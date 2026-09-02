@@ -79,7 +79,13 @@ function createVoiceId(): string {
   return id;
 }
 
+function pendingInteractionKey(sessionId: string, interactionId: string): string {
+  return `${sessionId}\u0000${interactionId}`;
+}
+
 type PendingInteractionResponse = {
+  sessionId: string;
+  interactionId: string;
   type: "permission_request" | "ask_user";
   response: Record<string, unknown>;
   version: number;
@@ -362,7 +368,8 @@ export function useChatAppStateCore(): ChatAppState {
     input: string;
     attachments: UploadedFile[];
     voice?: CanonicalVoiceSubmission;
-    state: "sending" | "acked";
+    sessionId?: string;
+    state: "sending" | "verifying" | "acked";
     createdAt: number;
   }
   const outboxRef = useRef<OutboxEntry[]>([]);
@@ -497,11 +504,12 @@ export function useChatAppStateCore(): ChatAppState {
   const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
   const interactionResponseGenerationRef = useRef(new Map<string, number>());
   const sessionIdRef = useRef<string | null>(null);
-  const releaseInteractionResponse = useCallback((interactionId: string, generation: number, error: string) => {
-    const pending = pendingInteractionResponsesRef.current.get(interactionId);
+  const releaseInteractionResponse = useCallback((key: string, generation: number, error: string) => {
+    const pending = pendingInteractionResponsesRef.current.get(key);
     if (!pending || pending.generation !== generation) return;
     if (pending.ackTimer) clearTimeout(pending.ackTimer);
-    pendingInteractionResponsesRef.current.delete(interactionId);
+    pendingInteractionResponsesRef.current.delete(key);
+    if (sessionIdRef.current !== pending.sessionId) return;
     // Keep the card pending, so its normal UI is immediately retryable.
     msgRef.current.addMessage({
       type: "system-error",
@@ -511,10 +519,17 @@ export function useChatAppStateCore(): ChatAppState {
     });
   }, []);
   const releaseAllInteractionResponses = useCallback((error: string) => {
-    for (const [interactionId, pending] of [...pendingInteractionResponsesRef.current]) {
-      releaseInteractionResponse(interactionId, pending.generation, error);
+    for (const [key, pending] of [...pendingInteractionResponsesRef.current]) {
+      releaseInteractionResponse(key, pending.generation, error);
     }
   }, [releaseInteractionResponse]);
+  const settleInteractionResponse = useCallback((sessionId: string, interactionId: string) => {
+    const key = pendingInteractionKey(sessionId, interactionId);
+    const pending = pendingInteractionResponsesRef.current.get(key);
+    if (!pending) return;
+    if (pending.ackTimer) clearTimeout(pending.ackTimer);
+    pendingInteractionResponsesRef.current.delete(key);
+  }, []);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(null);
   const refreshTokenUsageRef = useRef<() => void>(() => {});
@@ -928,16 +943,15 @@ export function useChatAppStateCore(): ChatAppState {
     [],
   );
 
-  /** ACK 超时：15s 未收到 chat_ack → 翻 failed + 清 loading */
+  /** ACK 超时只代表结果未知：保留原 intent/clientMsgId，人工 retry 必须复用。 */
   const armAckTimeout = useCallback(
     (clientMsgId: string) => {
       const existing = ackTimersRef.current.get(clientMsgId);
       if (existing) clearTimeout(existing);
       const timer = setTimeout(() => {
         ackTimersRef.current.delete(clientMsgId);
-        outboxRef.current = outboxRef.current.filter(
-          (e) => e.clientMsgId !== clientMsgId,
-        );
+        const entry = outboxRef.current.find((item) => item.clientMsgId === clientMsgId);
+        if (entry) entry.state = "verifying";
         console.warn(`[chat] ACK timeout for ${clientMsgId}`);
         markBubbleFailed(clientMsgId, -1, "发送超时，请重试");
         if (
@@ -1041,9 +1055,10 @@ export function useChatAppStateCore(): ChatAppState {
         }
       }
 
-      outboxRef.current.push({
+      const nextOutboxEntry: OutboxEntry = {
         clientMsgId,
         input: inputText,
+        sessionId: activeSessionId ?? undefined,
         attachments: submission.attachments.map((attachment) => ({
           attachmentId: attachment.attachmentId,
           originalName: attachment.display.originalName,
@@ -1055,7 +1070,10 @@ export function useChatAppStateCore(): ChatAppState {
         ...(submission.voice ? { voice: submission.voice } : {}),
         state: "sending",
         createdAt: Date.now(),
-      });
+      };
+      const existingOutboxIndex = outboxRef.current.findIndex((entry) => entry.clientMsgId === clientMsgId);
+      if (existingOutboxIndex >= 0) outboxRef.current[existingOutboxIndex] = nextOutboxEntry;
+      else outboxRef.current.push(nextOutboxEntry);
 
       setLoading(true);
       setCompacting(false); // 普通消息轮：清掉可能残留的压缩状态
@@ -1086,29 +1104,41 @@ export function useChatAppStateCore(): ChatAppState {
 
 
   const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: "respond_ok" | "respond_error" }>) => {
-    const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
-    // ACK 必须对应当前仍在等待的交互提交；重放或其他交互的 ACK 不得改变 UI。
-    if (!pending) return;
-    // Retry ACKs must echo the attempt token. This fences a delayed ACK from a
-    // timed-out submission from settling the newer response.
-    const ackAttemptId = (data as unknown as { clientAttemptId?: unknown }).clientAttemptId;
-    if (typeof ackAttemptId === "string" && ackAttemptId !== pending.attemptId) return;
+    const ackAttemptId = data.clientAttemptId;
+    const candidates = [...pendingInteractionResponsesRef.current.entries()].filter(([, pending]) =>
+      pending.interactionId === data.interactionId
+      && (!data.sessionId || pending.sessionId === data.sessionId)
+      && (!ackAttemptId || pending.attemptId === ackAttemptId),
+    );
+    const matched = candidates.length === 1 ? candidates[0] : undefined;
+    if (!matched) return;
+    const [key, pending] = matched;
     if (ackAttemptId === undefined && pending.generation > 1) return;
     if (data.version !== undefined && data.version !== pending.version) return;
 
     if (pending.ackTimer) clearTimeout(pending.ackTimer);
     if (data.type === 'respond_ok' && data.status === 'accepted') return; // accepted is non-terminal; wait for canonical outcome
-    pendingInteractionResponsesRef.current.delete(data.interactionId);
+    pendingInteractionResponsesRef.current.delete(key);
+
+    if (data.type === "respond_ok") {
+      sessionRef.current.applySessionInteractionEvent?.({
+        type: 'resolved',
+        sessionId: pending.sessionId,
+        interactionId: pending.interactionId,
+      });
+    }
+    // ACK 归属原会话；用户已切到其他会话时不得修改当前消息投影。
+    if (sessionIdRef.current !== pending.sessionId) return;
 
     const idx = msgRef.current.messagesRef.current.findIndex((m) =>
-      m.type === pending.type && m.interactionId === data.interactionId,
+      m.type === pending.type && m.interactionId === pending.interactionId,
     );
     if (idx < 0) return;
 
     if (data.type === "respond_ok") {
       const canonicalResponse = acknowledgedInteractionResponse(data, pending.response);
       msgRef.current.updateMessageAt(idx, (m) => {
-        if (m.type !== pending.type || m.interactionId !== data.interactionId || m.status !== "pending") return m;
+        if (m.type !== pending.type || m.interactionId !== pending.interactionId || m.status !== "pending") return m;
         return m.type === "permission_request"
           ? { ...m, status: canonicalResponse.allow ? "allowed" as const : "denied" as const }
           : { ...m, status: "answered" as const, answers: canonicalResponse.answers as AskUserAnswers };
@@ -1118,7 +1148,7 @@ export function useChatAppStateCore(): ChatAppState {
 
     // 失败时卡片始终保持 pending，用户可直接重试；错误另以系统消息可见地呈现。
     msgRef.current.updateMessageAt(idx, (m) =>
-      m.type === pending.type && m.interactionId === data.interactionId
+      m.type === pending.type && m.interactionId === pending.interactionId
         ? { ...m, status: "pending" as const }
         : m,
     );
@@ -1156,6 +1186,7 @@ export function useChatAppStateCore(): ChatAppState {
           interaction: { interactionId: event.interactionId, type: event.type, version: event.version ?? 0, order: event.order ?? event.version ?? 0 },
         });
       } else if (event.type === 'interaction_resolved') {
+        settleInteractionResponse(event.sessionId, event.interactionId);
         sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: event.sessionId, interactionId: event.interactionId });
       } else if (event.type === 'session_status' && ['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(event.status)) {
         sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: event.sessionId });
@@ -1201,10 +1232,6 @@ export function useChatAppStateCore(): ChatAppState {
       }
 
       if (data.type === "respond_ok" || data.type === "respond_error") {
-        if (data.type === 'respond_ok') {
-          const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
-          if (sid) sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: sid, interactionId: data.interactionId });
-        }
         resolveInteractionResponse(data);
         return;
       }
@@ -1576,6 +1603,7 @@ export function useChatAppStateCore(): ChatAppState {
     makeResumeMessage,
     clearRuntimeForSession,
     showCompactionNotice,
+    settleInteractionResponse,
   ]);
 
   // Subscribe to active stream on session change
@@ -1873,11 +1901,12 @@ export function useChatAppStateCore(): ChatAppState {
         setInput(typeof message.content === 'string' ? message.content : '');
         return;
       }
-      const msgs = msg.messagesRef.current;
-      const idx = msgs.findIndex((m) => m.id === message.id);
-      if (idx >= 0) {
-        msgs.splice(idx, 1);
-        msg.setMessages([...msgs]);
+      const retryOutboxEntry = message.clientMsgId
+        ? outboxRef.current.find((entry) => entry.clientMsgId === message.clientMsgId)
+        : undefined;
+      if (retryOutboxEntry?.sessionId && retryOutboxEntry.sessionId !== sessionIdRef.current) {
+        Alert.alert('无法重试', '该消息属于另一个会话，请返回原会话后重试。');
+        return;
       }
       if (message.clientMsgId) {
         const t = ackTimersRef.current.get(message.clientMsgId);
@@ -1885,20 +1914,29 @@ export function useChatAppStateCore(): ChatAppState {
           clearTimeout(t);
           ackTimersRef.current.delete(message.clientMsgId);
         }
-        outboxRef.current = outboxRef.current.filter(
-          (e) => e.clientMsgId !== message.clientMsgId,
-        );
       }
-      const text = typeof message.content === "string" ? message.content : "";
+      const text = retryOutboxEntry?.input ?? (typeof message.content === "string" ? message.content : "");
       if (!text && retryFiles.length === 0) {
         setInput(text);
         return;
       }
-      // 用户手动 retry：生成新 clientMsgId；附件仍使用上传时的同一 attachmentId。
+      const msgs = msg.messagesRef.current;
+      const idx = msgs.findIndex((m) => m.id === message.id);
+      if (idx >= 0) {
+        msgs.splice(idx, 1);
+        msg.setMessages([...msgs]);
+      }
+      // 结果未知时复用原 clientMsgId，服务端幂等键保持不变，避免 ACK 丢失后重复 run。
       setInput("");
-      void sendChatViaWs(text, retryFiles, true);
+      void sendChatViaWs(
+        text,
+        retryOutboxEntry?.attachments ?? retryFiles,
+        true,
+        retryOutboxEntry?.voice,
+        message.clientMsgId,
+      );
     },
-    [msg, sendChatViaWs, genClientMsgId, fileUpload],
+    [msg, sendChatViaWs, fileUpload],
   );
 
   const respondToInteraction = useCallback(
@@ -1907,19 +1945,28 @@ export function useChatAppStateCore(): ChatAppState {
       type: "permission_request" | "ask_user",
       response: Record<string, unknown>,
     ) => {
-      // A live attempt owns the submit slot; timeout/disconnect/error releases it.
-      if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-      const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1;
       const currentSessionId = sessionIdRef.current;
       if (!currentSessionId) return;
+      const key = pendingInteractionKey(currentSessionId, interactionId);
+      // A live attempt owns the submit slot only inside its canonical session.
+      if (pendingInteractionResponsesRef.current.has(key)) return;
+      const generation = (interactionResponseGenerationRef.current.get(key) ?? 0) + 1;
       const interactionMessage = msgRef.current.messagesRef.current.find((message) =>
         (message.type === 'permission_request' || message.type === 'ask_user') && message.interactionId === interactionId,
       ) as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }> | undefined;
       const version = interactionMessage?.interactionVersion;
       if (!Number.isSafeInteger(version)) return; // fail closed until authoritative interaction detail is hydrated
-      interactionResponseGenerationRef.current.set(interactionId, generation);
+      interactionResponseGenerationRef.current.set(key, generation);
       const attemptId = createInteractionRequestId(currentSessionId, interactionId, response);
-      pendingInteractionResponsesRef.current.set(interactionId, { type, response, version: version!, generation, attemptId });
+      pendingInteractionResponsesRef.current.set(key, {
+        sessionId: currentSessionId,
+        interactionId,
+        type,
+        response,
+        version: version!,
+        generation,
+        attemptId,
+      });
 
       let ok = false;
       try {
@@ -1936,14 +1983,14 @@ export function useChatAppStateCore(): ChatAppState {
       } catch {
         // A transport exception has the same retry semantics as a negative ACK.
       }
-      const pending = pendingInteractionResponsesRef.current.get(interactionId);
+      const pending = pendingInteractionResponsesRef.current.get(key);
       if (!pending || pending.generation !== generation) return;
       if (!ok) {
-        releaseInteractionResponse(interactionId, generation, "网络连接失败");
+        releaseInteractionResponse(key, generation, "网络连接失败");
         return;
       }
       pending.ackTimer = setTimeout(() => {
-        releaseInteractionResponse(interactionId, generation, "等待服务端确认超时");
+        releaseInteractionResponse(key, generation, "等待服务端确认超时");
       }, INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
     },
     [releaseInteractionResponse],

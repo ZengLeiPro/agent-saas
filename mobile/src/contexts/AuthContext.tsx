@@ -180,6 +180,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       let trustedServiceReady = false;
+      let authRequestGeneration: number | null = null;
+      const requestIsCurrent = () => !cancelled && (
+        authRequestGeneration === null || identityRef.current.generation === authRequestGeneration
+      );
       try {
         const storedIdentity = await AsyncStorage.getItem(IDENTITY_META_KEY);
         if (storedIdentity) {
@@ -216,7 +220,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         trustedServiceReady = true;
 
+        authRequestGeneration = identityRef.current.generation;
         const token = await mobileSecureStorage.getItem(TOKEN_KEY);
+        if (!requestIsCurrent()) return;
         if (!token) {
           if (identityRef.current.identity) {
             await clearAccountData(false);
@@ -226,17 +232,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         const res = await timedAuthFetch('/api/auth/me'); // may atomically upgrade an N-1 token
+        if (!requestIsCurrent()) return;
         if (res.ok) {
           const binding = await mobileSecureStorage.getItem(AUTH_SESSION_KEY);
+          if (!requestIsCurrent()) return;
           if (!binding) {
             await clearAccountData(false);
             return;
           }
           const data = await res.json() as AuthUser;
+          if (!requestIsCurrent()) return;
           const identity = await transitionIdentity({ type: 'authenticated', principal: { userId: data.id, tenantId: data.tenantId } });
-          if (!cancelled) setUser(data);
+          if (!identity || identityRef.current.identity?.generation !== identity.generation) return;
+          setUser(data);
           const key = cachedUserKey(identity);
           if (key) await AsyncStorage.setItem(key, JSON.stringify(data));
+          if (identityRef.current.identity?.generation !== identity.generation) return;
           setSensitiveTransportAllowed(true);
           wsClient.unfreezeSending();
         } else {
@@ -244,6 +255,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await transitionIdentity({ type: 'token-invalidated' });
         }
       } catch {
+        if (!requestIsCurrent()) return;
         if (!trustedServiceReady) {
           if (!cancelled) {
             const snapshot = getServiceConfigSnapshot();
@@ -272,7 +284,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch { /* corrupted cache, ignore */ }
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (requestIsCurrent()) setLoading(false);
       }
     })();
 
@@ -298,16 +310,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshUser = useCallback(async () => {
     if (!getServiceConfigSnapshot().ready) return;
+    const requestGeneration = identityRef.current.generation;
+    const requestIsCurrent = () => identityRef.current.generation === requestGeneration;
     try {
       const token = await mobileSecureStorage.getItem(TOKEN_KEY);
-      if (!token) return;
+      if (!token || !requestIsCurrent()) return;
       const res = await timedAuthFetch('/api/auth/me');
+      if (!requestIsCurrent()) return;
       if (res.ok) {
         const data = await res.json() as AuthUser;
+        if (!requestIsCurrent()) return;
         const current = identityRef.current.identity;
         const changed = !!current && (current.userId !== data.id || current.tenantId !== data.tenantId);
         if (changed) await clearAccountData(false);
+        if (!requestIsCurrent()) return;
         const identity = await transitionIdentity({ type: changed ? 'tenant-switched' : 'authenticated', principal: { userId: data.id, tenantId: data.tenantId } });
+        if (!identity || identityRef.current.identity?.generation !== identity.generation) return;
         setUser(data);
         const key = cachedUserKey(identity);
         if (key) await AsyncStorage.setItem(key, JSON.stringify(data));

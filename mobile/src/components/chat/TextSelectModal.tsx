@@ -19,11 +19,10 @@ export function TextSelectModal({ visible, onClose, content }: TextSelectModalPr
   const insets = useSafeAreaInsets();
   const { scale } = useFontSize();
 
-  const html = useMemo(() => {
-    if (!content) return '';
-    const rendered = marked.parse(content, { breaks: true }) as string;
-    return buildHtml(rendered, colors, scale);
-  }, [content, colors, scale]);
+  const html = useMemo(
+    () => buildTextSelectionHtml(content, colors, scale),
+    [content, colors, scale],
+  );
 
   const styles = useMemo(() => StyleSheet.create({
     container: {
@@ -75,12 +74,30 @@ export function TextSelectModal({ visible, onClose, content }: TextSelectModalPr
         <WebView
           source={{ html }}
           style={{ flex: 1, backgroundColor: colors.card }}
-          originWhitelist={['*']}
+          originWhitelist={['about:blank']}
+          javaScriptEnabled={false}
+          allowFileAccess={false}
+          allowUniversalAccessFromFileURLs={false}
+          mixedContentMode="never"
+          onShouldStartLoadWithRequest={(request) => request.url === 'about:blank'}
           scrollEnabled
         />
       </View>
     </Modal>
   );
+}
+
+function escapeUntrustedMarkdownSource(content: string): string {
+  return content
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+export function buildTextSelectionHtml(content: string, colors: ThemeColors, fontScale: number): string {
+  if (!content) return '';
+  const rendered = marked.parse(escapeUntrustedMarkdownSource(content), { breaks: true }) as string;
+  return buildHtml(rendered, colors, fontScale);
 }
 
 function buildHtml(bodyHtml: string, colors: ThemeColors, fontScale: number): string {
@@ -95,6 +112,7 @@ function buildHtml(bodyHtml: string, colors: ThemeColors, fontScale: number): st
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {

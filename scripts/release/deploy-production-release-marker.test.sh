@@ -184,12 +184,17 @@ done
 # EXIT trap that could capture function-local state.
 grep -F 'arm_deploy_rollback cleanup_acs_failure' "$deploy" >/dev/null
 grep -F 'arm_deploy_rollback cleanup_app_failure' "$deploy" >/dev/null
+# Candidate release/env cleanup stays gated by a successful topology stop + final commit.
+grep -F 'elif commit_rollback_worker_authority "$worker_active" "$worker_idle"' "$deploy" >/dev/null
+grep -F '&& restore_candidate_worker_authority "$worker_idle" "$worker_env"' "$deploy" >/dev/null
 
 worker_helpers="$tmp/worker-authority-helpers.sh"
 {
   sed -n '/^acquire_config_governance_fence() {/,/^}$/p' "$deploy"
   sed -n '/^validate_worker_release_boundary() {/,/^}$/p' "$deploy"
   sed -n '/^commit_worker_active_color() {/,/^}$/p' "$deploy"
+  sed -n '/^commit_rollback_worker_authority() {/,/^}$/p' "$deploy"
+  sed -n '/^restore_candidate_worker_authority() {/,/^}$/p' "$deploy"
 } > "$worker_helpers"
 test -s "$worker_helpers"
 bash -n "$worker_helpers"
@@ -266,7 +271,7 @@ run_worker_boundary_case() {
   test ! -e "$case_dir/process/config-governance/config.lock"
 }
 
-# Both failures happen after initial admission and before the final marker commit.
+# These failures happen after initial admission and before the final marker commit.
 # The exact production helper must reject each stale state.
 run_worker_boundary_case ready-revoked green absent absent
 run_worker_boundary_case snapshot-drift green absent absent
@@ -274,6 +279,110 @@ run_worker_boundary_case none green absent green
 # Rollback already points at the candidate (green). If old blue loses its private
 # binding after the candidate stop, the final check must leave candidate authority.
 run_worker_boundary_case rollback-snapshot-drift-after-stop blue green green
+
+rollback_stop_harness="$tmp/rollback-stop-failure-harness.sh"
+cat > "$rollback_stop_harness" <<'HARNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$CLEANUP_LIFECYCLE"
+source "$WORKER_HELPERS"
+
+write_worker_state() {
+  local color="$1" pid="$2"
+  printf '%s\n' "$pid" >"$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$color.pid"
+  printf '%s\n' "$pid" >"$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$color.ready"
+  printf '{}\n' >"$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$color.config-identity.json"
+}
+
+systemctl() {
+  local action="$1" unit="${*: -1}"
+  case "$action" in
+    disable)
+      printf 'disable\n' >>"$ACTION_LOG"
+      CANDIDATE_ACTIVE=false
+      return "$DISABLE_STATUS"
+      ;;
+    is-active)
+      if [[ "$unit" == *@green ]]; then
+        test "$CANDIDATE_ACTIVE" = true
+      else
+        return 0
+      fi
+      ;;
+    enable)
+      printf 'restore\n' >>"$ACTION_LOG"
+      CANDIDATE_ACTIVE=true
+      write_worker_state green 5252
+      ;;
+    reset-failed) return 0 ;;
+    show) printf 'AGENT_SAAS_ENVIRONMENT=production\n' ;;
+    *) return 0 ;;
+  esac
+}
+kill() { return 0; }
+node() { return 0; }
+
+write_worker_state blue 4242
+write_worker_state green 5252
+printf 'green\n' >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
+printf 'candidate-link\n' >"$CANDIDATE_LINK_SENTINEL"
+printf 'candidate-env\n' >"$CANDIDATE_ENV_SENTINEL"
+candidate_stopped=false
+worker_restored=true
+if commit_rollback_worker_authority blue green "$CANDIDATE_ENV_SENTINEL" \
+  candidate_stopped worker_restored; then
+  transition_status=0
+  rm "$CANDIDATE_LINK_SENTINEL" "$CANDIDATE_ENV_SENTINEL"
+else
+  transition_status=$?
+  if [ "$candidate_stopped" = true ]; then
+    restore_candidate_worker_authority green "$CANDIDATE_ENV_SENTINEL"
+  fi
+fi
+
+test "$candidate_stopped" = true
+test "$(grep -Fxc disable "$ACTION_LOG")" = 1
+if [ "$EXPECTED_RESULT" = failure ]; then
+  test "$transition_status" -ne 0
+  test "$worker_restored" = false
+  test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = green
+  test "$(cat "$CANDIDATE_LINK_SENTINEL")" = candidate-link
+  test "$(cat "$CANDIDATE_ENV_SENTINEL")" = candidate-env
+  test "$(grep -Fxc restore "$ACTION_LOG")" = 1
+else
+  test "$transition_status" = 0
+  test "$worker_restored" = true
+  test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = blue
+  test ! -e "$CANDIDATE_LINK_SENTINEL"
+  test ! -e "$CANDIDATE_ENV_SENTINEL"
+  ! grep -Fx restore "$ACTION_LOG" >/dev/null
+fi
+HARNESS
+chmod +x "$rollback_stop_harness"
+run_rollback_stop_case() {
+  local disable_status="$1" expected_result="$2"
+  local rollback_case="$tmp/rollback-disable-$disable_status-$expected_result"
+  mkdir -p "$rollback_case/run" "$rollback_case/etc"
+  CLEANUP_LIFECYCLE="$lifecycle" \
+    WORKER_HELPERS="$worker_helpers" \
+    AGENT_SAAS_WORKER_RUN_ROOT="$rollback_case/run" \
+    AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$rollback_case/etc/active-color" \
+    ACTION_LOG="$rollback_case/actions.log" \
+    CANDIDATE_LINK_SENTINEL="$rollback_case/candidate-link" \
+    CANDIDATE_ENV_SENTINEL="$rollback_case/candidate.env" \
+    CANDIDATE_ACTIVE=true \
+    DISABLE_STATUS="$disable_status" \
+    EXPECTED_RESULT="$expected_result" \
+    GITHUB_RUN_ID=4242 \
+    GITHUB_RUN_ATTEMPT=7 \
+    config_identity_reader="$deploy" \
+    bash "$rollback_stop_harness"
+}
+
+# Non-zero disable plus an inactive process must restore candidate authority and
+# preserve marker/release/env; only a zero disable may commit and clean up.
+run_rollback_stop_case 73 failure
+run_rollback_stop_case 0 success
 
 source "$lifecycle"
 source "$worker_helpers"

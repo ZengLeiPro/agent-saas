@@ -204,6 +204,48 @@ commit_worker_active_color() {
   mv -f "$candidate" "$marker"
 }
 
+commit_rollback_worker_authority() {
+  local active_color="$1" candidate_color="$2" active_env="$3"
+  local -n candidate_stopped_ref="$4" worker_restored_ref="$5"
+  local disable_status=0
+  systemctl disable --now "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1 \
+    || disable_status=$?
+  if ! systemctl is-active --quiet "agent-saas-runtime-worker@$candidate_color"; then
+    candidate_stopped_ref=true
+  fi
+  if [ "$disable_status" -ne 0 ] || [ "$candidate_stopped_ref" != true ]; then
+    worker_restored_ref=false
+    return 1
+  fi
+  if validate_worker_release_boundary "$active_color" "$active_env" - - \
+    'Rollback Worker final ConfigIdentity' \
+    && commit_worker_active_color "$active_color"; then
+    return 0
+  fi
+  worker_restored_ref=false
+  return 1
+}
+
+restore_candidate_worker_authority() {
+  local color="$1" env_path="$2"
+  local run_root="${AGENT_SAAS_WORKER_RUN_ROOT:-/run}"
+  rm -f "$run_root/agent-saas-runtime-worker-$color.pid" \
+    "$run_root/agent-saas-runtime-worker-$color.ready" \
+    "$run_root/agent-saas-runtime-worker-$color.draining" \
+    "$run_root/agent-saas-runtime-worker-$color.config-identity.json" || true
+  systemctl reset-failed "agent-saas-runtime-worker@$color" >/dev/null 2>&1 || true
+  if systemctl enable --now "agent-saas-runtime-worker@$color" >/dev/null 2>&1; then
+    for _ in $(seq 1 180); do
+      if validate_worker_release_boundary "$color" "$env_path" - - \
+        'Rollback candidate Worker restored authority'; then
+        return 0
+      fi
+      sleep 1
+    done
+  fi
+  return 1
+}
+
 deploy_acs() {
   local digest target previous main_pid identity_backup env_backup had_previous_identity candidate
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
@@ -441,7 +483,7 @@ deploy_app() {
         echo 'ERROR: preserving candidate API release/env because old traffic or candidate stop is unverified' >&2
       fi
 
-      # 旧 Worker 先完成初检；停候选后，在配置 mutation fence 内再复检并提交 marker。
+      # 旧 Worker 先完成初检；候选 topology 停用成功后才允许最终复检并提交 marker。
       rm -f "/run/agent-saas-runtime-worker-$worker_active.pid" \
         "/run/agent-saas-runtime-worker-$worker_active.ready" \
         "/run/agent-saas-runtime-worker-$worker_active.draining" \
@@ -465,31 +507,20 @@ deploy_app() {
           "/etc/agent-saas/runtime-worker-$worker_active.release.env" - - \
           'Rollback Worker private ConfigIdentity'; then
           worker_restored=false
-        else
-          systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1
-          if ! systemctl is-active --quiet "agent-saas-runtime-worker@$worker_idle"; then
-            candidate_stopped=true
-            if validate_worker_release_boundary "$worker_active" \
-              "/etc/agent-saas/runtime-worker-$worker_active.release.env" - - \
-              'Rollback Worker final ConfigIdentity' \
-              && commit_worker_active_color "$worker_active"; then
-              release_config_governance_fence
-              rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
-              if [ -n "$worker_idle_previous" ]; then
-                ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle" || true
-              else
-                rm -f "/opt/agent-saas-app/worker/$worker_idle" || true
-              fi
-              if [ "$had_worker_env" = true ]; then
-                cp -a "$rollback_root/worker.release.env" "$worker_env" || true
-              else
-                rm -f "$worker_env" || true
-              fi
-            else
-              worker_restored=false
-            fi
+        elif commit_rollback_worker_authority "$worker_active" "$worker_idle" \
+          "/etc/agent-saas/runtime-worker-$worker_active.release.env" \
+          candidate_stopped worker_restored; then
+          release_config_governance_fence
+          rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
+          if [ -n "$worker_idle_previous" ]; then
+            ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle" || true
           else
-            worker_restored=false
+            rm -f "/opt/agent-saas-app/worker/$worker_idle" || true
+          fi
+          if [ "$had_worker_env" = true ]; then
+            cp -a "$rollback_root/worker.release.env" "$worker_env" || true
+          else
+            rm -f "$worker_env" || true
           fi
         fi
         release_config_governance_fence
@@ -497,22 +528,9 @@ deploy_app() {
         worker_restored=false
       fi
       if [ "$worker_restored" != true ]; then
-        if [ "$candidate_stopped" = true ]; then
-          rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" \
-            "/run/agent-saas-runtime-worker-$worker_idle.ready" \
-            "/run/agent-saas-runtime-worker-$worker_idle.draining" \
-            "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
-          systemctl reset-failed "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
-          if systemctl enable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1; then
-            for _ in $(seq 1 180); do
-              if validate_worker_release_boundary "$worker_idle" "$worker_env" - - \
-                'Rollback candidate Worker restored authority'; then
-                candidate_restored=true
-                break
-              fi
-              sleep 1
-            done
-          fi
+        if [ "$candidate_stopped" = true ] \
+          && restore_candidate_worker_authority "$worker_idle" "$worker_env"; then
+          candidate_restored=true
         fi
         if [ "$candidate_stopped" = true ] && [ "$candidate_restored" != true ]; then
           echo 'ERROR: Worker rollback failed after candidate stop; candidate restart is not ready' >&2

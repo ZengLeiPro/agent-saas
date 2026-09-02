@@ -216,7 +216,7 @@ test('rollback release env is parsed without shell evaluation and must match the
   }
 });
 
-test('Production and Staging deploy modules enforce the private snapshot commit boundary', async () => {
+test('Production and Staging deploy modules enforce topology and private snapshot commit boundaries', async () => {
   const [production, staging, healthRoute] = await Promise.all([
     readFile(new URL('./deploy-production-release.sh', import.meta.url), 'utf8'),
     readFile(new URL('./deploy-staging-release.sh', import.meta.url), 'utf8'),
@@ -256,29 +256,45 @@ test('Production and Staging deploy modules enforce the private snapshot commit 
   assert.ok(candidateFinalCheck > candidateFence);
   assert.ok(candidateMarker > candidateFinalCheck);
 
+  const rollbackHelperStart = production.indexOf('commit_rollback_worker_authority() {');
+  const rollbackHelperEnd = production.indexOf('restore_candidate_worker_authority() {');
+  const rollbackHelper = production.slice(rollbackHelperStart, rollbackHelperEnd);
+  assert.ok(rollbackHelperStart > -1);
+  assert.ok(rollbackHelperEnd > rollbackHelperStart);
+  assert.match(
+    rollbackHelper,
+    /systemctl disable --now "agent-saas-runtime-worker@\$candidate_color"[\s\S]*\|\| disable_status=\$\?/u,
+  );
+  assert.match(
+    rollbackHelper,
+    /\[ "\$disable_status" -ne 0 \] \|\| \[ "\$candidate_stopped_ref" != true \]/u,
+  );
+  const rollbackFinalCheck = rollbackHelper.indexOf("'Rollback Worker final ConfigIdentity'");
+  const rollbackMarker = rollbackHelper.indexOf(
+    'commit_worker_active_color "$active_color"',
+    rollbackFinalCheck,
+  );
+  assert.ok(rollbackFinalCheck > -1);
+  assert.ok(rollbackMarker > rollbackFinalCheck);
+
   const rollbackInitialCheck = production.indexOf("'Rollback Worker private ConfigIdentity'");
   const rollbackFence = production.indexOf(
     'acquire_config_governance_fence /mnt/agent-saas/server-data',
     rollbackInitialCheck,
   );
-  const rollbackCandidateStop = production.indexOf(
-    'systemctl disable --now "agent-saas-runtime-worker@$worker_idle"',
+  const rollbackHelperCall = production.indexOf(
+    'elif commit_rollback_worker_authority "$worker_active" "$worker_idle"',
     rollbackFence,
   );
-  const rollbackFinalCheck = production.indexOf(
-    "'Rollback Worker final ConfigIdentity'",
-    rollbackCandidateStop,
-  );
-  const rollbackMarker = production.indexOf(
-    'commit_worker_active_color "$worker_active"',
-    rollbackFinalCheck,
+  const rollbackCleanup = production.indexOf(
+    'rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"',
+    rollbackHelperCall,
   );
   assert.ok(rollbackInitialCheck > -1);
   assert.ok(rollbackFence > rollbackInitialCheck);
-  assert.ok(rollbackCandidateStop > rollbackFence);
-  assert.ok(rollbackFinalCheck > rollbackCandidateStop);
-  assert.ok(rollbackMarker > rollbackFinalCheck);
-  assert.match(production, /Rollback candidate Worker restored authority/u);
+  assert.ok(rollbackHelperCall > rollbackFence);
+  assert.ok(rollbackCleanup > rollbackHelperCall);
+  assert.match(production, /restore_candidate_worker_authority "\$worker_idle" "\$worker_env"/u);
   assert.match(healthRoute, /摘要本身只走平台管理员 API \/ 私有运行态快照，不进匿名响应/u);
   assert.doesNotMatch(
     healthRoute.slice(

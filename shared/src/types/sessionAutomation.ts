@@ -33,11 +33,13 @@ export interface SessionAutomationSnapshot {
   specVersion: number;
   controlVersion: number;
   projectionVersion: number;
+  continuationEpoch?: number;
   spec: SessionAutomationSpec;
   nextWakeupAt?: string;
   activeRunId?: string;
   runCount: number;
   noProgressCount: number;
+  lastProgressFingerprint?: string;
   lastError?: string;
   createdAt: string;
   updatedAt: string;

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import {
   SessionAutomationCoordinator,
@@ -24,19 +25,31 @@ describePg('session automation staged dispatch crash recovery on PostgreSQL', ()
   const prefix = `automation_staged_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const tenantId = 'tenant-staged-recovery';
   let pool: InstanceType<typeof Pool>;
+  let events: PgEventStore;
   let runs: PgRunStore;
   let store: PgSessionAutomationStore;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: url!, max: 8 });
+    events = new PgEventStore({ connectionString: url!, tablePrefix: prefix, poolMax: 3 });
+    await events.init();
     runs = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await runs.init();
     store = new PgSessionAutomationStore(pool, prefix, runs.runsTable);
     await store.init();
   }, 30_000);
 
+  beforeEach(async () => {
+    await pool.query(`DO $$ DECLARE r record; BEGIN
+      FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%'
+      LOOP EXECUTE format('TRUNCATE TABLE %I CASCADE',r.tablename); END LOOP;
+    END $$`);
+    await runs.init();
+  });
+
   afterAll(async () => {
     if (!pool) return;
+    await events.close();
     await pool.query(`DO $$ DECLARE r record; BEGIN
       FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%'
       LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP;

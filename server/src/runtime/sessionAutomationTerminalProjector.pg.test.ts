@@ -206,7 +206,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       runId: stale.targetRunId, status: 'completed', progressFingerprint: 'stale-progress',
     })).toBe(true);
     expect(await store.get(tenantId, fixed.sessionId, fixed.automationId)).toMatchObject({
-      generation: 3, status: 'active', phase: 'waiting', activeRunId: null,
+      generation: 3, status: 'active', phase: 'waiting', activeRunId: undefined,
       noProgressCount: 2, lastProgressFingerprint: 'generation-3-progress', continuationEpoch: 6,
     });
 
@@ -281,7 +281,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       runId: stale.targetRunId, status: 'completed', progressFingerprint: 'stale-progress',
     });
     expect(await store.get(tenantId, fixed.sessionId, fixed.automationId)).toMatchObject({
-      generation: 2, status: 'paused', phase: 'idle', activeRunId: null,
+      generation: 2, status: 'paused', phase: 'idle', activeRunId: undefined,
       noProgressCount: 1, lastProgressFingerprint: 'generation-2-progress', continuationEpoch: 9,
     });
 
@@ -338,14 +338,14 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       runId: replacement.targetRunId, status: 'cancelled',
     });
     const cleared = await store.get(tenantId, original.sessionId, original.automationId);
-    expect(cleared?.activeRunId).toBeNull();
+    expect(cleared?.activeRunId).toBeUndefined();
     const controlVersion = cleared?.controlVersion;
     await projector.project({
       globalSequence: 4, tenantId, sessionId: original.sessionId,
       runId: replacement.targetRunId, status: 'cancelled',
     });
     expect(await store.get(tenantId, original.sessionId, original.automationId)).toMatchObject({
-      activeRunId: null, controlVersion,
+      activeRunId: undefined, controlVersion,
     });
   });
 

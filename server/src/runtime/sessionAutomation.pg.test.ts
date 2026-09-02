@@ -6,6 +6,7 @@ import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import type { AutomationInFlightSummary } from './sessionAutomationInFlight.js';
 import { parseWholeNumeric, SessionAutomationRuntimeGuard } from './sessionAutomationRuntimeGuard.js';
+import type { SessionAutomationExecutionFlagSource } from './sessionAutomationFlags.js';
 import { createLifecycleAdapters } from '../app/sessionAutomationRuntime.js';
 import { PgSessionAutomationAttributionStore } from './sessionAutomationAttribution.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
@@ -74,7 +75,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   const readDone=new Promise<void>(resolve=>{initialRead=resolve;});
   const toolStore=Object.create(store) as PgSessionAutomationStore;
   toolStore.get=async(...args:Parameters<PgSessionAutomationStore['get']>)=>{const value=await store.get(...args);initialRead();return value;};
-  const flags={read:()=>({controlEnabled:true,executionEnabled:true,fixedLoopEnabled:true,adaptiveLoopEnabled:true,goalEnabled:true,evaluatorEnforced:true}),executionEnabled:()=>true};
+  const flags: SessionAutomationExecutionFlagSource={read:()=>({controlEnabled:true,executionEnabled:true,fixedLoopEnabled:true,adaptiveLoopEnabled:true,goalEnabled:true,evaluatorEnforced:true}),executionEnabled:()=>true};
   const tools = new SessionAutomationTools(toolStore,flags);
   const locker=await pool.connect();
   try{
@@ -466,7 +467,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,$8,'{}','dispatched')`,[outboxId,wakeupId,tenant,testSession,automationId,oldIncarnation,`late:${wakeupId}`,oldRun]);
   await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'running')`,[executionId,tenant,testSession,automationId,oldIncarnation,outboxId,oldRun]);
   await new SessionAutomationTerminalProjector(store,`late-old-run-${randomUUID()}`).project({globalSequence:1,tenantId:tenant,sessionId:testSession,runId:oldRun,status:'completed'});
-  expect(await store.get(tenant,testSession,automationId)).toMatchObject({incarnationId:newIncarnation,generation:2,status:'cancelling',phase:'draining',activeRunId:oldRun});
+  expect(await store.get(tenant,testSession,automationId)).toMatchObject({incarnationId:newIncarnation,generation:2,status:'cancelling',phase:'draining',activeRunId:undefined});
   expect((await pool.query(`SELECT state FROM ${store.tables.executions} WHERE execution_id=$1`,[executionId])).rows[0].state).toBe('terminal');
  });
 

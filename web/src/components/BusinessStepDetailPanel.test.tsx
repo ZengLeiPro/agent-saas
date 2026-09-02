@@ -159,6 +159,8 @@ describe("BusinessStepDetailPanel", () => {
   it("默认显示结果，并复用只读 PresentationBlocks 与正式交付物", () => {
     render(<BusinessStepDetailPanel {...props()} />);
 
+    expect(document.querySelector(".business-step-records-container")).toBeTruthy();
+    expect(document.querySelector("[data-records-block]")?.className).toContain("business-step-comparison-scroll");
     expect(screen.getByText("17 张通过，1 张需复核")).toBeTruthy();
     expect(screen.getByText("订单差异")).toBeTruthy();
     expect(screen.getByText("税号格式存在一处差异")).toBeTruthy();
@@ -252,6 +254,7 @@ describe("BusinessStepDetailSheet", () => {
     const comparison = document.querySelector<HTMLElement>("[data-records-block]");
     const row = document.querySelector<HTMLElement>("[data-comparison-row] [data-comparison-track]");
     expect(comparison?.className).toContain("overflow-x-hidden");
+    expect(comparison?.getAttribute("tabindex")).toBeNull();
     expect(row?.className).toContain("grid-cols-1");
     expect(screen.getByText("字段")).toBeTruthy();
     expect(screen.getAllByText("基准/之前").length).toBeGreaterThan(0);

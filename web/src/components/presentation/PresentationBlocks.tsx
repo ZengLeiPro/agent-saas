@@ -51,6 +51,7 @@ const CHECKLIST_ICON_MAP: Record<PresentationTone, typeof Circle> = {
 /** 渲染上下文。回写通道缺省时按钮 disabled——不允许出现「点了没反应」的按钮。 */
 export interface BlockContext {
   readOnly?: boolean;
+  recordsSurface?: "business-step";
   onAction?: (action: { interactionId: string; label: string }) => void;
 }
 
@@ -213,7 +214,7 @@ function RecordRow({
 // 首列、差异列与展开控件列使用固定轨道；基准和当前列等分剩余空间，兼顾跨行对齐与紧凑的右侧留白。
 const COMPARISON_COLUMNS = "sm:grid-cols-[9rem_repeat(2,minmax(8rem,1fr))_8rem_0.875rem]";
 
-function ComparisonRow({ item }: { item: RecordItem }) {
+function ComparisonRow({ item, businessStep }: { item: RecordItem; businessStep: boolean }) {
   const [open, setOpen] = useState(false);
   const expandable = !!item.detail?.length;
   const tone = item.tone ? TONE_MAP[item.tone] : "neutral";
@@ -231,31 +232,31 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         onClick={expandable ? () => setOpen((value) => !value) : undefined}
         className={cn(
           "grid w-full grid-cols-1 gap-x-3 gap-y-2 text-left select-text",
-          COMPARISON_COLUMNS,
-          "sm:items-start",
+          businessStep ? "business-step-comparison-track" : COMPARISON_COLUMNS,
+          !businessStep && "sm:items-start",
           !expandable && "cursor-default",
         )}
         data-comparison-track
       >
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
-          <span className="text-xs font-normal text-muted-foreground sm:hidden">字段</span>
+        <span className={cn("grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm", businessStep ? "business-step-comparison-field" : "sm:block")}>
+          <span className={cn("text-xs font-normal text-muted-foreground", businessStep ? "business-step-comparison-mobile-label" : "sm:hidden")}>字段</span>
           <span className="break-words font-medium text-foreground">{item.label}</span>
         </span>
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
-          <span className="text-xs text-muted-foreground sm:hidden">基准/之前</span>
+        <span className={cn("grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm", businessStep ? "business-step-comparison-field" : "sm:block")}>
+          <span className={cn("text-xs text-muted-foreground", businessStep ? "business-step-comparison-mobile-label" : "sm:hidden")}>基准/之前</span>
           <span className="break-words text-foreground">{item.baseline ?? "—"}</span>
         </span>
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
-          <span className="text-xs text-muted-foreground sm:hidden">当前/实际</span>
+        <span className={cn("grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm", businessStep ? "business-step-comparison-field" : "sm:block")}>
+          <span className={cn("text-xs text-muted-foreground", businessStep ? "business-step-comparison-mobile-label" : "sm:hidden")}>当前/实际</span>
           <span className="break-words text-foreground">{item.current ?? "—"}</span>
         </span>
-        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
-          <span className="text-xs text-muted-foreground sm:hidden">差异</span>
+        <span className={cn("grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm", businessStep ? "business-step-comparison-field" : "sm:block")}>
+          <span className={cn("text-xs text-muted-foreground", businessStep ? "business-step-comparison-mobile-label" : "sm:hidden")}>差异</span>
           <span className={cn("break-words font-medium", item.tone ? activityStatusTextClass(tone) : "text-foreground")}>
             {item.delta ?? "—"}
           </span>
         </span>
-        {expandable ? <ChevronRight className={cn("hidden size-3.5 shrink-0 transition-transform sm:block", open && "rotate-90")} /> : null}
+        {expandable ? <ChevronRight className={cn("hidden size-3.5 shrink-0 transition-transform", businessStep ? "business-step-comparison-chevron" : "sm:block", open && "rotate-90")} /> : null}
       </button>
       {item.note ? <p className="mt-1 text-xs text-muted-foreground">{item.note}</p> : null}
       {expandable && open ? <Detail lines={item.detail} /> : null}
@@ -263,11 +264,11 @@ function ComparisonRow({ item }: { item: RecordItem }) {
   );
 }
 
-function ComparisonView({ block }: { block: RecordsBlock }) {
+function ComparisonView({ block, businessStep }: { block: RecordsBlock; businessStep: boolean }) {
   return (
     <div data-comparison-table>
       <div
-        className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid", COMPARISON_COLUMNS)}
+        className={cn("hidden gap-x-3 border-b border-border/60 px-4 py-2 text-xs font-medium text-muted-foreground", businessStep ? "business-step-comparison-header" : ["sm:grid", COMPARISON_COLUMNS])}
         data-comparison-track
       >
         <span>对照项</span>
@@ -276,14 +277,17 @@ function ComparisonView({ block }: { block: RecordsBlock }) {
         <span>差异</span>
         <span aria-hidden="true" />
       </div>
-      {block.items.map((item, index) => <ComparisonRow key={index} item={item} />)}
+      {block.items.map((item, index) => <ComparisonRow key={index} item={item} businessStep={businessStep} />)}
     </div>
   );
 }
 
 function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext }) {
   const comparison = block.layout === "comparison";
-  const tabular = block.layout !== "grid";
+  const grid = block.layout === "grid";
+  const businessStep = ctx.recordsSurface === "business-step";
+  const tabular = !grid;
+  const horizontallyScrollable = tabular && !(comparison && businessStep);
   const checklist = block.layout === "checklist";
   const showValueColumn = tabular && block.items.some((item) => item.value !== undefined && item.value !== "");
   const tableColumns = checklist
@@ -298,14 +302,14 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
       className={cn(
         "max-w-full rounded-xl border border-primary/20 bg-card align-top",
         comparison
-          ? "block w-full overflow-x-hidden sm:overflow-x-auto"
-          : "inline-block self-start overflow-x-auto",
+          ? businessStep ? "business-step-comparison-scroll block w-full overflow-x-hidden" : "block w-full overflow-x-hidden sm:overflow-x-auto"
+          : grid && businessStep ? "block w-full overflow-hidden" : "inline-block self-start overflow-x-auto",
       )}
       data-records-block
-      tabIndex={tabular ? 0 : undefined}
-      aria-label={tabular ? `${block.title ?? "数据表格"}，可横向滚动` : undefined}
+      tabIndex={horizontallyScrollable ? 0 : undefined}
+      aria-label={horizontallyScrollable ? `${block.title ?? "数据表格"}，可横向滚动` : undefined}
     >
-      <div className={comparison ? "min-w-0 sm:min-w-[36rem]" : "w-max"}>
+      <div className={comparison ? businessStep ? "business-step-comparison-width min-w-0" : "min-w-0 sm:min-w-[36rem]" : grid && businessStep ? "w-full" : "w-max"}>
         {block.title ? (
           <div
             className="border-b border-primary/15 bg-primary/5 px-4 py-2.5 text-sm font-semibold text-foreground"
@@ -317,13 +321,13 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
         {block.layout === "grid" ? (
           <div
             className={cn(
-              "inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4",
-              block.items.length !== 4 && "sm:grid-cols-[repeat(3,minmax(0,max-content))]",
+              businessStep ? "grid w-full grid-cols-[repeat(2,minmax(0,1fr))] gap-x-4 gap-y-2 p-4" : "inline-grid grid-cols-[repeat(2,minmax(0,max-content))] gap-x-8 gap-y-2 p-4",
+              !businessStep && block.items.length !== 4 && "sm:grid-cols-[repeat(3,minmax(0,max-content))]",
             )}
             data-records-grid
           >
             {block.items.map((item, i) => (
-              <div className="max-w-64" key={i}>
+              <div className={businessStep ? "min-w-0" : "max-w-64"} key={i}>
                 <div className="break-words text-xs text-muted-foreground">{item.label}</div>
                 <div className={cn("break-words text-sm", item.mono && "font-mono text-xs", item.tone && activityStatusTextClass(TONE_MAP[item.tone]))}>
                   {item.value ?? ""}
@@ -332,7 +336,7 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
             ))}
           </div>
         ) : comparison ? (
-          <ComparisonView block={block} />
+          <ComparisonView block={block} businessStep={businessStep} />
         ) : (
           <div className={cn("grid w-max gap-x-4", tableColumns)} data-records-table>
             {block.items.map((item, i) => (

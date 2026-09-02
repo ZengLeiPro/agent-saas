@@ -19,6 +19,17 @@ export function isMatchingSelfProfile(
     && selfProfile?.id === currentUserId;
 }
 
+export function canCommitSelfProfileResponse(
+  requestId: number,
+  activeRequestId: number,
+  expectedUserId: string | undefined,
+  requestedUserId: string | undefined,
+  selfProfile: UserInfo | null,
+): selfProfile is UserInfo {
+  return requestId === activeRequestId
+    && isMatchingSelfProfile(expectedUserId, requestedUserId, selfProfile);
+}
+
 /** Production V1 exposes account self-service only; cached admin lists are never a fallback. */
 export function selectUserDetailProfile({
   profile,

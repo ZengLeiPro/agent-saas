@@ -22,7 +22,7 @@ import { useUsers } from '../../../src/hooks/useUsers';
 import { getServerUrl } from '../../../src/platform/mobileConfig';
 import { isV1RouteAllowed } from '../../../src/v1/v1Capabilities';
 import { getV1BuildProfile } from '../../../src/v1/v1Runtime';
-import { isMatchingSelfProfile, selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
+import { canCommitSelfProfileResponse, selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
 import { useColors, spacing, typography, radius } from '../../../src/theme';
 
 function formatDate(dateStr: string): string {
@@ -63,10 +63,13 @@ export default function UserDetailScreen() {
       const res = await authFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json() as UserInfo;
-        if (requestId === selfProfileRequestId.current
-          && isMatchingSelfProfile(expectedUserId, userId, data)) {
-          setSelfProfile(data);
-        }
+        if (canCommitSelfProfileResponse(
+          requestId,
+          selfProfileRequestId.current,
+          expectedUserId,
+          userId,
+          data,
+        )) setSelfProfile(data);
       }
     } catch { /* ignore */ }
   }, [currentUser?.id, userId]);

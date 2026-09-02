@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { UserInfo } from '@agent/shared';
-import { isMatchingSelfProfile, selectUserDetailProfile } from './userDetailAccess';
+import { canCommitSelfProfileResponse, isMatchingSelfProfile, selectUserDetailProfile } from './userDetailAccess';
 
 function user(id: string): UserInfo {
   return { id, username: id, role: 'user', tenantId: 'tenant-1' } as UserInfo;
@@ -39,6 +39,16 @@ describe('M30-01 production user-detail identity isolation', () => {
       selfProfile: staleResponse,
       users: [],
     })).toBeNull();
+  });
+
+  it('rejects a late response after a newer self-profile request starts', () => {
+    expect(canCommitSelfProfileResponse(
+      1,
+      2,
+      'user-b',
+      'user-b',
+      user('user-b'),
+    )).toBe(false);
   });
 
   it('keeps preview administrator lookup available outside production', () => {

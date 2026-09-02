@@ -360,6 +360,13 @@ function refineManifest(manifest: ManifestContentCandidate, ctx: z.RefinementCtx
       message: 'API and Runtime Worker must identify the same serverBundle digest',
     });
   }
+  if (components.api.sourceSha !== components.runtimeWorker.sourceSha) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['components', 'runtimeWorker', 'sourceSha'],
+      message: 'API and Runtime Worker must identify the same serverBundle source SHA',
+    });
+  }
   const digestBindings: Array<[unknown, unknown, (string | number)[]]> = [
     [
       components.web.artifactDigest,
@@ -410,6 +417,11 @@ function refineManifest(manifest: ManifestContentCandidate, ctx: z.RefinementCtx
   if (manifest.schemaVersion === 2) {
     const runtimeBindings = [
       [manifest.artifacts.runtimeDependencies.server.sourceSha, components.api.sourceSha, 'server'],
+      [
+        manifest.artifacts.runtimeDependencies.server.sourceSha,
+        components.runtimeWorker.sourceSha,
+        'server',
+      ],
       [manifest.artifacts.runtimeDependencies.acs.sourceSha, components.acs.sourceSha, 'acs'],
     ] as const;
     for (const [runtimeSha, componentSha, component] of runtimeBindings) {

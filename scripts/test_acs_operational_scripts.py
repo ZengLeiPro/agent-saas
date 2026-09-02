@@ -288,6 +288,9 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             "- 'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template'",
             push_paths,
         )
+        staged_environment = self.deploy_script.index(
+            'python3 "$RUNTIME_PREFLIGHT_DIR/scripts/apply-orchestrator-env.py"'
+        )
         guard = self.deploy_script.index(
             '"$ACS_NODE" "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs"'
         )
@@ -298,7 +301,22 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         )
         # restart 自身失败时也必须进入显式 rollback，而不是走“尚未替换”的轻量 cleanup。
         self.assertIn('ACS_NODE=/usr/bin/node', self.deploy_script)
+        self.assertIn('--environment-file="$runtime_environment_file"', self.deploy_script)
+        self.assertIn('--environment-file="$ENV_FILE"', self.deploy_script)
+        self.assertNotIn('. "$runtime_environment_file"', self.deploy_script)
+        self.assertNotIn('. "$ENV_FILE"', self.deploy_script)
+        self.assertIn(
+            '--print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE',
+            self.deploy_script,
+        )
+        self.assertLess(staged_environment, guard)
         self.assertLess(guard, install)
+        self.assertLess(
+            self.deploy_script.index('--environment-file="$ENV_FILE"'), replacement
+        )
+        self.assertLess(
+            self.deploy_script.index('--print-environment=ACS_ORCH_AUTH_TOKEN'), replacement
+        )
         self.assertLess(install, replacement)
         self.assertLess(replacement, restart)
         self.assertIn('Restart=on-failure 不会在 drain 的 clean exit(0) 后自动拉起', self.deploy_script)

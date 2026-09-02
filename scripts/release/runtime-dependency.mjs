@@ -57,6 +57,88 @@ const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const VERSION_TOKEN_PATTERN = /[vV]?[0-9][0-9A-Za-z._+-]*/gu;
 const VERSION_CANDIDATE_PATTERN = /^[vV]?\d+\.\d+\./u;
+const SYSTEMD_RUNTIME_ENVIRONMENT_KEYS = Object.freeze([
+  'ACS_KUBECTL_PATH',
+  'ACS_ALIYUN_CLI_PATH',
+  'ACS_SNAT_MODE',
+]);
+
+function parseSystemdEnvironmentValue(raw, lineNumber) {
+  let value = '';
+  let pendingWhitespace = '';
+  let quote = null;
+  for (let index = 0; index < raw.length; index += 1) {
+    const character = raw[index];
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      else value += character;
+      continue;
+    }
+    if (quote === '"') {
+      if (character === '"') {
+        quote = null;
+      } else if (character === '\\') {
+        const next = raw[index + 1];
+        if (next === undefined)
+          throw new Error(`Systemd environment line ${lineNumber} ends with a continuation`);
+        if (['$', '`', '"', '\\'].includes(next)) value += next;
+        else value += `\\${next}`;
+        index += 1;
+      } else {
+        value += character;
+      }
+      continue;
+    }
+    if (/\s/u.test(character)) {
+      if (value) pendingWhitespace += character;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      value += pendingWhitespace;
+      pendingWhitespace = '';
+      quote = character;
+      continue;
+    }
+    value += pendingWhitespace;
+    pendingWhitespace = '';
+    if (character === '\\') {
+      const next = raw[index + 1];
+      if (next === undefined)
+        throw new Error(`Systemd environment line ${lineNumber} ends with a continuation`);
+      value += next;
+      index += 1;
+    } else {
+      value += character;
+    }
+  }
+  if (quote) throw new Error(`Systemd environment line ${lineNumber} has an unterminated quote`);
+  return value;
+}
+
+export function parseSystemdEnvironmentFile(text) {
+  const values = {};
+  for (const [index, raw] of String(text).split(/\r?\n/u).entries()) {
+    const line = raw.trimStart();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/u.exec(line);
+    if (!assignment) throw new Error(`Systemd environment line ${index + 1} is invalid`);
+    const value = parseSystemdEnvironmentValue(assignment[2], index + 1);
+    if (value.includes('\0'))
+      throw new Error(`Systemd environment line ${index + 1} contains a null byte`);
+    values[assignment[1]] = value;
+  }
+  return values;
+}
+
+export function runtimeEnvironmentFromSystemdEnvironmentFile(text, inheritedEnvironment = {}) {
+  const parsed = parseSystemdEnvironmentFile(text);
+  const environment = { ...inheritedEnvironment };
+  for (const key of SYSTEMD_RUNTIME_ENVIRONMENT_KEYS) {
+    if (Object.hasOwn(parsed, key)) environment[key] = parsed[key];
+    else delete environment[key];
+  }
+  return environment;
+}
 const ARCHITECTURES = new Set(['x64', 'arm64']);
 const FORBIDDEN_KEY = /(secret|token|password|credential|private.?key|access.?key)/iu;
 const FORBIDDEN_VALUE =
@@ -398,7 +480,30 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (Object.hasOwn(args, 'production') && mode !== 'enforce') {
     throw new Error('Production runtime dependency checks cannot be disabled by any flag form');
   }
-  if (args.create === 'true') {
+  if (args['print-environment']) {
+    if (!args['environment-file'])
+      throw new Error('Printing systemd environment values requires --environment-file=<path>');
+    const allowedKeys = new Set([
+      ...SYSTEMD_RUNTIME_ENVIRONMENT_KEYS,
+      'ACS_ORCH_AUTH_TOKEN',
+      'ACS_KUBECONFIG',
+      'ACS_NAMESPACE',
+    ]);
+    const requestedKeys = String(args['print-environment']).split(',');
+    if (
+      requestedKeys.length === 0 ||
+      requestedKeys.some((key) => !allowedKeys.has(key)) ||
+      new Set(requestedKeys).size !== requestedKeys.length
+    ) {
+      throw new Error('Requested systemd environment output contains an unsupported key');
+    }
+    const parsed = parseSystemdEnvironmentFile(
+      await readFile(resolve(String(args['environment-file'])), 'utf8'),
+    );
+    for (const key of requestedKeys) {
+      if (Object.hasOwn(parsed, key)) process.stdout.write(`${key}\0${parsed[key]}\0`);
+    }
+  } else if (args.create === 'true') {
     if (!args.contract || !args['source-sha'] || !args.output)
       throw new Error(
         'usage: runtime-dependency.mjs --create=true --contract=<path> --source-sha=<sha> --output=<path>',
@@ -415,10 +520,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } else {
     if (!args.manifest || !args.component)
       throw new Error(
-        'usage: runtime-dependency.mjs --manifest=<path> --component=<component> [--production] [--mode=enforce]',
+        'usage: runtime-dependency.mjs --manifest=<path> --component=<component> [--environment-file=<path>] [--production] [--mode=enforce]',
       );
     const identity = JSON.parse(await readFile(resolve(String(args.manifest)), 'utf8'));
-    const result = verifyRuntimeEnvironment({ identity, component: String(args.component) });
+    const environment = args['environment-file']
+      ? runtimeEnvironmentFromSystemdEnvironmentFile(
+          await readFile(resolve(String(args['environment-file'])), 'utf8'),
+          process.env,
+        )
+      : process.env;
+    const result = verifyRuntimeEnvironment({
+      identity,
+      component: String(args.component),
+      environment,
+    });
     process.stdout.write(`runtime-dependency: ${result.component} ${result.dependencyDigest}\n`);
   }
 }

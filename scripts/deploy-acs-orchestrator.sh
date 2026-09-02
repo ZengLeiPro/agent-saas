@@ -160,6 +160,7 @@ RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
 RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
 RUNTIME_IDENTITY_UPDATED=false
 RUNTIME_PREFLIGHT_DIR=""
+RUNTIME_ENV_OUTPUT="/tmp/agent-saas-runtime-environment-${GITHUB_RUN_ID}"
 ACS_NODE=/usr/bin/node
 SYSTEMCTL_BIN=/usr/bin/systemctl
 ACS_UNIT_PATH=/etc/systemd/system/agent-saas-acs-orchestrator.service
@@ -339,6 +340,7 @@ EOF
   case "${RUNTIME_PREFLIGHT_DIR:-}" in
     /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
   esac
+  [ -n "${RUNTIME_ENV_OUTPUT:-}" ] && rm -f "$RUNTIME_ENV_OUTPUT"
   rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
   cleanup_acs_unit_backup
@@ -365,16 +367,26 @@ RUNTIME_PREFLIGHT_DIR="$(mktemp -d "/tmp/agent-saas-runtime-preflight-${GITHUB_R
 tar -xzf "$RELEASE_TGZ" -C "$RUNTIME_PREFLIGHT_DIR"
 test -x "$ACS_NODE"
 test -x "$SYSTEMCTL_BIN"
+test -f "$ENV_FILE"
 test -s "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json"
 unit_helper="$RUNTIME_PREFLIGHT_DIR/scripts/release/manage-acs-systemd-unit.sh"
 unit_source="$RUNTIME_PREFLIGHT_DIR/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template"
+desired_environment_file="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/config/production.env"
+runtime_environment_file="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator.env"
 test -s "$unit_helper"
+test -s "$desired_environment_file"
+# 在 /tmp 构造最终 EnvironmentFile：仓库声明的 SNAT 模式会先应用，自定义 CLI 路径原样保留。
+# Runtime guard 自己按 systemd EnvironmentFile 语义解析，禁止 source/eval 生产 env。
+install -m 0600 "$ENV_FILE" "$runtime_environment_file"
+python3 "$RUNTIME_PREFLIGHT_DIR/scripts/apply-orchestrator-env.py" \
+  --desired "$desired_environment_file" \
+  --target "$runtime_environment_file"
 # shellcheck disable=SC1090
 . "$unit_helper"
 validate_acs_managed_unit "$unit_source" "$ACS_NODE" "$ACS_SERVICE_NAME"
 "$ACS_NODE" "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
   --manifest="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json" \
-  --component=acsOrchestrator --production=true
+  --component=acsOrchestrator --environment-file="$runtime_environment_file" --production=true
 
 # Runtime guard 通过后，在进程替换前原子安装受管 unit；首次升级允许 /etc 下无旧 unit，
 # 失败时 cleanup/rollback 会恢复旧 unit 或移除本次新增 override 并 daemon-reload。
@@ -464,14 +476,25 @@ if [ -f "$DESIRED_ENV" ]; then
     --desired "$DESIRED_ENV" \
     --target "$ENV_FILE" \
     --runtime-config-target "$RUNTIME_CONFIG_FILE"
+  # 最终 unit 将读取这个同一 EnvironmentFile；在旧进程 drain 前再次校验实际落盘值。
+  "$ACS_NODE" "$APP_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+    --manifest="$APP_DIR/acs-orchestrator/runtime-dependencies.json" \
+    --component=acsOrchestrator --environment-file="$ENV_FILE" --production=true
 else
   echo "未找到声明式运行配置 $DESIRED_ENV，拒绝部署" >&2
   exit 1
 fi
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
+# 部署事务只读取自身需要的非 Runtime 字段；通过 NUL 分隔传值，不 source/eval EnvironmentFile。
+"$ACS_NODE" "$APP_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+  --environment-file="$ENV_FILE" \
+  --print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE > "$RUNTIME_ENV_OUTPUT"
+unset ACS_ORCH_AUTH_TOKEN ACS_KUBECONFIG
+ACS_NAMESPACE=agent-saas-coding
+while IFS= read -r -d '' environment_key && IFS= read -r -d '' environment_value; do
+  printf -v "$environment_key" '%s' "$environment_value"
+  export "$environment_key"
+done < "$RUNTIME_ENV_OUTPUT"
+rm -f "$RUNTIME_ENV_OUTPUT"
 : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
 AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 SNAT_OPERATION_STATE_FILE="${RUNTIME_CONFIG_FILE}.snat-operation-state.json"

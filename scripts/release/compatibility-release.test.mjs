@@ -212,7 +212,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsDeploy, /SYSTEMCTL_BIN=\/usr\/bin\/systemctl/u);
   assert.match(
     acsDeploy,
-    /"\$ACS_NODE" "\$RUNTIME_PREFLIGHT_DIR\/acs-orchestrator\/dist\/runtime-dependency\.mjs"[\s\S]*--component=acsOrchestrator --production=true/u,
+    /"\$ACS_NODE" "\$RUNTIME_PREFLIGHT_DIR\/acs-orchestrator\/dist\/runtime-dependency\.mjs"[\s\S]*--component=acsOrchestrator --environment-file="\$runtime_environment_file" --production=true/u,
   );
   assert.match(
     acsDeploy,
@@ -224,7 +224,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   assert.match(acsDeploy, /restore_acs_managed_unit/u);
   assert.ok(
-    acsDeploy.indexOf('--component=acsOrchestrator --production=true') <
+    acsDeploy.indexOf('--environment-file="$runtime_environment_file" --production=true') <
       acsDeploy.indexOf('install_acs_managed_unit'),
   );
   assert.ok(
@@ -239,7 +239,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
       acsDeploy.indexOf('runtime_identity_probe="/etc/agent-saas/'),
   );
   assert.ok(
-    acsDeploy.indexOf('--component=acsOrchestrator --production=true') <
+    acsDeploy.indexOf('--environment-file="$runtime_environment_file" --production=true') <
       acsDeploy.indexOf('candidate="$APP_DIR.candidate-${GITHUB_RUN_ID}"'),
   );
   assert.ok(

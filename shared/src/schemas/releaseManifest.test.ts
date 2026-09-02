@@ -195,10 +195,37 @@ describe('releaseManifestSchema', () => {
     expect(releaseManifestContentSchema.safeParse(keep).success).toBe(false);
   });
 
-  it('binds each v2 runtime identity to the selected component source', () => {
+  it('rejects conflicting API and Runtime Worker source SHAs for a deploy serverBundle', () => {
     const manifest = validManifestContent();
-    manifest.artifacts.runtimeDependencies.acs.sourceSha = RELEASE_SHA;
+    manifest.components.runtimeWorker.sourceSha = BASELINE_SHA;
     expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('rejects conflicting API and Runtime Worker source SHAs for a kept serverBundle', () => {
+    const manifest = validManifestContent();
+    const api = manifest.components.api as {
+      action: 'deploy' | 'keep';
+      sourceSha: string;
+      artifactDigest: string;
+    };
+    const runtimeWorker = manifest.components.runtimeWorker as typeof api;
+    Object.assign(api, { action: 'keep', ...manifest.productionBaseline.api });
+    Object.assign(runtimeWorker, {
+      action: 'keep',
+      ...manifest.productionBaseline.runtimeWorker,
+      sourceSha: RELEASE_SHA,
+    });
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('binds each v2 runtime identity to both selected component sources', () => {
+    const serverTamper = validManifestContent();
+    serverTamper.artifacts.runtimeDependencies.server.sourceSha = BASELINE_SHA;
+    expect(releaseManifestContentSchema.safeParse(serverTamper).success).toBe(false);
+
+    const acsTamper = validManifestContent();
+    acsTamper.artifacts.runtimeDependencies.acs.sourceSha = RELEASE_SHA;
+    expect(releaseManifestContentSchema.safeParse(acsTamper).success).toBe(false);
   });
 
   it('binds both ACS digests and App digests to immutable artifacts', () => {
@@ -207,7 +234,7 @@ describe('releaseManifestSchema', () => {
     expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
   });
 
-  it('rejects a mixed API and Runtime Worker action matrix for one server bundle', () => {
+  it('rejects a mixed API and Runtime Worker action matrix for one serverBundle', () => {
     const manifest = validManifestContent();
     const runtimeWorker = manifest.components.runtimeWorker as {
       action: 'deploy' | 'keep';

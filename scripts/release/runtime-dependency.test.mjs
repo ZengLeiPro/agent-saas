@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   createRuntimeDependencyIdentity,
   loadRuntimeDependencyContract,
   runtimeDependencyContractDigest,
+  runtimeEnvironmentFromSystemdEnvironmentFile,
   validateRuntimeDependencyContract,
   verifyRuntimeDependencyIdentity,
   verifyRuntimeEnvironment,
@@ -292,6 +296,65 @@ test('ACS Sandbox verifies the git version installed by the base image build', a
   );
 });
 
+test('systemd EnvironmentFile parsing is non-executing and clears inherited Runtime selectors', () => {
+  const environment = runtimeEnvironmentFromSystemdEnvironmentFile(
+    [
+      '  # comment',
+      'ACS_KUBECTL_PATH="/managed/kubectl custom"',
+      "ACS_ALIYUN_CLI_PATH='/managed/aliyun'",
+      'ACS_SNAT_MODE=$(touch /tmp/runtime-dependency-injection)',
+    ].join('\n'),
+    {
+      ACS_KUBECTL_PATH: '/stale/kubectl',
+      ACS_ALIYUN_CLI_PATH: '/stale/aliyun',
+      ACS_SNAT_MODE: 'disabled',
+      SAFE_UNRELATED_VALUE: 'retained',
+    },
+  );
+  assert.equal(environment.ACS_KUBECTL_PATH, '/managed/kubectl custom');
+  assert.equal(environment.ACS_ALIYUN_CLI_PATH, '/managed/aliyun');
+  assert.equal(environment.ACS_SNAT_MODE, '$(touch /tmp/runtime-dependency-injection)');
+  assert.equal(environment.SAFE_UNRELATED_VALUE, 'retained');
+
+  const defaults = runtimeEnvironmentFromSystemdEnvironmentFile('', {
+    ACS_KUBECTL_PATH: '/stale/kubectl',
+    ACS_ALIYUN_CLI_PATH: '/stale/aliyun',
+    ACS_SNAT_MODE: 'shared-cidr',
+  });
+  assert.equal(defaults.ACS_KUBECTL_PATH, undefined);
+  assert.equal(defaults.ACS_ALIYUN_CLI_PATH, undefined);
+  assert.equal(defaults.ACS_SNAT_MODE, undefined);
+  assert.throws(
+    () => runtimeEnvironmentFromSystemdEnvironmentFile('ACS_SNAT_MODE="shared-cidr'),
+    /unterminated quote/u,
+  );
+});
+
+test('systemd EnvironmentFile CLI emits NUL-delimited values without executing shell syntax', () => {
+  const root = mkdtempSync(join(tmpdir(), 'runtime-dependency-environment-'));
+  const marker = join(root, 'injected');
+  const environmentFile = join(root, 'acs.env');
+  writeFileSync(
+    environmentFile,
+    `ACS_ORCH_AUTH_TOKEN=$(touch ${marker})\nACS_NAMESPACE=agent-saas-coding\n`,
+  );
+  try {
+    const result = spawnSync(process.execPath, [
+      'scripts/release/runtime-dependency.mjs',
+      `--environment-file=${environmentFile}`,
+      '--print-environment=ACS_ORCH_AUTH_TOKEN,ACS_NAMESPACE',
+    ]);
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.deepEqual(
+      result.stdout,
+      Buffer.from(`ACS_ORCH_AUTH_TOKEN\0$(touch ${marker})\0ACS_NAMESPACE\0agent-saas-coding\0`),
+    );
+    assert.equal(existsSync(marker), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('ACS Orchestrator fails closed on kubectl and conditionally probes the configured aliyun CLI', async () => {
   const contract = await fixture();
   const identity = createRuntimeDependencyIdentity(contract, SHA);
@@ -329,11 +392,9 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
       identity,
       component: 'acsOrchestrator',
       runtime,
-      environment: {
-        ACS_SNAT_MODE: 'disabled',
-        ACS_KUBECTL_PATH: '/managed/kubectl',
-        ACS_ALIYUN_CLI_PATH: '/managed/aliyun',
-      },
+      environment: runtimeEnvironmentFromSystemdEnvironmentFile(
+        'ACS_SNAT_MODE=disabled\nACS_KUBECTL_PATH=/managed/kubectl\nACS_ALIYUN_CLI_PATH=/managed/aliyun\n',
+      ),
       execFileSync: (command, args) => {
         disabledCalls.push([command, args]);
         return command === 'git' ? 'git version 2.49.1' : 'Client Version: v1.37.0';
@@ -351,11 +412,9 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
       identity,
       component: 'acsOrchestrator',
       runtime,
-      environment: {
-        ACS_SNAT_MODE: 'shared-cidr',
-        ACS_KUBECTL_PATH: '/managed/kubectl',
-        ACS_ALIYUN_CLI_PATH: '/managed/aliyun',
-      },
+      environment: runtimeEnvironmentFromSystemdEnvironmentFile(
+        'ACS_SNAT_MODE=shared-cidr\nACS_KUBECTL_PATH=/managed/kubectl\nACS_ALIYUN_CLI_PATH=/managed/aliyun\n',
+      ),
       execFileSync: (command, args) => {
         enabledCalls.push([command, args]);
         if (command === 'git') return 'git version 2.49.1';
@@ -368,6 +427,33 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
     ['/managed/kubectl', ['version', '--client=true']],
     ['/managed/aliyun', ['version']],
   ]);
+  for (const [label, aliyunProbe] of [
+    [
+      'missing',
+      () => {
+        throw new Error('missing');
+      },
+    ],
+    ['drifted', () => '3.4.3'],
+  ]) {
+    assert.throws(
+      () =>
+        verifyRuntimeEnvironment({
+          identity,
+          component: 'acsOrchestrator',
+          runtime,
+          environment: runtimeEnvironmentFromSystemdEnvironmentFile(
+            'ACS_SNAT_MODE=shared-cidr\nACS_KUBECTL_PATH=/managed/kubectl\nACS_ALIYUN_CLI_PATH=/managed/aliyun\n',
+          ),
+          execFileSync: (command) => {
+            if (command === 'git') return 'git version 2.49.1';
+            if (command === '/managed/kubectl') return 'Client Version: v1.37.0';
+            return aliyunProbe();
+          },
+        }),
+      label === 'missing' ? /tool aliyun is missing/u : /tool aliyun version mismatch/u,
+    );
+  }
   assert.throws(
     () =>
       verifyRuntimeEnvironment({

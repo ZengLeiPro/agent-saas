@@ -19,16 +19,16 @@
 
 fixture server 必须为本次 RC 创建隔离 namespace，并返回不可复用的 fixture receipt。禁止使用真实客户数据。
 
-| fixture | 权限/状态 | 用途 |
-|---|---|---|
-| `account-a` | 普通账号 A | 建立旧 WS、会话缓存、离线队列 |
-| `account-b` | 普通账号 B，和 A 不同租户/主体 | 验证 A→B 后旧 WS/cache 不泄漏 |
-| `admin` | 管理员，但无越权跨租户数据 | 管理入口与普通聊天并行回归 |
-| `disabled` | 登录后由 fixture server 禁用 | 禁用态失败关闭 |
-| `agent-personal` | 可用个人 Agent | personal 基线 |
-| `agent-assigned` | 组织分配 Agent | assigned 基线 |
-| `agent-revoked` | 测试过程中撤销 | 撤销后不得继续执行 |
-| `agent-personal-disabled` | 租户关闭个人 Agent | 不得回退或误执行 |
+| fixture                   | 权限/状态                      | 用途                          |
+| ------------------------- | ------------------------------ | ----------------------------- |
+| `account-a`               | 普通账号 A                     | 建立旧 WS、会话缓存、离线队列 |
+| `account-b`               | 普通账号 B，和 A 不同租户/主体 | 验证 A→B 后旧 WS/cache 不泄漏 |
+| `admin`                   | 管理员，但无越权跨租户数据     | 管理入口与普通聊天并行回归    |
+| `disabled`                | 登录后由 fixture server 禁用   | 禁用态失败关闭                |
+| `agent-personal`          | 可用个人 Agent                 | personal 基线                 |
+| `agent-assigned`          | 组织分配 Agent                 | assigned 基线                 |
+| `agent-revoked`           | 测试过程中撤销                 | 撤销后不得继续执行            |
+| `agent-personal-disabled` | 租户关闭个人 Agent             | 不得回退或误执行              |
 
 会话 fixture 必须明确产生 empty、normal、1000 条索引、500 条消息、50 个 tools 和 running 六种状态。running fixture 需提供可观察的 queued message 与幂等 execution ID。AskUser fixture 至少两题；approval fixture 分别产生 allow/deny；ACK fixture 能控制超时且保留 server execution ID。
 
@@ -50,9 +50,9 @@ adapter 自行绑定真实设备和网络工具，仓库不安装或猜测 provi
 
 ## 4. 执行
 
-推荐从 GitHub Actions 手工触发或经受保护的 `workflow_call` 调用 `.github/workflows/mobile-rc-regression.yml`。只有 `configured=true` 时真实 matrix 才运行；否则只跑 plan/schema/mock/negative contract，并明确不生成 RC 结论。
+仓库当前不提供可手工触发的 RC GitHub Actions 入口。主 CI 只运行 plan/schema/mock/negative contract，不生成 RC 结论。真实 RC 必须由后续接入的受保护发布系统调用本节脚本，并在 runner、provider、审批环境和凭据全部配置后显式执行。
 
-真实入口还需指定：
+真实执行还需指定：
 
 - `build_sha` 与安装 RC SHA；
 - `profile`；
@@ -60,7 +60,7 @@ adapter 自行绑定真实设备和网络工具，仓库不安装或猜测 provi
 - 完整 `matrix_json`；
 - fixture/provider/HMAC/telemetry/release public-key secrets。
 
-本地单 case 调试命令（仍须真实 provider）：
+单 case 调试命令（仍须真实 provider）：
 
 ```bash
 node mobile/rc/scripts/run-rc-case.mjs \

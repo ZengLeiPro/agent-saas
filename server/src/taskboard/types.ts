@@ -480,13 +480,8 @@ export interface TaskboardService {
   readExecutionPullRequestJobLogV2?(
     identity: TaskboardIdentity,
     runId: string,
-    inspectionId: string,
     providerJobId: string,
-  ): Promise<{ inspectionId: string; providerJobId: string; log: string }>;
-  recordReviewedExecutionSubjectV2?(
-    identity: TaskboardIdentity,
-    runId: string,
-  ): Promise<TaskBoardTask>;
+  ): Promise<{ providerJobId: string; log: string }>;
   finishExecutionV2?(
     identity: TaskboardIdentity,
     runId: string,

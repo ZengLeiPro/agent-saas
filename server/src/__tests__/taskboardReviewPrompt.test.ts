@@ -25,9 +25,11 @@ describe('taskboard execution writeback prompt', () => {
       expect(prompt).not.toContain('target=taskboard');
     }
     expect(work).toContain('execution.pull_request.inspect');
-    expect(work).toContain('pending、failure、unknown 均不得提交复核');
-    expect(review).toContain('不得复用 Work 阶段旧结果');
-    expect(review).toContain('inspection receipt');
+    expect(work).toContain('pending 是正常等待状态');
+    expect(work).toContain('主线公共故障或无关/无适用 job');
+    expect(review).toContain('不得复用 Work 的结论');
+    expect(review).toContain('红 CI 只有在有直接证据');
+    expect(review).toContain('服务端不会要求 inspection receipt');
     expect(merge).not.toContain('integration.source.');
   });
 
@@ -39,10 +41,10 @@ describe('taskboard execution writeback prompt', () => {
     const prompt = executionWritebackInstructions(integrationWork).join('\n');
 
     expect(prompt).toContain('唯一的持久 Agent');
-    expect(prompt).toContain('标准 Git 与 GitHub 能力');
-    expect(prompt).toContain('重新读取 GitHub 与本地 Git 的实际状态');
-    expect(prompt).toContain('本批次拥有的本地 worktree、本地分支、远程分支和临时目录');
-    expect(prompt).toContain('execution.finish({targetStatus: "done", body})');
+    expect(prompt).toContain('标准 Git 与 GitHub merge 能力');
+    expect(prompt).toContain('重读 GitHub 与本地 Git 实际状态');
+    expect(prompt).toContain('本批次拥有且无未合并提交的资源');
+    expect(prompt).toContain('以 done 收口');
     expect(prompt).not.toContain('integration.agent.merge');
     expect(prompt).not.toContain('integration.agent.cleanup');
     expect(prompt).not.toContain('Merge Gateway');

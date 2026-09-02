@@ -627,7 +627,6 @@ describe("TaskDetail 交互与草稿隔离", () => {
         deliveryTaskId: "task-delivery-1",
         repositoryId: "repo-1",
         providerPullRequestId: "pr-101",
-        reviewedSubjectDigest: "sha256:subject-1",
         order: 0,
         state: "merged",
         attemptCount: 1,
@@ -640,7 +639,6 @@ describe("TaskDetail 交互与草稿隔离", () => {
         deliveryTaskId: "task-delivery-2",
         repositoryId: "repo-1",
         providerPullRequestId: "pr-102",
-        reviewedSubjectDigest: "sha256:subject-2",
         order: 1,
         state: "waiting_remediation",
         attemptCount: 2,
@@ -666,7 +664,7 @@ describe("TaskDetail 交互与草稿隔离", () => {
     mocks.fetchTask.mockResolvedValue(integrationTask);
     mocks.fetchIntegrationSources.mockResolvedValue([{ id: "source-v3", integrationTaskId: integrationTask.id, deliveryTaskId: "delivery-v3",
       deliveryTaskIdentifier: "TASK-SOURCE", deliveryTaskTitle: "真实交付来源", repositoryId: "repo-1",
-      providerPullRequestId: "pr-v3", reviewedSubjectDigest: "digest-v3", order: 0, state: "ready", attemptCount: 1, updatedAt: taskOne.updatedAt }]);
+      providerPullRequestId: "pr-v3", order: 0, state: "ready", attemptCount: 1, updatedAt: taskOne.updatedAt }]);
     render(<TaskDetail {...props({ task: integrationTask })} />); await waitFor(() => expect(mocks.fetchIntegrationSources).toHaveBeenCalledWith(integrationTask.id)); expandTaskDetails();
     expect(await screen.findByText(/TASK-SOURCE · 真实交付来源/)).toBeTruthy(); expect(screen.getAllByText("0/1 已合并")).toHaveLength(2);
   });

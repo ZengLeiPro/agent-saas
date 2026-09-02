@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createIntegrationBatch, type TaskboardV2StoreOptions } from './v2Store.js';
+import { createIntegrationBatch, enqueueOnReadyTrigger, type TaskboardV2StoreOptions } from './v2Store.js';
 
 const identity = {
   tenantId: 'tenant-1',
@@ -17,12 +17,41 @@ const repository = {
   allowForkPullRequest: false,
 };
 
+describe('enqueueOnReadyTrigger', () => {
+  it('checks existing eligible sources when policy activation has no triggering task', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+    await enqueueOnReadyTrigger({
+      pool: { connect: vi.fn(), query },
+      boardsTable: 'boards', tasksTable: 'tasks', commentsTable: 'comments', executionsTable: 'executions',
+      membersTable: 'members', changesTable: 'changes', integrationLanesTable: 'integration_lanes',
+      integrationSourcesTable: 'integration_sources', mergeAuthorizationsTable: 'merge_authorizations',
+      mergeOperationsTable: 'merge_operations', blockEpisodesTable: 'block_episodes',
+      integrationTriggerOutboxTable: 'integration_triggers', remediationAttemptsTable: 'remediation_attempts',
+      cancellationOutboxTable: 'cancellation_outbox',
+    }, { query } as never, {
+      id: 'board-1',
+      integration_policy: {
+        enabled: true,
+        revision: 'policy-1',
+        trigger: { mode: 'on_ready', debounceMs: 0 },
+      },
+    });
+
+    const [sql, values] = query.mock.calls[0]!;
+    expect(sql).toContain("task.status='ready_to_merge'");
+    expect(sql).toContain('task.reviewed_subject_digest IS NOT NULL');
+    expect(sql).toContain("source.state NOT IN ('merged','canceled')");
+    expect(values).toEqual(expect.arrayContaining(['board-1', null, 'policy-1', 0]));
+  });
+});
+
 describe('createIntegrationBatch', () => {
   it('creates a single-Agent integration from ready-to-merge delivery sources without lane or Provider gates', async () => {
     let tailQuery = '';
     let taskInsert = '';
     let taskInsertValues: unknown[] = [];
     let agentInsert = '';
+    let sourceInsert = '';
     let sourceStatus: 'in_progress' | 'ready_to_merge' = 'ready_to_merge';
     const client = {
       query: vi.fn(async (sql: string, values?: unknown[]) => {
@@ -49,11 +78,6 @@ describe('createIntegrationBatch', () => {
             status: sourceStatus,
             branch: 'feature/task-1',
             provider_pull_request_id: null,
-            reviewed_subject_digest: 'subject-1',
-            provider_ci_status: 'success',
-            provider_ci_purpose: 'review',
-            provider_ci_head_oid: 'head-1',
-            provider_ci_execution_id: 'review-1',
             head_oid: 'head-1',
             base_oid: 'base-1',
             review_execution_id: 'review-1',
@@ -70,6 +94,7 @@ describe('createIntegrationBatch', () => {
           taskInsertValues = values ?? [];
           return { rows: [] };
         }
+        if (sql.includes('INSERT INTO integration_sources')) sourceInsert = sql;
         if (sql.includes('INSERT INTO integration_agents')) {
           agentInsert = sql;
           throw new Error('stop after agent insert');
@@ -104,6 +129,7 @@ describe('createIntegrationBatch', () => {
     expect(taskInsertValues[8]).toBe(3);
     expect(agentInsert).toContain("'active'");
     expect(agentInsert).not.toContain('integration_branch');
+    expect(sourceInsert).not.toContain('reviewed_subject_digest');
     expect(options.repositoryProvider?.getPullRequest).not.toHaveBeenCalled();
     const sql = client.query.mock.calls.map(([text]) => String(text)).join('\n');
     expect(sql).not.toContain('FROM integration_lanes');

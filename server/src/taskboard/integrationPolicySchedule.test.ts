@@ -17,7 +17,6 @@ function policy(cron: string, timezone = 'Asia/Shanghai'): TaskBoardIntegrationP
       autoResolveConflicts: true,
       maxAutomaticRemediationRounds: 2,
       maxTransientRetries: 3,
-      requireGreenChecks: true,
       deleteRemoteBranch: false,
       deploy: false,
     },

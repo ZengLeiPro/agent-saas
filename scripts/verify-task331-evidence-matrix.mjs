@@ -71,7 +71,7 @@ if (ledger.length !== expectedLedger.length || ledger.some((sha, index) => sha !
   throw new Error(`TASK-331 commit ledger does not exactly match ${auditBase}..HEAD: ${ledger.length}/${expectedLedger.length}`);
 }
 
-const changedAtHead = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], { encoding: 'utf8' })
+const changedAtHead = execFileSync('git', ['-c', 'core.quotePath=false', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], { encoding: 'utf8' })
   .trim()
   .split('\n')
   .filter(Boolean);

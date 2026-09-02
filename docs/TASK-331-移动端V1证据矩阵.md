@@ -179,7 +179,7 @@
 
 ## 7. 当前任务提交账本
 
-本账本覆盖审计基线 `c340bc0e9ba2027b47ac00e01309a095f2f35155..HEAD` 的全部 **84** 个提交。末行使用符号 `HEAD` 表示包含本文件与 verifier 的自引用证据提交，由 verifier 实时解析并要求该提交只修改这两个证据文件；任何后续提交若不刷新本账本都会失败。
+本账本覆盖审计基线 `c340bc0e9ba2027b47ac00e01309a095f2f35155..HEAD` 的全部 **85** 个提交。末行使用符号 `HEAD` 表示包含本文件与 verifier 的自引用证据提交，由 verifier 实时解析并要求该提交只修改这两个证据文件；任何后续提交若不刷新本账本都会失败。
 
 | 序号 | 当前 full SHA / 符号 | 声明 ID / 类型 | Commit subject |
 |---:|---|---|---|
@@ -266,7 +266,8 @@
 | 81 | `321f94e2597f11fe93815c433c4d513a23b30a95` | M30-01 | fix(mobile): M30-01 isolate production user detail |
 | 82 | `ff537f85813facf128f16826d9f27652cbc122c3` | M60-04 | fix(mobile): M60-04 isolate submit credentials by profile |
 | 83 | `6a0ad1cda9aa6e60c5358f5761a34f653453560b` | M60-04 | fix(mobile): M60-04 invoke profile credential gate |
-| 84 | `HEAD` | M00-01 | docs(mobile): M00-01 bind evidence to current head |
+| 84 | `8db082e9863ddcabc439764acbf7e3192b7ef970` | M00-01 | docs(mobile): M00-01 bind evidence to current head |
+| 85 | `HEAD` | M00-01 | docs(mobile): M00-01 bind evidence verifier to head |
 
 ## 8. 后续 Reviewer 检查重点
 

@@ -320,19 +320,14 @@ function PlanTodoRow({
         className={cn(
           "group relative flex min-h-11 w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left outline-none transition-colors",
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          "before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent",
-          isSelected && "before:bg-primary",
-          isCurrent
-            ? "bg-primary/5 hover:bg-primary/10"
-            : isSelected
-              ? "bg-primary/5 hover:bg-primary/10"
-              : "hover:bg-muted/70",
+          isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/70",
         )}
         aria-label={[todo.content, accessibleStatus, todo.outcome?.text].filter(Boolean).join("，")}
         aria-selected={isSelected}
         aria-current={isCurrent ? "step" : undefined}
         aria-controls={detailPanelId}
         data-business-step-select-key={selectionKey}
+        data-business-step-selected={isSelected ? "true" : "false"}
         data-business-step-current={isCurrent ? "true" : "false"}
         onClick={() => onSelect?.(selection)}
       >
@@ -391,10 +386,6 @@ export function BusinessStepFlow({
       data-business-step-plan
     >
       <header className="flex items-center gap-2 border-b border-border/50 px-2 pb-2 pt-0.5">
-        <ListChecks
-          aria-hidden="true"
-          className={activityStatusIconClass(overall.tone, "size-4 shrink-0")}
-        />
         <h3 className="min-w-0 flex-1 text-sm font-semibold text-foreground">任务步骤</h3>
         <span className="text-2xs tabular-nums text-muted-foreground">
           {overall.completed}/{todos.length}

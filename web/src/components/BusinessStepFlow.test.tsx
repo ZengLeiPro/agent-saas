@@ -89,12 +89,13 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(card?.className).toContain("md:max-w-[min(760px,100%)]");
   });
 
-  it("头部显示完成数和整体状态，不再显示“共 N 步”", () => {
-    render(<BusinessStepFlow event={event()} sessionId="session-1" selected={null} />);
+  it("头部只显示标题、完成数和整体状态，不再显示装饰图标或“共 N 步”", () => {
+    const { container } = render(<BusinessStepFlow event={event()} sessionId="session-1" selected={null} />);
 
     expect(screen.getByText("1/3")).toBeTruthy();
     expect(screen.getByText("运行中")).toBeTruthy();
     expect(screen.queryByText("共 3 步")).toBeNull();
+    expect(container.querySelector("header svg")).toBeNull();
   });
 
   it("主行只显示 content、状态和两位序号，不泄露 activeForm 或详情字段", () => {
@@ -152,7 +153,9 @@ describe("BusinessStepFlow 主导航卡", () => {
     const row = screen.getByRole("button", { name: /核验订单/ });
 
     expect(row.getAttribute("aria-selected")).toBe("false");
+    expect(row.getAttribute("data-business-step-selected")).toBe("false");
     expect(row.getAttribute("aria-current")).toBe("step");
+    expect(row.className).not.toContain("bg-primary/5");
     expect(row.getAttribute("aria-controls")).toBe("business-step-detail-panel");
     fireEvent.click(row);
     expect(onSelect).toHaveBeenCalledWith(selection);
@@ -162,8 +165,11 @@ describe("BusinessStepFlow 主导航卡", () => {
     );
     const selectedCurrent = screen.getByRole("button", { name: /核验订单/ });
     expect(selectedCurrent.getAttribute("aria-selected")).toBe("true");
+    expect(selectedCurrent.getAttribute("data-business-step-selected")).toBe("true");
     expect(selectedCurrent.getAttribute("aria-current")).toBe("step");
-    expect(selectedCurrent.className).toContain("before:bg-primary");
+    expect(selectedCurrent.className).toContain("bg-primary/5");
+    expect(selectedCurrent.className).not.toContain("before:bg-primary");
+    expect(selectedCurrent.className).not.toContain("before:w-0.5");
     expect(selectedCurrent.className).not.toContain("ring-primary/25");
     expect(selectedCurrent.className).toContain("focus-visible:ring-2");
   });

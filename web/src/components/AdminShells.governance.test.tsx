@@ -320,16 +320,20 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("MCP 服务叶子复用完整 Connector Catalog 管理能力", () => {
+    const renderMcp = vi.fn((tenantId?: string, tenantName?: string) => (
+      <div>连接器管理器 {tenantId} {tenantName}</div>
+    ));
     render(
       <TenantAdminShell
         {...commonTenantProps}
         renderUsers={() => <div />}
-        renderMcp={() => <div>连接器管理器</div>}
+        renderMcp={renderMcp}
         governanceRoute={governanceRoute("organization.agents.mcp-catalog", { orgId: "acme" })}
       />,
     );
 
-    expect(screen.getByText("连接器管理器")).toBeTruthy();
+    expect(screen.getByText("连接器管理器 acme Acme")).toBeTruthy();
+    expect(renderMcp).toHaveBeenCalledWith("acme", "Acme");
   });
 
   it("组织记忆与知识叶子在原区域内接入 Context Center，不增加顶级路由", async () => {

@@ -24,7 +24,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from '@/components/PersonalSettings/dirtyRegistry';
 import { authFetch } from '@/lib/authFetch';
 
 const MODE_OPTIONS: Array<{ value: AgentDwsContextPolicyMode; label: string }> = [
@@ -57,6 +60,7 @@ export function ContextPolicyDialog({
   const [minutesEnabled, setMinutesEnabled] = useState(false);
   const [minutesLookbackDays, setMinutesLookbackDays] = useState('30');
   const [saving, setSaving] = useState(false);
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const [error, setError] = useState('');
   const [recentConversationIds, setRecentConversationIds] = useState<string[]>([]);
 
@@ -183,8 +187,10 @@ export function ContextPolicyDialog({
     draft,
   });
 
+  const requestClose = () => requestDirtyNavigation(() => onOpenChange(false));
+
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!saving) onOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next && !saving) requestClose(); }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <form onSubmit={(event) => void handleSubmit(event)} className="space-y-5">
           <DialogHeader>
@@ -311,7 +317,7 @@ export function ContextPolicyDialog({
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>取消</Button>
+            <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>取消</Button>
             <Button type="submit" disabled={saving || !account}>保存范围</Button>
           </DialogFooter>
         </form>

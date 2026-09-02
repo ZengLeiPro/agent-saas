@@ -158,6 +158,12 @@ describe('mcpApi', () => {
       expect(lastCall().url).toBe('/api/mcp/admin/servers');
     });
 
+    it('组织控制台显式携带目标 tenantId', async () => {
+      mockAuthFetch.mockResolvedValue(ok({ servers: [] }));
+      await fetchMcpAdminServers('tenant-a');
+      expect(lastCall().url).toBe('/api/mcp/admin/servers?tenantId=tenant-a');
+    });
+
     it('非 2xx 抛错', async () => {
       mockAuthFetch.mockResolvedValue(fail(403));
       await expect(fetchMcpAdminServers()).rejects.toThrow('Failed to fetch MCP servers: 403');

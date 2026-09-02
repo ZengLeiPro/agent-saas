@@ -28,7 +28,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useUsers } from '@/components/UserManager/hooks';
-import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from '@/components/PersonalSettings/dirtyRegistry';
 import { useTenantKnowledgeOptions, useTenantSkillOptions, type OrgAgentConfiguration } from './hooks';
 import { OrgAgentAudienceSection } from './OrgAgentAudienceSection';
 import { OrgAgentDwsSection } from './OrgAgentDwsSection';
@@ -91,6 +94,7 @@ export function OrgAgentFormDialog({
   /** 上传图片头像（专用媒体接口，上传即时生效） */
   onUploadAvatar?: (id: string, file: File) => Promise<{ avatar: string; avatarPath?: string; avatarVersion: number }>;
 }) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const [values, setValues] = useState<OrgAgentFormValues>(emptyFormValues());
   const [baselineValues, setBaselineValues] = useState<OrgAgentFormValues | null>(null);
   const [saving, setSaving] = useState(false);
@@ -430,6 +434,8 @@ export function OrgAgentFormDialog({
     draft: values,
   });
 
+  const requestClose = () => requestDirtyNavigation(onClose);
+
   const selectedKnowledgeIds = values.allowedKnowledgeText
     .split(/[\n,]/)
     .map(item => item.trim())
@@ -438,7 +444,7 @@ export function OrgAgentFormDialog({
   const unavailableKnowledgeIds = selectedKnowledgeIds.filter(id => !knownKnowledgeIds.has(id));
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent className="flex max-h-[min(860px,calc(100vh-40px))] w-[min(960px,calc(100vw-32px))] max-w-none flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{editing ? `配置「${editing.name}」` : '创建企业专家'}</DialogTitle>
@@ -928,7 +934,7 @@ export function OrgAgentFormDialog({
         </div>
 
         <DialogFooter className="shrink-0 border-t px-6 py-4">
-          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+          <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>取消</Button>
           <Button type="button" onClick={() => { void handleSubmit(); }} disabled={saving || configurationLoading}>
             {saving ? '保存中...' : editing ? '保存全部配置' : '创建'}
           </Button>

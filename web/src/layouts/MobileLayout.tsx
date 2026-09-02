@@ -46,6 +46,7 @@ const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m
 const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
 const McpManagerPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpManager })));
 const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpAdminCatalog })));
+const renderTenantMcpCatalog = (tenantId?: string) => <McpAdminCatalogPanel tenantId={tenantId} />;
 const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
 const EfficiencyViewPanel = lazy(() => import("@/components/UsageDashboard/EfficiencyView").then(m => ({ default: m.EfficiencyView })));
 const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m => ({ default: m.ModelManager })));
@@ -306,7 +307,7 @@ export function MobileLayout(props: LayoutProps) {
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderMcp={() => <McpAdminCatalogPanel />}
+                renderMcp={renderTenantMcpCatalog}
                 renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
                 renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                 renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -500,7 +501,7 @@ export function MobileLayout(props: LayoutProps) {
                     renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                    renderMcp={() => <McpAdminCatalogPanel />}
+                    renderMcp={renderTenantMcpCatalog}
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
                     renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -771,7 +772,7 @@ export function MobileLayout(props: LayoutProps) {
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
             renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderMcp={() => <McpAdminCatalogPanel />}
+            renderMcp={renderTenantMcpCatalog}
             renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
             renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}

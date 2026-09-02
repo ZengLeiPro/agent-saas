@@ -31,7 +31,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { OrganizationAssignmentManager } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
@@ -46,6 +49,7 @@ export interface SkillManagerProps {
 }
 
 export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: SkillManagerProps = {}) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const {
     poolSkills,
     customData,
@@ -255,6 +259,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     discard: () => { setEditContent(editBaselineContent); setEditTarget(null); },
     draft: { content: editContent },
   });
+
+  const requestEditorClose = () => requestDirtyNavigation(() => setEditTarget(null));
 
   const openPoolDelete = useCallback(async (skill: PoolSkillInfo) => {
     if (skill.enabled) {
@@ -640,7 +646,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
         </div>
       </div>
 
-      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
+      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) requestEditorClose(); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{editTarget?.kind === "tenantOwn" ? "编辑组织技能" : "接管编辑技能"}</DialogTitle>
@@ -662,7 +668,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             />
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTarget(null)}>取消</Button>
+            <Button variant="outline" onClick={requestEditorClose}>取消</Button>
             <Button onClick={() => { void saveEditor(); }} disabled={writeDisabled || editLoading || editSaving}>
               {editSaving && <Loader2 className="size-4 animate-spin" />}
               保存

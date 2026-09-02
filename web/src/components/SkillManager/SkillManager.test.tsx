@@ -1,8 +1,9 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SkillManager } from './index';
+import { SettingsDirtyBoundary } from '@/components/PersonalSettings/dirtyRegistry';
 
 const mocks = vi.hoisted(() => ({
   fetchTenantSkillPool: vi.fn(async () => ({
@@ -108,5 +109,26 @@ describe('SkillManager 技能操作可访问名称', () => {
     expect(screen.getByText('Assignment 权威授权')).toBeTruthy();
     expect(screen.getByText('Entitlement + Assignment 权威授权')).toBeTruthy();
     expect(screen.queryByRole('switch', { name: '启用技能 组织自有技能' })).toBeNull();
+  });
+
+  it('技能编辑弹窗自身取消时经过 dirty guard', async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsDirtyBoundary>
+        {() => <SkillManager />}
+      </SettingsDirtyBoundary>,
+    );
+
+    await user.click(screen.getByRole('tab', { name: /用户技能/ }));
+    await user.click(screen.getByRole('button', { name: '接管编辑技能 用户写作技能' }));
+    const dialog = await screen.findByRole('dialog');
+    const editor = within(dialog).getByRole('textbox');
+    await user.type(editor, '# 草稿');
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(await screen.findByRole('heading', { name: '有未保存的更改' })).toBeTruthy();
+    expect(screen.getByDisplayValue('# 草稿')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '放弃更改' }));
+    expect(screen.queryByDisplayValue('# 草稿')).toBeNull();
   });
 });

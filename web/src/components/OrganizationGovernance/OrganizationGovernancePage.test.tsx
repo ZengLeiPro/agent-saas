@@ -220,6 +220,25 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.getByText("auditId：audit-1")).toBeTruthy();
   });
 
+  it("成员身份弹窗自身取消时经过 dirty guard", async () => {
+    mocks.listMemberships.mockResolvedValue({ memberships: [
+      { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [{ id: "promote_admin", label: "设为组织管理员", change: { persona: "org_admin" }, requiresReason: false }] },
+    ] });
+    render(
+      <SettingsDirtyBoundary>
+        {() => <OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />}
+      </SettingsDirtyBoundary>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "设为组织管理员" }));
+    fireEvent.change(screen.getByPlaceholderText("至少 3 个字符"), { target: { value: "业务管理员交接" } });
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+    expect(await screen.findByRole("heading", { name: "有未保存的更改" })).toBeTruthy();
+    expect(screen.getByDisplayValue("业务管理员交接")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "放弃更改" }));
+    await waitFor(() => expect(screen.queryByDisplayValue("业务管理员交接")).toBeNull());
+  });
+
   it("权威 API 失败时 fail closed", async () => {
     mocks.listMemberships.mockRejectedValue(new Error("503"));
     render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);

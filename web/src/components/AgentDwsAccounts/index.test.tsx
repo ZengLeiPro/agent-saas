@@ -4,6 +4,7 @@ import type { AgentDwsAccount, AgentDwsAuthSession } from "@agent/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authFetch } from "@/lib/authFetch";
+import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
 import AgentDwsAccountsPage from "./index";
 
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
@@ -96,6 +97,27 @@ describe("AgentDwsAccountsPage", () => {
       wiki: { enabled: false },
       minutes: { enabled: false, lookbackDays: 30 },
     });
+  });
+
+  it("Context 弹窗自身取消时经过 dirty guard", async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsDirtyBoundary>
+        {() => <AgentDwsAccountsPage tenantId="tenant-a" />}
+      </SettingsDirtyBoundary>,
+    );
+
+    await screen.findByText("销售助手");
+    await user.click(screen.getByRole("button", { name: "配置 Context" }));
+    const lookback = await screen.findByLabelText("回填天数");
+    await user.clear(lookback);
+    await user.type(lookback, "31");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+
+    expect(await screen.findByRole("heading", { name: "有未保存的更改" })).toBeTruthy();
+    expect(screen.getByDisplayValue("31")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "放弃更改" }));
+    expect(screen.queryByRole("heading", { name: "配置 Context 范围" })).toBeNull();
   });
 
   it("展示真实账号状态，并用 tenant/revision 发起 OAuth、提供授权链接", async () => {

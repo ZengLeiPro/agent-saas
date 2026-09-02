@@ -3,7 +3,10 @@ import type { AgentDwsAccount, AgentDwsAuthSession } from "@agent/shared";
 import { CircleAlert, ExternalLink, Loader2, Plus, RefreshCw, RotateCw, UserRound } from "lucide-react";
 
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
-import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -160,6 +163,7 @@ function contextPolicyText(account: AgentDwsAccount): { historical: string; real
 }
 
 export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageProps) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const [accounts, setAccounts] = useState<AgentDwsAccount[]>([]);
   const [agents, setAgents] = useState<OrgAgentOption[]>([]);
   const [sessions, setSessions] = useState<Record<string, AgentDwsAuthSession | null>>({});
@@ -306,8 +310,15 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
   };
 
   const handleCreateOpenChange = (open: boolean) => {
-    setCreateOpen(open);
-    if (!open && !creating) resetCreateForm();
+    if (open) {
+      setCreateOpen(true);
+      return;
+    }
+    if (creating) return;
+    requestDirtyNavigation(() => {
+      setCreateOpen(false);
+      resetCreateForm();
+    });
   };
 
   const createAccount = async () => {

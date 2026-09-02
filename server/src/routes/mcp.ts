@@ -602,14 +602,27 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     res.json({ ok: true });
   });
 
-  // 列出 admin 视野内可写/可读的 server：平台 admin 看全部；组织 admin 仅本组织 + 全局。
-  // 全局 server 对组织 admin 只读（参考意义），写权限由 PUT/DELETE 业务层兜底。
+  // 不带 tenantId 时保留平台级 Catalog 语义；组织控制台必须显式带目标 tenantId，
+  // 服务端只返回该组织可见的 own + global，避免仅靠前端过滤泄漏或误编辑其他组织。
   router.get('/admin/servers', requireAdmin, (req, res) => {
     const tenantId = currentTenantId(req);
     if (!tenantId) return res.status(401).json({ error: 'Authentication required' });
-    const servers = isPlatformAdmin(req.user)
-      ? store.listCatalogServers()
-      : store.listServersVisibleToTenant(tenantId);
+    const requestedTenant = req.query.tenantId;
+    if (requestedTenant !== undefined && typeof requestedTenant !== 'string') {
+      return res.status(400).json({ error: 'Invalid tenantId' });
+    }
+    if (requestedTenant) {
+      const parsedTenant = tenantIdSchema.safeParse(requestedTenant);
+      if (!parsedTenant.success) return res.status(400).json({ error: 'Invalid tenantId' });
+      if (!isPlatformAdmin(req.user) && parsedTenant.data !== tenantId) {
+        return res.status(403).json({ error: '跨组织访问被拒绝' });
+      }
+    }
+    const servers = requestedTenant
+      ? store.listServersVisibleToTenant(requestedTenant)
+      : isPlatformAdmin(req.user)
+        ? store.listCatalogServers()
+        : store.listServersVisibleToTenant(tenantId);
     res.json({ configVersion: store.getConfigVersion(), servers });
   });
 

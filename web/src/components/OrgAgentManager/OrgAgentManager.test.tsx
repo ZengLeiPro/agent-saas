@@ -171,6 +171,24 @@ describe('OrgAgentManager - 数据合同与异步隔离', () => {
     expect(screen.getByText(/创建企业专家尚未保存/)).toBeTruthy();
   });
 
+  it('企业专家弹窗自身的取消操作也经过 dirty guard', async () => {
+    render(
+      <SettingsDirtyBoundary>
+        {() => <OrgAgentManager tenantId="kaiyan" />}
+      </SettingsDirtyBoundary>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), { target: { value: '草稿专家' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+
+    expect(await screen.findByRole('heading', { name: '有未保存的更改' })).toBeTruthy();
+    expect(screen.getByDisplayValue('草稿专家')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '放弃更改' }));
+    await waitFor(() => expect(screen.queryByDisplayValue('草稿专家')).toBeNull());
+  });
+
   it('隔离 audience 异常资源并显示安全错误状态', () => {
     mockUseOrgAgentAdmin.mockReturnValue({
       agents: [],

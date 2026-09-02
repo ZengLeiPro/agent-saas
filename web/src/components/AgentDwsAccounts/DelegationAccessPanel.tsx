@@ -67,11 +67,13 @@ export function DelegationAccessPanel({
 
   useSettingsDirtyEntry({
     id: `organization-dws-delegation:${tenantId}`,
-    label: '钉钉命令委托授权',
+    label: '钉钉命令委托授权（请返回页面生成资源并配置 Assignment）',
     dirty: !resourceId && Boolean(accountId || argsText !== defaultArgs),
     save: async () => {
-      if (!await resolve()) throw new Error('DWS delegation resource resolution failed');
+      setError('请先生成精确委托资源，并在 Assignment 中配置授权规则。');
+      throw new Error('DWS delegation assignment is not configured');
     },
+    saveDisabled: true,
     discard: () => {
       setAccountId(''); setArgsText(defaultArgs); setResourceId(''); setError('');
     },

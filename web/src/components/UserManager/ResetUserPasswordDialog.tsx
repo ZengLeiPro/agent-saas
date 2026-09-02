@@ -4,7 +4,10 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +34,7 @@ export function ResetUserPasswordDialog({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
 
   useEffect(() => {
     if (open) {
@@ -74,8 +78,10 @@ export function ResetUserPasswordDialog({
     secret: true,
   });
 
+  const requestClose = () => requestDirtyNavigation(() => onOpenChange(false));
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>重置密码</DialogTitle>
@@ -121,7 +127,7 @@ export function ResetUserPasswordDialog({
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={requestClose}
               disabled={loading}
             >
               取消

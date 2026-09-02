@@ -10,7 +10,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 
 export interface GovernedMembership {
@@ -56,6 +59,7 @@ export function MembershipIdentityActions({
   target: GovernedMembership;
   onChanged: () => void;
 }) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const actions = target.allowedActions;
   const [action, setAction] = useState<MembershipAction | null>(null);
   const [reason, setReason] = useState("");
@@ -111,11 +115,13 @@ export function MembershipIdentityActions({
     draft: { actionId: action?.id, reason },
   });
 
+  const requestClose = () => requestDirtyNavigation(close);
+
   if (!actions.length) return <span className="text-xs text-muted-foreground">只读</span>;
 
   return <>
     <div className="flex flex-wrap gap-1">{actions.map(item => <Button key={item.id} type="button" size="sm" variant="outline" onClick={() => { setAction(item); setPreview(null); setReceipt(null); setError(null); }}>{item.label}</Button>)}</div>
-    <Dialog open={action !== null} onOpenChange={(open) => { if (!open) close(); }}>
+    <Dialog open={action !== null} onOpenChange={(open) => { if (!open) requestClose(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>{action?.label}</DialogTitle><DialogDescription>目标成员：{target.directoryProfile?.displayName ?? target.userId}{target.directoryProfile?.username ? `（${target.directoryProfile.username}）` : ""}；稳定 ID：{target.userId}。身份变更必须先生成与当前版本绑定的权威预览。</DialogDescription></DialogHeader>
         <div className="space-y-3">
@@ -124,7 +130,7 @@ export function MembershipIdentityActions({
           {receipt ? <div className="space-y-1 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs"><div className="font-medium">变更回执</div><div>changeId：{receipt.changeId}</div><div>auditId：{receipt.auditId}{receipt.auditCompletion === "pending" ? "（终态审计排队中）" : ""}</div><div>生效时间：{new Date(receipt.effectiveAt).toLocaleString()} · Membership v{receipt.version}</div><div>投影：{receipt.projectionStatus}{receipt.projectionId ? ` · ${receipt.projectionId}` : ""}</div></div> : null}
           {error ? <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{error}</div> : null}
         </div>
-        <DialogFooter>{receipt ? <Button type="button" onClick={close}>完成</Button> : <><Button type="button" variant="outline" onClick={close} disabled={busy}>取消</Button>{preview ? <Button type="button" onClick={() => { void commit(); }} disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()}>{busy ? "正在提交" : "确认变更"}</Button> : <Button type="button" onClick={() => { void requestPreview(); }} disabled={busy || reason.trim().length < 3}>{busy ? "正在预览" : "生成影响预览"}</Button>}</>}</DialogFooter>
+        <DialogFooter>{receipt ? <Button type="button" onClick={close}>完成</Button> : <><Button type="button" variant="outline" onClick={requestClose} disabled={busy}>取消</Button>{preview ? <Button type="button" onClick={() => { void commit(); }} disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()}>{busy ? "正在提交" : "确认变更"}</Button> : <Button type="button" onClick={() => { void requestPreview(); }} disabled={busy || reason.trim().length < 3}>{busy ? "正在预览" : "生成影响预览"}</Button>}</>}</DialogFooter>
       </DialogContent>
     </Dialog>
   </>;

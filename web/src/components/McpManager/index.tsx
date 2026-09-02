@@ -139,11 +139,29 @@ export function McpManager({ embedded = false }: { embedded?: boolean }) {
   return <McpManagerInner mode="personal" embedded={embedded} />;
 }
 
-export function McpAdminCatalog() {
-  return <McpManagerInner mode="admin" embedded={false} />;
+export function McpAdminCatalog({
+  tenantId,
+}: {
+  tenantId?: string;
+} = {}) {
+  return (
+    <McpManagerInner
+      mode="admin"
+      embedded={false}
+      tenantIdScope={tenantId}
+    />
+  );
 }
 
-function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embedded: boolean }) {
+function McpManagerInner({
+  mode,
+  embedded,
+  tenantIdScope,
+}: {
+  mode: "personal" | "admin";
+  embedded: boolean;
+  tenantIdScope?: string;
+}) {
   // platformReadOnly：只读平台 admin，admin 态（全局 MCP 管理）写入口 disabled；个人态连接器不受影响
   const { isAdmin, isPlatformAdmin, user, platformReadOnly } = useAuth();
   // tenants 列表仅平台 admin 可见（路由用 requirePlatformAdmin，hook 内部
@@ -158,10 +176,14 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [error, setError] = useState<string | null>(null);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
   const [diagnostic, setDiagnostic] = useState<McpDiagnosticResponse | null>(null);
-  const [form, setForm] = useState<ManagedMcpServer>(EMPTY_SERVER);
+  const scopedEmptyServer = useMemo<ManagedMcpServer>(
+    () => tenantIdScope ? { ...EMPTY_SERVER, tenantId: tenantIdScope } : EMPTY_SERVER,
+    [tenantIdScope],
+  );
+  const [form, setForm] = useState<ManagedMcpServer>(scopedEmptyServer);
   const [configText, setConfigText] = useState(JSON.stringify(EMPTY_SERVER.config, null, 2));
   const [adminFormBaseline, setAdminFormBaseline] = useState(() => JSON.stringify({
-    form: EMPTY_SERVER,
+    form: scopedEmptyServer,
     configText: JSON.stringify(EMPTY_SERVER.config, null, 2),
   }));
   const [personalForm, setPersonalForm] = useState<ManagedMcpServer>({
@@ -193,6 +215,14 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [notionDetailOpen, setNotionDetailOpen] = useState(false);
   const [googleWorkspaceDetailOpen, setGoogleWorkspaceDetailOpen] = useState(false);
   const [aliyunDetailOpen, setAliyunDetailOpen] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "admin") return;
+    const nextConfigText = JSON.stringify(scopedEmptyServer.config, null, 2);
+    setForm(scopedEmptyServer);
+    setConfigText(nextConfigText);
+    setAdminFormBaseline(JSON.stringify({ form: scopedEmptyServer, configText: nextConfigText }));
+  }, [mode, scopedEmptyServer]);
 
   const diagnose = useCallback(async (force = false) => {
     setDiagnosing(true);
@@ -237,7 +267,10 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
         if (hasReadyEnabledServer) void diagnose(false);
       }
       if (mode === "admin" && isAdmin) {
-        const [adminServers, templateData] = await Promise.all([fetchMcpAdminServers(), fetchMcpTemplates()]);
+        const [adminServers, templateData] = await Promise.all([
+          fetchMcpAdminServers(tenantIdScope),
+          fetchMcpTemplates(),
+        ]);
         setAdminData(adminServers);
         setTemplates(templateData);
       }
@@ -247,7 +280,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
     } finally {
       setLoading(false);
     }
-  }, [diagnose, isAdmin, mode]);
+  }, [diagnose, isAdmin, mode, tenantIdScope]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -271,11 +304,12 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   }, [diagnose, enabled]);
 
   const editServer = useCallback((server: ManagedMcpServer) => {
+    if (tenantIdScope && server.tenantId !== tenantIdScope) return;
     const nextConfigText = JSON.stringify(server.config, null, 2);
     setForm(server);
     setConfigText(nextConfigText);
     setAdminFormBaseline(JSON.stringify({ form: server, configText: nextConfigText }));
-  }, []);
+  }, [tenantIdScope]);
 
   const saveServer = useCallback(async () => {
     setSaving(true);
@@ -283,13 +317,17 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       const config = JSON.parse(configText) as Record<string, unknown>;
       // tenantId 仅在显式有值（平台 admin 选了某个 tenant 或 '*'）时上送；
       // 否则省略，让后端按 caller 身份默认。组织 admin 入参也会被后端强制 own。
-      const payload: ManagedMcpServer = { ...form, config };
+      const payload: ManagedMcpServer = {
+        ...form,
+        config,
+        ...(tenantIdScope ? { tenantId: tenantIdScope } : {}),
+      };
       if (!payload.tenantId) delete payload.tenantId;
       await upsertMcpServer(payload);
-      setForm(EMPTY_SERVER);
-      const resetConfigText = JSON.stringify(EMPTY_SERVER.config, null, 2);
+      setForm(scopedEmptyServer);
+      const resetConfigText = JSON.stringify(scopedEmptyServer.config, null, 2);
       setConfigText(resetConfigText);
-      setAdminFormBaseline(JSON.stringify({ form: EMPTY_SERVER, configText: resetConfigText }));
+      setAdminFormBaseline(JSON.stringify({ form: scopedEmptyServer, configText: resetConfigText }));
       await refresh();
       return true;
     } catch (err) {
@@ -298,7 +336,7 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
     } finally {
       setSaving(false);
     }
-  }, [configText, form, refresh]);
+  }, [configText, form, refresh, scopedEmptyServer, tenantIdScope]);
 
   const adminFormDraft = { form, configText };
   useSettingsDirtyEntry({
@@ -414,9 +452,9 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   }, []);
 
   const applyTemplate = useCallback((server: ManagedMcpServer) => {
-    setForm(server);
+    setForm(tenantIdScope ? { ...server, tenantId: tenantIdScope } : server);
     setConfigText(JSON.stringify(server.config, null, 2));
-  }, []);
+  }, [tenantIdScope]);
 
   const connectOAuth = useCallback(async (serverId: string) => {
     setSaving(true);
@@ -907,7 +945,13 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
       {mode === "admin" && isAdmin && (
         <Card className={cn("border-0 shadow-none", CAPABILITY_SURFACE)}>
-          <CardHeader className="pb-3"><CardTitle className="text-base">管理员：MCP Server Catalog</CardTitle></CardHeader>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">
+              {tenantIdScope
+                ? `${tenantIdScope}：MCP Server Catalog`
+                : "管理员：MCP Server Catalog"}
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-4 pt-0">
             {(templates?.templates.length ?? 0) > 0 && (
               <div className={cn("p-3", CAPABILITY_SUBTLE_SURFACE)}>
@@ -928,7 +972,14 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
               <Input className="md:col-span-2" placeholder="描述" value={form.description || ""} onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))} />
               <Input placeholder="风险等级" value={form.riskLevel || "workspace_write"} onChange={e => setForm(prev => ({ ...prev, riskLevel: e.target.value as ManagedMcpServer["riskLevel"] }))} />
               <label className="flex items-center gap-2 text-sm"><Switch checked={form.enabledByDefault === true} onCheckedChange={v => setForm(prev => ({ ...prev, enabledByDefault: v }))} />默认对用户启用</label>
-              {isPlatformAdmin && (
+              {tenantIdScope ? (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs md:col-span-2">
+                  <div className="font-medium">组织归属已锁定</div>
+                  <div className="mt-1 text-muted-foreground">
+                    {tenantIdScope}。全局 Server 仅供参考，不能在此组织入口编辑。
+                  </div>
+                </div>
+              ) : isPlatformAdmin && (
                 <label className="flex flex-col gap-1 text-xs md:col-span-2">
                   <span className="font-medium">组织归属（仅平台 admin 可改）</span>
                   <select
@@ -953,14 +1004,21 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
 
             <div className="space-y-2">
               {(adminData?.servers ?? []).filter(server => !server.managedByConnectorId).map(server => {
+                const scopedReadOnly = Boolean(tenantIdScope && server.tenantId !== tenantIdScope);
                 const tenantBadge = server.tenantId === GLOBAL_TENANT_ID
                   ? { label: "全局", className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" }
+                  : tenantIdScope && server.tenantId === tenantIdScope
+                    ? { label: `目标组织 ${server.tenantId}`, className: "bg-muted text-muted-foreground" }
                   : server.tenantId === user?.tenantId
                     ? { label: `本组织 ${server.tenantId}`, className: "bg-muted text-muted-foreground" }
                     : { label: `跨组织 ${server.tenantId ?? "?"}`, className: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100" };
                 return (
                   <div key={server.id} className="flex items-center gap-2 rounded-xl p-2 text-sm ring-1 ring-border/60">
-                    <button className="min-w-0 flex-1 text-left" onClick={() => editServer(server)}>
+                    <button
+                      className="min-w-0 flex-1 text-left disabled:cursor-default"
+                      onClick={() => editServer(server)}
+                      disabled={scopedReadOnly}
+                    >
                       <div className="flex items-center gap-2 font-medium">
                         <span>{server.name}</span>
                         <span className="text-xs text-muted-foreground">({server.id})</span>
@@ -968,7 +1026,15 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
                       </div>
                       <div className="truncate text-xs text-muted-foreground">{server.description || JSON.stringify(server.config)}</div>
                     </button>
-                    <Button variant="ghost" size="icon" onClick={() => void removeServer(server.id)} disabled={platformReadOnly}><Trash2 className="size-4" /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`删除 MCP Server ${server.name}`}
+                      onClick={() => void removeServer(server.id)}
+                      disabled={platformReadOnly || scopedReadOnly}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
                   </div>
                 );
               })}

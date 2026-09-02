@@ -20,7 +20,10 @@ import {
 import { DEFAULT_TENANT_ID, isDebugModeAvailable } from "@/components/TenantManager/types";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
 import type { UserInfo, UserPermissions } from "./types";
 
@@ -73,6 +76,7 @@ export function UserFormDialog({
   const [tenantId, setTenantId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const isEditingSelf = isEdit && editingUser?.id === currentUser?.id;
   const isEditingPeerAdmin =
     isEdit &&
@@ -201,8 +205,10 @@ export function UserFormDialog({
     secret: true,
   });
 
+  const requestClose = () => requestDirtyNavigation(() => onOpenChange(false));
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑用户" : "新建用户"}</DialogTitle>
@@ -376,7 +382,7 @@ export function UserFormDialog({
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={requestClose}
                 disabled={loading}
               >
                 取消

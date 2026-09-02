@@ -125,4 +125,31 @@ describe("UserFormDialog", () => {
     expect(await screen.findByRole("heading", { name: "有未保存的更改" })).toBeTruthy();
     expect(screen.getByText(/编辑账号 alice尚未保存/)).toBeTruthy();
   });
+
+  it("弹窗取消关闭也必须经过 dirty guard", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <SettingsDirtyBoundary>
+        {() => (
+          <UserFormDialog
+            open
+            onOpenChange={onOpenChange}
+            editingUser={editingUser}
+            onSubmit={vi.fn()}
+          />
+        )}
+      </SettingsDirtyBoundary>,
+    );
+
+    await user.clear(screen.getByLabelText("真实姓名"));
+    await user.type(screen.getByLabelText("真实姓名"), "新的姓名");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+
+    expect(await screen.findByRole("heading", { name: "有未保存的更改" })).toBeTruthy();
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "放弃更改" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
 });

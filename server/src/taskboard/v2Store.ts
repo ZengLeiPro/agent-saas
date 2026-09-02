@@ -533,11 +533,12 @@ export async function appendTaskChange(
   await appendChange(options, client, taskId, changeType, actorType, actorId, payload, tombstone);
 }
 
+/** Existing ready sources are checked when policy activation has no specific transition task. */
 export async function enqueueOnReadyTrigger(
   options: TaskboardV2StoreOptions,
   client: PoolClient,
   board: Record<string, unknown>,
-  taskId: string,
+  taskId?: string,
 ): Promise<void> {
   const policy = jsonObject(board.integration_policy) as {
     enabled?: boolean;
@@ -548,9 +549,20 @@ export async function enqueueOnReadyTrigger(
   await client.query(
     `INSERT INTO ${options.integrationTriggerOutboxTable}
        (id, board_id, task_id, trigger_mode, policy_revision, available_at)
-     VALUES ($1,$2,$3,'on_ready',$4,now()+($5::bigint * interval '1 millisecond'))
+     SELECT $1,$2,$3,'on_ready',$4,now()+($5::bigint * interval '1 millisecond')
+      WHERE $3::text IS NOT NULL OR EXISTS (
+        SELECT 1 FROM ${options.tasksTable} task
+         WHERE task.board_id=$2 AND task.kind='delivery' AND task.status='ready_to_merge'
+           AND task.archived_at IS NULL
+           AND task.provider_pull_request_id IS NOT NULL
+           AND task.reviewed_subject_digest IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM ${options.integrationSourcesTable} source
+              WHERE source.delivery_task_id=task.id AND source.state NOT IN ('merged','canceled')
+           )
+      )
      ON CONFLICT DO NOTHING`,
-    [randomUUID(), board.id, taskId, policy.revision, Math.max(0, Number(policy.trigger.debounceMs ?? 0))],
+    [randomUUID(), board.id, taskId ?? null, policy.revision, Math.max(0, Number(policy.trigger.debounceMs ?? 0))],
   );
 }
 

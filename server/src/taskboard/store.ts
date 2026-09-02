@@ -21,6 +21,7 @@ import {
   releaseContinuationReconcile,
   retryContinuationDispatch,
 } from './continuationOutbox.js';
+import { integrationPolicyNextRunAt } from './integrationPolicySchedule.js';
 import {
   claimExecutionDispatch,
   claimExecutionReconcileCandidates,
@@ -56,7 +57,7 @@ import {
   appendBoardChange,
   appendTaskChange,
   cancelIntegrationTask as cancelStoredIntegrationTask,
-  createIntegrationBatch as createStoredIntegrationBatch,
+  createIntegrationBatch as createStoredIntegrationBatch, enqueueOnReadyTrigger,
   getExecutionContextV2 as getStoredExecutionContextV2,
   listBoardMembers as listStoredBoardMembers,
   listIntegrationSources as listStoredIntegrationSources,
@@ -292,8 +293,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return this.requireBoard(this.pool, identity, boardId, false);
   }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
-    const integrationPolicy = input.integrationPolicy;
-    const name = requireText(input.name, 'Board name');
+    const integrationPolicy = input.integrationPolicy, name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
     const model = normalizeModel(input.model);
@@ -307,20 +307,19 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     );
     try {
       return await this.withTransaction(async (client) => {
-        const boardId = randomUUID();
+        const boardId = randomUUID(), policy = integrationPolicy
+          ? { ...integrationPolicy, revision: randomUUID() } : undefined, nextRunAt = integrationPolicyNextRunAt(policy);
         const result = await client.query(
           `INSERT INTO ${this.boardsTable}
              (id, tenant_id, owner_user_id, name, description, visibility, prompt, model, stage_models, stage_prompts,
-              repository, integration_policy, next_task_number, version)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,1,1)
+              repository, integration_policy, integration_next_run_at, next_task_number, version)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13,1,1)
            RETURNING id, owner_user_id, name, description, visibility, prompt, model, stage_models, stage_prompts, repository, integration_policy, version, archived_at, created_at, updated_at`,
           [
             boardId, identity.tenantId, identity.ownerUserId, name, description, visibility, prompt, model,
             stageModelsToJson(input.stageModels), stagePromptsToJson(input.stagePrompts),
             repository ? JSON.stringify(repository) : null,
-            integrationPolicy
-              ? JSON.stringify({ ...integrationPolicy, revision: randomUUID() })
-              : null,
+            policy ? JSON.stringify(policy) : null, nextRunAt,
           ],
         );
         await appendBoardChange(this, client, boardId, 'board.created', 'user', identity.ownerUserId, {
@@ -422,7 +421,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           : null;
         params.push(policy ? JSON.stringify(policy) : null);
         assignments.push(`integration_policy=$${params.length}::jsonb`);
-        assignments.push('integration_next_run_at=NULL');
+        params.push(integrationPolicyNextRunAt(policy ?? undefined)); assignments.push(`integration_next_run_at=$${params.length}`);
       }
       try {
         const result = await client.query(
@@ -433,6 +432,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
           params,
         );
         const updated = rowToBoard(result.rows[0], identity.ownerUserId);
+        if (input.integrationPolicy !== undefined) await enqueueOnReadyTrigger(this, client, result.rows[0]);
         await appendBoardChange(this, client, boardId, 'board.updated', 'user', identity.ownerUserId, {
           changedFields: Object.keys(input).filter((key) => key !== 'expectedVersion'),
           version: updated.version,

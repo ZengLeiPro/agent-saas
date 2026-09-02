@@ -831,11 +831,6 @@ export class SessionAutomationRuntimeGuard {
       );
       const locked = resource.rows[0];
       if (!locked) throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
-      if (locked.state === 'released') {
-        await client.query('COMMIT');
-        committed = true;
-        return 'released';
-      }
       const child = await client.query<{ status: string }>(
         `SELECT status FROM ${this.runsTable}
           WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 FOR UPDATE`,

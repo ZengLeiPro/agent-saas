@@ -127,8 +127,9 @@ describePg('automation background child recovery on PostgreSQL', () => {
     const context = {
       tenantId, sessionId: parentSessionId, runId: parentRunId, automationFence: rootFence,
     } as RunContext;
-    await runs.markStatus(parentRunId, 'running', 'background_worker_started');
-    await guard.recordBackgroundResource(context, parentRunId, { childSessionId, childRunId }, 'prepared');
+    await guard.activateBackgroundResourceIntent(
+      context, parentRunId, { childSessionId, childRunId },
+    );
     await pool.query(
       `UPDATE ${runs.runsTable}
           SET status=CASE WHEN run_id=$1 THEN 'running' ELSE $3 END,

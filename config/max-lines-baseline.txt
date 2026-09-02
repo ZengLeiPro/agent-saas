@@ -49,7 +49,7 @@ shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/BillingManager/index.tsx	2256	production
 web/src/components/DesktopSessionSidebar.tsx	2420	production
 web/src/components/MessageItem.tsx	1120	production
-web/src/components/MessageList.tsx	1086	production
+web/src/components/MessageList.tsx	1079	production
 web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/TenantManager/index.tsx	1222	production
 web/src/hooks/useChatAppState.ts	3128	production

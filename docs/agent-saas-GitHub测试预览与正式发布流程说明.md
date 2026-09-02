@@ -104,7 +104,7 @@ GitHub 现场已有两套 active Ruleset，且都没有 bypass actor：
 - 只改 contract/test fixture：只跑 contract check，不发布镜像。
 - 真正影响 ACS：执行 Server/Orchestrator typecheck、Orchestrator 测试和 ACS 运维脚本测试。
 
-PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再按影响范围运行 contract check 或完整 Orchestrator 检查，不部署。main push 并不是“完整重跑同一套 ACS CI”：`acs-sandbox.yml` 有路径过滤，只有命中 ACS 相关路径才启动；命中后再执行 Classify → Contract/Tests → Gate 拓扑。`.github/acs-bundle-inputs.txt` 是 Orchestrator 引用 `server/src/**` 源码的路径契约；测试会从三个真实 entry 生成 esbuild metafile，并逐项核对清单、classifier 与 main `push.paths`，所以新增 bundle 输入不能静默漏过 ACS 构建。若属于 ACS publish 变更，阿里云 ACR 会为精确 SHA 构建镜像；GitHub 侧后续按 build record 和 digest 解析，不再把 digest 误当普通 tag。
+PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再按影响范围运行 contract check 或完整 Orchestrator 检查，不部署。main push 并不是“完整重跑同一套 ACS CI”：`acs-sandbox.yml` 有路径过滤，只有命中 ACS 相关路径才启动；命中后再执行 Classify → Contract/Tests → Gate 拓扑。`.github/acs-bundle-inputs.txt` 是 Orchestrator 全部仓库内生产 bundle 输入的路径契约，覆盖 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 以及相应 workspace `package.json`。测试会从三个真实 entry 生成 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，再按路径语义逐项核对清单、classifier 与 main `push.paths`；因此新增仓库源码或包元数据不能静默漏过 ACS 构建，`node_modules` 等安装依赖也不会误报。若属于 ACS publish 变更，阿里云 ACR 会为精确 SHA 构建镜像；GitHub 侧后续按 build record 和 digest 解析，不再把 digest 误当普通 tag。
 
 ## 四、第二阶段：手动 RC 流程先生成或复用 Release Evidence
 

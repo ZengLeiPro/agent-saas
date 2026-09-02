@@ -1,3 +1,36 @@
+# 会改变生产 Orchestrator bundle 的仓库路径。
+acs-orchestrator/package.json
+acs-orchestrator/src/activeSandboxRegistry.ts
+acs-orchestrator/src/alerts.ts
+acs-orchestrator/src/backgroundShell.ts
+acs-orchestrator/src/backgroundShellWorker.ts
+acs-orchestrator/src/capacityReservations.ts
+acs-orchestrator/src/cidr.ts
+acs-orchestrator/src/config.ts
+acs-orchestrator/src/executor.ts
+acs-orchestrator/src/index.ts
+acs-orchestrator/src/kubeApi.ts
+acs-orchestrator/src/kubectl.ts
+acs-orchestrator/src/lifecycleController.ts
+acs-orchestrator/src/networkPolicyManager.ts
+acs-orchestrator/src/persistentRunner.ts
+acs-orchestrator/src/protocol.ts
+acs-orchestrator/src/provision.ts
+acs-orchestrator/src/restorePerPodCli.ts
+acs-orchestrator/src/runnerDaemonProtocol.ts
+acs-orchestrator/src/runnerLog.ts
+acs-orchestrator/src/sandboxCapacity.ts
+acs-orchestrator/src/sandboxCapacityAdmission.ts
+acs-orchestrator/src/sandboxDeletion.ts
+acs-orchestrator/src/sandboxHttp.ts
+acs-orchestrator/src/sandboxManager.ts
+acs-orchestrator/src/sandboxName.ts
+acs-orchestrator/src/sandboxResourceDrift.ts
+acs-orchestrator/src/sandboxState.ts
+acs-orchestrator/src/singleflightCleanup.ts
+acs-orchestrator/src/snatManager.ts
+acs-orchestrator/src/snatOperations.ts
+server/package.json
 server/src/agent/**
 server/src/data/tenants/types.ts
 server/src/runtime/clientDaemonTransport.ts
@@ -16,3 +49,6 @@ server/src/runtime/workspaceIdentity.ts
 server/src/security/trustedFile.ts
 server/src/utils/logger.ts
 server/src/utils/requestContext.ts
+# Workspace 包元数据参与模块解析。
+shared/package.json
+shared/src/**

@@ -82,8 +82,11 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
 Workflow 相同的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。
 ACS 分类器与 `acs-sandbox.yml` 的 `main` push `paths` 以 `.github/acs-bundle-inputs.txt` 为共同
-输入契约；契约测试会现场生成三个 Orchestrator entry 的 esbuild metafile，并逐项证明所有真实
-`server/src/**` bundle 输入同时命中清单、分类器与 push 路径，新增或遗漏输入都 fail closed。
+输入契约；契约测试会现场生成三个 Orchestrator entry 的 esbuild metafile，将输入规范化为仓库
+相对路径并与 `git ls-files` 取交集，逐项证明 `acs-orchestrator` 的真实生产源码、被引用的
+`server/src/**`、`shared/src/**` 等全部仓库 bundle 输入同时命中清单、分类器与 push 路径。每个
+实际贡献源码的 workspace 还必须
+覆盖对应 `package.json`；新增或遗漏输入都 fail closed，`node_modules` 等安装依赖不误入仓库契约。
 如果该 SHA 已有通过 Schema 校验的不可变证据则直接复用，否则通过固定
 host key 的 SSH 只读生产状态，在 `RELEASE_RECORD_OSS_URI` 的 `baselines/` 与 `records/` 中按每个
 组件的生产 source SHA 和 digest 解析不可变 artifact index，绑定四类基线制品。解析不依赖 GitHub

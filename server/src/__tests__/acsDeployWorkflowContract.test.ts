@@ -20,14 +20,16 @@ const bundleInputsPath = fileURLToPath(
 const orchestratorPackagePath = fileURLToPath(
   new URL('../../../acs-orchestrator/package.json', import.meta.url),
 );
+const orchestratorDirectory = dirname(orchestratorPackagePath);
+const repoRoot = dirname(orchestratorDirectory);
 const requireFromOrchestrator = createRequire(orchestratorPackagePath);
 const bundleInputPatterns = readFileSync(bundleInputsPath, 'utf8')
   .split('\n')
   .map((line) => line.trim())
   .filter((line) => line && !line.startsWith('#'));
 
-function matchesBundleInput(path: string): boolean {
-  return bundleInputPatterns.some((pattern) => {
+function matchesPathPatterns(path: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => {
     if (pattern.endsWith('/**')) {
       return path.startsWith(pattern.slice(0, -2));
     }
@@ -35,14 +37,18 @@ function matchesBundleInput(path: string): boolean {
   });
 }
 
-function actualBundleSourceInputs(): string[] {
+function matchesBundleInput(path: string): boolean {
+  return matchesPathPatterns(path, bundleInputPatterns);
+}
+
+function actualBundleRepositoryInputs(): string[] {
   const esbuild = requireFromOrchestrator('esbuild') as {
     buildSync(options: Record<string, unknown>): {
       metafile?: { inputs: Record<string, unknown> };
     };
   };
   const result = esbuild.buildSync({
-    absWorkingDir: dirname(orchestratorPackagePath),
+    absWorkingDir: orchestratorDirectory,
     entryPoints: ['src/index.ts', 'src/backgroundShellWorker.ts', 'src/restorePerPodCli.ts'],
     bundle: true,
     platform: 'node',
@@ -55,9 +61,15 @@ function actualBundleSourceInputs(): string[] {
     logLevel: 'silent',
   });
   if (!result.metafile) throw new Error('esbuild did not return a metafile');
+
+  const trackedFiles = new Set(
+    execFileSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' })
+      .trim()
+      .split('\n'),
+  );
   return Object.keys(result.metafile.inputs)
-    .filter((path) => path.startsWith('../server/src/'))
-    .map((path) => path.slice(3))
+    .map((path) => (path.startsWith('../') ? path.slice(3) : `acs-orchestrator/${path}`))
+    .filter((path) => trackedFiles.has(path))
     .sort();
 }
 
@@ -119,31 +131,44 @@ describe('ACS deploy workflow contract', () => {
       publish: 'true',
       contract_check: 'false',
     });
-    expect(classify(['server/src/runtime/invocationCorrelation.ts'])).toMatchObject({
-      publish: 'true',
-      contract_check: 'false',
-    });
+    for (const path of [
+      'server/src/runtime/invocationCorrelation.ts',
+      'shared/src/schemas/workflowScenario.ts',
+      'shared/package.json',
+    ]) {
+      expect(classify([path]), path).toMatchObject({
+        publish: 'true',
+        contract_check: 'false',
+      });
+    }
   });
 
-  it('从真实 Orchestrator bundle 锁定全部 server 源输入的触发与分类', () => {
-    const sourceInputs = actualBundleSourceInputs();
+  it('从真实 Orchestrator bundle 锁定全部仓库输入的触发与分类', () => {
+    const sourceInputs = actualBundleRepositoryInputs();
     expect(sourceInputs).toContain('server/src/runtime/invocationCorrelation.ts');
+    expect(sourceInputs).toContain('shared/src/schemas/workflowScenario.ts');
     expect(sourceInputs.length).toBeGreaterThan(0);
 
     const pushStart = workflow.indexOf('  push:');
     const dispatchStart = workflow.indexOf('  workflow_dispatch:', pushStart);
     const pushTrigger = workflow.slice(pushStart, dispatchStart);
+    const pushPatterns = [...pushTrigger.matchAll(/^\s+- '([^']+)'$/gm)].map(
+      (match) => match[1],
+    );
     expect(pushTrigger).toContain("- '.github/acs-bundle-inputs.txt'");
 
     for (const sourceInput of sourceInputs) {
       expect(matchesBundleInput(sourceInput), sourceInput).toBe(true);
+      expect(matchesPathPatterns(sourceInput, pushPatterns), sourceInput).toBe(true);
     }
     expect(classify(sourceInputs)).toMatchObject({
       publish: 'true',
       contract_check: 'false',
     });
-    for (const pattern of bundleInputPatterns) {
-      expect(pushTrigger, pattern).toContain(`- '${pattern}'`);
+    for (const workspace of new Set(sourceInputs.map((path) => path.split('/')[0]))) {
+      const packageMetadata = `${workspace}/package.json`;
+      expect(matchesBundleInput(packageMetadata), packageMetadata).toBe(true);
+      expect(matchesPathPatterns(packageMetadata, pushPatterns), packageMetadata).toBe(true);
     }
   });
 

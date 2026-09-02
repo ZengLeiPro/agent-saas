@@ -1,5 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
+const coverageReporters =
+  process.env.COVERAGE_REPORT_MODE === 'ci'
+    ? ['text', 'lcovonly', 'json-summary']
+    : ['text', 'lcov', 'json-summary', 'json', 'html'];
+
 export default defineConfig({
   test: {
     // 测试文件匹配模式
@@ -14,7 +19,7 @@ export default defineConfig({
     // lcov 供 diff coverage 脚本使用；json-summary 供 CI 汇总；text/html 便于本地看
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'json-summary', 'json', 'html'],
+      reporter: coverageReporters,
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
       exclude: [

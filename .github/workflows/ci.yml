@@ -66,20 +66,43 @@ jobs:
       - name: Run static checks
         run: bash scripts/pr-preflight-task.sh checks
 
+  coverage_scope:
+    name: Preflight / Coverage scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      workspaces: ${{ steps.plan.outputs.workspaces }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Select affected coverage workspaces
+        id: plan
+        run: >-
+          node scripts/coverage-workspace-plan.mjs
+          --event "${{ github.event_name }}"
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --output "$GITHUB_OUTPUT"
+
   coverage:
     name: Preflight / Coverage (${{ matrix.workspace }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: coverage_scope
     strategy:
       fail-fast: false
       matrix:
-        workspace: [shared, server, web]
+        workspace: ${{ fromJSON(needs.coverage_scope.outputs.workspaces) }}
 
-    # Server coverage 包含 PostgreSQL 测试。三个矩阵实例使用相互隔离的数据库容器，
-    # 避免并行任务共享状态；Shared/Web 虽不访问数据库，也保持完全一致的 Runner 定义。
+    # 只有 Server 覆盖率包含 PostgreSQL 测试；空 image 会让 GitHub Actions 跳过该服务，
+    # 避免 Web/Shared 为未使用的数据库多付容器初始化时间。
     services:
       postgres:
-        image: postgres:16-alpine
+        image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}
         env:
           POSTGRES_USER: agent_test
           POSTGRES_PASSWORD: ci-only-password
@@ -94,29 +117,35 @@ jobs:
 
     steps:
       - name: Checkout code
+        if: matrix.workspace != 'none'
         uses: actions/checkout@v5
 
       - name: Setup pnpm
+        if: matrix.workspace != 'none'
         uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
+        if: matrix.workspace != 'none'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
       - name: Install dependencies
+        if: matrix.workspace != 'none'
         run: pnpm install --frozen-lockfile
 
       - name: Run ${{ matrix.workspace }} coverage
+        if: matrix.workspace != 'none'
         env:
+          COVERAGE_REPORT_MODE: ci
           TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
           MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
         run: bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"
 
       # 跨 Runner 汇总 PR diff coverage 所需的最小文件；中间 artifact 仅保留一天。
       - name: Upload ${{ matrix.workspace }} coverage part
-        if: always()
+        if: always() && matrix.workspace != 'none'
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:

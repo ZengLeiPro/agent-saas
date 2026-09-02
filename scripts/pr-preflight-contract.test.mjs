@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { planCoverageWorkspaces } from './coverage-workspace-plan.mjs';
 
 const [workflow, wrapper, tasks, serverPackage] = await Promise.all([
   readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
@@ -54,6 +55,9 @@ test('本地 PR preflight 仍按原顺序串行执行全部任务', () => {
 
 test('CI 并行任务与 Build & Check 汇总门禁完整连接', () => {
   for (const marker of [
+    'name: Preflight / Coverage scope',
+    'node scripts/coverage-workspace-plan.mjs',
+    '--output "$GITHUB_OUTPUT"',
     'bash scripts/pr-preflight-task.sh checks',
     'bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"',
     'bash scripts/pr-preflight-task.sh postgres',
@@ -71,8 +75,30 @@ test('CI 并行任务与 Build & Check 汇总门禁完整连接', () => {
   ]) {
     assert.match(workflow, new RegExp(escapeRegExp(marker), 'u'));
   }
-  assert.match(workflow, /workspace: \[shared, server, web\]/u);
+  assert.match(
+    workflow,
+    /workspace: \$\{\{ fromJSON\(needs\.coverage_scope\.outputs\.workspaces\) \}\}/u,
+  );
+  assert.match(workflow, /matrix\.workspace == 'server'.*postgres:16-alpine/u);
+  assert.match(workflow, /COVERAGE_REPORT_MODE: ci/u);
   assert.match(workflow, /build:\s+[\s\S]*?if: always\(\)/u);
+});
+
+test('PR 覆盖率范围按依赖方向收窄，未知路径 fail closed', () => {
+  assert.deepEqual(planCoverageWorkspaces(['web/src/App.tsx']), ['web']);
+  assert.deepEqual(planCoverageWorkspaces(['server/src/index.ts']), ['server']);
+  assert.deepEqual(planCoverageWorkspaces(['shared/src/index.ts']), ['shared', 'server', 'web']);
+  assert.deepEqual(planCoverageWorkspaces(['docs/guide.md']), ['none']);
+  assert.deepEqual(planCoverageWorkspaces(['new-workspace/src/index.ts']), [
+    'shared',
+    'server',
+    'web',
+  ]);
+  assert.deepEqual(planCoverageWorkspaces(['web/src/App.tsx'], 'push'), [
+    'shared',
+    'server',
+    'web',
+  ]);
 });
 
 function escapeRegExp(value) {

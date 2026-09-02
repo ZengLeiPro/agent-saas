@@ -37,7 +37,7 @@ server/src/routes/auth.ts	1779	production
 server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3317	production
 server/src/routes/skills.ts	1394	production
-server/src/runtime/rawAgentLoop.ts	3917	production
+server/src/runtime/rawAgentLoop.ts	3865	production
 server/src/runtime/rawRuntimeRunDispatch.ts	3090	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1316	production

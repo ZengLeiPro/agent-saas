@@ -1,8 +1,17 @@
 import { isCompactCommand } from '../agent/prompt.js';
 import type { OutboundEvent } from '../types/index.js';
+import { buildModelUserContent } from './imageAttachments.js';
 import type { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
+import type { RunStore } from './runStore.js';
 import type { SteeringApplyInput } from './runStoreTypes.js';
-import type { PlatformEvent, PlatformEventInput, QueuedInterjection } from './types.js';
+import type {
+  EventStore,
+  ModelChatMessage,
+  PlatformEvent,
+  PlatformEventInput,
+  QueuedInterjection,
+  RunContext,
+} from './types.js';
 
 export function collectDurableInterjectionAnnouncementSourceRunIds(events: PlatformEvent[]): Set<string> {
   return new Set(events
@@ -101,4 +110,174 @@ export async function announceAppliedInterjections(args: {
     }
   }
   return { type: 'interjection_applied', ...appliedPayload };
+}
+
+export interface SteeringInterjectionCoordinatorOptions {
+  context: RunContext;
+  messages: ModelChatMessage[];
+  priorEvents: PlatformEvent[];
+  currentUserMessageIndex: number;
+  runStore?: RunStore;
+  eventStore: EventStore;
+  tenantId: string;
+  transcriptProjection: LegacyTranscriptProjection;
+  append: (event: PlatformEventInput) => Promise<void>;
+  warn: (message: string) => void;
+}
+
+export class SteeringInterjectionCoordinator {
+  readonly manualCheckpointSourceRunIds = new Set<string>();
+  readonly durableSourceRunIds: Set<string>;
+  readonly modelContextSourceRunIds: Set<string>;
+  readonly announcementSourceRunIds: Set<string>;
+  currentUserMessageIndex: number;
+  absorptionDisabled = false;
+
+  constructor(private readonly options: SteeringInterjectionCoordinatorOptions) {
+    this.durableSourceRunIds = new Set(options.priorEvents.flatMap((event) => (
+      event.type === 'user_message' && typeof event.interjectionSourceRunId === 'string'
+        ? [event.interjectionSourceRunId]
+        : []
+    )));
+    this.modelContextSourceRunIds = new Set(this.durableSourceRunIds);
+    this.announcementSourceRunIds = collectDurableInterjectionAnnouncementSourceRunIds(options.priorEvents);
+    this.currentUserMessageIndex = options.currentUserMessageIndex;
+  }
+
+  requestRecoveryHandoff(reason: string): void {
+    this.absorptionDisabled = true;
+    const handoff = this.options.context.drainHandoff;
+    if (!handoff) return;
+    handoff.requested = true;
+    handoff.reason = reason;
+    handoff.requestedAt = new Date().toISOString();
+  }
+
+  async drain(): Promise<QueuedInterjection[]> {
+    const { context } = this.options;
+    if (context.signal?.aborted || this.absorptionDisabled) return [];
+    const queued = await context.loadQueuedInterjections?.() ?? [];
+    if (queued.length === 0 || context.signal?.aborted) return [];
+    const requestedSourceRunIds = queued.map((item) => item.sourceRunId);
+    let reserved = queued;
+    try {
+      const reservedIds = await this.options.runStore?.reserveSteeringInputs?.(
+        context.runId,
+        requestedSourceRunIds,
+      ) ?? requestedSourceRunIds;
+      const reservedSet = new Set(reservedIds);
+      reserved = queued.filter((item) => reservedSet.has(item.sourceRunId));
+      if (reserved.length !== queued.length) {
+        const missing = queued.filter((item) => !reservedSet.has(item.sourceRunId)).map((item) => item.sourceRunId);
+        this.options.warn(`[run] steering reserve partial: run=${context.runId} unreserved=${missing.join(',')}`);
+      }
+    } catch (error) {
+      if (context.signal?.aborted) throw error;
+      this.requestRecoveryHandoff('steering_reserve_failed');
+      this.options.warn(`[run] steering reserve failed; handing off target run=${context.runId}: ${String(error)}`);
+      return [];
+    }
+    if (reserved.length === 0 || context.signal?.aborted) return [];
+    for (const item of reserved) {
+      if (isCompactCommand(item.message.content)) this.manualCheckpointSourceRunIds.add(item.sourceRunId);
+    }
+
+    let applied = reserved;
+    if (this.options.runStore?.applySteeringInputsAtomically) {
+      try {
+        const atomic = await this.options.runStore.applySteeringInputsAtomically(
+          context.runId,
+          buildAtomicSteeringInputs(reserved, this.durableSourceRunIds, context.runId, context.sessionId),
+          this.options.tenantId,
+        );
+        const appliedSet = new Set(atomic.appliedSourceRunIds);
+        applied = reserved.filter((item) => appliedSet.has(item.sourceRunId));
+        await projectAtomicInterjectionEvents({
+          events: atomic.events,
+          durableInterjectionSourceRunIds: this.durableSourceRunIds,
+          durableAnnouncementSourceRunIds: this.announcementSourceRunIds,
+          transcriptProjection: this.options.transcriptProjection,
+          runId: context.runId,
+          warn: this.options.warn,
+        });
+        if (applied.length !== reserved.length) {
+          this.requestRecoveryHandoff('steering_atomic_apply_partial');
+          const missing = reserved.filter((item) => !appliedSet.has(item.sourceRunId)).map((item) => item.sourceRunId);
+          this.options.warn(`[run] steering atomic apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`);
+        }
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        this.requestRecoveryHandoff('steering_atomic_apply_failed');
+        this.options.warn(`[run] steering atomic append/apply failed; handing off target run=${context.runId}: ${String(error)}`);
+        return [];
+      }
+    } else {
+      for (const item of reserved) {
+        if (isCompactCommand(item.message.content) || this.durableSourceRunIds.has(item.sourceRunId)) continue;
+        try {
+          const event = await this.options.eventStore.append({
+            type: 'user_message',
+            runId: context.runId,
+            sessionId: context.sessionId,
+            content: item.message.content,
+            modelContent: item.prompt,
+            ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+            ...(item.visionAnalysis ? { visionAnalysis: item.visionAnalysis } : {}),
+            interjectionSourceRunId: item.sourceRunId,
+            ...(item.clientMsgId ? { clientMsgId: item.clientMsgId } : {}),
+          }, { tenantId: this.options.tenantId });
+          this.durableSourceRunIds.add(item.sourceRunId);
+          try {
+            await this.options.transcriptProjection.project(event);
+          } catch (error) {
+            this.options.warn(`[run] interjection transcript project failed (degraded): run=${context.runId} source=${item.sourceRunId} error=${String(error)}`);
+          }
+        } catch (error) {
+          this.requestRecoveryHandoff('steering_reserved_event_append_failed');
+          this.options.warn(`[run] steering event append failed; handing off target run=${context.runId}: ${String(error)}`);
+          return [];
+        }
+      }
+      try {
+        const appliedIds = await this.options.runStore?.markSteeringInputsApplied?.(
+          context.runId,
+          reserved.map((item) => item.sourceRunId),
+        ) ?? reserved.map((item) => item.sourceRunId);
+        const appliedSet = new Set(appliedIds);
+        applied = reserved.filter((item) => appliedSet.has(item.sourceRunId));
+        if (applied.length !== reserved.length) {
+          this.requestRecoveryHandoff('steering_reserved_apply_partial');
+          const missing = reserved.filter((item) => !appliedSet.has(item.sourceRunId)).map((item) => item.sourceRunId);
+          this.options.warn(`[run] steering apply partial; absorption disabled for run=${context.runId} unapplied=${missing.join(',')}`);
+        }
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        this.requestRecoveryHandoff('steering_reserved_apply_failed');
+        this.options.warn(`[run] steering apply failed; handing off target run=${context.runId}: ${String(error)}`);
+        return [];
+      }
+    }
+
+    for (const item of applied) {
+      if (this.manualCheckpointSourceRunIds.has(item.sourceRunId) || this.modelContextSourceRunIds.has(item.sourceRunId)) continue;
+      this.options.messages.push({
+        role: 'user',
+        content: buildModelUserContent(item.prompt, item.attachments, item.visionAnalysis),
+      });
+      this.currentUserMessageIndex = this.options.messages.length - 1;
+      this.modelContextSourceRunIds.add(item.sourceRunId);
+    }
+    return applied;
+  }
+
+  announce(interjections: QueuedInterjection[]): Promise<OutboundEvent> {
+    return announceAppliedInterjections({
+      interjections,
+      durableSourceRunIds: this.announcementSourceRunIds,
+      runId: this.options.context.runId,
+      sessionId: this.options.context.sessionId,
+      append: this.options.append,
+      warn: this.options.warn,
+    });
+  }
 }

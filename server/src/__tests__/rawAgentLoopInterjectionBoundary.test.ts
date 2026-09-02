@@ -54,6 +54,19 @@ class FinalTextAdapter implements ModelAdapter {
   }
 }
 
+class CompletionContinuationAdapter implements ModelAdapter {
+  requests: ModelRequest[] = [];
+
+  constructor(private readonly onSecondRequest: () => void) {}
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    if (this.requests.length === 2) this.onSecondRequest();
+    const content = `回答 ${this.requests.length}`;
+    yield { type: 'completed', content, toolCalls: [] };
+  }
+}
+
 class SerialCountingToolRuntime implements ToolRuntime {
   readonly invocations: string[] = [];
   private readonly descriptor: ToolDescriptor;
@@ -356,4 +369,74 @@ describe('RawAgentLoop user input boundaries', () => {
       role: 'user', content: '[2026/09/02 周三 22:41] 最后一个工具结束后处理我',
     });
   });
+  it('keeps steering open while successful-completion requests another turn', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-completion-continuation-interjection-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    let messageReady = false;
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-completion-continue', sourceRunId: 'source-completion-continue',
+      message: { channel: 'web', chatId: 'chat-completion-continue', content: '续轮期间补充' },
+      prompt: '续轮期间补充',
+    }];
+    const adapter = new CompletionContinuationAdapter(() => { messageReady = true; });
+    const markApplied = vi.fn(async () => { queued = []; });
+    const trySeal = vi.fn(async () => true);
+    let completionChecks = 0;
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter, eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-completion-continue', DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      runStore: { markSteeringInputsApplied: markApplied, trySealSteeringInputWindow: trySeal } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-completion-continue', content: '完成任务' },
+      prompt: '完成任务', instructions: '需要显式交接。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'target-completion-continue', sessionId: 'session-completion-continue', model: 'gpt-5.5', cwd,
+      tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' },
+      loadQueuedInterjections: async () => messageReady ? queued : [],
+      checkSuccessfulCompletion: async () => (++completionChecks === 1
+        ? { action: 'continue', prompt: '仍需交接' }
+        : { action: 'allow' }),
+    }));
+
+    expect(adapter.requests).toHaveLength(3);
+    expect(adapter.requests[2]?.messages.at(-1)).toEqual({ role: 'user', content: '续轮期间补充' });
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(true);
+    expect(markApplied).toHaveBeenCalledWith('target-completion-continue', ['source-completion-continue']);
+    expect(trySeal).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands off instead of finishing when the final steering seal fails', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-seal-failure-handoff-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const drainHandoff = { requested: false } as NonNullable<RunContext['drainHandoff']>;
+    const loop = new RawAgentLoop({
+      modelAdapter: new FinalTextAdapter(), eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-seal-failure', DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      runStore: {
+        trySealSteeringInputWindow: vi.fn(async () => { throw new Error('seal unavailable'); }),
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-seal-failure', content: '先回答' }, prompt: '先回答',
+      instructions: '直接回答。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'target-seal-failure', sessionId: 'session-seal-failure', model: 'gpt-5.5', cwd,
+      tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' }, drainHandoff,
+    }));
+
+    expect(events.some((event) => event.type === 'done')).toBe(false);
+    expect(drainHandoff).toMatchObject({ requested: true, reason: 'steering_seal_failed' });
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, 'session-seal-failure');
+    expect(durable.some((event) => event.type === 'run_finished')).toBe(false);
+  });
+
 });

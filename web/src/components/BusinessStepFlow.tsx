@@ -17,6 +17,7 @@ import type {
 } from "@agent/shared";
 
 import { cn } from "@/lib/utils";
+import "./businessStepRecords.css";
 import {
   activityStatusBadgeClass,
   activityStatusIconClass,
@@ -138,16 +139,17 @@ function migrateLegacySectionVerdicts(detail: DetailLine[] | undefined): StepDet
   return parts;
 }
 
+// 详情侧栏使用独立容器断点；主会话里的 PresentationBlocks 保持原布局。
 function StepSummaryBody({ todo }: { todo: TodoItem }) {
   const detailParts = migrateLegacySectionVerdicts(todo.detail);
   return (
-    <div className="flex flex-col gap-3">
+    <div className="business-step-records-container flex flex-col gap-3">
       {detailParts.map((part, index) => part.kind === "detail" ? (
         <PresentationDetail key={index} data={{ title: "", detail: part.lines }} className="mt-0" variant="plain" />
       ) : (
-        <PresentationBlocks key={index} blocks={[part.block]} ctx={{ readOnly: true }} />
+        <PresentationBlocks key={index} blocks={[part.block]} ctx={{ readOnly: true, recordsSurface: "business-step" }} />
       ))}
-      {todo.display?.length ? <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true }} /> : null}
+      {todo.display?.length ? <PresentationBlocks blocks={todo.display} ctx={{ readOnly: true, recordsSurface: "business-step" }} /> : null}
     </div>
   );
 }
@@ -200,6 +202,9 @@ function statusMeta(todo: TodoItem): {
   Icon: typeof Circle;
   spin?: boolean;
 } {
+  if (todo.status === "completed" && todo.outcome?.tone === "warn") {
+    return { label: "已完成，有例外", tone: "warning", Icon: TriangleAlert };
+  }
   if (todo.status === "completed" && todo.outcome?.tone === "fail") {
     return { label: "完成结果异常", tone: "danger", Icon: CircleX };
   }

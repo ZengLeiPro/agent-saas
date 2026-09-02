@@ -59,4 +59,11 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(analysisContentSource).toContain('<OrganizationScopeBanner route={route} dirtyController={dirtyController} />');
     expect(analysisContentSource).toContain('dirtyController={dirtyController}');
   });
+
+  it("进入统一设置后隐藏底层业务页，避免旧组织分析与新组织管理重复可访问", () => {
+    expect(source).toContain('settingsMode && "invisible"');
+    expect(source).toContain('(settingsMode || activeTab !== "chat") && "hidden"');
+    expect(source).toContain('(settingsMode || activeTab !== "tenant-admin") && "hidden"');
+    expect(source).toContain('(settingsMode || activeTab !== "platform-admin") && "hidden"');
+  });
 });

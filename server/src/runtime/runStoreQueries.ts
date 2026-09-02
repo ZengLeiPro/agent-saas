@@ -1,5 +1,5 @@
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
-import { markRunStatusIfCurrent } from './runStatusCas.js';
+import { claimStateOnlyTerminalOutbox, markRunStatusIfCurrent } from './runStatusCas.js';
 import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 
@@ -224,6 +224,19 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `, [runId, reason]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : this.get(runId);
+  }
+
+  async claimStateOnlyTerminalOutbox(
+    runId: string,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+    reason: string | undefined,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    return claimStateOnlyTerminalOutbox({
+      pool: this.pool,
+      runsTable: this.runsTable,
+      normalizeRunRecord,
+    }, runId, status, reason, metadataPatch);
   }
 
   async markStatusIfCurrent(

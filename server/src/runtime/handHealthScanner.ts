@@ -188,6 +188,18 @@ export class HandHealthScanner {
           }
           continue;
         }
+        if (hand.status === 'provisioning') {
+          // A live provision transport owns the attempt until its durable owner claim expires.
+          // Shared /health must never complete that attempt. Only a scanner that atomically
+          // takes over an ownerless/expired attempt may use health to recover it.
+          const recoveryToken = randomUUID();
+          const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
+            lastHealthCheckAt: new Date().toISOString(),
+            provisionRecoveryReason: 'orphaned_attempt',
+          });
+          if (!claimed) continue;
+          hand = claimed;
+        }
         if (hand.status === 'ready' && hasUnresolvedHandProvisionFailure(hand)) {
           // endpoint/token 即使不可用，数据库状态也必须先收敛为 unhealthy。PG 实现
           // 用 unresolved marker 条件原子 claim，避免与正常 provision 成功互相覆盖。
@@ -236,20 +248,21 @@ export class HandHealthScanner {
           targetStatus = await this.probeEndpoint(group.endpoint, group.authToken);
         }
         for (const hand of group.hands) {
-          if (hand.status === 'provisioning') {
-            const generation = typeof hand.metadata.provisionGeneration === 'string'
-              ? hand.metadata.provisionGeneration
+          if (hand.metadata.provisionRecoveryReason === 'orphaned_attempt') {
+            const recoveryToken = typeof hand.metadata.provisionRecoveryToken === 'string'
+              ? hand.metadata.provisionRecoveryToken
               : undefined;
-            const completed = generation && store.completeProvisionAttempt
-              ? await store.completeProvisionAttempt(hand.handId, generation, targetStatus, {
+            const completed = recoveryToken
+              ? await this.completeProvisionRecovery(hand, recoveryToken, targetStatus, {
                 lastHealthCheckAt: new Date().toISOString(),
-                provisionFailure: targetStatus === 'ready' ? null : 'shared hand health probe failed during provision recovery',
+                provisionFailure: targetStatus === 'ready' ? null : 'shared hand health probe failed during orphan recovery',
+                provisionRecoveryReason: null,
                 provision: {
                   ...parseProvisionMetadata(hand.metadata.provision),
                   lastStatus: targetStatus === 'ready' ? 'ok' : 'error',
                   lastAttemptAt: new Date().toISOString(),
                 },
-              }, requireHandTenantId(hand))
+              })
               : null;
             if (!completed) continue;
             await this.appendHealthEvent(hand, targetStatus, 'provisioning_process_recovered');

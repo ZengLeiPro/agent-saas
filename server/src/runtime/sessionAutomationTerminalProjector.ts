@@ -5,18 +5,21 @@ import type { PlatformEvent } from './types.js';
 import { extractRunProgressEvidence, reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import { SessionAutomationEvaluator, type GoalEvaluatorPort } from './sessionAutomationEvaluator.js';
+import { computeUsageTotalTokens } from '../data/usage/pricing.js';
 
 export interface AutomationTerminalEvent {
   globalSequence: number;
   tenantId: string;
   sessionId: string;
   runId: string;
-  status: 'completed' | 'failed' | 'cancelled' | 'interrupted';
+  status: 'completed' | 'failed' | 'cancelled' | 'orphaned' | 'interrupted';
   summary?: string;
   evidenceRefs?: string[];
   progressFingerprint?: string;
   numTurns?: number;
   modelUsage?: Record<string, SdkResultModelUsage>;
+  /** Terminal fact recovered from run_state_changed without a run_finished usage aggregate. */
+  stateOnly?: boolean;
 }
 
 function nonNegativeInteger(value: unknown): number {
@@ -25,17 +28,13 @@ function nonNegativeInteger(value: unknown): number {
 }
 
 function totalTokens(modelUsage?: Record<string, SdkResultModelUsage>): number {
-  return Object.values(modelUsage ?? {}).reduce((total, usage) => total
-    + nonNegativeInteger(usage.inputTokens)
-    + nonNegativeInteger(usage.outputTokens)
-    + nonNegativeInteger(usage.reasoningTokens), 0);
-}
-
-function totalCredits(modelUsage?: Record<string, SdkResultModelUsage>): number {
-  return Object.values(modelUsage ?? {}).reduce((total, usage) => {
-    const costUsd = Number(usage.costUSD ?? 0);
-    return total + (Number.isFinite(costUsd) ? Math.max(0, Math.round(costUsd * 1_000_000)) : 0);
-  }, 0);
+  return Object.entries(modelUsage ?? {}).reduce((total, [model, usage]) => total
+    + computeUsageTotalTokens(model, {
+      inputTokens: nonNegativeInteger(usage.inputTokens),
+      outputTokens: nonNegativeInteger(usage.outputTokens),
+      cacheReadTokens: nonNegativeInteger(usage.cacheReadInputTokens),
+      cacheCreationTokens: nonNegativeInteger(usage.cacheCreationInputTokens),
+    }), 0);
 }
 
 function nextContinuationEpoch(value: unknown): number {
@@ -87,7 +86,7 @@ export class SessionAutomationTerminalProjector {
                 w.trigger_key AS wakeup_trigger_key,
                 a.status,a.mode,a.active_run_id,a.desired_terminal_status,a.no_progress_count,a.last_progress_fingerprint,
                 a.incarnation_id AS current_incarnation,a.generation AS current_generation,
-                a.control_version AS current_control_version,s.spec
+                a.control_version AS current_control_version,a.continuation_epoch AS current_continuation_epoch,s.spec
            FROM ${this.store.tables.executions} e
            JOIN ${this.store.tables.outbox} o ON o.outbox_id=e.outbox_id
            JOIN ${this.store.tables.wakeups} w ON w.wakeup_id=o.wakeup_id
@@ -106,6 +105,9 @@ export class SessionAutomationTerminalProjector {
       );
       const row = execution.rows[0];
       if (row) {
+        // Capture the durable execution phase before terminal projection mutates it. A prepared
+        // execution with no provider/reservation facts is the only state-only pre-model proof.
+        const executionState = String(row.state);
         const fingerprint = event.progressFingerprint
           ?? extractRunProgressEvidence([], event.status).fingerprint;
         const noProgress = reduceNoProgress(
@@ -137,13 +139,15 @@ export class SessionAutomationTerminalProjector {
             WHERE wakeup_id=(SELECT wakeup_id FROM ${this.store.tables.outbox} WHERE outbox_id=$1)`,
           [row.outbox_id],
         );
-        // Persist only the positive gap between the terminal aggregate and provider-attempt
-        // rows. Budget accounting can sum model + automation_run without undercounting or
-        // double-counting an execution that persisted only part of its provider usage.
+        const terminalTurns = nonNegativeInteger(event.numTurns);
+        const terminalTokens = totalTokens(event.modelUsage);
+        // Turns/tokens are comparable aggregates, so persist only their positive terminal gap.
+        // Credits are deliberately zero here: SDK costUSD is non-authoritative and cannot be
+        // subtracted from provider-priced microcredits. Authoritative credits are written only by
+        // provider reservation settlement (the source_kind='model' ledger row).
         await client.query(
           `WITH provider AS (
-             SELECT COALESCE(SUM(turns),0) AS turns,COALESCE(SUM(tokens),0) AS tokens,
-                    COALESCE(SUM(credits),0) AS credits
+             SELECT COALESCE(SUM(turns),0) AS turns,COALESCE(SUM(tokens),0) AS tokens
                FROM ${this.store.tables.usage}
               WHERE tenant_id=$1 AND automation_id=$2 AND execution_id=$3 AND source_kind='model'
            )
@@ -151,19 +155,83 @@ export class SessionAutomationTerminalProjector {
              (usage_id,tenant_id,session_id,automation_id,execution_id,source_key,source_kind,turns,tokens,credits)
            SELECT $4,$1,$5,$2,$3,$6,'automation_run',
                   GREATEST($7::bigint-provider.turns,0),
-                  GREATEST($8::bigint-provider.tokens,0),
-                  GREATEST($9::numeric-provider.credits,0)
+                  GREATEST($8::bigint-provider.tokens,0),0
              FROM provider
            ON CONFLICT(tenant_id,automation_id,source_key) DO NOTHING`,
           [event.tenantId, row.automation_id, row.execution_id, randomUUID(), event.sessionId,
-            `run:${event.runId}`, nonNegativeInteger(event.numTurns), totalTokens(event.modelUsage),
-            totalCredits(event.modelUsage)],
+            `run:${event.runId}`, terminalTurns, terminalTokens],
         );
+
+        // SDK aggregates never authorize credits. Under maxCredits, state-only terminals and any
+        // terminal reporting model usage must prove each durable work attempt independently:
+        // completed => settled credits reservation + charged settlement + matching model usage;
+        // cancelled => released credits reservation; every other attempt state is unresolved.
+        // With no attempt facts, only a still-prepared execution with no work reservation proves the
+        // provider boundary was never reached. This intentionally fails closed for running legacy
+        // state-only executions whose model/ledger chain is missing.
+        let creditsUnverifiable = false;
+        const creditBudgetEnabled = row.spec?.budget?.maxCredits !== undefined;
+        if (creditBudgetEnabled && (event.stateOnly || terminalTurns > 0 || terminalTokens > 0)) {
+          const creditAuthority = await client.query<{
+            state: string;
+            completed_authoritative: boolean;
+            cancelled_authoritative: boolean;
+          }>(
+            `SELECT p.state,
+                    (p.state='completed' AND EXISTS (
+                      SELECT 1 FROM ${this.store.tables.budgetReservations} r
+                      JOIN ${this.store.tables.budgetSettlements} s
+                        ON s.reservation_id=r.reservation_id AND s.outcome='charged'
+                      JOIN ${this.store.tables.usage} u
+                        ON u.tenant_id=p.tenant_id AND u.automation_id=p.automation_id
+                       AND u.execution_id=p.execution_id AND u.source_kind='model'
+                       AND u.source_key=p.idempotency_key AND u.credits=s.amount
+                     WHERE r.tenant_id=p.tenant_id AND r.automation_id=p.automation_id
+                       AND r.execution_id=p.execution_id AND r.run_id=p.run_id
+                       AND r.budget_kind='credits' AND r.purpose='work' AND r.state='settled'
+                       AND r.idempotency_key=p.idempotency_key||':credits'
+                    )) AS completed_authoritative,
+                    (p.state='cancelled' AND EXISTS (
+                      SELECT 1 FROM ${this.store.tables.budgetReservations} r
+                       WHERE r.tenant_id=p.tenant_id AND r.automation_id=p.automation_id
+                         AND r.execution_id=p.execution_id AND r.run_id=p.run_id
+                         AND r.budget_kind='credits' AND r.purpose='work' AND r.state='released'
+                         AND r.idempotency_key=p.idempotency_key||':credits'
+                    )) AS cancelled_authoritative
+               FROM ${this.store.tables.providerAttempts} p
+              WHERE p.tenant_id=$1 AND p.automation_id=$2 AND p.execution_id=$3
+                AND p.provider='model' AND COALESCE(p.request_payload->>'purpose','work')='work'`,
+            [event.tenantId, row.automation_id, row.execution_id],
+          );
+          if (creditAuthority.rows.length === 0) {
+            const reservations = await client.query(
+              `SELECT 1 FROM ${this.store.tables.budgetReservations}
+                WHERE tenant_id=$1 AND automation_id=$2 AND execution_id=$3 AND purpose='work' LIMIT 1`,
+              [event.tenantId, row.automation_id, row.execution_id],
+            );
+            creditsUnverifiable = executionState !== 'prepared' || Boolean(reservations.rowCount);
+          } else {
+            creditsUnverifiable = creditAuthority.rows.some(attempt =>
+              attempt.state === 'completed' ? !attempt.completed_authoritative
+                : attempt.state === 'cancelled' ? !attempt.cancelled_authoritative
+                  : true,
+            );
+          }
+        }
 
         const ownsActiveRun = row.active_run_id === event.runId;
         const fenced = row.incarnation_id === row.current_incarnation
           && Number(row.generation) === Number(row.current_generation);
-        if (ownsActiveRun && fenced && row.desired_terminal_status) {
+        if (ownsActiveRun && fenced && creditsUnverifiable) {
+          await client.query(
+            `UPDATE ${this.store.tables.automations}
+                SET status='reconcile_required',phase='waiting',active_run_id=NULL,next_wakeup_at=NULL,
+                    projection_version=projection_version+1,updated_at=now()
+              WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND active_run_id=$4
+                AND incarnation_id=$5 AND generation=$6`,
+            [event.tenantId,event.sessionId,row.automation_id,event.runId,row.incarnation_id,row.generation],
+          );
+        } else if (ownsActiveRun && fenced && row.desired_terminal_status) {
           await client.query(
             `UPDATE ${this.store.tables.automations}
                 SET phase='draining',active_run_id=NULL,next_wakeup_at=NULL,
@@ -233,121 +301,128 @@ export class SessionAutomationTerminalProjector {
               `UPDATE ${this.store.tables.automations}
                   SET phase=CASE WHEN EXISTS (
                         SELECT 1 FROM ${this.store.tables.wakeups} w
-                         WHERE w.tenant_id=$1 AND w.automation_id=$2 AND w.state IN ('pending','claimed')
+                         WHERE w.tenant_id=$1 AND w.automation_id=$2 AND w.incarnation_id=$6
+                           AND w.generation=$7 AND w.spec_version=$8 AND w.state IN ('pending','claimed')
                       ) THEN 'waiting' ELSE 'idle' END,
                       active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4,
                       projection_version=projection_version+1,updated_at=now()
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
-              [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId],
+              [event.tenantId,row.automation_id,noProgress.count,fingerprint,event.runId,
+                row.current_incarnation,row.current_generation,row.spec_version],
             );
           }
 
-          if (row.mode === 'goal') {
+          if (row.mode === 'goal' && !noProgress.pause) {
             const candidate = await client.query(
-              `SELECT evidence_manifest,evidence_manifest_hash FROM ${this.store.tables.goalCompletionCandidates}
+              `SELECT evidence_manifest,evidence_manifest_hash,projected_at,rejection_reason
+                 FROM ${this.store.tables.goalCompletionCandidates}
                 WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4
-                  AND run_id=$5 AND incarnation_id=$6 AND generation=$7 AND spec_version=$8 AND projected_at IS NULL`,
-              [event.tenantId, event.sessionId, row.automation_id, row.execution_id, event.runId,
-                row.current_incarnation, row.current_generation, row.spec_version],
+                  AND run_id=$5 AND incarnation_id=$6 AND generation=$7 AND spec_version=$8`,
+              [event.tenantId,event.sessionId,row.automation_id,row.execution_id,event.runId,
+                row.current_incarnation,row.current_generation,row.spec_version],
             );
             const frozen = candidate.rows[0];
-            // Wakeup lineage is encoded in trigger_key; payload belongs to the later outbox row.
-            const existingContinuation = await client.query(
-              `SELECT 1 FROM ${this.store.tables.wakeups}
-                WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
-                  AND incarnation_id=$4 AND generation=$5 AND spec_version=$6
-                  AND state IN ('pending','claimed')
-                  AND trigger_key LIKE $7
-                LIMIT 1`,
-              [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
-                row.current_generation, row.spec_version,
-                `goal:${row.automation_id}:g${row.current_generation}:e%:from:${event.runId}`],
+            const existingEvaluation = await client.query(
+              `SELECT evaluation_id FROM ${this.store.tables.evaluations}
+                WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4
+                  AND incarnation_id=$5 AND generation=$6 AND spec_version=$7`,
+              [event.tenantId,event.sessionId,row.automation_id,row.execution_id,row.current_incarnation,
+                row.current_generation,row.spec_version],
             );
-            if (!frozen && !existingContinuation.rowCount && !noProgress.pause) {
-              const continuationEpoch = nextContinuationEpoch(row.wakeup_continuation_epoch);
-              await this.store.scheduleTx(client, {
-                tenantId: event.tenantId,
-                sessionId: event.sessionId,
-                automationId: row.automation_id,
-                incarnationId: row.current_incarnation,
-                generation: Number(row.current_generation),
-                specVersion: Number(row.spec_version),
-                continuationEpoch,
-                triggerKey: `goal:${row.automation_id}:g${row.current_generation}:e${continuationEpoch}:no_checkpoint`,
-                dueAt: new Date(),
-                payload: { sourceRunId: event.runId, reason: 'no_checkpoint' },
-              });
-              await client.query(
-                `UPDATE ${this.store.tables.automations}
-                    SET phase='waiting',continuation_epoch=$6,projection_version=projection_version+1,updated_at=now()
-                  WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
-                    AND incarnation_id=$4 AND generation=$5 AND status='active' AND active_run_id IS NULL`,
-                [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
-                  row.current_generation, continuationEpoch],
+            let evaluating = Number(existingEvaluation.rowCount) > 0;
+            if (!evaluating && frozen && !frozen.projected_at) {
+              const validation = await this.evidenceValidator.validateEvidenceManifest(
+                client,frozen.evidence_manifest,String(frozen.evidence_manifest_hash),{
+                  tenantId:event.tenantId,sessionId:event.sessionId,automationId:row.automation_id,
+                  executionId:row.execution_id,incarnationId:row.current_incarnation,
+                  generation:Number(row.current_generation),specVersion:Number(row.spec_version),
+                  runId:event.runId,throughGlobalSequence:event.globalSequence,
+                },
               );
+              if (validation.valid) {
+                // Resolve candidate/continuation authority before publishing evaluating phase.
+                const locked = await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
+                if (locked) await this.store.supersedeActiveWakeupsLocked(client,locked,'goal_candidate_projected');
+                const evaluation = await client.query(
+                  `INSERT INTO ${this.store.tables.evaluations}
+                    (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,evidence_manifest,evidence_manifest_hash)
+                   SELECT $1,c.tenant_id,c.session_id,c.automation_id,c.execution_id,c.incarnation_id,c.generation,c.spec_version,$2,
+                          jsonb_build_object('summary',c.summary,'evidenceManifest',c.evidence_manifest,
+                            'hardGates',jsonb_build_object('runTerminal',true,'noPendingInteraction',false,'noActiveResources',false,'budgetValid',false)),
+                          c.evidence_manifest,c.evidence_manifest_hash
+                     FROM ${this.store.tables.goalCompletionCandidates} c
+                    WHERE c.tenant_id=$3 AND c.session_id=$4 AND c.automation_id=$5 AND c.execution_id=$6
+                      AND c.run_id=$7 AND c.incarnation_id=$8 AND c.generation=$9 AND c.spec_version=$10
+                      AND c.projected_at IS NULL AND c.evidence_manifest_hash=$11
+                      AND NOT EXISTS (SELECT 1 FROM ${this.store.tables.evaluations} e WHERE e.execution_id=c.execution_id)
+                   ON CONFLICT(tenant_id,automation_id,generation,decision_epoch) DO NOTHING RETURNING evaluation_id`,
+                  [randomUUID(),event.globalSequence,event.tenantId,event.sessionId,row.automation_id,row.execution_id,
+                    event.runId,row.current_incarnation,row.current_generation,row.spec_version,frozen.evidence_manifest_hash],
+                );
+                evaluating = Number(evaluation.rowCount) > 0 || Boolean((await client.query(
+                  `SELECT 1 FROM ${this.store.tables.evaluations} WHERE execution_id=$1 AND incarnation_id=$2 AND generation=$3 AND spec_version=$4`,
+                  [row.execution_id,row.current_incarnation,row.current_generation,row.spec_version],
+                )).rowCount);
+                if (evaluating) await client.query(
+                  `UPDATE ${this.store.tables.goalCompletionCandidates} SET projected_at=COALESCE(projected_at,now())
+                    WHERE execution_id=$1 AND tenant_id=$2 AND session_id=$3 AND automation_id=$4
+                      AND incarnation_id=$5 AND generation=$6 AND spec_version=$7`,
+                  [row.execution_id,event.tenantId,event.sessionId,row.automation_id,row.current_incarnation,
+                    row.current_generation,row.spec_version],
+                );
+              } else {
+                await client.query(
+                  `UPDATE ${this.store.tables.goalCompletionCandidates} SET projected_at=now(),rejection_reason=$2
+                    WHERE execution_id=$1 AND tenant_id=$3 AND session_id=$4 AND automation_id=$5
+                      AND incarnation_id=$6 AND generation=$7 AND spec_version=$8 AND projected_at IS NULL`,
+                  [row.execution_id,validation.reason??'evidence_manifest_invalid',event.tenantId,event.sessionId,
+                    row.automation_id,row.current_incarnation,row.current_generation,row.spec_version],
+                );
+              }
             }
-            const validation = frozen
-              ? await this.evidenceValidator.validateEvidenceManifest(client, frozen.evidence_manifest, String(frozen.evidence_manifest_hash), {
-                tenantId: event.tenantId, sessionId: event.sessionId, automationId: row.automation_id,
-                executionId: row.execution_id, incarnationId: row.current_incarnation,
-                generation: Number(row.current_generation), specVersion: Number(row.spec_version),
-                runId: event.runId, throughGlobalSequence: event.globalSequence,
-              })
-              : { valid: false, reason: 'evidence_manifest_missing' };
-            if (frozen && !validation.valid) {
+            if (evaluating) {
+              const locked = await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
+              if (locked) await this.store.supersedeActiveWakeupsLocked(client,locked,'goal_evaluation_authoritative');
               await client.query(
-                `UPDATE ${this.store.tables.goalCompletionCandidates}
-                    SET projected_at=now(),rejection_reason=$2
-                  WHERE execution_id=$1 AND tenant_id=$3 AND session_id=$4 AND automation_id=$5
-                    AND incarnation_id=$6 AND generation=$7 AND spec_version=$8 AND projected_at IS NULL`,
-                [row.execution_id, validation.reason ?? 'evidence_manifest_invalid', event.tenantId, event.sessionId,
-                  row.automation_id, row.current_incarnation, row.current_generation, row.spec_version],
+                `UPDATE ${this.store.tables.automations} SET phase='evaluating',next_wakeup_at=NULL,
+                    projection_version=projection_version+1,updated_at=now()
+                  WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
+                    AND generation=$5 AND spec_version=$6 AND status='active' AND active_run_id IS NULL`,
+                [event.tenantId,event.sessionId,row.automation_id,row.current_incarnation,
+                  row.current_generation,row.spec_version],
               );
-            }
-            const evaluation = validation.valid ? await client.query(
-              `INSERT INTO ${this.store.tables.evaluations}
-                (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,evidence_manifest,evidence_manifest_hash)
-               SELECT $1,c.tenant_id,c.session_id,c.automation_id,c.execution_id,c.incarnation_id,c.generation,c.spec_version,$2,
-                      jsonb_build_object(
-                        'summary',c.summary,
-                        'evidenceManifest',c.evidence_manifest,
-                        'hardGates',jsonb_build_object(
-                          'runTerminal',true,'noPendingInteraction',false,'noActiveResources',false,'budgetValid',false)),
-                      c.evidence_manifest,c.evidence_manifest_hash
-                 FROM ${this.store.tables.goalCompletionCandidates} c
-                WHERE c.tenant_id=$3 AND c.session_id=$4 AND c.automation_id=$5 AND c.execution_id=$6
-                  AND c.run_id=$7 AND c.incarnation_id=$8 AND c.generation=$9 AND c.spec_version=$10
-                  AND c.projected_at IS NULL AND c.evidence_manifest_hash=$11
-                  AND NOT EXISTS (SELECT 1 FROM ${this.store.tables.evaluations} e WHERE e.execution_id=c.execution_id)
-               ON CONFLICT(tenant_id,automation_id,generation,decision_epoch) DO NOTHING
-               RETURNING evaluation_id`,
-              [randomUUID(), event.globalSequence, event.tenantId, event.sessionId, row.automation_id,
-                row.execution_id, event.runId, row.current_incarnation, row.current_generation, row.spec_version,
-                frozen?.evidence_manifest_hash],
-            ) : { rowCount: 0 };
-            if (evaluation.rowCount) {
-              await client.query(
-                `UPDATE ${this.store.tables.goalCompletionCandidates}
-                    SET projected_at=now()
-                  WHERE execution_id=$1 AND tenant_id=$2 AND automation_id=$3
-                    AND incarnation_id=$4 AND generation=$5 AND spec_version=$6`,
-                [row.execution_id, event.tenantId, row.automation_id, row.current_incarnation,
-                  row.current_generation, row.spec_version],
+            } else {
+              const successor = await client.query(
+                `SELECT 1 FROM ${this.store.tables.wakeups}
+                  WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
+                    AND generation=$5 AND spec_version=$6 AND state IN ('pending','claimed') LIMIT 1`,
+                [event.tenantId,event.sessionId,row.automation_id,row.current_incarnation,
+                  row.current_generation,row.spec_version],
               );
-              await client.query(
-                `UPDATE ${this.store.tables.automations}
-                    SET phase='evaluating',projection_version=projection_version+1,updated_at=now()
-                  WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
-                    AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,
-                [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
-                  row.current_generation, row.spec_version],
-              );
+              if (!successor.rowCount) {
+                const epoch=nextContinuationEpoch(row.current_continuation_epoch);
+                await this.store.scheduleTx(client,{
+                  tenantId:event.tenantId,sessionId:event.sessionId,automationId:row.automation_id,
+                  incarnationId:row.current_incarnation,generation:Number(row.current_generation),
+                  specVersion:Number(row.spec_version),continuationEpoch:epoch,
+                  triggerKey:`goal:${row.automation_id}:g${row.current_generation}:e${epoch}:from:${event.runId}:no_checkpoint`,
+                  dueAt:new Date(),payload:{sourceRunId:event.runId,reason:frozen?.rejection_reason??'no_checkpoint'},
+                });
+                await client.query(
+                  `UPDATE ${this.store.tables.automations} SET phase='waiting',continuation_epoch=$7,
+                      projection_version=projection_version+1,updated_at=now()
+                    WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
+                      AND generation=$5 AND spec_version=$6 AND status='active' AND active_run_id IS NULL`,
+                  [event.tenantId,event.sessionId,row.automation_id,row.current_incarnation,
+                    row.current_generation,row.spec_version,epoch],
+                );
+              }
             }
           }
         }
         if(fenced)await this.store.tryFinalizeLocked(client,event.tenantId,event.sessionId,row.automation_id);
         const next=await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
-        if(next){
+        if(next&&fenced){
           await this.store.event(client,next,'automation_execution_changed',{runId:event.runId,status:event.status,snapshot:next});
           this.store.publish(next,'automation_execution_changed');
         }
@@ -424,19 +499,30 @@ export class SessionAutomationTerminalProjector {
             modelUsage: event.modelUsage,
             ...(event.error ? { summary: event.error } : {}),
           };
-        } else if (event.type === 'run_state_changed' && ['cancelled', 'failed'].includes(event.status)) {
-          terminal = {
-            globalSequence: after,
-            tenantId: envelope.tenantId,
-            sessionId: envelope.sessionId,
-            runId: event.runId,
-            status: event.status === 'cancelled' ? 'cancelled' : 'failed',
-            ...(event.reason ? { summary: event.reason } : {}),
-          };
+        } else if (event.type === 'run_state_changed') {
+          if (['completed', 'cancelled', 'failed', 'orphaned'].includes(event.status)) {
+            terminal = {
+              globalSequence: after,
+              tenantId: envelope.tenantId,
+              sessionId: envelope.sessionId,
+              runId: event.runId,
+              status: event.status as AutomationTerminalEvent['status'],
+              stateOnly: true,
+              ...(event.reason ? { summary: event.reason } : {}),
+            };
+          } else if (!['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(event.status)) {
+            // A newly introduced/invalid status must fail closed. Advancing this cursor would
+            // permanently discard a terminal transition that this projector does not understand.
+            throw new Error(`unknown runtime run status at terminal cursor: ${String(event.status)}`);
+          }
         }
         if (!terminal) {
+          // Multiple projector instances may recover the same consumer concurrently. A slower
+          // non-terminal page must never overwrite a newer terminal projection's cursor.
           await this.store.pool.query(
-            `UPDATE ${this.store.tables.consumers} SET last_global_sequence=$2,updated_at=now() WHERE consumer_name=$1`,
+            `UPDATE ${this.store.tables.consumers}
+                SET last_global_sequence=GREATEST(last_global_sequence,$2),updated_at=now()
+              WHERE consumer_name=$1`,
             [this.consumerName, after],
           );
           continue;

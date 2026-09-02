@@ -160,7 +160,7 @@ export { startWakeLeaseRenewal, type RuntimeWakeLease };
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
-import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
+import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, finalizeTerminalRun, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
 export {
   failRunningRunForWallClock,
   markRunState,
@@ -1539,11 +1539,21 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             for (const input of queued) {
               const wakeMessage = input.sourceRun.metadata?.wakeMessage;
               if (!isWakeMessage(wakeMessage)) {
-                // 2026-08-04 BUG-8：坏数据不打死健康的目标 run。把坏行标 failed +
+                // 2026-08-04 BUG-8：坏数据不打死健康的目标 run。先持久化 failed outbox +
                 // 回收 steering 行，跳过继续处理其余插话。
                 logger.error(`插话消息 ${input.sourceRunId} 缺少 durable wakeMessage，已跳过并标记 failed`);
-                await config.runStore?.releasePendingSteeringForSourceRun?.(input.sourceRunId).catch(() => undefined);
-                await config.runStore?.markStatus(input.sourceRunId, 'failed', 'missing_wake_message').catch(() => undefined);
+                if (config.runStore) {
+                  await finalizeTerminalRun({
+                    runStore: config.runStore, eventStore: eventStore!, runId: input.sourceRunId,
+                    status: 'failed', reason: 'missing_wake_message',
+                    events: [{ type: 'run_state_changed', runId: input.sourceRunId,
+                      sessionId: input.sourceRun.sessionId, status: 'failed',
+                      previousStatus: input.sourceRun.status, reason: 'missing_wake_message' }],
+                    ctx: { tenantId: tenantIdForRun }, logger: config.logger,
+                  });
+                  // Release steering ownership only after the durable terminal claim.
+                  await config.runStore.releasePendingSteeringForSourceRun?.(input.sourceRunId).catch(() => undefined);
+                }
                 continue;
               }
               const queuedMessage: InboundMessage = {
@@ -3102,7 +3112,7 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
   );
   const reason = input.drainHandoff.reason ?? 'server_drain_handoff';
   const handedOffAt = new Date().toISOString();
-  // steering 的 durable user_message 可安全重放，但恢复必须有上限；否则同一故障会让
+  // Durable steering user_message 可安全重放，但恢复必须有上限；否则同一故障会让
   // 目标 run 永久 running，并把后续 reserved source 永久挡在 recoverable 集合之外。
   const isSteeringRecovery = reason.startsWith('steering_');
   const previousAttempts = typeof current.metadata?.drainHandoffAttempts === 'number'
@@ -3115,31 +3125,21 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     ...(isSteeringRecovery ? { drainHandoffAttempts: handoffAttempts } : {}),
   });
   if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
-  await appendRunStateChanged(
-    input.eventStore,
-    input.run.sessionId,
-    input.run.runId,
-    'running',
-    current.status,
-    reason,
-    { tenantId: eventTenantId },
-  );
+  await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId,
+    'running', current.status, reason, { tenantId: eventTenantId });
 
   if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
-    await input.eventStore.append({
-      type: 'run_finished',
-      runId: input.run.runId,
-      sessionId: input.run.sessionId,
-      subtype: 'error',
-      numTurns: 0,
-      error: STEERING_RECOVERY_FAILURE_MESSAGE,
-    }, { tenantId: eventTenantId });
+    await finalizeTerminalRun({
+      runStore: input.config.runStore, eventStore: input.eventStore, runId: input.run.runId,
+      status: 'failed', reason: STEERING_RECOVERY_FAILURE_MESSAGE,
+      events: [{ type: 'run_state_changed', runId: input.run.runId, sessionId: input.run.sessionId,
+        status: 'failed', previousStatus: handedOff.status, reason: STEERING_RECOVERY_FAILURE_MESSAGE }],
+      ctx: { tenantId: eventTenantId }, logger: input.config.logger,
+    });
     await input.sessionCatalog.markStatus(input.run.sessionId, 'error');
-    await input.onOutboundEvent?.(
-      { type: 'error', error: STEERING_RECOVERY_FAILURE_MESSAGE },
-      { runId: input.run.runId, sessionId: input.run.sessionId },
-    );
-    await input.lease.release('failed', STEERING_RECOVERY_FAILURE_MESSAGE);
+    await input.onOutboundEvent?.({ type: 'error', error: STEERING_RECOVERY_FAILURE_MESSAGE },
+      { runId: input.run.runId, sessionId: input.run.sessionId });
+    await input.lease.release(undefined, STEERING_RECOVERY_FAILURE_MESSAGE);
     input.config.logger?.error(
       `Runtime steering recovery exhausted run=${input.run.runId} session=${input.run.sessionId} reason=${reason} attempts=${handoffAttempts}`,
     );

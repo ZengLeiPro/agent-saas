@@ -565,10 +565,15 @@ export class SessionAutomationEvaluator {
           input.incarnationId, input.generation, input.specVersion, input.runId, input.summary,
           JSON.stringify(frozen.manifest.entries.map(entry => entry.ref)), JSON.stringify(frozen.manifest), frozen.manifest.canonicalHash],
       );
-      return inserted.rowCount ? { queued: true } : { queued: false, reason: 'candidate_exists' };
+      const authoritative = inserted.rowCount || (await client.query(
+        `SELECT 1 FROM ${this.store.tables.goalCompletionCandidates} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4 AND incarnation_id=$5 AND generation=$6 AND spec_version=$7 AND run_id=$8`,
+        [input.tenantId,input.sessionId,input.automationId,input.executionId,input.incarnationId,input.generation,input.specVersion,input.runId])).rowCount;
+      if (!authoritative) return { queued: false, reason: 'candidate_exists' };
+      // The locked transaction leaves the candidate as the only authoritative successor.
+      await this.store.supersedeActiveWakeupsLocked(client,snapshot,'goal_candidate_nominated');
+      return { queued: true };
     });
   }
-
   private async applyDecisionLocked(
     client: pg.PoolClient,
     job: {
@@ -618,19 +623,18 @@ export class SessionAutomationEvaluator {
     if (decision.decision === 'met') {
       await this.store.beginTerminalDrainLocked(client,current!,'completed','goal_met');
     } else if (decision.decision === 'continue') {
-      const epoch = Number(job.decision_epoch) + 1;
-      await this.store.scheduleTx(client, {
-        tenantId: job.tenant_id,
-        sessionId: job.session_id,
-        automationId: job.automation_id,
-        incarnationId: job.incarnation_id,
-        generation: Number(job.generation),
-        specVersion: Number(job.spec_version),
-        continuationEpoch: epoch,
-        triggerKey: `goal:${job.automation_id}:g${job.generation}:e${epoch}`,
-        dueAt: new Date(),
-        payload: { evaluationId: job.evaluation_id, reason: decision.reason },
+      await this.store.supersedeActiveWakeupsLocked(client,current!,'goal_evaluator_continue');
+      const fence=[job.tenant_id,job.session_id,job.automation_id,job.incarnation_id,job.generation,job.spec_version];
+      const persisted=await client.query(`SELECT continuation_epoch FROM ${this.store.tables.automations} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 FOR UPDATE`,fence);
+      const epoch=Number(persisted.rows[0]?.continuation_epoch)+1;
+      if(!Number.isSafeInteger(epoch)||epoch<1)throw new Error('invalid_wakeup_continuation_epoch');
+      await this.store.scheduleTx(client,{
+        tenantId:job.tenant_id,sessionId:job.session_id,automationId:job.automation_id,incarnationId:job.incarnation_id,
+        generation:Number(job.generation),specVersion:Number(job.spec_version),continuationEpoch:epoch,
+        triggerKey:`goal:${job.automation_id}:g${job.generation}:e${epoch}:evaluation:${job.evaluation_id}`,
+        dueAt:new Date(),payload:{evaluationId:job.evaluation_id,reason:decision.reason},
       });
+      await client.query(`UPDATE ${this.store.tables.automations} SET phase='waiting',continuation_epoch=$7,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active' AND phase='evaluating'`,[...fence,epoch]);
     } else {
       await client.query(
         `UPDATE ${this.store.tables.automations}
@@ -646,7 +650,6 @@ export class SessionAutomationEvaluator {
     if(next)await this.store.event(client,next,'automation_state_changed',{evaluationId:job.evaluation_id,decision:decision.decision,snapshot:next});
     return true;
   }
-
   async reconcileUnknown(): Promise<number> {
     let restored = 0;
     // Restart-safe billing close: retry durable lifecycle rows before replaying a completed verdict.

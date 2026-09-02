@@ -504,10 +504,10 @@ describe('DurableBackgroundTaskService', () => {
     });
     expect(runStore.records.has('bg-wake-bg-task-1')).toBe(false);
   });
-
-  it('authorizes status/cancel by parent session and freezes cancellation for delivery', async () => {
-    const { service, runStore } = fixture();
+  it('authorizes status/cancel by parent session and durably freezes cancellation for delivery', async () => {
+    const { service, runStore, sessionCatalog } = fixture();
     const task = completedTask('');
+    sessionCatalog.records.set(task.sessionId, { ...session(task.sessionId), kind: 'subagent' });
     task.status = 'pending';
     task.metadata.wakeState = 'none';
     runStore.records.set(task.runId, task);
@@ -539,8 +539,7 @@ describe('DurableBackgroundTaskService', () => {
 
   it('escapes all XML metacharacters', () => {
     expect(escapeXml(`<tag a="b">Tom & Jerry's</tag>`)).toBe(
-      '&lt;tag a=&quot;b&quot;&gt;Tom &amp; Jerry&apos;s&lt;/tag&gt;',
-    );
+      '&lt;tag a=&quot;b&quot;&gt;Tom &amp; Jerry&apos;s&lt;/tag&gt;');
   });
 
   it('restores the parent tenant hand and monitors a durable command after service reconstruction', async () => {

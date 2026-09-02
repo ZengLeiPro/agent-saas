@@ -14,6 +14,7 @@ import {
   type RuntimeWakeLease,
 } from '../runtime/rawRuntimeRunDispatch.js';
 import type { RunRecord, RunStatus, RunStore } from '../runtime/runStore.js';
+import { readTerminalEventOutbox } from '../runtime/runTerminalCoordinator.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 import { MemoryEventStore, MemorySessionCatalog } from './runtimeWake.testHelpers.js';
@@ -323,9 +324,9 @@ describe('wakeRuntimeSession', () => {
     });
     expect(innerEventStore.events.map((event) => event.type)).toEqual([
       'run_state_changed',
-      'run_finished',
       'run_state_changed',
     ]);
+    expect(readTerminalEventOutbox(current)).toMatchObject({ terminalStatus: 'failed' });
     expect(innerEventStore.events.at(-1)).toMatchObject({
       type: 'run_state_changed',
       runId: 'target-steering-recovery',
@@ -333,12 +334,9 @@ describe('wakeRuntimeSession', () => {
     });
     expect(markSessionStatus).toHaveBeenCalledWith('session-steering-recovery', 'error');
     expect(outbound).toEqual(['error']);
-    expect(releases).toEqual([{
-      status: 'failed',
-      reason: '会话恢复连续失败，本次运行已结束，请重试。',
-    }]);
+    expect(releases).toEqual([{ status: undefined,
+      reason: '会话恢复连续失败，本次运行已结束，请重试。' }]);
   });
-
   it('restores durable context far enough to honor cancel commands before model wake', async () => {
     const session: RuntimeSessionRecord = {
       sessionId: 'session-1',

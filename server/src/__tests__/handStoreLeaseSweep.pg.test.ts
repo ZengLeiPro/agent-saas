@@ -64,8 +64,10 @@ describePg('PgHandStore lease 与 provision authority 治理', () => {
     store.claimProvisionRecovery(handId, token, patch, updatedAt, generation, tenantId);
   const completeProvisionRecovery = (handId: string, token: string, status: 'provisioning' | 'ready' | 'unhealthy' | 'destroyed', patch?: Record<string, unknown>, tenantId = TENANT_ID) =>
     store.completeProvisionRecovery(handId, token, status, patch, tenantId);
-  const completeProvisionAttempt = (handId: string, generation: string, status: 'provisioning' | 'ready' | 'unhealthy' | 'destroyed', patch?: Record<string, unknown>, tenantId = TENANT_ID) =>
-    store.completeProvisionAttempt(handId, generation, status, patch, tenantId);
+  const completeProvisionAttempt = (handId: string, generation: string, status: 'provisioning' | 'ready' | 'unhealthy' | 'destroyed', patch?: Record<string, unknown>, tenantId = TENANT_ID, owner?: string) =>
+    store.completeProvisionAttempt(handId, generation, status, patch, tenantId, owner);
+  const renewProvisionAttemptLease = (handId: string, generation: string, owner: string, tenantId = TENANT_ID) =>
+    store.renewProvisionAttemptLease(handId, generation, owner, tenantId);
   const claimProvisionDispatch = (handId: string, generation: string, token: string, updatedAt: string, tenantId = TENANT_ID) =>
     store.claimProvisionDispatch(handId, generation, token, updatedAt, tenantId);
   const completeProvisionDispatch = (handId: string, generation: string, token: string, status: 'ready' | 'unhealthy', patch?: Record<string, unknown>, tenantId = TENANT_ID) =>
@@ -158,6 +160,45 @@ describePg('PgHandStore lease 与 provision authority 治理', () => {
     );
     expect(await completeProvisionAttempt('normal-generation', 'generation-1', 'unhealthy')).toBeNull();
     expect(await completeProvisionAttempt('normal-generation', 'generation-2', 'ready')).not.toBeNull();
+
+    await seed('owned-attempt', { status: 'provisioning' });
+    const owner = 'live-transport-owner';
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['owned-attempt', JSON.stringify({
+        provisionGeneration: 'owned-generation', provisionAttemptOwner: owner,
+        provisionAttemptClaimedAtMs: Date.now(), provisionAttemptLeaseExpiresAtMs: Date.now() + 60_000,
+      })],
+    );
+    const owned = await getHand('owned-attempt');
+    expect(await renewProvisionAttemptLease('owned-attempt', 'owned-generation', owner)).toMatchObject({
+      status: 'provisioning', metadata: { provisionAttemptOwner: owner },
+    });
+    expect(await claimProvisionRecovery(
+      'owned-attempt', 'scanner-too-early', undefined, owned!.updatedAt, 'owned-generation',
+    )).toBeNull();
+    expect(await completeProvisionAttempt(
+      'owned-attempt', 'owned-generation', 'unhealthy', { provisionFailure: 'transport failed' }, TENANT_ID, owner,
+    )).toMatchObject({ status: 'unhealthy', metadata: { provisionFailure: 'transport failed' } });
+
+    await seed('expired-attempt', { status: 'provisioning' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['expired-attempt', JSON.stringify({
+        provisionGeneration: 'expired-generation', provisionAttemptOwner: 'dead-owner',
+        provisionAttemptClaimedAtMs: Date.now() - 10 * 60_000,
+        provisionAttemptLeaseExpiresAtMs: Date.now() - 1,
+      })],
+    );
+    const expired = await getHand('expired-attempt');
+    expect(await claimProvisionRecovery(
+      'expired-attempt', 'scanner-takeover', undefined, expired!.updatedAt, 'expired-generation',
+    )).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionRecoveryToken: 'scanner-takeover', provisionAttemptOwner: null,
+    } });
+    expect(await completeProvisionAttempt(
+      'expired-attempt', 'expired-generation', 'ready', {}, TENANT_ID, 'dead-owner',
+    )).toBeNull();
   });
 
   it('dispatch claim 原子持久化未知结果且只有同 generation/token 可按结果确定性完成', async () => {
@@ -261,7 +302,7 @@ describePg('PgHandStore lease 与 provision authority 治理', () => {
     ]);
   });
 
-  it('并发跨租户注册只允许一个 tenant-qualified client Hand 继承 tenant-less legacy metadata', async () => {
+  it('不可证明归属的 tenant-less legacy Client metadata 在并发跨租户注册时零泄漏并保留隔离', async () => {
     const rawHandId = 'shared-legacy-client';
     const tenantA = 'legacy-tenant-a';
     const tenantB = 'legacy-tenant-b';
@@ -275,7 +316,7 @@ describePg('PgHandStore lease 与 provision authority 治理', () => {
     await pool.query(
       `INSERT INTO ${prefix}_hands
          (hand_id, workspace_id, tenant_id, type, status, capabilities, metadata)
-       VALUES ($1, 'legacy-workspace', NULL, 'client', 'unhealthy', '[]'::jsonb, $2::jsonb)`,
+       VALUES ($1, 'client:legacy-daemon', NULL, 'client', 'unhealthy', '[]'::jsonb, $2::jsonb)`,
       [rawHandId, JSON.stringify(legacyMetadata)],
     );
 
@@ -290,26 +331,65 @@ describePg('PgHandStore lease 与 provision authority 治理', () => {
       }, [rawHandId]),
     ]);
 
-    const inheritors = [registeredA, registeredB].filter(
-      (hand) => hand.metadata.secret === legacyMetadata.secret,
-    );
-    const freshRegistrations = [registeredA, registeredB].filter(
-      (hand) => hand.metadata.secret === undefined,
-    );
-
-    expect(inheritors).toHaveLength(1);
-    expect(inheritors[0]?.metadata).toMatchObject(legacyMetadata);
-    expect(freshRegistrations).toHaveLength(1);
-    expect(freshRegistrations[0]?.metadata).toEqual({
-      rawHandId,
-      registrant: freshRegistrations[0]?.tenantId === tenantA ? 'a' : 'b',
-    });
+    expect(registeredA.metadata).toEqual({ rawHandId, registrant: 'a' });
+    expect(registeredB.metadata).toEqual({ rawHandId, registrant: 'b' });
+    expect(JSON.stringify([registeredA.metadata, registeredB.metadata])).not.toContain(legacyMetadata.secret);
     expect(await store.get(handA, tenantA)).toEqual(registeredA);
     expect(await store.get(handB, tenantB)).toEqual(registeredB);
     expect((await pool.query(
       `SELECT hand_id FROM ${prefix}_hands WHERE hand_id = $1 AND tenant_id IS NULL`,
       [rawHandId],
-    )).rows).toEqual([]);
+    )).rows).toEqual([{ hand_id: rawHandId }]);
+  });
+
+  it('即使 runs 快照与 workspace 看似唯一归属也绝不迁移 tenant-less Client metadata', async () => {
+    const rawHandId = 'provable-legacy-client';
+    const tenantId = 'legacy-proven-tenant';
+    const sessionId = 'legacy-proven-session';
+    const handId = deriveTenantQualifiedClientDaemonHandId(tenantId, rawHandId);
+    const legacyMetadata = { secret: 'owned-secret', token: 'owned-token' };
+    await pool.query(
+      `INSERT INTO ${prefix}_runs (run_id, tenant_id, session_id, status, updated_at)
+       VALUES ('legacy-proof-run', $1, $2, 'running', now())`,
+      [tenantId, sessionId],
+    );
+    await pool.query(
+      `INSERT INTO ${prefix}_hands
+         (hand_id, session_id, workspace_id, tenant_id, type, status, capabilities, metadata)
+       VALUES ($1, $2, 'client:legacy-daemon', NULL, 'client', 'unhealthy', '[]'::jsonb, $3::jsonb)`,
+      [rawHandId, sessionId, JSON.stringify(legacyMetadata)],
+    );
+
+    const registered = await store.registerClientDaemon({
+      handId, tenantId, sessionId, workspaceId: `ws_${tenantId}__user`,
+      type: 'client', metadata: { rawHandId, connected: true },
+    }, [rawHandId]);
+
+    expect(registered.metadata).toEqual({ rawHandId, connected: true });
+    expect(JSON.stringify(registered.metadata)).not.toContain(legacyMetadata.secret);
+    expect(JSON.stringify(registered.metadata)).not.toContain(legacyMetadata.token);
+    expect((await pool.query(
+      `SELECT hand_id, metadata FROM ${prefix}_hands WHERE hand_id = $1 AND tenant_id IS NULL`,
+      [rawHandId],
+    )).rows).toEqual([{ hand_id: rawHandId, metadata: legacyMetadata }]);
+  });
+
+  it('init backfill 不从伪装成 qualified workspace 的 tenant-less Client 行推导租户', async () => {
+    const handId = 'client-init-backfill-quarantine';
+    const metadata = { secret: 'never-backfill-client-secret' };
+    await pool.query(
+      `INSERT INTO ${prefix}_hands
+         (hand_id, workspace_id, tenant_id, type, status, capabilities, metadata)
+       VALUES ($1, 'ws_forged-tenant__user', NULL, 'client', 'unhealthy', '[]'::jsonb, $2::jsonb)`,
+      [handId, JSON.stringify(metadata)],
+    );
+
+    await store.init();
+
+    expect((await pool.query(
+      `SELECT tenant_id, user_id, metadata FROM ${prefix}_hands WHERE hand_id = $1`,
+      [handId],
+    )).rows).toEqual([{ tenant_id: null, user_id: null, metadata }]);
   });
 
   it('unhealthy 恢复队列只包含活跃会话并排除历史与 waiting_user', async () => {

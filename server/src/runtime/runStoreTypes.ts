@@ -278,6 +278,13 @@ export interface RunStore {
     waitingStatus: Extract<RunStatus, 'waiting_user' | 'waiting_approval'>,
     reason?: string,
   ): Promise<RunRecord | null>;
+  /** State-only terminal repair: atomically claim only when the terminal outbox is absent. */
+  claimStateOnlyTerminalOutbox?(
+    runId: string,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+    reason: string | undefined,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null>;
   /** CAS 状态迁移；仅当前状态命中 expectedStatuses 时更新，未命中返回 null。 */
   markStatusIfCurrent?(
     runId: string,

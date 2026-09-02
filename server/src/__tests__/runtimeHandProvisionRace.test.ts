@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto'; // recipe and stable provision-key assertions
 import { describe, expect, it, vi } from 'vitest';
-
-// Fixed child identities must make default and tenant hand provisioning safely repeatable after a crash.
-
+// Fixed identities and durable attempt owners make provisioning/scanner races repeatable after a crash.
 import type {
   HandRecord,
   HandStatus,
@@ -13,7 +11,7 @@ import type {
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
 import { deriveProvisionIdentity, deriveTenantHandId, ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
 
-// Single-record store covers default-hand CAS; tenant dispatch claims and completion certainty use the map fixture below.
+// Single-record store covers default-hand CAS; the map fixture covers tenant dispatch claims.
 class CasMemoryHandStore implements HandStore {
   record: HandRecord | null = null;
 
@@ -41,9 +39,14 @@ class CasMemoryHandStore implements HandStore {
     generation: string,
     status: HandStatus,
     metadata: Record<string, unknown> = {},
+    _tenantId?: string,
+    owner?: string,
   ): Promise<HandRecord | null> {
+    const leaseExpiry = this.record?.metadata.provisionAttemptLeaseExpiresAtMs;
     if (this.record?.handId !== handId || this.record.status !== 'provisioning'
-      || this.record.metadata.provisionGeneration !== generation) return null;
+      || this.record.metadata.provisionGeneration !== generation
+      || (owner && (this.record.metadata.provisionAttemptOwner !== owner
+        || typeof leaseExpiry !== 'number' || leaseExpiry <= Date.now()))) return null;
     return await this.updateStatus(handId, status, metadata);
   }
 
@@ -107,18 +110,52 @@ class MapMemoryHandStore implements HandStore {
       reconcileRequired: metadata.reconcileRequired ?? status !== 'ready',
     });
   }
-  async completeProvisionAttempt(handId: string, generation: string, status: HandStatus, metadata: Record<string, unknown> = {}) {
+  async completeProvisionAttempt(handId: string, generation: string, status: HandStatus,
+    metadata: Record<string, unknown> = {}, _tenantId?: string, provisionAttemptOwner?: string) {
     const record = this.records.get(handId);
-    if (!record || record.status !== 'provisioning' || record.metadata.provisionGeneration !== generation) return null;
-    return this.updateStatus(handId, status, metadata);
+    if (!record || record.status !== 'provisioning' || record.metadata.provisionGeneration !== generation
+      || (provisionAttemptOwner
+        ? record.metadata.provisionAttemptOwner !== provisionAttemptOwner
+          || typeof record.metadata.provisionAttemptLeaseExpiresAtMs !== 'number'
+          || record.metadata.provisionAttemptLeaseExpiresAtMs <= Date.now()
+        : typeof record.metadata.provisionAttemptOwner === 'string')) return null;
+    return this.updateStatus(handId, status, {
+      ...metadata, provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null,
+      provisionAttemptLeaseExpiresAtMs: null,
+    });
   }
   async updateStatus(handId: string, status: HandStatus, metadata: Record<string, unknown> = {}) {
     const record = this.records.get(handId); if (!record) return null;
     const updated = { ...record, status, updatedAt: new Date().toISOString(), metadata: { ...record.metadata, ...metadata } };
     this.records.set(handId, updated); return updated;
   }
-  async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
-  async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
+  async claimProvisionRecovery(handId: string, recoveryToken: string, metadata: Record<string, unknown> = {},
+    expectedUpdatedAt?: string, expectedGeneration?: string): Promise<HandRecord | null> {
+    const record = this.records.get(handId);
+    if (!record || !['provisioning', 'ready', 'unhealthy'].includes(record.status)
+      || record.metadata.reconcileRequired === true
+      || (expectedUpdatedAt && record.updatedAt !== expectedUpdatedAt)
+      || (expectedGeneration && record.metadata.provisionGeneration !== expectedGeneration)) return null;
+    if (record.status === 'provisioning') {
+      const owner = record.metadata.provisionAttemptOwner;
+      const leaseExpiresAt = record.metadata.provisionAttemptLeaseExpiresAtMs;
+      if (typeof owner === 'string' && (typeof leaseExpiresAt !== 'number'
+        || leaseExpiresAt >= Date.now())) return null;
+    }
+    return this.updateStatus(handId, 'unhealthy', {
+      ...metadata, provisionRecoveryToken: recoveryToken, provisionRecoveryClaimedAtMs: Date.now(),
+      provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null, provisionAttemptLeaseExpiresAtMs: null,
+    });
+  }
+  async completeProvisionRecovery(handId: string, recoveryToken: string, status: HandStatus,
+    metadata: Record<string, unknown> = {}): Promise<HandRecord | null> {
+    const record = this.records.get(handId);
+    if (!record || record.status !== 'unhealthy'
+      || record.metadata.provisionRecoveryToken !== recoveryToken) return null;
+    return this.updateStatus(handId, status, {
+      ...metadata, provisionRecoveryToken: null, provisionRecoveryClaimedAtMs: null,
+    });
+  }
   async get(handId: string) { return this.records.get(handId) ?? null; }
   async listBySession(sessionId: string) { return [...this.records.values()].filter(record => record.sessionId === sessionId); }
   async listByWorkspace(workspaceId: string) { return [...this.records.values()].filter(record => record.workspaceId === workspaceId); }
@@ -299,7 +336,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
     })).not.toBe(originalKey);
   });
 
-  it('does not let an older slow failure overwrite a newer successful attempt', async () => {
+  it('fails the older transport closed without overwriting a newer successful attempt', async () => {
     const handStore = new CasMemoryHandStore();
     let releaseFirst!: () => void;
     let markFirstStarted!: () => void;
@@ -331,7 +368,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
       executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision: secondProvision }) } as never,
     });
     releaseFirst();
-    await expect(first).resolves.toBeUndefined();
+    await expect(first).rejects.toThrow('HAND_PROVISION_AUTHORITY_LOST:completion rejected');
 
     expect(handStore.record).toMatchObject({
       status: 'ready',
@@ -343,6 +380,48 @@ describe('runtime Hand atomic provision attempt authority', () => {
     });
     expect(firstProvision.mock.calls[0]![0].provisionKey)
       .toBe(secondProvision.mock.calls[0]![0].provisionKey);
+  });
+
+  it('does not let shared health complete ready while the owned provision transport is in flight', async () => {
+    const handStore = new MapMemoryHandStore();
+    let markStarted!: () => void;
+    let releaseFailure!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const provision = vi.fn(async () => {
+      markStarted();
+      await failureGate;
+      throw new Error('injected transport failure');
+    });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ handStore, fetchImpl, defaultServerRemoteAuthToken: 'token' });
+    const registration = ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: {
+        has: () => true, get: () => ({ listInternalTools: () => [], provision }),
+      } as never,
+      executionTarget: 'server-remote', sessionId: 'scanner-transport-race',
+      workspaceId: 'workspace-race', tenantId: 'tenant-race',
+    });
+    await started;
+    const inFlight = [...handStore.records.values()][0]!;
+    expect(inFlight).toMatchObject({ status: 'provisioning', metadata: {
+      provisionAttemptOwner: expect.any(String), provisionAttemptClaimedAtMs: expect.any(Number),
+    } });
+
+    expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 0 });
+    expect(handStore.records.get(inFlight.handId)?.status).toBe('provisioning');
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    releaseFailure();
+    await expect(registration).rejects.toThrow('HAND_PROVISION_FAILED:injected transport failure');
+    expect(handStore.records.get(inFlight.handId)).toMatchObject({
+      status: 'unhealthy', metadata: { provisionFailure: 'injected transport failure',
+        provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null },
+    });
   });
 
   it('keeps claimed dispatch authority stable when scanner runs before the original request', async () => {

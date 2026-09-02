@@ -6,6 +6,8 @@ import type { ExecutionTargetKind, ToolDescriptor } from '../agent/toolRuntime.j
 import type { ExecutionTransportRegistry } from './executionTransport.js';
 import { HandManager } from './handManager.js';
 import {
+  PROVISION_ATTEMPT_LEASE_MS,
+  PROVISION_ATTEMPT_RENEW_INTERVAL_MS,
   SERVER_REMOTE_HAND_LEASE_MS,
   type HandCapability,
   type HandStore,
@@ -302,12 +304,16 @@ export async function ensureRuntimeHandRegistered(params: {
   let defaultProvisionFailure: string | undefined;
   let defaultProvisionMetadata: Record<string, unknown> | undefined;
   const defaultProvisionGeneration = provisionKey;
+  const defaultProvisionAttemptOwner = randomUUID();
   const initialProvisionMetadata = {
     registeredBy: 'rawRuntimeRunDispatch',
     provisionKey,
     provisionFailure: null,
     provisionRecoveryToken: null,
     provisionRecoveryClaimedAtMs: null,
+    provisionAttemptOwner: defaultProvisionAttemptOwner,
+    provisionAttemptClaimedAtMs: Date.now(),
+    provisionAttemptLeaseExpiresAtMs: Date.now() + PROVISION_ATTEMPT_LEASE_MS,
     provisionGeneration: defaultProvisionGeneration,
     provision: { attempts: 0, lastStatus: 'provisioning', lastAttemptAt: new Date().toISOString() },
   };
@@ -320,6 +326,27 @@ export async function ensureRuntimeHandRegistered(params: {
   } else {
     defaultProvisionMetadata = existingDefaultHand.metadata;
   }
+  let provisionAuthorityFailure: Error | undefined;
+  let renewalInFlight: Promise<void> | undefined;
+  const renewProvisionAuthority = (): void => {
+    if (renewalInFlight || provisionAuthorityFailure || !params.handStore?.renewProvisionAttemptLease) return;
+    renewalInFlight = params.handStore.renewProvisionAttemptLease(
+      defaultHandId,
+      defaultProvisionGeneration,
+      defaultProvisionAttemptOwner,
+      eventTenantId,
+    ).then((renewed) => {
+      if (!renewed) provisionAuthorityFailure = new Error('HAND_PROVISION_AUTHORITY_LOST:lease renewal rejected');
+    }, (err: unknown) => {
+      provisionAuthorityFailure = new Error(`HAND_PROVISION_AUTHORITY_LOST:lease renewal failed: ${err instanceof Error ? err.message : String(err)}`);
+    }).finally(() => { renewalInFlight = undefined; });
+  };
+  const renewalTimer = !reuseReadyDefaultHand && transport
+    && typeof (transport as { provision?: unknown }).provision === 'function'
+    && params.handStore.renewProvisionAttemptLease
+    ? setInterval(renewProvisionAuthority, PROVISION_ATTEMPT_RENEW_INTERVAL_MS)
+    : undefined;
+  renewalTimer?.unref?.();
   if (!reuseReadyDefaultHand && transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     defaultProvisionAttempted = true;
     try {
@@ -384,6 +411,9 @@ export async function ensureRuntimeHandRegistered(params: {
       sandboxScopeId: verifiedRuntimeIsolationEvidence.sandboxScopeId,
     } : {}),
   };
+  if (renewalTimer) clearInterval(renewalTimer);
+  await renewalInFlight;
+  if (provisionAuthorityFailure) throw provisionAuthorityFailure;
   const completedDefaultHand = reuseReadyDefaultHand
     ? existingDefaultHand
     : await params.handStore.completeProvisionAttempt(
@@ -392,8 +422,11 @@ export async function ensureRuntimeHandRegistered(params: {
       defaultFinalStatus,
       defaultFinalMetadata,
       eventTenantId,
+      defaultProvisionAttemptOwner,
     );
-  if (!completedDefaultHand) return;
+  if (!completedDefaultHand) {
+    throw new Error(`HAND_PROVISION_AUTHORITY_LOST:completion rejected for ${defaultHandId}`);
+  }
   if (defaultProvisionFailure) {
     try {
       await params.eventStore.append({

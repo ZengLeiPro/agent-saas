@@ -43,7 +43,9 @@ export async function finalizeWakeTerminalRun(input: {
       await finalizeTerminalRun({
         runStore: input.config.runStore, eventStore: input.eventStore,
         runId: input.run.runId, status: input.status, reason: input.reason,
-        ...(mayRepairStateOnlyTerminal ? { expectedStatuses: [input.status] } : {}),
+        ...(mayRepairStateOnlyTerminal
+          ? { expectedStatuses: [input.status], stateOnlyRepair: true }
+          : {}),
         events: [{
           type: 'run_state_changed', runId: input.run.runId, sessionId: input.run.sessionId, status: input.status,
           ...(!isTerminalRunStatus(current?.status) && current?.status ? { previousStatus: current.status } : {}),

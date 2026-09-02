@@ -365,14 +365,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   }
   async failCommandStart(context: ToolCallContext, taskId: string, message: string): Promise<void> {
     const task = await this.requireOwnedTask(context, taskId);
-    await this.config.runStore!.markStatus(taskId, 'failed', 'background_command_start_failed', {
-      backgroundResult: failureResult('failed', message),
-      wakeState: 'discarded',
-      backgroundFinishedAt: new Date().toISOString(),
-    });
+    await markBackgroundTaskTerminal(this.config.runStore!, await this.backgroundTaskEventStore(task), task,
+      'failed', 'background_command_start_failed', { backgroundResult: failureResult('failed', message),
+        wakeState: 'discarded', backgroundFinishedAt: new Date().toISOString() });
     await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
   }
-
   handoffCommandMonitor(record: RunRecord): void {
     const metadata = parseBackgroundTaskMetadata(record);
     if (metadata?.taskType !== 'command') return;
@@ -681,9 +678,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     if (isTerminal(task.status)) return task;
     const metadata = parseBackgroundTaskMetadata(task);
     const message = '后台任务由父会话请求取消';
-    const updated = await markBackgroundTaskTerminal(this.config.runStore!, task.runId, 'cancelled', message, {
-      backgroundResult: failureResult('cancelled', message),
-      wakeState: 'pending',
+    const updated = await markBackgroundTaskTerminal(this.config.runStore!, await this.backgroundTaskEventStore(task),
+      task, 'cancelled', message, {
+      backgroundResult: failureResult('cancelled', message), wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),
     });
     if (!updated) {
@@ -772,7 +769,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
             ? 'cancelled'
             : 'failed';
         const statusReason = runStatus === 'completed' ? undefined : view.error ?? `background_command_${view.status}`;
-        const updated = await markBackgroundTaskTerminal(this.config.runStore!, record.runId, runStatus, statusReason, {
+        const updated = await markBackgroundTaskTerminal(this.config.runStore!,
+          await this.backgroundTaskEventStore(record), record, runStatus, statusReason, {
           backgroundResult: result,
           wakeState: 'pending',
           backgroundFinishedAt: new Date().toISOString(),
@@ -891,7 +889,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     };
     const status = outcomeToRunStatus(outcome.status);
     const statusReason = status === 'completed' ? undefined : safeErrorMessage ?? `background_${outcome.status}`;
-    const updated = await markBackgroundTaskTerminal(this.config.runStore!, record.runId, status, statusReason, {
+    const updated = await markBackgroundTaskTerminal(this.config.runStore!,
+      await this.backgroundTaskEventStore(record), record, status, statusReason, {
       backgroundResult: result,
       wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),
@@ -907,13 +906,14 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     status: 'failed' | 'cancelled',
     reason = message,
   ): Promise<void> {
-    const updated = await markBackgroundTaskTerminal(this.config.runStore!, record.runId, status, reason, {
-      backgroundResult: failureResult(status, message),
-      wakeState: 'pending',
+    const updated = await markBackgroundTaskTerminal(this.config.runStore!, await this.backgroundTaskEventStore(record),
+      record, status, reason, {
+      backgroundResult: failureResult(status, message), wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),
     });
     if (updated) await resolveSessionCatalog(this.config).markStatus(record.sessionId, 'error').catch(() => undefined);
   }
+  private async backgroundTaskEventStore(record: RunRecord) { const taskSession = await resolveSessionCatalog(this.config).get(record.sessionId); if (!taskSession) throw new Error(`后台任务 session 不存在：${record.sessionId}`); return createEventStoreForSession(this.config, taskSession); }
 
   private async appendParentLifecycleEvent(
     parentSession: import('../sessionCatalog.js').RuntimeSessionRecord,

@@ -1,25 +1,48 @@
+import { finalizeTerminalRun } from '../runTerminalCoordinator.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
+import type { EventStore } from '../types.js';
 
 const ACTIVE_BACKGROUND_STATUSES = ['pending', 'running'] as const;
 
-/** Never overwrites a terminal background-task state; PG uses a single-statement CAS. */
+/**
+ * Terminalizes a background task through the same durable state/outbox CAS as foreground runs.
+ * Event append may fail, but the durable outbox is committed before this function returns.
+ */
 export async function markBackgroundTaskTerminal(
   runStore: RunStore,
-  runId: string,
+  eventStore: EventStore,
+  run: RunRecord,
   status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled'>,
   reason?: string,
   metadataPatch: Record<string, unknown> = {},
 ): Promise<RunRecord | null> {
-  if (runStore.markStatusIfCurrent) {
-    return runStore.markStatusIfCurrent(
-      runId,
-      ACTIVE_BACKGROUND_STATUSES,
+  const tenantId = run.tenantId?.trim();
+  if (!tenantId) throw new Error(`background terminal tenantId missing: ${run.runId}`);
+  const result = await finalizeTerminalRun({
+    runStore,
+    eventStore,
+    runId: run.runId,
+    status,
+    reason,
+    expectedStatuses: ACTIVE_BACKGROUND_STATUSES,
+    claim: (outboxPatch) => runStore.markStatusIfCurrent
+      ? runStore.markStatusIfCurrent(
+          run.runId,
+          ACTIVE_BACKGROUND_STATUSES,
+          status,
+          reason,
+          { ...metadataPatch, ...outboxPatch },
+        )
+      : runStore.markStatus(run.runId, status, reason, { ...metadataPatch, ...outboxPatch }),
+    events: [{
+      type: 'run_state_changed',
+      runId: run.runId,
+      sessionId: run.sessionId,
       status,
-      reason,
-      metadataPatch,
-    );
-  }
-  const current = await runStore.get(runId);
-  if (!current || !ACTIVE_BACKGROUND_STATUSES.includes(current.status as 'pending' | 'running')) return null;
-  return runStore.markStatus(runId, status, reason, metadataPatch);
+      previousStatus: run.status,
+      ...(reason ? { reason } : {}),
+    }],
+    ctx: { tenantId },
+  });
+  return result.won ? result.record : null;
 }

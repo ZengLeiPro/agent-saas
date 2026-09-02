@@ -352,6 +352,22 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(continuation.rows[0].trigger_key).toContain('no_checkpoint');
   });
 
+  it('atomically supersedes continuation when the execution nominates a candidate', async () => {
+    const setup=await activeExecution();
+    await store.tx(client=>store.scheduleTx(client,{tenantId,sessionId:setup.sessionId,automationId:setup.automationId,
+      incarnationId:setup.incarnationId,generation:1,specVersion:1,continuationEpoch:9,
+      triggerKey:`goal:${setup.automationId}:g1:e9:from:${setup.dispatch.targetRunId}`,dueAt:new Date(),payload:{}}));
+    const evidence=await appendSuccessfulShellEvidence(setup);
+    const evaluator=new SessionAutomationEvaluator(store,{evaluate:vi.fn()} as unknown as GoalEvaluatorPort,()=>true);
+    const nomination={tenantId,sessionId:setup.sessionId,automationId:setup.automationId,executionId:setup.dispatch.outboxId,runId:setup.dispatch.targetRunId,
+      incarnationId:setup.incarnationId,generation:1,specVersion:1,summary:'done',evidenceRefs:[`event:${evidence.event.id}`]};
+    await expect(Promise.all([evaluator.nominate(nomination),evaluator.nominate(nomination)])).resolves.toEqual([{queued:true},{queued:true}]);
+    const active=await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.wakeups} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+      AND incarnation_id=$4 AND generation=1 AND spec_version=1 AND state IN ('pending','claimed')`,[tenantId,setup.sessionId,setup.automationId,setup.incarnationId]);
+    expect(active.rows[0].count).toBe(0);
+    expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.goalCompletionCandidates} WHERE execution_id=$1`,[setup.dispatch.outboxId])).rows[0].count).toBe(1);
+  });
+
   it('creates a goal evaluation only after the current execution durably nominates frozen evidence', async () => {
     const setup = await activeExecution();
     const evaluate = vi.fn(async () => ({ decision: 'met' as const, reason: 'verified', confidence: 0.99 }));
@@ -533,6 +549,17 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect((await pool.query(
       `SELECT count(*)::int n FROM ${store.tables.providerAttempts} WHERE automation_id=$1`, [setup.automationId],
     )).rows[0].n).toBe(1);
+    const successor=await pool.query(`SELECT continuation_epoch,trigger_key FROM ${store.tables.wakeups}
+      WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
+        AND generation=1 AND spec_version=1 AND state IN ('pending','claimed')`,
+    [tenantId,setup.sessionId,setup.automationId,setup.incarnationId]);
+    expect(successor.rows).toHaveLength(1);
+    expect(successor.rows[0].continuation_epoch).toBe('1');
+    expect(successor.rows[0].trigger_key).toContain(`:evaluation:${evaluationId}`);
+    expect(await evaluator.evaluatePending()).toBe(0);
+    expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.wakeups}
+      WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`,
+    [tenantId,setup.automationId])).rows[0].count).toBe(1);
   });
 
   it('completed evaluator attempt without a durable verdict becomes explicitly unverifiable without replay', async () => {

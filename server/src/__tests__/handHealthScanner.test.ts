@@ -24,6 +24,7 @@ function makeHand(overrides: Partial<HandRecord> & { handId: string }): HandReco
   };
 }
 
+// Mirrors the durable recovery/attempt ownership fences used by PgHandStore.
 class InMemoryHandStore implements HandStore {
   readonly hands = new Map<string, HandRecord>();
 
@@ -58,27 +59,27 @@ class InMemoryHandStore implements HandStore {
     return updated;
   }
 
-  async claimProvisionRecovery(
-    handId: string,
-    recoveryToken: string,
-    metadataPatch: Record<string, unknown> = {},
-    expectedUpdatedAt?: string,
-    expectedProvisionGeneration?: string,
-  ): Promise<HandRecord | null> {
+  async claimProvisionRecovery(handId: string, recoveryToken: string, metadataPatch: Record<string, unknown> = {},
+    expectedUpdatedAt?: string, expectedProvisionGeneration?: string): Promise<HandRecord | null> {
     const hand = this.hands.get(handId);
-    if (!hand || !['ready', 'unhealthy'].includes(hand.status)) return null;
+    if (!hand || !['provisioning', 'ready', 'unhealthy'].includes(hand.status)) return null;
     if (hand.metadata.reconcileRequired === true) return null;
     if (expectedUpdatedAt && hand.updatedAt !== expectedUpdatedAt) return null;
     if (expectedProvisionGeneration && hand.metadata.provisionGeneration !== expectedProvisionGeneration) return null;
-    const token = hand.metadata.provisionRecoveryToken;
-    const claimedAt = hand.metadata.provisionRecoveryClaimedAtMs;
-    if (typeof token === 'string' && typeof claimedAt === 'number'
-      && claimedAt >= Date.now() - PROVISION_RECOVERY_CLAIM_TTL_MS) return null;
-    return await this.updateStatus(handId, 'unhealthy', {
-      ...metadataPatch,
-      provisionRecoveryToken: recoveryToken,
-      provisionRecoveryClaimedAtMs: Date.now(),
-    });
+    if (hand.status === 'provisioning') {
+      const attemptOwner = hand.metadata.provisionAttemptOwner;
+      const leaseExpiresAt = hand.metadata.provisionAttemptLeaseExpiresAtMs;
+      if (typeof attemptOwner === 'string' && (typeof leaseExpiresAt !== 'number'
+        || leaseExpiresAt >= Date.now())) return null;
+    } else {
+      const token = hand.metadata.provisionRecoveryToken;
+      const claimedAt = hand.metadata.provisionRecoveryClaimedAtMs;
+      if (typeof token === 'string' && typeof claimedAt === 'number'
+        && claimedAt >= Date.now() - PROVISION_RECOVERY_CLAIM_TTL_MS) return null;
+    }
+    return await this.updateStatus(handId, 'unhealthy', { ...metadataPatch,
+      provisionRecoveryToken: recoveryToken, provisionRecoveryClaimedAtMs: Date.now(),
+      provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null, provisionAttemptLeaseExpiresAtMs: null });
   }
 
   async completeProvisionAttempt(

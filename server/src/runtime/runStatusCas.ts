@@ -44,6 +44,28 @@ export async function markRunStatus(
   return result.rows[0] ? store.normalizeRunRecord(result.rows[0].row_json) : null;
 }
 
+/** Atomically repairs a legacy state-only terminal row exactly once. */
+export async function claimStateOnlyTerminalOutbox(
+  store: RunStatusCasStore,
+  runId: string,
+  status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+  reason: string | undefined,
+  metadataPatch: Record<string, unknown>,
+): Promise<RunRecord | null> {
+  const now = new Date().toISOString();
+  const result = await store.pool.query<{ row_json: RunRecord }>(`
+    UPDATE ${store.runsTable}
+    SET status_reason = COALESCE(status_reason, $3),
+        updated_at = $4,
+        metadata = (metadata || $5::jsonb) - 'wakeMessage'
+    WHERE run_id = $1
+      AND status = $2
+      AND NOT (metadata ? 'terminalEventOutbox')
+    RETURNING row_to_json(${store.runsTable}.*) AS row_json
+  `, [runId, status, reason ?? null, now, JSON.stringify(metadataPatch)]);
+  return result.rows[0] ? store.normalizeRunRecord(result.rows[0].row_json) : null;
+}
+
 /** Implements the single-statement compare-and-set status transition for PgRunStore. */
 export async function markRunStatusIfCurrent(
   store: RunStatusCasStore,

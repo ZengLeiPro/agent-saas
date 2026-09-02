@@ -1169,8 +1169,7 @@ export class PgRunStore implements RunStore {
     `, [runId, claimToken, state, patch, now]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
-  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); }
-  async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
+  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); } async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
   async claimPersistedInteractionResume(runId: string, expectedStatuses: readonly RunStatus[], reason: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimPersistedInteractionResume(runId, expectedStatuses, reason, metadataPatch); }
 
   async listStagedPersistedInteractionResumes(limit?: number): Promise<RunRecord[]> { return this.queries.listStagedPersistedInteractionResumes(limit); }
@@ -1178,6 +1177,7 @@ export class PgRunStore implements RunStore {
   async rollbackPersistedInteractionResume(runId: string, claim: Record<string, unknown>, waitingStatus: 'waiting_user' | 'waiting_approval', reason?: string): Promise<RunRecord | null> { return this.queries.rollbackPersistedInteractionResume(runId, claim, waitingStatus, reason); }
   async stagePendingRun(runId: string): Promise<RunRecord | null> { return this.queries.stagePendingRun(runId); }
   async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> { return this.queries.cancelPendingTaskboardRun(runId, reason); }
+  async claimStateOnlyTerminalOutbox(runId: string, status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>, reason: string | undefined, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimStateOnlyTerminalOutbox(runId, status, reason, metadataPatch); }
   async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch); }
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.patchMetadata(runId, metadataPatch); }
   async get(runId: string): Promise<RunRecord | null> { return this.queries.get(runId); }

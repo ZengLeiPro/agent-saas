@@ -160,6 +160,9 @@ function terminalOutbox(
     // acknowledge instead of publishing a duplicate batch.
     events: events.map((event, index) => ({
       ...event,
+      // Reuse EventStore's durable (tenant_id,event_id) unique idempotency boundary.
+      // The delivery marker remains independently queryable for legacy/outbox repair.
+      id: `terminal:${deliveryId}:${index}`,
       terminalDeliveryId: deliveryId,
       terminalDeliveryIndex: index,
     })) as PlatformEventInput[],
@@ -176,8 +179,9 @@ function outboxPatch(outbox: TerminalEventOutboxRecord): Record<string, unknown>
 
 function durableOutboxStore(runStore: RunStore): TerminalEventOutboxRunStore | null {
   const candidate = runStore as Partial<TerminalEventOutboxRunStore>;
-  return candidate.claimTerminalEventOutbox && candidate.finishTerminalEventOutbox
-    && candidate.listPendingTerminalEventOutboxes ? candidate as TerminalEventOutboxRunStore : null;
+  return candidate.claimTerminalEventOutbox && candidate.renewTerminalEventOutboxClaim
+    && candidate.finishTerminalEventOutbox && candidate.listPendingTerminalEventOutboxes
+    ? candidate as TerminalEventOutboxRunStore : null;
 }
 
 function warnTerminalDelivery(logger: TerminalEventLogger | undefined, message: string): void {
@@ -212,26 +216,26 @@ async function finishClaimedOutboxBestEffort(
   previous: TerminalEventOutboxRecord,
   next: TerminalEventOutboxRecord,
   logger?: TerminalEventLogger,
-): Promise<void> {
+): Promise<boolean> {
   const durableStore = durableOutboxStore(runStore);
   if (durableStore && previous.claimToken) {
     try {
-      await durableStore.finishTerminalEventOutbox(
+      return Boolean(await durableStore.finishTerminalEventOutbox(
         runId,
         previous.deliveryId,
         previous.claimToken,
         next as unknown as Record<string, unknown>,
-      );
-      return;
+      ));
     } catch (error) {
       warnTerminalDelivery(
         logger,
         `[run-terminal] outbox claim finish failed run=${runId} delivery=${previous.deliveryId}: ${errorMessage(error)}`,
       );
-      return;
+      return false;
     }
   }
   await patchOutboxBestEffort(runStore, runId, next, logger);
+  return true;
 }
 
 async function appendTerminalEvents(
@@ -239,10 +243,77 @@ async function appendTerminalEvents(
   events: PlatformEventInput[],
   ctx: Parameters<EventStore['append']>[1],
 ): Promise<PlatformEvent[]> {
-  if (events.length > 1 && eventStore.appendBatch) return eventStore.appendBatch(events, ctx);
+  const idempotentEvents = events.map((event) => {
+    const marked = event as PlatformEventInput & { terminalDeliveryId?: unknown; terminalDeliveryIndex?: unknown };
+    return typeof marked.terminalDeliveryId === 'string' && Number.isInteger(marked.terminalDeliveryIndex)
+      ? { ...event, id: `terminal:${marked.terminalDeliveryId}:${marked.terminalDeliveryIndex}` } as PlatformEventInput
+      : event;
+  });
+  if (idempotentEvents.length > 1 && eventStore.appendBatch) return eventStore.appendBatch(idempotentEvents, ctx);
   const stored: PlatformEvent[] = [];
-  for (const event of events) stored.push(await eventStore.append(event, ctx));
+  for (const event of idempotentEvents) stored.push(await eventStore.append(event, ctx));
   return stored;
+}
+
+interface TerminalClaimLease {
+  assertAndRenew(): Promise<void>;
+  lost(): boolean;
+  stop(): Promise<void>;
+}
+
+class TerminalOutboxClaimLostError extends Error {
+  constructor(runId: string, deliveryId: string) {
+    super(`terminal outbox claim lost: run=${runId} delivery=${deliveryId}`);
+    this.name = 'TerminalOutboxClaimLostError';
+  }
+}
+
+function startTerminalClaimLease(input: {
+  store: TerminalEventOutboxRunStore;
+  runId: string;
+  deliveryId: string;
+  claimToken: string;
+  claimTtlMs: number;
+}): TerminalClaimLease {
+  let stopped = false;
+  let claimLost = false;
+  let renewal: Promise<void> | null = null;
+  const renew = async (): Promise<void> => {
+    if (stopped || claimLost) return;
+    if (renewal) return renewal;
+    renewal = (async () => {
+      try {
+        const owned = await input.store.renewTerminalEventOutboxClaim(
+          input.runId,
+          input.deliveryId,
+          input.claimToken,
+          new Date(),
+        );
+        if (!owned) claimLost = true;
+      } catch {
+        // A renewal whose durability is unknown cannot be treated as ownership.
+        claimLost = true;
+      } finally {
+        renewal = null;
+      }
+    })();
+    return renewal;
+  };
+  const intervalMs = Math.max(10, Math.floor(input.claimTtlMs / 3));
+  const timer = setInterval(() => { void renew(); }, intervalMs);
+  timer.unref?.();
+  return {
+    async assertAndRenew() {
+      await renew();
+      if (claimLost) throw new TerminalOutboxClaimLostError(input.runId, input.deliveryId);
+    },
+    lost: () => claimLost,
+    async stop() {
+      stopped = true;
+      clearInterval(timer);
+      await renewal;
+    },
+  };
 }
 
 async function terminalEventsAlreadyAppended(
@@ -294,6 +365,8 @@ export async function finalizeTerminalRun(input: {
   reason?: string;
   events: PlatformEventInput[];
   expectedStatuses?: readonly RunStatus[];
+  /** Repair a terminal status row that predates the durable outbox; claim must be metadata-aware. */
+  stateOnlyRepair?: boolean;
   ctx?: Parameters<EventStore['append']>[1];
   logger?: TerminalEventLogger;
   onClaim?: () => void;
@@ -314,15 +387,22 @@ export async function finalizeTerminalRun(input: {
   // The guarded markStatus fallback exists only for lightweight/file test stores.
   const updated = input.claim
     ? await input.claim(outboxPatch(outbox))
-    : input.runStore.markStatusIfCurrent
-      ? await input.runStore.markStatusIfCurrent(
+    : input.stateOnlyRepair && input.runStore.claimStateOnlyTerminalOutbox
+      ? await input.runStore.claimStateOnlyTerminalOutbox(
           input.runId,
-          expectedStatuses,
           input.status,
           input.reason,
           outboxPatch(outbox),
         )
-      : await claimWithGuardedFallback(input.runStore, input.runId, expectedStatuses, input.status, input.reason, outbox);
+      : input.runStore.markStatusIfCurrent
+        ? await input.runStore.markStatusIfCurrent(
+            input.runId,
+            expectedStatuses,
+            input.status,
+            input.reason,
+            outboxPatch(outbox),
+          )
+        : await claimWithGuardedFallback(input.runStore, input.runId, expectedStatuses, input.status, input.reason, outbox);
 
   if (!updated) {
     return {
@@ -336,8 +416,19 @@ export async function finalizeTerminalRun(input: {
   // retries must never extend the lifetime of a billable model/tool execution.
   input.onClaim?.();
 
+  const durableStore = durableOutboxStore(input.runStore);
+  const lease = durableStore && outbox.claimToken ? startTerminalClaimLease({
+    store: durableStore,
+    runId: input.runId,
+    deliveryId: outbox.deliveryId,
+    claimToken: outbox.claimToken,
+    claimTtlMs: 30_000,
+  }) : undefined;
+  let storedEvents: PlatformEvent[] = [];
   try {
-    const storedEvents = await appendTerminalEvents(input.eventStore, input.events, appendContext);
+    await lease?.assertAndRenew();
+    storedEvents = await appendTerminalEvents(input.eventStore, outbox.events, appendContext);
+    await lease?.assertAndRenew();
     const delivered: TerminalEventOutboxRecord = {
       ...outbox,
       state: 'delivered',
@@ -348,10 +439,15 @@ export async function finalizeTerminalRun(input: {
       claimToken: undefined,
       claimedAt: undefined,
     };
-    await finishClaimedOutboxBestEffort(input.runStore, input.runId, outbox, delivered, input.logger);
+    const finished = await finishClaimedOutboxBestEffort(input.runStore, input.runId, outbox, delivered, input.logger);
+    if (!finished) throw new TerminalOutboxClaimLostError(input.runId, outbox.deliveryId);
     return { won: true, record: updated, storedEvents, outbox: delivered };
   } catch (error) {
     const deliveryError = toError(error);
+    if (lease?.lost() || deliveryError instanceof TerminalOutboxClaimLostError) {
+      warnTerminalDelivery(input.logger, `[run-terminal] event append claim lost run=${input.runId} delivery=${outbox.deliveryId}`);
+      return { won: true, record: updated, storedEvents, deliveryError, outbox };
+    }
     const failed: TerminalEventOutboxRecord = {
       ...outbox,
       state: 'failed',
@@ -367,7 +463,9 @@ export async function finalizeTerminalRun(input: {
       input.logger,
       `[run-terminal] event append failed; durable outbox retained run=${input.runId} delivery=${outbox.deliveryId}: ${deliveryError.message}`,
     );
-    return { won: true, record: updated, storedEvents: [], deliveryError, outbox: failed };
+    return { won: true, record: updated, storedEvents, deliveryError, outbox: failed };
+  } finally {
+    await lease?.stop();
   }
 }
 
@@ -509,6 +607,14 @@ export async function retryPendingTerminalEvents(input: {
     if (!run || !outbox || outbox.claimToken !== claimToken) return false;
   }
 
+  const claimTtlMs = input.claimTtlMs ?? 30_000;
+  const lease = durableStore && outbox.claimToken ? startTerminalClaimLease({
+    store: durableStore,
+    runId: input.runId,
+    deliveryId: outbox.deliveryId,
+    claimToken: outbox.claimToken,
+    claimTtlMs,
+  }) : undefined;
   try {
     const tenantId = resolveTerminalTenantId({
       runId: input.runId,
@@ -518,8 +624,13 @@ export async function retryPendingTerminalEvents(input: {
     });
     outbox = { ...outbox, tenantId, tenantResolutionError: undefined };
     const appendContext = { ...(input.ctx ?? {}), tenantId };
+    await lease?.assertAndRenew();
     const alreadyAppended = await terminalEventsAlreadyAppended(input.eventStore, outbox);
-    if (!alreadyAppended) await appendTerminalEvents(input.eventStore, outbox.events, appendContext);
+    await lease?.assertAndRenew();
+    if (!alreadyAppended) {
+      await appendTerminalEvents(input.eventStore, outbox.events, appendContext);
+      await lease?.assertAndRenew();
+    }
     const delivered: TerminalEventOutboxRecord = {
       ...outbox,
       state: 'delivered',
@@ -531,10 +642,15 @@ export async function retryPendingTerminalEvents(input: {
       claimToken: undefined,
       claimedAt: undefined,
     };
-    await finishClaimedOutboxBestEffort(input.runStore, input.runId, outbox, delivered, input.logger);
+    const finished = await finishClaimedOutboxBestEffort(input.runStore, input.runId, outbox, delivered, input.logger);
+    if (!finished) throw new TerminalOutboxClaimLostError(input.runId, outbox.deliveryId);
     return true;
   } catch (error) {
     const deliveryError = toError(error);
+    if (lease?.lost() || deliveryError instanceof TerminalOutboxClaimLostError) {
+      warnTerminalDelivery(input.logger, `[run-terminal] event replay claim lost run=${input.runId} delivery=${outbox.deliveryId}`);
+      return false;
+    }
     const tenantResolutionFailed = deliveryError instanceof TerminalOutboxTenantResolutionError;
     const attempts = outbox.attempts + 1;
     const failed: TerminalEventOutboxRecord = {
@@ -554,6 +670,8 @@ export async function retryPendingTerminalEvents(input: {
       `[run-terminal] event replay failed run=${input.runId} delivery=${outbox.deliveryId}: ${deliveryError.message}`,
     );
     return false;
+  } finally {
+    await lease?.stop();
   }
 }
 

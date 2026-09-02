@@ -459,15 +459,55 @@ export interface SnatStatus {
   entries: SnatEntry[];
   error?: string;
 }
+/** 能力就绪状态；与 server/src/config/capabilityContract.ts 保持一致。 */
+export type CapabilityState =
+  | "disabled"
+  | "incomplete"
+  | "validating"
+  | "ready"
+  | "enabled"
+  | "degraded"
+  | "blocked";
+
+export interface CapabilityBlocker {
+  code: string;
+  message: string;
+  targetRouteId?: string;
+}
+
+export interface CapabilityValidationRecord {
+  status: "passed" | "failed";
+  validatedAt: string;
+  configFingerprint: string;
+}
+
+/** 验证记录相对当前配置的有效性；never 与 passed 必须区分展示。 */
+export type CapabilityVerification = "passed" | "failed" | "stale" | "never";
+
+export interface CapabilityReadiness {
+  state: CapabilityState;
+  verification: CapabilityVerification;
+  /** 只有字段路径，不含 Secret 明文或 Vault 引用标识。 */
+  missing: string[];
+  blockers: CapabilityBlocker[];
+  lastValidation?: CapabilityValidationRecord;
+  targetRouteId: string | null;
+}
+
 export interface EffectiveConfigStatus {
   configSchemaVersion: number;
+  /** 运行时收敛读回口径（解析后的 AppConfig）。不是乐观锁令牌。 */
   effectiveConfigFingerprint: string;
+  /** 回写配置时作为 If-Match 的乐观锁令牌；仅管理接口返回。 */
+  rawConfigFingerprint?: string;
   capabilityFingerprint: string;
   secretReadiness: "ready" | "missing" | "legacy_inline" | "unknown";
   environment: "development" | "staging" | "production" | "test";
   processRole: string;
   appliedAt: string;
   capabilities: Record<string, boolean>;
+  /** 旧版服务端不返回；缺失时前端退回到 capabilities 的已启用/未启用两态。 */
+  capabilityStates?: Record<string, CapabilityReadiness>;
   secrets: {
     references: number;
     inlineLegacy: number;

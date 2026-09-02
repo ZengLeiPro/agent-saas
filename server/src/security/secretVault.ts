@@ -123,7 +123,13 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
   'egress-proxy': { read: ['__system__'], write: ['egress_config_admin'] },
   feishu_connector: { read: ['__system__'] },
   github_app: { read: ['__system__'] },
-  image_gen_tools: { read: ['__system__'], write: ['image_gen_config_admin'] },
+  // 各配置 admin principal 的 revoke 与其 write 同权：能力启用事务在配置未能落盘
+  // 时必须撤销本次暂存的 Secret，否则会留下无人引用却仍可解密的凭据。
+  image_gen_tools: {
+    read: ['__system__'],
+    write: ['image_gen_config_admin'],
+    revoke: ['image_gen_config_admin'],
+  },
   models: { read: ['__system__'], write: ['models_config_admin'], revoke: ['models_config_admin'] },
   memory_index: { read: ['__system__'], write: ['models_config_admin'], revoke: ['models_config_admin'] },
   server_remote: { read: ['__system__'] },
@@ -131,10 +137,18 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
     read: ['auth_sms_service', 'signup_sms_service'],
     write: ['signup_config_admin'],
   },
-  stt: { read: ['__system__'], write: ['__system__', 'audio_transcribe_config_admin'] },
-  'tenant-hand': { read: ['__system__'], write: ['__system__'] },
-  tenant_hand: { read: ['__system__'], write: ['__system__'] },
-  web_tools: { read: ['__system__'], write: ['tool_controls_admin'] },
+  stt: {
+    read: ['__system__'],
+    write: ['__system__', 'audio_transcribe_config_admin'],
+    revoke: ['audio_transcribe_config_admin'],
+  },
+  'tenant-hand': { read: ['__system__'], write: ['__system__'], revoke: ['__system__'] },
+  tenant_hand: { read: ['__system__'], write: ['__system__'], revoke: ['__system__'] },
+  web_tools: {
+    read: ['__system__'],
+    write: ['tool_controls_admin'],
+    revoke: ['tool_controls_admin'],
+  },
 };
 
 function assertSystemInfrastructurePrincipal(

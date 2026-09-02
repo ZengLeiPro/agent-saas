@@ -1,4 +1,5 @@
 import { authFetch } from './authFetch';
+import type { NativeOAuthStartBinding } from './oauthCallbackBridge';
 import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpOAuthStartResponse, McpTemplatesResponse, MyMcpResponse } from '../types/mcp';
 
 type ApiErrorBody = { error?: string; details?: unknown };
@@ -72,8 +73,9 @@ export async function diagnoseMyMcp(force = false): Promise<McpDiagnosticRespons
   }), 'Failed to diagnose MCP');
 }
 
-export async function fetchMcpAdminServers(): Promise<McpAdminServersResponse> {
-  return jsonOrError(await authFetch('/api/mcp/admin/servers'), 'Failed to fetch MCP servers');
+export async function fetchMcpAdminServers(tenantId?: string): Promise<McpAdminServersResponse> {
+  const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+  return jsonOrError(await authFetch(`/api/mcp/admin/servers${query}`), 'Failed to fetch MCP servers');
 }
 
 export async function upsertMcpServer(server: ManagedMcpServer): Promise<void> {
@@ -116,12 +118,12 @@ export async function deleteMyMcpServer(id: string): Promise<void> {
 export async function startMyMcpOAuth(
   serverId: string,
   returnTo: string,
-  nativeDeviceId?: string,
+  nativeBinding?: NativeOAuthStartBinding,
 ): Promise<McpOAuthStartResponse> {
   return jsonOrError(await authFetch(`/api/mcp/me/servers/${encodeURIComponent(serverId)}/oauth/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ returnTo, ...(nativeDeviceId ? { nativeDeviceId } : {}) }),
+    body: JSON.stringify({ returnTo, ...(nativeBinding ?? {}) }),
   }), '连接器授权启动失败');
 }
 

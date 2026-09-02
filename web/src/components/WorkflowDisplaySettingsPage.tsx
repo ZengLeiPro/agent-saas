@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { SettingsPanelHeader } from '@/components/SettingsCenter/SettingsPanelHeader';
+import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
 import { authFetch } from '@/lib/authFetch';
 import { cn } from '@/lib/utils';
 import { useScenarioLibrary } from '@/components/scenarios/useScenarioLibrary';
@@ -148,6 +149,14 @@ export default function WorkflowDisplaySettingsPage({ tenantId }: { tenantId: st
   }, [currentPolicy?.revision, selection.scope, selection.subjectId]);
 
   const chooseScope = (next: ScopeSelection) => {
+    if (JSON.stringify(draft) !== JSON.stringify(
+      currentPolicy
+        ? { displayCount: currentPolicy.displayCount, workflowIds: currentPolicy.workflowIds }
+        : null,
+    )) {
+      setError('当前展示配置尚未保存，请先保存或恢复后再切换范围。');
+      return;
+    }
     setSelection(next);
     setQuery('');
   };
@@ -188,7 +197,7 @@ export default function WorkflowDisplaySettingsPage({ tenantId }: { tenantId: st
   };
 
   const save = async () => {
-    if (!draft || draft.displayCount > draft.workflowIds.length) return;
+    if (!draft || draft.displayCount > draft.workflowIds.length) return false;
     setSaving(true);
     setSaved(false);
     try {
@@ -209,12 +218,26 @@ export default function WorkflowDisplaySettingsPage({ tenantId }: { tenantId: st
       if (!response.ok) throw new Error(responseError(response.status, body));
       await load();
       setSaved(true);
+      return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const baselineDraft = currentPolicy
+    ? { displayCount: currentPolicy.displayCount, workflowIds: [...currentPolicy.workflowIds] }
+    : null;
+  useSettingsDirtyEntry({
+    id: `organization-workflow-display:${tenantId}:${selection.scope}:${selection.subjectId}`,
+    label: `${selection.label}的工作流展示配置`,
+    dirty: !loading && JSON.stringify(draft) !== JSON.stringify(baselineDraft),
+    save: async () => { if (!await save()) throw new Error('Workflow display policy save failed'); },
+    discard: () => { setDraft(baselineDraft); setSaved(false); setError(null); },
+    draft,
+  });
 
   const restoreInheritance = async () => {
     if (!currentPolicy) {

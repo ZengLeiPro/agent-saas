@@ -93,7 +93,7 @@ describe('transcript physical-line windows', () => {
       initial.window.cursorGeneration,
       initial.window.latestCursor,
     );
-    expect(after).toMatch(/^tw1\./);
+    expect(after).toMatch(/^tw2\./);
     await appendFile(transcriptPath, transcriptText(25), 'utf8');
 
     const parsed = await parseTranscriptWindow(transcriptPath, { after, limit: 100 });

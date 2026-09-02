@@ -4,9 +4,8 @@
  * 12. 点踩 → 弹层 → 提交 POST → 「已反馈」实心态防连点
  * 13. Provider 缺省（个人 Agent 会话）→ 按钮零渲染（兼容性红线回归）
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { webcrypto } from 'node:crypto';
 import { MessageFeedbackButton } from './MessageFeedback';
 import { MessageFeedbackProvider } from '@/contexts/MessageFeedbackContext';
 
@@ -20,12 +19,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-beforeAll(() => {
-  // jsdom 无 crypto.subtle：注入 Node webcrypto（与浏览器行为一致）
-  if (!globalThis.crypto?.subtle) {
-    Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true });
-  }
-});
+
 
 describe('MessageFeedback', () => {
   beforeEach(() => {
@@ -75,7 +69,7 @@ describe('MessageFeedback', () => {
 
   it('用例12b: 刷新恢复——GET 返回的 contentHash 匹配后按钮为已反馈禁用态', async () => {
     const content = '被踩过的回答';
-    const digest = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
     const realHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
     authFetchMock.mockResolvedValueOnce(jsonResponse({ items: [{ contentHash: realHash, createdAt: '2026-07-10T08:00:00.000Z' }] }));

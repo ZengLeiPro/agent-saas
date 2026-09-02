@@ -8,16 +8,19 @@
  *   - /compact 与纯附件消息跳过门禁模型调用
  *   - config.guardrail 缺省（getter 缺省/空链）→ 门禁旁路，行为与改造前一致
  *   - personalAgentEnabled=false 普通用户被拒；admin 与 org agent 会话不受影响
+ *   - M20-06 V1 target 首绑、mismatch/cross-tenant 与 N-1 迁移 fail-closed
  *   - orgAgentId 无效 → org_agent_unavailable
  */
 
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
+import { normalizeChatSubmission, toCanonicalChatSubmissionWireMessage, type AgentTarget } from '@agent/shared';
 import { interactionStore } from '../channels/web/interactionStore.js';
 import { findTranscriptOrMetaPathBySessionId } from '../data/transcripts/index.js';
 import { readSessionMeta } from '../data/transcripts/meta.js';
@@ -26,7 +29,7 @@ import type { GuardrailEventInsert, GuardrailEventStore } from '../data/guardrai
 import type { TenantStore } from '../data/tenants/store.js';
 import type { TenantSettings } from '../data/tenants/types.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
-import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
+import { createRuntimeSessionRecord, FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 
@@ -137,6 +140,18 @@ function chatMessage(overrides: Record<string, unknown>) {
   } as any;
 }
 
+function canonicalMessage(target: { sessionId?: string; agentTarget?: AgentTarget }, clientMsgId: string) {
+  const normalized = normalizeChatSubmission({
+    text: 'hi',
+    clientMsgId: `${clientMsgId}-${randomUUID()}`,
+    target,
+    deliveryMode: 'queue',
+    attachments: [],
+  });
+  if (!normalized.ok) throw new Error(normalized.issue.message);
+  return toCanonicalChatSubmissionWireMessage(normalized.value);
+}
+
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 8; i += 1) await Promise.resolve();
 }
@@ -150,6 +165,7 @@ interface Rig {
   guardrailEvents: GuardrailEventInsert[];
   orgAgentStore: OrgAgentStore;
   send(user: TestUser, overrides: Record<string, unknown>): Promise<void>;
+  sendRaw(user: TestUser, message: any): Promise<void>;
 }
 
 describe('WebChannel 专职 Agent 门禁', () => {
@@ -214,6 +230,11 @@ describe('WebChannel 专职 Agent 门禁', () => {
         await (channel as any).processChatMessage(client, chatMessage(overrides));
         await flushMicrotasks();
       },
+      sendRaw: async (user, message) => {
+        const client = { ws: ws as any, user, alive: true, lastActivityAt: Date.now() };
+        await (channel as any).processChatMessage(client, message);
+        await flushMicrotasks();
+      },
     };
   }
 
@@ -247,7 +268,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(rig.enqueued).toHaveLength(0);
     // WS 合成气泡序列：stream_id → session → block_start → text(预设话术) → block_end → done
     const types = rig.ws.sent.map((m) => m.data?.type);
-    const seq = ['stream_id', 'session', 'block_start', 'text', 'block_end', 'done'];
+    const seq = ['stream_id', 'session', 'moderation_outcome', 'block_start', 'text', 'block_end', 'done'];
     const indexes = seq.map((t) => types.indexOf(t));
     expect(indexes.every((i) => i >= 0)).toBe(true);
     expect([...indexes].sort((a, b) => a - b)).toEqual(indexes);
@@ -255,6 +276,10 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(textEvent?.data?.content).toBe('这个问题超出了我的职责范围，请咨询选型相关问题。');
     // 拒答气泡携带真实 guardrail event id（员工申诉入口数据源；2026-07-19 F2 收尾）
     expect(textEvent?.data?.guardrailEventId).toBe('ev-fake-1');
+    expect(rig.ws.sent.find((m) => m.data?.type === 'moderation_outcome')?.data).toMatchObject({
+      moderationId: 'ev-fake-1', outcome: 'blocked', reasonCode: 'off_topic',
+      projection: { eventId: 'ev-fake-1:outcome', domain: 'moderation' },
+    });
     // 会话完成态广播（前端 loading 结束 + 列表刷新）
     expect(rig.userEvents.find((e) => e.type === 'session_status')?.status).toBe('completed');
     expect(rig.userEvents.some((e) => e.type === 'session_updated')).toBe(true);
@@ -273,6 +298,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
       message: { content: [{ type: 'text', text: '这个问题超出了我的职责范围，请咨询选型相关问题。' }] },
       // assistant 行顶层持久化 event id → 刷新后历史重建仍能渲染申诉入口
       guardrailEventId: 'ev-fake-1',
+      moderation: { eventId: 'ev-fake-1', outcome: 'blocked', reasonCode: 'off_topic' },
     });
 
     // guardrail_events 落库
@@ -386,16 +412,17 @@ describe('WebChannel 专职 Agent 门禁', () => {
     const scheduler = (rig.channel as any).config.enqueueRuntime.scheduler;
     vi.spyOn(scheduler, 'enqueue').mockRejectedValueOnce(new Error('scheduler unavailable'));
 
+    const clientMsgId = `msg-scheduler-failed-${randomUUID()}`;
     await rig.send(WAIN_USER, {
       message: '帮我选型',
       orgAgentId: agent.id,
-      client_msg_id: 'msg-scheduler-failed',
+      client_msg_id: clientMsgId,
     });
 
     const sessionEvent = rig.ws.sent.find((item) => item.data?.type === 'session')?.data;
     const doneEvent = rig.ws.sent.find((item) => item.data?.type === 'done')?.data;
-    expect(sessionEvent).toMatchObject({ client_msg_id: 'msg-scheduler-failed' });
-    expect(doneEvent).toMatchObject({ client_msg_id: 'msg-scheduler-failed', error: 'scheduler unavailable' });
+    expect(sessionEvent).toMatchObject({ client_msg_id: clientMsgId });
+    expect(doneEvent).toMatchObject({ client_msg_id: clientMsgId, error: 'scheduler unavailable' });
     expect(rig.ws.sent.findIndex((item) => item.data?.type === 'session'))
       .toBeLessThan(rig.ws.sent.findIndex((item) => item.data?.type === 'done'));
     await expect(rig.sessionCatalog.get(sessionEvent.sessionId)).resolves.toMatchObject({
@@ -446,6 +473,22 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(session?.orgAgentId).toBe(agent.id);
   });
 
+  it('V1 新 session 的 cross-tenant agentTarget fail-closed', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+
+    await rig.sendRaw(WAIN_USER, canonicalMessage({
+      agentTarget: { kind: 'org-agent', tenantId: 'kaiyan', orgAgentId: agent.id },
+    }, 'v1-cross-tenant'));
+
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data).toMatchObject({
+      reason_code: 'access_denied',
+    });
+    expect(rig.enqueued).toHaveLength(0);
+  });
+
   it('personalAgentEnabled=false：普通用户个人会话被拒；admin 与 org agent 会话不受影响', async () => {
     const rig = await makeRig({
       tenantStore: fakeTenantStore({ personalAgentEnabled: false }),
@@ -454,8 +497,10 @@ describe('WebChannel 专职 Agent 门禁', () => {
       guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
     });
 
-    // 普通用户无 orgAgentId → personal_agent_disabled
-    await rig.send(WAIN_USER, { message: 'hi' });
+    // V1 普通用户显式 personal target → personal_agent_disabled
+    await rig.sendRaw(WAIN_USER, canonicalMessage({
+      agentTarget: { kind: 'personal', tenantId: 'wain' },
+    }, 'v1-personal-disabled'));
     expect(rig.ws.sent.find((m) => m.data?.type === 'chat_rejected')?.data?.reason_code).toBe('personal_agent_disabled');
     expect(rig.enqueued).toHaveLength(0);
 
@@ -533,6 +578,37 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(meta?.tenantId).toBe('wain');
   });
 
+  it('已绑定 org target 撤权或删除后历史 session 仍存在但 send blocked', async () => {
+    const rig = await makeRig();
+    const guardrailOff = { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' };
+    const revoked = await seedOrgAgent(rig, { guardrail: guardrailOff });
+    const revokedTarget = { kind: 'org-agent' as const, tenantId: 'wain', orgAgentId: revoked.id };
+    await rig.sendRaw(WAIN_USER, canonicalMessage({ agentTarget: revokedTarget }, 'v1-revoke-create'));
+    const revokedSessionId = rig.enqueued[0].sessionId;
+    await rig.orgAgentStore.update(revoked.id, {
+      audience: { exposure: 'allow_users', usernames: ['someone_else'] },
+    }, 'wain_admin');
+
+    rig.ws.sent.length = 0;
+    await rig.sendRaw(WAIN_USER, canonicalMessage({ sessionId: revokedSessionId }, 'v1-revoke-send'));
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data?.reason_code)
+      .toBe('org_agent_unavailable');
+    expect(await rig.sessionCatalog.get(revokedSessionId)).not.toBeNull();
+
+    const deleted = await seedOrgAgent(rig, { guardrail: guardrailOff });
+    const deletedTarget = { kind: 'org-agent' as const, tenantId: 'wain', orgAgentId: deleted.id };
+    await rig.sendRaw(WAIN_USER, canonicalMessage({ agentTarget: deletedTarget }, 'v1-delete-create'));
+    const deletedSessionId = rig.enqueued[1].sessionId;
+    await rig.orgAgentStore.remove(deleted.id);
+
+    rig.ws.sent.length = 0;
+    await rig.sendRaw(WAIN_USER, canonicalMessage({ sessionId: deletedSessionId }, 'v1-delete-send'));
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data?.reason_code)
+      .toBe('org_agent_unavailable');
+    expect(await rig.sessionCatalog.get(deletedSessionId)).not.toBeNull();
+    expect(rig.enqueued).toHaveLength(2);
+  });
+
   it('orgAgentId 无效（缺失/停用/未指派）→ org_agent_unavailable，不 enqueue', async () => {
     const rig = await makeRig();
     const disabled = await seedOrgAgent(rig, { enabled: false });
@@ -547,6 +623,45 @@ describe('WebChannel 专职 Agent 门禁', () => {
     }
     expect(rig.enqueued).toHaveLength(0);
     expect(modelCalls()).toHaveLength(0);
+  });
+
+  it('N-1 仅凭 meta.orgAgentId 迁移 org target；无证明的历史 session 阻止发送', async () => {
+    const rig = await makeRig();
+    const agent = await seedOrgAgent(rig, {
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
+    });
+    const legacyOrg = createRuntimeSessionRecord({
+      sessionId: randomUUID(),
+      userId: WAIN_USER.sub,
+      username: WAIN_USER.username,
+      userRole: WAIN_USER.role,
+      tenantId: WAIN_USER.tenantId,
+      channel: 'web',
+      cwd: (rig.sessionCatalog as any).options.agentCwd,
+      orgAgentId: agent.id,
+    });
+    await rig.sessionCatalog.ensure(legacyOrg);
+    await rig.send(WAIN_USER, { sessionId: legacyOrg.sessionId, message: '继续' });
+    expect(await readSessionMeta(legacyOrg.transcriptPath)).toMatchObject({
+      agentTarget: { kind: 'org-agent', tenantId: 'wain', orgAgentId: agent.id },
+      agentTargetBindingVersion: 1,
+    });
+
+    const unproven = createRuntimeSessionRecord({
+      sessionId: randomUUID(),
+      userId: WAIN_USER.sub,
+      username: WAIN_USER.username,
+      userRole: WAIN_USER.role,
+      tenantId: WAIN_USER.tenantId,
+      channel: 'web',
+      cwd: (rig.sessionCatalog as any).options.agentCwd,
+    });
+    await rig.sessionCatalog.ensure(unproven);
+    rig.ws.sent.length = 0;
+    await rig.send(WAIN_USER, { sessionId: unproven.sessionId, message: '继续' });
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data).toMatchObject({
+      reason_code: 'invalid_submission',
+    });
   });
 
   it('audience 合同无效时管理员豁免也必须 fail-closed', async () => {

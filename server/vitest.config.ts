@@ -1,17 +1,20 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+const coverageReporters =
+  process.env.COVERAGE_REPORT_MODE === 'ci'
+    ? ['text', 'lcovonly', 'json-summary']
+    : ['text', 'lcov', 'json-summary', 'json', 'html'];
+
 export default defineConfig({
   resolve: {
-    alias: [
-      {
-        find: /^@agent\/shared$/,
-        replacement: fileURLToPath(new URL('../shared/src/index.ts', import.meta.url)),
-      },
-    ],
+    alias: {
+      '@agent/shared/lib/chatSubmission': fileURLToPath(new URL('../shared/src/lib/chatSubmission.ts', import.meta.url)),
+      '@agent/shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url)),
+    },
   },
   test: {
-    // 测试文件匹配模式
+    // 测试文件匹配模式（server + shared 源码 alias）
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'tests/**/*.{test,spec}.{ts,tsx}'],
     // 排除的目录
     exclude: ['node_modules', 'dist'],
@@ -23,7 +26,7 @@ export default defineConfig({
     // lcov 供 diff coverage 脚本使用；json-summary 供 CI 汇总；text/html 便于本地看
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'json-summary', 'json', 'html'],
+      reporter: coverageReporters,
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
       exclude: [

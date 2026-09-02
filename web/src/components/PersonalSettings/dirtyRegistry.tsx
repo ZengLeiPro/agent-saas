@@ -29,6 +29,8 @@ export interface SettingsDirtyEntry {
   dirty: boolean;
   save: () => void | Promise<void>;
   discard: () => void | Promise<void>;
+  /** 当前草稿必须回到页面完成时，禁用全局“保存并继续”。 */
+  saveDisabled?: boolean;
   /** Secret entries are guarded in-memory only and can never enter Web Storage. */
   secret?: boolean;
   draft?: unknown;
@@ -41,6 +43,7 @@ export interface SettingsDirtyController {
 
 interface DirtyRegistryContextValue {
   register: (entry: SettingsDirtyEntry) => () => void;
+  requestNavigation: (navigation: () => void) => void;
 }
 
 const DirtyRegistryContext = createContext<DirtyRegistryContextValue | null>(null);
@@ -266,7 +269,7 @@ export function useSettingsDirtyEntry(entry: SettingsDirtyEntry): void {
   useEffect(() => {
     if (!registry) return;
     return registry.register({ ...entry, save: () => latest.current.save(), discard: () => latest.current.discard() });
-  }, [registry, entry.id, entry.label, entry.dirty, entry.secret, draftFingerprint]);
+  }, [registry, entry.id, entry.label, entry.dirty, entry.secret, entry.saveDisabled, draftFingerprint]);
 
   useEffect(() => {
     if (!entry.dirty) {
@@ -277,10 +280,18 @@ export function useSettingsDirtyEntry(entry: SettingsDirtyEntry): void {
   }, [entry.id, entry.dirty, entry.draft, entry.secret]);
 }
 
+/** 让弹窗自己的 X、Esc、遮罩和取消按钮复用设置中心的统一 dirty guard。 */
+export function useSettingsDirtyNavigation(): (navigation: () => void) => void {
+  const registry = useContext(DirtyRegistryContext);
+  return registry?.requestNavigation ?? ((navigation) => navigation());
+}
+
 export function SettingsDirtyBoundary({
   children,
+  onControllerChange,
 }: {
   children: (controller: SettingsDirtyController) => ReactNode;
+  onControllerChange?: (controller: SettingsDirtyController | null) => void;
 }) {
   const entriesRef = useRef(new Map<string, SettingsDirtyEntry>());
   const acceptedHistoryRef = useRef<HistoryPoint>(typeof window === "undefined"
@@ -329,6 +340,7 @@ export function SettingsDirtyBoundary({
     [version],
   );
   const dirty = dirtyEntries.length > 0;
+  const saveDisabled = dirtyEntries.some((entry) => entry.saveDisabled);
 
   useEffect(() => {
     if (!dirty) return;
@@ -602,11 +614,20 @@ export function SettingsDirtyBoundary({
     }
   }, [continueNavigation]);
 
-  const value = useMemo(() => ({ register }), [register]);
+  const value = useMemo(
+    () => ({ register, requestNavigation }),
+    [register, requestNavigation],
+  );
+  const controller = useMemo(() => ({ dirty, requestNavigation }), [dirty, requestNavigation]);
+
+  useEffect(() => {
+    onControllerChange?.(controller);
+    return () => onControllerChange?.(null);
+  }, [controller, onControllerChange]);
 
   return (
     <DirtyRegistryContext.Provider value={value}>
-      {children({ dirty, requestNavigation })}
+      {children(controller)}
       <Dialog open={pendingNavigation !== null} onOpenChange={(open) => { if (!open && !actionInFlight) cancelNavigation(); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
           <DialogHeader>
@@ -619,7 +640,7 @@ export function SettingsDirtyBoundary({
             <Button type="button" variant="ghost" onClick={cancelNavigation} disabled={actionInFlight}>取消</Button>
             <div className="flex gap-2">
               <Button type="button" variant="outline" onClick={() => { void discardAndContinue(); }} disabled={actionInFlight}>放弃更改</Button>
-              <Button type="button" onClick={() => { void saveAndContinue(); }} disabled={actionInFlight}>{saving ? "正在保存" : "保存并继续"}</Button>
+              <Button type="button" onClick={() => { void saveAndContinue(); }} disabled={actionInFlight || saveDisabled}>{saving ? "正在保存" : "保存并继续"}</Button>
             </div>
           </DialogFooter>
         </DialogContent>

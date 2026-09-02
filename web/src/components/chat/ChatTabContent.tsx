@@ -13,6 +13,7 @@ import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
 import { LazyChatInput } from "@/components/LazyChatInput";
 import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
+import { PermissionBlock } from "@/components/PermissionBlock";
 import { QueuedMessageBar } from "@/components/QueuedMessageBar";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { SandboxProfile } from "@/types/sandboxProfile";
@@ -245,21 +246,20 @@ export function ChatTabContent({
   const handleSwitchModel = useCallback(() => setModelSelectorOpen(true), []);
   useEffect(() => setModelSelectorOpen(false), [sessionId]);
 
-  const activeAskUser = useMemo(() => {
-    if (readOnly) return null;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (message.type === "ask_user" && message.status === "pending") {
-        return message;
-      }
-    }
-    return null;
-  }, [messages, readOnly]);
+  const pendingInteractions = useMemo(() => messages
+    .filter((message): message is Extract<MessageItem, { type: 'ask_user' | 'permission_request' }> =>
+      (message.type === 'ask_user' || message.type === 'permission_request') && message.status === 'pending')
+    .sort((left, right) => (left.interactionOrder ?? Number.MAX_SAFE_INTEGER) - (right.interactionOrder ?? Number.MAX_SAFE_INTEGER)
+      || (left.interactionVersion ?? 0) - (right.interactionVersion ?? 0)
+      || left.interactionId.localeCompare(right.interactionId)), [messages]);
+  const activeInteraction = pendingInteractions[0] ?? null;
+  const activeAskUser = activeInteraction?.type === 'ask_user' ? activeInteraction : null;
+  const activePermission = activeInteraction?.type === 'permission_request' ? activeInteraction : null;
 
-  const visibleMessages = useMemo(() => {
-    if (!activeAskUser) return messages;
-    return messages.filter((message) => message.id !== activeAskUser.id);
-  }, [activeAskUser, messages]);
+  // Pending interactions live exclusively in the fixed composer zone. Terminal receipts may remain in history.
+  const visibleMessages = useMemo(() => messages.filter((message) => !(
+    (message.type === 'ask_user' || message.type === 'permission_request') && message.status === 'pending'
+  )), [messages]);
 
   const displayAgentProfile = useMemo<AgentProfile | null | undefined>(() => {
     if (!orgAgent) return agentProfile;
@@ -289,7 +289,7 @@ export function ChatTabContent({
     && !sessionLoadError
     && messages.length === 0
     && !loading
-    && !activeAskUser
+    && !activeInteraction
     && !hasQueuedInterjections;
   const showInitialSuggestions = isInitialConversation && !hasComposerDraft && Boolean(emptySlot);
   const initialPlaceholder = orgAgent
@@ -320,7 +320,7 @@ export function ChatTabContent({
           scrollContainerRef={scrollContainerRef}
           isNearBottomRef={isNearBottomRef}
           messages={visibleMessages}
-          loading={activeAskUser ? false : loading}
+          loading={activeInteraction ? false : loading}
           isLoadingMessages={isLoadingMessages}
           hasMoreHistory={hasMoreHistory}
           isLoadingEarlier={isLoadingEarlier}
@@ -464,7 +464,7 @@ export function ChatTabContent({
               onAutoApproveRunShellChange={onAutoApproveRunShellChange}
               onSendVoice={onSendVoice}
               placeholder={isInitialConversation ? initialPlaceholder : undefined}
-              topSlot={((orgAgent && !isInitialConversation) || activeAskUser || hasQueuedInterjections) ? (
+              topSlot={((orgAgent && !isInitialConversation) || activeInteraction || hasQueuedInterjections) ? (
                 <div className="space-y-2">
                   {orgAgent && !isInitialConversation && (
                     <OrgAgentComposerChip
@@ -474,12 +474,28 @@ export function ChatTabContent({
                     />
                   )}
                   {activeAskUser && (
-                    <AskUserPromptPanel
-                      key={activeAskUser.interactionId}
-                      questions={activeAskUser.questions}
-                      onSubmit={(answers) => onAskUserResponse?.(activeAskUser.interactionId, answers)}
-                    />
+                    <div aria-label="待回答问题" data-interaction-zone="canonical">
+                      <AskUserPromptPanel
+                        key={activeAskUser.interactionId}
+                        questions={activeAskUser.questions}
+                        onSubmit={(answers) => { if (!readOnly) onAskUserResponse?.(activeAskUser.interactionId, answers); }}
+                      />
+                    </div>
                   )}
+                  {activePermission && (
+                    <div aria-label="待处理权限请求" data-interaction-zone="canonical">
+                      <PermissionBlock
+                        key={activePermission.interactionId}
+                        toolName={activePermission.toolName}
+                        toolInput={activePermission.toolInput}
+                        status="pending"
+                        disabled={readOnly}
+                        onAllow={() => { if (!readOnly) onPermissionResponse?.(activePermission.interactionId, true); }}
+                        onDeny={() => { if (!readOnly) onPermissionResponse?.(activePermission.interactionId, false); }}
+                      />
+                    </div>
+                  )}
+                  {pendingInteractions.length > 1 ? <p className="px-1 text-xs text-muted-foreground">另有 {pendingInteractions.length - 1} 个交互按服务端顺序排队</p> : null}
                   {queuedInterjections && queuedInterjections.length > 0
                     && onCancelQueuedInterjection && onEditQueuedInterjection
                     && onResendQueuedInterjection && onDismissQueuedInterjection && (

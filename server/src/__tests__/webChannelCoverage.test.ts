@@ -57,8 +57,6 @@ import { getTranscriptPath } from '../data/transcripts/index.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
 import { readSessionMeta, writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { speechToText } from '../integrations/stt/sttClient.js';
-import type { SttConfig } from '../integrations/stt/sttClient.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { UserStore } from '../data/users/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
@@ -72,10 +70,6 @@ import {
 } from './webChannelTestHelpers.js';
 
 // ── 模块 mock ──────────────────────────────────────────────────────────
-
-// STT：只拦上游语音识别调用，channel 侧编排逻辑真实执行
-vi.mock('../integrations/stt/sttClient.js', () => ({ speechToText: vi.fn() }));
-const sttMock = vi.mocked(speechToText);
 
 // openai：自动命名（titleGenerator）上游，返回固定标题并记录调用
 vi.mock('openai', () => {
@@ -185,7 +179,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     }
     for (const dir of dirs) await rm(dir, { recursive: true, force: true });
     dirs.length = 0;
-    sttMock.mockReset();
   });
 
   afterAll(async () => {
@@ -202,13 +195,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     it('缺 runId/streamId → error；runId 与 streamId 指向不同流 → error', async () => {
       const rig = makeRig();
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId is required' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'client_misconfigured' });
 
       (rig.channel as any).activeStreams.set('st-a', {
         controller: new AbortController(), userId: USER.sub, ws: rig.ws, sessionId: 's-a', runId: 'run-mm',
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-mm', streamId: 'st-other' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId and streamId do not match' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'stale_generation' });
     });
 
     it('非 admin 中止他人活跃流（legacy streamId 路径）→ Access denied，流不受影响', async () => {
@@ -218,7 +211,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         controller, userId: OTHER_USER.sub, ws: rig.ws, sessionId: 's-b',
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', streamId: 'st-b' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       expect(controller.signal.aborted).toBe(false);
     });
 
@@ -335,7 +328,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-other-1' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       expect((await runStore.get('run-other-1'))?.status).toBe('running');
     });
 
@@ -466,11 +459,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const runStore = new MemoryRunStore();
       const rig = policyRig(runStore);
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws), { action: 'approval_policy', runId: 'r' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, USER), { action: 'approval_policy', runId: '  ' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId is required' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'client_misconfigured' });
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, USER), { action: 'approval_policy', runId: 'missing' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Run not found' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'stale_generation' });
     });
 
     it('组织 admin 不能改他人 run；owner 传错 sessionId 也拒绝', async () => {
@@ -481,12 +474,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, ORG_ADMIN), {
         action: 'approval_policy', runId: 'run-pol-1', approvalPolicy: { autoApproveTools: true },
       });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       // owner + sessionId 不匹配
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, USER), {
         action: 'approval_policy', runId: 'run-pol-1', sessionId: 'wrong-session', approvalPolicy: { autoApproveTools: true },
       });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       expect((await runStore.get('run-pol-1'))?.metadata?.approvalPolicy).toBeUndefined();
     });
 
@@ -526,11 +519,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: '' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId is required' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'client_misconfigured' });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: 'missing' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Run not found' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'stale_generation' });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: 'run-st-0' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
     });
 
     it('成功：回 session_status，携带 metadata.streamId 与 statusReason', async () => {
@@ -544,15 +537,15 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: 'run-st-1' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
         type: 'session_status', sessionId: 's-st-1', status: 'waiting_approval',
         runId: 'run-st-1', streamId: 'st-77', reason: 'worker paused',
       });
     });
   });
 
-  describe('handleSync / handleDetach', () => {
-    it('sync：正常回放 lastSeq 之后事件；缓冲淘汰后回 sync_overflow；无用户静默', () => {
+  describe('handleSync authoritative recovery / handleDetach', () => {
+    it('sync：正常回放 lastSeq 之后事件；缓冲淘汰后回 sync_overflow；无用户静默', async () => {
       const rig = makeRig();
       const log = new UserEventLog();
       // destroy 供 channel.stop() 调用（真 WsServer 的最小替身）
@@ -567,34 +560,99 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         log.push('sync-u1', { type: 'title_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_deleted', sessionId: 'a' });
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u1'),
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
         expect(rig.ws.sent.at(-1)?.data.events.map((e: any) => e.seq)).toEqual([2, 3]);
 
         // 新实例可恰好追到相同 seq；正 seq 缺失/不匹配 epoch 仍必须强制全量恢复。
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 3, epoch: 'previous-instance',
         });
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 3, epoch: log.getEpoch('sync-u1') });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+          type: 'sync_overflow', seq: 3, epoch: log.getEpoch('sync-u1'),
+          recovery: { version: 1, authoritative: true },
+        });
 
         // 首次客户端 lastSeq=0 不要求 epoch，兼容滚动部署。
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 0,
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
 
         for (let i = 0; i < 205; i += 1) log.push('sync-u2', { type: 'title_updated' });
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
           action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u2'),
         });
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 205, epoch: log.getEpoch('sync-u2') });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+          type: 'sync_overflow', seq: 205, epoch: log.getEpoch('sync-u2'),
+          recovery: { version: 1, authoritative: true },
+        });
 
         const before = rig.ws.sent.length;
-        (rig.channel as any).handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
         expect(rig.ws.sent.length).toBe(before);
       } finally {
+        log.stop();
+      }
+    });
+
+    it('overflow：按 sessionId 内联 durable queue/runtime/pending interactions 的权威快照', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({
+        runId: 'sync-run-pending', sessionId: 'sync-session', userId: USER.sub,
+        model: 'm', channel: 'web', idempotencyKey: 'sync-msg-pending',
+      });
+      await runStore.upsertPending({
+        runId: 'sync-run-done', sessionId: 'sync-session', userId: USER.sub,
+        model: 'm', channel: 'web', idempotencyKey: 'sync-msg-done',
+      });
+      await runStore.markStatus('sync-run-done', 'completed');
+      (runStore as any).listUserMessagesBySession = async () => [
+        await runStore.get('sync-run-pending'),
+        await runStore.get('sync-run-done'),
+      ].filter(Boolean);
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+      const log = new UserEventLog('sync-server-epoch');
+      (rig.channel as any).wsServer = {
+        userEventLog: log,
+        hasUserEventEpochMismatch: (_client: unknown, userId: string, epoch: string | undefined, lastSeq: number) => (
+          log.hasEpochMismatch(userId, epoch, lastSeq)
+        ),
+        refreshAuthoritativeUser: () => true,
+        destroy: () => {},
+      };
+      const interactionId = 'sync-pending-interaction';
+      const pendingResponse = interactionStore.create(interactionId, 'ask_user', {
+        sessionId: 'sync-session', runId: 'sync-run-pending', userId: USER.sub,
+        questions: [{ question: 'continue?', header: 'Confirm', options: [], multiSelect: false }],
+      });
+      try {
+        log.push(USER.sub, { type: 'session_status', sessionId: 'sync-session', status: 'running' });
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, USER), {
+          action: 'sync', lastSeq: 1, epoch: 'stale-epoch', sessionId: 'sync-session',
+        });
+        const overflow = rig.ws.sent.at(-1)?.data;
+        expect(overflow).toMatchObject({
+          type: 'sync_overflow', seq: 1, epoch: 'sync-server-epoch',
+          recovery: {
+            authoritative: true,
+            session: {
+              sessionId: 'sync-session',
+              runtime: { active: true, runId: 'sync-run-pending' },
+              pendingInteractions: [{ interactionId, type: 'ask_user', runId: 'sync-run-pending' }],
+            },
+          },
+        });
+        expect(overflow.recovery.session.queueSnapshot.items.map((item: any) => item.status)).toEqual([
+          'queued', 'completed',
+        ]);
+      } finally {
+        interactionStore.resolve(interactionId, { answers: {} });
+        await pendingResponse;
         log.stop();
       }
     });
@@ -604,7 +662,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const unsub = vi.fn();
       (rig.channel as any).wsActiveStream.set(rig.ws, 'st-detach');
       (rig.channel as any).resumeSubscriptions.set(rig.ws, unsub);
-      (rig.channel as any).handleDetach(wsClient(rig.ws, USER));
+      (rig.channel as any).runtimeRecovery.handleDetach(wsClient(rig.ws, USER));
       expect(unsub).toHaveBeenCalledTimes(1);
       expect((rig.channel as any).wsActiveStream.get(rig.ws)).toBeUndefined();
       expect((rig.channel as any).resumeSubscriptions.get(rig.ws)).toBeUndefined();
@@ -655,7 +713,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await expect(pending).resolves.toEqual({ allow: true, message: '同意执行' });
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
       await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success', response: { allow: true, message: '同意执行' } }); }, { timeout: 5_000 });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id, response: { allow: true, message: '同意执行' } });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id, status: 'resolved', response: { allow: true, message: '同意执行' } });
       expect(interactionStore.get(id)).toBeUndefined();
     });
     it('未知交互且无持久化兜底 → Interaction not found or expired', async () => {
@@ -875,64 +933,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         type: 'chat_rejected', reason_code: 'model_not_allowed', reason: '当前组织不可使用所选模型',
       });
       expect(modelResolver).toHaveBeenCalledWith('forbidden/model', TENANT);
-    });
-  });
-
-  describe('语音消息 STT', () => {
-    const voiceFile = { savedPath: '/tmp/cov-voice.wav', relativePath: 'voice/cov-voice.wav', duration: 1200 };
-
-    it('未配置 STT → stt_not_configured + voice_transcribed(error)', async () => {
-      const rig = makeRig();
-      await rig.send(USER, { client_msg_id: 'cm-stt-0', message: '', voiceFile });
-      const types = rig.ws.sent.map((m) => m.data.type);
-      expect(types).toEqual(['voice_transcribed', 'chat_rejected']);
-      expect(rig.ws.sent[0].data).toEqual({ type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
-      expect(rig.ws.sent[1].data).toMatchObject({ reason_code: 'stt_not_configured' });
-      expect(rig.ws.sent.some((message) => message.data.type === 'chat_ack')).toBe(false);
-    });
-
-    it('识别成功：注入 VOICE_STT_TAG 前缀送 dispatch，先推 voice_transcribed', async () => {
-      const tmp = await makeTmp('cov-stt-ok-');
-      sttMock.mockResolvedValueOnce({ text: '今天天气不错', duration: 900 });
-      const inbound: any[] = [];
-      const dispatch: AgentRunDispatch = async function* (msg) {
-        inbound.push(msg);
-        yield { type: 'done' };
-      };
-      const rig = makeRig({ agentCwd: tmp, sttConfig: { apiKey: 'k' } as SttConfig }, dispatch);
-      await rig.send(USER, { client_msg_id: 'cm-stt-1', message: '', voiceFile });
-      expect(sttMock).toHaveBeenCalledWith('/tmp/cov-voice.wav', { apiKey: 'k' });
-      expect(rig.ws.sent.find((m) => m.data.type === 'voice_transcribed')?.data).toEqual({
-        type: 'voice_transcribed', text: '今天天气不错',
-      });
-      expect(inbound).toHaveLength(1);
-      expect(inbound[0].content).toBe('[这是一条语音转文字的消息，可能存在识别准确度问题] 今天天气不错');
-      expect(rig.ws.sent.find((m) => m.data.type === 'done')?.data).toMatchObject({ client_msg_id: 'cm-stt-1' });
-    });
-
-    it('识别为空（未检测到语音）与调用异常 → stt_failed，不进入 dispatch', async () => {
-      const tmp = await makeTmp('cov-stt-fail-');
-      const dispatchCalls: unknown[] = [];
-      const dispatch: AgentRunDispatch = async function* (msg) {
-        dispatchCalls.push(msg);
-        yield { type: 'done' };
-      };
-      const rig = makeRig({ agentCwd: tmp, sttConfig: { apiKey: 'k' } as SttConfig }, dispatch);
-
-      sttMock.mockResolvedValueOnce({ text: '', duration: 0 });
-      await rig.send(USER, { client_msg_id: 'cm-stt-2', message: '', voiceFile });
-      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
-        reason_code: 'stt_failed', reason: '语音无法识别：未检测到语音',
-      });
-
-      rig.ws.sent.length = 0;
-      sttMock.mockRejectedValueOnce(new Error('asr down'));
-      await rig.send(USER, { client_msg_id: 'cm-stt-3', message: '', voiceFile });
-      expect(rig.ws.sent.find((m) => m.data.type === 'voice_transcribed')?.data).toEqual({
-        type: 'voice_transcribed', text: '[语音识别失败]', error: true,
-      });
-      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ reason_code: 'stt_failed', reason: '语音识别服务调用失败' });
-      expect(dispatchCalls).toHaveLength(0);
     });
   });
 

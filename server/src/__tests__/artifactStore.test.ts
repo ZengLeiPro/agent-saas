@@ -93,6 +93,7 @@ describe('LocalArtifactBlobStore', () => {
       await writeFile(path.join(outside, 'secret.txt'), 'outside secret');
       await symlink(outside, path.join(root, 'linked'));
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore: new InMemoryArtifactStore(),
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: root,
@@ -118,6 +119,7 @@ describe('LocalArtifactBlobStore', () => {
       await writeFile(path.join(outside, 'result.txt'), 'outside replacement');
       const blobStore = new LocalArtifactBlobStore({ rootDir: blobRoot });
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore: new InMemoryArtifactStore(),
         blobStore,
         agentCwd: root,
@@ -151,6 +153,7 @@ describe('LocalArtifactBlobStore', () => {
       const secret = path.join(outside, 'secret.txt');
       await writeFile(secret, 'outside secret');
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore: new InMemoryArtifactStore(),
         blobStore: new LocalArtifactBlobStore({ rootDir: path.join(base, 'blobs') }),
         agentCwd: root,
@@ -169,6 +172,7 @@ describe('LocalArtifactBlobStore', () => {
     try {
       const authorizeContentAccess = vi.fn(async () => false);
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore: new InMemoryArtifactStore(),
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: blobRoot,
@@ -201,6 +205,7 @@ describe('LocalArtifactBlobStore', () => {
       let grantExpiresAt: number | undefined;
       const auditContentAccess = vi.fn(async () => undefined);
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore: new InMemoryArtifactStore(),
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: blobRoot,
@@ -234,6 +239,7 @@ describe('LocalArtifactBlobStore', () => {
       const shareStore = new InMemoryArtifactShareStore();
       let active = true;
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore,
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: blobRoot,
@@ -266,6 +272,7 @@ describe('LocalArtifactBlobStore', () => {
       const artifactStore = new InMemoryArtifactStore();
       const shareStore = new InMemoryArtifactShareStore();
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore,
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: blobRoot,
@@ -291,6 +298,7 @@ describe('LocalArtifactBlobStore', () => {
       await writeFile(path.join(root, 'logs', 'result.log'), 'tool artifact');
       const artifactStore = new InMemoryArtifactStore();
       const service = new ArtifactService({
+        runtimeEnvironment: 'test',
         artifactStore,
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: root,

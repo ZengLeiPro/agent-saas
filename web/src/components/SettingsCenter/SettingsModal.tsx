@@ -48,6 +48,10 @@ import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgent
 import type { AgentProfileDetail, ModelList, SidebarLayoutPref } from "@agent/shared";
 import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
 import { SETTINGS_GROUP_LABELS, SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
+import {
+  ManagementSettingsGroups,
+  type ManagementSettingsGroup,
+} from "@/components/SettingsCenter/ManagementSettingsGroups";
 
 export { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
 const SETTINGS_NAV_ITEM_SELECTED =
@@ -703,6 +707,8 @@ export interface SettingsModalProps {
   /** false 时隐藏只服务个人通用 Agent 的设置；管理员调用方应传 true。 */
   personalAgentEnabled?: boolean;
   onNavigationControllerChange?: (controller: SettingsDirtyController | null) => void;
+  /** 移动端统一设置菜单中的组织/平台管理入口；桌面统一侧栏不传。 */
+  managementGroups?: readonly ManagementSettingsGroup[];
 }
 
 export function SettingsModalInner({
@@ -719,6 +725,7 @@ export function SettingsModalInner({
   onChatFontSizeChange,
   personalAgentEnabled = true,
   onNavigationControllerChange,
+  managementGroups = [],
   dirtyController, embedded = false,
 }: SettingsModalProps & { dirtyController: SettingsDirtyController; embedded?: boolean }) {
   const section = normalizeSettingsSection(sectionInput);
@@ -935,6 +942,10 @@ export function SettingsModalInner({
                 </div>
               </div>
             ))}
+            <ManagementSettingsGroups
+              groups={managementGroups}
+              onSelect={(navigation) => dirtyController.requestNavigation(navigation)}
+            />
           </div>
           <div className="border-t pt-3">
             <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground">

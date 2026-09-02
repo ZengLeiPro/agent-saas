@@ -1,6 +1,7 @@
 export * from './types/correlation';
 export * from './types/sessionAutomation';
 export * from './lib/sessionAutomationCommands.js';
+export * from './mobileV1';
 
 // Platform abstraction
 export { initPlatform, getPlatform } from './platform/context';

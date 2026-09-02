@@ -109,6 +109,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           cancelled_at TIMESTAMPTZ,
           worker_id TEXT,
           lease_expires_at TIMESTAMPTZ,
+
           idempotency_key TEXT,
           execution_target TEXT,
           workspace_id TEXT,
@@ -437,6 +438,21 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       if (!existingColumns.has('sandbox_scope_id')) {
         await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN sandbox_scope_id TEXT`);
       }
+      if (!existingColumns.has('last_heartbeat_at')) {
+        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN last_heartbeat_at TIMESTAMPTZ`);
+      }
+      if (!existingColumns.has('liveness_state')) {
+        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN liveness_state TEXT`);
+      }
+      if (!existingColumns.has('liveness_reason_code')) {
+        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN liveness_reason_code TEXT`);
+      }
+      if (!existingColumns.has('liveness_detected_at')) {
+        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN liveness_detected_at TIMESTAMPTZ`);
+      }
+      if (!existingColumns.has('liveness_version')) {
+        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN liveness_version BIGINT`);
+      }
       // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
       // dispatch 层（PR 4）显式传入；UpsertRunInput 已加可选 tenantId 字段。
       if (!existingColumns.has('submitter_scope')) {
@@ -449,6 +465,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_user_idx ON ${store.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_sandbox_scope_idx ON ${store.runsTable} (sandbox_scope_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_status_idx ON ${store.runsTable} (status, updated_at)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_liveness_reap_idx ON ${store.runsTable} (liveness_state, lease_expires_at, liveness_detected_at) WHERE liveness_version IS NOT NULL`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_idx`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_enqueue_idx`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_idx ON ${store.runsTable} (tenant_id, session_id, updated_at DESC)`);

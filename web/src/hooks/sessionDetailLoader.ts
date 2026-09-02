@@ -31,6 +31,7 @@ export interface SessionDetailCursor {
   historyComplete: boolean;
   tailCursor?: string;
   oldestCursor?: string;
+  historyRevision?: string;
 }
 
 export interface SessionDetailLoadOptions {
@@ -217,10 +218,10 @@ export async function loadSessionDetailRequest(
       : incomingMsgs;
     const historyComplete = data.mode === "delta"
       ? baseHistoryComplete
-      : data.historyComplete !== false;
+      : data.hasMore !== undefined ? !data.hasMore : data.historyComplete !== false;
     const oldestCursor = data.mode === "delta"
       ? baseOldestCursor
-      : data.oldestCursor ?? incomingMsgs[0]?.id;
+      : data.nextCursor ?? data.oldestCursor ?? incomingMsgs[0]?.id;
 
     msgs = msgs.filter((message) =>
       message.type !== "system-error" && !message.id.startsWith("pending-"),
@@ -261,7 +262,8 @@ export async function loadSessionDetailRequest(
       }
       deps.callbacksRef.current.onLastRunState?.(id, lastRunState);
     }
-    deps.callbacksRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
+    if (data.queueSnapshot) deps.callbacksRef.current.onQueueSnapshot?.(id, data.queueSnapshot);
+    else deps.callbacksRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
     deps.callbacksRef.current.onSandboxProfile?.(id, data.sandboxProfile);
 
     if (isStale()) return;
@@ -282,6 +284,7 @@ export async function loadSessionDetailRequest(
       historyComplete,
       ...(data.cursor ? { tailCursor: data.cursor } : {}),
       ...(oldestCursor ? { oldestCursor } : {}),
+      ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
     });
     saveSessionMessages(id, finalMsgs, {
       historyComplete,

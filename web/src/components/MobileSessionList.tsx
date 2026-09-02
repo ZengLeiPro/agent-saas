@@ -1,7 +1,6 @@
 import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
 import { lazy, Suspense, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, Camera, Lock, UserCog } from "lucide-react";
-import { EntityIcons } from "@/lib/icons";
 import { SwipeableRow, type SwipeAction } from "@/components/mobile/SwipeableRow";
 import { PullToRefresh } from "@/components/mobile/PullToRefresh";
 import { RenameSessionDialog } from "@/components/chat/RenameSessionDialog";
@@ -19,12 +18,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { TOKEN_KEY } from "@/lib/constants";
 import { useGroupedSessions } from "@/hooks/useGroupedSessions";
 import { useGroups } from "@/hooks/useGroups";
-import { DEFAULT_TENANT_ID, getSortedGroupItems } from "@agent/shared";
+import { getSortedGroupItems } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
-import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
 const SessionAutomationBadge = lazy(() => import("@/components/SessionAutomationBadge"));
 interface MobileSessionListProps {
@@ -39,11 +37,7 @@ interface MobileSessionListProps {
   className?: string;
   activeTab?: AppTab;
   onTabChange?: (tab: AppTab) => void;
-  /** push 版本的 tab 切换，给 user menu 跳转「组织/平台分析」用 */
-  onPushTab?: (tab: AppTab) => void;
   onOpenSettings?: (section?: SettingsSectionId) => void;
-  /** 打开「组织管理」/「平台管理」modal，并推 URL 到 /tenant-admin/settings 或 /platform-admin/settings */
-  onOpenAdminSettings?: (target: AdminSettingsTarget) => void;
   isAdmin?: boolean;
   onClose: () => void;
   renderCronManager?: () => ReactNode;
@@ -77,7 +71,6 @@ export function MobileSessionList({
   className,
   activeTab = "chat",
   onTabChange,
-  onPushTab,
   onOpenSettings,
   isAdmin = false,
   onClose,
@@ -342,7 +335,7 @@ export function MobileSessionList({
                   <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
                 </span>
               )}
-              <span className="truncate">{s.title || "新会话"}</span>
+              <span className="truncate" title={s.title || "新会话"}>{s.title || "新会话"}</span>
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
               {waitingLabel ? (
@@ -357,7 +350,7 @@ export function MobileSessionList({
           <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground/60">
             <Suspense fallback={null}><SessionAutomationBadge session={s} separator /></Suspense>
             <span>{sourceDisplayText(s.source)}</span>
-            {s.orgAgentName && <span> · {s.orgAgentName}</span>}
+            <span> · {s.agentTarget ? (s.agentTarget.kind === 'personal' ? '个人 Agent' : s.orgAgentName || '企业专家') : '绑定不可验证'}</span>
             {isAdmin && s.owner && (
               <span> - {s.owner.realName || s.owner.username}</span>
             )}
@@ -668,7 +661,7 @@ export function MobileSessionList({
                     onClick={() => { setShowUserMenu(false); onClose(); onOpenSettings?.("account"); }}
                   >
                     <UserCog className="size-3.5" />
-                    个人设置
+                    设置
                   </button>
                   <button
                     type="button"
@@ -687,32 +680,6 @@ export function MobileSessionList({
                     修改密码
                   </button>
 
-                  {authUser.role === "admin" && (
-                    <>
-                      <div className="my-1 border-t" />
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
-                        onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("tenant-admin"); }}
-                      >
-                        <EntityIcons.org className="size-3.5" />
-                        组织控制台
-                      </button>
-                    </>
-                  )}
-                  {authUser.role === "admin" && authUser.tenantId === DEFAULT_TENANT_ID && (
-                    <>
-                      <div className="my-1 border-t" />
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent transition-colors"
-                        onClick={() => { setShowUserMenu(false); onClose(); (onPushTab ?? onTabChange)?.("platform-admin"); }}
-                      >
-                        <EntityIcons.admin className="size-3.5" />
-                        平台控制台
-                      </button>
-                    </>
-                  )}
                   <div className="my-1 border-t" />
                   <button
                     type="button"

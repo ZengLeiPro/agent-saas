@@ -19,19 +19,16 @@ type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
 import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 export class PgRunStore implements RunStore {
-  readonly pool: PgPool;
-  readonly runsTable: string;
-  readonly messageSubmissionsTable: string;
-  readonly steeringInputsTable: string;
-  readonly steeringSessionsTable: string;
-  readonly eventsTable: string;
+  readonly pool: PgPool; readonly runsTable: string;
+  readonly messageSubmissionsTable: string; readonly steeringInputsTable: string;
+  readonly steeringSessionsTable: string; readonly eventsTable: string;
   readonly eventCursorsTable: string;
   readonly toolInvocationsTable: string;
   readonly eventNotifyChannel: string;
   private readonly ownsPool: boolean; readonly writerCapability: PgRunStoreOptions['writerCapability'];
   private readonly queries: PgRunStoreQueries;
-
   constructor(options: PgRunStoreOptions) {
     if (!options.pool && !options.connectionString) {
       throw new Error('PgRunStore requires either pool or connectionString');
@@ -46,12 +43,19 @@ export class PgRunStore implements RunStore {
     this.toolInvocationsTable = `${prefix}_tool_invocations`;
     this.eventNotifyChannel = `${prefix}_events_notify`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
-    this.ownsPool = !options.pool; this.writerCapability = options.writerCapability;
-    this.queries = new PgRunStoreQueries(this.pool, this.runsTable, this.messageSubmissionsTable, this.steeringInputsTable);
+    this.ownsPool = !options.pool;
+    this.writerCapability = options.writerCapability;
+    this.queries = new PgRunStoreQueries(
+      this.pool,
+      this.runsTable,
+      this.messageSubmissionsTable,
+      this.steeringInputsTable,
+      this.toolInvocationsTable,
+    );
   }
-
   async init(): Promise<void> { await initializePgRunStore(this); }
-  async registerTenantNativeWriterCapability(dbRole: string): Promise<void> { await registerPgRunStoreTenantNativeWriterCapability(this, dbRole); } async registerLegacyWriterCapability(capability: PgRunStoreLegacyWriterCapability): Promise<void> { await registerPgRunStoreLegacyWriterCapability(this, capability); }
+  async registerTenantNativeWriterCapability(dbRole: string): Promise<void> { await registerPgRunStoreTenantNativeWriterCapability(this, dbRole); }
+  async registerLegacyWriterCapability(capability: PgRunStoreLegacyWriterCapability): Promise<void> { await registerPgRunStoreLegacyWriterCapability(this, capability); }
   async disableLegacyWriterCapability(dbRole: string): Promise<void> { await disablePgRunStoreLegacyWriterCapability(this, dbRole); }
   async recordTenantDrainEvidence(evidence: PgRunStoreDrainEvidence): Promise<void> { await recordPgRunStoreDrainEvidence(this, evidence); }
   async contractTenantSchema(gate: PgRunStoreContractGate): Promise<void> { await contractPgRunStoreTenantSchema(this, gate); }
@@ -60,8 +64,10 @@ export class PgRunStore implements RunStore {
     const now = new Date().toISOString();
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       INSERT INTO ${this.runsTable}
-        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+         liveness_state, liveness_detected_at, liveness_version)
+      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+         'active',$7,1)
       ON CONFLICT (run_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at,
         status = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
@@ -72,6 +78,14 @@ export class PgRunStore implements RunStore {
                          THEN NULL ELSE ${this.runsTable}.worker_id END,
         lease_expires_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
                                 THEN NULL ELSE ${this.runsTable}.lease_expires_at END,
+        liveness_state = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                              THEN 'active' ELSE ${this.runsTable}.liveness_state END,
+        liveness_reason_code = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                                    THEN NULL ELSE ${this.runsTable}.liveness_reason_code END,
+        liveness_detected_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                                    THEN EXCLUDED.updated_at ELSE ${this.runsTable}.liveness_detected_at END,
+        liveness_version = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                                THEN COALESCE(${this.runsTable}.liveness_version,0)+1 ELSE ${this.runsTable}.liveness_version END,
         sandbox_scope_id = COALESCE(EXCLUDED.sandbox_scope_id, ${this.runsTable}.sandbox_scope_id),
         submitter_scope = COALESCE(EXCLUDED.submitter_scope, ${this.runsTable}.submitter_scope),
         metadata = ${this.runsTable}.metadata || EXCLUDED.metadata
@@ -85,8 +99,10 @@ export class PgRunStore implements RunStore {
     try {
       result = await this.pool.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
-          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+           liveness_state, liveness_detected_at, liveness_version)
+        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+           'active',$7,1)
         ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, input.submitterUserId ?? input.userId ?? null, JSON.stringify(input.metadata ?? {})]);
@@ -204,7 +220,6 @@ export class PgRunStore implements RunStore {
         `, [tenantId, input.sessionId, input.runId]);
         queuedBehindRunId = blockerResult.rows[0]?.run_id;
       }
-
       const metadata = {
         ...(input.metadata ?? {}),
         deliveryMode,
@@ -215,8 +230,10 @@ export class PgRunStore implements RunStore {
       const result = await client.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
           (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
-           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+           liveness_state, liveness_detected_at, liveness_version)
+        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+           'active',$7,1)
         ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [
@@ -293,7 +310,6 @@ export class PgRunStore implements RunStore {
       sourceRun: normalizeRunRecord(row.row_json),
     }));
   }
-
   async reserveSteeringInputs(targetRunId: string, sourceRunIds: string[]): Promise<string[]> {
     // targetRunId remains API-compatible; its locked row resolves authoritative tenant/session.
     if (sourceRunIds.length === 0) return [];
@@ -357,7 +373,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async markSteeringInputsApplied(targetRunId: string, sourceRunIds: string[]): Promise<string[]> {
     if (sourceRunIds.length === 0) return [];
     const now = new Date().toISOString();
@@ -434,7 +449,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async applySteeringInputsAtomically(
     targetRunId: string,
     inputs: SteeringApplyInput[],
@@ -499,7 +513,6 @@ export class PgRunStore implements RunStore {
         await client.query('COMMIT');
         return { appliedSourceRunIds: [], events: [] };
       }
-
       const { candidateEventInputs, candidateSourceRunIds } = selectSteeringEventCandidates(inputs, appliedSourceRunIds);
       const existingDurableSources = candidateSourceRunIds.length > 0
         ? await client.query<{ source_run_id: string }>(`
@@ -551,7 +564,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async trySealSteeringInputWindow(targetRunId: string): Promise<boolean> {
     const sessionResult = await this.pool.query<{ session_id: string; tenant_id: string }>(
       `SELECT session_id, tenant_id FROM ${this.runsTable} WHERE run_id = $1`,
@@ -598,7 +610,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async releasePendingSteeringForSourceRun(sourceRunId: string): Promise<void> {
     await this.pool.query(`
       WITH released AS (
@@ -613,7 +624,6 @@ export class PgRunStore implements RunStore {
       WHERE run_id = $1 AND metadata->>'steeringState' = 'pending'
     `, [sourceRunId, new Date().toISOString()]);
   }
-
   async cancelPendingUserMessage(runId: string, reason = 'user_withdrew'): Promise<CancelSteeringResult> {
     const existing = await this.get(runId);
     if (!existing) return { ok: false, reason: 'not_found' };
@@ -637,13 +647,16 @@ export class PgRunStore implements RunStore {
       }
       if (row.status !== 'pending') {
         await client.query('ROLLBACK');
+        if (row.status === 'cancelled' && row.metadata?.cancelledByQueueRequest === true) {
+          return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+        }
         return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
       }
       const now = new Date().toISOString();
       await client.query(`
         UPDATE ${this.runsTable}
         SET status = 'cancelled', status_reason = $2, updated_at = $3, cancelled_at = $3,
-            worker_id = NULL, lease_expires_at = NULL, metadata = metadata - 'wakeMessage'
+            worker_id = NULL, lease_expires_at = NULL, metadata = (metadata || jsonb_build_object('cancelledByQueueRequest', true)) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [runId, reason, now]);
       await client.query('COMMIT');
@@ -655,7 +668,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async cancelPendingSteeringSourceRun(sourceRunId: string, reason = 'user_withdrew'): Promise<CancelSteeringResult> {
     const client = await this.pool.connect();
     try {
@@ -677,6 +689,9 @@ export class PgRunStore implements RunStore {
       const clientMsgId = typeof row.metadata?.clientMsgId === 'string' ? row.metadata.clientMsgId : undefined;
       if (row.status !== 'pending' || row.metadata?.steeringState !== 'pending') {
         await client.query('ROLLBACK');
+        if (row.status === 'cancelled' && row.metadata?.cancelledByQueueRequest === true) {
+          return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+        }
         return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
       }
       const inputUpdate = await client.query(`
@@ -696,7 +711,7 @@ export class PgRunStore implements RunStore {
             status_reason = $2,
             updated_at = $3,
             completed_at = $3,
-            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'
+            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled', 'cancelledByQueueRequest', true)) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [sourceRunId, reason, now]);
       await client.query('COMMIT');
@@ -874,7 +889,6 @@ export class PgRunStore implements RunStore {
         const targetCancelledAtIso = targetCancelledAt instanceof Date
           ? targetCancelledAt.toISOString()
           : targetCancelledAt ?? now;
-
         if (event && targetCancelled) {
           const cancelRequests = await client.query<{
             invocation_id: string;
@@ -951,7 +965,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async listPendingUserMessagesBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
@@ -966,7 +979,19 @@ export class PgRunStore implements RunStore {
     `, [tenantId, sessionId]);
     return result.rows.map((row) => normalizeRunRecord(row.row_json));
   }
-
+  async listUserMessagesBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<RunRecord[]> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      WHERE run.tenant_id = $1
+        AND run.session_id = $2
+        AND run.channel = 'web'
+        AND (run.metadata ? 'clientMsgId' OR run.idempotency_key IS NOT NULL)
+        AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
+      ORDER BY run.enqueue_seq ASC
+    `, [tenantId, sessionId]);
+    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+  }
   async listPendingSteeringBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<SteeringInputRecord[]> {
     const result = await this.pool.query<{
       input_id: string;
@@ -1003,7 +1028,6 @@ export class PgRunStore implements RunStore {
       sourceRun: normalizeRunRecord(row.row_json),
     }));
   }
-
   async enqueueBackgroundTask(
     input: UpsertRunInput,
     limits: EnqueueBackgroundTaskLimits,
@@ -1044,13 +1068,14 @@ export class PgRunStore implements RunStore {
       if (tenantActive >= limits.perTenantActive) {
         throw new BackgroundTaskLimitError(`当前组织同时活跃的后台任务已达上限 ${limits.perTenantActive}`);
       }
-
       const now = new Date().toISOString();
       const result = await client.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
           (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
-           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+           liveness_state, liveness_detected_at, liveness_version)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+           'active',$7,1)
         ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [
@@ -1078,7 +1103,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async listBackgroundTasks(
     parentSessionId: string,
     options: ListBackgroundTasksOptions = {},
@@ -1143,7 +1167,6 @@ export class PgRunStore implements RunStore {
     `, [runId, claimToken, staleBefore.toISOString(), patch, now]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
-
   async finishBackgroundTaskWake(
     runId: string,
     claimToken: string,
@@ -1171,7 +1194,6 @@ export class PgRunStore implements RunStore {
   }
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); } async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
   async claimPersistedInteractionResume(runId: string, expectedStatuses: readonly RunStatus[], reason: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimPersistedInteractionResume(runId, expectedStatuses, reason, metadataPatch); }
-
   async listStagedPersistedInteractionResumes(limit?: number): Promise<RunRecord[]> { return this.queries.listStagedPersistedInteractionResumes(limit); }
   async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.activatePersistedInteractionResume(runId, claim, metadataPatch); }
   async rollbackPersistedInteractionResume(runId: string, claim: Record<string, unknown>, waitingStatus: 'waiting_user' | 'waiting_approval', reason?: string): Promise<RunRecord | null> { return this.queries.rollbackPersistedInteractionResume(runId, claim, waitingStatus, reason); }
@@ -1185,7 +1207,6 @@ export class PgRunStore implements RunStore {
   async cancelActiveByTenant(tenantId: string, reason: string): Promise<number> { return this.queries.cancelActiveByTenant(tenantId, reason); } async listActiveByUser(userId: string): Promise<RunRecord[]> { return this.queries.listActiveByUser(userId); }
   async updateApprovalPolicyForActiveByUser(userId: string, approvalPolicy: Record<string, unknown> | null): Promise<string[]> { return this.queries.updateApprovalPolicyForActiveByUser(userId, approvalPolicy); }
   async findByIdempotencyKey(tenantId:string,userId:string|undefined,key:string):Promise<RunRecord|null>{return this.queries.findByIdempotencyKey(tenantId,userId,key);} async findUniqueByIdempotencyKeyAcrossTenants(userId:string,key:string):Promise<RunRecord|null>{return this.queries.findUniqueByIdempotencyKeyAcrossTenants(userId,key);}
-
   async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(tenantId, sessionId); }
   async getActiveCounts(): Promise<ActiveRunCounts> { return this.queries.getActiveCounts(); }
   async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
@@ -1203,8 +1224,24 @@ export class PgRunStore implements RunStore {
   async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission, identity?: RunLeaseIdentity): Promise<RunRecord | null> {
     return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission, identity);
   }
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
-    return this.queries.renewLease(runId, workerId, leaseMs, now);
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker'): Promise<RunRecord | null> {
+    return this.queries.renewLease(runId, workerId, leaseMs, now, source);
+  }
+  async heartbeatRun(runId: string, workerId: string, leaseMs: number, source: RunHeartbeatSource, now = new Date()): Promise<RunRecord | null> {
+    return this.queries.renewLease(runId, workerId, leaseMs, now, source);
+  }
+  async markLivenessStale(runId: string, workerId: string, reasonCode: string, now = new Date()): Promise<RunRecord | null> {
+    return this.queries.markLivenessStale(runId, workerId, reasonCode, now);
+  }
+  /** Runs one bounded, CAS-fenced liveness reaper pass. */
+  async reapExpiredLiveness(now: Date, staleGraceMs: number, limit = 50): Promise<LivenessReapResult> {
+    return this.queries.reapExpiredLiveness(now, staleGraceMs, limit);
+  }
+  async retryOrphanedUserMessage(submitterUserId: string | undefined, clientMsgId: string, now = new Date()): Promise<RunRecord | null> {
+    return this.queries.retryOrphanedUserMessage(submitterUserId, clientMsgId, now);
+  }
+  async cancelUserMessageByClientMsgId(submitterUserId: string | undefined, clientMsgId: string, reason = 'explicit_client_cancel', now = new Date()): Promise<RunRecord | null> {
+    return this.queries.cancelUserMessageByClientMsgId(submitterUserId, clientMsgId, reason, now);
   }
   async updateResponseSessionState(runId: string, tenantId: string, sessionId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
     return this.queries.updateResponseSessionState(runId, tenantId, sessionId, patch);
@@ -1215,7 +1252,6 @@ export class PgRunStore implements RunStore {
   async clearResponseSessionStateBySession(tenantId: string, sessionId: string): Promise<number> {
     return this.queries.clearResponseSessionStateBySession(tenantId, sessionId);
   }
-
   private async appendRuntimeEventsInTransaction(
     client: PgPoolClient,
     events: PlatformEventInput[],
@@ -1260,7 +1296,6 @@ export class PgRunStore implements RunStore {
     }
     return fullEvents;
   }
-
   private async notifyRuntimeEvents(
     client: PgPoolClient,
     events: Array<PlatformEvent & { sequence: number }>,
@@ -1271,7 +1306,6 @@ export class PgRunStore implements RunStore {
       encodePgEventNotifyPayload(events),
     ]).catch(() => undefined);
   }
-
   async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null> {
     return releaseRunLease({
       pool: this.pool,

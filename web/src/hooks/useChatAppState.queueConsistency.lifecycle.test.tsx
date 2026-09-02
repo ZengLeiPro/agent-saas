@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
+import type { AgentTarget, CanonicalChatSubmissionWireMessage } from "@agent/shared";
 
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
@@ -12,6 +13,8 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
+    pendingAgentTargetRef: { current: { kind: 'personal', tenantId: 'tenant-a' } as AgentTarget | null },
+    pendingNewSessionGroupIdRef: { current: null as string | null },
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
@@ -68,12 +71,24 @@ vi.mock("@/hooks/useSession", () => ({
     return harness.session;
   },
 }));
+vi.mock("@/hooks/usePendingNewSessionTarget", () => ({
+  usePendingNewSessionTarget: () => ({
+    pendingAgentTargetRef: harness.pendingAgentTargetRef,
+    pendingNewSessionGroupIdRef: harness.pendingNewSessionGroupIdRef,
+    pendingAgentTarget: harness.pendingAgentTargetRef.current,
+    pendingOrgAgentId: null,
+    setPendingAgentTarget: vi.fn((target: AgentTarget | null) => { harness.pendingAgentTargetRef.current = target; }),
+    clearPendingOrgAgent: vi.fn(),
+    assignPendingGroup: vi.fn(async () => {}),
+  }),
+}));
 vi.mock("@/hooks/useFileUpload", () => ({
   useFileUpload: () => ({
     uploadedFiles: harness.currentFiles,
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: vi.fn(),
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -122,9 +137,9 @@ function emit(data: unknown): void {
   for (const handler of [...harness.messageHandlers]) handler({ data });
 }
 
-function chatPayloads(): Array<Record<string, unknown>> {
+function chatPayloads(): CanonicalChatSubmissionWireMessage[] {
   return harness.sends.mock.calls
-    .map(([payload]) => payload as Record<string, unknown>)
+    .map(([payload]) => payload as CanonicalChatSubmissionWireMessage)
     .filter((payload) => payload.action === "chat");
 }
 
@@ -134,6 +149,8 @@ beforeEach(() => {
   harness.sends.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
+  harness.pendingAgentTargetRef.current = { kind: 'personal', tenantId: 'tenant-a' };
+  harness.pendingNewSessionGroupIdRef.current = null;
   harness.session.sessionId = null;
   harness.session.isNewSession = true;
   Object.values(harness.session).forEach((value) => {
@@ -652,7 +669,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
     ]));
   });
 
-  it("locks later provisional submissions and flushes them in order with the authoritative sessionId", async () => {
+  it("keeps later new-session text in the composer until server authority is known", async () => {
     const { result } = renderHook(() => useChatAppState());
 
     act(() => result.current.setInput("first"));
@@ -661,72 +678,43 @@ describe("useChatAppState queue consistency lifecycle", () => {
     await act(async () => { await result.current.sendMessage(); });
 
     expect(chatPayloads()).toHaveLength(1);
-    expect(chatPayloads()[0].sessionId).toBeUndefined();
-    expect(result.current.queuedInterjections.map((entry) => entry.content)).toEqual(["second"]);
+    expect(result.current.input).toBe("second");
+    expect(result.current.queuedInterjections).toHaveLength(0);
 
     act(() => emit({
       type: "session",
       sessionId: "session-authoritative",
-      client_msg_id: chatPayloads()[0].client_msg_id,
+      client_msg_id: chatPayloads()[0].submission.clientMsgId,
     }));
-
-    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]);
-    expect(chatPayloads()[1].sessionId).toBe("session-authoritative");
+    expect(chatPayloads()).toHaveLength(1);
+    await act(async () => { await result.current.sendMessage(); });
+    expect(chatPayloads()).toHaveLength(2);
+    expect(chatPayloads()[1].submission.target.sessionId).toBe("session-authoritative");
   });
 
-  it("stops the remaining provisional flush when the user switches sessions mid-batch", async () => {
-    let releaseInflight: (() => void) | undefined;
-    const inflight = new Promise<void>((resolve) => { releaseInflight = resolve; });
-    harness.sends.mockImplementation(async (payload: unknown) => {
-      if ((payload as { message?: string }).message === "second") await inflight;
-      return true;
-    });
+  it("never auto-dispatches composer text when session authority arrives", async () => {
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
     act(() => result.current.setInput("second"));
     await act(async () => { await result.current.sendMessage(); });
-    act(() => result.current.setInput("third"));
-    await act(async () => { await result.current.sendMessage(); });
-
-    const rootId = chatPayloads()[0].client_msg_id;
+    const rootId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
-    await waitFor(() => expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]));
+    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first"]);
     act(() => result.current.selectSession("session-b"));
-    releaseInflight?.();
-    await act(async () => { await inflight; await Promise.resolve(); });
-
-    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]);
     expect(harness.session.selectSession).toHaveBeenCalledWith("session-b");
   });
 
-  it("fails only the rejected provisional batch and never flushes it into the next new session", async () => {
+  it("does not manufacture a failed queue item for blocked composer text", async () => {
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const rejectedRootId = chatPayloads()[0].client_msg_id as string;
+    const rejectedRootId = chatPayloads()[0].submission.clientMsgId as string;
     act(() => result.current.setInput("must not leak"));
     await act(async () => { await result.current.sendMessage(); });
-
-    act(() => emit({
-      type: "chat_rejected",
-      client_msg_id: rejectedRootId,
-      reason_code: "server_draining",
-      reason: "rejected",
-    }));
-    expect(result.current.queuedInterjections.find((entry) => entry.content === "must not leak")?.status).toBe("failed");
-
-    act(() => result.current.newSession());
-    act(() => result.current.setInput("next root"));
-    await act(async () => { await result.current.sendMessage(); });
-    const nextRootId = chatPayloads()[1].client_msg_id as string;
-    act(() => emit({ type: "session", sessionId: "session-next", client_msg_id: nextRootId }));
-
-    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "next root"]);
+    act(() => emit({ type: "chat_rejected", client_msg_id: rejectedRootId, reason_code: "server_draining", reason: "rejected" }));
+    expect(result.current.queuedInterjections).toHaveLength(0);
+    expect(chatPayloads()).toHaveLength(1);
   });
 
   it("drops a provisional batch on session switch and ignores the late session confirmation", async () => {
@@ -734,7 +722,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const staleRootId = chatPayloads()[0].client_msg_id as string;
+    const staleRootId = chatPayloads()[0].submission.clientMsgId as string;
     act(() => result.current.setInput("must stay local"));
     await act(async () => { await result.current.sendMessage(); });
 

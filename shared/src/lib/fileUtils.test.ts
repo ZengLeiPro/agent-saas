@@ -5,8 +5,13 @@
  * - parseToolResult：从 tool result JSON 提取图片块 + 文本
  * - resolveImageSrc：外部 URL 原样返回 + 工作区路径拼接带鉴权下载 URL（需 initPlatform）
  */
-import { describe, expect, it, beforeEach } from 'vitest';
-import { getPreviewFileType, parseToolResult, resolveImageSrc } from './fileUtils';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
+import {
+  getPreviewFileType,
+  parseToolResult,
+  resolveImageSrc,
+  resolveTaskAttachmentSrc,
+} from './fileUtils';
 import { initPlatform } from '../platform/context';
 import type { PlatformDeps } from '../platform/types';
 import { TOKEN_KEY } from './constants';
@@ -133,5 +138,33 @@ describe('resolveImageSrc', () => {
     const url = await resolveImageSrc('a/b.png', 'alice', 'docs/readme.md');
     expect(url).toContain(`owner=${encodeURIComponent('alice')}`);
     expect(url).toContain(`referrer=${encodeURIComponent('docs/readme.md')}`);
+  });
+
+  it('M10-01: attachment URL policy runs before reading a token', async () => {
+    const tokenRead = vi.fn(async () => 'must-not-leave-storage');
+    const policyGuard = vi.fn(() => {
+      throw new Error('untrusted attachment origin');
+    });
+    initPlatform({
+      secureStorage: {
+        getItem: tokenRead,
+        setItem: async () => {},
+        removeItem: async () => {},
+      },
+      platformConfig: {
+        getBaseUrl: () => 'https://attacker.test',
+        getWsUrl: () => '',
+        assertTrustedUrl: policyGuard,
+        platform: 'mobile',
+      },
+    } as unknown as PlatformDeps);
+
+    await expect(resolveTaskAttachmentSrc('task-1', 'attachment-1'))
+      .rejects.toThrow('untrusted attachment origin');
+    expect(policyGuard).toHaveBeenCalledWith(
+      'https://attacker.test/api/taskboard/tasks/task-1/attachments/attachment-1',
+      'http',
+    );
+    expect(tokenRead).not.toHaveBeenCalled();
   });
 });

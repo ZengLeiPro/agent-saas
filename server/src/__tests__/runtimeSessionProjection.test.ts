@@ -105,6 +105,15 @@ describe('runtime session projection hook', () => {
   });
 
   it('handles startup-style bulk meta writes', async () => {
+    setSessionMetaProjectionSink({
+      upsert: async (transcriptPath, meta) => {
+        const record = buildRuntimeSessionProjectionRecord(transcriptPath, meta);
+        if (record) projected.set(record.sessionId, record);
+      },
+      delete: async (sessionId) => {
+        projected.delete(sessionId);
+      },
+    });
     const dir = await makeProjectionDir('runtime-session-bulk-');
     cleanupDirs.add(dir);
 

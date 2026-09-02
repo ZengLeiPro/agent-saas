@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { projectRuntimePlatformEvent } from "../channels/web/runtimeEventProjection.js";
 import type { PlatformEvent } from "../runtime/types.js";
+import {
+  businessStepProjectionFixture,
+  toolPresentationProjectionFixture,
+} from './fixtures/presentationProjection.fixture.js';
+
+function legacyFrames(event: PlatformEvent): object[] {
+  return projectRuntimePlatformEvent(event).events.map((frame) => {
+    const { projection: _projection, ...legacy } = frame as Record<string, unknown>;
+    return legacy;
+  });
+}
 
 describe("runtimeEventProjection", () => {
   it("user_message 携带 sourceRunId，供前端阻止旧队列状态复活", () => {
@@ -17,7 +28,7 @@ describe("runtimeEventProjection", () => {
 
     const projection = projectRuntimePlatformEvent(event);
 
-    expect(projection.events).toEqual([{
+    expect(legacyFrames(event)).toEqual([{
       type: "user_message",
       sessionId: "session-1",
       content: "插话内容",
@@ -38,7 +49,7 @@ describe("runtimeEventProjection", () => {
       toolCalls: [{ id: "todo-1", name: "TodoWrite", arguments: '{"todos":[]}' }],
     };
 
-    expect(projectRuntimePlatformEvent(event).events[0]).toEqual({
+    expect(legacyFrames(event)[0]).toEqual({
       type: "block_start",
       blockType: "tool_use",
       toolId: "todo-1",
@@ -60,7 +71,7 @@ describe("runtimeEventProjection", () => {
       recoveryAction: "switch_model",
     };
 
-    expect(projectRuntimePlatformEvent(event).events).toEqual([
+    expect(legacyFrames(event)).toEqual([
       {
         type: "session_status",
         sessionId: "session-policy-1",
@@ -102,7 +113,7 @@ describe("runtimeEventProjection", () => {
       recoveryAction: "switch_model",
     };
 
-    expect(projectRuntimePlatformEvent(event).events).toEqual([expect.objectContaining({
+    expect(legacyFrames(event)).toEqual([expect.objectContaining({
       type: "subagent_end",
       failureKind: "policy_rejection",
       recoveryAction: "switch_model",
@@ -130,7 +141,7 @@ describe("runtimeEventProjection", () => {
       }],
     };
 
-    expect(projectRuntimePlatformEvent(event).events).toEqual([{
+    expect(legacyFrames(event)).toEqual([{
       type: "ask_user",
       interactionId: "interaction-ask-1",
       runId: "run-ask-1",
@@ -139,4 +150,69 @@ describe("runtimeEventProjection", () => {
       questions: event.questions,
     }]);
   });
+
+  it('为 replay frame 提供稳定 canonical identity 与显式 domain', () => {
+    const event: Extract<PlatformEvent, { type: 'tool_result' }> = {
+      id: 'event-tool-result', timestamp: '2026-08-30T00:00:00.000Z', type: 'tool_result',
+      sessionId: 'session-1', runId: 'run-a', toolCallId: 'same-id', toolName: 'Shell',
+      content: 'blocked is ordinary tool output', isError: true,
+    };
+    expect(projectRuntimePlatformEvent(event).events[0]).toMatchObject({
+      type: 'tool_result',
+      projection: {
+        eventId: 'event-tool-result:0', domain: 'tool', runId: 'run-a',
+        messageId: 'assistant:run-a', blockId: 'tool:run-a:same-id', toolCallId: 'same-id',
+      },
+    });
+  });
+
+
+  it('projects a structured tool presenter input without raw result or showRaw authority', () => {
+    const frame = projectRuntimePlatformEvent(toolPresentationProjectionFixture).events[0] as any;
+    expect(frame.projection.presentationInputs).toEqual([{
+      kind: 'tool',
+      source: {
+        id: 'tool:fixture-run:fixture-tool-call',
+        kind: 'tool_activity', status: 'completed',
+        content: [{
+          type: 'tool', toolName: 'Shell',
+          presentation: toolPresentationProjectionFixture.presentation,
+        }],
+      },
+    }]);
+    const serialized = JSON.stringify(frame.projection.presentationInputs);
+    expect(serialized).not.toContain('SERVER_RAW_SENTINEL');
+    expect(serialized).not.toContain('showRaw');
+  });
+
+  it('projects structured BusinessStep inputs and leaves raw disclosure to the client presenter', () => {
+    const frame = projectRuntimePlatformEvent(businessStepProjectionFixture).events.find(
+      (candidate) => (candidate as any).type === 'tool_input',
+    ) as any;
+    expect(frame.projection.presentationInputs).toEqual([{
+      kind: 'business_step',
+      source: {
+        kind: 'business', content: '核对发布结果', status: 'completed',
+        outcome: { text: '全部通过', tone: 'ok' },
+        display: [{ type: 'checklist', title: '发布检查', items: [{ label: '健康检查', status: 'pass' }] }],
+        evidenceRefs: ['release-42'],
+      },
+    }]);
+    expect(JSON.stringify(frame.projection.presentationInputs)).not.toContain('showRaw');
+  });
+
+  it('stream restart rotates blockId while replayed deltas keep the active block identity', () => {
+    const streamStates = new Map();
+    const make = (id: string, phase: 'start' | 'delta' | 'end', content?: string): Extract<PlatformEvent, { type: 'assistant_stream_event' }> => ({
+      id, timestamp: '2026-08-30T00:00:00.000Z', type: 'assistant_stream_event',
+      sessionId: 'session-1', runId: 'run-stream', blockType: 'text', phase, ...(content ? { content } : {}),
+    });
+    const first = projectRuntimePlatformEvent(make('start-1', 'start'), { streamStates }).events[0] as any;
+    const delta = projectRuntimePlatformEvent(make('delta-1', 'delta', 'a'), { streamStates }).events[0] as any;
+    projectRuntimePlatformEvent(make('end-1', 'end'), { streamStates });
+    const restarted = projectRuntimePlatformEvent(make('start-2', 'start'), { streamStates }).events[0] as any;
+    expect(delta.projection.blockId).toBe(first.projection.blockId);
+    expect(restarted.projection.blockId).not.toBe(first.projection.blockId);
+  });
+
 });

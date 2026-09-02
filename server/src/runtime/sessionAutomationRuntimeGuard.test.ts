@@ -450,9 +450,11 @@ describe('SessionAutomationRuntimeGuard', () => {
     )).resolves.toBeUndefined();
     const authority = pool.statements.findIndex(sql => sql.includes('SELECT status,incarnation_id'));
     const intent = pool.statements.findIndex(sql => sql.startsWith('INSERT INTO runtime_session_automation_background_resources'));
+    const activation = pool.statements.findIndex(sql => sql.startsWith('UPDATE runtime_runs SET metadata='));
     expect(authority).toBeGreaterThan(-1);
     expect(authority).toBeLessThan(intent);
-    expect(pool.statements.indexOf('COMMIT')).toBeGreaterThan(intent);
+    expect(intent).toBeLessThan(activation);
+    expect(pool.statements.indexOf('COMMIT')).toBeGreaterThan(activation);
   });
 
   it('worker prepared locks and revalidates authority before touching intent', async () => {

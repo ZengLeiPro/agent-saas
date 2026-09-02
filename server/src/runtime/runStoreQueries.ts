@@ -1,14 +1,20 @@
+import { randomUUID } from 'node:crypto';
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
 import { claimStateOnlyTerminalOutbox, markRunStatusIfCurrent } from './runStatusCas.js';
 import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
+import { getActiveRunBySession, listRecoverableRuns } from './runStoreRecoveryQueries.js';
+import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
+import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 
-export class PgRunStoreQueries { // all steering joins preserve tenant/session identity
+/** SQL implementation for authoritative Runtime Run state; all steering joins preserve tenant/session identity. */
+export class PgRunStoreQueries {
   constructor(
     readonly pool: PgPool,
     readonly runsTable: string,
     readonly messageSubmissionsTable: string,
     readonly steeringInputsTable: string,
+    readonly toolInvocationsTable: string = runsTable.replace(/_runs$/, '_tool_invocations'),
   ) {}
 
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
@@ -40,6 +46,12 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
               status_reason = $2,
               updated_at = cancellation_time.now,
               cancelled_at = COALESCE(run.cancelled_at, cancellation_time.now),
+              worker_id = NULL,
+              lease_expires_at = NULL,
+              liveness_state = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+              liveness_reason_code = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE COALESCE($2, 'cancelled') END,
+              liveness_detected_at = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE cancellation_time.now END,
+              liveness_version = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE run.liveness_version + 1 END,
               metadata = (run.metadata || $3::jsonb) - 'wakeMessage'
           FROM cancellation_time
           WHERE run.run_id = $1
@@ -72,6 +84,19 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
             completed_at = CASE WHEN $2 = 'completed' THEN $4 ELSE completed_at END,
             failed_at = CASE WHEN $2 = 'failed' THEN $4 ELSE failed_at END,
             cancelled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(cancelled_at, $4) ELSE cancelled_at END,
+            worker_id = CASE WHEN $2::text IN ('waiting_approval','waiting_user','completed','failed','cancelled','orphaned') THEN NULL ELSE worker_id END,
+            lease_expires_at = CASE WHEN $2::text IN ('waiting_approval','waiting_user','completed','failed','cancelled','orphaned') THEN NULL ELSE lease_expires_at END,
+            liveness_state = CASE
+              WHEN liveness_version IS NULL THEN NULL
+              WHEN $2 = 'orphaned' THEN 'orphaned'
+              WHEN $2::text IN ('completed','failed','cancelled') THEN 'terminal'
+              WHEN $2::text IN ('waiting_approval','waiting_user') THEN 'waiting_interaction'
+              WHEN $2::text IN ('running','waiting_hand') THEN 'busy'
+              ELSE 'active'
+            END,
+            liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $3 END,
+            liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4 END,
+            liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
             metadata = CASE
               WHEN $2::text IN ('completed','failed','cancelled','orphaned')
                 THEN (metadata || $5::jsonb) - 'wakeMessage'
@@ -112,6 +137,10 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
           status_reason = $3,
           worker_id = NULL,
           lease_expires_at = NULL,
+          liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'active' END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $3 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4::timestamptz END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           updated_at = $4,
           metadata = jsonb_set(metadata || $5::jsonb, '{schedulerState}', '"staged"'::jsonb, true)
       WHERE run_id = $1
@@ -164,6 +193,10 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
           status_reason = $4,
           worker_id = NULL,
           lease_expires_at = NULL,
+          liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'waiting_interaction' END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE clock_timestamp() END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           updated_at = clock_timestamp(),
           metadata = metadata
             - 'schedulerState'
@@ -216,6 +249,10 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
           cancelled_at = COALESCE(cancelled_at, cancellation_time.now),
           worker_id = NULL,
           lease_expires_at = NULL,
+          liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $2 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE cancellation_time.now END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           metadata = metadata - 'wakeMessage'
       FROM cancellation_time
       WHERE run_id = $1
@@ -348,48 +385,7 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     return result.rows.length === 1 ? normalizeRunRecord(result.rows[0]!.row_json) : null;
   }
 
-  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE run.tenant_id = $1
-        AND run.session_id = $2
-        AND run.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target
-            ON target.tenant_id = input.tenant_id
-           AND target.session_id = input.session_id
-           AND target.run_id = input.target_run_id
-          WHERE input.tenant_id = run.tenant_id
-            AND input.session_id = run.session_id
-            AND input.source_run_id = run.run_id
-            AND (
-              (
-                input.state = 'reserved'
-                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
-              )
-              OR (
-                input.state = 'pending'
-                AND target.status IN ('pending','running','waiting_hand')
-                AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
-              )
-            )
-        )
-      ORDER BY
-        CASE run.status
-          WHEN 'running' THEN 0
-          WHEN 'waiting_approval' THEN 0
-          WHEN 'waiting_user' THEN 0
-          WHEN 'waiting_hand' THEN 0
-          ELSE 1
-        END,
-        run.updated_at DESC
-      LIMIT 1
-    `, [tenantId, sessionId]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
-  }
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> { return getActiveRunBySession(this.pool, this.runsTable, this.steeringInputsTable, tenantId, sessionId); }
 
   async getActiveCounts(): Promise<ActiveRunCounts> {
     const result = await this.pool.query<{
@@ -488,45 +484,8 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     }
   }
 
-  // Subagent child runs are parent-owned and must never enter scheduler recovery.
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE (
-        run.status = 'pending'
-        OR (run.status = 'running' AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1))
-      )
-        AND run.metadata->>'subagent' IS DISTINCT FROM 'true'
-        AND NOT (
-          run.status = 'pending'
-          AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target
-            ON target.tenant_id = input.tenant_id
-           AND target.session_id = input.session_id
-           AND target.run_id = input.target_run_id
-          WHERE input.tenant_id = run.tenant_id
-            AND input.session_id = run.session_id
-            AND input.source_run_id = run.run_id
-            AND (
-              (
-                input.state = 'reserved'
-                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
-              )
-              OR (
-                input.state = 'pending'
-                AND target.status IN ('pending','running','waiting_hand')
-                AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
-              )
-            )
-        )
-      ORDER BY run.enqueue_seq ASC
-    `, [now.toISOString()]);
-    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+    return listRecoverableRuns(this.pool, this.runsTable, this.steeringInputsTable, now);
   }
 
   async listStaleWaitingApproval(cutoff: Date, limit = 50): Promise<RunRecord[]> {
@@ -674,6 +633,11 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
         SET status = 'running',
             worker_id = $2,
             lease_expires_at = $3,
+            last_heartbeat_at = $4,
+            liveness_state = 'busy',
+            liveness_reason_code = NULL,
+            liveness_detected_at = $4,
+            liveness_version = COALESCE(candidate.liveness_version, 0) + 1,
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
             metadata = CASE
@@ -683,7 +647,11 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
         WHERE candidate.run_id = $1
           AND (
             candidate.status = 'pending'
-            OR (candidate.status = 'running' AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4))
+            OR (
+              candidate.status = 'running'
+              AND candidate.liveness_version IS NULL
+              AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
+            )
           )
           AND NOT (
             candidate.status = 'pending'
@@ -743,17 +711,139 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     }
   }
 
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
-    const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
+  async renewLease(
+    runId: string,
+    workerId: string,
+    leaseMs: number,
+    now = new Date(),
+    source: RunHeartbeatSource = 'worker',
+  ): Promise<RunRecord | null> {
+    return renewRunLease(this, runId, workerId, leaseMs, now, source);
+  }
+
+  async markLivenessStale(
+    runId: string,
+    workerId: string,
+    reasonCode: string,
+    now = new Date(),
+  ): Promise<RunRecord | null> {
+    return markRunLivenessStale(this, runId, workerId, reasonCode, now);
+  }
+
+  async reapExpiredLiveness(now: Date, staleGraceMs: number, limit = 50): Promise<LivenessReapResult> {
+    return reapExpiredRunLiveness(this, now, staleGraceMs, limit);
+  }
+
+  async retryOrphanedUserMessage(
+    submitterUserId: string | undefined,
+    clientMsgId: string,
+    now = new Date(),
+  ): Promise<RunRecord | null> {
+    const scope = submitterUserId ?? '__anonymous__';
+    const retryRunId = `retry-${randomUUID()}`;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `${this.runsTable}:explicit-retry:${scope}:${clientMsgId}`,
+      ]);
+      const sourceResult = await client.query<{ row_json: RunRecord }>(`
+        SELECT row_to_json(run.*) AS row_json
+        FROM ${this.runsTable} run
+        JOIN ${this.messageSubmissionsTable} submission ON submission.run_id = run.run_id
+        WHERE submission.user_scope = $1 AND submission.client_message_id = $2
+        FOR UPDATE OF run
+      `, [scope, clientMsgId]);
+      const sourceRaw = sourceResult.rows[0]?.row_json;
+      if (!sourceRaw) { await client.query('COMMIT'); return null; }
+      const source = normalizeRunRecord(sourceRaw);
+      const existingRetryRunId = typeof source.metadata?.explicitRetryRunId === 'string'
+        ? source.metadata.explicitRetryRunId : undefined;
+      if (existingRetryRunId) {
+        const existing = await client.query<{ row_json: RunRecord }>(`
+          SELECT row_to_json(${this.runsTable}.*) AS row_json FROM ${this.runsTable} WHERE run_id = $1
+        `, [existingRetryRunId]);
+        await client.query('COMMIT');
+        return existing.rows[0] ? normalizeRunRecord(existing.rows[0].row_json) : null;
+      }
+      const unsafe = source.status !== 'orphaned'
+        || !source.liveness
+        || source.liveness.reasonCode === 'external_tool_outcome_unknown';
+      if (unsafe) { await client.query('COMMIT'); return null; }
+      const runningTool = await client.query<{ exists: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM ${this.toolInvocationsTable}
+          WHERE run_id = $1 AND status = 'running'
+        ) AS exists
+      `, [source.runId]);
+      if (runningTool.rows[0]?.exists) { await client.query('COMMIT'); return null; }
+      const created = await client.query<{ row_json: RunRecord }>(`
+        INSERT INTO ${this.runsTable}
+          (run_id, session_id, user_id, tenant_id, submitter_scope, status, status_reason, model, channel,
+           requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata,
+           liveness_state, liveness_reason_code, liveness_detected_at, liveness_version)
+        SELECT $3, session_id, user_id, tenant_id, submitter_scope, 'pending', 'explicit_client_retry', model, channel,
+               $4::timestamptz, $4::timestamptz, $2, execution_target, workspace_id, sandbox_scope_id,
+               (metadata || jsonb_build_object('retryOf', run_id, 'explicitRetryAt', $4::text))
+                 - 'externalToolOutcomeUnknown' - 'livenessTerminalizedBy',
+               'active', 'explicit_client_retry', $4::timestamptz, 1
+        FROM ${this.runsTable}
+        WHERE run_id = $1
+        RETURNING row_to_json(${this.runsTable}.*) AS row_json
+      `, [source.runId, clientMsgId, retryRunId, now.toISOString()]);
+      if (!created.rows[0]) throw new Error(`Explicit retry source disappeared: ${source.runId}`);
+      await client.query(`
+        UPDATE ${this.runsTable}
+        SET metadata = metadata || jsonb_build_object('explicitRetryRunId', $2::text, 'explicitRetryAt', $3::text)
+        WHERE run_id = $1 AND status = 'orphaned'
+      `, [source.runId, retryRunId, now.toISOString()]);
+      await client.query('COMMIT');
+      return normalizeRunRecord(created.rows[0].row_json);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async cancelUserMessageByClientMsgId(
+    submitterUserId: string | undefined,
+    clientMsgId: string,
+    reason = 'explicit_client_cancel',
+    now = new Date(),
+  ): Promise<RunRecord | null> {
+    const scope = submitterUserId ?? '__anonymous__';
     const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET lease_expires_at = GREATEST(COALESCE(lease_expires_at, '-infinity'::timestamptz), $3::timestamptz),
-          updated_at = GREATEST(updated_at, $4::timestamptz)
-      WHERE run_id = $1
-        AND worker_id = $2
-        AND status = 'running'
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, workerId, leaseExpiresAt, now.toISOString()]);
+      WITH target AS (
+        SELECT submission.run_id
+        FROM ${this.messageSubmissionsTable} submission
+        WHERE submission.user_scope = $1 AND submission.client_message_id = $2
+      ), updated AS (
+        UPDATE ${this.runsTable} run
+        SET status = 'cancelled',
+            status_reason = $3,
+            worker_id = NULL,
+            lease_expires_at = NULL,
+            cancelled_at = COALESCE(cancelled_at, $4::timestamptz),
+            updated_at = $4::timestamptz,
+            liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+            liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $3 END,
+            liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4::timestamptz END,
+            liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
+            metadata = run.metadata - 'wakeMessage'
+        FROM target
+        WHERE run.run_id = target.run_id
+          AND run.status NOT IN ('completed','failed','cancelled','orphaned')
+        RETURNING row_to_json(run.*) AS row_json
+      )
+      SELECT row_json FROM updated
+      UNION ALL
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      JOIN target ON target.run_id = run.run_id
+      WHERE NOT EXISTS (SELECT 1 FROM updated)
+    `, [scope, clientMsgId, reason, now.toISOString()]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 

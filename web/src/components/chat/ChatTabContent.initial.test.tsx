@@ -169,7 +169,7 @@ describe("ChatTabContent 初始会话", () => {
     expect(screen.getByRole("button", { name: "使用经营分析专家发起新对话" })).toBeTruthy();
   });
 
-  it("AskUser 或排队交互存在时不误判为空会话", () => {
+  it("AskUser 固定交互或排队消息存在时不误判为空会话", () => {
     const askUser = {
       id: "ask-1",
       type: "ask_user" as const,
@@ -196,6 +196,21 @@ describe("ChatTabContent 初始会话", () => {
     })} />);
     expect(screen.getByTestId("chat-input").closest("[data-initial-conversation]")?.getAttribute("data-initial-conversation")).toBe("false");
     expect(screen.getByTestId("queued-message-bar")).toBeTruthy();
+  });
+
+  it("固定区按 server order 只显示一个当前交互，队列不进入 history，切会话可恢复", () => {
+    const question = [{ question: '选择', header: '范围', options: [{ label: 'A', description: 'A' }], multiSelect: false }];
+    const later = { id: 'later', type: 'ask_user' as const, interactionId: 'later', interactionVersion: 2, interactionOrder: 20, status: 'pending' as const, questions: question };
+    const first = { id: 'first', type: 'ask_user' as const, interactionId: 'first', interactionVersion: 1, interactionOrder: 10, status: 'pending' as const, questions: question };
+    const view = render(<ChatTabContent {...makeProps({ sessionId: 's1', messages: [later, first] })} />);
+    expect(screen.getAllByTestId('ask-user-panel')).toHaveLength(1);
+    expect(screen.getByText('另有 1 个交互按服务端顺序排队')).toBeTruthy();
+    expect(screen.getByTestId('message-list').getAttribute('data-message-count')).toBe('0');
+
+    view.rerender(<ChatTabContent {...makeProps({ sessionId: 's2', messages: [] })} />);
+    expect(screen.queryByTestId('ask-user-panel')).toBeNull();
+    view.rerender(<ChatTabContent {...makeProps({ sessionId: 's1', messages: [later, first] })} />);
+    expect(screen.getAllByTestId('ask-user-panel')).toHaveLength(1);
   });
 
   it("会话加载失败时退出初始态并提供原位重试", () => {

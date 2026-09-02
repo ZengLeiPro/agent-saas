@@ -1,3 +1,4 @@
+import { mapCanonicalError, type CanonicalError } from '@agent/shared';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from '../types/index.js';
 import type { ModelRetryBlockedReason } from './modelRetryTypes.js';
 
@@ -16,6 +17,26 @@ export function customerSafeRuntimeError(
 }
 
 const POLICY_REJECTION_ERROR_CODES = new Set(['cyber_policy']);
+
+/** M40-05 adapter: runtimeFailure remains the runtime authority; UI consumes canonical semantics. */
+export function mapRuntimeFailureToCanonical(input: {
+  failureKind?: RuntimeFailureKind;
+  errorCode?: string;
+  correlationId?: string;
+  retryAfterMs?: number;
+  legacyMessage?: string;
+}): CanonicalError {
+  const code = input.failureKind === 'policy_rejection'
+    ? 'capability_unavailable'
+    : input.errorCode;
+  return mapCanonicalError({
+    source: 'runtime',
+    code,
+    correlationId: input.correlationId,
+    retryAfterMs: input.retryAfterMs,
+    legacyMessage: input.legacyMessage,
+  });
+}
 
 export function classifyModelFailure(
   errorCode: string | undefined,

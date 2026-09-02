@@ -6,12 +6,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 
+import { AGENT_TARGET_BINDING_VERSION } from '@agent/shared';
+
 import type { AgentRunDispatch, InteractionResponse } from '../agent/types.js';
 import { WebChannel } from '../channels/web/channel.js';
 import { interactionStore } from '../channels/web/interactionStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getTranscriptPath } from '../data/transcripts/index.js';
-import { writeSessionMeta } from '../data/transcripts/meta.js';
+import { ensureSessionAgentTargetBinding, readSessionMeta, writeSessionMeta } from '../data/transcripts/meta.js';
 import { chatMessage, FakeWebSocket, MemoryRunStore, wsClient } from './webChannelTestHelpers.js';
 
 function waitOpen(ws: WebSocket): Promise<void> {
@@ -42,7 +44,15 @@ async function listen(server: http.Server): Promise<number> {
   return address.port;
 }
 
-describe('WebChannel WebSocket auth-mode chat boundary', () => {
+async function writeOwnerlessSessionMeta(transcriptPath: string, tenantId: string): Promise<void> {
+  await writeSessionMeta(transcriptPath, {
+    tenantId,
+    channel: 'web',
+    createdAt: new Date().toISOString(),
+  } as any);
+}
+
+describe('WebChannel WebSocket auth-mode structured chat boundary', () => {
   const channels: WebChannel[] = [];
   const servers: http.Server[] = [];
   const workspaces: string[] = [];
@@ -62,10 +72,10 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     const agentCwd = await mkdtemp(join(tmpdir(), 'web-channel-ws-auth-'));
     workspaces.push(agentCwd);
     if (sessionId) {
-      await writeSessionMeta(getTranscriptPath(agentCwd, sessionId, { tenantId: DEFAULT_TENANT_ID }), {
-        userId: 'anonymous', username: 'anonymous', tenantId: DEFAULT_TENANT_ID,
-        channel: 'web', createdAt: new Date().toISOString(),
-      });
+      await writeOwnerlessSessionMeta(
+        getTranscriptPath(agentCwd, sessionId, { tenantId: DEFAULT_TENANT_ID }),
+        DEFAULT_TENANT_ID,
+      );
     }
     const channel = new WebChannel({
       authEnabled,
@@ -115,7 +125,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     await closed;
   });
 
-  it('auth disabled lets the same anonymous WS answer ask_user and completes the run', async () => {
+  it('auth disabled lets only the bound anonymous WS answer ask_user and completes the run', async () => {
     const sessionId = randomUUID();
     const interactionId = 'anonymous-ask-user';
     let interactionResponse: InteractionResponse | undefined;
@@ -144,22 +154,43 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     await waitUntil(() => messages.some((message) => message.data?.type === 'auth_ok'));
     ws.send(JSON.stringify({ action: 'chat', client_msg_id: 'anonymous-ask-chat', message: 'ask me' }));
     await waitUntil(() => messages.some((message) => message.data?.type === 'ask_user'));
+
+    const reconnect = new WebSocket(url);
+    const reconnectMessages: any[] = [];
+    reconnect.on('message', (raw) => reconnectMessages.push(JSON.parse(raw.toString())));
+    await waitOpen(reconnect);
+    await waitUntil(() => reconnectMessages.some((message) => message.data?.type === 'auth_ok'));
+    reconnect.send(JSON.stringify({
+      action: 'respond', interactionId, answers: { choice: '接管' },
+    }));
+    await waitUntil(() => reconnectMessages.some((message) => message.data?.type === 'respond_error'));
+    expect(interactionStore.get(interactionId)).toBeTruthy();
+
     ws.send(JSON.stringify({
       action: 'respond', interactionId, answers: { choice: '继续' },
     }));
-
     await waitUntil(() => messages.some((message) => message.data?.type === 'respond_ok'));
     await waitUntil(() => messages.some((message) => message.data?.type === 'done'));
     expect(interactionResponse).toEqual({ answers: { choice: '继续' } });
     expect(interactionStore.get(interactionId)).toBeUndefined();
     expect(messages.some((message) => message.data?.type === 'respond_error')).toBe(false);
+    const persisted = await readSessionMeta(getTranscriptPath(workspaces.at(-1)!, sessionId, { tenantId: DEFAULT_TENANT_ID }));
+    expect(persisted).toMatchObject({
+      tenantId: DEFAULT_TENANT_ID,
+      agentTarget: { kind: 'personal', tenantId: DEFAULT_TENANT_ID },
+      agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+    });
+    expect(persisted).not.toHaveProperty('userId');
+    expect(persisted).not.toHaveProperty('username');
     const closed = waitClose(ws);
+    const reconnectClosed = waitClose(reconnect);
     ws.close();
-    await closed;
+    reconnect.close();
+    await Promise.all([closed, reconnectClosed]);
   });
 
   it('auth disabled limits anonymous resume and abort to the WS that started the run', async () => {
-    const sessionId = 'anonymous-control-session';
+    const sessionId = randomUUID();
     const dispatch: AgentRunDispatch = async function* (_message, _context, options, hooks) {
       await hooks!.onSessionStart!(sessionId);
       yield { type: 'session_init', sessionId };
@@ -169,7 +200,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
       });
       yield { type: 'done' };
     };
-    const url = await startChannel(false, dispatch);
+    const url = await startChannel(false, dispatch, sessionId);
     const ownerWs = new WebSocket(url);
     const ownerMessages: any[] = [];
     ownerWs.on('message', (raw) => ownerMessages.push(JSON.parse(raw.toString())));
@@ -196,7 +227,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     otherWs.send(JSON.stringify({ action: 'abort', streamId }));
     await waitUntil(() => otherMessages.some((message) => message.data?.type === 'error'));
     expect(otherMessages.filter((message) => message.data?.type === 'error').at(-1)?.data)
-      .toEqual({ type: 'error', message: 'Access denied' });
+      .toMatchObject({ type: 'error', code: 'auth_revoked' });
 
     ownerWs.send(JSON.stringify({ action: 'abort', streamId }));
     await waitUntil(() => ownerMessages.some((message) => message.data?.type === 'abort_ok'));
@@ -250,7 +281,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
       type: 'active_stream', sessionId: 'tenant-sensitive-session', active: false,
     });
     await (channel as any).handleAbortAsync(client, { action: 'abort', runId: 'tenant-sensitive-run' });
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+    expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
     expect((await runStore.get('tenant-sensitive-run'))?.status).toBe('pending');
   });
 
@@ -292,7 +323,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'active_stream', sessionId, active: false });
 
     await (channel as any).handleAbortAsync(client, { action: 'abort', streamId });
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+    expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
     expect((channel as any).activeStreams.get(streamId).controller.signal.aborted).toBe(false);
   });
 
@@ -432,7 +463,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     }) }]);
   });
 
-  it('auth disabled still rejects non-default tenant or owner scoped durable runs', async () => {
+  it('auth disabled still rejects non-default tenant or owner-scoped durable runs', async () => {
     const runStore = new MemoryRunStore();
     await runStore.upsertPending({
       runId: 'tenant-run',
@@ -476,5 +507,106 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
         reason_code: 'access_denied',
       }) }]);
     }
+  });
+
+  it('auth disabled rejects an ownerless legacy session from a non-default tenant', async () => {
+    const agentCwd = await mkdtemp(join(tmpdir(), 'web-channel-ws-auth-'));
+    workspaces.push(agentCwd);
+    const sessionId = randomUUID();
+    const transcriptPath = getTranscriptPath(agentCwd, sessionId);
+    await writeOwnerlessSessionMeta(transcriptPath, 'tenant-sensitive');
+    let dispatchCount = 0;
+    const channel = new WebChannel({ authEnabled: false, agentCwd }, async function* () {
+      dispatchCount += 1;
+      yield { type: 'done' };
+    });
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).processChatMessage(wsClient(ws), chatMessage({ sessionId }));
+
+    expect(dispatchCount).toBe(0);
+    expect(ws.sent).toEqual([{ data: expect.objectContaining({
+      type: 'chat_rejected', reason_code: 'invalid_submission',
+    }) }]);
+    expect(await readSessionMeta(transcriptPath)).not.toHaveProperty('agentTarget');
+  });
+
+  it('auth disabled rejects an existing cross-tenant canonical target', async () => {
+    const agentCwd = await mkdtemp(join(tmpdir(), 'web-channel-ws-auth-'));
+    workspaces.push(agentCwd);
+    const sessionId = randomUUID();
+    const transcriptPath = getTranscriptPath(agentCwd, sessionId);
+    await writeSessionMeta(transcriptPath, {
+      tenantId: DEFAULT_TENANT_ID,
+      channel: 'web',
+      createdAt: new Date().toISOString(),
+      agentTarget: { kind: 'personal', tenantId: 'tenant-sensitive' },
+      agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+    } as any);
+    let dispatchCount = 0;
+    const channel = new WebChannel({ authEnabled: false, agentCwd }, async function* () {
+      dispatchCount += 1;
+      yield { type: 'done' };
+    });
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).processChatMessage(wsClient(ws), chatMessage({ sessionId }));
+
+    expect(dispatchCount).toBe(0);
+    expect(ws.sent).toEqual([{ data: expect.objectContaining({
+      type: 'chat_rejected', reason_code: 'invalid_submission',
+    }) }]);
+  });
+
+  it('target binding refuses to rewrite a legacy session across tenants', async () => {
+    const agentCwd = await mkdtemp(join(tmpdir(), 'web-channel-ws-auth-'));
+    workspaces.push(agentCwd);
+    const transcriptPath = getTranscriptPath(agentCwd, randomUUID());
+    await writeOwnerlessSessionMeta(transcriptPath, 'tenant-sensitive');
+
+    await expect(ensureSessionAgentTargetBinding(transcriptPath, {
+      kind: 'personal', tenantId: DEFAULT_TENANT_ID,
+    })).rejects.toThrow('SESSION_AGENT_TARGET_MISMATCH');
+    expect(await readSessionMeta(transcriptPath)).not.toHaveProperty('agentTarget');
+  });
+
+  it('repeating the same default personal binding is stable and ownerless', async () => {
+    const agentCwd = await mkdtemp(join(tmpdir(), 'web-channel-ws-auth-'));
+    workspaces.push(agentCwd);
+    const transcriptPath = getTranscriptPath(agentCwd, randomUUID());
+    await writeOwnerlessSessionMeta(transcriptPath, DEFAULT_TENANT_ID);
+    const target = { kind: 'personal', tenantId: DEFAULT_TENANT_ID } as const;
+
+    await ensureSessionAgentTargetBinding(transcriptPath, target);
+    const rebound = await ensureSessionAgentTargetBinding(transcriptPath, target);
+
+    expect(rebound).toMatchObject({
+      tenantId: DEFAULT_TENANT_ID,
+      agentTarget: target,
+      agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+    });
+    expect(rebound).not.toHaveProperty('userId');
+    expect(rebound).not.toHaveProperty('username');
+  });
+
+  it('auth enabled direct ownerless legacy chat remains fail-closed', async () => {
+    let dispatchCount = 0;
+    const channel = new WebChannel({ authEnabled: true }, async function* () {
+      dispatchCount += 1;
+      yield { type: 'done' };
+    });
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).processChatMessage(wsClient(ws), chatMessage({
+      client_msg_id: 'auth-enabled-ownerless-direct',
+    }));
+
+    expect(dispatchCount).toBe(0);
+    expect(ws.sent).toEqual([{ data: expect.objectContaining({
+      type: 'chat_rejected', reason_code: 'access_denied',
+    }) }]);
   });
 });

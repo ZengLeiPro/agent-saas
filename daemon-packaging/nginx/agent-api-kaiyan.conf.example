@@ -1,4 +1,4 @@
-# agent-saas 后端 API 独立域名（由 ci.yml 部署脚本安装）
+# agent-saas 后端 API 独立域名（由 ci.yml 部署脚本安装；credential-safe access log）
 # 链路：https://api.agent.kaiyan.net -> nginx -> agent_saas_backend
 # limit zone 与 $connection_upgrade map 定义在 recovery Web 站点配置中。
 # 由 nginx 统一输出生产 API 的 CORS 响应头，使其生成的 502/503 也能被
@@ -8,11 +8,16 @@ map $http_origin $agent_api_cors_origin {
     "https://agent.kaiyan.net" $http_origin;
 }
 
-# Security: log only the normalized path, never $request/$request_uri/$args.
-# WebSocket JWT is carried in the auth first frame and must never enter proxy logs.
+# Security: log only a safe normalized route label, never $request/$request_uri/$args.
+# WebSocket JWT is carried in the auth first frame; preview bearer grants are path
+# segments. Neither credential nor a credential-bearing Referer may enter proxy logs.
+map $uri $agent_api_log_uri {
+    default $uri;
+    ~^/preview(?:/|$) /preview/[REDACTED];
+}
 log_format agent_api_safe '$remote_addr - $remote_user [$time_local] '
-                          '"$request_method $uri $server_protocol" $status $body_bytes_sent '
-                          '"$http_referer" "$http_user_agent"';
+                          '"$request_method $agent_api_log_uri $server_protocol" $status $body_bytes_sent '
+                          '"-" "$http_user_agent"';
 
 server {
     listen 80;

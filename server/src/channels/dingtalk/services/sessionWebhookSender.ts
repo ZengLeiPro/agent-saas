@@ -7,6 +7,7 @@
 
 import { dingtalkLogger } from '../../../utils/logger.js';
 import { parseVoiceMarkers, dispatchVoiceMarkers } from './voiceService.js';
+import { isTtsCapabilityEnabled } from '../../../integrations/tts/capability.js';
 import type { SendDingtalkOptions } from './types.js';
 
 // ============ 超时辅助 ============
@@ -52,17 +53,19 @@ export async function sendDingtalkMessage(opts: SendDingtalkOptions): Promise<vo
 
   const parsedVoice = parseVoiceMarkers(content);
   if (parsedVoice.markers.length > 0) {
-    await dispatchVoiceMarkers({
+    if (!isTtsCapabilityEnabled(ttsConfig)) {
+      content = [parsedVoice.cleanedText, ...parsedVoice.markers.map((marker) => marker.text)].filter(Boolean).join('\n');
+    } else await dispatchVoiceMarkers({
       markers: parsedVoice.markers,
       sessionWebhook,
       ttsConfig,
       credentials,
     });
 
-    if (!parsedVoice.cleanedText) {
-      return;
+    if (isTtsCapabilityEnabled(ttsConfig)) {
+      if (!parsedVoice.cleanedText) return;
+      content = parsedVoice.cleanedText;
     }
-    content = parsedVoice.cleanedText;
   }
 
   // Add @ user in group chat

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { PgRunStore } from '../runtime/runStore.js';
 
 class CapacityPool {
-  readonly queries: string[] = [];
+  readonly queries: string[] = []; // captured SQL is asserted below
   updateCalls = 0;
   rollbackCalls = 0;
   releaseCalls = 0;
@@ -68,8 +68,8 @@ class CapacityPool {
   }
 }
 
-describe('PgRunStore unified parent/child scheduler capacity using an explicit test writer', () => {
-  it('skips startup column ALTERs when every compatibility column exists', async () => {
+describe('PgRunStore unified parent/child scheduler capacity, liveness and schema compatibility using an explicit test writer', () => {
+  it('skips startup ALTER TABLE statements when all compatibility columns exist', async () => {
     const queries: string[] = [];
     const existingColumns = [
       'enqueue_seq',
@@ -82,6 +82,11 @@ describe('PgRunStore unified parent/child scheduler capacity using an explicit t
       'sandbox_scope_id',
       'tenant_id',
       'submitter_scope',
+      'last_heartbeat_at',
+      'liveness_state',
+      'liveness_reason_code',
+      'liveness_detected_at',
+      'liveness_version',
     ];
     const client = {
       query: async <T>(sql: string) => {

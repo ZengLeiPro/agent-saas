@@ -35,6 +35,8 @@ interface ModelPickerProps {
   /** Drill-down sub-pages keyed by action ID */
   drillDowns?: Record<string, DrillDownPage>;
   onDrillDownSelect?: (parentId: string, childId: string) => void;
+  /** Stable native automation identifier for the trigger. */
+  testID?: string;
   /** Custom trigger content — when provided, replaces the default trigger UI */
   children?: (modelLabel: string | null) => React.ReactElement;
 }
@@ -50,6 +52,7 @@ export function ModelPicker({
   onExtraAction,
   drillDowns,
   onDrillDownSelect,
+  testID,
   children,
 }: ModelPickerProps) {
   const colors = useColors();
@@ -161,7 +164,7 @@ export function ModelPicker({
 
   return (
     <>
-      <Pressable ref={triggerRef} onPress={handleOpen}>
+      <Pressable ref={triggerRef} onPress={handleOpen} testID={testID} accessibilityLabel="Agent 与模型选择器">
         {children ? children(selectedModelLabel) : (
           <View style={defaultStyles.trigger}>
             <Text style={[defaultStyles.triggerText, { color: colors.mutedForeground }]} numberOfLines={1}>

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path'; import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js';
+import { resolve } from 'node:path';
+import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js';
 import type { Express, Request, Response } from 'express';
 import type { AppRuntime } from './runtime.js';
 import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
@@ -7,11 +8,7 @@ import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.j
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
-import {
-  createContextAdminConsumerStore,
-  createContextProductService,
-  createContextRetentionWorker,
-} from './runtimeContextAdmin.js';
+import { createContextAdminConsumerStore, createContextProductService, createContextRetentionWorker } from './runtimeContextAdmin.js';
 export { activeOffboardingWriteFence } from './routeGuards.js';
 import type { UserInfo } from '../data/users/types.js';
 import {
@@ -46,8 +43,9 @@ import {
   createContextCitationsRouter,
   createContextAdminRouter, createSessionAutomationsRouter,
 } from '../routes/index.js';
-import { createAuthRouter } from '../routes/auth.js';
+import { registerAuthConnectionRoutes } from './routesAuthConnections.js';
 import { createSignupRouters } from '../routes/signup.js';
+import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { createAgentsRouter } from '../routes/agents.js';
 import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
@@ -135,8 +133,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     },
     enforcementMode: async () => 'enforce' as const,
   };
-  const nativeOAuthHandoff = runtime.oauthGrantStore
-    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, 'https://kaiyan.net/oauth/callback')
+  const nativeOAuthCallbackUrl = process.env.NATIVE_OAUTH_CALLBACK_URL?.trim();
+  const allowNonProductionCustomCallback = process.env.NODE_ENV !== 'production'
+    && process.env.NATIVE_OAUTH_ALLOW_CUSTOM_SCHEME === 'true';
+  const nativeOAuthHandoff = runtime.oauthGrantStore && nativeOAuthCallbackUrl
+    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, nativeOAuthCallbackUrl, {
+        allowCustomScheme: allowNonProductionCustomCallback,
+      })
     : undefined;
   if (nativeOAuthHandoff)
     app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));
@@ -163,8 +166,19 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : {}),
     }),
   );
-  app.use('/api', activeOffboardingWriteFence(runtime)); app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
-  if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore, service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog, createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd), compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd), broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload) }));
+  app.use('/api', activeOffboardingWriteFence(runtime));
+  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
+  if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
+    app.use('/api', createSessionAutomationsRouter({
+      store: runtime.sessionAutomationStore,
+      service: runtime.sessionAutomationCommandService,
+      sessionCatalog: runtime.sessionCatalog,
+      createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd),
+      compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
+      broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload),
+    }));
+  }
+  app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
@@ -246,18 +260,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-  // Azeroth 透明反向代理：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
+  // Azeroth 透明反向代理层：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。
   // 依赖：index.ts 中 express.json() 已配置为跳过 /api/azeroth/* 路径
   app.use('/api', createAzerothProxyRouter());
-  // HTML Preview: token API 走 /api（需认证），文件服务走 /preview（自认证）
+  // Retired HTML preview: authenticated single-file grant; /preview only serves a static retirement page.
   const preview = createPreviewRoutes({
     agentCwd,
     userOverrides: config.agent.userOverrides,
+    userStore: runtime.userStore,
+    authEpochAuthority: runtime.authEpochAuthority,
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);
-  app.use('/api', createVoiceRouter({ agentCwd }));
+  app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService }));
   app.use('/api', createTtsRouter({ tts: config.tts }));
   app.use('/api/search', createSearchRouter({ agentCwd, userStore: runtime.userStore }));
   // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）
@@ -342,6 +358,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
       listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
         ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId, tenantId)
+        : undefined,
+      listUserMessagesBySession: runtime.runtimeRunStore?.listUserMessagesBySession
+        ? (sessionId) => runtime.runtimeRunStore!.listUserMessagesBySession!(sessionId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
         ? (tenantId, userId, clientMessageId) =>
@@ -537,7 +556,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   if (runtime.billingService) {
     app.use('/api/billing', createBillingRouter({ billingService: runtime.billingService }));
     app.use(
@@ -550,7 +568,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // Runtime audit 读 API（admin-only）：按 sessionId/runId 查 tool_audit 投影，
   // 不引 DB，直接读 *.runtime-events.jsonl。
   if (runtime.runtimeAuditQuery) {
@@ -560,7 +577,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createRuntimeAuditRouter({ auditQuery: runtime.runtimeAuditQuery }),
     );
   }
-
   // Agent 运行监测读 API（admin-only，router 内 resolveTenant 隔离：平台 admin 全量、
   // 组织 admin 锁本租户 + ¥ 成本按 policy.showCost 脱敏）：
   // run trace drill-down + 最近 run 列表 + 效率聚合。仅 PG runtime backend 可用
@@ -585,7 +601,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // 组织对话质检台（会话记录/门禁日志/反馈标注；2026-07 唯恩批次）。
   // 须挂在 /api/admin 观测路由之前，避免前缀匹配先落进 observability router。
   app.use(
@@ -634,7 +649,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
     }),
   );
-
   app.use(
     '/api/admin',
     requireAdmin,
@@ -652,7 +666,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
     }),
   );
-
   app.use('/api/admin/system', requireAdmin, createSystemAdminRouter({
       agentCwd,
       systemMetricsStore: runtime.systemMetricsStore,
@@ -686,9 +699,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
     }),
   );
-
   let executeUserOffboarding: ExecuteUserOffboarding | undefined;
-
   if (runtime.userStore && config.auth?.enabled) {
     const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
     const avatarsDir = resolve(usersFilePath, '..', 'avatars');
@@ -833,37 +844,24 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         return archivePersonalWorkspace(agentCwd, user, jobId, relativePaths);
       },
     });
-    app.use(
-      '/api/auth',
-      createAuthRouter({
-        userStore: runtime.userStore,
-        tenantStore: runtime.tenantStore,
-        jwtSecret: config.auth.jwtSecret,
-        tokenExpiresIn: config.auth.tokenExpiresIn || '30d',
-        avatarsDir,
-        loginLogFilePath,
-        agentCwd,
-        sharedDir,
-        tenantSkillsRootDir,
-        onUserDisabled: async (userId: string) => {
-          const disabledUser = userStore.findById(userId);
-          if (disabledUser) await terminateAndRevokeUserConnectors(disabledUser);
-        },
-        onUserTenantChanging: terminateAndRevokeUserConnectors,
-        skillConfigStore: runtime.skillConfigStore,
-        onUserDeleting: async (target) => {
-          await Promise.all([
-            terminateAndRevokeUserConnectors(target),
-            cronRuntime.service?.removeByOwners([target.id]),
-          ]);
-        },
-        mcpOAuthService: runtime.mcpOAuthService,
-        signupConfigStore: runtime.signupConfigStore,
-        secretVault: runtime.secretVault,
-        getModelsConfig: () => config.models,
-        runStore: runtime.runtimeRunStore, legacyWriteGate,
-      }),
-    );
+    registerAuthConnectionRoutes({
+      app,
+      runtime,
+      jwtSecret: config.auth.jwtSecret,
+      tokenExpiresIn: config.auth.tokenExpiresIn || '30d',
+      avatarsDir,
+      loginLogFilePath,
+      agentCwd,
+      sharedDir,
+      tenantSkillsRootDir,
+      terminateAndRevokeUserConnectors,
+      disconnectWebUser: (userId) => webChannel?.disconnectUser(userId),
+      removeCronsByOwners: cronRuntime.service
+        ? (ownerIds) => cronRuntime.service!.removeByOwners(ownerIds)
+        : undefined,
+      nativeOAuthHandoffAvailable: Boolean(nativeOAuthHandoff),
+      legacyWriteGate,
+    });
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES
     // 放行；enabled 开关与频控在 router 内收口。配置走 SignupConfigStore 动态读
     // （platform-admin「注册管理」页可改，改完下一请求即生效，无需重启）。

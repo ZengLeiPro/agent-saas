@@ -1,5 +1,6 @@
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import type { UploadedFile } from "@/components/types";
+import { isValidAttachmentId } from "@agent/shared";
 
 export interface InterjectionIdentity {
   clientMsgId?: string;
@@ -15,11 +16,10 @@ export interface QueuedInterjection {
   deliveryMode: 'queue' | 'steer';
   queuePosition?: number;
   content: string;
+  /** Path-free queue/replay projection; attachmentId is authoritative. */
   attachments?: Array<{
     name: string;
     attachmentId?: string;
-    savedPath?: string;
-    relativePath?: string;
     size?: number;
     mimeType?: string;
     isImage?: boolean;
@@ -81,14 +81,14 @@ export function reconcileQueuedInterjections(
         || (entry.sourceRunId && candidate.sourceRunId === entry.sourceRunId)
       ));
       const restoredFiles = entry.attachments?.flatMap((attachment) => (
-        attachment.relativePath
+        isValidAttachmentId(attachment.attachmentId)
         && typeof attachment.size === 'number'
         && typeof attachment.mimeType === 'string'
           ? [{
-            ...(attachment.attachmentId ? { attachmentId: attachment.attachmentId } : {}),
+            attachmentId: attachment.attachmentId,
             originalName: attachment.name,
-            ...(attachment.savedPath ? { savedPath: attachment.savedPath } : {}),
-            relativePath: attachment.relativePath,
+            // Local adapters never submit this compatibility placeholder; V1 uses attachmentId only.
+            relativePath: '',
             size: attachment.size,
             mimeType: attachment.mimeType,
             isImage: attachment.isImage ?? attachment.mimeType.startsWith('image/'),
@@ -100,7 +100,7 @@ export function reconcileQueuedInterjections(
         sourceRunId: entry.runId ?? entry.sourceRunId,
         ...(entry.targetRunId ? { targetRunId: entry.targetRunId } : {}),
         deliveryMode: entry.deliveryMode === 'steer' ? 'steer' as const : 'queue' as const,
-        ...(entry.queuePosition ? { queuePosition: entry.queuePosition } : {}),
+        ...(entry.queuePosition !== undefined ? { queuePosition: entry.queuePosition } : {}),
         content: entry.content,
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
         ...(local?.uploadedFiles?.length

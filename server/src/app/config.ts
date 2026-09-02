@@ -23,6 +23,7 @@ import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 import { sttConfigSchema, sttPricingSchema } from './sttConfigSchema.js';
 import { runtimeSchedulerConfigSchema } from './runtimeSchedulerConfigSchema.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
+import { ttsConfigSchema } from './ttsConfigSchema.js';
 const agentPermissionModeSchema = z.enum([
   'default',
   'acceptEdits',
@@ -205,13 +206,6 @@ const webPushConfigSchema = z.object({
   }
 });
 
-const ttsConfigSchema = z.object({
-  doubaoAppId: z.string(),
-  doubaoApiKey: z.string(),
-  doubaoCluster: z.string().optional(),
-  defaultVoice: z.string().optional(),
-  defaultSpeed: z.number().positive().optional(),
-});
 const webDisplayConfigSchema = z.object({
   thinking: z.boolean().optional(),
   toolInput: z.boolean().optional(),
@@ -666,7 +660,7 @@ const auditConfigSchema = z.object({
 
 const artifactBaseConfigSchema = z.object({
   signedUrlSecret: z.string().min(16).optional(),
-  readUrlTtlSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+  readUrlTtlSeconds: z.number().int().positive().max(5 * 60).optional(),
   maxBlobBytes: z.number().int().positive().optional(),
   retentionDays: z.number().int().positive().optional(),
   gcIntervalMs: z.number().int().positive().optional(),
@@ -1231,6 +1225,7 @@ export const appConfigSchema = z.object({
   dingtalk: dingtalkConfigSchema.optional(),
   dingtalkSendMessage: dingtalkSendMessageConfigSchema.optional(),
   webPush: webPushConfigSchema.optional(),
+  // TTS remains optional and, when present, is still disabled unless enabled=true.
   tts: ttsConfigSchema.optional(),
   stt: sttConfigSchema.optional(),
   messageDisplay: messageDisplayConfigSchema.optional(),

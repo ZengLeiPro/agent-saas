@@ -158,6 +158,12 @@ describe('mcpApi', () => {
       expect(lastCall().url).toBe('/api/mcp/admin/servers');
     });
 
+    it('组织控制台显式携带目标 tenantId', async () => {
+      mockAuthFetch.mockResolvedValue(ok({ servers: [] }));
+      await fetchMcpAdminServers('tenant-a');
+      expect(lastCall().url).toBe('/api/mcp/admin/servers?tenantId=tenant-a');
+    });
+
     it('非 2xx 抛错', async () => {
       mockAuthFetch.mockResolvedValue(fail(403));
       await expect(fetchMcpAdminServers()).rejects.toThrow('Failed to fetch MCP servers: 403');
@@ -237,8 +243,11 @@ describe('mcpApi', () => {
 
     it('原生端授权启动时附带设备绑定 ID', async () => {
       mockAuthFetch.mockResolvedValue(ok({ status: 'pending', authorizationUrl: 'https://x' }));
-      await startMyMcpOAuth('srv1', '/', 'native-device-123');
-      expect(lastCall().init.body).toBe(JSON.stringify({ returnTo: '/', nativeDeviceId: 'native-device-123' }));
+      const binding = { nativeDeviceId: 'native-device-123', nativeState: 's'.repeat(64),
+        nativePkceChallenge: 'p'.repeat(43), nativeProvider: 'srv1',
+        nativeRedirectUri: 'agent-saas://oauth/callback', nativeIdentityGeneration: 2, nativeCreatedAt: 1 };
+      await startMyMcpOAuth('srv1', '/', binding);
+      expect(lastCall().init.body).toBe(JSON.stringify({ returnTo: '/', ...binding }));
     });
 
     it('非 2xx 抛「连接器授权启动失败」', async () => {

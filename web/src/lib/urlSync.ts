@@ -326,11 +326,11 @@ function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | '
 
 /** 解析 pathname → URL state；search 只由 platform-admin 路由读取，常规 buildUrl 仍只管理 pathname */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
-  // Registry 中的统一管理设置叶必须停留在设置工作区；非 Registry 旧别名继续交给治理 canonical。
+  // 平台设置仍保留现有 modal；tenant 旧 settings URL 必须交给 Governance parser
+  // canonical 到唯一的组织管理 route，不再复活第二套组织设置 renderer。
   const adminSettings = matchAdminSettingsPath(pathname);
-  if (adminSettings) {
-    const tab: AppTab = adminSettings.target === 'tenant' ? 'tenant-admin' : 'platform-admin';
-    return parsed({ tab, sessionId: null, settingsSection: null, adminSettings });
+  if (adminSettings?.target === 'platform') {
+    return parsed({ tab: 'platform-admin', sessionId: null, settingsSection: null, adminSettings });
   }
 
   const governance = parseGovernanceUrl(`${pathname}${search}`);

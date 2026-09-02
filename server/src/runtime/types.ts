@@ -19,6 +19,8 @@ import type {
 import type { ChannelContext, InboundMessage, OutboundEvent } from '../types/index.js';
 import type { RunStatus } from './runStore.js';
 import type { HandStatus } from './handStore.js';
+import type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
+export type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
 export type {
   ModelRequestDiagnostic,
   ModelResponseMode,
@@ -797,14 +799,7 @@ export type PlatformEvent =
     previousStatus?: RunStatus;
     reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
   }
-  | {
-    id: string;
-    timestamp: string;
-    type: 'session_read_state_changed';
-    sessionId: string;
-    userId: string;
-    hasUnreadAiReply: boolean;
-  }
+  | SessionReadStateChangedEvent
   | {
     id: string;
     timestamp: string;

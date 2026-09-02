@@ -25,6 +25,8 @@ import { listOrgAgentTemplateApiViews } from '../data/orgAgentTemplates.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { OrgAgentRecord, OrgAgentSummary } from '../data/orgAgents/types.js';
+import type { AgentTargetCatalog } from '@agent/shared';
+import { NO_AVAILABLE_AGENT_TARGET } from '@agent/shared';
 import {
   checkTopicScope,
   type GuardrailCheckResult,
@@ -45,7 +47,7 @@ export interface OrgAgentsRouterDeps {
   };
   /** allowedSkills/audience/enabled 变化后使 workspace manifest 失效。 */
   onSkillAssignmentsChanged?: () => Promise<void>;
-  /** 图片头像落盘目录（缺省 ./data/org-agent-avatars，测试可不传） */
+  /** 图片头像落盘目录（缺省 ./data/org-agent-avatars，测试可不传）。 */
   orgAgentAvatarsDir?: string;
   /** 门禁模型链（reuse WebChannel 用的 getter；未装配 → gate-preview 503） */
   getGuardrailModelConfigs?: () => GuardrailModelConfig[];
@@ -160,7 +162,7 @@ export function createTenantExpertTemplatesRouter(): Router {
 }
 
 export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
-  const { orgAgentStore } = deps;
+  const { orgAgentStore, tenantStore } = deps;
   const avatarsDir = deps.orgAgentAvatarsDir ?? resolve(process.cwd(), './data/org-agent-avatars');
   const router = Router();
 
@@ -277,12 +279,46 @@ export function createOrgAgentsRouter(deps: OrgAgentsRouterDeps): Router {
     }
   });
 
-  // GET /api/org-agents/mine — 员工侧边栏数据源：被指派且 enabled 的裁剪视图
+  // GET /api/org-agents/mine — 个人 Agent + 被指派组织 Agent 的统一 target 目录。
   router.get('/mine', (req, res) => {
     const user = requireUser(req, res);
     if (!user) return;
     try {
-      res.json(orgAgentStore.listForUser(user.tenantId, user.username));
+      const assignedAgents = orgAgentStore.listForUser(user.tenantId, user.username);
+      const personalEnabled = tenantStore.getSettings(user.tenantId)?.features.personalAgentEnabled !== false;
+      const personalTarget = { kind: 'personal' as const, tenantId: user.tenantId };
+      const orgAgents = assignedAgents.map(agent => ({
+        target: { kind: 'org-agent' as const, tenantId: user.tenantId, orgAgentId: agent.id },
+        availability: { status: 'available' as const },
+        presentation: agent,
+      }));
+      const selectableTargets = [
+        ...(personalEnabled ? [personalTarget] : []),
+        ...orgAgents.map(option => option.target),
+      ];
+      const catalog: AgentTargetCatalog<OrgAgentSummary> & { agents: OrgAgentSummary[] } = {
+        version: 1,
+        tenantId: user.tenantId,
+        personal: {
+          target: personalTarget,
+          availability: personalEnabled
+            ? { status: 'available' }
+            : {
+                status: 'unavailable',
+                reason: {
+                  code: 'personal_agent_disabled',
+                  message: '当前组织未开放个人通用 Agent，请使用组织为你配置的企业专家',
+                  contactAdmin: true,
+                },
+              },
+        },
+        orgAgents,
+        selectableTargets,
+        ...(selectableTargets.length === 0 ? { unavailableReason: NO_AVAILABLE_AGENT_TARGET } : {}),
+        // N-1 兼容投影：旧调用方可继续只消费安全裁剪后的组织 Agent 摘要。
+        agents: assignedAgents,
+      };
+      res.json(catalog);
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : '获取失败' });
     }

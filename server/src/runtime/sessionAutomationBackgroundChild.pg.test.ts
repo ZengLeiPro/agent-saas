@@ -215,6 +215,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
       `SELECT state FROM ${store.tables.backgroundResources} WHERE tenant_id=$1 AND resource_key=$2`,
       [tenantId, started.taskId],
     )).rows[0]?.state).toBe('prepared');
+    expect(persisted?.metadata.backgroundTaskReady).toBe(true);
     expect(persisted?.metadata.automationFence).toMatchObject({
       rootSessionId: setup.sessionId,
       rootRunId: setup.dispatch.targetRunId,

@@ -24,6 +24,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from '@/components/PersonalSettings/dirtyRegistry';
 import { authFetch } from '@/lib/authFetch';
 
 const MODE_OPTIONS: Array<{ value: AgentDwsContextPolicyMode; label: string }> = [
@@ -56,6 +60,7 @@ export function ContextPolicyDialog({
   const [minutesEnabled, setMinutesEnabled] = useState(false);
   const [minutesLookbackDays, setMinutesLookbackDays] = useState('30');
   const [saving, setSaving] = useState(false);
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const [error, setError] = useState('');
   const [recentConversationIds, setRecentConversationIds] = useState<string[]>([]);
 
@@ -97,9 +102,9 @@ export function ContextPolicyDialog({
   const historyCount = useMemo(() => parseConversationIds(historicalIds).length, [historicalIds]);
   const realtimeCount = useMemo(() => parseConversationIds(realtimeIds).length, [realtimeIds]);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!account) return;
+  const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (!account) return false;
     const historicalConversationIds = historicalMode === 'selected' ? parseConversationIds(historicalIds) : [];
     const realtimeConversationIds = realtimeMode === 'selected' ? parseConversationIds(realtimeIds) : [];
     const days = Number(lookbackDays);
@@ -112,12 +117,12 @@ export function ContextPolicyDialog({
     });
     if (validation) {
       setError(validation);
-      return;
+      return false;
     }
     const minutesDays = Number(minutesLookbackDays);
     if (!Number.isInteger(minutesDays) || minutesDays < 1 || minutesDays > 365) {
       setError('听记回填天数必须是 1 到 365 的整数');
-      return;
+      return false;
     }
 
     const payload: UpdateAgentDwsContextPolicyInput = {
@@ -147,15 +152,45 @@ export function ContextPolicyDialog({
       if (!result.account) throw new Error('范围配置接口返回格式不正确');
       onSaved(result.account);
       onOpenChange(false);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '保存 Context 范围失败');
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
+  const baseline = account ? {
+    historicalMode: account.contextPolicy.historical.mode,
+    realtimeMode: account.contextPolicy.realtime.mode,
+    historicalIds: account.contextPolicy.historical.conversationIds.join('\n'),
+    realtimeIds: account.contextPolicy.realtime.conversationIds.join('\n'),
+    lookbackDays: String(account.contextPolicy.historical.lookbackDays),
+    wikiEnabled: account.contextPolicy.wiki?.enabled ?? false,
+    minutesEnabled: account.contextPolicy.minutes?.enabled ?? false,
+    minutesLookbackDays: String(account.contextPolicy.minutes?.lookbackDays ?? 30),
+  } : null;
+  const draft = { historicalMode, realtimeMode, historicalIds, realtimeIds, lookbackDays, wikiEnabled, minutesEnabled, minutesLookbackDays };
+  useSettingsDirtyEntry({
+    id: `organization-dws-context:${tenantId}:${account?.accountId ?? 'none'}`,
+    label: `${account?.displayName ?? '钉钉账号'} Context 范围`,
+    dirty: Boolean(open && baseline && JSON.stringify(draft) !== JSON.stringify(baseline)),
+    save: async () => { if (!await handleSubmit()) throw new Error('DWS context policy save failed'); },
+    discard: () => {
+      if (!baseline) return;
+      setHistoricalMode(baseline.historicalMode); setRealtimeMode(baseline.realtimeMode);
+      setHistoricalIds(baseline.historicalIds); setRealtimeIds(baseline.realtimeIds); setLookbackDays(baseline.lookbackDays);
+      setWikiEnabled(baseline.wikiEnabled); setMinutesEnabled(baseline.minutesEnabled);
+      setMinutesLookbackDays(baseline.minutesLookbackDays); setError('');
+    },
+    draft,
+  });
+
+  const requestClose = () => requestDirtyNavigation(() => onOpenChange(false));
+
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!saving) onOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next && !saving) requestClose(); }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <form onSubmit={(event) => void handleSubmit(event)} className="space-y-5">
           <DialogHeader>
@@ -282,7 +317,7 @@ export function ContextPolicyDialog({
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>取消</Button>
+            <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>取消</Button>
             <Button type="submit" disabled={saving || !account}>保存范围</Button>
           </DialogFooter>
         </form>

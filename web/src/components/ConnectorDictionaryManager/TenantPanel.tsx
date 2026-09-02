@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { cn } from "@/lib/utils";
 import { Field, fromDraft, toDraft, type DraftState } from "./index";
 
@@ -65,6 +66,10 @@ export function TenantConnectorDictionaryPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [baseline, setBaseline] = useState<{ selected: string | null; draft: DraftState | null }>({
+    selected: null,
+    draft: null,
+  });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 组织新增、尚未保存的连接器（保存前不存在于任何一层） */
@@ -98,7 +103,9 @@ export function TenantConnectorDictionaryPanel({
         : view[0]?.entry.binary ?? null;
       setSelected(target);
       const item = view.find((candidate) => candidate.entry.binary === target);
-      setDraft(item ? toDraft(item.entry) : null);
+      const nextDraft = item ? toDraft(item.entry) : null;
+      setDraft(nextDraft);
+      setBaseline({ selected: target, draft: nextDraft });
       setDirty(false);
     },
     [],
@@ -115,8 +122,7 @@ export function TenantConnectorDictionaryPanel({
     } finally {
       setLoading(false);
     }
-    // selected 刻意不进依赖：刷新只在挂载/切组织/显式点击时发生
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // selected 刻意不进依赖：刷新只在挂载/切组织/显式点击时发生。
   }, [applyResponse, tenantId]);
 
   useEffect(() => {
@@ -124,14 +130,18 @@ export function TenantConnectorDictionaryPanel({
   }, [load]);
 
   const select = useCallback((binary: string) => {
+    if (dirty) {
+      setError("当前连接器映射尚未保存，请先保存或放弃更改");
+      return;
+    }
+    const item = merged.find((candidate) => candidate.entry.binary === binary);
+    const nextDraft = item ? toDraft(item.entry) : null;
     setSelected(binary);
-    setDraft(() => {
-      const item = merged.find((candidate) => candidate.entry.binary === binary);
-      return item ? toDraft(item.entry) : null;
-    });
+    setDraft(nextDraft);
+    setBaseline({ selected: binary, draft: nextDraft });
     setDirty(false);
     setMessage(null);
-  }, [merged]);
+  }, [dirty, merged]);
 
   const patch = useCallback((next: Partial<DraftState>) => {
     setDraft((currentDraft) => (currentDraft ? { ...currentDraft, ...next } : currentDraft));
@@ -141,19 +151,33 @@ export function TenantConnectorDictionaryPanel({
   }, []);
 
   const save = useCallback(async () => {
-    if (!selected || !draft) return;
+    if (!selected || !draft) return false;
     setSaving(true);
     setError(null);
     try {
       const response = await saveOrgConnectorEntry(fromDraft(selected, draft), tenantId);
       applyResponse(response, selected);
       setMessage("已保存为本组织覆盖，后续工具调用按组织词典产出摘要（约 1 分钟内全量生效）");
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setSaving(false);
     }
   }, [applyResponse, draft, selected, tenantId]);
+
+  useSettingsDirtyEntry({
+    id: `organization-connector-dictionary:${tenantId ?? "own"}:${selected ?? "none"}`,
+    label: `编辑连接器映射 ${selected ?? ""}`.trim(),
+    dirty,
+    save: async () => { if (!await save()) throw new Error("Connector dictionary save failed"); },
+    discard: () => {
+      setPendingNew(null); setSelected(baseline.selected); setDraft(baseline.draft);
+      setDirty(false); setMessage(null); setError(null);
+    },
+    draft: { selected, draft },
+  });
 
   const removeOverride = useCallback(async () => {
     if (!selected) return;

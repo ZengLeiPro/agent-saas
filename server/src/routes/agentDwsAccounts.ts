@@ -19,6 +19,7 @@ import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDws
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
+import { deriveDwsAgentDelegationResourceId } from '../dws/businessToolProvider.js';
 
 const eventKindSchema = z.enum(['at_me', 'all_direct']);
 const createSchema = z.object({
@@ -68,6 +69,9 @@ const contextPolicySchema = expectedRevisionSchema.extend({
 const inboxQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
+const delegationResourceSchema = z.object({
+  args: z.array(z.string().min(1).max(500)).min(1).max(100),
+}).strict();
 
 class AgentDwsMutationFailure extends Error {
   constructor(
@@ -128,6 +132,24 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     } catch {
       res.status(503).json({ error: 'Agent 钉钉消息诊断读取失败' });
     }
+  });
+
+  router.post('/agent-dws-accounts/:accountId/delegation-resource', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore) return res.status(503).json({ error: 'Agent 钉钉账号服务暂不可用' });
+    const parsed = delegationResourceSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'args 必须是非空字符串数组' });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account || account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
+      return res.status(409).json({ error: '仅已完成精确身份授权的启用账号可配置委托范围' });
+    }
+    return res.json({
+      accountId: account.accountId,
+      args: parsed.data.args,
+      resourceId: deriveDwsAgentDelegationResourceId(account.accountId, parsed.data.args),
+    });
   });
 
   router.post('/agent-dws-accounts', async (req, res) => {

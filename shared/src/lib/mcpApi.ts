@@ -72,8 +72,9 @@ export async function diagnoseMyMcp(force = false): Promise<McpDiagnosticRespons
   }), 'Failed to diagnose MCP');
 }
 
-export async function fetchMcpAdminServers(): Promise<McpAdminServersResponse> {
-  return jsonOrError(await authFetch('/api/mcp/admin/servers'), 'Failed to fetch MCP servers');
+export async function fetchMcpAdminServers(tenantId?: string): Promise<McpAdminServersResponse> {
+  const query = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : '';
+  return jsonOrError(await authFetch(`/api/mcp/admin/servers${query}`), 'Failed to fetch MCP servers');
 }
 
 export async function upsertMcpServer(server: ManagedMcpServer): Promise<void> {

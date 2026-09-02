@@ -22,11 +22,7 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useAuth } from "@/contexts/AuthContext";
-const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then(m => ({ default: m.SettingsDirtyBoundary })));
-const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole }))); const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
-const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
-const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
-const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
+const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
 const FilePreviewPanel = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewPanel })));
@@ -34,24 +30,18 @@ const ArtifactPreviewPanel = lazy(() => import("@/components/artifacts/ArtifactP
 const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscriptPanel").then(m => ({ default: m.SubagentTranscriptPanel })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
-const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
-const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
-const EfficiencyViewPanel = lazy(() => import("@/components/UsageDashboard/EfficiencyView").then(m => ({ default: m.EfficiencyView })));
-const McpManagerPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpManager })));
-const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpAdminCatalog })));
-const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m => ({ default: m.ModelManager })));
-const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemoteHandsManager").then(m => ({ default: m.TenantRemoteHandsManager })));
-const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
-const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
-const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
 const SettingsContent = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsContent })));
-const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
-const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
-const ManagementSettingsAccessGate = lazy(() => import("@/components/ManagementSettingsAccessGate").then(m => ({ default: m.ManagementSettingsAccessGate })));
 const PlatformAdminHeaderControls = lazy(() => import("@/components/PlatformAdmin/PlatformAdminHeaderControls").then(m => ({ default: m.PlatformAdminHeaderControls })));
 const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHeaderControls").then(m => ({ default: m.TenantAdminHeaderControls })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
+import {
+  CompanyInfoSectionPanel, CronManager, EfficiencyViewPanel, GovernanceConsole,
+  ManagementSettingsAccessGate, McpManagerPanel, MemoryPollingManagerPanel,
+  ModelManagerPanel, OrgAgentManagerPanel, PlatformAdminShell, SettingsDirtyBoundary,
+  SignupConfigManagerPanel, SkillManagerPanel, TenantAdminShell, TenantManager,
+  TenantRemoteHandsManagerPanel, ToolControlsManagerPanel, UsageDashboard, UserManager,
+} from "./lazySettingsComponents";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { isAnalysisRoute, useUnifiedAnalysisWorkspace } from "@/hooks/useUnifiedAnalysisWorkspace";
@@ -70,8 +60,6 @@ import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import { CapabilityTabsList } from "@/components/CapabilityCenter/CapabilityTabsList";
 import { useCapabilityNavigation } from "@/components/CapabilityCenter/navigation";
 import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
-const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
-const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
 
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
@@ -108,11 +96,12 @@ export function DesktopLayout(props: LayoutProps) {
     activeSection: activeSettingsSection,
     navigate: handleSettingsNavigate,
     close: handleCloseUnifiedSettings,
-    open: handleOpenUnifiedSettings, openOrganizationGovernance: handleOpenOrganizationGovernance,
+    open: handleOpenUnifiedSettings,
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
     openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin, organizationSettingsTargetId,
+    governanceRoute, closeOrganizationSettings: closeSettings,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
   const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });
@@ -333,33 +322,6 @@ export function DesktopLayout(props: LayoutProps) {
     if (fallback) setActiveTab(fallback);
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
-  if (!analysisMode && activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
-    return (
-      <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
-        <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess}
-          onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
-          <TenantAdminShell
-            renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderMcp={() => <McpAdminCatalogPanel />}
-            renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-            renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderAutomation={() => <CronManager />}
-            settingsOpen={false}
-            settingsSection="users"
-            onSettingsSectionChange={() => undefined}
-            onSettingsClose={() => undefined}
-            governanceRoute={governanceRoute}
-            governanceContentOnly
-          />
-          </GovernanceConsole>
-        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary></Suspense>
-    );
-  }
-
   if (!analysisMode && activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
@@ -374,7 +336,6 @@ export function DesktopLayout(props: LayoutProps) {
             renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
             renderToolControls={() => <ToolControlsManagerPanel />}
             renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-            renderMcp={() => <McpAdminCatalogPanel />}
             renderSkills={() => <SkillManagerPanel mode="platform" />}
             renderEfficiency={() => <EfficiencyViewPanel />}
             activeSection={platformAdminSection}
@@ -412,7 +373,7 @@ export function DesktopLayout(props: LayoutProps) {
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
-        onSettingsNavigate={handleSettingsNavigate} onOpenOrganizationGovernance={handleOpenOrganizationGovernance}
+        onSettingsNavigate={handleSettingsNavigate}
         onCloseSettings={handleCloseUnifiedSettings}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
@@ -445,6 +406,10 @@ export function DesktopLayout(props: LayoutProps) {
             contentPanelFloating && FLOATING_PANEL_SURFACE,
           )}
           style={{ flex: 1 }}
+        >
+        <div
+          className={cn("contents", settingsMode && "invisible")}
+          aria-hidden={settingsMode || undefined}
         >
         {/* Header 内含任务中心的 portal 宿主，只隐藏不卸载，避免切页时与 portal 清理竞争。 */}
         <header
@@ -729,7 +694,6 @@ export function DesktopLayout(props: LayoutProps) {
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderMcp={() => <McpAdminCatalogPanel />}
                 renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
             renderFiles={() => (
               <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
@@ -760,7 +724,6 @@ export function DesktopLayout(props: LayoutProps) {
                 renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
                 renderToolControls={() => <ToolControlsManagerPanel />}
                 renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                renderMcp={() => <McpAdminCatalogPanel />}
                 renderSkills={() => <SkillManagerPanel mode="platform" />}
                 renderEfficiency={() => <EfficiencyViewPanel />}
                 activeSection={platformAdminSection}
@@ -824,6 +787,7 @@ export function DesktopLayout(props: LayoutProps) {
             onOpenChange={setCronWizardOpen}
           />
         )}
+        </div>
         {!!previewFilePath && previewMode === "dialog" && (
           <Suspense fallback={null}>
             <FilePreviewDialog
@@ -837,7 +801,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
         {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
           openFilePreview={handleOpenFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
-        {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
+        {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
               <Suspense fallback={SuspenseFallback}>
@@ -846,7 +810,7 @@ export function DesktopLayout(props: LayoutProps) {
                   section={settingsSection}
                   onSectionChange={setSettingsSection}
                   onClose={handleCloseUnifiedSettings}
-                  onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}
+                  dirtyController={dirtyController}
                   renderMemory={() => <MemorySectionPanel />}
                   renderFiles={() => (
                     <FileBrowserLazy
@@ -879,12 +843,16 @@ export function DesktopLayout(props: LayoutProps) {
                     renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                    renderMcp={() => <McpAdminCatalogPanel />}
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
                     renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
+                    renderAutomation={() => <CronManager />}
                     settingsOpen={settingsTarget === "tenant"}
-                    settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
+                    settingsContentOnly={governanceRoute?.area !== "organization"}
+                    governanceRoute={governanceRoute?.area === "organization" ? governanceRoute : null}
+                    governanceContentOnly={governanceRoute?.area === "organization"}
+                    governanceContentEmbedded
+                    onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
                     settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
                     onSettingsClose={handleCloseUnifiedSettings}
@@ -901,7 +869,6 @@ export function DesktopLayout(props: LayoutProps) {
                     renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
                     renderToolControls={() => <ToolControlsManagerPanel />}
                     renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                    renderMcp={() => <McpAdminCatalogPanel />}
                     renderSkills={() => <SkillManagerPanel mode="platform" />}
                     renderEfficiency={() => <EfficiencyViewPanel />}
                     activeSection={platformAdminSection}

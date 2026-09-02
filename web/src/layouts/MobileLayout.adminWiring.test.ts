@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { managementAccessTarget } from "@/lib/managementAccessView";
+import mobileSessionListSource from "@/components/MobileSessionList.tsx?raw";
+import mobileSettingsModalSource from "@/components/SettingsCenter/MobileSettingsModal.tsx?raw";
 import source from "./MobileLayout.tsx?raw";
+import lazySettingsSource from "./lazySettingsComponents.ts?raw";
 
 describe("MobileLayout 管理模块接线", () => {
   it("每个组织管理壳实例都接入组织智能体模块", () => {
@@ -12,14 +15,32 @@ describe("MobileLayout 管理模块接线", () => {
   });
 
   it("组织与平台治理入口接入统一 dirty boundary", () => {
-    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(source).toContain("SettingsDirtyBoundary");
+    expect(lazySettingsSource).toContain("export const SettingsDirtyBoundary = lazy(() =>");
+    expect(lazySettingsSource).toContain("@/components/PersonalSettings/dirtyRegistry");
     expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
-    expect(source).toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).not.toContain('<GovernanceConsole area="organization"');
+    expect(source).toContain('data-testid="mobile-organization-settings"');
+    expect(source).toContain('governanceContentEmbedded');
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate\n          scope="platform"');
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate\n          scope="tenant"');
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (<>\n        {adminSettings?.target === "tenant"');
     expect(source).toContain('dirtyController={dirtyController}\n            settingsSection={adminSettings.section as TenantSection}');
     expect(source).toContain('onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}');
+    expect(source).toContain('dirtyController.requestNavigation(returnToSettingsMenu)');
+    expect(source).toContain('dirtyController.requestNavigation(closeSettings)');
+    expect(source).toContain('organizationTargetId={organizationSettingsTargetId.current}');
+    expect(mobileSettingsModalSource).toContain('organizationTargetId,');
+  });
+
+  it("移动头像菜单通过唯一设置入口承载组织与平台管理", () => {
+    expect(source).toContain("<MobileSettingsModal");
+    expect(mobileSettingsModalSource).toContain("managementGroups={managementGroups}");
+    expect(mobileSettingsModalSource).toContain("ORGANIZATION_SETTINGS_WORKSPACES.map");
+    expect(mobileSessionListSource).toContain("设置");
+    expect(mobileSessionListSource).not.toContain("个人设置");
+    expect(mobileSessionListSource).not.toContain("组织控制台");
+    expect(mobileSessionListSource).not.toContain("平台控制台");
   });
 
   it("个人 Agent 移动端接入统一初始会话 composer", () => {

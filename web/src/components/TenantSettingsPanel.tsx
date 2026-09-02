@@ -60,7 +60,7 @@ function SettingSwitch({
   );
 }
 
-type TenantSettingsPanelSection = "all" | "model-tools" | "brand" | "security";
+export type TenantSettingsPanelSection = "all" | "general" | "model-tools" | "brand" | "security";
 
 type GovernedTenantSettingsResponse = {
   tenantId: string;
@@ -200,6 +200,10 @@ export function TenantSettingsPanel({
       title: "组织管理",
       description: `配置组织 ${tenantId} 的功能开关、配额、模型、MCP、安全和品牌策略。`,
     },
+    general: {
+      title: "功能与配额",
+      description: `配置组织 ${tenantId} 的功能开关、配额和个性化策略。`,
+    },
     "model-tools": {
       title: "模型与工具",
       description: `配置组织 ${tenantId} 可用的模型与 MCP 策略。`,
@@ -213,7 +217,7 @@ export function TenantSettingsPanel({
       description: `配置组织 ${tenantId} 的密码、会话和钉钉绑定策略。`,
     },
   };
-  const showGeneral = section === "all";
+  const showGeneral = section === "all" || section === "general";
   const showModelTools = section === "all" || section === "model-tools";
   const showBrand = section === "all" || section === "brand";
   const showSecurity = section === "all" || section === "security";

@@ -20,11 +20,12 @@ import {
   buildOrganizationSwitchUrl,
   filterCustomerOrganizations,
   governanceRoute,
+  organizationSwitchRoute,
   type GovernanceArea,
   type GovernanceRouteDefinition,
   type GovernanceRouteState,
 } from "@/lib/governanceNavigation";
-import { navigateGovernance, navigateToHref } from "@/lib/urlSync";
+import { navigateGovernance, navigateSettingsRoute, navigateToHref } from "@/lib/urlSync";
 import { cn } from "@/lib/utils";
 import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 
@@ -88,9 +89,11 @@ export function GovernanceCapabilityNotice({
 export function OrganizationScopeBanner({
   route,
   dirtyController,
+  settingsMode = false,
 }: {
   route: GovernanceRouteState;
   dirtyController?: SettingsDirtyController;
+  settingsMode?: boolean;
 }) {
   const { user, isPlatformAdmin } = useAuth();
   const { tenants } = useTenants();
@@ -117,7 +120,9 @@ export function OrganizationScopeBanner({
         placeholder="请选择目标组织"
         onValueChange={(nextId) => {
           if (!nextId || nextId === currentId) return;
-          const switchOrganization = () => navigateToHref(buildOrganizationSwitchUrl(route, nextId));
+          const switchOrganization = () => settingsMode
+            ? navigateSettingsRoute(organizationSwitchRoute(route, nextId))
+            : navigateToHref(buildOrganizationSwitchUrl(route, nextId));
           if (dirtyController) dirtyController.requestNavigation(switchOrganization);
           else switchOrganization();
         }}

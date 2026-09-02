@@ -32,7 +32,7 @@ describe("governance navigation registry", () => {
       "overview", "members", "agents", "governance", "settings",
     ]);
     expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(24);
-    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(23);
+    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(25);
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
   });
 
@@ -145,8 +145,9 @@ describe("legacy URL canonical adapters", () => {
     ["/tenant-admin/settings/users?org=acme", "organization.members.list", "/tenant-admin/members/list?org=acme"],
     ["/tenant-admin/settings/org-agents?org=acme", "organization.agents.org-agents", "/tenant-admin/agents/org-agents?org=acme"],
     ["/tenant-admin/settings/mcp?org=acme", "organization.agents.connectors", "/tenant-admin/agents/connectors?org=acme"],
+    ["/tenant-admin/settings/connector-dictionary?org=acme", "organization.agents.connector-mappings", "/tenant-admin/agents/connector-mappings?org=acme"],
     ["/tenant-admin/settings/company?org=acme", "organization.settings.profile", "/tenant-admin/settings/profile?org=acme"],
-    ["/tenant-admin/settings/settings?org=acme", "organization.settings.security", "/tenant-admin/settings/security?org=acme"],
+    ["/tenant-admin/settings/settings?org=acme", "organization.settings.general", "/tenant-admin/settings/general?org=acme"],
     ["/users?org=acme", "organization.members.list", "/tenant-admin/members/list?org=acme"],
     ["/skills?org=acme", "organization.agents.skills", "/tenant-admin/agents/skills?org=acme"],
   ])("%s → %s且不丢 org", (legacy, routeId, canonical) => {

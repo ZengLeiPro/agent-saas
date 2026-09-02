@@ -131,7 +131,7 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "组织作用域" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "请先选择目标组织" })).toBeTruthy();
     expect(screen.queryByText(/组织预算面板 kaiyan-demo/)).toBeNull();
   });
 
@@ -498,6 +498,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it.each([
+    ["organization.settings.general", "功能与配额", ["模型策略", "品牌", "安全"]],
     ["organization.settings.brand", "品牌", ["功能开关", "模型策略", "安全"]],
     ["organization.settings.security", "登录与安全", ["功能开关", "模型策略", "品牌"]],
     ["organization.agents.model-tools", "模型与工具", ["功能开关", "品牌", "安全"]],
@@ -510,6 +511,7 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
     expect(screen.getAllByText(expectedTitle).length).toBeGreaterThan(0);
-    for (const title of unrelatedTitles) expect(screen.queryByText(title)).toBeNull();
+    const page = screen.getByTestId("organization-management-content").querySelector("main");
+    for (const title of unrelatedTitles) expect(page?.textContent).not.toContain(title);
   });
 });

@@ -18,7 +18,7 @@ import { PlatformBillingManager, TenantBillingPanel } from "@/components/Billing
 import { HISTORY_PUSH, useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 import { decideFocusTrap, findFocusables } from "@/lib/focusTrap";
 import { navigateGovernance, navigatePlatformAdmin, type PlatformAdminSection } from "@/lib/urlSync";
-import { GovernanceCapabilityNotice } from "@/components/GovernanceConsole";
+import { GovernanceCapabilityNotice, OrganizationScopeBanner } from "@/components/GovernanceConsole";
 import { filterCustomerOrganizations, governanceRoute as makeGovernanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
@@ -31,16 +31,7 @@ import { OverviewSection as TenantOverviewSection } from "@/components/TenantAna
 import { QaConsole } from "@/components/QaConsole";
 import { AuditEventsPanel } from "@/components/GovernanceAuditPanel";
 import { GovernanceChangeAuditPage } from "@/components/Governance/GovernanceChangeAuditPage";
-import {
-  OrganizationCredentialsPage,
-  OrganizationEnvironmentsPage,
-  OrganizationGroupsPage,
-  OrganizationMemoryKnowledgePage,
-  OrganizationMembersPage,
-  OrganizationOffboardingPage,
-  OrganizationPoliciesPage,
-} from "@/components/OrganizationGovernance/OrganizationGovernancePage";
-import { OrganizationUsageBillingPage } from "@/components/OrganizationGovernance/OrganizationUsageBillingPage";
+import { OrganizationManagementContent } from "@/components/OrganizationManagement/OrganizationManagementContent";
 import {
   PlatformAdminsPage,
   PlatformOrganizationGovernance,
@@ -56,7 +47,6 @@ const AgentRuntimeProfilesManagerPanel = lazy(() => import("@/components/AgentRu
 const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigManager"));
 const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/ConnectorDictionaryManager"));
 const TenantConnectorDictionaryPanel = lazy(() => import("@/components/ConnectorDictionaryManager/TenantPanel"));
-const AgentDwsAccountsPage = lazy(() => import('@/components/AgentDwsAccounts'));
 const WorkflowDisplaySettingsPage = lazy(() => import('@/components/WorkflowDisplaySettingsPage'));
 
 export type TenantSection = "overview" | "usage" | "qa" | "audit" | TenantSettingsSectionId;
@@ -441,66 +431,37 @@ export function TenantAdminShell({
 
   const governanceContent = (() => {
     if (!governanceRoute) return null;
-    if (!effectiveTenantId) return <GovernanceCapabilityNotice title="组织作用域" mode="readonly" />;
-    switch (governanceRoute.routeId) {
-      case "organization.overview.overview":
-        return <TenantOverviewSection tenantId={effectiveTenantId} />;
-      case "organization.members.list":
-      case "organization.members.owners":
-      case "organization.members.member":
-        return <OrganizationMembersPage tenantId={effectiveTenantId} route={governanceRoute} />;
-      case "organization.members.policies":
-        return <OrganizationPoliciesPage tenantId={effectiveTenantId} />;
-      case "organization.members.groups":
-        return <OrganizationGroupsPage tenantId={effectiveTenantId} />;
-      case "organization.members.offboarding":
-        return <OrganizationOffboardingPage tenantId={effectiveTenantId} />;
-      case "organization.agents.org-agents":
-        return renderOrgAgents ? renderOrgAgents(effectiveTenantId, currentTenant?.name) : <GovernanceCapabilityNotice title="组织智能体" />;
-      case "organization.agents.workflows":
-        return <WorkflowDisplaySettingsPage tenantId={effectiveTenantId} />;
-      case "organization.agents.dingtalk-accounts":
-        return <AgentDwsAccountsPage tenantId={effectiveTenantId} />;
-      case "organization.agents.skills":
-        return renderSkills(effectiveTenantId, currentTenant?.name);
-      case "organization.agents.connectors":
-        return <OrganizationCredentialsPage tenantId={effectiveTenantId} />;
-      case "organization.agents.memory-knowledge":
-        return <OrganizationMemoryKnowledgePage tenantId={effectiveTenantId} />;
-      case "organization.agents.model-tools":
-        return <TenantSettingsPanel tenantId={effectiveTenantId} section="model-tools" />;
-      case "organization.agents.environments":
-        return <OrganizationEnvironmentsPage tenantId={effectiveTenantId} />;
-      case "organization.agents.files-data":
-        return renderFiles();
-      case "organization.governance.automation":
-        return renderAutomation ? renderAutomation() : <GovernanceCapabilityNotice title="自动化任务" />;
-      case "organization.governance.usage":
-        return (
-          <OrganizationUsageBillingPage tenantId={effectiveTenantId} tenantName={currentTenant?.name} usage={renderUsage(effectiveTenantId)} />
-        );
-      case "organization.governance.qa":
-        return <QaConsole tenantId={effectiveTenantId} />;
-      case "organization.governance.audit":
-        return <GovernanceChangeAuditPage tenantId={effectiveTenantId} />;
-      case "organization.settings.profile":
-        return renderCompanyInfo(effectiveTenantId, currentTenant?.name);
-      case "organization.settings.rules":
-        return <TenantInstructionsPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} />;
-      case "organization.settings.brand":
-        return <TenantSettingsPanel tenantId={effectiveTenantId} section="brand" />;
-      case "organization.settings.security":
-        return <TenantSettingsPanel tenantId={effectiveTenantId} section="security" />;
-      default:
-        return <GovernanceCapabilityNotice title="该治理能力" />;
-    }
+    if (!effectiveTenantId) return (
+      <div className="flex h-full min-h-0 flex-col bg-card">
+        <OrganizationScopeBanner route={governanceRoute} dirtyController={dirtyController} settingsMode />
+        <div className="min-h-0 flex-1 overflow-auto">
+          <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
+        </div>
+      </div>
+    );
+    return (
+      <OrganizationManagementContent
+        route={governanceRoute}
+        tenantId={effectiveTenantId}
+        tenantName={currentTenant?.name}
+        renderOrgAgents={renderOrgAgents
+          ? (tenantId, tenantName) => renderOrgAgents(tenantId, tenantName)
+          : undefined}
+        renderSkills={(tenantId, tenantName) => renderSkills(tenantId, tenantName)}
+        renderUsage={(tenantId) => renderUsage(tenantId)}
+        renderFiles={renderFiles}
+        renderCompanyInfo={renderCompanyInfo}
+        renderAutomation={renderAutomation}
+        dirtyController={dirtyController}
+      />
+    );
   })();
 
   if (governanceContentOnly) {
     return (
       <div className={cn(
-        "min-h-full bg-muted/20 p-3 sm:p-4",
-        governanceContentEmbedded && "h-full min-h-0 overflow-auto bg-card p-4 md:p-6",
+        "min-h-full bg-muted/20",
+        governanceContentEmbedded && "h-full min-h-0 overflow-hidden bg-card",
       )}>
         {governanceContent}
       </div>

@@ -43,6 +43,17 @@ class SerialToolsThenTextAdapter implements ModelAdapter {
   }
 }
 
+class FinalTextAdapter implements ModelAdapter {
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
+    this.requests.push(request);
+    const content = this.requests.length === 1 ? '第一段回答。' : '已按插话修正。';
+    yield { type: 'text_delta', content };
+    yield { type: 'completed', content, toolCalls: [] };
+  }
+}
+
 class SerialCountingToolRuntime implements ToolRuntime {
   readonly invocations: string[] = [];
   private readonly descriptor: ToolDescriptor;
@@ -80,12 +91,101 @@ async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEv
   return events;
 }
 
-describe('RawAgentLoop user input tool boundary', () => {
+describe('RawAgentLoop user input boundaries', () => {
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
     for (const dir of cleanupDirs) await rm(dir, { recursive: true, force: true });
     cleanupDirs.clear();
+  });
+
+  it('consumes pending user input in the same run after a final text turn exhausts maxTurns', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-text-interjection-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new FinalTextAdapter();
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-final-text', sourceRunId: 'source-final-text', clientMsgId: 'client-final-text',
+      message: { channel: 'web', chatId: 'chat-final-text', content: '最后一刻补充' }, prompt: '最后一刻补充',
+    }];
+    let loadCalls = 0;
+    const markApplied = vi.fn(async () => { queued = []; });
+    const trySeal = vi.fn(async () => false);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter, eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-text', DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new SerialCountingToolRuntime(() => undefined),
+      runStore: {
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: trySeal,
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-final-text', content: '先回答' }, prompt: '先回答',
+        instructions: '直接回答。', maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-final-text', sessionId: 'session-final-text', model: 'gpt-5.5', cwd,
+        tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => (++loadCalls === 1 ? [] : queued),
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]?.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '第一段回答。' },
+      { role: 'user', content: '最后一刻补充' },
+    ]);
+    expect(events.filter((event) => event.type === 'interjection_applied')).toEqual([{
+      type: 'interjection_applied', sourceRunIds: ['source-final-text'], clientMsgIds: ['client-final-text'],
+    }]);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(markApplied).toHaveBeenCalledWith('target-final-text', ['source-final-text']);
+    expect(trySeal).toHaveBeenCalledWith('target-final-text');
+  });
+
+  it('leaves input arriving after a successful final seal for durable fallback', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-post-seal-fallback-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new FinalTextAdapter();
+    let fallbackReady = false;
+    const queued: QueuedInterjection[] = [{
+      inputId: 'input-post-seal', sourceRunId: 'source-post-seal', clientMsgId: 'client-post-seal',
+      message: { channel: 'web', chatId: 'chat-post-seal', content: '封口后补充' }, prompt: '封口后补充',
+    }];
+    const markApplied = vi.fn(async () => [] as string[]);
+    const trySeal = vi.fn(async () => { fallbackReady = true; return true; });
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter, eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-post-seal', DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new SerialCountingToolRuntime(() => undefined),
+      runStore: { markSteeringInputsApplied: markApplied, trySealSteeringInputWindow: trySeal } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run(
+      {
+        message: { channel: 'web', chatId: 'chat-post-seal', content: '先回答' }, prompt: '先回答',
+        instructions: '直接回答。', maxTurns: 1,
+        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+      },
+      {
+        runId: 'target-post-seal', sessionId: 'session-post-seal', model: 'gpt-5.5', cwd,
+        tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' },
+        loadQueuedInterjections: async () => fallbackReady ? queued : [],
+      },
+    ));
+
+    expect(adapter.requests).toHaveLength(1);
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+    expect(markApplied).not.toHaveBeenCalled();
+    expect(trySeal).toHaveBeenCalledWith('target-post-seal');
   });
 
   it('finishes the active serial tool, skips the rest, and extends the final turn', async () => {

@@ -1046,7 +1046,6 @@ export class RawAgentLoop implements AgentLoop {
         let turnText = '';
         let turnThinking = '';
         const turnFinalTextStart = finalText.length;
-        let inlineCompactionAttempted = false;
         const draftId = supportsReplaceableDrafts(context.channelContext) ? randomUUID() : undefined;
         const draftStartedAt = new Date().toISOString();
         let draftStatePersisted = false;
@@ -1527,7 +1526,6 @@ export class RawAgentLoop implements AgentLoop {
               contextPressureForceReason,
             );
             if (evaluation.shouldCompact) {
-              inlineCompactionAttempted = true;
               logger.info(
                 `[auto-compact] inline start session=${context.sessionId} run=${context.runId} `
                 + `tokens=${evaluation.currentTokens ?? 'unknown'}/${evaluation.contextWindow ?? 'unknown'} `
@@ -1606,53 +1604,30 @@ export class RawAgentLoop implements AgentLoop {
               }
             }
           }
-          if (turn < turnLimit || inlineCompactionAttempted) {
-            // BUG-8 降级（2026-08-04）：drain/seal 的 PG 抖动不允许把已经答完的 run
-            // 打成 failed——按「无插话」继续收尾；窗口留 open 时，目标终态后
-            // NOT EXISTS 条件自动失效，排队插话回退为独立 run 执行，不丢消息。
-            let queuedInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
-            try {
-              queuedInterjections = await drainQueuedInterjections();
-              if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
-                const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
-                if (!sealed) queuedInterjections = await drainQueuedInterjections();
-              }
-            } catch (error) {
-              if (context.signal?.aborted) throw error;
-              logger.warn(
-                `[run] steering drain/seal failed at finish (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-              );
-              queuedInterjections = [];
+          // 每个纯文本轮（包括耗尽预算的最后一轮）都先 drain/seal。completed 前已入队的
+          // 补充继续由当前 run 消费；封口后才到达的消息由 durable fallback 接续。
+          let queuedInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
+          try {
+            queuedInterjections = await drainQueuedInterjections();
+            if (queuedInterjections.length === 0 && this.runStore?.trySealSteeringInputWindow) {
+              const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
+              if (!sealed) queuedInterjections = await drainQueuedInterjections();
             }
-            if (context.drainHandoff?.requested) {
-              if (queuedInterjections.length > 0) {
-                yield await announceAppliedInterjections(queuedInterjections);
-              }
-              return;
-            }
-            if (queuedInterjections.length > 0) {
-              carriedBoundaryInterjections = queuedInterjections;
-              // 压缩期间到达的消息必须仍是当前 run 的插话。即使原任务恰好耗尽
-              // maxTurns，也为这批插话重新开放一份完整轮次预算，避免压缩尾阶段
-              // 人为制造“上一 run 已停、下一 run 尚未开始”的断层。
-              if (inlineCompactionAttempted && turn >= turnLimit) {
-                turnLimit = turn + input.maxTurns;
-              }
-              continue;
-            }
-          } else if (this.runStore?.trySealSteeringInputWindow) {
-            // D-4（2026-08-04）：最后一轮（turn === turnLimit 且未触发内联压缩）没有
-            // 轮次预算再消费插话，立即封口让此后到达的插话马上回退为独立 run，
-            // 而不是滞留到本 run 终态。seal 返回 false（已有 pending）时无预算可
-            // 消费，留给终态回退路径处理。
-            try {
-              await this.runStore.trySealSteeringInputWindow(context.runId);
-            } catch (error) {
-              if (context.signal?.aborted) throw error;
-              logger.warn(
-                `[run] steering final-turn seal failed (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
+          } catch (error) {
+            if (context.signal?.aborted) throw error;
+            logger.warn(
+              `[run] steering drain/seal failed at finish (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
+            );
+            queuedInterjections = [];
+          }
+          if (context.drainHandoff?.requested) {
+            if (queuedInterjections.length > 0) yield await announceAppliedInterjections(queuedInterjections);
+            return;
+          }
+          if (queuedInterjections.length > 0) {
+            carriedBoundaryInterjections = queuedInterjections;
+            if (turn >= turnLimit) turnLimit = turn + input.maxTurns;
+            continue;
           }
           if (await successfulCompletion.check(context, messages, assistantContent)) {
             currentResponseId = undefined;
@@ -2161,7 +2136,7 @@ export class RawAgentLoop implements AgentLoop {
     );
   }
 
-  /** 默认串行；预授权并发工具稳定回填，交互型工具串行挂起。 */
+  /** 默认串行；并发工具稳定回填，交互型工具串行挂起。 */
   private async *drainToolCalls(args: {
     calls: ModelToolCall[];
     descriptorsByName: Map<string, ToolDescriptor>;

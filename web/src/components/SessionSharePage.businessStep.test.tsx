@@ -198,11 +198,11 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     expect(within(sheet).getByText("公开分享中仅展示")).toBeTruthy();
     expect(within(sheet).queryByRole("button", { name: "下载 分享核验报告.xlsx" })).toBeNull();
 
-    fireEvent.click(within(sheet).getByRole("tab", { name: "过程" }));
+    fireEvent.click(within(sheet).getByText("过程"));
     expect(within(sheet).getByText(/读取公开数据/)).toBeTruthy();
     expect(within(sheet).getByText(/写入公开回执/)).toBeTruthy();
     expect(sheet.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(2);
-    fireEvent.click(within(sheet).getByRole("tab", { name: "依据" }));
+    fireEvent.click(within(sheet).getByText("依据"));
     expect(within(sheet).getByText("receipt:share-step")).toBeTruthy();
 
     fireEvent.click(within(sheet).getByRole("button", { name: "关闭" }));

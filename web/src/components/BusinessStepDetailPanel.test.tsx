@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { BusinessStepEventItem, BusinessStepSection, RenderItem, TodoItem } from "@agent/shared";
 
@@ -147,66 +147,77 @@ function props() {
     plan,
     followMode: "fixed" as const,
     debugMode: true,
-    onPrevious: vi.fn(),
-    onNext: vi.fn(),
-    onReturnCurrent: vi.fn(),
+    onSelectStep: vi.fn(),
     onClose: vi.fn(),
     renderItem,
   };
 }
 
 describe("BusinessStepDetailPanel", () => {
-  it("默认显示结果，并复用只读 PresentationBlocks 与正式交付物", () => {
+  it("标题栏仅保留标题和右上关闭叉号，结果直接展示且复用只读内容", () => {
     render(<BusinessStepDetailPanel {...props()} />);
 
+    expect(screen.getByText("任务步骤")).toBeTruthy();
+    expect(screen.queryByText("已暂停跟随")).toBeNull();
+    expect(screen.queryByRole("button", { name: "上一步" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "下一步" })).toBeNull();
+    expect(screen.getByRole("button", { name: "关闭步骤详情" }).querySelector(".lucide-x")).toBeTruthy();
+    expect(document.querySelector(".lucide-chevron-left")).toBeNull();
     expect(screen.getByText("17 张通过，1 张需复核")).toBeTruthy();
     expect(screen.getByText("订单差异")).toBeTruthy();
     expect(screen.getByText("税号格式存在一处差异")).toBeTruthy();
     expect(screen.getByText("artifact-1")).toBeTruthy();
     expect(screen.getByText(/过程记录中仍有异常/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "批准" })).toHaveProperty("disabled", true);
-    expect(screen.getByText("已暂停跟随")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "返回当前步骤" })).toBeTruthy();
   });
 
-  it("结果、过程、依据按真实内容分区，空内容不伪造", () => {
-    render(<BusinessStepDetailPanel {...props()} />);
+  it("步骤标签显示同步状态和两位序号，并可直接切换步骤", () => {
+    const callbacks = props();
+    render(<BusinessStepDetailPanel {...callbacks} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: "过程" }));
+    const first = screen.getByRole("tab", { name: "第 01 步：核验订单" });
+    const second = screen.getByRole("tab", { name: "第 02 步：写入结果" });
+    expect(first.getAttribute("aria-selected")).toBe("true");
+    expect(second.getAttribute("aria-selected")).toBe("false");
+    expect(within(first).getByLabelText("已完成，有例外")).toBeTruthy();
+    expect(within(second).getByLabelText("进行中")).toBeTruthy();
+
+    fireEvent.click(second);
+    expect(callbacks.onSelectStep).toHaveBeenCalledWith("id:write");
+  });
+
+  it("过程和依据合并在结果下方，并以折叠区展开", () => {
+    const { container } = render(<BusinessStepDetailPanel {...props()} />);
+    const process = container.querySelector<HTMLDetailsElement>('[data-business-step-collapsible="process"]');
+    const evidence = container.querySelector<HTMLDetailsElement>('[data-business-step-collapsible="evidence"]');
+
+    expect(process?.open).toBe(false);
+    expect(evidence?.open).toBe(false);
+    fireEvent.click(screen.getByText("过程"));
+    expect(process?.open).toBe(true);
     expect(screen.getByLabelText("步骤过程")).toBeTruthy();
     expect(screen.getByText("read-order")).toBeTruthy();
     expect(screen.getByText("write-action")).toBeTruthy();
-    expect(screen.queryByText("artifact-1")).toBeNull();
 
-    fireEvent.click(screen.getByRole("tab", { name: "依据" }));
+    fireEvent.click(screen.getByText("依据"));
+    expect(evidence?.open).toBe(true);
     expect(screen.getByText("order:SO-1001")).toBeTruthy();
     expect(screen.getByText("receipt:check-18")).toBeTruthy();
   });
 
   it("非 debug 终态仍保留安全过程摘要与外部写操作", () => {
     render(<BusinessStepDetailPanel {...props()} debugMode={false} />);
-    fireEvent.click(screen.getByRole("tab", { name: "过程" }));
+    fireEvent.click(screen.getByText("过程"));
 
     expect(screen.getByText("read-order")).toBeTruthy();
     expect(screen.getByText("write-action")).toBeTruthy();
   });
 
-  it("提供上一步、下一步与返回当前步骤控制", () => {
-    const callbacks = props();
-    render(<BusinessStepDetailPanel {...callbacks} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "上一步" }));
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
-    fireEvent.click(screen.getByRole("button", { name: "返回当前步骤" }));
-    expect(callbacks.onPrevious).toHaveBeenCalledTimes(1);
-    expect(callbacks.onNext).toHaveBeenCalledTimes(1);
-    expect(callbacks.onReturnCurrent).toHaveBeenCalledTimes(1);
-  });
-
-  it("只有结果时隐藏空 Tab", () => {
+  it("只有结果时不渲染空的过程与依据折叠区", () => {
     const resultOnly = { ...detail, todo: { ...todo, display: undefined, detail: undefined, evidenceRefs: undefined }, sections: [] };
-    render(<BusinessStepDetailPanel {...props()} detail={resultOnly} />);
-    expect(screen.queryByRole("tablist")).toBeNull();
+    const { container } = render(<BusinessStepDetailPanel {...props()} detail={resultOnly} />);
+    expect(screen.getByRole("tablist", { name: "任务步骤" })).toBeTruthy();
+    expect(container.querySelector("[data-business-step-collapsible]")).toBeNull();
     expect(screen.getByText("17 张通过，1 张需复核")).toBeTruthy();
   });
 });

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, LocateFixed } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
+import { ChevronDown, X } from "lucide-react";
 import type { RenderItem } from "@agent/shared";
 
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { RightPanelFrame } from "./RightPanelFrame";
 import {
   BusinessStepEvidence,
   BusinessStepResultContent,
@@ -23,16 +22,12 @@ import type {
 } from "./businessStepViewModel";
 
 // 面板和 Sheet 共用同一详情主体；默认导出按 open 是否存在分派按需加载后的外壳。
-type DetailTab = "result" | "process" | "evidence";
-
 export interface BusinessStepDetailProps {
   detail: BusinessStepDetailView;
   plan: BusinessStepPlanView;
   followMode: BusinessStepFollowMode;
   debugMode: boolean;
-  onPrevious?: () => void;
-  onNext?: () => void;
-  onReturnCurrent?: () => void;
+  onSelectStep?: (todoKey: string) => void;
   onClose: () => void;
   renderItem: (item: RenderItem) => ReactNode;
 }
@@ -75,74 +70,73 @@ function detailItems(detail: BusinessStepDetailView) {
   };
 }
 
-function HeaderActions({
-  onPrevious,
-  onNext,
-}: {
-  onPrevious?: () => void;
-  onNext?: () => void;
-}) {
+function StepTabs({
+  detail,
+  plan,
+  onSelectStep,
+}: Pick<BusinessStepDetailProps, "detail" | "plan" | "onSelectStep">) {
   return (
-    <div className="flex items-center gap-0.5">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-8"
-        disabled={!onPrevious}
-        onClick={onPrevious}
-        title="上一步"
-        aria-label="上一步"
-      >
-        <ArrowUp className="size-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-8"
-        disabled={!onNext}
-        onClick={onNext}
-        title="下一步"
-        aria-label="下一步"
-      >
-        <ArrowDown className="size-4" />
-      </Button>
+    <div
+      className="flex shrink-0 gap-1 overflow-x-auto border-b px-4 py-2"
+      role="tablist"
+      aria-label="任务步骤"
+      data-business-step-tabs
+    >
+      {plan.details.map((step) => {
+        const selected = step.todoKey === detail.todoKey;
+        const number = String(step.stepIndex).padStart(2, "0");
+        return (
+          <button
+            key={step.todoKey}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            aria-controls="business-step-selected-content"
+            aria-label={`第 ${number} 步：${step.todo.content}`}
+            className={cn(
+              "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium tabular-nums outline-none transition-colors",
+              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+              selected
+                ? "bg-primary/10 text-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+            )}
+            onClick={() => onSelectStep?.(step.todoKey)}
+          >
+            <BusinessStepStatusIcon todo={step.todo} className="size-3.5" />
+            <span>{number}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function FollowBar({
-  detail,
-  plan,
-  followMode,
-  onReturnCurrent,
-}: Pick<BusinessStepDetailProps, "detail" | "plan" | "followMode" | "onReturnCurrent">) {
-  const fixedAwayFromCurrent = followMode === "fixed"
-    && !!plan.currentTodoKey
-    && plan.currentTodoKey !== detail.todoKey;
-
+function CollapsibleDetail({
+  title,
+  children,
+  dataAttribute,
+}: {
+  title: string;
+  children: ReactNode;
+  dataAttribute: "process" | "evidence";
+}) {
   return (
-    <div className="flex min-h-9 shrink-0 items-center justify-between gap-3 border-b bg-muted/20 px-4 py-1.5 text-xs text-muted-foreground">
-      <span>{followMode === "follow" ? "正在跟随当前步骤" : "已暂停跟随"}</span>
-      {fixedAwayFromCurrent && onReturnCurrent ? (
-        <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={onReturnCurrent}>
-          <LocateFixed className="size-3.5" />
-          返回当前步骤
-        </Button>
-      ) : null}
-    </div>
+    <details className="group rounded-xl border border-border/70 bg-muted/15" data-business-step-collapsible={dataAttribute}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm font-medium outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <span>{title}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-border/60 px-3 py-3">{children}</div>
+    </details>
   );
 }
 
 function BusinessStepDetailBody({
   detail,
   plan,
-  followMode,
-  onReturnCurrent,
+  onSelectStep,
   renderItem,
-}: Pick<
-  BusinessStepDetailProps,
-  "detail" | "plan" | "followMode" | "onReturnCurrent" | "renderItem"
->) {
+}: Pick<BusinessStepDetailProps, "detail" | "plan" | "onSelectStep" | "renderItem">) {
   const items = useMemo(() => detailItems(detail), [detail]);
   const hasResult = !!detail.todo.outcome
     || !!detail.todo.detail?.length
@@ -151,16 +145,6 @@ function BusinessStepDetailBody({
     || items.processAnomaly;
   const hasProcess = items.process.length > 0;
   const hasEvidence = !!detail.todo.evidenceRefs?.length;
-  const tabs = useMemo<DetailTab[]>(() => [
-    ...(hasResult ? ["result" as const] : []),
-    ...(hasProcess ? ["process" as const] : []),
-    ...(hasEvidence ? ["evidence" as const] : []),
-  ], [hasEvidence, hasProcess, hasResult]);
-  const [activeTab, setActiveTab] = useState<DetailTab>("result");
-
-  useEffect(() => {
-    setActiveTab(tabs.includes("result") ? "result" : (tabs[0] ?? "result"));
-  }, [detail.planId, detail.todoKey, tabs]);
 
   const deliverables = items.deliverables.length ? (
     <section className="space-y-2" aria-label="交付物">
@@ -173,75 +157,71 @@ function BusinessStepDetailBody({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <FollowBar
-        detail={detail}
-        plan={plan}
-        followMode={followMode}
-        onReturnCurrent={onReturnCurrent}
-      />
-      {tabs.length > 1 ? (
-        <div className="flex shrink-0 gap-1 border-b px-4 pt-2" role="tablist" aria-label="步骤详情分区">
-          {tabs.map((tab) => {
-            const labels: Record<DetailTab, string> = { result: "结果", process: "过程", evidence: "依据" };
-            return (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab}
-                className={cn(
-                  "border-b-2 px-3 py-2 text-sm transition-colors",
-                  activeTab === tab
-                    ? "border-primary font-medium text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => setActiveTab(tab)}
-              >
-                {labels[tab]}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      <StepTabs detail={detail} plan={plan} onSelectStep={onSelectStep} />
       <div
         className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-4"
+        id="business-step-selected-content"
         role="tabpanel"
-        data-business-step-detail-tab={activeTab}
+        aria-label={`第 ${detail.stepIndex} 步详情`}
+        data-business-step-detail-content
       >
-        {activeTab === "result" ? (
-          <BusinessStepResultContent
-            todo={detail.todo}
-            processAnomaly={items.processAnomaly}
-            deliverables={deliverables}
-          />
-        ) : null}
-        {activeTab === "process" ? (
-          <div className="flex flex-col gap-2.5" aria-label="步骤过程" data-business-step-process>
-            {items.process.map((item) => <div key={item.id}>{renderItem(item)}</div>)}
-          </div>
-        ) : null}
-        {activeTab === "evidence" ? <BusinessStepEvidence todo={detail.todo} /> : null}
+        <div className="flex flex-col gap-4">
+          <section className="space-y-3" aria-label="步骤结果">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">结果</h2>
+            {hasResult ? (
+              <BusinessStepResultContent
+                todo={detail.todo}
+                processAnomaly={items.processAnomaly}
+                deliverables={deliverables}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">暂无结果</p>
+            )}
+          </section>
+          {hasProcess ? (
+            <CollapsibleDetail title="过程" dataAttribute="process">
+              <div className="flex flex-col gap-2.5" aria-label="步骤过程" data-business-step-process>
+                {items.process.map((item) => <div key={item.id}>{renderItem(item)}</div>)}
+              </div>
+            </CollapsibleDetail>
+          ) : null}
+          {hasEvidence ? (
+            <CollapsibleDetail title="依据" dataAttribute="evidence">
+              <BusinessStepEvidence todo={detail.todo} />
+            </CollapsibleDetail>
+          ) : null}
+        </div>
       </div>
     </div>
   );
 }
 
 export function BusinessStepDetailPanel(props: BusinessStepDetailProps) {
-  const { detail, onPrevious, onNext, onClose } = props;
+  const { detail, onClose } = props;
   return (
-    <div id="business-step-detail-panel" className="h-full min-h-0" data-business-step-detail-panel>
-      <RightPanelFrame
-        title={detail.todo.content}
-        ariaLabel={`步骤详情：${detail.todo.content}`}
-        subtitle={`第 ${detail.stepIndex} / ${detail.stepCount} 步`}
-        leading={<BusinessStepStatusIcon todo={detail.todo} />}
-        onClose={onClose}
-        closeLabel="关闭步骤详情"
-        actions={<HeaderActions onPrevious={onPrevious} onNext={onNext} />}
-      >
+    <section
+      id="business-step-detail-panel"
+      className="flex h-full min-h-0 flex-col bg-card"
+      aria-label={`步骤详情：${detail.todo.content}`}
+      data-business-step-detail-panel
+    >
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3">
+        <div className="min-w-0 flex-1 truncate text-sm font-medium">任务步骤</div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 shrink-0"
+          onClick={onClose}
+          title="关闭步骤详情"
+          aria-label="关闭步骤详情"
+        >
+          <X className="size-4" />
+        </Button>
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <BusinessStepDetailBody {...props} />
-      </RightPanelFrame>
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -249,7 +229,7 @@ export function BusinessStepDetailSheet({
   open,
   ...props
 }: BusinessStepDetailProps & { open: boolean }) {
-  const { detail, onClose, onPrevious, onNext } = props;
+  const { onClose } = props;
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
@@ -263,13 +243,9 @@ export function BusinessStepDetailSheet({
           <div className="flex h-5 shrink-0 items-center justify-center" aria-hidden="true">
             <span className="h-1 w-10 rounded-full bg-muted-foreground/30" />
           </div>
-          <header className="flex min-h-12 shrink-0 items-center gap-2 border-b px-4 pb-2 pr-12">
-            <BusinessStepStatusIcon todo={detail.todo} />
-            <div className="min-w-0 flex-1">
-              <SheetTitle className="truncate text-sm font-medium">{detail.todo.content}</SheetTitle>
-              <SheetDescription className="truncate text-xs">第 {detail.stepIndex} / {detail.stepCount} 步</SheetDescription>
-            </div>
-            <HeaderActions onPrevious={onPrevious} onNext={onNext} />
+          <header className="flex min-h-12 shrink-0 items-center border-b px-4 pb-2 pr-12">
+            <SheetTitle className="truncate text-sm font-medium">任务步骤</SheetTitle>
+            <SheetDescription className="sr-only">查看并切换任务步骤详情</SheetDescription>
           </header>
           <BusinessStepDetailBody {...props} />
         </div>

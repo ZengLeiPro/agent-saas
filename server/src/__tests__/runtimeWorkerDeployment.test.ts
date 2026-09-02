@@ -69,6 +69,10 @@ describe('Runtime Worker 生产部署契约', () => {
       'utf-8',
     );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
+    const compatibilityRollback = await readFile(
+      join(repoRoot, 'scripts/release/rollback-compatibility-app.sh'),
+      'utf-8',
+    );
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
     const runtimeSource = await readFile(join(repoRoot, 'server/src/app/runtime.ts'), 'utf-8');
     const readinessSource = await readFile(
@@ -151,26 +155,39 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(rollbackBlock).toContain('previous runtime worker reclaimed authority without restart');
     expect(rollbackBlock).toContain('kill -HUP "$old_pid"');
     expect(rollbackBlock).toContain('write_worker_active_color "$WORKER_ACTIVE"');
-    expect(rollbackBlock).toContain('previous runtime worker marker restored before candidate stop');
+    expect(rollbackBlock).toContain(
+      'previous runtime worker marker restored before candidate stop',
+    );
     expect(rollbackBlock).toContain('WORKER_CANDIDATE_PROCESS_STARTED');
     expect(rollbackBlock).toContain('WORKER_ACTIVE_DRAIN_COMPLETED');
     expect(rollbackBlock).toContain('preserving candidate and refusing restart');
     expect(rollbackBlock).toContain('systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
     expect(rollbackBlock).toContain('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
-    expect(rollbackBlock.indexOf('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"'))
-      .toBeLessThan(rollbackBlock.indexOf('write_worker_active_color "$WORKER_ACTIVE"'));
+    expect(
+      rollbackBlock.indexOf('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"'),
+    ).toBeLessThan(rollbackBlock.indexOf('write_worker_active_color "$WORKER_ACTIVE"'));
     expect(
       rollbackBlock.indexOf('previous runtime worker marker restored before candidate stop'),
     ).toBeLessThan(rollbackBlock.indexOf('stop runtime worker candidate:'));
-    const authorityPromotion = workflow.indexOf('runtime worker authority promoted before old drain');
+    const authorityPromotion = workflow.indexOf(
+      'runtime worker authority promoted before old drain',
+    );
     const oldWorkerDrain = workflow.indexOf('kill -USR2 "$OLD_WORKER_PID"', authorityPromotion);
-    const authorityRefresh = workflow.indexOf('runtime worker authority refreshed after old drain', oldWorkerDrain);
-    const handoffCompleted = workflow.indexOf('runtime worker handoff completed before Web readiness', oldWorkerDrain);
+    const authorityRefresh = workflow.indexOf(
+      'runtime worker authority refreshed after old drain',
+      oldWorkerDrain,
+    );
+    const handoffCompleted = workflow.indexOf(
+      'runtime worker handoff completed before Web readiness',
+      oldWorkerDrain,
+    );
     expect(authorityPromotion).toBeGreaterThan(-1);
     expect(oldWorkerDrain).toBeGreaterThan(authorityPromotion);
     expect(authorityRefresh).toBeGreaterThan(oldWorkerDrain);
     expect(handoffCompleted).toBeGreaterThan(authorityRefresh);
-    expect(workflow).toContain('worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value');
+    expect(workflow).toContain(
+      'worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value',
+    );
     expect(workflow).toContain('kill -USR1 "$worker_pid"');
     expect(workflow).toContain('WORKER_DRAIN_TIMEOUT=960');
     expect(workflow).toContain('WORKER_ACTIVE_DRAIN_COMPLETED=1');
@@ -191,11 +208,14 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain(
       'rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"',
     );
-    expect(workflow).toContain(
-      'rollback drain endpoint unavailable; marker snapshot reports activeUploads=',
+    expect(compatibilityRollback).toContain(
+      'TARGET_DRAIN_SNAPSHOT="$(cat "$RUN_DIR/$SERVICE-$OTHER.draining"',
     );
-    expect(workflow).toContain(
-      'rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"',
+    expect(compatibilityRollback).toContain(
+      'rollback refused: target $OTHER is draining with activeUploads=$TARGET_ACTIVE_UPLOADS',
+    );
+    expect(compatibilityRollback).toContain(
+      'rm -f "$RUN_DIR/$SERVICE-$API_ACTIVE.pid" "$RUN_DIR/$SERVICE-$API_ACTIVE.draining"',
     );
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',
@@ -208,10 +228,16 @@ describe('Runtime Worker 生产部署契约', () => {
     );
     expect(runtimeSource).toContain('createRuntimeEventRetentionAdmissionGuard(');
     expect(runtimeSource).toContain('admissionGuard: runtimeAdmissionGuard');
-    expect(runtimeSource).toContain('enableSingletonWorkers && config.runtimeEventRetention?.enabled === true');
-    expect(runtimeSource).toContain("startupFailureMode: processRole === 'runtime-worker' ? 'throw'");
+    expect(runtimeSource).toContain(
+      'enableSingletonWorkers && config.runtimeEventRetention?.enabled === true',
+    );
+    expect(runtimeSource).toContain(
+      "startupFailureMode: processRole === 'runtime-worker' ? 'throw'",
+    );
     expect(runtimeSource).toContain('statusAuthorityTable: systemMetricsStore?.systemMetricsTable');
-    expect(retentionSource).toContain('runtime-worker failed to establish RuntimeEventRetention status authority');
+    expect(retentionSource).toContain(
+      'runtime-worker failed to establish RuntimeEventRetention status authority',
+    );
     expect(retentionSource).toContain('withExecutionAuthority');
     expect(retentionSource).toContain('this.startupRetryTimer = setTimeout(');
     expect(runtimeSource).toContain('await runtimeEventRetention?.quiesce()');

@@ -296,6 +296,29 @@ test('ACS Sandbox verifies the git version installed by the base image build', a
   );
 });
 
+test('ACS Sandbox accepts the dws CLI v-prefixed semantic version', async () => {
+  const contract = await fixture();
+  const identity = createRuntimeDependencyIdentity(contract, SHA);
+  const runtime = { version: contract.node.version, arch: 'x64', platform: 'linux' };
+  const execFileSync = (command) => {
+    const tool = contract.tools.find(
+      (entry) => entry.probe[0] === command && entry.components.includes('acsSandbox'),
+    );
+    return command === 'dws'
+      ? `dws version v${tool.version} (build metadata)\n`
+      : `${command} version ${tool.version}\n`;
+  };
+
+  assert.doesNotThrow(() =>
+    verifyRuntimeEnvironment({
+      identity,
+      component: 'acsSandbox',
+      runtime,
+      execFileSync,
+    }),
+  );
+});
+
 test('systemd EnvironmentFile parsing is non-executing and clears inherited Runtime selectors', () => {
   const environment = runtimeEnvironmentFromSystemdEnvironmentFile(
     [

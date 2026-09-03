@@ -153,7 +153,7 @@ export interface AppRuntime {
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
   auditProjectionShutdown?: () => Promise<void>;
-  /** Runtime event store 外部连接关闭（仅 runtimeEventStore.backend='pg' 时定义） */
+  /** Runtime event store 外部连接关闭（仅 runtimeEventStore.backend='pg' 时定义）。 */
   runtimeEventStoreShutdown?: () => Promise<void>;
   /** Stops durable tenant deletion scans before PostgreSQL shutdown. */
   tenantDeletionShutdown?: () => Promise<void>;
@@ -164,6 +164,7 @@ export interface AppRuntime {
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
   codexWebSocketShutdown?: () => void;
+  codexWebSocketCredentialShutdown?: (credentialRefs: readonly string[]) => void;
   userStore?: UserStore;
   /** M30-01 durable auth epoch/generation authority. */
   authEpochAuthority?: AuthEpochAuthority;

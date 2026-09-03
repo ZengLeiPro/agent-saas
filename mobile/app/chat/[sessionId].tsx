@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, ScrollView, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { showTextPrompt } from '../../src/lib/prompt';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -554,12 +554,20 @@ export default function ChatDetailScreen() {
             accessibilityLabel={activeInteraction.type === 'ask_user' ? '待回答问题' : '待处理权限请求'}
             testID="canonical-interaction-zone"
           >
-            {activeInteraction.type === 'ask_user' ? (
-              <AskUserBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handleAskUserResponse} />
-            ) : (
-              <PermissionBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handlePermissionResponse} />
-            )}
-            {pendingInteractions.length > 1 ? <Text style={styles.interactionQueueText}>另有 {pendingInteractions.length - 1} 个交互按服务端顺序排队</Text> : null}
+            <ScrollView
+              style={styles.interactionScroll}
+              contentContainerStyle={styles.interactionScrollContent}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
+              {activeInteraction.type === 'ask_user' ? (
+                <AskUserBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handleAskUserResponse} />
+              ) : (
+                <PermissionBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handlePermissionResponse} />
+              )}
+              {pendingInteractions.length > 1 ? <Text style={styles.interactionQueueText}>另有 {pendingInteractions.length - 1} 个交互按服务端顺序排队</Text> : null}
+            </ScrollView>
           </View>
         ) : null}
         <ChatInput
@@ -665,6 +673,13 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
       borderRadius: 12,
       backgroundColor: colors.card,
       maxHeight: 360,
+    },
+    interactionScroll: {
+      flexShrink: 1,
+    },
+    interactionScrollContent: {
+      flexGrow: 0,
+      paddingBottom: 4,
     },
     interactionQueueText: {
       marginTop: 8,

@@ -11,8 +11,7 @@ function isDocumentationOnly(file) {
     file.endsWith('.md') ||
     file.startsWith('docs/') ||
     file.startsWith('.github/ISSUE_TEMPLATE/') ||
-    file.startsWith('.github/PULL_REQUEST_TEMPLATE') ||
-    file.startsWith('mobile/')
+    file.startsWith('.github/PULL_REQUEST_TEMPLATE')
   );
 }
 
@@ -36,7 +35,9 @@ export function planCoverageWorkspaces(files, eventName = 'pull_request') {
   if (eventName !== 'pull_request') return [...ALL_WORKSPACES];
 
   const normalized = [...new Set(files.map((file) => file.trim()).filter(Boolean))];
-  if (normalized.some(requiresAllCoverage)) return [...ALL_WORKSPACES];
+  if (normalized.some(requiresAllCoverage) || normalized.some((file) => file.startsWith('mobile/'))) {
+    return [...ALL_WORKSPACES];
+  }
 
   const selected = new Set();
   for (const file of normalized) {

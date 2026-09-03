@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DerivedStoreError } from '../derived/index.js';
+import { PLATFORM_TENANT_ID } from '../../data/tenants/types.js';
 import { ContextPlanePhase2Runtime, derivedProjectionFailureCode } from './runtime.js';
 
 describe('ContextPlanePhase2Runtime fast sync isolation', () => {
@@ -21,6 +22,25 @@ describe('ContextPlanePhase2Runtime fast sync isolation', () => {
     expect(warn).toHaveBeenCalledWith(
       'Context fast projection failed for tenant tenant-a: projector unavailable',
     );
+  });
+
+  it('跳过平台租户：它不参与客户侧 governance，跑了必然 fail-closed', async () => {
+    const { runtime, warn, info } = makeRuntime({});
+    const internals = runtime as unknown as RuntimeInternals;
+    internals.taskboard = { runOnce: vi.fn().mockResolvedValue([{ tenantId: PLATFORM_TENANT_ID }, { tenantId: 'tenant-b' }]) };
+    internals.directory = { runOnce: vi.fn().mockResolvedValue([{ tenantId: PLATFORM_TENANT_ID }]) };
+    internals.ensurePhase2Assignments = vi.fn().mockResolvedValue(undefined);
+    internals.projectDerived = vi.fn().mockResolvedValue(undefined);
+
+    await runtime.runFastOnce();
+
+    expect(internals.ensurePhase2Assignments).toHaveBeenCalledTimes(1);
+    expect(internals.ensurePhase2Assignments).toHaveBeenCalledWith('tenant-b', false);
+    expect(internals.projectDerived).toHaveBeenCalledTimes(1);
+    expect(internals.projectDerived).toHaveBeenCalledWith('tenant-b');
+    expect(warn).not.toHaveBeenCalled();
+    // 计数只统计真正参与投影的租户，平台租户不再虚增分母
+    expect(info).toHaveBeenCalledWith('Context Phase2/3 fast sync completed: tenants=1, projected=1');
   });
 
   it('keeps Directory and projection running when the Taskboard coordinator is unavailable', async () => {
@@ -146,8 +166,13 @@ describe('ContextPlanePhase2Runtime relation draining', () => {
   });
 });
 
-function makeRuntime(derivedStore: object): { runtime: ContextPlanePhase2Runtime; warn: ReturnType<typeof vi.fn> } {
+function makeRuntime(derivedStore: object): {
+  runtime: ContextPlanePhase2Runtime;
+  warn: ReturnType<typeof vi.fn>;
+  info: ReturnType<typeof vi.fn>;
+} {
   const warn = vi.fn();
+  const info = vi.fn();
   return {
     runtime: new ContextPlanePhase2Runtime({
       contextStore: {} as never,
@@ -156,9 +181,10 @@ function makeRuntime(derivedStore: object): { runtime: ContextPlanePhase2Runtime
       assignmentStore: {} as never,
       userStore: {} as never,
       derivedStore: derivedStore as never,
-      logger: { info: vi.fn(), warn },
+      logger: { info, warn },
     }),
     warn,
+    info,
   };
 }
 

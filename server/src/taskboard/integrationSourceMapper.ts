@@ -11,6 +11,7 @@ export function rowToIntegrationSource(row: Record<string, unknown>): TaskBoardI
     ...(row.delivery_task_title ? { deliveryTaskTitle: String(row.delivery_task_title) } : {}),
     repositoryId: String(row.repository_id),
     ...(row.provider_pull_request_id ? { providerPullRequestId: String(row.provider_pull_request_id) } : {}),
+    ...(row.frozen_head_oid ? { frozenHeadOid: String(row.frozen_head_oid) } : {}),
     order: Number(row.source_order),
     state,
     ...(row.merged_commit_oid ? { mergedCommitOid: String(row.merged_commit_oid) } : {}),

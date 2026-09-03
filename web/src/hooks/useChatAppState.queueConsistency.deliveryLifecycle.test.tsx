@@ -184,8 +184,8 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
-describe("useChatAppState queue delivery lifecycle", () => {
-  it("defaults new conversations to daily and sends the selected profile on the first WS chat", async () => {
+describe("useChatAppState message delivery lifecycle", () => {
+  it("defaults new conversations to daily and sends the selected profile through the single delivery path", async () => {
     const { result } = renderHook(() => useChatAppState());
     expect(result.current.sandboxProfile).toBe("daily");
     act(() => {
@@ -194,7 +194,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
     await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()[0]).toMatchObject({
-      submission: { text: "compile this", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
+      submission: { text: "compile this", deliveryMode: "steer", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
     });
   });
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {
@@ -775,7 +775,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     expect(JSON.stringify(chatPayloads()[3])).not.toMatch(/savedPath|relativePath|\/uploads\//);
   });
 
-  it("handles a rejected permission response without surfacing an unhandled rejection", async () => {
+  it("handles a rejected permission response in the current session without an unhandled rejection", async () => {
     harness.session.sessionId = "session-permission";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
@@ -784,7 +784,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
       .map(([payload]) => payload as { action?: string; requestId?: string })
       .find((payload) => payload.action === "resume");
     act(() => emit({ type: "active_stream", sessionId: "session-permission", active: true, status: "running", streamId: "stream-permission", runId: "run-permission", requestId: resume?.requestId }));
-    act(() => emit({ type: "pending_interactions", interactions: [{
+    act(() => emit({ type: "pending_interactions", sessionId: "session-permission", interactions: [{
       type: "permission_request", interactionId: "permission-1", version: 1, toolName: "Shell", toolInput: { command: "echo test" },
     }] }));
 

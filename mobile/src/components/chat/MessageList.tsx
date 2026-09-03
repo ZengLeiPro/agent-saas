@@ -54,11 +54,9 @@ function groupIntoBubbles(items: RenderItem[], keyFor: (item: RenderItem) => str
     } else if (item.type === 'user' || item.type === 'user-voice') {
       flushGroup();
       result.push(item);
-    } else if (item.type === 'text' || item.type === 'voice') {
-      currentGroup.push(item);
-      flushGroup();
     } else {
       currentGroup.push(item);
+      if (item.type === 'voice' || (item.type === 'text' && item.finalOutput)) flushGroup();
     }
   }
 

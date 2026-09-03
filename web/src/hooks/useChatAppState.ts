@@ -1502,7 +1502,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
       };
-      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current);
+      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current ?? sessionIdRef.current);
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
@@ -1695,7 +1695,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           });
         }
         if (inline?.pendingInteractions) {
-          projectRecoveredInteraction({ type: 'pending_interactions', interactions: inline.pendingInteractions });
+          projectRecoveredInteraction({ type: 'pending_interactions', sessionId: inline.sessionId, interactions: inline.pendingInteractions });
         }
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
@@ -2025,7 +2025,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const result = processWsEvent(
         data, ctx, wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        immediateSessionIdRef.current,
+        immediateSessionIdRef.current ?? sessionIdRef.current,
       );
       if (data.type === 'chat_rejected' && data.reason_code === 'server_draining') reconnectAfterServerDrain();
       // 新建会话 → replaceState（不创建历史记录）
@@ -2362,8 +2362,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     existingClientMsgId?: string,
     autoApproveRunShellForMessage = autoApproveRunShellRef.current,
     preserveActiveStream = false,
-    /** 普通 queue 默认；只有用户显式选择“立即插话”时传 steer。 */
-    deliveryMode: 'queue' | 'steer' = 'queue',
+    /** 用户消息默认尝试补充当前 run；无可绑定目标时由服务端作为独立 run 接续。 */
+    deliveryMode: 'queue' | 'steer' = 'steer',
     /** provisional 队列只接受 session 事件给出的权威 id，避免等待 React ref 同步时再次建会话。 */
     authoritativeSessionId?: string,
   ) => {
@@ -2577,7 +2577,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [dispatchConnection]);
 
-  const submitCurrentMessage = useCallback(async (deliveryMode: 'queue' | 'steer') => {
+  const submitCurrentMessage = useCallback(async () => {
     const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
     if (stoppingRef.current) return;
@@ -2605,13 +2605,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       fileUpload.clearFiles();
 
       if (loadingRef.current) {
-        // 当前 run 运行时，默认 queue 只等待终态；steer 必须由用户显式点击“立即插话”。
         const clientMsgId = crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const queueSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
         mutateQueuedInterjections((prev) => [...prev, {
           clientMsgId,
           ...(queueSessionId ? { sessionId: queueSessionId } : {}),
-          deliveryMode,
+          deliveryMode: 'steer',
           content: capturedInput,
           ...(capturedAttachments.length > 0 ? {
             attachments: capturedAttachmentDisplay,
@@ -2629,19 +2628,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           clientMsgId,
           autoApproveRunShellRef.current,
           true,
-          deliveryMode,
+          'steer',
         );
         return;
       }
 
-      await sendChatViaWs(capturedInput, capturedAttachments, true, undefined, undefined, undefined, false, 'queue');
+      await sendChatViaWs(capturedInput, capturedAttachments, true, undefined, undefined, undefined, false, 'steer');
     } finally {
       releaseSubmissionSlot();
     }
   }, [setInput, fileUpload.clearFiles, fileUpload.reportUploadError, sendChatViaWs, mutateQueuedInterjections]);
 
-  const sendMessage = useCallback(() => submitCurrentMessage('queue'), [submitCurrentMessage]);
-  const interjectMessage = useCallback(() => submitCurrentMessage('steer'), [submitCurrentMessage]);
+  const sendMessage = useCallback(() => submitCurrentMessage(), [submitCurrentMessage]);
 
   // ---- 活跃会话事件流订阅 ----
   const subscribeToActiveStream = useCallback(async (
@@ -3070,7 +3068,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     handleAssetSelect: fileUpload.handleAssetSelect,
     handlePaste: fileUpload.handlePaste,
     sendMessage,
-    interjectMessage,
     stopping,
     stopGeneration: cancelActiveStream,
     queuedInterjections,

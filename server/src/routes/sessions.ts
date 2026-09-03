@@ -33,7 +33,7 @@ import {
   readSessionMeta,
   writeSessionMeta,
   updateSessionMeta,
-  resolveSessionAgentTarget,
+  resolveSessionAgentTargetForAccess,
   type SessionMeta,
 } from "../data/transcripts/meta.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
@@ -471,7 +471,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   } {
     if (!meta) return {};
-    const resolved = resolveSessionAgentTarget(meta, meta.tenantId);
+    const resolved = resolveSessionAgentTargetForAccess(meta, meta.tenantId);
     if (resolved.status === 'unproven') {
       return {
         orgAgentAvailable: false,

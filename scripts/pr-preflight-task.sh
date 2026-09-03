@@ -33,6 +33,7 @@ case "$task" in
     # 显式清单是快速动态合约门禁，新增关键 PG 合约必须在此登记。
     require_test_database
     pnpm -F server exec vitest run \
+      src/__tests__/codexCredentialRuntimeState.pg.test.ts \
       src/__tests__/memoryConsolidationStore.pg.test.ts \
       src/__tests__/pgEventStoreGlobalPage.pg.test.ts \
       src/__tests__/sessionShareStore.pg.test.ts \

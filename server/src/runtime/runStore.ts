@@ -976,10 +976,10 @@ export class PgRunStore implements RunStore {
   async listUserMessagesBySession(sessionId: string): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE run.session_id = $1
+      FROM ${this.messageSubmissionsTable} submission
+      JOIN ${this.runsTable} run ON run.run_id = submission.run_id
+      WHERE submission.session_id = $1
         AND run.channel = 'web'
-        AND (run.metadata ? 'clientMsgId' OR run.idempotency_key IS NOT NULL)
         AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
       ORDER BY run.enqueue_seq ASC
     `, [sessionId]);

@@ -1,6 +1,7 @@
 import {
   TASKBOARD_DEFAULT_PROMPT,
   TASKBOARD_EXECUTION_PURPOSES,
+  TASKBOARD_STAGE_DEFAULT_PROMPTS,
   TASKBOARD_EXECUTION_STATUSES,
 } from '../../../shared/src/types/taskboard.js';
 import {
@@ -40,7 +41,7 @@ export async function initializeTaskboardStore(store: PgTaskboardStore): Promise
           CHECK (visibility IN ('personal', 'organization')),
         prompt TEXT NOT NULL DEFAULT ${quoteSqlLiteral(TASKBOARD_DEFAULT_PROMPT)},
         stage_models JSONB NOT NULL DEFAULT '{}'::jsonb,
-        stage_prompts JSONB NOT NULL DEFAULT '{}'::jsonb,
+        stage_prompts JSONB NOT NULL DEFAULT ${quoteSqlLiteral(JSON.stringify(TASKBOARD_STAGE_DEFAULT_PROMPTS))}::jsonb,
         model TEXT,
         repository JSONB,
         integration_policy JSONB,

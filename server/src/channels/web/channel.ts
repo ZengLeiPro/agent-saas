@@ -55,7 +55,7 @@ import {
   writeSessionMetaIfAbsent,
   addSessionCost,
   ensureSessionAgentTargetBinding,
-  resolveSessionAgentTarget,
+  resolveSessionAgentTargetForAccess,
   type SessionMeta,
 } from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
@@ -2552,29 +2552,9 @@ export class WebChannel implements BaseChannel {
     const gateTenantId = gateIdentity?.tenantId ?? anonymousDefaultTenant;
     let agentTarget: AgentTarget;
     if (validSessionId) {
-      let resolvedTarget = resolveSessionAgentTarget(gateSessionMeta, gateTenantId);
-      if (
-        resolvedTarget.status === 'unproven'
-        && anonymousDefaultTenant
-        && gateTranscriptPath
-        && gateSessionMeta
-        && gateSessionMeta.agentTarget === undefined
-        && !gateSessionMeta.orgAgentId
-        && (gateSessionMeta.tenantId === undefined || gateSessionMeta.tenantId === anonymousDefaultTenant)
-      ) {
-        // No-auth ownerless sessions retain connection ownership semantics, but their legacy
-        // personal target is upgraded server-side to the one permitted default tenant.
-        // Do not synthesize a user/session owner: resume, abort and ask_user stay WS-bound.
-        agentTarget = { kind: 'personal', tenantId: anonymousDefaultTenant };
-        try {
-          gateSessionMeta = await ensureSessionAgentTargetBinding(gateTranscriptPath, agentTarget);
-          resolvedTarget = { status: 'bound', target: agentTarget, needsMigration: false };
-        } catch {
-          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '会话 Agent 绑定迁移失败，已阻止继续发送');
-          return;
-        }
-      }
+      // 缺 canonical agentTarget 且无 orgAgentId 的 N-1 会话由 access 解析兜底为 personal，
+      // 并带 needsMigration 走下方既有迁移路径把绑定落盘（惰性升级，不做批量回填）。
+      const resolvedTarget = resolveSessionAgentTargetForAccess(gateSessionMeta, gateTenantId);
       if (resolvedTarget.status === 'unproven') {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
         this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '历史会话缺少可证明的 Agent 绑定，已阻止继续发送');

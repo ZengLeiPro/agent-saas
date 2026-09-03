@@ -85,4 +85,45 @@ describe('M20-02 durable chat queue projection with M40-02 server liveness', () 
   it('omits legacy runs with no stable clientMsgId', () => {
     expect(projectChatQueueItem(run(1, { idempotencyKey: undefined, metadata: {} }))).toBeUndefined();
   });
+
+  it('keeps a legacy accepted message only when it has both client identity and message content', () => {
+    expect(projectChatQueueItem(run(1, {
+      metadata: {
+        clientMsgId: 'legacy-client',
+        wakeMessage: { channel: 'web', chatId: 'session-queue', content: 'legacy message' },
+      },
+    }))).toMatchObject({ clientMsgId: 'legacy-client', content: 'legacy message' });
+  });
+
+  it('does not project taskboard executions as failed user messages', () => {
+    const internalRuns = Array.from({ length: 40 }, (_, index) => run(index + 1, {
+      status: 'orphaned',
+      statusReason: index === 0 ? 'lease_expired' : 'external_tool_outcome_unknown',
+      idempotencyKey: `taskboard-execution:${index + 1}`,
+      metadata: { taskboardExecution: true, taskboardExecutionId: `execution-${index + 1}` },
+    }));
+    const pendingInternalRun = run(41, {
+      idempotencyKey: 'taskboard-execution:41',
+      metadata: {
+        taskboardExecution: true,
+        wakeMessage: {
+          channel: 'web',
+          chatId: 'session-queue',
+          content: '正在读取任务看板中的最新任务与评论。',
+        },
+      },
+    });
+    const snapshot = buildChatQueueSnapshot('session-queue', [
+      ...internalRuns,
+      pendingInternalRun,
+      run(42),
+    ]);
+
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]).toMatchObject({
+      clientMsgId: 'client-42',
+      content: 'message 42',
+      queuePosition: 0,
+    });
+  });
 });

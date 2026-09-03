@@ -143,9 +143,10 @@ test('M10-04 EAS profiles map Store to AAB and Enterprise to APK while productio
   assert.equal(eas.build.production.env.MOBILE_ANDROID_DISTRIBUTION, undefined);
 
   const ambiguous = structuredClone(readJson(RELEASE_MANIFEST_PATH));
+  ambiguous.version.iosBuildNumber = 85;
   ambiguous.version.androidVersionCode = 86;
   ambiguous.version.latestPublished = {
-    marketingVersion: '1.9.5',
+    marketingVersion: '0.9.5',
     iosBuildNumber: 84,
     androidVersionCode: 85,
   };

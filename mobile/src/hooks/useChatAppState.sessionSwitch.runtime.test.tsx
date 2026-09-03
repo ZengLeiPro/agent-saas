@@ -202,6 +202,57 @@ describe('useChatAppState 会话切换窗口的事件归属', () => {
     expect(h.addMessage).not.toHaveBeenCalled();
   });
 
+  it('projects a canonical cross-device resolution before recording its tombstone', () => {
+    render(<Harness />);
+    act(() => emit({ type: 'stream_started', sessionId: 'session-a', streamId: 'stream-a', runId: 'run-a' }));
+    act(() => emit({
+      type: 'ask_user', interactionId: 'ask-cross-device', version: 1, order: 1,
+      questions: [{ question: 'q', header: 'h', options: [], multiSelect: false }],
+    }));
+    expect(h.messages).toContainEqual(expect.objectContaining({
+      type: 'ask_user', interactionId: 'ask-cross-device', status: 'pending',
+    }));
+
+    act(() => emit({
+      type: 'interaction_resolved', sessionId: 'session-a', interactionId: 'ask-cross-device',
+      status: 'resolved', response: { answers: { q: 'done' } },
+    }));
+    expect(h.messages).toContainEqual(expect.objectContaining({
+      type: 'ask_user', interactionId: 'ask-cross-device', status: 'answered', answers: { q: 'done' },
+    }));
+
+    act(() => emit({
+      type: 'ask_user', interactionId: 'ask-cross-device', version: 1, order: 1, questions: [],
+    }));
+    expect(h.messages.filter((message) => (
+      message.type === 'ask_user' && message.interactionId === 'ask-cross-device'
+    ))).toHaveLength(1);
+  });
+
+  it('records a non-active canonical resolution recovered inside sync_ok', () => {
+    render(<Harness />);
+    act(() => emit({ type: 'stream_started', sessionId: 'session-a', streamId: 'stream-a', runId: 'run-a' }));
+    act(() => h.latest!.selectSession('session-b'));
+    vi.clearAllMocks();
+
+    act(() => emit({
+      type: 'sync_ok', seq: 8,
+      events: [{ event: {
+        type: 'interaction_resolved', sessionId: 'session-a', interactionId: 'ask-sync-a',
+        status: 'resolved', response: { answers: { q: 'done' } },
+      } }],
+    }));
+    act(() => emit({
+      type: 'ask_user', interactionId: 'ask-sync-a', version: 1, order: 1, questions: [],
+    }));
+
+    expect(h.session.applySessionInteractionEvent).toHaveBeenCalledOnce();
+    expect(h.session.applySessionInteractionEvent).toHaveBeenCalledWith({
+      type: 'resolved', sessionId: 'session-a', interactionId: 'ask-sync-a',
+    });
+    expect(h.addMessage).not.toHaveBeenCalled();
+  });
+
   it('ignores a non-canonical empty resolved frame instead of hiding a later request', () => {
     render(<Harness />);
     act(() => emit({ type: 'stream_started', sessionId: 'session-a', streamId: 'stream-a', runId: 'run-a' }));

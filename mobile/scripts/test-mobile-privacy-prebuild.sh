@@ -30,12 +30,14 @@ write_test_only_manifest() {
 const fs = require('node:fs');
 const path = process.argv[2];
 const manifest = JSON.parse(fs.readFileSync(path, 'utf8'));
+manifest.version.iosBuildNumber = 85;
 manifest.version.androidVersionCode = 86;
 manifest.version.latestPublished = {
-  marketingVersion: '1.9.4-m10-05-static-fixture',
+  marketingVersion: '0.9.4-m10-05-static-fixture',
   iosBuildNumber: 84,
   androidVersionCode: 85,
 };
+manifest.oauthCallback.enabled.production = true;
 manifest.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
 manifest.target = {
   profile: 'production',

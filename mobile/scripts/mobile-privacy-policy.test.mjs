@@ -39,12 +39,14 @@ function listRuntimeSource(root) {
 function productionManifest(distribution = 'store') {
   const { manifest } = loadRepositoryInputs();
   const fixture = structuredClone(manifest);
+  fixture.version.iosBuildNumber = 85;
   fixture.version.androidVersionCode = 86;
   fixture.version.latestPublished = {
-    marketingVersion: '1.9.4',
+    marketingVersion: '0.9.4',
     iosBuildNumber: 84,
     androidVersionCode: 85,
   };
+  fixture.oauthCallback.enabled.production = true;
   fixture.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
   fixture.target = {
     profile: 'production',

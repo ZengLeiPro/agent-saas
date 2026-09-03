@@ -463,6 +463,32 @@ export function createCronRouter(
   });
 
   router.post(
+    "/jobs/:id/runs/:runId/cancel",
+    async (req: Request, res: Response) => {
+      try {
+        const existing = await cronService.get(req.params.id);
+        if (!existing) {
+          res.status(404).json({ error: "Job not found" });
+          return;
+        }
+        if (!canAccess(req, existing)) {
+          res.status(403).json({ error: "Access denied" });
+          return;
+        }
+        const result = await cronService.cancelRun(req.params.id, req.params.runId);
+        if (!result.cancelled) {
+          res.status(result.error === "Run not found" ? 404 : 409).json({ error: result.error });
+          return;
+        }
+        auditLog(req, "cron_job_cancelled", `${existing.name} run:${req.params.runId}`);
+        res.json({ ok: true, runId: req.params.runId });
+      } catch (err) {
+        sendCronInternalError(req, res, err, "CRON_OPERATION_FAILED");
+      }
+    },
+  );
+
+  router.post(
     "/jobs/:id/runs/:runId/retry",
     async (req: Request, res: Response) => {
       try {

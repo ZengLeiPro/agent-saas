@@ -86,20 +86,23 @@ function renderSidebar(
   extraProps: Partial<ComponentProps<typeof DesktopSessionSidebar>> = {},
 ) {
   const onNew = vi.fn();
+  const build = (props = extraProps) => (
+    <DesktopSessionSidebar
+      sessions={sessions}
+      activeSessionId={session.id}
+      activeTab={activeTab}
+      sidebarLayout={sidebarLayout}
+      onSelect={vi.fn()}
+      onNew={onNew}
+      onTabChange={vi.fn()}
+      {...props}
+    />
+  );
+  const rendered = render(build());
   return {
-    ...render(
-      <DesktopSessionSidebar
-        sessions={sessions}
-        activeSessionId={session.id}
-        activeTab={activeTab}
-        sidebarLayout={sidebarLayout}
-        onSelect={vi.fn()}
-        onNew={onNew}
-        onTabChange={vi.fn()}
-        {...extraProps}
-      />,
-    ),
+    ...rendered,
     onNew,
+    rerenderSidebar: (props: Partial<ComponentProps<typeof DesktopSessionSidebar>>) => rendered.rerender(build({ ...extraProps, ...props })),
   };
 }
 
@@ -226,6 +229,35 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
 
     renderSidebar("chat", [session], "double");
     expect(screen.getByTestId("desktop-sidebar-main-panel").classList.contains("border-r")).toBe(true);
+  });
+
+  it("窄态临时隐藏第二栏，宽度恢复后还原原有展开状态", () => {
+    const { container, rerenderSidebar } = renderSidebar("chat", [session], "double");
+    const sidebar = container.querySelector("aside");
+    const secondaryPanel = screen.getByTestId("desktop-sidebar-secondary-panel");
+
+    rerenderSidebar({ responsiveMode: "secondary-hidden" });
+    expect(sidebar?.style.width).toBe("160px");
+    expect(screen.getByTestId("desktop-sidebar-secondary-panel")).toBe(secondaryPanel);
+    expect(secondaryPanel.classList.contains("hidden")).toBe(true);
+    expect(secondaryPanel.getAttribute("aria-hidden")).toBe("true");
+
+    rerenderSidebar({ responsiveMode: "none" });
+    expect(sidebar?.style.width).toBe("432px");
+    expect(screen.getByTestId("desktop-sidebar-secondary-panel")).toBe(secondaryPanel);
+    expect(secondaryPanel.classList.contains("hidden")).toBe(false);
+  });
+
+  it("响应式临时隐藏整栏不清空会话搜索状态", () => {
+    const { container, rerenderSidebar } = renderSidebar("chat", [session], "double");
+    const search = screen.getByLabelText("搜索会话内容") as HTMLInputElement;
+    fireEvent.change(search, { target: { value: "保留我" } });
+
+    rerenderSidebar({ responsiveMode: "hidden" });
+    expect(container.querySelector("aside")?.classList.contains("hidden")).toBe(true);
+    rerenderSidebar({ responsiveMode: "none" });
+
+    expect((screen.getByLabelText("搜索会话内容") as HTMLInputElement).value).toBe("保留我");
   });
 
   it("普通用户头像菜单不显示分析入口", () => {

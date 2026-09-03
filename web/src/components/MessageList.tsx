@@ -336,8 +336,6 @@ export const MessageList = memo(function MessageList({
     detailsOpen: businessStepDetailsOpen,
     selectStep: selectBusinessStep,
     clearSelection: clearBusinessStepSelection,
-    selectRelative: selectRelativeBusinessStep,
-    returnToCurrent: returnToCurrentBusinessStep,
   } = useBusinessStepDetail({
     groupedMessages,
     sessionId,
@@ -742,15 +740,10 @@ export const MessageList = memo(function MessageList({
     plan: selectedBusinessStepPlan,
     followMode: businessStepFollowMode,
     debugMode,
-    onPrevious: selectedBusinessStepDetail.stepIndex > 1
-      ? () => selectRelativeBusinessStep(-1)
-      : undefined,
-    onNext: selectedBusinessStepDetail.stepIndex < selectedBusinessStepDetail.stepCount
-      ? () => selectRelativeBusinessStep(1)
-      : undefined,
-    onReturnCurrent: selectedBusinessStepPlan.currentTodoKey
-      ? returnToCurrentBusinessStep
-      : undefined,
+    onSelectStep: (todoKey: string) => {
+      if (!businessStepSelection) return;
+      selectBusinessStep({ ...businessStepSelection, todoKey });
+    },
     onClose: () => clearBusinessStepSelection(),
     renderItem: renderBusinessDetailItem,
   } : null;

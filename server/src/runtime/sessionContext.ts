@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { loadToolDescription } from '../agent/tools/descriptionLoader.js';
+import { boundSessionEventList } from './eventContentBudget.js';
 import type { AuthorizedToolCall, ToolCallContext, ToolDescriptor, ToolProvider, ToolResult } from '../agent/toolRuntime.js';
 import {
   INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
@@ -285,7 +286,14 @@ export class SessionToolProvider implements ToolProvider {
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         ...(input.type !== undefined ? { type: input.type } : {}),
       };
-      return { content: JSON.stringify(await this.contextService.getEvents(sessionId, opts), null, 2) };
+      const page = await this.contextService.getEvents(sessionId, opts);
+      return {
+        content: JSON.stringify(
+          { ...page, events: boundSessionEventList(page.events) },
+          null,
+          2,
+        ),
+      };
     }
     if (input.action === 'search') {
       if (!input.query) throw new Error('SessionContext(action="search") 需要 query。');
@@ -295,7 +303,13 @@ export class SessionToolProvider implements ToolProvider {
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         ...(input.type !== undefined ? { type: input.type } : {}),
       };
-      return { content: JSON.stringify(await this.contextService.searchEvents(sessionId, opts.query, opts), null, 2) };
+      return {
+        content: JSON.stringify(
+          boundSessionEventList(await this.contextService.searchEvents(sessionId, opts.query, opts)),
+          null,
+          2,
+        ),
+      };
     }
     // action === 'trace'
     if (!input.toolCallId) throw new Error('SessionContext(action="trace") 需要 toolCallId。');

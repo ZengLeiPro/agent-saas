@@ -3,8 +3,8 @@ import { Modal, View, Text, Pressable, StyleSheet, Platform } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { WebView } from 'react-native-webview';
-import { marked } from 'marked';
 import { useColors, typography, spacing } from '../../theme';
+import { parseMarkdownToHtml } from '../../lib/marked';
 import { useFontSize } from '../../theme';
 import type { ThemeColors } from '../../theme';
 
@@ -96,7 +96,7 @@ function escapeUntrustedMarkdownSource(content: string): string {
 
 export function buildTextSelectionHtml(content: string, colors: ThemeColors, fontScale: number): string {
   if (!content) return '';
-  const rendered = marked.parse(escapeUntrustedMarkdownSource(content), { breaks: true }) as string;
+  const rendered = parseMarkdownToHtml(escapeUntrustedMarkdownSource(content), { breaks: true });
   return buildHtml(rendered, colors, fontScale);
 }
 

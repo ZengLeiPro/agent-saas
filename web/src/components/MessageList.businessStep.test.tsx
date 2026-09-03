@@ -195,9 +195,9 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
     fireEvent.click(screen.getByRole("button", { name: /旧 Run 步骤/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：旧 Run 步骤")).toBeTruthy());
-    expect(screen.getByText("已暂停跟随")).toBeTruthy();
+    expect(screen.queryByText("已暂停跟随")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /新 Run 第一步/ }));
-    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：新 Run 第一步")).toBeTruthy());
 
     rerender(<Harness messages={[oldRun, boundary, newRun, newRunProgress]} loading />);
     await waitFor(() => expect(screen.getByLabelText("步骤详情：新 Run 第二步")).toBeTruthy());
@@ -220,8 +220,8 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /中断步骤/ }));
-    await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
-    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：中断步骤")).toBeTruthy());
+    expect(screen.queryByText("已暂停跟随")).toBeNull();
   });
 
   it.each([
@@ -241,8 +241,8 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /过渡窗口旧步骤/ }));
-    await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
-    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：过渡窗口旧步骤")).toBeTruthy());
+    expect(screen.queryByText("已暂停跟随")).toBeNull();
   });
 
   it("中断计划只有在同 Run TodoWrite 到达后恢复 current，且可重新进入 follow", async () => {
@@ -263,7 +263,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     await waitFor(() => expect(document.querySelectorAll('[data-business-step-current="true"]')).toHaveLength(1));
     expect(screen.queryByLabelText("已结束")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /可恢复旧步骤/ }));
-    await waitFor(() => expect(screen.getByText("正在跟随当前步骤")).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：可恢复旧步骤")).toBeTruthy());
   });
 
   it("中断后若新 Run TodoWrite 到达，只有新 Run 保持 current", async () => {
@@ -302,19 +302,20 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText("钉钉 · 记录核验回执")).toBeNull();
   });
 
-  it("点击历史步骤后在右侧显示结果、过程、依据和交付物，主区不重复", async () => {
+  it("正式交付物在主区可见，点击历史步骤后仍保留结果、过程、依据和交付归属", async () => {
     render(<Harness messages={workflowMessages(2)} debugMode />);
     await waitForBusinessPlan();
+    expect(screen.getByText("订单核验结果.xlsx")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
 
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
     expect(screen.getByText("17 张通过，1 张待复核")).toBeTruthy();
     expect(screen.getByText("核验统计")).toBeTruthy();
-    expect(screen.getByText("订单核验结果.xlsx")).toBeTruthy();
+    expect(screen.getAllByText("订单核验结果.xlsx")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("tab", { name: "依据" }));
+    fireEvent.click(screen.getByText("依据"));
     expect(screen.getByText("receipt:verify-18")).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "过程" }));
+    fireEvent.click(screen.getByText("过程"));
     const processPanel = document.querySelector<HTMLElement>("[data-business-step-process]");
     expect(processPanel?.childElementCount).toBeGreaterThan(0);
     const planCard = document.querySelector<HTMLElement>("[data-business-step-plan]");
@@ -329,8 +330,9 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
     expect(screen.getByText("发现一处税号差异")).toBeTruthy();
     expect(screen.getByText("核验统计")).toBeTruthy();
-    expect(screen.queryByText("receipt:verify-18")).toBeNull();
-    fireEvent.click(screen.getByRole("tab", { name: "依据" }));
+    const evidence = document.querySelector<HTMLDetailsElement>('[data-business-step-collapsible="evidence"]');
+    expect(evidence?.open).toBe(false);
+    fireEvent.click(screen.getByText("依据"));
     expect(screen.getByText("receipt:verify-18")).toBeTruthy();
   });
 
@@ -353,7 +355,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
 
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
-    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
     expect(screen.queryByText("等待财务确认")).toBeNull();
   });
 
@@ -379,8 +381,8 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText("等待续接.xlsx")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /等待续接步骤/ }));
     await waitFor(() => expect(screen.getByText("等待续接.xlsx")).toBeTruthy());
-    const processTab = screen.queryByRole("tab", { name: "过程" });
-    if (processTab) fireEvent.click(processTab);
+    const processToggle = screen.queryByText("过程");
+    if (processToggle) fireEvent.click(processToggle);
     await waitFor(() => expect(screen.getByText(/等待后写入/)).toBeTruthy());
   });
 
@@ -388,11 +390,10 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     const { rerender } = render(<Harness messages={workflowMessages(1)} />);
     await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
-    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
 
     rerender(<Harness messages={workflowMessages(2)} />);
     await waitFor(() => expect(screen.getByLabelText("步骤详情：写入结果")).toBeTruthy());
-    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
   });
 
   it("跟随中的计划发生 reset 后自动收口为固定查看", async () => {
@@ -403,24 +404,23 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     const { rerender } = render(<Harness messages={[active]} loading />);
     await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /重置跟随步骤/ }));
-    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：重置跟随步骤")).toBeTruthy());
 
     rerender(<Harness messages={[active, reset]} loading={false} />);
 
-    await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
-    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：重置跟随步骤")).toBeTruthy());
+    expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
   });
 
   it("用户固定查看历史步骤后，新快照只更新数据，不强制切走", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(2)} />);
     await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
-    expect(screen.getByText("已暂停跟随")).toBeTruthy();
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
 
     rerender(<Harness messages={workflowMessages(3)} />);
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "返回当前步骤" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "返回当前步骤" }));
+    fireEvent.click(screen.getByRole("tab", { name: "第 03 步：归档凭据" }));
     expect(screen.getByLabelText("步骤详情：归档凭据")).toBeTruthy();
   });
 
@@ -625,14 +625,14 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText(/系统事件后读取/)).toBeNull();
     expect(screen.queryByText(/语音边界后读取/)).toBeNull();
     expect(screen.queryByText(/错误边界后读取/)).toBeNull();
-    expect(screen.queryByText("跨消息核验结果.xlsx")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: /跨消息核验/ }));
-    await waitFor(() => expect(screen.getByLabelText("步骤详情：跨消息核验")).toBeTruthy());
-    expect(screen.getByText("跨消息核验完成")).toBeTruthy();
     expect(screen.getByText("跨消息核验结果.xlsx")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("tab", { name: "过程" }));
+    fireEvent.click(screen.getByText("跨消息核验").closest("button")!);
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：跨消息核验")).toBeTruthy());
+    expect(screen.getByText("跨消息核验完成")).toBeTruthy();
+    expect(screen.getAllByText("跨消息核验结果.xlsx")).toHaveLength(2);
+
+    fireEvent.click(screen.getByText("过程"));
     expect(screen.getByText(/前半段读取/)).toBeTruthy();
     expect(screen.getByText(/用户边界后读取/)).toBeTruthy();
     expect(screen.getByText(/系统事件后读取/)).toBeTruthy();
@@ -640,7 +640,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.getByText(/错误边界后读取/)).toBeTruthy();
     expect(document.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(6);
     expect(screen.getByText(/写入核验回执/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "依据" }));
+    fireEvent.click(screen.getByText("依据"));
     expect(screen.getByText("receipt:continuation")).toBeTruthy();
   });
 
@@ -698,8 +698,8 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
     fireEvent.click(screen.getByRole("button", { name: /最终正文归位/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：最终正文归位")).toBeTruthy());
-    const processTab = screen.queryByRole("tab", { name: "过程" });
-    if (processTab) fireEvent.click(processTab);
+    const processToggle = screen.queryByText("过程");
+    if (processToggle) fireEvent.click(processToggle);
     const process = await waitFor(() => {
       const value = document.querySelector<HTMLElement>("[data-business-step-process]");
       expect(value).toBeTruthy();
@@ -739,8 +739,8 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
     fireEvent.click(screen.getByRole("button", { name: /Reset 边界核验/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：Reset 边界核验")).toBeTruthy());
-    const processTab = screen.queryByRole("tab", { name: "过程" });
-    if (processTab) fireEvent.click(processTab);
+    const processToggle = screen.queryByText("过程");
+    if (processToggle) fireEvent.click(processToggle);
     const process = await waitFor(() => {
       const value = document.querySelector<HTMLElement>("[data-business-step-process]");
       expect(value).toBeTruthy();

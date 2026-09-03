@@ -1,0 +1,37 @@
+/* 业务步骤右侧详情按自身宽度重排，避免桌面 viewport 断点误判窄侧栏。 */
+.business-step-records-container {
+  container-name: business-step-records;
+  container-type: inline-size;
+}
+
+@container business-step-records (min-width: 40rem) {
+  .business-step-comparison-scroll {
+    overflow-x: auto;
+  }
+
+  .business-step-comparison-width {
+    min-width: 36rem;
+  }
+
+  .business-step-comparison-header {
+    display: grid;
+    grid-template-columns: 9rem repeat(2, minmax(8rem, 1fr)) 8rem 0.875rem;
+  }
+
+  .business-step-comparison-track {
+    grid-template-columns: 9rem repeat(2, minmax(8rem, 1fr)) 8rem 0.875rem;
+    align-items: start;
+  }
+
+  .business-step-comparison-field {
+    display: block;
+  }
+
+  .business-step-comparison-mobile-label {
+    display: none;
+  }
+
+  .business-step-comparison-chevron {
+    display: block;
+  }
+}

@@ -184,8 +184,8 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
-describe("useChatAppState queue delivery lifecycle", () => {
-  it("defaults new conversations to daily and sends the selected profile on the first WS chat", async () => {
+describe("useChatAppState message delivery lifecycle", () => {
+  it("defaults new conversations to daily and sends the selected profile through the single delivery path", async () => {
     const { result } = renderHook(() => useChatAppState());
     expect(result.current.sandboxProfile).toBe("daily");
     act(() => {
@@ -194,7 +194,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
     await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()[0]).toMatchObject({
-      submission: { text: "compile this", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
+      submission: { text: "compile this", deliveryMode: "steer", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
     });
   });
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {

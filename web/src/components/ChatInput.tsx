@@ -26,8 +26,6 @@ interface ChatInputProps {
   hasUploadedFiles: boolean;
   onInputChange: (value: string) => void;
   onSend: () => void;
-  /** 当前 run 运行时显式插话；普通发送按钮只加入串行队列。 */
-  onInterject?: () => void;
   onStop?: () => void;
   stopping?: boolean;
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -77,7 +75,6 @@ export function ChatInput({
   hasUploadedFiles,
   onInputChange,
   onSend,
-  onInterject,
   onStop,
   stopping,
   onFileSelect,
@@ -341,8 +338,8 @@ export function ChatInput({
             "hover:opacity-80 active:opacity-70",
             "disabled:pointer-events-none disabled:opacity-40",
           )}
-          title={loading ? "加入队列" : "发送消息"}
-          aria-label={loading ? "加入队列" : "发送消息"}
+          title="发送消息"
+          aria-label="发送消息"
         >
           <ArrowUp className="size-5" strokeWidth={2.5} />
         </button>
@@ -595,17 +592,6 @@ export function ChatInput({
                 )}
 
                 {renderVoiceButton()}
-                {loading && hasContent && onInterject && !stopping && (
-                  <button
-                    type="button"
-                    onClick={(event) => { event.stopPropagation(); onInterject(); }}
-                    className="h-8 rounded-full border border-border px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    title="在当前 Agent 的下一个安全边界插话"
-                    aria-label="立即插话"
-                  >
-                    立即插话
-                  </button>
-                )}
                 {renderRightButton()}
               </div>
             </div>

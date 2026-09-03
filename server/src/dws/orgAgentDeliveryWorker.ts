@@ -1,17 +1,26 @@
+import { createHash } from 'node:crypto';
+
 import {
   hasExactAgentDwsProfile,
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
 import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 
 export interface OrgAgentDeliveryWorkerOptions {
   store: OrgGroupAgentStore;
   accountStore: AgentDwsAccountStore;
+  agentStore?: Pick<OrgAgentStore, 'get'>;
   sender: DwsPersonalMessageSenderLike;
   workerId: string;
   leaseTtlMs: number;
+  authorizeCompletionRequester?: (
+    tenantId: string,
+    agentId: string,
+    userId: string,
+  ) => Promise<boolean> | boolean;
 }
 
 /**
@@ -42,22 +51,78 @@ export async function deliverNextOrgAgentIntent(
     return true;
   }
 
+  if (delivery.deliveryKind === 'task_completion') {
+    const work = delivery.sourceWorkOrderId
+      ? await options.store.getWorkOrder(delivery.tenantId, delivery.sourceWorkOrderId)
+      : null;
+    const attempt = work && delivery.sourceAttemptId
+      ? (await options.store.listWorkAttempts(delivery.tenantId, work.workOrderId))
+          .find(candidate => candidate.attemptId === delivery.sourceAttemptId)
+      : undefined;
+    if (
+      !work ||
+      !attempt ||
+      work.currentAttemptNo !== attempt.attemptNo ||
+      work.state !== attempt.status ||
+      !['completed', 'failed', 'cancelled'].includes(work.state)
+    ) {
+      await options.store.markClaimedDeliveryDeadLetter(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
+      );
+      return true;
+    }
+    if (delivery.visibility === 'requester_only') {
+      const mappedUserId = work.createdByActor.mappedUserId;
+      const allowed = mappedUserId && delivery.agentId
+        ? await options.authorizeCompletionRequester?.(
+            delivery.tenantId, delivery.agentId, mappedUserId,
+          ) : false;
+      if (!allowed) {
+        await createRedactedTerminalNotice(options.store, delivery);
+        await options.store.markClaimedDeliveryDeadLetter(
+          delivery.deliveryId,
+          options.workerId,
+          delivery.leaseFence,
+          'ORG_AGENT_REQUESTER_MEMBERSHIP_REVOKED',
+        );
+        return true;
+      }
+    }
+  }
+
   if (delivery.bindingId || delivery.agentId) {
     const binding = await options.store.getBinding(
       delivery.tenantId,
       delivery.accountId,
       delivery.conversationId,
     );
-    if (
-      !binding ||
-      binding.bindingId !== delivery.bindingId ||
-      binding.agentId !== delivery.agentId ||
-      binding.activationState !== 'active' ||
-      !binding.enabled ||
-      !binding.policy.enabled ||
-      binding.policy.liveDeny ||
-      (delivery.deliveryKind === 'task_completion' && binding.policy.completion === 'silent')
+    if (!binding || binding.bindingId !== delivery.bindingId || binding.agentId !== delivery.agentId) {
+      await options.store.markClaimedDeliveryDeadLetter(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        'ORG_AGENT_CHANNEL_LIVE_DENY',
+      );
+      return true;
+    }
+    const agent = delivery.agentId ? options.agentStore?.get(delivery.agentId) : undefined;
+    if (delivery.deliveryKind === 'task_completion' && binding.policy.completion === 'silent') {
+      await options.store.markClaimedDeliveryDeadLetter(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        'ORG_AGENT_COMPLETION_SILENT',
+      );
+      return true;
+    }
+    if (binding.activationState !== 'active' || !binding.enabled || !binding.policy.enabled
+      || binding.policy.liveDeny || !agent || agent.tenantId !== delivery.tenantId || !agent.enabled
     ) {
+      if (delivery.deliveryKind === 'task_completion')
+        await createRedactedTerminalNotice(options.store, delivery);
       await options.store.markClaimedDeliveryDeadLetter(
         delivery.deliveryId,
         options.workerId,
@@ -91,6 +156,29 @@ export async function deliverNextOrgAgentIntent(
     );
   }
   return true;
+}
+
+const REDACTED_TERMINAL_NOTICE = '任务已结束，但当前群策略不允许披露结果，请联系管理员。';
+
+export async function createRedactedTerminalNotice(
+  store: OrgGroupAgentStore,
+  delivery: DwsDeliveryIntent,
+): Promise<void> {
+  await store.createDelivery({
+    tenantId: delivery.tenantId,
+    ...(delivery.inboxId ? { inboxId: delivery.inboxId } : {}),
+    accountId: delivery.accountId,
+    conversationId: delivery.conversationId,
+    source: 'system',
+    deliveryKind: 'system_notice',
+    disposition: 'rejected',
+    destination: delivery.destination,
+    content: REDACTED_TERMINAL_NOTICE,
+    idempotencyKey: `agent-dws-policy-notice-${createHash('sha256')
+      .update(delivery.idempotencyKey)
+      .digest('hex')
+      .slice(0, 32)}`,
+  });
 }
 
 function deliveryEvent(delivery: DwsDeliveryIntent): DwsPersonalEvent {

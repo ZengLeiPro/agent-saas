@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
+import { dwsBusinessToolDescriptor } from '../dws/businessToolProvider.js';
 import { DefaultToolPolicy } from '../runtime/toolPolicy.js';
 import type { RunContext, ToolPolicyDecision } from '../runtime/types.js';
 
@@ -89,7 +90,7 @@ describe('DefaultToolPolicy 组织 Agent 群聊门禁', () => {
     orgAgentChannel: {
       bindingId: 'binding-1', accountId: 'account-1', agentId: 'agent-1',
       channelPrincipal: { provider: 'dingtalk', accountId: 'account-1', conversationId: 'group-1', kind: 'group' },
-      allowedToolNames: ['WriteTool'], approvalRoles: ['admin'], actorRole: 'member',
+      allowedToolNames: ['WriteTool'], approvalRoles: ['org_admin'], actorRole: 'member',
     },
   } as unknown as RunContext['channelContext'];
 
@@ -108,5 +109,45 @@ describe('DefaultToolPolicy 组织 Agent 群聊门禁', () => {
       channelContext,
     } as RunContext);
     expect(result).toEqual({ type: 'allow' });
+  });
+
+  it('DwsBusiness 使用群动作矩阵确定性放行共享读与已确认低风险写', async () => {
+    const dwsChannel = {
+      channel: 'dingtalk',
+      user: { id: 'user-1', username: 'alice', tenantId: 'tenant-1' },
+      sessionOwner: { id: 'adws-account-1', username: 'agent-dws:agent-1', tenantId: 'tenant-1' },
+      orgAgentChannel: {
+        bindingId: 'binding-1', accountId: 'account-1', agentId: 'agent-1',
+        conversationSpaceId: 'space-1', workConversationId: 'work-1', policyRevision: 1,
+        agentPrincipal: { kind: 'org_agent', tenantId: 'tenant-1', agentId: 'agent-1',
+          accountId: 'account-1', workspaceId: 'workspace-1' },
+        externalActorAssurance: 'mapped', allowedToolNames: ['DwsBusiness'],
+        allowedSkillIds: [], allowedSourceIds: [], contextEnabled: false,
+        taskVisibility: 'conversation', actorRole: 'member', triggerRoles: [], approvalRoles: ['member'],
+        externalActor: { kind: 'external_user', provider: 'dingtalk', corpId: 'corp-1', openId: 'open-1',
+          mappedUserId: 'user-1', role: 'member', assurance: 'mapped' },
+        channelPrincipal: { provider: 'dingtalk', accountId: 'account-1',
+          conversationId: 'group-1', kind: 'group' },
+      },
+    } as unknown as RunContext['channelContext'];
+    const policy = new DefaultToolPolicy(livePolicy);
+    await expect(policy.decide(dwsBusinessToolDescriptor, {
+      args: ['doc', 'read', '--node', 'doc-1'], credentialMode: 'agent',
+    }, { channelContext: dwsChannel } as RunContext)).resolves.toEqual({ type: 'allow' });
+    await expect(policy.decide(dwsBusinessToolDescriptor, {
+      args: ['doc', 'create', '--title', '群文档', '--content', '正文'],
+      credentialMode: 'agent', confirmed: true,
+    }, { channelContext: dwsChannel } as RunContext)).resolves.toEqual({ type: 'allow' });
+
+    await expect(policy.decide(dwsBusinessToolDescriptor, {
+      args: ['doc', 'read', '--node', 'doc-1'], credentialMode: 'requester',
+    }, { channelContext: dwsChannel } as RunContext)).resolves.toMatchObject({ type: 'deny' });
+    await expect(policy.decide(dwsBusinessToolDescriptor, {
+      args: ['todo', 'task', 'list'], credentialMode: 'agent',
+    }, { channelContext: dwsChannel } as RunContext)).resolves.toMatchObject({ type: 'deny' });
+    await expect(policy.decide(dwsBusinessToolDescriptor, {
+      args: ['doc', 'read', '--node', 'doc-1'], credentialMode: 'agent',
+    }, { channelContext: dwsChannel, executionRole: 'worker' } as RunContext))
+      .resolves.toMatchObject({ type: 'deny' });
   });
 });

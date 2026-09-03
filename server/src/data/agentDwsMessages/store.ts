@@ -115,12 +115,13 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.inboxTable} active
-            WHERE active.account_id=item.account_id
+            WHERE active.tenant_id=item.tenant_id
+              AND active.account_id=item.account_id
+              AND active.conversation_id=item.conversation_id
               AND (
-                (item.work_conversation_id IS NOT NULL
-                  AND active.work_conversation_id=item.work_conversation_id)
-                OR (item.work_conversation_id IS NULL AND active.work_conversation_id IS NULL
-                  AND active.conversation_id=item.conversation_id)
+                item.work_conversation_id IS NULL
+                OR active.work_conversation_id IS NULL
+                OR active.work_conversation_id=item.work_conversation_id
               )
               AND active.inbox_id<>item.inbox_id
               AND (active.state='processing' OR active.state='reply_pending')
@@ -129,12 +130,13 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.inboxTable} earlier
-            WHERE earlier.account_id=item.account_id
+            WHERE earlier.tenant_id=item.tenant_id
+              AND earlier.account_id=item.account_id
+              AND earlier.conversation_id=item.conversation_id
               AND (
-                (item.work_conversation_id IS NOT NULL
-                  AND earlier.work_conversation_id=item.work_conversation_id)
-                OR (item.work_conversation_id IS NULL AND earlier.work_conversation_id IS NULL
-                  AND earlier.conversation_id=item.conversation_id)
+                item.work_conversation_id IS NULL
+                OR earlier.work_conversation_id IS NULL
+                OR earlier.work_conversation_id=item.work_conversation_id
               )
               AND earlier.state IN ('pending','processing','retry_wait','reply_pending')
               AND (

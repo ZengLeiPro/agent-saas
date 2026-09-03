@@ -54,6 +54,7 @@ export interface WorkspaceRecipe {
   sessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
+  sharedReadOnlySubPath?: string;
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
   setupCommands?: string[];
@@ -169,6 +170,8 @@ export interface SandboxRunnerInput {
     username?: string;
     sessionId?: string;
     root: string;
+    /** Orchestrator-verified mount fact; runner resolves the fixed pod-local root. */
+    sharedReadOnlyMounted?: boolean;
   };
   stream?: boolean;
   /**
@@ -312,6 +315,12 @@ export function parseProvisionRecipe(body: unknown): { ok: true; value: Workspac
   const mountSubPath = parseMountSubPath(recipeRaw.mountSubPath ?? obj.mountSubPath);
   if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
   if (mountSubPath.value) recipe.mountSubPath = mountSubPath.value;
+  const sharedReadOnlySubPath = parseMountSubPath(
+    recipeRaw.sharedReadOnlySubPath ?? obj.sharedReadOnlySubPath,
+  );
+  if (sharedReadOnlySubPath.error)
+    return { ok: false, error: `sharedReadOnlySubPath: ${sharedReadOnlySubPath.error}` };
+  if (sharedReadOnlySubPath.value) recipe.sharedReadOnlySubPath = sharedReadOnlySubPath.value;
   const repo = recipeRaw.repo;
   if (repo && typeof repo === 'object' && typeof (repo as { url?: unknown }).url === 'string') {
     const raw = repo as { url: string; ref?: unknown; remote?: unknown };

@@ -71,7 +71,7 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', ['collection-a'], 'Quarterly plan', '%Quarterly plan%', ['document'], ['source-a'],
       '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 201, 'user-a', null, null,
-      null, null, null, null,
+      null, null, null, null, null, null,
     ]);
     expect(result).toMatchObject({
       degraded: true,
@@ -95,7 +95,7 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[2]![0]).toContain('e.revision=v.revision');
   });
 
-  it('pins group-channel source and conversation filters into SQL instead of filtering only after retrieval', async () => {
+  it('pins every group-channel ownership boundary into search and get SQL instead of filtering only after retrieval', async () => {
     const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [hitRow()] }));
     const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
     const channelSubject: ContextRecallSubject = { ...subject, channelScope: {
@@ -108,9 +108,97 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain('r.source_id=ANY($11::text[])');
     expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'conversationId'");
     expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'workConversationId'");
-    expect(query.mock.calls[0]![1]?.slice(-6)).toEqual([
-      ['source-a'], 'group-a', 'binding-a', 'space-a', 'work-conversation-a', 5,
+    expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'orgAgentContextScope'");
+    expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'agentId'");
+    expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'visibility'");
+    expect(query.mock.calls[0]![1]?.slice(-8)).toEqual([
+      ['source-a'], 'group-a', 'binding-a', 'space-a', 'work-conversation-a', 5, null, true,
     ]);
+
+    const search = await service.search({ subject: { ...channelSubject, orgAgentId: 'agent-a' }, scope, query: 'record-a', limit: 1, filters: {} });
+    await service.get({ subject: { ...channelSubject, orgAgentId: 'agent-a' }, scope, id: search.hits[0]!.id });
+
+    const getCall = query.mock.calls[4]!;
+    expect(getCall[0]).toContain("v.metadata_json->>'conversationId'");
+    expect(getCall[0]).toContain("v.metadata_json->>'bindingId'");
+    expect(getCall[0]).toContain("v.metadata_json->>'conversationSpaceId'");
+    expect(getCall[0]).toContain("v.metadata_json->>'workConversationId'");
+    expect(getCall[0]).toContain("v.metadata_json->>'orgAgentContextScope'");
+    expect(getCall[0]).toContain("v.metadata_json->>'policyRevision'");
+    expect(getCall[0]).toContain("v.metadata_json->>'agentId'");
+    expect(getCall[0]).toContain("v.metadata_json->>'visibility'");
+    expect(getCall[1]?.slice(-7)).toEqual([
+      'group-a', 'binding-a', 'space-a', 'work-conversation-a', 5, 'agent-a', true,
+    ]);
+  });
+
+  it('keeps group source ceilings fail-closed and binds cross-group requests to distinct SQL values', async () => {
+    const query = vi.fn(async (_sql: string, params?: readonly unknown[]) => {
+      // This is the database-side behavior of r.source_id=ANY($11): an empty
+      // route ceiling must return nothing even when a broad collection exists.
+      if (Array.isArray(params?.[10]) && params?.[10].length === 0) return { rows: [] };
+      return { rows: [hitRow()] };
+    });
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
+    const groupA: ContextRecallSubject = { ...subject, orgAgentId: 'agent-a', channelScope: {
+      bindingId: 'binding-a', conversationSpaceId: 'space-a', workConversationId: 'work-a',
+      conversationId: 'group-a', policyRevision: 3, allowedSourceIds: ['source-a'],
+    } };
+    const groupB: ContextRecallSubject = { ...subject, orgAgentId: 'agent-a', channelScope: {
+      bindingId: 'binding-b', conversationSpaceId: 'space-b', workConversationId: 'work-b',
+      conversationId: 'group-b', policyRevision: 4, allowedSourceIds: ['source-b'],
+    } };
+
+    await service.search({ subject: groupA, scope, query: 'plan', limit: 1, filters: {} });
+    await service.search({ subject: groupB, scope, query: 'plan', limit: 1, filters: {} });
+    const closed = await service.search({ subject: {
+      ...groupA,
+      channelScope: { ...groupA.channelScope!, allowedSourceIds: [] },
+    }, scope, query: 'plan', limit: 1, filters: {} });
+
+    expect(query.mock.calls[0]![1]?.slice(-8)).toEqual([
+      ['source-a'], 'group-a', 'binding-a', 'space-a', 'work-a', 3, 'agent-a', true,
+    ]);
+    expect(query.mock.calls[2]![1]?.slice(-8)).toEqual([
+      ['source-b'], 'group-b', 'binding-b', 'space-b', 'work-b', 4, 'agent-a', true,
+    ]);
+    expect(query.mock.calls[4]![1]?.[10]).toEqual([]);
+    expect(closed.hits).toEqual([]);
+  });
+
+  it('allows only trusted group-history fallback while keeping a sibling WorkConversation out of the current topic', async () => {
+    const query = vi.fn(async (sql: string, params?: readonly unknown[]) => {
+      const workConversationId = params?.[14];
+      // Simulate the only two records that SQL may return inside the group: a
+      // group-level backfill and an exact current-topic record. A sibling topic
+      // is deliberately absent; it must not pass the SQL predicate.
+      if (sql.includes('orgAgentContextScope') && workConversationId === 'work-current') {
+        return { rows: [
+          hitRow({ record_id: 'historical-group', metadata_json: {
+            conversationId: 'group-a', bindingId: 'binding-a', conversationSpaceId: 'space-a',
+            policyRevision: '3', agentId: 'agent-a', visibility: 'conversation', orgAgentContextScope: 'group',
+          } }),
+          hitRow({ record_id: 'current-topic', metadata_json: {
+            conversationId: 'group-a', bindingId: 'binding-a', conversationSpaceId: 'space-a',
+            workConversationId: 'work-current', policyRevision: '3', agentId: 'agent-a', visibility: 'conversation',
+            orgAgentContextScope: 'work_conversation',
+          } }),
+        ] };
+      }
+      return { rows: [] };
+    });
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
+    const channelSubject: ContextRecallSubject = { ...subject, orgAgentId: 'agent-a', channelScope: {
+      bindingId: 'binding-a', conversationSpaceId: 'space-a', workConversationId: 'work-current',
+      conversationId: 'group-a', policyRevision: 3, allowedSourceIds: ['source-a'],
+    } };
+
+    const result = await service.search({ subject: channelSubject, scope, query: 'plan', limit: 5, filters: {} });
+
+    expect(query.mock.calls[0]![0]).toContain("COALESCE(r.metadata_json->>'orgAgentContextScope','')='group'");
+    expect(query.mock.calls[0]![0]).toContain("COALESCE(r.metadata_json->>'orgAgentContextScope','')='work_conversation'");
+    expect(result.hits.map(hit => hit.id)).toHaveLength(2);
+    expect(result.hits.map(hit => hit.id)).not.toContain(expect.stringContaining('sibling-topic'));
   });
 
   it('adds only confirmed evidence-bound derived context to an already authorized source hit', async () => {

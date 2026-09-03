@@ -17,6 +17,7 @@ import {
 import { DwsPersonalMessageSender } from '../dws/personalMessageSender.js';
 import { DwsRequesterIdentityResolver } from '../dws/requesterIdentityResolver.js';
 import type { UserStore } from '../data/users/store.js';
+import type { PgMembershipStore } from '../data/memberships/store.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import { isAssignedToOrgAgent, type OrgAgentStore } from '../data/orgAgents/store.js';
 import type { RunPreflightService } from '../runtime/runPreflight.js';
@@ -36,6 +37,7 @@ export interface AgentDwsRuntimeBundle {
   messageRouter?: AgentDwsMessageRouter;
   eventGateway: DwsPersonalEventGateway;
   onContextPolicyUpdated(account: AgentDwsAccountRecord): Promise<void>;
+  onGroupBindingUpdated(account: AgentDwsAccountRecord, conversationId: string): Promise<void>;
   onEnabledChanged(account: AgentDwsAccountRecord, enabled: boolean): Promise<void>;
   stop(): Promise<void>;
 }
@@ -101,6 +103,7 @@ export async function createAgentDwsRuntime(options: {
   dispatch: AgentRunDispatch;
   resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
   userStore: UserStore;
+  membershipStore?: Pick<PgMembershipStore, 'getMembership'>;
   orgAgentStore: Pick<OrgAgentStore, 'get'>;
   runPreflightService: Pick<RunPreflightService, 'preflight'>;
   governanceAuditStore: GovernanceAuditStore;
@@ -108,6 +111,7 @@ export async function createAgentDwsRuntime(options: {
   remoteAvailable: boolean;
   enableWorker: boolean;
   isExecutionEnabled?: () => boolean | Promise<boolean>;
+  isOrgAgentRuntimeV2Ready?: () => boolean;
   logger: Logger;
 }): Promise<AgentDwsRuntimeBundle | undefined> {
   if (!options.pgEventStore || !options.remoteAvailable) {
@@ -134,6 +138,7 @@ export async function createAgentDwsRuntime(options: {
         accountStore: options.accountStore,
         contextStore: options.contextStore,
         ...(options.assignmentStore ? { assignmentStore: options.assignmentStore } : {}),
+        ...(options.orgGroupAgentStore ? { orgGroupAgentStore: options.orgGroupAgentStore } : {}),
         resolveServerRemote: options.resolveServerRemote,
         logger: options.logger.child('DwsContextRuntime'),
       })
@@ -150,6 +155,7 @@ export async function createAgentDwsRuntime(options: {
         agentCwd: options.agentCwd,
         messageStore: options.messageStore,
         ...(options.orgGroupAgentStore ? { orgGroupAgentStore: options.orgGroupAgentStore } : {}),
+        orgAgentStore: options.orgAgentStore,
         accountStore: options.accountStore,
         dispatch: options.dispatch,
         resolveDefaultModel: options.resolveDefaultModel,
@@ -163,6 +169,24 @@ export async function createAgentDwsRuntime(options: {
           senderOpenDingtalkId,
           senderName,
         ),
+        resolveRequesterGovernanceRole: async (tenantId, userId) => {
+          const membership = await options.membershipStore?.getMembership(tenantId, userId);
+          return membership?.status === 'active' ? membership.persona : undefined;
+        },
+        ...(options.isOrgAgentRuntimeV2Ready
+          ? { isOrgAgentRuntimeV2Ready: options.isOrgAgentRuntimeV2Ready }
+          : {}),
+        authorizeCompletionRequester: async (tenantId, agentId, userId) => {
+          const [membership, user] = await Promise.all([
+            options.membershipStore?.getMembership(tenantId, userId),
+            Promise.resolve(options.userStore.findById(userId)),
+          ]);
+          const agent = options.orgAgentStore.get(agentId);
+          return membership?.status === 'active'
+            && Boolean(user && !user.disabled && user.tenantId === tenantId)
+            && Boolean(agent && agent.enabled && agent.tenantId === tenantId
+              && user && isAssignedToOrgAgent(agent, user.username));
+        },
         authorizeRequester: input => authorizeAgentDwsRequesterAccess({
           ...input,
           orgAgentStore: options.orgAgentStore,
@@ -268,6 +292,9 @@ export async function createAgentDwsRuntime(options: {
     eventGateway,
     async onContextPolicyUpdated(account) {
       await contextRuntime?.onContextPolicyUpdated(account);
+    },
+    async onGroupBindingUpdated(account, conversationId) {
+      await contextRuntime?.onGroupBindingUpdated(account, conversationId);
     },
     async onEnabledChanged(account, enabled) {
       await contextRuntime?.onAccountEnabledChanged(account, enabled);

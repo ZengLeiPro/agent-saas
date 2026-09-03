@@ -121,6 +121,7 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
       FOREIGN KEY (tenant_id,work_conversation_id,binding_id)
         REFERENCES ${conversations}(tenant_id,work_conversation_id,binding_id),
       idempotency_key TEXT NOT NULL,
+      short_id TEXT,
       title TEXT NOT NULL,
       state TEXT NOT NULL CHECK (state IN ('queued','running','waiting_input','paused','completed','failed','cancelled')),
       current_attempt_no INTEGER NOT NULL DEFAULT 0 CHECK (current_attempt_no >= 0),
@@ -128,6 +129,7 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
       created_by_actor_json JSONB NOT NULL,
       policy_snapshot_json JSONB NOT NULL,
       cancel_policy_json JSONB NOT NULL,
+      control_json JSONB NOT NULL DEFAULT '{"revision":1,"supplements":[],"workerType":"general"}'::jsonb,
       result_envelope_json JSONB,
       version BIGINT NOT NULL DEFAULT 1 CHECK (version >= 1),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -138,8 +140,14 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
       CHECK (jsonb_typeof(created_by_actor_json)='object' AND octet_length(created_by_actor_json::text)<=65536),
       CHECK (jsonb_typeof(policy_snapshot_json)='object' AND octet_length(policy_snapshot_json::text)<=262144),
       CHECK (jsonb_typeof(cancel_policy_json)='object' AND octet_length(cancel_policy_json::text)<=65536),
+      CHECK (jsonb_typeof(control_json)='object' AND octet_length(control_json::text)<=262144),
       CHECK (result_envelope_json IS NULL OR (jsonb_typeof(result_envelope_json)='object' AND octet_length(result_envelope_json::text)<=1048576))
     )`,
+    `ALTER TABLE ${workOrders} ADD COLUMN IF NOT EXISTS short_id TEXT`,
+    `ALTER TABLE ${workOrders} ADD COLUMN IF NOT EXISTS control_json JSONB
+      NOT NULL DEFAULT '{"revision":1,"supplements":[],"workerType":"general"}'::jsonb`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS ${workOrders}_short_id_idx
+      ON ${workOrders}(tenant_id,agent_id,short_id) WHERE short_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS ${workOrders}_conversation_idx
       ON ${workOrders}(work_conversation_id,updated_at DESC)`,
     `CREATE TABLE IF NOT EXISTS ${attempts} (
@@ -149,7 +157,7 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
       FOREIGN KEY (tenant_id,work_order_id) REFERENCES ${workOrders}(tenant_id,work_order_id),
       attempt_no INTEGER NOT NULL CHECK (attempt_no >= 1),
       runtime_run_id TEXT NOT NULL,
-      parent_attempt_id TEXT REFERENCES ${attempts}(attempt_id),
+      parent_attempt_id TEXT,
       status TEXT NOT NULL CHECK (status IN ('queued','running','completed','failed','cancelled')),
       task_workspace_id TEXT NOT NULL,
       sandbox_scope_id TEXT NOT NULL,
@@ -168,6 +176,8 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
       UNIQUE (runtime_run_id),
       UNIQUE (tenant_id,attempt_id),
       UNIQUE (tenant_id,work_order_id,attempt_id),
+      FOREIGN KEY (tenant_id,work_order_id,parent_attempt_id)
+        REFERENCES ${attempts}(tenant_id,work_order_id,attempt_id),
       CHECK (checkpoint_json IS NULL OR (jsonb_typeof(checkpoint_json)='object' AND octet_length(checkpoint_json::text)<=1048576)),
       CHECK (artifact_manifest_json IS NULL OR (jsonb_typeof(artifact_manifest_json)='object' AND octet_length(artifact_manifest_json::text)<=1048576)),
       CHECK (result_envelope_json IS NULL OR (jsonb_typeof(result_envelope_json)='object' AND octet_length(result_envelope_json::text)<=1048576))

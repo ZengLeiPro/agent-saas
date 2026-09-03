@@ -91,7 +91,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
         identity: { displayName: '开开' },
         knowledge: { contextEnabled: true, sourceIds: ['kb-a'] },
         capabilities: { skillIds: ['skill-a'], toolNames: ['ContextSearch'] },
-        access: { triggerRoles: ['member'], approvalRoles: ['admin'] },
+        access: { triggerRoles: ['member'], approvalRoles: ['org_admin'] },
         speech: { proactive: false, requireMention: true },
       },
     });
@@ -154,10 +154,34 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       sharedReadOnlySubPath: 'shared/a',
     });
     const terminalEnvelope = {
-      status: 'completed' as const, summary: '完成', facts: [], artifacts: [], writeScope: ['tasks/a'],
+      status: 'completed' as const, summary: '完成', facts: [],
+      artifacts: [{ path: '报告.txt', digest: `sha256:${'a'.repeat(64)}`, size: 12 }],
+      writeScope: ['tasks/a'],
     };
+    await expect(store.getWorkOrder('tenant-a', work.workOrderId))
+      .resolves.toMatchObject({ state: 'queued', currentAttemptNo: 1 });
+    await expect(store.transitionWorkAttempt({
+      tenantId: 'tenant-a', runtimeRunId: 'run-a', status: 'running',
+    })).resolves.toMatchObject({ status: 'running' });
+    await expect(store.getWorkOrder('tenant-a', work.workOrderId))
+      .resolves.toMatchObject({ state: 'running', currentAttemptNo: 1 });
     await store.transitionWorkAttempt({ tenantId: 'tenant-a', runtimeRunId: 'run-a',
-      status: 'completed', resultEnvelope: terminalEnvelope });
+      status: 'completed', resultEnvelope: terminalEnvelope,
+      checkpoint: { step: 'finished' },
+      artifactManifest: { version: 1, files: terminalEnvelope.artifacts, totalBytes: 12,
+        capturedAt: '2026-09-04T00:00:00.000Z' },
+      publishState: 'pending' });
+    const publishedAttempt = await store.transitionWorkAttemptPublishState({
+      tenantId: 'tenant-a', attemptId: attempt.attemptId, expectedState: 'pending',
+      state: 'published', artifactManifest: { version: 1, files: terminalEnvelope.artifacts,
+        totalBytes: 12, capturedAt: '2026-09-04T00:00:00.000Z',
+        publishedRoot: `published/${work.workOrderId}/${attempt.attemptId}` },
+    });
+    expect(publishedAttempt).toMatchObject({ publishState: 'published',
+      checkpoint: { step: 'finished' }, artifactManifest: { totalBytes: 12 } });
+    await expect(store.transitionWorkAttemptPublishState({
+      tenantId: 'tenant-a', attemptId: attempt.attemptId, expectedState: 'pending', state: 'rejected',
+    })).rejects.toThrow('ORG_AGENT_ARTIFACT_PUBLISH_STATE_CONFLICT');
     const runningWork = await store.getWorkOrder('tenant-a', work.workOrderId);
     await store.transitionWorkOrder({ tenantId: 'tenant-a', workOrderId: work.workOrderId,
       expectedVersion: runningWork!.version, state: 'completed', resultEnvelope: terminalEnvelope });
@@ -167,6 +191,23 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       mountSubPath: 'tasks/a', sharedReadOnlySubPath: 'shared/a',
     })).resolves.toMatchObject({ attemptId: 'attempt-a', status: 'completed',
       resultEnvelope: terminalEnvelope });
+    await expect(store.createWorkAttempt({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId, runtimeRunId: 'run-a',
+      attemptId: 'attempt-a', taskWorkspaceId: 'task-workspace-a', sandboxScopeId: 'sandbox-a',
+      mountSubPath: 'tasks/tampered', sharedReadOnlySubPath: 'shared/a',
+    })).rejects.toThrow('ORG_AGENT_WORK_ATTEMPT_IDEMPOTENCY_CONFLICT');
+    const otherWork = await store.createWorkOrder({
+      tenantId: 'tenant-a', agentId: 'agent-a', bindingId: binding.bindingId,
+      workConversationId: conversation.workConversationId, idempotencyKey: 'event-other:tool-a',
+      title: '另一项工作', visibility: 'conversation', createdByActor: actor,
+      policySnapshot: { revision: binding.revision }, cancelPolicy: { mode: 'conversation' },
+    });
+    await expect(store.createWorkAttempt({
+      tenantId: 'tenant-a', workOrderId: otherWork.workOrderId, runtimeRunId: 'run-other',
+      attemptId: 'attempt-other', parentAttemptId: attempt.attemptId,
+      taskWorkspaceId: 'task-workspace-other', sandboxScopeId: 'sandbox-other',
+      mountSubPath: 'tasks/other', sharedReadOnlySubPath: 'shared/a',
+    })).rejects.toThrow('ORG_AGENT_PARENT_ATTEMPT_SCOPE_INVALID');
 
     const intent = await store.createDelivery({
       tenantId: 'tenant-a',
@@ -217,6 +258,10 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
         status: 'accepted',
       }),
     ).resolves.toMatchObject({ deliveryState: 'sent' });
+    await expect(store.findWorkConversationByMessage({
+      tenantId: 'tenant-a', bindingId: binding.bindingId, accountId: 'account-a',
+      conversationId: 'group-a', messageIds: ['provider-message-a'],
+    })).resolves.toMatchObject({ workConversationId: conversation.workConversationId });
 
     const memory = await store.createMemory({
       tenantId: 'tenant-a',
@@ -228,6 +273,15 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       provenance: { messageId: 'root-message-a' },
       policyRevision: binding.revision,
     });
+    const otherShadow = await store.ensureShadowBinding({
+      tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-memory-other', channelKind: 'group', workspaceId: 'agent-workspace-a',
+    });
+    await expect(store.createMemory({
+      tenantId: 'tenant-a', agentId: 'agent-a', bindingId: otherShadow.bindingId,
+      workOrderId: work.workOrderId, memoryScope: 'task_checkpoint',
+      content: { checkpoint: 'wrong group' }, provenance: {}, policyRevision: otherShadow.revision,
+    })).rejects.toThrow('ORG_AGENT_MEMORY_ASSOCIATION_INVALID');
     const promoted = await store.promoteMemory({
       tenantId: 'tenant-a',
       sourceMemoryId: memory.memoryId,
@@ -238,14 +292,85 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     await expect(
       store.changeMemoryStatus({
         tenantId: 'tenant-a',
-        memoryId: promoted.memoryId,
-        expectedVersion: promoted.version,
+        memoryId: memory.memoryId,
+        expectedVersion: memory.version,
         status: 'revoked',
       }),
     ).resolves.toMatchObject({ status: 'revoked' });
+    await expect(store.getMemory('tenant-a', promoted.memoryId)).resolves.toMatchObject({
+      status: 'revoked',
+      provenance: expect.objectContaining({ sourceMemoryId: memory.memoryId }),
+    });
+    await expect(store.listMemories({
+      tenantId: 'tenant-a', agentId: 'agent-a', memoryScope: 'agent', status: 'active', limit: 20,
+    })).resolves.toEqual([]);
+
+    const checkpoint = await store.createMemory({
+      tenantId: 'tenant-a', agentId: 'agent-a', bindingId: binding.bindingId,
+      workOrderId: work.workOrderId, memoryScope: 'task_checkpoint',
+      content: { checkpoint: '已核对采购异常' }, provenance: { attemptId: attempt.attemptId },
+      policyRevision: binding.revision,
+    });
+    const promotedCheckpoint = await store.promoteMemory({
+      tenantId: 'tenant-a', sourceMemoryId: checkpoint.memoryId,
+      promotedBy: 'admin', reason: '任务结论转长期记忆', policyRevision: binding.revision,
+    });
+    await store.changeMemoryStatus({
+      tenantId: 'tenant-a', memoryId: checkpoint.memoryId,
+      expectedVersion: checkpoint.version, status: 'deleted',
+    });
+    await expect(store.getMemory('tenant-a', promotedCheckpoint.memoryId)).resolves.toMatchObject({
+      status: 'deleted',
+      provenance: expect.objectContaining({ sourceMemoryId: checkpoint.memoryId }),
+    });
     await expect(
       store.listMemories({ tenantId: 'tenant-b', agentId: 'agent-a', limit: 20 }),
     ).resolves.toEqual([]);
+
+    const completedBeforeRetry = await store.getWorkOrder('tenant-a', work.workOrderId);
+    const reopened = await store.reopenWorkOrder({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId,
+      expectedVersion: completedBeforeRetry!.version,
+    });
+    await pool.query(`UPDATE ${prefix}_org_agent_work_orders
+      SET updated_at=NOW()-INTERVAL '5 minutes' WHERE work_order_id=$1`, [work.workOrderId]);
+    await expect(store.listStagedWorkOrders(new Date(), 10)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ workOrderId: work.workOrderId })]),
+    );
+    const attempt2 = await store.createWorkAttempt({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId, runtimeRunId: 'run-a-2',
+      attemptId: 'attempt-a-2', parentAttemptId: attempt.attemptId,
+      taskWorkspaceId: 'task-workspace-a-2', sandboxScopeId: 'sandbox-a-2',
+      mountSubPath: 'tasks/a-2', sharedReadOnlySubPath: 'shared/a',
+    });
+    await expect(store.getWorkOrder('tenant-a', work.workOrderId))
+      .resolves.toMatchObject({ state: 'queued', currentAttemptNo: attempt2.attemptNo });
+    await store.transitionWorkAttempt({ tenantId: 'tenant-a', runtimeRunId: 'run-a-2',
+      status: 'running' });
+    await store.transitionWorkAttempt({ tenantId: 'tenant-a', runtimeRunId: 'run-a-2',
+      status: 'completed', resultEnvelope: terminalEnvelope });
+    const retryRunning = await store.getWorkOrder('tenant-a', work.workOrderId);
+    await store.transitionWorkOrder({ tenantId: 'tenant-a', workOrderId: work.workOrderId,
+      expectedVersion: retryRunning!.version, state: 'completed', resultEnvelope: terminalEnvelope });
+    expect(attempt2.attemptNo).toBe(reopened.currentAttemptNo + 1);
+    const staleIntent = await store.createDelivery({
+      tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'group-a',
+      agentId: 'agent-a', bindingId: binding.bindingId,
+      conversationSpaceId: binding.conversationSpaceId,
+      workConversationId: conversation.workConversationId,
+      policyRevision: binding.revision, visibility: 'conversation',
+      sourceWorkOrderId: work.workOrderId, sourceAttemptId: attempt.attemptId,
+      source: 'background_completion', deliveryKind: 'task_completion', disposition: 'replied',
+      destination: { provider: 'dingtalk', accountId: 'account-a',
+        conversationId: 'group-a', kind: 'group' },
+      content: '旧 attempt 完成', idempotencyKey: 'delivery-stale-attempt-a',
+    });
+    await expect(store.claimDelivery(staleIntent.deliveryId, 'worker-stale', 60_000))
+      .rejects.toThrow('DWS_DELIVERY_NOT_CLAIMABLE');
+    await expect(store.reconcileAllExpiredDeliveries()).resolves.toBe(1);
+    await expect(store.getDelivery('tenant-a', staleIntent.deliveryId)).resolves.toMatchObject({
+      deliveryState: 'dead_letter', lastError: 'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
+    });
 
     const expiring = await store.createDelivery({
       tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'direct-expiring',
@@ -333,5 +458,35 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       new Set([topicA.workConversationId, topicB.workConversationId]),
     );
     expect(blocked).toBeNull();
+  });
+
+  it('treats an unpinned row as a group FIFO barrier against an already pinned topic', async () => {
+    const inbox = new PgAgentDwsMessageStore(pool, prefix);
+    const first = await inbox.ingest({
+      tenantId: 'tenant-a', accountId: 'account-a', eventId: 'mixed-unpinned-first',
+      eventType: 'user_im_message_receive_at', conversationId: 'group-mixed',
+      messageId: 'mixed-message-1', senderOpenDingtalkId: 'member-a', content: 'first',
+    }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
+      profileId: 'corp-a:agent-member-a', corpId: 'corp-a', dingtalkUserId: 'agent-member-a',
+    } });
+    const second = await inbox.ingest({
+      tenantId: 'tenant-a', accountId: 'account-a', eventId: 'mixed-pinned-second',
+      eventType: 'user_im_message_receive_at', conversationId: 'group-mixed',
+      messageId: 'mixed-message-2', senderOpenDingtalkId: 'member-a', content: 'second',
+    }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
+      profileId: 'corp-a:agent-member-a', corpId: 'corp-a', dingtalkUserId: 'agent-member-a',
+    } });
+    await store.pinInboxRouting({
+      inboxId: second.record.inboxId, conversationSpaceId: 'space-mixed',
+      workConversationId: 'topic-mixed', policyRevision: 1,
+    });
+
+    const firstClaim = await inbox.claimNext('mixed-worker-1', 60_000);
+    expect(firstClaim?.inboxId).toBe(first.record.inboxId);
+    await expect(inbox.claimNext('mixed-worker-2', 60_000)).resolves.toBeNull();
+    await inbox.complete(firstClaim!.inboxId, 'mixed-worker-1', firstClaim!.leaseFence);
+    await expect(inbox.claimNext('mixed-worker-2', 60_000)).resolves.toMatchObject({
+      inboxId: second.record.inboxId,
+    });
   });
 });

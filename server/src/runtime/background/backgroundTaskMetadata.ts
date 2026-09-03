@@ -56,6 +56,7 @@ interface CommonBackgroundTaskMetadata {
   workOrderId?: string;
   attemptId?: string;
   attemptNo?: number;
+  parentAttemptId?: string;
   sharedReadOnlySubPath?: string;
   sandboxResources?: SandboxResources;
   workload?: SandboxWorkloadWireDescriptor;
@@ -70,6 +71,7 @@ interface CommonBackgroundTaskMetadata {
 export interface BackgroundAgentTaskMetadata extends CommonBackgroundTaskMetadata {
   taskType: 'agent';
   outputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
+  basePrompt?: string;
   prompt: string;
   agentType: 'general' | 'explore';
   includeCompanyInfo: boolean;
@@ -143,6 +145,8 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(metadataString(value, 'attemptId') ? { attemptId: metadataString(value, 'attemptId') } : {}),
     ...(typeof value.attemptNo === 'number' && Number.isSafeInteger(value.attemptNo) && value.attemptNo > 0
       ? { attemptNo: value.attemptNo } : {}),
+    ...(metadataString(value, 'parentAttemptId')
+      ? { parentAttemptId: metadataString(value, 'parentAttemptId') } : {}),
     ...(metadataString(value, 'sharedReadOnlySubPath')
       ? { sharedReadOnlySubPath: metadataString(value, 'sharedReadOnlySubPath') } : {}),
     ...(sandboxResources ? { sandboxResources } : {}),
@@ -164,6 +168,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   }
 
   const prompt = metadataString(value, 'prompt');
+  const basePrompt = metadataString(value, 'basePrompt');
   const agentType = value.agentType === 'explore'
     ? 'explore'
     : value.agentType === 'general'
@@ -177,6 +182,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     outputTransactionMode: isModelOutputTransactionMode(value.outputTransactionMode)
       ? value.outputTransactionMode
       : 'terminal_buffered',
+    ...(basePrompt ? { basePrompt } : {}),
     prompt,
     agentType,
     includeCompanyInfo: value.includeCompanyInfo === true,
@@ -278,10 +284,8 @@ function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAg
     && raw.allowedSkillIds.every(item => typeof item === 'string') ? raw.allowedSkillIds as string[] : undefined;
   const allowedSourceIds = Array.isArray(raw.allowedSourceIds)
     && raw.allowedSourceIds.every(item => typeof item === 'string') ? raw.allowedSourceIds as string[] : undefined;
-  const triggerRoles = raw.triggerRoles === undefined ? [] : Array.isArray(raw.triggerRoles)
-    && raw.triggerRoles.every(item => typeof item === 'string') ? raw.triggerRoles as string[] : undefined;
-  const approvalRoles = raw.approvalRoles === undefined ? [] : Array.isArray(raw.approvalRoles)
-    && raw.approvalRoles.every(item => typeof item === 'string') ? raw.approvalRoles as string[] : undefined;
+  const triggerRoles = parseGovernanceRoles(raw.triggerRoles);
+  const approvalRoles = parseGovernanceRoles(raw.approvalRoles);
   const taskVisibility = raw.taskVisibility === 'conversation' || raw.taskVisibility === 'requester_only'
     ? raw.taskVisibility : undefined;
   const externalActor = parseExternalActor(raw.externalActor);
@@ -292,11 +296,21 @@ function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAg
     || !triggerRoles || !approvalRoles
     || !taskVisibility || !externalActor || !channelPrincipal
     || !agentPrincipal) return undefined;
+  const actorRole = raw.actorRole === 'member' || raw.actorRole === 'org_admin'
+    ? raw.actorRole : undefined;
+  if (agentPrincipal.accountId !== accountId || agentPrincipal.agentId !== agentId
+    || channelPrincipal.accountId !== accountId) return undefined;
+  if (externalActor.kind === 'service_event') {
+    if (assurance !== 'service' || actorRole) return undefined;
+  } else if (assurance !== externalActor.assurance
+    || (externalActor.assurance === 'mapped'
+      ? !externalActor.mappedUserId || !externalActor.role || actorRole !== externalActor.role
+      : Boolean(externalActor.mappedUserId || externalActor.role || actorRole))) return undefined;
   return { accountId, agentId, bindingId, conversationSpaceId, workConversationId, policyRevision,
     agentPrincipal, externalActorAssurance: assurance, allowedToolNames, allowedSkillIds, allowedSourceIds,
     contextEnabled: raw.contextEnabled === true,
     taskVisibility,
-    ...(typeof raw.actorRole === 'string' ? { actorRole: raw.actorRole } : {}),
+    ...(actorRole ? { actorRole } : {}),
     triggerRoles,
     approvalRoles,
     externalActor, channelPrincipal };
@@ -318,7 +332,15 @@ function parseExternalActor(value: unknown): NonNullable<ChannelContext['orgAgen
   if (!kind || raw.provider !== 'dingtalk' || !assurance || !corpId || !openId) return undefined;
   return { kind, provider: 'dingtalk', corpId, openId, assurance,
     ...(metadataString(raw, 'displayName') ? { displayName: metadataString(raw, 'displayName') } : {}),
-    ...(metadataString(raw, 'mappedUserId') ? { mappedUserId: metadataString(raw, 'mappedUserId') } : {}) };
+    ...(metadataString(raw, 'mappedUserId') ? { mappedUserId: metadataString(raw, 'mappedUserId') } : {}),
+    ...(raw.role === 'member' || raw.role === 'org_admin' ? { role: raw.role } : {}) };
+}
+
+function parseGovernanceRoles(value: unknown): Array<'member' | 'org_admin'> | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every(item => item === 'member' || item === 'org_admin'))
+    return undefined;
+  return value;
 }
 
 function parseAgentPrincipal(value: unknown): NonNullable<ChannelContext['orgAgentChannel']>['agentPrincipal'] | undefined {

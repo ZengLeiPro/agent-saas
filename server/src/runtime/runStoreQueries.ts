@@ -473,6 +473,10 @@ export class PgRunStoreQueries {
           run.status = 'pending'
           AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'
         )
+        AND NOT (
+          run.metadata->>'backgroundTaskVersion' = '2'
+          AND COALESCE(run.metadata->>'backgroundTaskReady', 'false') <> 'true'
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM ${this.steeringInputsTable} input
@@ -658,6 +662,10 @@ export class PgRunStoreQueries {
           AND NOT (
             candidate.status = 'pending'
             AND COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'
+          )
+          AND NOT (
+            candidate.metadata->>'backgroundTaskVersion' = '2'
+            AND COALESCE(candidate.metadata->>'backgroundTaskReady', 'false') <> 'true'
           )
           AND (
             candidate.status <> 'pending'

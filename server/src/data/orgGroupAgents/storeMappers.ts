@@ -9,6 +9,7 @@ import type {
   OrgAgentWorkAttempt,
   OrgAgentWorkConversation,
   OrgAgentWorkOrder,
+  OrgAgentWorkOrderControl,
 } from './types.js';
 
 export function mapBinding(row: Record<string, unknown>): OrgAgentChannelBinding {
@@ -103,6 +104,7 @@ export function mapWorkOrder(row: Record<string, unknown>): OrgAgentWorkOrder {
     throw new Error('ORG_AGENT_WORK_ORDER_ACTOR_INVALID');
   return {
     workOrderId: String(row.work_order_id),
+    shortId: text(row.short_id) ?? fallbackShortId(String(row.work_order_id)),
     tenantId: String(row.tenant_id),
     agentId: String(row.agent_id),
     bindingId: String(row.binding_id),
@@ -115,6 +117,7 @@ export function mapWorkOrder(row: Record<string, unknown>): OrgAgentWorkOrder {
     createdByActor: actor as unknown as ExternalActorRef,
     policySnapshot: parseJson(row.policy_snapshot_json),
     cancelPolicy: parseJson(row.cancel_policy_json),
+    control: validateWorkOrderControl(parseJson(row.control_json)),
     ...(row.result_envelope_json
       ? { resultEnvelope: parseJson(row.result_envelope_json) as unknown as OrgAgentResultEnvelope }
       : {}),
@@ -123,6 +126,26 @@ export function mapWorkOrder(row: Record<string, unknown>): OrgAgentWorkOrder {
     updatedAt: iso(row.updated_at),
     ...(row.completed_at ? { completedAt: iso(row.completed_at) } : {}),
   };
+}
+
+function validateWorkOrderControl(value: Record<string, unknown>): OrgAgentWorkOrderControl {
+  const supplements = Array.isArray(value.supplements) ? value.supplements.flatMap(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const row = item as Record<string, unknown>;
+    if (typeof row.text !== 'string' || typeof row.actorOpenId !== 'string'
+      || typeof row.createdAt !== 'string' || (row.kind !== 'supplement' && row.kind !== 'review')) return [];
+    return [{ text: row.text, actorOpenId: row.actorOpenId, createdAt: row.createdAt,
+      kind: row.kind as 'supplement' | 'review' }];
+  }) : [];
+  return {
+    revision: Number.isSafeInteger(value.revision) && Number(value.revision) >= 1 ? Number(value.revision) : 1,
+    supplements,
+    workerType: value.workerType === 'explore' ? 'explore' : 'general',
+  };
+}
+
+function fallbackShortId(workOrderId: string): string {
+  return `W-${workOrderId.replace(/[^A-Za-z0-9]/g, '').slice(-12).toUpperCase()}`;
 }
 
 export function mapWorkAttempt(row: Record<string, unknown>): OrgAgentWorkAttempt {
@@ -211,8 +234,8 @@ export function validateEffectiveConfig(value: unknown): OrgAgentEffectiveConfig
       toolNames: stringArray(capabilities.toolNames),
     },
     access: {
-      triggerRoles: stringArray(access.triggerRoles),
-      approvalRoles: stringArray(access.approvalRoles),
+      triggerRoles: governanceRoleArray(access.triggerRoles),
+      approvalRoles: governanceRoleArray(access.approvalRoles),
     },
     speech: {
       proactive: speech.proactive === true,
@@ -264,6 +287,11 @@ function parseJson(value: unknown): Record<string, unknown> {
 }
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
+}
+function governanceRoleArray(value: unknown): Array<'member' | 'org_admin'> {
+  if (!Array.isArray(value) || !value.every(item => item === 'member' || item === 'org_admin'))
+    throw new Error('ORG_AGENT_EFFECTIVE_CONFIG_ROLE_INVALID');
+  return value;
 }
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;

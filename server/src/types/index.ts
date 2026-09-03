@@ -359,12 +359,12 @@ export interface ChannelContext {
     allowedSourceIds: string[];
     contextEnabled: boolean;
     taskVisibility: 'conversation' | 'requester_only';
-    actorRole?: string;
-    triggerRoles: string[];
-    approvalRoles: string[];
+    actorRole?: 'member' | 'org_admin';
+    triggerRoles: Array<'member' | 'org_admin'>;
+    approvalRoles: Array<'member' | 'org_admin'>;
     externalActor: {
       kind: 'external_user'; provider: 'dingtalk'; corpId: string; openId: string;
-      displayName?: string; mappedUserId?: string; assurance: 'mapped' | 'unmapped' | 'ambiguous';
+      displayName?: string; mappedUserId?: string; role?: 'member' | 'org_admin'; assurance: 'mapped' | 'unmapped' | 'ambiguous';
     } | { kind: 'service_event'; issuer: 'runtime'; workOrderId: string; attemptId: string; fence: number };
     channelPrincipal: {
       provider: 'dingtalk'; accountId: string; conversationId: string; kind: 'group' | 'direct'; peerOpenId?: string;

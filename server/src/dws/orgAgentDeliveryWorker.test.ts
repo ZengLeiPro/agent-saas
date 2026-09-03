@@ -59,20 +59,37 @@ function harness(input?: {
   pending?: boolean;
   receipt?: Record<string, unknown>;
   liveDeny?: boolean;
+  agentEnabled?: boolean;
+  claimedDelivery?: DwsDeliveryIntent;
+  completionPolicy?: 'reply_to_work_conversation' | 'silent';
+  accountStatus?: AgentDwsAccountRecord['status'];
 }) {
   const store = {
     reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
-    claimNextDelivery: vi.fn().mockResolvedValue(input?.pending === false ? null : delivery),
+    claimNextDelivery: vi.fn().mockResolvedValue(
+      input?.pending === false ? null : (input?.claimedDelivery ?? delivery),
+    ),
     getBinding: vi.fn().mockResolvedValue({
       bindingId: 'binding-1',
       agentId: 'agent-1',
       activationState: 'active',
       enabled: true,
-      policy: { enabled: true, liveDeny: input?.liveDeny ?? false, completion: 'announce' },
+      policy: {
+        enabled: true,
+        liveDeny: input?.liveDeny ?? false,
+        completion: input?.completionPolicy ?? 'reply_to_work_conversation',
+      },
     }),
     markClaimedDeliveryDeadLetter: vi.fn().mockResolvedValue(undefined),
     markDeliverySent: vi.fn().mockResolvedValue(undefined),
     markDeliveryUnknown: vi.fn().mockResolvedValue(undefined),
+    createDelivery: vi.fn().mockImplementation(async value => ({ ...delivery, ...value,
+      deliveryId: 'policy-notice', deliveryState: 'pending' })),
+    getWorkOrder: vi.fn().mockResolvedValue({
+      workOrderId: 'work-current', currentAttemptNo: 2, state: 'completed',
+    }),
+    listWorkAttempts: vi.fn().mockResolvedValue([{ attemptId: 'attempt-current',
+      attemptNo: 2, status: 'completed' }]),
   } as unknown as OrgGroupAgentStore;
   const sender = {
     send: vi.fn().mockResolvedValue(input?.receipt ?? { status: 'accepted', acceptedAt: 'now' }),
@@ -83,8 +100,15 @@ function harness(input?: {
     options: {
       store,
       accountStore: {
-        getForTenant: vi.fn().mockResolvedValue(account),
+        getForTenant: vi.fn().mockResolvedValue({
+          ...account,
+          status: input?.accountStatus ?? account.status,
+        }),
       } as unknown as AgentDwsAccountStore,
+      agentStore: {
+        get: vi.fn().mockReturnValue({ id: 'agent-1', tenantId: 'tenant-1',
+          enabled: input?.agentEnabled ?? true }),
+      },
       sender,
       workerId: 'worker-1',
       leaseTtlMs: 1_000,
@@ -133,6 +157,36 @@ describe('deliverNextOrgAgentIntent', () => {
     expect(test.store.claimNextDelivery).toHaveBeenCalledTimes(1);
   });
 
+  it('moves an accepted provider send to unknown when receipt persistence fails', async () => {
+    const test = harness();
+    vi.mocked(test.store.markDeliverySent).mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).toHaveBeenCalledOnce();
+    expect(test.store.markDeliveryUnknown).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, expect.objectContaining({ message: 'database unavailable' }),
+    );
+  });
+
+  it('fails closed when the pinned DWS account is revoked before completion delivery', async () => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+    };
+    const test = harness({ accountStatus: 'paused', claimedDelivery: completion });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
+    );
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
   it('dead-letters a claimed intent when the live binding denies delivery', async () => {
     const test = harness({ liveDeny: true });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
@@ -141,6 +195,81 @@ describe('deliverNextOrgAgentIntent', () => {
       'worker-1',
       7,
       'ORG_AGENT_CHANNEL_LIVE_DENY',
+    );
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('emits one durable redacted notice when completion content is denied but destination is live', async () => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+    };
+    const test = harness({ liveDeny: true, claimedDelivery: completion });
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+    expect(test.store.createDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'system',
+      deliveryKind: 'system_notice',
+      content: '任务已结束，但当前群策略不允许披露结果，请联系管理员。',
+    }));
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+    );
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('keeps an explicitly silent completion fully silent', async () => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+    };
+    const test = harness({ completionPolicy: 'silent', claimedDelivery: completion });
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.store.createDelivery).not.toHaveBeenCalled();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      delivery.deliveryId,
+      'worker-1',
+      7,
+      'ORG_AGENT_COMPLETION_SILENT',
+    );
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('uses the same redacted completion path when the Agent is disabled after creation', async () => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+    };
+    const test = harness({ agentEnabled: false, claimedDelivery: completion });
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+    expect(test.store.createDelivery).toHaveBeenCalledOnce();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+    );
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('dead-letters a completion from a stale attempt after retry', async () => {
+    const stale = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-old',
+    };
+    const test = harness({ claimedDelivery: stale });
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
     );
     expect(test.sender.send).not.toHaveBeenCalled();
   });

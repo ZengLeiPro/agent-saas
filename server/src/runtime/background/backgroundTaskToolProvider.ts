@@ -24,8 +24,8 @@ import type { BackgroundTaskRuntime } from './backgroundTaskRuntime.js';
  * （见 DurableBackgroundTaskService.invokeCommandControl / cancel）。
  */
 const backgroundTaskSchema = z.object({
-  action: z.enum(['list', 'status', 'output', 'cancel']).describe(
-    'list = 列出当前会话的后台任务；status = 查询单个任务状态、结果摘要与完整输出文件位置；output = 续读运行中后台命令的增量输出；cancel = 取消 pending/running 任务（命令任务会同时终止 ACS 内的进程）。',
+  action: z.enum(['list', 'status', 'output', 'cancel', 'amend', 'pause', 'resume', 'review', 'reassign']).describe(
+    'list/status/output 查询任务；cancel 取消；amend 补充后续要求；pause/resume 暂停或恢复为新 attempt；review 发起结果复核；reassign 在 general/explore Worker 间转派。',
   ),
   task_id: z.string().min(1).optional().describe(
     'Agent(mode=background) 或 Shell(mode=background) 返回的 taskId。status/output/cancel 必填。',
@@ -35,6 +35,8 @@ const backgroundTaskSchema = z.object({
   stderr_offset: z.number().int().min(0).optional().describe('output 专用：stderr 续读偏移字节，默认 0。'),
   limit_bytes: z.number().int().min(1).max(64 * 1024).optional().describe('output 专用：本次最多返回字节数，默认 20000。'),
   wait_ms: z.number().int().min(0).max(30_000).optional().describe('output 专用：无新输出时最长等待毫秒数，默认 0。'),
+  text: z.string().trim().min(1).max(20_000).optional().describe('amend/review 的补充或复核要求。'),
+  worker_type: z.enum(['general', 'explore']).optional().describe('reassign 的目标 Worker 类型。'),
 });
 
 type BackgroundTaskInput = z.infer<typeof backgroundTaskSchema>;
@@ -86,9 +88,32 @@ export class BackgroundTaskToolProvider implements ToolProvider {
       });
       return { content: result.content };
     }
-    // action === 'cancel'
-    const task = await this.runtime.cancel(context, taskId);
-    return { content: JSON.stringify(toTaskView(task, true)) };
+    if (input.action === 'cancel') {
+      const task = await this.runtime.cancel(context, taskId);
+      return { content: JSON.stringify(toTaskView(task, true)) };
+    }
+    if ((input.action === 'amend' || input.action === 'review') && !input.text) {
+      throw new Error(`BackgroundTask(action="${input.action}") 需要 text。`);
+    }
+    if (input.action === 'reassign' && !input.worker_type) {
+      throw new Error('BackgroundTask(action="reassign") 需要 worker_type。');
+    }
+    const result = await this.runtime.controlWorkOrder(context, {
+      taskId,
+      action: input.action,
+      ...(input.text ? { text: input.text } : {}),
+      ...(input.worker_type ? { workerType: input.worker_type } : {}),
+    });
+    return { content: JSON.stringify({
+      workOrder: {
+        shortId: result.workOrder.shortId,
+        state: result.workOrder.state,
+        version: result.workOrder.version,
+        currentAttemptNo: result.workOrder.currentAttemptNo,
+        workerType: result.workOrder.control.workerType,
+      },
+      task: result.task ? toTaskView(result.task, true) : null,
+    }) };
   }
 }
 

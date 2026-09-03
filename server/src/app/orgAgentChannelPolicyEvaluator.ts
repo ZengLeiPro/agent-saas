@@ -1,5 +1,8 @@
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
-import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import {
+  hasExactAgentDwsProfile,
+  type AgentDwsAccountStore,
+} from '../data/agentDwsAccounts/index.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 
 export function createOrgAgentChannelPolicyEvaluator(
@@ -13,19 +16,20 @@ export function createOrgAgentChannelPolicyEvaluator(
       store.getBindingById(input.tenantId, input.bindingId),
       accountStore.getForTenant(input.tenantId, input.accountId),
     ]);
-    if (!binding || !binding.enabled || !binding.policy.enabled || binding.policy.liveDeny) {
+    if (!binding || binding.activationState !== 'active' || !binding.enabled
+      || !binding.policy.enabled || binding.policy.liveDeny) {
       return { allowed: false, reason: 'ChannelBinding disabled or live-denied' };
     }
     const agent = agentStore.get(input.agentId);
     if (binding.accountId !== input.accountId || binding.agentId !== input.agentId
       || binding.conversationId !== input.conversationId || !account || account.status !== 'active'
+      || account.accountId !== input.accountId || account.tenantId !== input.tenantId
+      || !hasExactAgentDwsProfile(account)
       || account.agentId !== input.agentId || !agent || !agent.enabled || agent.tenantId !== input.tenantId) {
       return { allowed: false, reason: 'ChannelBinding principal chain is stale or mismatched' };
     }
-    return {
-      allowed: binding.effectiveConfig.capabilities.toolNames.includes(input.toolName),
-      reason: 'tool is outside current ChannelBinding capability',
-    };
+    // 工具集合在 attempt 创建时已固化；live 层只复核主体链与紧急停用。
+    return { allowed: true };
   };
 }
 

@@ -22,6 +22,7 @@ const orgChannel = {
   allowedSourceIds: [],
   contextEnabled: false,
   taskVisibility: 'conversation',
+  actorRole: 'member',
   triggerRoles: [],
   approvalRoles: [],
   externalActor: {
@@ -31,6 +32,7 @@ const orgChannel = {
     openId: 'user-open-1',
     mappedUserId: 'user-1',
     assurance: 'mapped',
+    role: 'member',
   },
   channelPrincipal: {
     provider: 'dingtalk',
@@ -87,25 +89,34 @@ describe('组织 Agent staged run 恢复', () => {
       .fn()
       .mockResolvedValueOnce(runs.slice(0, 50))
       .mockResolvedValueOnce(runs.slice(50));
-    const markStatus = vi.fn(async (runId, status, _reason, patch) => ({
+    const activate = vi.fn(async (runId, _reason, patch) => ({
       ...runs.find((item) => item.runId === runId),
-      status,
-      metadata: { ...(runs.find((item) => item.runId === runId) as any).metadata, ...patch },
+      metadata: { ...(runs.find((item) => item.runId === runId) as any).metadata,
+        ...patch, backgroundTaskReady: true },
     }));
+    const created = new Set<string>();
     const createWorkAttempt = vi.fn(async (input) => ({
       ...input,
       attemptNo: 1,
       status: 'queued',
-    }));
+    })).mockImplementation(async input => {
+      created.add(input.workOrderId);
+      return { ...input, attemptNo: 1, status: 'queued' };
+    });
     const listStagedWorkOrders = vi.fn().mockResolvedValue([]);
     const service = new DurableBackgroundTaskService({
-      runStore: { listStagedOrgAgentBackgroundTasks: listStaged, markStatus },
+      runStore: {
+        listStagedOrgAgentBackgroundTasks: listStaged,
+        activateStagedOrgAgentBackgroundTask: activate,
+        markStatusIfCurrent: vi.fn(async () => null),
+        get: vi.fn(),
+      },
       orgGroupAgentStore: {
         getWorkOrder: vi.fn(async (_tenantId, workOrderId) => ({
           workOrderId,
           tenantId: 'tenant-1',
-          state: 'queued',
-          currentAttemptNo: 0,
+          state: created.has(workOrderId) ? 'running' : 'queued',
+          currentAttemptNo: created.has(workOrderId) ? 1 : 0,
         })),
         listWorkAttempts: vi.fn().mockResolvedValue([]),
         createWorkAttempt,
@@ -116,7 +127,7 @@ describe('组织 Agent staged run 恢复', () => {
     await service.reconcileStagedOrgWork();
 
     expect(createWorkAttempt).toHaveBeenCalledTimes(51);
-    expect(markStatus).toHaveBeenCalledTimes(51);
+    expect(activate).toHaveBeenCalledTimes(51);
     expect(listStaged).toHaveBeenCalledTimes(2);
     expect(listStagedWorkOrders).toHaveBeenCalledOnce();
   });
@@ -131,9 +142,13 @@ describe('组织 Agent staged run 恢复', () => {
     };
     const transitionWorkOrder = vi.fn().mockResolvedValue({ ...work, state: 'failed' });
     const service = new DurableBackgroundTaskService({
-      runStore: { listStagedOrgAgentBackgroundTasks: vi.fn().mockResolvedValue([]) },
+      runStore: {
+        listStagedOrgAgentBackgroundTasks: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue(null),
+      },
       orgGroupAgentStore: {
         listStagedWorkOrders: vi.fn().mockResolvedValue([work]),
+        listWorkAttempts: vi.fn().mockResolvedValue([]),
         transitionWorkAttempt: vi.fn().mockResolvedValue(null),
         getWorkOrder: vi.fn().mockResolvedValue(work),
         transitionWorkOrder,
@@ -149,5 +164,62 @@ describe('组织 Agent staged run 恢复', () => {
         state: 'failed',
       }),
     );
+  });
+
+  it('不会把仍有耐久 runtime run 的 queued WorkOrder 当作孤儿', async () => {
+    const work = {
+      workOrderId: 'live-work', tenantId: 'tenant-1', state: 'queued', currentAttemptNo: 1, version: 2,
+    };
+    const attempt = {
+      workOrderId: 'live-work', attemptId: 'attempt-live', attemptNo: 1,
+      runtimeRunId: 'run-live', mountSubPath: 'work/live/attempt-1', status: 'queued',
+    };
+    const transitionWorkOrder = vi.fn();
+    const service = new DurableBackgroundTaskService({
+      runStore: {
+        listStagedOrgAgentBackgroundTasks: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue(stagedRun(1)),
+      },
+      orgGroupAgentStore: {
+        listStagedWorkOrders: vi.fn().mockResolvedValue([work]),
+        listWorkAttempts: vi.fn().mockResolvedValue([attempt]),
+        transitionWorkOrder,
+      },
+    } as never);
+
+    await service.reconcileStagedOrgWork();
+    expect(transitionWorkOrder).not.toHaveBeenCalled();
+  });
+
+  it('不会复活已经失败的 WorkOrder，也不会让旧 attempt 失败覆盖当前 attempt', async () => {
+    const run = stagedRun(9) as any;
+    const currentWork = {
+      workOrderId: 'work-9', tenantId: 'tenant-1', state: 'running', currentAttemptNo: 2, version: 8,
+    };
+    const transitionWorkOrder = vi.fn();
+    const markStatusIfCurrent = vi.fn().mockResolvedValue({ ...run, status: 'failed' });
+    const activate = vi.fn();
+    const service = new DurableBackgroundTaskService({
+      runStore: {
+        listStagedOrgAgentBackgroundTasks: vi.fn().mockResolvedValue([run]),
+        activateStagedOrgAgentBackgroundTask: activate,
+        markStatusIfCurrent,
+        get: vi.fn(),
+      },
+      orgGroupAgentStore: {
+        getWorkOrder: vi.fn().mockResolvedValue(currentWork),
+        listWorkAttempts: vi.fn().mockResolvedValue([{ ...run.metadata, workOrderId: 'work-9',
+          runtimeRunId: 'run-9', attemptNo: 1, status: 'queued' }]),
+        transitionWorkAttempt: vi.fn().mockResolvedValue({ attemptNo: 1, status: 'failed' }),
+        transitionWorkOrder,
+        listStagedWorkOrders: vi.fn().mockResolvedValue([]),
+      },
+    } as never);
+
+    await service.reconcileStagedOrgWork();
+
+    expect(activate).not.toHaveBeenCalled();
+    expect(markStatusIfCurrent).toHaveBeenCalledOnce();
+    expect(transitionWorkOrder).not.toHaveBeenCalled();
   });
 });

@@ -190,7 +190,9 @@ export interface AppRuntime {
   dwsPersonalEventGateway?: DwsPersonalEventGateway;
   /** Context 范围保存后，立即把权威策略镜像到检索 Source/Collection。 */
   agentDwsContextPolicyUpdated?: (account: AgentDwsAccountRecord) => Promise<void>;
+  agentDwsGroupBindingUpdated?: (account: AgentDwsAccountRecord, conversationId: string) => Promise<void>;
   agentDwsEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => Promise<void>;
+  isOrgAgentRuntimeV2Ready?: () => boolean;
   /** Notion 官方 ntn 两阶段登录，成功后 token 转存用户级 Vault。 */
   notionAuthFlowService?: NotionAuthFlowServiceLike;
   getNotionConnection?: (identity: {

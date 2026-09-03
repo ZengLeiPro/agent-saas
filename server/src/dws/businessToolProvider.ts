@@ -20,9 +20,10 @@ import {
 } from '../data/agentDwsAccounts/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { UserStore } from '../data/users/store.js';
 import type { RunStore } from '../runtime/runStore.js';
-import type { SessionCatalog } from '../runtime/sessionCatalog.js';
+import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
 import {
@@ -40,6 +41,7 @@ import {
   type ClassifiedDwsCommand,
 } from './commandPolicy.js';
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
+import { decideSharedGroupDwsAction } from './sharedGroupBusinessPolicy.js';
 import {
   hasExactDwsConnectionProfile,
   type DwsConnectionStore,
@@ -106,6 +108,7 @@ export interface DwsBusinessToolProviderOptions {
   agentCwd: string;
   accountStore: AgentDwsAccountStore;
   assignmentStore?: Pick<PgAssignmentStore, 'listEffectiveResourceIds'>;
+  orgGroupAgentStore?: Pick<OrgGroupAgentStore, 'getBindingById'>;
   connectionStore?: DwsConnectionStore;
   userStore: UserStore;
   isRequesterRuntimeEnabled?: (username: string) => boolean;
@@ -139,7 +142,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
     if (call.toolId !== dwsBusinessToolDescriptor.id) return undefined;
     const identity = context.channelContext.sessionOwner ?? context.channelContext.user;
     const operator = context.channelContext.user ?? identity;
-    const workspaceIdentity = operator;
+    const orgChannel = context.channelContext.orgAgentChannel;
+    const sharedGroup = orgChannel?.channelPrincipal.kind === 'group';
+    const workspaceIdentity = sharedGroup ? identity : operator;
     const session = context.sessionId ? await this.options.sessionCatalog.get(context.sessionId) : null;
     const workload = context.workspace.workload
       ?? (context.memoryMaintenanceMode === 'consolidation'
@@ -196,7 +201,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
     // 的个人钉钉连接解析凭据；仅 agent 模式才要求 Session 绑定企业专家。
     const requiresOrgAgent = input.credentialMode === 'agent';
     const mismatchFields = [
-      ...(!operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
+      ...(!sharedGroup && !operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
       ...(requiresOrgAgent && !orgAgentId ? ['session.orgAgentId'] : []),
       ...(session?.userId !== identity.id ? ['session.userId'] : []),
       ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),
@@ -204,7 +209,30 @@ export class DwsBusinessToolProvider implements ToolProvider {
       ...(context.workspace.tenantId && context.workspace.tenantId !== workspaceIdentity?.tenantId
         ? ['workspace.tenantId']
         : []),
+      ...(sharedGroup && orgChannel ? sharedGroupSubjectMismatches({
+        orgChannel,
+        identity,
+        operator: context.channelContext.user,
+        session,
+        workspace: context.workspace,
+      }) : []),
     ];
+    if (sharedGroup && orgChannel) {
+      const binding = await this.options.orgGroupAgentStore
+        ?.getBindingById(orgChannel.agentPrincipal.tenantId, orgChannel.bindingId);
+      if (!binding || binding.activationState !== 'active' || !binding.enabled
+        || !binding.policy.enabled || binding.policy.liveDeny
+        || binding.tenantId !== orgChannel.agentPrincipal.tenantId
+        || binding.accountId !== orgChannel.accountId
+        || binding.agentId !== orgChannel.agentId
+        || binding.conversationId !== orgChannel.channelPrincipal.conversationId
+        || binding.conversationSpaceId !== orgChannel.conversationSpaceId
+        || binding.workspaceId !== orgChannel.agentPrincipal.workspaceId
+        || binding.revision !== orgChannel.policyRevision
+        || !binding.effectiveConfig.capabilities.toolNames.includes('DwsBusiness')) {
+        mismatchFields.push('channelBinding.livePrincipal');
+      }
+    }
     if (mismatchFields.length > 0) {
       const cronSessionUnbound = input.credentialMode === 'agent'
         && mismatchFields.length === 1
@@ -240,6 +268,22 @@ export class DwsBusinessToolProvider implements ToolProvider {
       } : undefined);
       throw error;
     }
+    if (sharedGroup && orgChannel) {
+      const sharedDecision = decideSharedGroupDwsAction({
+        toolInput: input,
+        channel: orgChannel,
+        ...(session?.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
+      });
+      if (!sharedDecision.allowed) {
+        await auditRejection('DWS_BUSINESS_SHARED_GROUP_DENIED', {
+          commandPath: command.commandPath,
+          policySource: command.policySource,
+          policyCliVersion: DWS_ACTIVE_CLI_VERSION,
+          sharedPolicyReason: sharedDecision.reason,
+        });
+        throw new Error(`当前共享群不允许此 DWS 操作：${sharedDecision.reason}`);
+      }
+    }
     if (command.risk === 'write' && input.confirmed !== true) {
       await auditRejection('DWS_BUSINESS_CONFIRMATION_REQUIRED', {
         commandPath: command.commandPath,
@@ -251,9 +295,13 @@ export class DwsBusinessToolProvider implements ToolProvider {
 
     const account = input.credentialMode === 'agent' && orgAgentId
       ? (await this.options.accountStore.listForTenant(identity.tenantId))
-          .find(candidate => candidate.agentId === orgAgentId) ?? null
+          .find(candidate => candidate.agentId === orgAgentId
+            && (!sharedGroup || candidate.accountId === orgChannel?.accountId)) ?? null
       : null;
     if (input.credentialMode === 'agent' && (!account || account.status !== 'active'
+      || account.tenantId !== identity.tenantId
+      || (sharedGroup && orgChannel?.externalActor.kind === 'external_user'
+        && account.corpId !== orgChannel.externalActor.corpId)
       || !hasExactAgentDwsProfile(account))) {
       await auditRejection('DWS_BUSINESS_AGENT_ACCOUNT_UNAVAILABLE');
       throw new Error('当前企业专家没有可用的钉钉账号授权');
@@ -273,7 +321,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
       await auditRejection('DWS_BUSINESS_RUN_ACCOUNT_IDENTITY_STALE');
       throw new Error('当前 DWS 入站 Run 的钉钉账号已发生变化，已拒绝执行');
     }
-    const delegation = input.credentialMode === 'agent' && account
+    const delegation = input.credentialMode === 'agent' && account && !sharedGroup
       ? await this.resolveAgentCredentialDelegation(
           identity.tenantId,
           identity.id,
@@ -281,7 +329,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
           input.args,
         ).catch(() => null)
       : null;
-    if (input.credentialMode === 'agent' && !delegation) {
+    if (input.credentialMode === 'agent' && !sharedGroup && !delegation) {
       await auditRejection('DWS_BUSINESS_AGENT_DELEGATION_DENIED');
       throw new Error('当前请求者没有此专家钉钉账号的业务动作与资源委托权限');
     }
@@ -498,6 +546,50 @@ export class DwsBusinessToolProvider implements ToolProvider {
       ...(metadata ? { metadata } : {}),
     };
   }
+}
+
+function sharedGroupSubjectMismatches(input: {
+  orgChannel: NonNullable<ToolCallContext['channelContext']['orgAgentChannel']>;
+  identity: NonNullable<ToolCallContext['channelContext']['sessionOwner']>;
+  operator?: ToolCallContext['channelContext']['user'];
+  session: RuntimeSessionRecord | null;
+  workspace: ToolCallContext['workspace'];
+}): string[] {
+  const { orgChannel, identity, operator, session, workspace } = input;
+  const principal = orgChannel.agentPrincipal;
+  const actor = orgChannel.externalActor;
+  const expectedOwnerId = `adws-${principal.accountId}`;
+  const expectedOwnerUsername = `agent-dws:${principal.agentId}`;
+  const mismatches = [
+    ...(orgChannel.accountId !== principal.accountId ? ['channel.accountId'] : []),
+    ...(orgChannel.agentId !== principal.agentId ? ['channel.agentId'] : []),
+    ...(orgChannel.channelPrincipal.provider !== 'dingtalk'
+      || orgChannel.channelPrincipal.kind !== 'group'
+      || orgChannel.channelPrincipal.accountId !== principal.accountId
+      ? ['channelPrincipal'] : []),
+    ...(identity.id !== expectedOwnerId ? ['sessionOwner.id'] : []),
+    ...(identity.username !== expectedOwnerUsername ? ['sessionOwner.username'] : []),
+    ...(identity.tenantId !== principal.tenantId ? ['sessionOwner.tenantId'] : []),
+    ...(session?.userId !== expectedOwnerId ? ['session.userId'] : []),
+    ...(session?.username !== expectedOwnerUsername ? ['session.username'] : []),
+    ...(session?.tenantId !== principal.tenantId ? ['session.tenantId'] : []),
+    ...(session?.orgAgentId !== principal.agentId ? ['session.orgAgentId'] : []),
+    ...(JSON.stringify(session?.principal) !== JSON.stringify(principal) ? ['session.principal'] : []),
+    ...(workspace.id !== principal.workspaceId ? ['workspace.id'] : []),
+    ...(workspace.userId !== expectedOwnerId ? ['workspace.userId'] : []),
+    ...(workspace.tenantId !== principal.tenantId ? ['workspace.tenantId'] : []),
+  ];
+  if (actor.kind !== 'external_user') return [...mismatches, 'externalActor.kind'];
+  if (actor.assurance !== orgChannel.externalActorAssurance) mismatches.push('externalActor.assurance');
+  if (actor.assurance === 'mapped') {
+    if (!operator || operator.id !== actor.mappedUserId || operator.tenantId !== principal.tenantId) {
+      mismatches.push('externalActor.mappedUser');
+    }
+    if (!actor.role || actor.role !== orgChannel.actorRole) mismatches.push('externalActor.role');
+  } else if (operator) {
+    mismatches.push('externalActor.unmappedOperator');
+  }
+  return mismatches;
 }
 
 export function createDwsBusinessToolProviders(

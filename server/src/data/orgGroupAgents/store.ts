@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 
 import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
@@ -14,6 +14,7 @@ import {
   type OrgAgentWorkConversation,
   type OrgAgentWorkAttempt,
   type OrgAgentWorkOrder,
+  type OrgAgentWorkOrderControl,
   type OrgAgentWorkOrderState,
   type OrgAgentResultEnvelope,
   type OrgAgentMemory,
@@ -23,6 +24,25 @@ import {
   mapBinding, mapDelivery, mapMemory, mapWorkAttempt, mapWorkConversation, mapWorkOrder,
   requiredRow, validateDestination, validateEffectiveConfig, validatePolicy,
 } from './storeMappers.js';
+import {
+  claimDeliveryIntent,
+  claimNextDeliveryIntent,
+  compactDeliveryError,
+  finishClaimedDelivery,
+  reconcileExpiredAndStaleDeliveries,
+  sanitizeDeliveryReceipt,
+} from './deliveryClaims.js';
+import {
+  transitionWorkAttempt as transitionAttempt,
+  transitionWorkAttemptPublishState as transitionAttemptPublishState,
+} from './workAttemptArtifacts.js';
+import {
+  getWorkOrderByShortId as selectWorkOrderByShortId,
+  pauseWorkOrder as pauseStoredWorkOrder,
+  queueWorkOrderAttempt as queueStoredWorkOrderAttempt,
+  updateWorkOrderControl as updateStoredWorkOrderControl,
+} from './workOrderLifecycle.js';
+import { changeStoredMemoryStatus, promoteStoredMemory } from './memoryLifecycle.js';
 
 const MAX_DELIVERY_LEASE_MS = 24 * 60 * 60 * 1_000;
 
@@ -216,12 +236,23 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     const messageIds = [...new Set(input.messageIds.filter(Boolean))].slice(0, 10);
     if (messageIds.length === 0) return null;
     const result = await this.pool.query(
-      `SELECT conversation.* FROM ${this.inboxTable} inbox
+      `SELECT conversation.* FROM (
+        SELECT inbox.work_conversation_id, inbox.created_at AS matched_at
+        FROM ${this.inboxTable} inbox
+        WHERE inbox.tenant_id=$1 AND inbox.account_id=$2 AND inbox.conversation_id=$3
+          AND inbox.message_id=ANY($5::text[])
+        UNION ALL
+        SELECT delivery.work_conversation_id, delivery.updated_at AS matched_at
+        FROM ${this.deliveriesTable} delivery
+        WHERE delivery.tenant_id=$1 AND delivery.account_id=$2 AND delivery.conversation_id=$3
+          AND delivery.delivery_state='sent' AND delivery.work_conversation_id IS NOT NULL
+          AND (delivery.provider_receipt_json->>'messageId'=ANY($5::text[])
+            OR delivery.provider_receipt_json->>'processQueryKey'=ANY($5::text[]))
+      ) matched
       JOIN ${this.conversationsTable} conversation
-        ON conversation.work_conversation_id=inbox.work_conversation_id
-      WHERE inbox.tenant_id=$1 AND inbox.account_id=$2 AND inbox.conversation_id=$3
-        AND conversation.binding_id=$4 AND inbox.message_id=ANY($5::text[])
-      ORDER BY inbox.created_at DESC LIMIT 1`,
+        ON conversation.work_conversation_id=matched.work_conversation_id
+      WHERE conversation.binding_id=$4
+      ORDER BY matched.matched_at DESC LIMIT 1`,
       [input.tenantId, input.accountId, input.conversationId, input.bindingId, messageIds],
     );
     return result.rows[0] ? mapWorkConversation(result.rows[0] as Record<string, unknown>) : null;
@@ -325,7 +356,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         ),
         input.content,
         input.idempotencyKey,
-        input.providerReceipt ? JSON.stringify(sanitizeReceipt(input.providerReceipt)) : null,
+        input.providerReceipt ? JSON.stringify(sanitizeDeliveryReceipt(input.providerReceipt)) : null,
         input.completedAt ?? null,
       ],
     );
@@ -340,48 +371,21 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     assertTexts(deliveryId, owner);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_DELIVERY_LEASE_MS)
       throw new Error('DWS_DELIVERY_INVALID');
-    const result = await this.pool.query(
-      `UPDATE ${this.deliveriesTable}
-      SET delivery_state='sending',attempt=attempt+1,lease_owner=$2,lease_fence=lease_fence+1,
-          lease_expires_at=NOW()+($3::bigint*INTERVAL '1 millisecond'),last_attempt_at=NOW(),updated_at=NOW()
-      WHERE delivery_id=$1 AND delivery_state='pending' RETURNING *`,
-      [deliveryId, owner, ttlMs],
-    );
-    if (!result.rows[0]) throw new Error('DWS_DELIVERY_NOT_CLAIMABLE');
-    return mapDelivery(result.rows[0] as Record<string, unknown>);
+    const delivery = await claimDeliveryIntent(this.pool, this.deliveryTables(), deliveryId, owner, ttlMs);
+    if (!delivery) throw new Error('DWS_DELIVERY_NOT_CLAIMABLE');
+    return delivery;
   }
 
   async claimNextDelivery(owner: string, ttlMs: number): Promise<DwsDeliveryIntent | null> {
     assertTexts(owner);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_DELIVERY_LEASE_MS)
       throw new Error('DWS_DELIVERY_INVALID');
-    const result = await this.pool.query(
-      `WITH candidate AS (
-      SELECT delivery_id FROM ${this.deliveriesTable}
-      WHERE delivery_state='pending' ORDER BY created_at,delivery_id FOR UPDATE SKIP LOCKED LIMIT 1
-    ) UPDATE ${this.deliveriesTable} delivery
-      SET delivery_state='sending',attempt=attempt+1,lease_owner=$1,lease_fence=lease_fence+1,
-          lease_expires_at=NOW()+($2::bigint*INTERVAL '1 millisecond'),last_attempt_at=NOW(),updated_at=NOW()
-      FROM candidate WHERE delivery.delivery_id=candidate.delivery_id RETURNING delivery.*`,
-      [owner, ttlMs],
-    );
-    return result.rows[0] ? mapDelivery(result.rows[0] as Record<string, unknown>) : null;
+    return claimNextDeliveryIntent(this.pool, this.deliveryTables(), owner, ttlMs);
   }
 
   async reconcileAllExpiredDeliveries(limit = 100): Promise<number> {
     const bounded = Math.max(1, Math.min(1_000, Math.trunc(limit)));
-    const result = await this.pool.query(
-      `WITH expired AS (
-      SELECT delivery_id FROM ${this.deliveriesTable}
-      WHERE delivery_state='sending' AND lease_expires_at<=NOW()
-      ORDER BY lease_expires_at,delivery_id FOR UPDATE SKIP LOCKED LIMIT $1
-    ) UPDATE ${this.deliveriesTable} delivery
-      SET delivery_state='unknown',lease_owner=NULL,lease_expires_at=NULL,
-          last_error='DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',completed_at=NOW(),updated_at=NOW()
-      FROM expired WHERE delivery.delivery_id=expired.delivery_id`,
-      [bounded],
-    );
-    return result.rowCount ?? 0;
+    return reconcileExpiredAndStaleDeliveries(this.pool, this.deliveryTables(), bounded);
   }
 
   async markDeliverySent(
@@ -390,9 +394,12 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     fence: number,
     receipt: Record<string, unknown>,
   ): Promise<DwsDeliveryIntent> {
-    if (Object.keys(sanitizeReceipt(receipt)).length === 0)
+    if (Object.keys(sanitizeDeliveryReceipt(receipt)).length === 0)
       throw new Error('DWS_DELIVERY_RECEIPT_REQUIRED');
-    return await this.finishDelivery(deliveryId, owner, fence, 'sent', undefined, receipt);
+    assertTexts(deliveryId, owner);
+    return await finishClaimedDelivery(
+      this.pool, this.deliveriesTable, deliveryId, owner, fence, 'sent', undefined, receipt,
+    );
   }
 
   async markDeliveryUnknown(
@@ -401,7 +408,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     fence: number,
     error: unknown,
   ): Promise<DwsDeliveryIntent> {
-    return await this.finishDelivery(deliveryId, owner, fence, 'unknown', compactError(error));
+    assertTexts(deliveryId, owner);
+    return await finishClaimedDelivery(
+      this.pool, this.deliveriesTable, deliveryId, owner, fence, 'unknown', compactDeliveryError(error),
+    );
   }
 
   async markDeliveryDeadLetter(deliveryId: string, reason: string): Promise<DwsDeliveryIntent> {
@@ -411,7 +421,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       SET delivery_state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,last_error=$2,
           completed_at=NOW(),updated_at=NOW()
       WHERE delivery_id=$1 AND delivery_state IN ('pending','unknown') RETURNING *`,
-      [deliveryId, compactError(reason)],
+      [deliveryId, compactDeliveryError(reason)],
     );
     if (!result.rows[0]) throw new Error('DWS_DELIVERY_NOT_RECOVERABLE');
     return mapDelivery(result.rows[0] as Record<string, unknown>);
@@ -430,7 +440,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
           completed_at=NOW(),updated_at=NOW()
       WHERE delivery_id=$1 AND delivery_state='sending' AND lease_owner=$2 AND lease_fence=$3
         AND lease_expires_at>NOW() RETURNING *`,
-      [deliveryId, owner, fence, compactError(reason)],
+      [deliveryId, owner, fence, compactDeliveryError(reason)],
     );
     if (!result.rows[0]) throw new Error('DWS_DELIVERY_LEASE_LOST');
     return mapDelivery(result.rows[0] as Record<string, unknown>);
@@ -490,7 +500,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     outcome: 'confirmed_sent' | 'confirmed_not_sent' | 'indeterminate';
   }): Promise<DwsDeliveryIntent> {
     assertTexts(input.tenantId, input.deliveryId, input.actorId, input.reason);
-    const evidence = sanitizeReceipt({
+    const evidence = sanitizeDeliveryReceipt({
       ...input.evidence,
       reconciledAt: new Date().toISOString(),
       reconcileOutcome: input.outcome,
@@ -511,7 +521,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         input.deliveryId,
         state,
         JSON.stringify({ ...evidence, reconciledBy: input.actorId }),
-        compactError(input.reason),
+        compactDeliveryError(input.reason),
       ],
     );
     if (!result.rows[0]) throw new Error('DWS_DELIVERY_NOT_RECONCILABLE');
@@ -529,6 +539,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     createdByActor: ExternalActorRef;
     policySnapshot: Record<string, unknown>;
     cancelPolicy: Record<string, unknown>;
+    workerType?: 'general' | 'explore';
   }): Promise<OrgAgentWorkOrder> {
     assertTexts(
       input.tenantId,
@@ -538,12 +549,14 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       input.idempotencyKey,
       input.title,
     );
+    const shortId = `W-${createHash('sha256').update(input.idempotencyKey).digest('hex').slice(0, 12).toUpperCase()}`;
     const result = await this.pool.query(
       `INSERT INTO ${this.workOrdersTable} AS work_order (
-      work_order_id,tenant_id,agent_id,binding_id,work_conversation_id,idempotency_key,title,state,
+      work_order_id,tenant_id,agent_id,binding_id,work_conversation_id,idempotency_key,short_id,title,state,
       current_attempt_no,visibility,created_by_actor_json,policy_snapshot_json,cancel_policy_json,
-      version,created_at,updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'queued',0,$8,$9::jsonb,$10::jsonb,$11::jsonb,1,NOW(),NOW())
+      control_json,version,created_at,updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'queued',0,$9,$10::jsonb,$11::jsonb,$12::jsonb,
+      $13::jsonb,1,NOW(),NOW())
     ON CONFLICT (tenant_id,idempotency_key) DO UPDATE SET idempotency_key=work_order.idempotency_key
     RETURNING work_order.*`,
       [
@@ -553,11 +566,13 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         input.bindingId,
         input.workConversationId,
         input.idempotencyKey,
+        shortId,
         input.title.slice(0, 500),
         input.visibility,
         JSON.stringify(input.createdByActor),
         JSON.stringify(input.policySnapshot),
         JSON.stringify(input.cancelPolicy),
+        JSON.stringify({ revision: 1, supplements: [], workerType: input.workerType ?? 'general' }),
       ],
     );
     const workOrder = mapWorkOrder(requiredRow(result.rows[0]));
@@ -611,7 +626,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
           attempt.workOrderId !== input.workOrderId ||
           attempt.attemptId !== input.attemptId ||
           attempt.taskWorkspaceId !== input.taskWorkspaceId ||
-          attempt.sandboxScopeId !== input.sandboxScopeId
+          attempt.sandboxScopeId !== input.sandboxScopeId ||
+          attempt.parentAttemptId !== input.parentAttemptId ||
+          attempt.mountSubPath !== input.mountSubPath ||
+          attempt.sharedReadOnlySubPath !== input.sharedReadOnlySubPath
         ) {
           throw new Error('ORG_AGENT_WORK_ATTEMPT_IDEMPOTENCY_CONFLICT');
         }
@@ -620,6 +638,14 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       }
       if ((work.rows[0] as Record<string, unknown>).state !== 'queued')
         throw new Error('ORG_AGENT_WORK_ORDER_NOT_ATTEMPTABLE');
+      if (input.parentAttemptId) {
+        const parent = await client.query(
+          `SELECT 1 FROM ${this.attemptsTable}
+          WHERE tenant_id=$1 AND work_order_id=$2 AND attempt_id=$3`,
+          [input.tenantId, input.workOrderId, input.parentAttemptId],
+        );
+        if (!parent.rows[0]) throw new Error('ORG_AGENT_PARENT_ATTEMPT_SCOPE_INVALID');
+      }
       const attemptNo = Number((work.rows[0] as Record<string, unknown>).current_attempt_no) + 1;
       const result = await client.query(
         `INSERT INTO ${this.attemptsTable} (
@@ -641,7 +667,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         ],
       );
       await client.query(
-        `UPDATE ${this.workOrdersTable} SET current_attempt_no=$3,state='running',
+        `UPDATE ${this.workOrdersTable} SET current_attempt_no=$3,
         version=version+1,updated_at=NOW() WHERE tenant_id=$1 AND work_order_id=$2`,
         [input.tenantId, input.workOrderId, attemptNo],
       );
@@ -663,6 +689,15 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       [tenantId, workOrderId],
     );
     return result.rows[0] ? mapWorkOrder(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async getWorkOrderByShortId(
+    tenantId: string,
+    agentId: string,
+    shortId: string,
+  ): Promise<OrgAgentWorkOrder | null> {
+    assertTexts(tenantId, agentId, shortId);
+    return await selectWorkOrderByShortId(this.pool, this.workOrdersTable, tenantId, agentId, shortId);
   }
 
   async getWorkConversation(
@@ -694,25 +729,23 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     status: 'running' | 'completed' | 'failed' | 'cancelled';
     resultEnvelope?: OrgAgentResultEnvelope;
     failure?: string;
+    checkpoint?: Record<string, unknown>;
+    artifactManifest?: Record<string, unknown>;
+    publishState?: OrgAgentWorkAttempt['publishState'];
   }): Promise<OrgAgentWorkAttempt | null> {
     assertTexts(input.tenantId, input.runtimeRunId);
-    const terminal = input.status !== 'running';
-    const result = await this.pool.query(
-      `UPDATE ${this.attemptsTable}
-      SET status=$3,result_envelope_json=COALESCE($4::jsonb,result_envelope_json),failure=$5,
-          started_at=CASE WHEN $3='running' THEN COALESCE(started_at,NOW()) ELSE started_at END,
-          completed_at=CASE WHEN $6 THEN NOW() ELSE completed_at END,updated_at=NOW()
-      WHERE tenant_id=$1 AND runtime_run_id=$2 AND status NOT IN ('completed','failed','cancelled') RETURNING *`,
-      [
-        input.tenantId,
-        input.runtimeRunId,
-        input.status,
-        input.resultEnvelope ? JSON.stringify(input.resultEnvelope) : null,
-        input.failure ?? null,
-        terminal,
-      ],
-    );
-    return result.rows[0] ? mapWorkAttempt(result.rows[0] as Record<string, unknown>) : null;
+    return await transitionAttempt(this.pool, this.attemptsTable, this.workOrdersTable, input);
+  }
+
+  async transitionWorkAttemptPublishState(input: {
+    tenantId: string;
+    attemptId: string;
+    expectedState: 'pending';
+    state: 'published' | 'conflict' | 'rejected';
+    artifactManifest?: Record<string, unknown>;
+  }): Promise<OrgAgentWorkAttempt> {
+    assertTexts(input.tenantId, input.attemptId);
+    return await transitionAttemptPublishState(this.pool, this.attemptsTable, input);
   }
 
   async listWorkOrders(
@@ -733,9 +766,9 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   async listStagedWorkOrders(staleBefore: Date, limit = 100): Promise<OrgAgentWorkOrder[]> {
     const bounded = Math.max(1, Math.min(500, Math.trunc(limit)));
     const result = await this.pool.query(
-      `SELECT * FROM ${this.workOrdersTable}
-      WHERE state='queued' AND current_attempt_no=0 AND updated_at<$1
-      ORDER BY updated_at,work_order_id LIMIT $2`,
+      `SELECT work.* FROM ${this.workOrdersTable} work
+      WHERE work.state='queued' AND work.updated_at<$1
+      ORDER BY work.updated_at,work.work_order_id LIMIT $2`,
       [staleBefore.toISOString(), bounded],
     );
     return result.rows.map((row) => mapWorkOrder(row as Record<string, unknown>));
@@ -771,6 +804,35 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     return mapWorkOrder(result.rows[0] as Record<string, unknown>);
   }
 
+  async updateWorkOrderControl(input: {
+    tenantId: string;
+    workOrderId: string;
+    expectedVersion: number;
+    control: OrgAgentWorkOrderControl;
+  }): Promise<OrgAgentWorkOrder> {
+    return await updateStoredWorkOrderControl(this.pool, this.workOrdersTable, input);
+  }
+
+  async pauseWorkOrder(input: {
+    tenantId: string;
+    workOrderId: string;
+    expectedVersion: number;
+  }): Promise<OrgAgentWorkOrder> {
+    return await pauseStoredWorkOrder(this.pool, this.workOrdersTable, this.attemptsTable, input);
+  }
+
+  async queueWorkOrderAttempt(input: {
+    tenantId: string;
+    workOrderId: string;
+    expectedVersion: number;
+    control?: OrgAgentWorkOrderControl;
+    supersedePendingCompletion?: boolean;
+  }): Promise<OrgAgentWorkOrder> {
+    return await queueStoredWorkOrderAttempt(
+      this.pool, this.workOrdersTable, this.deliveriesTable, input,
+    );
+  }
+
   async reopenWorkOrder(input: {
     tenantId: string;
     workOrderId: string;
@@ -781,7 +843,13 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       `UPDATE ${this.workOrdersTable}
       SET state='queued',result_envelope_json=NULL,version=version+1,completed_at=NULL,updated_at=NOW()
       WHERE tenant_id=$1 AND work_order_id=$2 AND version=$3
-        AND state IN ('completed','failed','cancelled') RETURNING *`,
+        AND state IN ('completed','failed','cancelled')
+        AND NOT EXISTS (
+          SELECT 1 FROM ${this.deliveriesTable} delivery
+          WHERE delivery.tenant_id=$1 AND delivery.source_work_order_id=$2
+            AND delivery.delivery_kind='task_completion'
+            AND delivery.delivery_state IN ('pending','sending','unknown')
+        ) RETURNING *`,
       [input.tenantId, input.workOrderId, input.expectedVersion],
     );
     if (!result.rows[0]) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_CONFLICT');
@@ -800,10 +868,29 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     policyRevision: number;
   }): Promise<OrgAgentMemory> {
     assertTexts(input.tenantId, input.agentId);
-    if (input.memoryScope === 'conversation' && (!input.bindingId || !input.workConversationId))
+    if (!input.bindingId)
       throw new Error('ORG_AGENT_MEMORY_SCOPE_INVALID');
     if (input.memoryScope === 'task_checkpoint' && !input.workOrderId)
       throw new Error('ORG_AGENT_MEMORY_SCOPE_INVALID');
+    const binding = await this.getBindingById(input.tenantId, input.bindingId);
+    if (!binding || binding.agentId !== input.agentId)
+      throw new Error('ORG_AGENT_MEMORY_ASSOCIATION_INVALID');
+    let effectiveWorkConversationId = input.workConversationId;
+    if (input.memoryScope === 'task_checkpoint') {
+      const work = await this.getWorkOrder(input.tenantId, input.workOrderId!);
+      if (
+        !work ||
+        work.agentId !== input.agentId ||
+        work.bindingId !== input.bindingId ||
+        (effectiveWorkConversationId && effectiveWorkConversationId !== work.workConversationId)
+      ) throw new Error('ORG_AGENT_MEMORY_ASSOCIATION_INVALID');
+      effectiveWorkConversationId = work.workConversationId;
+    }
+    if (!effectiveWorkConversationId)
+      throw new Error('ORG_AGENT_MEMORY_SCOPE_INVALID');
+    const conversation = await this.getWorkConversation(input.tenantId, effectiveWorkConversationId);
+    if (!conversation || conversation.bindingId !== input.bindingId)
+      throw new Error('ORG_AGENT_MEMORY_ASSOCIATION_INVALID');
     const result = await this.pool.query(
       `INSERT INTO ${this.memoriesTable} (
       memory_id,tenant_id,agent_id,binding_id,work_conversation_id,work_order_id,memory_scope,status,
@@ -814,7 +901,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         input.tenantId,
         input.agentId,
         input.bindingId ?? null,
-        input.workConversationId ?? null,
+        effectiveWorkConversationId,
         input.workOrderId ?? null,
         input.memoryScope,
         JSON.stringify(input.content),
@@ -833,25 +920,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     policyRevision: number;
   }): Promise<OrgAgentMemory> {
     assertTexts(input.tenantId, input.sourceMemoryId, input.promotedBy, input.reason);
-    const result = await this.pool.query(
-      `INSERT INTO ${this.memoriesTable} (
-      memory_id,tenant_id,agent_id,memory_scope,status,content_json,provenance_json,promoted_by,
-      promotion_reason,policy_revision,version,created_at,updated_at
-    ) SELECT $1,tenant_id,agent_id,'agent','active',content_json,
-      provenance_json || jsonb_build_object('sourceMemoryId',memory_id),$4,$5,$6,1,NOW(),NOW()
-      FROM ${this.memoriesTable} WHERE tenant_id=$2 AND memory_id=$3 AND status='active'
-        AND memory_scope IN ('conversation','task_checkpoint') RETURNING *`,
-      [
-        `memory-${randomUUID()}`,
-        input.tenantId,
-        input.sourceMemoryId,
-        input.promotedBy,
-        input.reason.slice(0, 1000),
-        input.policyRevision,
-      ],
-    );
-    if (!result.rows[0]) throw new Error('ORG_AGENT_MEMORY_NOT_PROMOTABLE');
-    return mapMemory(result.rows[0] as Record<string, unknown>);
+    return mapMemory(await promoteStoredMemory(this.pool, this.memoriesTable, {
+      ...input,
+      memoryId: `memory-${randomUUID()}`,
+    }));
   }
 
   async changeMemoryStatus(input: {
@@ -861,15 +933,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     status: 'revoked' | 'deleted';
   }): Promise<OrgAgentMemory> {
     assertTexts(input.tenantId, input.memoryId);
-    const result = await this.pool.query(
-      `UPDATE ${this.memoriesTable}
-      SET status=$4,version=version+1,revoked_at=CASE WHEN $4='revoked' THEN NOW() ELSE revoked_at END,
-          deleted_at=CASE WHEN $4='deleted' THEN NOW() ELSE deleted_at END,updated_at=NOW()
-      WHERE tenant_id=$1 AND memory_id=$2 AND version=$3 AND status='active' RETURNING *`,
-      [input.tenantId, input.memoryId, input.expectedVersion, input.status],
-    );
-    if (!result.rows[0]) throw new Error('ORG_AGENT_MEMORY_VERSION_CONFLICT');
-    return mapMemory(result.rows[0] as Record<string, unknown>);
+    return mapMemory(await changeStoredMemoryStatus(this.pool, this.memoriesTable, input));
   }
 
   async listMemories(input: {
@@ -911,58 +975,17 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     return result.rows[0] ? mapMemory(result.rows[0] as Record<string, unknown>) : null;
   }
 
-  private async finishDelivery(
-    deliveryId: string,
-    owner: string,
-    fence: number,
-    state: 'sent' | 'unknown',
-    error?: string,
-    receipt?: Record<string, unknown>,
-  ): Promise<DwsDeliveryIntent> {
-    assertTexts(deliveryId, owner);
-    const result = await this.pool.query(
-      `UPDATE ${this.deliveriesTable}
-      SET delivery_state=$4,provider_receipt_json=COALESCE($5::jsonb,provider_receipt_json),
-          lease_owner=NULL,lease_expires_at=NULL,last_error=$6,completed_at=NOW(),updated_at=NOW()
-      WHERE delivery_id=$1 AND delivery_state='sending' AND lease_owner=$2 AND lease_fence=$3
-        AND lease_expires_at>NOW() RETURNING *`,
-      [
-        deliveryId,
-        owner,
-        fence,
-        state,
-        receipt ? JSON.stringify(sanitizeReceipt(receipt)) : null,
-        error ?? null,
-      ],
-    );
-    if (!result.rows[0]) throw new Error('DWS_DELIVERY_LEASE_LOST');
-    return mapDelivery(result.rows[0] as Record<string, unknown>);
+  private deliveryTables() {
+    return {
+      deliveries: this.deliveriesTable,
+      workOrders: this.workOrdersTable,
+      attempts: this.attemptsTable,
+    };
   }
+
 }
 
 function assertTexts(...values: string[]): void {
   if (values.some((value) => typeof value !== 'string' || !value.trim()))
     throw new Error('ORG_AGENT_STORE_INVALID');
-}
-function compactError(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replace(/\s+/g, ' ')
-    .slice(0, 2_000);
-}
-
-function sanitizeReceipt(value: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const key of [
-    'messageId',
-    'processQueryKey',
-    'status',
-    'acceptedAt',
-    'reconciledAt',
-    'reconcileOutcome',
-    'reconciledBy',
-  ]) {
-    const item = value[key];
-    if (typeof item === 'string' && item.trim()) result[key] = item.slice(0, 512);
-  }
-  return result;
 }

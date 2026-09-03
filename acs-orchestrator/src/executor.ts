@@ -180,6 +180,7 @@ export class AcsExecutor {
           username: workspace.username,
           sessionId: workspace.sessionId,
           root: this.config.workspaceMountPath,
+          ...(workspace.sharedReadOnlySubPath ? { sharedReadOnlyMounted: true } : {}),
         },
         stream: options.stream,
         ...(wireEnv && Object.keys(wireEnv).length > 0 ? { env: wireEnv } : {}),

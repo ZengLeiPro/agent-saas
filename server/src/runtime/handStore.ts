@@ -57,6 +57,8 @@ export interface WorkspaceRecipe {
    * relative to the orchestrator's workspace root.
    */
   mountSubPath?: string;
+  /** Optional Agent-owned shared view mounted read-only beside the writable task workspace. */
+  sharedReadOnlySubPath?: string;
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
   packages?: string[];

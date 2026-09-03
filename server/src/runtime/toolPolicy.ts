@@ -1,4 +1,6 @@
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
+import { decideSharedGroupDwsAction } from '../dws/sharedGroupBusinessPolicy.js';
+import { isAttestedOrgAgentWorkerTaskTool } from './orgAgentWorkerCapability.js';
 import type { RunContext, ToolPolicy, ToolPolicyDecision } from './types.js';
 
 const INTERACTIVE_PERMISSION_TOOLS = new Set([
@@ -21,8 +23,10 @@ export class DefaultToolPolicy implements ToolPolicy {
 
   async decide(descriptor: ToolDescriptor, input: unknown, _context: RunContext): Promise<ToolPolicyDecision> {
     const channelPolicy = _context.channelContext.orgAgentChannel;
+    const attestedWorkerTaskTool = isAttestedOrgAgentWorkerTaskTool(descriptor, _context);
     if (channelPolicy && !channelPolicy.allowedToolNames.includes(descriptor.name)
-      && !channelPolicy.allowedToolNames.includes(descriptor.id)) {
+      && !channelPolicy.allowedToolNames.includes(descriptor.id)
+      && !attestedWorkerTaskTool) {
       return { type: 'deny', reason: 'tool is outside the ChannelBinding effective capability' };
     }
     if (channelPolicy) {
@@ -34,6 +38,16 @@ export class DefaultToolPolicy implements ToolPolicy {
         accountId: channelPolicy.accountId, agentId: channelPolicy.agentId,
         conversationId: channelPolicy.channelPrincipal.conversationId, toolName: descriptor.name });
       if (!live.allowed) return { type: 'deny', reason: live.reason ?? 'live ChannelBinding policy denied the tool' };
+    }
+    if (channelPolicy && (descriptor.id === 'DwsBusiness' || descriptor.name === 'DwsBusiness')) {
+      const decision = decideSharedGroupDwsAction({
+        toolInput: input,
+        channel: channelPolicy,
+        ...(_context.executionRole ? { executionRole: _context.executionRole } : {}),
+      });
+      return decision.allowed
+        ? { type: 'allow' }
+        : { type: 'deny', reason: decision.reason };
     }
     // 授权模式（autoApprove）对所有已认证用户生效（2026-07-02 起）：
     // 它免除的是「人工确认」，不是「安全边界」——Shell 的宿主隔离兜底

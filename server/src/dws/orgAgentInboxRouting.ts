@@ -51,6 +51,7 @@ export async function pinActiveOrgAgentGroupRouting(input: {
   const referencedMessages = Object.values(extractOrgAgentRoutingFields(event.raw));
   const explicitId =
     typeof event.raw.workConversationId === 'string' ? event.raw.workConversationId : undefined;
+  if (!explicitId && referencedMessages.length === 0) return;
   const explicit = explicitId
     ? await store.getWorkConversation(account.tenantId, explicitId)
     : null;

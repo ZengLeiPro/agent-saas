@@ -222,6 +222,21 @@ describe('parseProvisionRecipe', () => {
       workspaceId: 'ws',
       recipe: { sessionId: 's', mountSubPath: '/mnt/agent-saas/workspaces/kaiyan/u-1' },
     })).toMatchObject({ ok: false });
+    expect(parseProvisionRecipe({
+      workspaceId: 'ws',
+      recipe: {
+        sessionId: 's',
+        mountSubPath: 'workspaces/kaiyan/task-1',
+        sharedReadOnlySubPath: 'workspaces/kaiyan/shared/topic-1',
+      },
+    })).toMatchObject({
+      ok: true,
+      value: { sharedReadOnlySubPath: 'workspaces/kaiyan/shared/topic-1' },
+    });
+    expect(parseProvisionRecipe({
+      workspaceId: 'ws',
+      recipe: { sessionId: 's', sharedReadOnlySubPath: '../other-agent' },
+    })).toMatchObject({ ok: false });
   });
 });
 

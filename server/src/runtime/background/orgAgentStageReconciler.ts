@@ -32,7 +32,7 @@ export async function reconcileStagedOrgWork(
           !metadata.orgAgentChannel
         )
           throw new Error('ORG_AGENT_STAGED_METADATA_INVALID');
-        const work = await store.getWorkOrder(run.tenantId!, metadata.workOrderId);
+        let work = await store.getWorkOrder(run.tenantId!, metadata.workOrderId);
         if (!work) throw new Error('ORG_AGENT_STAGED_WORK_ORDER_MISSING');
         let attempt = (await store.listWorkAttempts(run.tenantId!, work.workOrderId)).find(
           (item) => item.runtimeRunId === run.runId,
@@ -43,6 +43,7 @@ export async function reconcileStagedOrgWork(
             workOrderId: work.workOrderId,
             runtimeRunId: run.runId,
             attemptId: metadata.attemptId,
+            ...(metadata.parentAttemptId ? { parentAttemptId: metadata.parentAttemptId } : {}),
             taskWorkspaceId: metadata.workspaceId,
             sandboxScopeId: metadata.sandboxScopeId,
             mountSubPath: metadata.mountSubPath,
@@ -50,29 +51,59 @@ export async function reconcileStagedOrgWork(
           });
         if (attempt.attemptNo !== metadata.attemptNo)
           throw new Error('ORG_AGENT_STAGED_ATTEMPT_FENCE_MISMATCH');
-        const activated = await runStore.markStatus(
+        work = await store.getWorkOrder(run.tenantId!, metadata.workOrderId);
+        if (
+          !work ||
+          !['queued', 'running'].includes(work.state) ||
+          work.currentAttemptNo !== attempt.attemptNo ||
+          attempt.status !== 'queued'
+        )
+          throw new Error('ORG_AGENT_STAGED_ATTEMPT_NOT_CURRENT');
+        const activate = runStore.activateStagedOrgAgentBackgroundTask;
+        if (!activate) throw new Error('ORG_AGENT_STAGED_ACTIVATION_UNAVAILABLE');
+        const activated = await activate.call(
+          runStore,
           run.runId,
-          'pending',
           'org_agent_stage_recovered',
           {
             backgroundTaskReady: true,
             backgroundStageRecoveredAt: new Date().toISOString(),
           },
         );
-        if (!activated) throw new Error('ORG_AGENT_STAGED_ACTIVATION_FAILED');
+        if (!activated) {
+          const current = await runStore.get(run.runId);
+          if (
+            current?.metadata.backgroundTaskReady === true ||
+            (current && current.status !== 'pending')
+          ) continue;
+          throw new Error('ORG_AGENT_STAGED_ACTIVATION_FAILED');
+        }
       } catch (error) {
-        await runStore
-          .markStatus(run.runId, 'failed', 'org_agent_stage_recovery_failed', {
+        const failedRun = runStore.markStatusIfCurrent
+          ? await runStore.markStatusIfCurrent(
+              run.runId,
+              ['pending'],
+              'failed',
+              'org_agent_stage_recovery_failed',
+              {
             backgroundTaskReady: false,
             backgroundStageFailure: (error instanceof Error ? error.message : String(error)).slice(
               0,
               500,
             ),
-          })
-          .catch(() => undefined);
-        if (metadata?.workOrderId && run.tenantId) {
+              },
+            ).catch(() => null)
+          : null;
+        if (failedRun && metadata?.workOrderId && run.tenantId) {
           await orgWork
-            .failSetup(run.tenantId, metadata.workOrderId, run.runId, metadata.cwd, error)
+            .failSetup(
+              run.tenantId,
+              metadata.workOrderId,
+              run.runId,
+              metadata.cwd,
+              error,
+              metadata.attemptNo,
+            )
             .catch(() => undefined);
         }
       }
@@ -85,13 +116,17 @@ export async function reconcileStagedOrgWork(
   if (!fullyDrained) return;
   const orphanedWork = await store.listStagedWorkOrders(staleBefore, STAGE_BATCH_SIZE);
   for (const work of orphanedWork) {
+    const currentAttempt = (await store.listWorkAttempts(work.tenantId, work.workOrderId))
+      .find(attempt => attempt.attemptNo === work.currentAttemptNo);
+    if (currentAttempt && await runStore.get(currentAttempt.runtimeRunId)) continue;
     await orgWork
       .failSetup(
         work.tenantId,
         work.workOrderId,
-        `orphaned-stage:${work.workOrderId}`,
-        work.workOrderId,
+        currentAttempt?.runtimeRunId ?? `orphaned-stage:${work.workOrderId}`,
+        currentAttempt?.mountSubPath ?? work.workOrderId,
         new Error('ORG_AGENT_STAGED_RUN_MISSING'),
+        currentAttempt?.attemptNo ?? work.currentAttemptNo + 1,
       )
       .catch(() => undefined);
   }

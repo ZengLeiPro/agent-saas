@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../../data/agentDwsAccounts/index.js';
+import type { OrgAgentChannelBinding, OrgAgentWorkConversation } from '../../data/orgGroupAgents/index.js';
 import type { ToolInvocationRequest } from '../../runtime/handProtocol.js';
 import type { ContextStore } from '../store/index.js';
 import { defaultPartitionIdentity } from './contextStoreAdapter.js';
@@ -43,6 +44,86 @@ const context = {
 };
 
 describe('DwsContextRuntime', () => {
+  it('materializes active group ownership only for an enabled Context source and an already pinned work conversation', async () => {
+    const key = {
+      tenantId: 'tenant-a', accountId: 'account-a', profileId: 'corp-a:user-a', source: 'chat' as const,
+    };
+    const sourceId = defaultPartitionIdentity(key).sourceId;
+    const binding = (overrides: Partial<OrgAgentChannelBinding> = {}): OrgAgentChannelBinding => ({
+      bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-a', channelKind: 'group', activationState: 'active', enabled: true,
+      conversationSpaceId: 'space-a', serviceSessionId: 'service-a', workspaceId: 'workspace-a',
+      policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation',
+        completion: 'reply_to_work_conversation', liveDeny: false },
+      effectiveConfig: { identity: {}, knowledge: { contextEnabled: true, sourceIds: [sourceId] },
+        capabilities: { skillIds: [], toolNames: ['ContextSearch', 'ContextGet'] },
+        access: { triggerRoles: [], approvalRoles: [] }, speech: { proactive: false, requireMention: true } },
+      revision: 7, createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+      ...overrides,
+    });
+    const conversation: OrgAgentWorkConversation = {
+      workConversationId: 'work-a', tenantId: 'tenant-a', bindingId: 'binding-a', rootKey: 'root-a',
+      rootMessageId: 'message-a', sessionId: 'session-a', state: 'active',
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const getBinding = vi.fn(async () => binding());
+    const findWorkConversationByMessage = vi.fn(async (): Promise<OrgAgentWorkConversation | null> => conversation);
+    const runtime = new DwsContextRuntime({
+      agentCwd: '/workspace/agent', accountStore: accountStore(), contextStore: {} as ContextStore,
+      orgGroupAgentStore: { getBinding, findWorkConversationByMessage },
+      resolveServerRemote: async () => ({ baseUrl: 'https://hand.test', authToken: 'secret' }),
+    });
+    const resolve = (runtime as unknown as {
+      resolveOrgAgentRecordMetadata(
+        input: typeof key,
+        item: { source: 'chat'; sourceId: string; conversationId?: string },
+      ): Promise<Record<string, string | number> | undefined>;
+    }).resolveOrgAgentRecordMetadata.bind(runtime);
+
+    await expect(resolve(key, { source: 'chat', sourceId: 'message-a', conversationId: 'group-a' }))
+      .resolves.toEqual({
+        agentId: 'agent-a', bindingId: 'binding-a', conversationSpaceId: 'space-a',
+        workConversationId: 'work-a', policyRevision: 7, visibility: 'conversation',
+        orgAgentContextScope: 'work_conversation',
+      });
+    expect(findWorkConversationByMessage).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-a', bindingId: 'binding-a', accountId: 'account-a',
+      conversationId: 'group-a', messageIds: ['message-a'],
+    });
+
+    getBinding.mockResolvedValueOnce(binding({
+      effectiveConfig: { ...binding().effectiveConfig, knowledge: { contextEnabled: false, sourceIds: [sourceId] } },
+    }));
+    await expect(resolve(key, { source: 'chat', sourceId: 'message-a', conversationId: 'group-a' }))
+      .resolves.toBeUndefined();
+
+    getBinding.mockResolvedValueOnce(binding({
+      effectiveConfig: { ...binding().effectiveConfig, knowledge: { contextEnabled: true, sourceIds: ['other-source'] } },
+    }));
+    await expect(resolve(key, { source: 'chat', sourceId: 'message-a', conversationId: 'group-a' }))
+      .resolves.toBeUndefined();
+
+    findWorkConversationByMessage.mockResolvedValueOnce(null);
+    await expect(resolve(key, { source: 'chat', sourceId: 'message-a', conversationId: 'group-a' }))
+      .resolves.toEqual({
+        agentId: 'agent-a', bindingId: 'binding-a', conversationSpaceId: 'space-a',
+        policyRevision: 7, visibility: 'conversation', orgAgentContextScope: 'group',
+      });
+
+    const withoutGroupStore = new DwsContextRuntime({
+      agentCwd: '/workspace/agent', accountStore: accountStore(), contextStore: {} as ContextStore,
+      resolveServerRemote: async () => ({ baseUrl: 'https://hand.test', authToken: 'secret' }),
+    });
+    const resolveWithoutGroupStore = (withoutGroupStore as unknown as {
+      resolveOrgAgentRecordMetadata(
+        input: typeof key,
+        item: { source: 'chat'; sourceId: string; conversationId?: string },
+      ): Promise<Record<string, string | number> | undefined>;
+    }).resolveOrgAgentRecordMetadata.bind(withoutGroupStore);
+    await expect(resolveWithoutGroupStore(key, { source: 'chat', sourceId: 'message-a', conversationId: 'group-a' }))
+      .resolves.toBeUndefined();
+  });
+
   it('consults durable retry state and does not start a new window before nextRetryAt', async () => {
     const invoke = vi.fn(async (_request: ToolInvocationRequest) => ({
       status: 'success' as const,

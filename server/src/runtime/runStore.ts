@@ -13,6 +13,9 @@ import { PgRunStoreQueries } from './runStoreQueries.js';
 import { initializePgRunStoreSchema } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
 import {
+  activateStagedOrgAgentBackgroundTask,
+  claimBackgroundTaskWake,
+  finishBackgroundTaskWake,
   listPendingBackgroundTaskWakes,
   listStagedOrgAgentBackgroundTasks,
 } from './runStoreBackgroundQueries.js';
@@ -1125,31 +1128,25 @@ export class PgRunStore implements RunStore {
   listStagedOrgAgentBackgroundTasks(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
     return listStagedOrgAgentBackgroundTasks(this.pool, this.runsTable, staleBefore, limit);
   }
+  activateStagedOrgAgentBackgroundTask(
+    runId: string,
+    reason: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    return activateStagedOrgAgentBackgroundTask(
+      this.pool,
+      this.runsTable,
+      runId,
+      reason,
+      metadataPatch,
+    );
+  }
   async claimBackgroundTaskWake(
     runId: string,
     claimToken: string,
     staleBefore: Date,
   ): Promise<RunRecord | null> {
-    const now = new Date().toISOString();
-    const patch = JSON.stringify({ wakeState: 'delivering', wakeClaimToken: claimToken, wakeClaimedAt: now });
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET metadata = metadata || $4::jsonb,
-          updated_at = $5
-      WHERE run_id = $1
-        AND length($2::text) > 0
-        AND metadata->>'backgroundTask' = 'true'
-        AND status IN ('completed','failed','cancelled','orphaned')
-        AND (
-          COALESCE(metadata->>'wakeState', 'pending') = 'pending'
-          OR (
-            metadata->>'wakeState' = 'delivering'
-            AND COALESCE((metadata->>'wakeClaimedAt')::timestamptz, '-infinity'::timestamptz) < $3
-          )
-        )
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, claimToken, staleBefore.toISOString(), patch, now]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    return claimBackgroundTaskWake(this.pool, this.runsTable, runId, claimToken, staleBefore);
   }
 
   async finishBackgroundTaskWake(
@@ -1158,24 +1155,9 @@ export class PgRunStore implements RunStore {
     state: 'pending' | 'queued' | 'discarded',
     metadataPatch: Record<string, unknown> = {},
   ): Promise<RunRecord | null> {
-    const now = new Date().toISOString();
-    const patch = JSON.stringify({
-      ...metadataPatch,
-      wakeState: state,
-      wakeFinishedAt: now,
-      wakeClaimToken: null,
-    });
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET metadata = metadata || $4::jsonb,
-          updated_at = $5
-      WHERE run_id = $1
-        AND metadata->>'wakeState' = 'delivering'
-        AND metadata->>'wakeClaimToken' = $2
-        AND $3::text IN ('pending','queued','discarded')
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, claimToken, state, patch, now]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    return finishBackgroundTaskWake(
+      this.pool, this.runsTable, runId, claimToken, state, metadataPatch,
+    );
   }
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); }
   async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }

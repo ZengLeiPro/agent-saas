@@ -20,7 +20,10 @@ import {
   runtimePerformanceSamplerIntervalMs,
 } from './runtime/runtimePerformanceSampler.js';
 import { isTransientNetworkError } from './utils/transientNetworkError.js';
-import { projectRuntimeWorkerReadyFile } from './runtime/runtimeWorkerReadiness.js';
+import {
+  projectRuntimeWorkerReadyFile,
+  removeRuntimeWorkerReadyFiles,
+} from './runtime/runtimeWorkerReadiness.js';
 
 type ProcessRole = 'all' | 'ws-only' | 'scheduler-only' | 'runtime-worker';
 
@@ -74,7 +77,11 @@ function removeReadyFile(): void {
   const readyFile = process.env.AGENT_SAAS_READYFILE;
   if (!readyFile) return;
   try {
-    fs.unlinkSync(readyFile);
+    if (resolveProcessRole() === 'runtime-worker') {
+      removeRuntimeWorkerReadyFiles(readyFile);
+    } else {
+      fs.unlinkSync(readyFile);
+    }
   } catch { /* 不存在或不可删，忽略 */ }
 }
 

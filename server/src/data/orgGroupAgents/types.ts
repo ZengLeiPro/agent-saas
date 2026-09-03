@@ -1,4 +1,5 @@
 export type ExternalActorAssurance = 'mapped' | 'unmapped' | 'ambiguous';
+export type OrgAgentGovernanceRole = 'member' | 'org_admin';
 
 export interface AgentPrincipal {
   kind: 'org_agent';
@@ -15,6 +16,7 @@ export interface ExternalActorRef {
   openId: string;
   displayName?: string;
   mappedUserId?: string;
+  role?: OrgAgentGovernanceRole;
   assurance: ExternalActorAssurance;
 }
 
@@ -49,7 +51,7 @@ export interface OrgAgentEffectiveConfig {
   identity: { displayName?: string };
   knowledge: { contextEnabled: boolean; sourceIds: string[] };
   capabilities: { skillIds: string[]; toolNames: string[] };
-  access: { triggerRoles: string[]; approvalRoles: string[] };
+  access: { triggerRoles: OrgAgentGovernanceRole[]; approvalRoles: OrgAgentGovernanceRole[] };
   speech: { proactive: boolean; requireMention: boolean };
 }
 
@@ -132,6 +134,7 @@ export interface OrgAgentResultEnvelope {
 
 export interface OrgAgentWorkOrder {
   workOrderId: string;
+  shortId: string;
   tenantId: string;
   agentId: string;
   bindingId: string;
@@ -144,11 +147,23 @@ export interface OrgAgentWorkOrder {
   createdByActor: ExternalActorRef;
   policySnapshot: Record<string, unknown>;
   cancelPolicy: Record<string, unknown>;
+  control: OrgAgentWorkOrderControl;
   resultEnvelope?: OrgAgentResultEnvelope;
   version: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+}
+
+export interface OrgAgentWorkOrderControl {
+  revision: number;
+  supplements: Array<{
+    text: string;
+    actorOpenId: string;
+    createdAt: string;
+    kind: 'supplement' | 'review';
+  }>;
+  workerType: 'general' | 'explore';
 }
 
 export interface OrgAgentWorkAttempt {
@@ -297,6 +312,7 @@ export interface OrgGroupAgentStore {
     createdByActor: ExternalActorRef;
     policySnapshot: Record<string, unknown>;
     cancelPolicy: Record<string, unknown>;
+    workerType?: 'general' | 'explore';
   }): Promise<OrgAgentWorkOrder>;
   createWorkAttempt(input: {
     tenantId: string;
@@ -316,8 +332,19 @@ export interface OrgGroupAgentStore {
     status: 'running' | 'completed' | 'failed' | 'cancelled';
     resultEnvelope?: OrgAgentResultEnvelope;
     failure?: string;
+    checkpoint?: Record<string, unknown>;
+    artifactManifest?: Record<string, unknown>;
+    publishState?: OrgAgentWorkAttempt['publishState'];
   }): Promise<OrgAgentWorkAttempt | null>;
+  transitionWorkAttemptPublishState(input: {
+    tenantId: string;
+    attemptId: string;
+    expectedState: 'pending';
+    state: 'published' | 'conflict' | 'rejected';
+    artifactManifest?: Record<string, unknown>;
+  }): Promise<OrgAgentWorkAttempt>;
   getWorkOrder(tenantId: string, workOrderId: string): Promise<OrgAgentWorkOrder | null>;
+  getWorkOrderByShortId(tenantId: string, agentId: string, shortId: string): Promise<OrgAgentWorkOrder | null>;
   getWorkConversation(tenantId: string, workConversationId: string): Promise<OrgAgentWorkConversation | null>;
   listWorkOrders(tenantId: string, bindingId: string, limit?: number): Promise<OrgAgentWorkOrder[]>;
   listStagedWorkOrders(staleBefore: Date, limit?: number): Promise<OrgAgentWorkOrder[]>;
@@ -327,6 +354,24 @@ export interface OrgGroupAgentStore {
     expectedVersion: number;
     state: OrgAgentWorkOrderState;
     resultEnvelope?: OrgAgentResultEnvelope;
+  }): Promise<OrgAgentWorkOrder>;
+  updateWorkOrderControl(input: {
+    tenantId: string;
+    workOrderId: string;
+    expectedVersion: number;
+    control: OrgAgentWorkOrderControl;
+  }): Promise<OrgAgentWorkOrder>;
+  pauseWorkOrder(input: {
+    tenantId: string;
+    workOrderId: string;
+    expectedVersion: number;
+  }): Promise<OrgAgentWorkOrder>;
+  queueWorkOrderAttempt(input: {
+    tenantId: string;
+    workOrderId: string;
+    expectedVersion: number;
+    control?: OrgAgentWorkOrderControl;
+    supersedePendingCompletion?: boolean;
   }): Promise<OrgAgentWorkOrder>;
   reopenWorkOrder(input: {
     tenantId: string;

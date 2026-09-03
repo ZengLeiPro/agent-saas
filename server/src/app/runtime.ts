@@ -69,7 +69,11 @@ import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import { RuntimeOutboundStreamRelay } from '../runtime/runtimeOutboundStreamRelay.js';
 import { MemoryPressureGuard, type RuntimeAdmissionGuard } from '../runtime/memoryPressureGuard.js';
-import { createRuntimeEventRetentionAdmissionGuard } from '../runtime/runtimeWorkerReadiness.js';
+import {
+  createRuntimeEventRetentionAdmissionGuard,
+  isActiveRuntimeWorkerOrgAgentV2Ready,
+} from '../runtime/runtimeWorkerReadiness.js';
+import { runDeferredStartupTasks } from './runtimeDeferredStartup.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import {
   effectiveMaxConcurrentRuns,
@@ -1423,7 +1427,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getFeishuTokenBroker: () => feishuTokenBroker,
     tenantRunEnvByTenant: resolvedSttRuntimeConfig.audioTranscribeEnvByTenant,
     userStore,
-    tenantStore, orgAgentStore,
+    tenantStore, orgAgentStore, agentDwsAccountStore,
     skillConfigStore,
     pgEventStore,
     membershipStore, oauthGrantStore, governanceChangeJobStore,
@@ -1591,7 +1595,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
-    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
+    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, orgGroupAgentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
       isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
@@ -2741,10 +2745,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
 
   if (agentDwsAccountStore && userStore && orgAgentStore && runPreflightService && governanceAuditStore) agentDwsRuntime = await createAgentDwsRuntime({
     agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, orgGroupAgentStore, pgEventStore, pgRunStore,
-    userStore, orgAgentStore, runPreflightService, governanceAuditStore,
+    userStore, membershipStore, orgAgentStore, runPreflightService, governanceAuditStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
+    isOrgAgentRuntimeV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
   });
 
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
@@ -2893,7 +2898,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgGroupAgentStore,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
     dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
+    agentDwsGroupBindingUpdated: agentDwsRuntime?.onGroupBindingUpdated,
     agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
+    isOrgAgentRuntimeV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
     getNotionConnection,
     disconnectNotionConnection,
     googleWorkspaceOAuthService,
@@ -2992,15 +2999,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     clientDaemonGateway,
     runtimeEventStoreFor,
     skillMaterialization: skillMaterializationService,
-    runDeferredStartupTasks: async () => {
-      for (const task of deferredStartupTasks) {
-        try {
-          await task.run();
-        } catch (err) {
-          serverLogger.error(`Deferred startup task "${task.name}" failed:`, err);
-        }
-      }
-    },
+    runDeferredStartupTasks: () => runDeferredStartupTasks(deferredStartupTasks, serverLogger),
     getSkillsWarmupStatus: () => ({ ...skillsWarmup }),
     startSkillMaterializationCoordinator: () => {
       skillMaterializationLeadership?.start();

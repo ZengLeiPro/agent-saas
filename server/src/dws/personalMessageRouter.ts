@@ -16,24 +16,28 @@ import {
 } from '../data/agentDwsMessages/index.js';
 import type { RunStore } from '../runtime/runStore.js';
 import {
-  type OrgAgentChannelActorRef,
   type OrgAgentChannelBinding,
-  type OrgAgentMemory,
-  type OrgAgentWorkConversation,
   type OrgGroupAgentStore,
 } from '../data/orgGroupAgents/index.js';
 import { deriveOrgAgentSharedView } from '../runtime/orgAgentTaskWorkspace.js';
-import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
+import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import { resolveAgentCwd } from '../workspace/resolver.js';
 import {
   extractOrgAgentRoutingFields,
-  ORG_AGENT_ROUTING_FIELD_NAMES,
   pinActiveOrgAgentGroupRouting,
 } from './orgAgentInboxRouting.js';
+import {
+  resolveSharedGroupContext,
+  type SharedGroupContext,
+  type SharedGroupResolution,
+} from './orgAgentSharedGroupContext.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
-import { deliverNextOrgAgentIntent } from './orgAgentDeliveryWorker.js';
+import {
+  createRedactedTerminalNotice,
+  deliverNextOrgAgentIntent,
+} from './orgAgentDeliveryWorker.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
@@ -79,6 +83,7 @@ export interface AgentDwsMessageRouterOptions {
   agentCwd: string;
   messageStore: AgentDwsMessageStore;
   orgGroupAgentStore?: OrgGroupAgentStore;
+  orgAgentStore?: Pick<OrgAgentStore, 'get'>;
   accountStore: AgentDwsAccountStore;
   dispatch: AgentRunDispatch;
   resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
@@ -92,6 +97,16 @@ export interface AgentDwsMessageRouterOptions {
     senderOpenDingtalkId: string,
     senderName?: string,
   ) => Promise<DwsRequesterResolution> | DwsRequesterResolution;
+  resolveRequesterGovernanceRole?: (
+    tenantId: string,
+    userId: string,
+  ) => Promise<'member' | 'org_admin' | undefined> | 'member' | 'org_admin' | undefined;
+  isOrgAgentRuntimeV2Ready?: () => boolean;
+  authorizeCompletionRequester?: (
+    tenantId: string,
+    agentId: string,
+    userId: string,
+  ) => Promise<boolean> | boolean;
   authorizeRequester: (input: {
     account: AgentDwsAccountRecord;
     requester: UserIdentity;
@@ -223,9 +238,13 @@ export class AgentDwsMessageRouter {
     if (this.options.orgGroupAgentStore && await deliverNextOrgAgentIntent({
       store: this.options.orgGroupAgentStore,
       accountStore: this.options.accountStore,
+      ...(this.options.orgAgentStore ? { agentStore: this.options.orgAgentStore } : {}),
       sender: this.options.sender,
       workerId: this.workerId,
       leaseTtlMs: this.leaseTtlMs,
+      ...(this.options.authorizeCompletionRequester
+        ? { authorizeCompletionRequester: this.options.authorizeCompletionRequester }
+        : {}),
     })) return true;
     const item = await this.options.messageStore.claimNext(this.workerId, this.leaseTtlMs);
     if (!item) return false;
@@ -398,7 +417,7 @@ export class AgentDwsMessageRouter {
       : serviceEvent && !this.options.orgGroupAgentStore && item.senderOpenDingtalkId
         ? await this.options.resolveRequester(account, item.senderOpenDingtalkId, senderName)
         : null;
-    const sharedResolution = await this.resolveSharedGroupContext(account, item, requester, senderName);
+    const sharedResolution = await resolveSharedGroupContext(this.options, account, item, requester, senderName);
     if (sharedResolution.state === 'ignored') {
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
@@ -427,6 +446,15 @@ export class AgentDwsMessageRouter {
       }
     } else if (!serviceEvent && (!shared || !allowsGuestSharedRead(shared.binding))) {
       await this.rejectAccess(account, item, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS');
+      return;
+    }
+    if (shared?.routingClarification) {
+      await this.options.messageStore.saveDispatchResult(
+        item.inboxId, this.workerId, item.leaseFence, shared.routingClarification,
+      );
+      await this.options.messageStore.markReplyAttemptStarted(item.inboxId, this.workerId, item.leaseFence);
+      await this.sendVisibleReply(account, item, shared.routingClarification, shared, 'front_reply', 'replied');
+      await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
     }
     const legacyBinding = shared ? undefined : await this.options.messageStore.getOrCreateBinding(
@@ -591,9 +619,9 @@ export class AgentDwsMessageRouter {
         allowedToolNames: sharedAllowedTools(shared),
         allowedSkillIds: [...shared.binding.effectiveConfig.capabilities.skillIds],
         allowedSourceIds: [...shared.binding.effectiveConfig.knowledge.sourceIds],
-        contextEnabled: false,
+        contextEnabled: shared.binding.effectiveConfig.knowledge.contextEnabled,
         taskVisibility: shared.binding.policy.taskVisibility,
-        ...(shared.requester?.role ? { actorRole: shared.requester.role } : {}),
+        ...(shared.governanceRole ? { actorRole: shared.governanceRole } : {}),
         triggerRoles: [...shared.binding.effectiveConfig.access.triggerRoles],
         approvalRoles: [...shared.binding.effectiveConfig.access.approvalRoles],
         externalActor: shared.externalActor,
@@ -660,75 +688,8 @@ export class AgentDwsMessageRouter {
     requester: UserIdentity | null,
     senderName?: string,
   ): Promise<SharedGroupResolution> {
-    if (!this.options.orgGroupAgentStore || item.eventType !== 'user_im_message_receive_at') return { state: 'legacy' };
-    const store = this.options.orgGroupAgentStore;
-    const binding = await store.ensureShadowBinding({
-      tenantId: account.tenantId, accountId: account.accountId, agentId: account.agentId,
-      conversationId: item.conversationId, channelKind: 'group',
-      workspaceId: deriveAgentWorkspaceId(account.tenantId, account.agentId),
-    });
-    if (binding.policy.liveDeny) return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_LIVE_DENY' };
-    if (binding.activationState === 'disabled') return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_DISABLED' };
-    if (binding.activationState === 'shadow') return { state: 'legacy' };
-    if (!binding.enabled || !binding.policy.enabled) return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_DISABLED' };
-    const serviceEvent = item.payload.source === 'background_task_completion';
-    if (!serviceEvent && !item.senderOpenDingtalkId) return { state: 'denied', reason: 'REQUESTER_IDENTITY_MISSING' };
-    if (!serviceEvent && binding.effectiveConfig.access.triggerRoles.length > 0
-      && (!requester?.role || !binding.effectiveConfig.access.triggerRoles.includes(requester.role))) {
-      return { state: 'denied', reason: 'ORG_AGENT_TRIGGER_ROLE_DENIED' };
-    }
-    let serviceWorkConversationId: string | undefined;
-    if (serviceEvent) {
-      const workOrderId = typeof item.payload.workOrderId === 'string' ? item.payload.workOrderId : '';
-      const attemptId = typeof item.payload.attemptId === 'string' ? item.payload.attemptId : '';
-      const fence = Number.isSafeInteger(item.payload.attemptFence) ? Number(item.payload.attemptFence) : 0;
-      const work = workOrderId ? await store.getWorkOrder(account.tenantId, workOrderId) : null;
-      const attempt = work ? (await store.listWorkAttempts(account.tenantId, workOrderId))
-        .find(candidate => candidate.attemptId === attemptId) : undefined;
-      if (!work || !attempt || work.bindingId !== binding.bindingId
-        || attempt.runtimeRunId !== item.payload.backgroundTaskId || attempt.attemptNo !== fence
-        || work.currentAttemptNo !== fence || work.state !== attempt.status
-        || !['completed', 'failed', 'cancelled'].includes(work.state)) return { state: 'ignored' };
-      serviceWorkConversationId = work.workConversationId;
-    }
-    const referencedMessages = routingMessageIds(item);
-    const pinnedId = item.workConversationId ?? serviceWorkConversationId;
-    const pinnedConversation = pinnedId
-      ? await store.getWorkConversation(account.tenantId, pinnedId) : null;
-    if (pinnedConversation && pinnedConversation.bindingId !== binding.bindingId)
-      return { state: 'denied', reason: 'ORG_AGENT_WORK_CONVERSATION_BINDING_MISMATCH' };
-    const existingConversation = pinnedConversation ?? await store.findWorkConversationByMessage({
-      tenantId: account.tenantId, bindingId: binding.bindingId, accountId: account.accountId,
-      conversationId: item.conversationId, messageIds: referencedMessages,
-    });
-    const rootKey = referencedMessages[0] ?? item.messageId ?? item.eventId;
-    const workConversation = existingConversation ?? await store.getOrCreateWorkConversation({
-      tenantId: account.tenantId, bindingId: binding.bindingId, rootKey,
-      ...(item.messageId ? { rootMessageId: item.messageId } : {}),
-    });
-    const [agentMemories, conversationMemories] = await Promise.all([
-      store.listMemories({ tenantId: binding.tenantId, agentId: binding.agentId,
-        memoryScope: 'agent', status: 'active', limit: 20 }),
-      store.listMemories({ tenantId: binding.tenantId, agentId: binding.agentId,
-        bindingId: binding.bindingId, workConversationId: workConversation.workConversationId,
-        memoryScope: 'conversation', status: 'active', limit: 20 }),
-    ]);
-    const externalActor: OrgAgentChannelActorRef = serviceEvent
-      ? { kind: 'service_event', issuer: 'runtime',
-          workOrderId: String(item.payload.workOrderId ?? item.payload.backgroundTaskId ?? item.eventId),
-          attemptId: String(item.payload.attemptId ?? item.payload.backgroundTaskId ?? item.eventId),
-          fence: Number.isSafeInteger(item.payload.attemptFence) ? Number(item.payload.attemptFence) : 0 }
-      : { kind: 'external_user', provider: 'dingtalk', corpId: account.corpId!,
-          openId: item.senderOpenDingtalkId!, ...(senderName ? { displayName: senderName } : {}),
-          ...(requester ? { mappedUserId: requester.id, assurance: 'mapped' as const }
-            : { assurance: 'unmapped' as const }) };
-    await store.pinInboxContext({ inboxId: item.inboxId, externalActor,
-      conversationSpaceId: binding.conversationSpaceId,
-      workConversationId: workConversation.workConversationId, policyRevision: binding.revision });
-    return { state: 'active', context: { binding, workConversation, externalActor, requester,
-      memories: [...agentMemories, ...conversationMemories] } };
+    return await resolveSharedGroupContext(this.options, account, item, requester, senderName);
   }
-
   private async sendVisibleReply(
     account: AgentDwsAccountRecord,
     item: AgentDwsInboxRecord,
@@ -737,11 +698,39 @@ export class AgentDwsMessageRouter {
     deliveryKind: 'front_reply' | 'access_rejection',
     disposition: 'replied' | 'rejected',
   ): Promise<void> {
-    const idempotencyKey = deterministicId('agent-dws-reply', `${item.accountId}:${item.eventId}:${deliveryKind}`);
+    // Provider idempotency must remain byte-for-byte compatible with the legacy sender
+    // during N/N+1 rollout and rollback. DeliveryIntent keeps its richer kind separately.
+    const idempotencyKey = deterministicId('agent-dws-reply', `${item.accountId}:${item.eventId}`);
     if (!this.options.orgGroupAgentStore) {
       await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey);
       return;
     }
+    const visibility = shared?.completionWork?.visibility ?? shared?.binding.policy.taskVisibility;
+    const requesterAllowed = shared?.completionWork?.visibility === 'requester_only'
+      && shared.completionWork.createdByActor.mappedUserId
+      ? await this.options.authorizeCompletionRequester?.(
+          shared.binding.tenantId, shared.binding.agentId,
+          shared.completionWork.createdByActor.mappedUserId,
+        ) : false;
+    const visibleText = shared?.completionWork?.visibility === 'requester_only' && !requesterAllowed
+      ? '任务已经结束，但你的组织权限已发生变化，当前无法展示任务结果。请联系管理员确认权限。'
+      : text;
+    const destination = shared?.completionWork?.visibility === 'requester_only'
+      ? {
+          provider: 'dingtalk' as const,
+          accountId: item.accountId,
+          conversationId: item.conversationId,
+          kind: 'direct' as const,
+          peerOpenId: shared.completionWork.createdByActor.openId,
+        }
+      : {
+          provider: 'dingtalk' as const,
+          accountId: item.accountId,
+          conversationId: item.conversationId,
+          kind: item.eventType === 'user_im_message_receive_at' ? 'group' as const : 'direct' as const,
+          ...(item.eventType === 'user_im_message_receive_o2o_all' && item.senderOpenDingtalkId
+            ? { peerOpenId: item.senderOpenDingtalkId } : {}),
+        };
     const delivery = await this.options.orgGroupAgentStore.createDelivery({
       tenantId: item.tenantId, inboxId: item.inboxId, accountId: item.accountId,
       conversationId: item.conversationId,
@@ -749,35 +738,60 @@ export class AgentDwsMessageRouter {
         conversationSpaceId: shared.binding.conversationSpaceId,
         workConversationId: shared.workConversation.workConversationId,
         policyRevision: shared.binding.revision,
-        visibility: shared.binding.policy.taskVisibility } : {}),
+        ...(visibility ? { visibility } : {}) } : {}),
       ...(typeof item.payload.workOrderId === 'string' ? { sourceWorkOrderId: item.payload.workOrderId } : {}),
       ...(typeof item.payload.attemptId === 'string' ? { sourceAttemptId: item.payload.attemptId } : {}),
       source: item.payload.source === 'background_task_completion' ? 'background_completion' : 'command',
       deliveryKind: item.payload.source === 'background_task_completion' ? 'task_completion' : deliveryKind,
       disposition,
-      destination: { provider: 'dingtalk', accountId: item.accountId, conversationId: item.conversationId,
-        kind: item.eventType === 'user_im_message_receive_at' ? 'group' : 'direct',
-        ...(item.eventType === 'user_im_message_receive_o2o_all' && item.senderOpenDingtalkId
-          ? { peerOpenId: item.senderOpenDingtalkId } : {}) },
-      content: text, idempotencyKey,
+      destination,
+      content: visibleText, idempotencyKey,
     });
     if (delivery.deliveryState === 'sent' || delivery.deliveryState === 'unknown'
       || delivery.deliveryState === 'dead_letter') return;
     if (shared) {
-      const current = await this.options.orgGroupAgentStore.getBinding(
-        shared.binding.tenantId, shared.binding.accountId, shared.binding.conversationId,
-      );
+      const [current, currentAccount] = await Promise.all([
+        this.options.orgGroupAgentStore.getBinding(
+          shared.binding.tenantId, shared.binding.accountId, shared.binding.conversationId,
+        ),
+        this.options.accountStore.getForTenant(shared.binding.tenantId, shared.binding.accountId),
+      ]);
+      const currentAgent = this.options.orgAgentStore?.get(shared.binding.agentId);
       if (!current || current.bindingId !== shared.binding.bindingId
-        || current.agentId !== shared.binding.agentId || current.activationState !== 'active'
-        || !current.enabled || !current.policy.enabled || current.policy.liveDeny
-        || (delivery.deliveryKind === 'task_completion' && current.policy.completion === 'silent')) {
+        || current.agentId !== shared.binding.agentId
+        || !currentAccount || currentAccount.status !== 'active'
+        || !hasExactAgentDwsProfile(currentAccount)
+        || currentAccount.agentId !== shared.binding.agentId) {
         await this.options.orgGroupAgentStore.markDeliveryDeadLetter(delivery.deliveryId, 'ORG_AGENT_CHANNEL_LIVE_DENY');
+        return;
+      }
+      if (delivery.deliveryKind === 'task_completion' && current.policy.completion === 'silent') {
+        await this.options.orgGroupAgentStore.markDeliveryDeadLetter(
+          delivery.deliveryId,
+          'ORG_AGENT_COMPLETION_SILENT',
+        );
+        return;
+      }
+      if (current.activationState !== 'active' || !current.enabled || !current.policy.enabled
+        || current.policy.liveDeny || !currentAgent || !currentAgent.enabled
+        || currentAgent.tenantId !== shared.binding.tenantId) {
+        if (delivery.deliveryKind === 'task_completion')
+          await createRedactedTerminalNotice(this.options.orgGroupAgentStore, delivery);
+        await this.options.orgGroupAgentStore.markDeliveryDeadLetter(
+          delivery.deliveryId,
+          'ORG_AGENT_CHANNEL_LIVE_DENY',
+        );
         return;
       }
     }
     const claimed = await this.options.orgGroupAgentStore.claimDelivery(delivery.deliveryId, this.workerId, this.leaseTtlMs);
     try {
-      const receipt = await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey);
+      const receipt = await this.options.sender.send(
+        account,
+        outboundEvent(item, destination),
+        visibleText,
+        idempotencyKey,
+      );
       if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
       await this.options.orgGroupAgentStore.markDeliverySent(delivery.deliveryId, this.workerId, claimed.leaseFence, receipt);
     } catch (error) {
@@ -786,19 +800,21 @@ export class AgentDwsMessageRouter {
   }
 }
 
-interface SharedGroupContext {
-  binding: OrgAgentChannelBinding;
-  workConversation: OrgAgentWorkConversation;
-  externalActor: OrgAgentChannelActorRef;
-  requester: UserIdentity | null;
-  memories: OrgAgentMemory[];
+function outboundEvent(
+  item: AgentDwsInboxRecord,
+  destination: { kind: 'group' | 'direct'; peerOpenId?: string },
+): DwsPersonalEvent {
+  if (destination.kind === 'group') return inboxEvent(item);
+  return {
+    type: 'user_im_message_receive_o2o_all',
+    eventId: item.eventId,
+    conversationId: item.conversationId,
+    senderOpenDingtalkId: destination.peerOpenId,
+    content: item.content,
+    ...(item.eventTimestamp ? { timestamp: new Date(item.eventTimestamp).getTime() } : {}),
+    raw: item.payload,
+  };
 }
-
-type SharedGroupResolution =
-  | { state: 'legacy' }
-  | { state: 'ignored' }
-  | { state: 'denied'; reason: string }
-  | { state: 'active'; context: SharedGroupContext };
 
 function inboxEvent(item: AgentDwsInboxRecord): DwsPersonalEvent {
   return {
@@ -837,7 +853,7 @@ function buildSystemContext(
 ): string {
   const isBackgroundCompletion = item.payload.source === 'background_task_completion';
   return [
-    `你正在通过组织 Agent「${bounded(account.displayName)}」的专属钉钉成员账号参与工作。`,
+    `你正在通过组织 Agent「${bounded(shared?.binding.effectiveConfig.identity.displayName?.trim() || account.displayName)}」的专属钉钉成员账号参与工作。`,
     '回复会由平台以该成员账号发回当前钉钉会话。不要声称自己是机器人，也不要泄露内部账号、事件或会话标识。',
     '需要澄清时直接用普通文本提问，不要调用 AskUserQuestion；当前钉钉通道不承载平台审批交互。',
     ...(isBackgroundCompletion ? [
@@ -847,9 +863,15 @@ function buildSystemContext(
       `当前工作空间：${shared.binding.conversationSpaceId}；当前话题：${shared.workConversation.workConversationId}。`,
       `本轮调用者身份可信度：${shared.externalActor.kind === 'service_event' ? 'service' : shared.externalActor.assurance}。只能调用本群 effective config 明确开放的工具。`,
       '这是组织共享会话。禁止读取请求者个人记忆、个人连接器或其他群内容；未映射身份只能处理本群允许的组织共享信息。',
+      ...(shared.visibleWorkOrders.length ? [
+        `当前话题任务（短号仅用于路由和歧义澄清）：${bounded(JSON.stringify(shared.visibleWorkOrders.map(work => ({ shortId: work.shortId, title: work.title, state: work.state, attempt: work.currentAttemptNo }))), 8_000)}`,
+        '需要操作既有任务时，用 BackgroundTask 的 amend/pause/resume/review/reassign/cancel；可直接把 W-短号作为 task_id。除非存在歧义，不要主动向用户展示内部短号。',
+      ] : []),
       ...(shared.memories.length ? [`当前已治理记忆（只读）：${bounded(JSON.stringify(shared.memories.map(memory => ({ scope: memory.memoryScope, content: memory.content }))), 12_000)}`] : []),
     ] : []),
     `当前入口：${item.eventType === 'user_im_message_receive_at' ? '群聊 @' : '单聊'}。`,
+    ...(item.eventType === 'user_im_message_receive_at'
+      ? ['当前钉钉接入只会收到群内 @ 消息；未 @ 的续话不会送达，请在需要时如实说明该限制。'] : []),
   ].join('\n');
 }
 
@@ -865,14 +887,20 @@ function serviceIdentity(account: AgentDwsAccountRecord): UserIdentity {
 
 function sharedAllowedTools(shared: SharedGroupContext): string[] {
   const contextTools = new Set(['ContextSearch', 'ContextGet']);
+  const sharedReadTools = new Set(['DwsBusiness', ...contextTools]);
   const alwaysPersonal = new Set(['MemoryCommand', 'UserActivityList']);
   if (shared.externalActor.kind === 'service_event') return [];
   if (shared.externalActor.assurance !== 'mapped') {
-    return [];
+    return allowsGuestSharedRead(shared.binding)
+      ? shared.binding.effectiveConfig.capabilities.toolNames.filter(name => (
+          sharedReadTools.has(name)
+          && (name === 'DwsBusiness' || shared.binding.effectiveConfig.knowledge.contextEnabled)
+        ))
+      : [];
   }
   return shared.binding.effectiveConfig.capabilities.toolNames.filter(name => (
     !alwaysPersonal.has(name)
-    && !contextTools.has(name)
+    && (shared.binding.effectiveConfig.knowledge.contextEnabled || !contextTools.has(name))
   ));
 }
 
@@ -909,18 +937,6 @@ function normalizeEventTimestamp(value: number): Date {
   const millis = value < 10_000_000_000 ? value * 1_000 : value;
   const date = new Date(millis);
   return Number.isFinite(date.getTime()) ? date : new Date();
-}
-
-function routingMessageIds(item: AgentDwsInboxRecord): string[] {
-  const routing = item.payload.routing;
-  if (routing && typeof routing === 'object' && !Array.isArray(routing)) {
-    const record = routing as Record<string, unknown>;
-    for (const key of ORG_AGENT_ROUTING_FIELD_NAMES) {
-      const value = record[key];
-      if (typeof value === 'string' && value) return [value];
-    }
-  }
-  return [];
 }
 
 function deterministicId(prefix: string, value: string): string {

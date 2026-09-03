@@ -19,6 +19,8 @@ import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDws
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import type { OrgAgentStore } from '../data/orgAgents/index.js';
+import type { PgAssignmentStore } from '../data/assignments/index.js';
+import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
@@ -75,10 +77,11 @@ const inboxQuerySchema = z.object({
 const delegationResourceSchema = z.object({
   args: z.array(z.string().min(1).max(500)).min(1).max(100),
 }).strict();
-const GROUP_AGENT_TOOL_MAX = new Set([
+export const GROUP_AGENT_FRONTDESK_TOOL_MAX: ReadonlySet<string> = new Set([
   'Agent', 'BackgroundTask',
+  'DwsBusiness',
   'ContextSearch', 'ContextGet', 'WebSearch', 'WebFetch',
-  'Read', 'Glob', 'Grep', 'ArtifactCreate',
+  'Read', 'Glob', 'Grep', 'Artifact',
 ]);
 const groupWorkspaceQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) });
 const groupWorkspaceUpdateSchema = z.object({
@@ -94,7 +97,10 @@ const groupWorkspaceUpdateSchema = z.object({
     identity: z.object({ displayName: z.string().trim().min(1).max(80).optional() }).strict(),
     knowledge: z.object({ contextEnabled: z.boolean(), sourceIds: z.array(z.string().min(1).max(200)).max(100) }).strict(),
     capabilities: z.object({ skillIds: z.array(z.string().min(1).max(200)).max(100), toolNames: z.array(z.string().min(1).max(200)).max(100) }).strict(),
-    access: z.object({ triggerRoles: z.array(z.string().min(1).max(100)).max(50), approvalRoles: z.array(z.string().min(1).max(100)).max(50) }).strict(),
+    access: z.object({
+      triggerRoles: z.array(z.enum(['member', 'org_admin'])).max(2),
+      approvalRoles: z.array(z.enum(['member', 'org_admin'])).max(2),
+    }).strict(),
     speech: z.object({ proactive: z.boolean(), requireMention: z.boolean() }).strict(),
   }).strict(),
 }).strict();
@@ -117,7 +123,10 @@ const memoryStatusSchema = z.object({
   expectedVersion: z.number().int().positive(), status: z.enum(['revoked', 'deleted']),
 }).strict();
 const workOrderActionSchema = z.object({
-  expectedVersion: z.number().int().positive(), action: z.enum(['cancel', 'retry']),
+  expectedVersion: z.number().int().positive(),
+  action: z.enum(['cancel', 'retry', 'publish', 'amend', 'pause', 'resume', 'review', 'reassign']),
+  text: z.string().trim().min(1).max(20_000).optional(),
+  workerType: z.enum(['general', 'explore']).optional(),
 }).strict();
 
 class AgentDwsMutationFailure extends Error {
@@ -137,11 +146,15 @@ export interface AgentDwsAccountsRouterOptions {
   messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
   orgGroupAgentStore?: OrgGroupAgentStore;
   orgAgentStore?: Pick<OrgAgentStore, 'get'>;
+  assignmentStore?: Pick<PgAssignmentStore, 'listEffectiveResourceIds'>;
+  contextStore?: Pick<ContextStore, 'listSources' | 'listCollections'>;
   backgroundTasks?: BackgroundTaskRuntime;
+  isOrgAgentRuntimeV2Ready?: () => boolean;
   authFlowService?: AgentDwsAuthFlowServiceLike;
   eventGateway?: DwsPersonalEventGateway;
   auditStore?: GovernanceAuditStore;
   onContextPolicyUpdated?: (account: AgentDwsAccountRecord) => void | Promise<void>;
+  onGroupBindingUpdated?: (account: AgentDwsAccountRecord, conversationId: string) => void | Promise<void>;
   onEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => void | Promise<void>;
 }
 
@@ -198,6 +211,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
         options.orgGroupAgentStore.listBindings(tenantId, account.accountId),
         options.orgGroupAgentStore.listDeliveries(tenantId, account.accountId, parsed.data.limit),
       ]);
+      const contextCeiling = await resolveGroupContextCeiling(options, account);
       const workspaces = await Promise.all(bindings.filter(binding => binding.channelKind === 'group').map(async binding => {
         const workOrders = await options.orgGroupAgentStore!.listWorkOrders(tenantId, binding.bindingId, parsed.data.limit);
         return { bindingId: binding.bindingId,
@@ -209,16 +223,16 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       return res.json({ bindings: bindings.map(binding => {
         const agent = options.orgAgentStore!.get(binding.agentId);
         return { ...binding, effectiveConfigComputation: {
-          publishedAgent: { skillIds: agent?.allowedSkills ?? [], sourceIds: agent?.allowedKnowledge ?? [],
+          publishedAgent: { skillIds: agent?.allowedSkills ?? [], knowledgeSkillIds: agent?.allowedKnowledge ?? [],
+            sourceIds: contextCeiling.publishedSourceIds,
             executionMode: agent?.runtime?.executionMode ?? 'unavailable', enabled: agent?.enabled === true },
-          channelCeiling: { toolNames: [...GROUP_AGENT_TOOL_MAX].sort() },
+          channelCeiling: { toolNames: [...GROUP_AGENT_FRONTDESK_TOOL_MAX].sort(),
+            contextSourceIds: contextCeiling.channelSourceIds },
           groupNarrowing: binding.effectiveConfig,
           liveOverrides: { bindingEnabled: binding.enabled && binding.activationState === 'active',
             liveDeny: binding.policy.liveDeny, accountStatus: account.status },
         } };
-      }), workspaces, deliveries: deliveries
-        .filter(item => item.destination.kind === 'group')
-        .map(toPublicDeliveryRecord) });
+      }), workspaces, deliveries: deliveries.map(toPublicDeliveryRecord) });
     } catch {
       return res.status(503).json({ error: '组织群工作台读取失败' });
     }
@@ -232,8 +246,15 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (parsed.data.policy.membership === 'members' && parsed.data.policy.guest !== 'deny') {
       return res.status(400).json({ error: '仅成员群策略不能开放游客只读' });
     }
-    if (parsed.data.effectiveConfig.knowledge.contextEnabled) {
-      return res.status(400).json({ error: '话题级钉钉上下文索引尚未物化，当前不能启用群聊 Context' });
+    if (parsed.data.effectiveConfig.speech.proactive
+      || !parsed.data.effectiveConfig.speech.requireMention) {
+      return res.status(400).json({ error: '当前钉钉入口只支持群内 @ 触发，不能启用主动发言或关闭 @ 要求' });
+    }
+    if (parsed.data.effectiveConfig.knowledge.contextEnabled
+      && (parsed.data.effectiveConfig.knowledge.sourceIds.length === 0
+        || !parsed.data.effectiveConfig.capabilities.toolNames.includes('ContextSearch')
+        || !parsed.data.effectiveConfig.capabilities.toolNames.includes('ContextGet'))) {
+      return res.status(400).json({ error: '启用群聊 Context 必须同时配置事实源、ContextSearch 与 ContextGet' });
     }
     const tenantId = tenantFor(req);
     if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
@@ -243,9 +264,20 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!agent || agent.tenantId !== tenantId || !agent.enabled) return res.status(409).json({ error: '组织智能体当前不可用' });
     if (parsed.data.enabled && agent.runtime?.executionMode !== 'dispatcher')
       return res.status(409).json({ error: '启用群聊前，组织智能体必须发布为 dispatcher 模式' });
+    if (parsed.data.enabled && options.isOrgAgentRuntimeV2Ready?.() !== true)
+      return res.status(409).json({ error: '启用群聊前，活动 Runtime Worker 必须支持组织群任务协议 v2' });
     const invalidSkill = parsed.data.effectiveConfig.capabilities.skillIds.some(id => !agent.allowedSkills.includes(id));
-    const invalidSource = parsed.data.effectiveConfig.knowledge.sourceIds.some(id => !(agent.allowedKnowledge ?? []).includes(id));
-    const invalidTool = parsed.data.effectiveConfig.capabilities.toolNames.some(name => !GROUP_AGENT_TOOL_MAX.has(name));
+    const contextCeiling = await resolveGroupContextCeiling(options, account);
+    if (parsed.data.effectiveConfig.knowledge.contextEnabled && !contextCeiling.available)
+      return res.status(503).json({ error: '群聊 Context 能力目录暂不可用' });
+    if (parsed.data.effectiveConfig.knowledge.contextEnabled
+      && !contextPolicyAllowsConversation(account, parsed.data.conversationId)) {
+      return res.status(409).json({ error: '启用群聊 Context 前，必须先在账号 Context 范围中授权当前群' });
+    }
+    const invalidSource = parsed.data.effectiveConfig.knowledge.sourceIds
+      .some(id => !contextCeiling.channelSourceIds.includes(id));
+    const invalidTool = parsed.data.effectiveConfig.capabilities.toolNames
+      .some(name => !GROUP_AGENT_FRONTDESK_TOOL_MAX.has(name));
     if (invalidSkill || invalidSource || invalidTool) return res.status(400).json({ error: '群配置只能收窄组织智能体已发布的能力' });
     await runMutation(req, res, options, {
       action: 'org_agent.channel_binding.update', tenantId, targetId: account.accountId,
@@ -253,6 +285,11 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     }, async () => {
       try {
         const binding = await options.orgGroupAgentStore!.updateBinding({ tenantId, accountId: account.accountId, ...parsed.data });
+        try {
+          await options.onGroupBindingUpdated?.(account, binding.conversationId);
+        } catch {
+          throw new AgentDwsMutationFailure('AGENT_DWS_CONTEXT_POLICY_SYNC_FAILED', true);
+        }
         return { status: 200, body: { binding } };
       } catch (error) {
         if (error instanceof Error && error.message === 'ORG_AGENT_BINDING_VERSION_CONFLICT') {
@@ -304,9 +341,49 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       action: `org_agent.work_order.${parsed.data.action}`, tenantId, targetId: workOrder.workOrderId,
       purpose: `${parsed.data.action} group work order`,
     }, async () => {
-      const task = parsed.data.action === 'cancel'
-        ? await options.backgroundTasks!.cancelWorkOrder(tenantId, workOrder.workOrderId, parsed.data.expectedVersion)
-        : await options.backgroundTasks!.retryWorkOrder(tenantId, workOrder.workOrderId, parsed.data.expectedVersion);
+      const action = parsed.data.action;
+      if ((action === 'amend' || action === 'review') && !parsed.data.text)
+        return { status: 400, body: { error: `${action} 需要 text` } };
+      if (action === 'reassign' && !parsed.data.workerType)
+        return { status: 400, body: { error: 'reassign 需要 workerType' } };
+      if (action === 'review' && !['completed', 'failed', 'cancelled'].includes(workOrder.state))
+        return { status: 409, body: { error: 'review 只能用于已结束任务' } };
+      let current = workOrder;
+      let mutationVersion = parsed.data.expectedVersion;
+      let task: unknown = null;
+      if (action === 'cancel') task = await options.backgroundTasks!.cancelWorkOrder(
+        tenantId, current.workOrderId, mutationVersion,
+      );
+      else if (action === 'pause') task = await options.backgroundTasks!.pauseWorkOrder(
+        tenantId, current.workOrderId, mutationVersion,
+      );
+      else if (action === 'retry' || action === 'resume') task =
+        await options.backgroundTasks!.retryWorkOrder(tenantId, current.workOrderId, mutationVersion);
+      else if (action === 'publish') task = await options.backgroundTasks!.publishWorkOrderArtifacts(
+        tenantId, current.workOrderId, mutationVersion,
+      );
+      else if ((action === 'amend' || action === 'reassign')
+        && ['queued', 'running', 'waiting_input'].includes(current.state)) {
+        await options.backgroundTasks!.pauseWorkOrder(tenantId, current.workOrderId, mutationVersion);
+        current = (await options.orgGroupAgentStore!.getWorkOrder(tenantId, current.workOrderId))!;
+        mutationVersion = current.version;
+      }
+      if (action === 'amend' || action === 'review' || action === 'reassign') {
+        const control = {
+          ...current.control,
+          revision: current.control.revision + 1,
+          ...(action === 'reassign' ? { workerType: parsed.data.workerType! } : {}),
+          ...((action === 'amend' || action === 'review') ? { supplements: [
+            ...current.control.supplements,
+            { text: parsed.data.text!, actorOpenId: req.user!.username, createdAt: new Date().toISOString(),
+              kind: action === 'review' ? 'review' as const : 'supplement' as const },
+          ] } : {}),
+        };
+        task = await options.backgroundTasks!.retryWorkOrder(
+          tenantId, current.workOrderId, mutationVersion,
+          { allowPendingArtifacts: true, control, supersedePendingCompletion: true },
+        );
+      }
       return { status: 200, body: { task,
         workOrder: await options.orgGroupAgentStore!.getWorkOrder(tenantId, workOrder.workOrderId) } };
     });
@@ -726,6 +803,56 @@ function withRealtimeConsentTimestamps(
     conversations[conversationId] = inherited ?? now;
   }
   return { ...policy, realtimeEffectiveAt: { conversations } };
+}
+
+async function resolveGroupContextCeiling(
+  options: AgentDwsAccountsRouterOptions,
+  account: AgentDwsAccountRecord,
+): Promise<{ available: boolean; publishedSourceIds: string[]; channelSourceIds: string[] }> {
+  if (!options.assignmentStore || !options.contextStore || !hasExactAgentDwsProfile(account)) {
+    return { available: false, publishedSourceIds: [], channelSourceIds: [] };
+  }
+  const [assignments, collections, sources] = await Promise.all([
+    options.assignmentStore.listEffectiveResourceIds(
+      account.tenantId,
+      `org-agent-context:${account.agentId}`,
+      'org_knowledge',
+      account.agentId,
+    ),
+    options.contextStore.listCollections(account.tenantId),
+    options.contextStore.listSources(account.tenantId),
+  ]);
+  const assignedCollections = new Set(assignments.map(item => item.resourceId));
+  const activeSources = new Map(sources.filter(source => source.status === 'active')
+    .map(source => [source.sourceId, source]));
+  const assignedActiveCollections = collections.filter(collection => collection.status === 'active'
+    && assignedCollections.has(collection.collectionId)
+    && activeSources.has(collection.sourceId));
+  const publishedSourceIds = [...new Set(assignedActiveCollections
+    .map(collection => collection.sourceId))].sort();
+  const channelSourceIds = publishedSourceIds.filter(sourceId => {
+    const source = activeSources.get(sourceId);
+    return source?.kind === 'dws'
+      && source.config.accountId === account.accountId
+      && source.config.profileId === account.profileId
+      // 当前群的 trusted ownership metadata 只在 chat 记录上物化。仅授权了
+      // wiki/minutes collection 的 DWS source 不能出现在群配置目录里，否则 UI
+      // 会给出一个确定性零命中的伪能力。
+      && assignedActiveCollections.some(collection =>
+        collection.sourceId === sourceId && collection.externalKey === 'chat');
+  });
+  return { available: true, publishedSourceIds, channelSourceIds };
+}
+
+function contextPolicyAllowsConversation(
+  account: AgentDwsAccountRecord,
+  conversationId: string,
+): boolean {
+  const policy = account.contextPolicy ?? failClosedAgentDwsContextPolicy();
+  const allows = (selection: { mode: 'none' | 'all' | 'selected'; conversationIds: string[] }) =>
+    selection.mode === 'all'
+      || (selection.mode === 'selected' && selection.conversationIds.includes(conversationId));
+  return allows(policy.historical) || allows(policy.realtime);
 }
 
 function toPublicAccount(account: AgentDwsAccountRecord): Record<string, unknown> {

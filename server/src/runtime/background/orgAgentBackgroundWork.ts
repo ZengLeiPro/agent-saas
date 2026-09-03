@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type { ToolCallContext } from '../../agent/toolRuntime.js';
-import type { OrgAgentResultEnvelope, OrgAgentWorkOrder } from '../../data/orgGroupAgents/index.js';
+import type {
+  OrgAgentResultEnvelope,
+  OrgAgentWorkOrder,
+  OrgAgentWorkOrderControl,
+} from '../../data/orgGroupAgents/index.js';
+import { atomicWriteTrustedFile } from '../../security/trustedFile.js';
 import { resolveAgentCwd } from '../../workspace/resolver.js';
 import {
   agentMountSubPathFromSharedView,
@@ -10,6 +16,12 @@ import {
   deriveOrgAgentTaskWorkspace,
   type OrgAgentTaskWorkspaceLayout,
 } from '../orgAgentTaskWorkspace.js';
+import {
+  collectOrgAgentArtifactManifest,
+  parseOrgAgentArtifactManifest,
+  publishOrgAgentArtifacts,
+  serializeOrgAgentArtifactManifest,
+} from '../orgAgentArtifactPublisher.js';
 import { runtimeRunController } from '../runController.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
 import type { RunRecord, RunStatus } from '../runStore.js';
@@ -19,7 +31,7 @@ import {
 } from '../rawRuntimeRunDispatch.js';
 import { createRuntimeSessionRecord } from '../sessionCatalog.js';
 import type { BackgroundAgentRequest } from './backgroundTaskRuntime.js';
-import { type StoredBackgroundResult } from './backgroundTaskFormatting.js';
+import { parseStoredResult, type StoredBackgroundResult } from './backgroundTaskFormatting.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
 
@@ -38,24 +50,27 @@ export async function prepareOrgAgentBackgroundWork(input: {
     orgChannel.agentPrincipal.tenantId,
     orgChannel.agentId,
   );
-  const agentMountSubPath = input.context.workspace.mountSubPath ?? (() => {
+  const sharedReadOnlySubPath = input.context.workspace.mountSubPath ?? (() => {
     throw new Error('组织群后台任务缺少 Agent workspace mount');
   })();
+  const agentMountSubPath = agentMountSubPathFromSharedView(sharedReadOnlySubPath);
   const sharedView = deriveOrgAgentSharedView({
     agentRoot,
     agentMountSubPath,
     bindingId: orgChannel.bindingId,
     workConversationId: orgChannel.workConversationId,
   });
+  if (sharedView.mountSubPath !== sharedReadOnlySubPath)
+    throw new Error('组织群后台任务 shared workspace 与话题身份不匹配');
   const taskLayout = deriveOrgAgentTaskWorkspace({
     agentWorkspaceId: orgChannel.agentPrincipal.workspaceId,
     agentRoot,
     agentMountSubPath,
-    sharedReadOnlySubPath: sharedView.mountSubPath,
+    sharedReadOnlySubPath,
     taskId: input.taskId,
     attemptNo: 1,
   });
-  await mkdir(taskLayout.taskRoot, { recursive: true });
+  await mkdir(join(taskLayout.taskRoot, 'artifacts'), { recursive: true });
   const workOrder =
     orgChannel.externalActor.kind === 'external_user'
       ? await input.config.orgGroupAgentStore?.createWorkOrder({
@@ -80,6 +95,7 @@ export async function prepareOrgAgentBackgroundWork(input: {
             mode: orgChannel.taskVisibility === 'conversation' && orgChannel.externalActorAssurance === 'mapped'
               ? 'conversation' : 'creator_only',
           },
+          workerType: input.request.agentType,
         })
       : undefined;
   if (!workOrder) throw new Error('组织群后台任务 WorkOrder store 不可用');
@@ -104,7 +120,16 @@ export class OrgAgentBackgroundWorkCoordinator {
         tenantId,
         metadata.workOrderId,
       );
-      if (!work || work.state !== 'running')
+      const existingAttempt = (
+        await this.config.orgGroupAgentStore.listWorkAttempts(tenantId, metadata.workOrderId)
+      ).find((item) => item.runtimeRunId === record.runId);
+      if (
+        !work ||
+        !existingAttempt ||
+        existingAttempt.status !== 'running' ||
+        existingAttempt.attemptNo !== work.currentAttemptNo ||
+        work.state !== 'running'
+      )
         throw new Error('ORG_AGENT_WORK_ATTEMPT_START_CONFLICT');
     }
   }
@@ -119,6 +144,16 @@ export class OrgAgentBackgroundWorkCoordinator {
     if (!metadata?.workOrderId || !metadata.orgAgentChannel || !this.config.orgGroupAgentStore)
       return;
     const tenantId = metadata.orgAgentChannel.agentPrincipal.tenantId;
+    let manifest: Awaited<ReturnType<typeof collectOrgAgentArtifactManifest>> | undefined;
+    let manifestFailure: string | undefined;
+    try {
+      manifest = await collectOrgAgentArtifactManifest(join(metadata.cwd, 'artifacts'));
+      const checkpoint = { runtimeRunId: record.runId, status: state, finishedAt: record.updatedAt };
+      await atomicWriteTrustedFile(metadata.cwd, 'checkpoint.json', JSON.stringify(checkpoint, null, 2));
+      await atomicWriteTrustedFile(metadata.cwd, 'manifest.json', JSON.stringify(manifest, null, 2));
+    } catch (error) {
+      manifestFailure = error instanceof Error ? error.message : String(error);
+    }
     const envelope: OrgAgentResultEnvelope = {
       status: state,
       summary: (result.text || result.errorMessage || failure || state).slice(0, 4_000),
@@ -126,7 +161,7 @@ export class OrgAgentBackgroundWorkCoordinator {
         { key: 'runtimeRunId', value: record.runId },
         { key: 'status', value: state },
       ],
-      artifacts: [],
+      artifacts: manifest?.files ?? [],
       writeScope: [metadata.cwd],
     };
     const transitionedAttempt = await this.config.orgGroupAgentStore.transitionWorkAttempt({
@@ -134,6 +169,14 @@ export class OrgAgentBackgroundWorkCoordinator {
       runtimeRunId: record.runId,
       status: state,
       resultEnvelope: envelope,
+      checkpoint: {
+        runtimeRunId: record.runId,
+        status: state,
+        finishedAt: record.updatedAt,
+        ...(manifestFailure ? { artifactCaptureError: manifestFailure } : {}),
+      },
+      ...(manifest ? { artifactManifest: serializeOrgAgentArtifactManifest(manifest) } : {}),
+      publishState: state === 'completed' && manifest ? 'pending' : 'rejected',
       ...(failure ? { failure } : {}),
     });
     const attempt = transitionedAttempt ?? (await this.config.orgGroupAgentStore.listWorkAttempts(
@@ -157,6 +200,86 @@ export class OrgAgentBackgroundWorkCoordinator {
     });
   }
 
+  async publish(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+  ): Promise<import('../../data/orgGroupAgents/index.js').OrgAgentWorkAttempt> {
+    const store = this.config.orgGroupAgentStore;
+    if (!store) throw new Error('ORG_AGENT_WORK_ORDER_STORE_UNAVAILABLE');
+    const work = await store.getWorkOrder(tenantId, workOrderId);
+    if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
+    if (work.version !== expectedVersion) throw new Error('ORG_AGENT_WORK_ORDER_VERSION_CONFLICT');
+    if (work.state !== 'completed') throw new Error('ORG_AGENT_ARTIFACT_WORK_NOT_COMPLETED');
+    const attempt = (await store.listWorkAttempts(tenantId, workOrderId))
+      .find(item => item.attemptNo === work.currentAttemptNo);
+    if (!attempt || attempt.status !== 'completed')
+      throw new Error('ORG_AGENT_ARTIFACT_ATTEMPT_NOT_COMPLETED');
+    if (attempt.publishState === 'published') return attempt;
+    if (attempt.publishState !== 'pending') throw new Error('ORG_AGENT_ARTIFACT_NOT_PUBLISHABLE');
+    const [binding, conversation] = await Promise.all([
+      store.getBindingById(tenantId, work.bindingId),
+      store.getWorkConversation(tenantId, work.workConversationId),
+    ]);
+    if (!binding || binding.agentId !== work.agentId || !conversation
+      || conversation.bindingId !== binding.bindingId)
+      throw new Error('ORG_AGENT_ARTIFACT_SCOPE_INVALID');
+    const agentRoot = resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId);
+    const agentMountSubPath = agentMountSubPathFromSharedView(attempt.sharedReadOnlySubPath);
+    const shared = deriveOrgAgentSharedView({
+      agentRoot,
+      agentMountSubPath,
+      bindingId: binding.bindingId,
+      workConversationId: conversation.workConversationId,
+    });
+    const expectedLayout = deriveOrgAgentTaskWorkspace({
+      agentWorkspaceId: binding.workspaceId,
+      agentRoot,
+      agentMountSubPath,
+      sharedReadOnlySubPath: attempt.sharedReadOnlySubPath,
+      taskId: attempt.runtimeRunId,
+      attemptNo: attempt.attemptNo,
+    });
+    if (shared.mountSubPath !== attempt.sharedReadOnlySubPath
+      || attempt.mountSubPath !== expectedLayout.mountSubPath
+      || attempt.attemptId !== expectedLayout.attemptId
+      || attempt.taskWorkspaceId !== expectedLayout.taskWorkspaceId
+      || attempt.sandboxScopeId !== expectedLayout.sandboxScopeId)
+      throw new Error('ORG_AGENT_ARTIFACT_SCOPE_INVALID');
+    const publishedRoot = `published/${work.workOrderId}/${attempt.attemptId}`;
+    let publishedManifest: Awaited<ReturnType<typeof publishOrgAgentArtifacts>>;
+    try {
+      publishedManifest = await publishOrgAgentArtifacts({
+        taskRoot: join(expectedLayout.taskRoot, 'artifacts'),
+        stagingRoot: join(agentRoot, '.artifact-publish-staging'),
+        sharedRoot: shared.root,
+        publishedRoot,
+        manifest: parseOrgAgentArtifactManifest(attempt.artifactManifest),
+      });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : String(error);
+      const state = code.includes('CONFLICT') || code.includes('INTEGRITY') ? 'conflict' : 'rejected';
+      await store.transitionWorkAttemptPublishState({
+        tenantId, attemptId: attempt.attemptId, expectedState: 'pending', state,
+      }).catch(() => undefined);
+      throw error;
+    }
+    try {
+      return await store.transitionWorkAttemptPublishState({
+        tenantId,
+        attemptId: attempt.attemptId,
+        expectedState: 'pending',
+        state: 'published',
+        artifactManifest: serializeOrgAgentArtifactManifest(publishedManifest),
+      });
+    } catch (error) {
+      const current = (await store.listWorkAttempts(tenantId, workOrderId))
+        .find(item => item.attemptId === attempt.attemptId);
+      if (current?.publishState === 'published') return current;
+      throw error;
+    }
+  }
+
   async cancel(
     tenantId: string,
     workOrderId: string,
@@ -170,6 +293,17 @@ export class OrgAgentBackgroundWorkCoordinator {
     const attempt = (await store.listWorkAttempts(tenantId, workOrderId)).at(-1);
     const task = attempt ? await this.config.runStore?.get(attempt.runtimeRunId) : null;
     const message = '组织管理员取消任务';
+    if (task && isRunTerminal(task.status)) {
+      const state = task.status === 'completed'
+        ? 'completed'
+        : task.status === 'cancelled'
+          ? 'cancelled'
+          : 'failed';
+      const result = parseStoredResult(task.metadata.backgroundResult)
+        ?? terminalResult(state, task.statusReason ?? state);
+      await this.syncTerminal(task, state, result, task.statusReason);
+      return task;
+    }
     if (task && !isRunTerminal(task.status)) {
       const updated = await markBackgroundTaskTerminal(
         this.config.runStore!,
@@ -182,14 +316,31 @@ export class OrgAgentBackgroundWorkCoordinator {
           backgroundFinishedAt: new Date().toISOString(),
         },
       );
-      runtimeRunController.abort(task.runId);
       if (updated) {
+        runtimeRunController.abort(task.runId);
         await resolveSessionCatalog(this.config)
           .markStatus(task.sessionId, 'error')
           .catch(() => undefined);
         await this.syncTerminal(updated, 'cancelled', failedResult('cancelled', message), message);
+        return updated;
       }
-      return updated ?? task;
+      const settled = await this.config.runStore!.get(task.runId);
+      if (settled && isRunTerminal(settled.status)) {
+        const settledState = settled.status === 'completed'
+          ? 'completed'
+          : settled.status === 'cancelled'
+            ? 'cancelled'
+            : 'failed';
+        await this.syncTerminal(
+          settled,
+          settledState,
+          parseStoredResult(settled.metadata.backgroundResult)
+            ?? terminalResult(settledState, settled.statusReason ?? settledState),
+          settled.statusReason,
+        );
+        return settled;
+      }
+      throw new Error('ORG_AGENT_WORK_ORDER_CANCEL_CONFLICT');
     }
     if (!isWorkTerminal(work.state)) {
       const envelope: OrgAgentResultEnvelope = {
@@ -218,14 +369,27 @@ export class OrgAgentBackgroundWorkCoordinator {
     return task ?? null;
   }
 
-  async retry(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord> {
+  async retry(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+    options: {
+      allowPendingArtifacts?: boolean;
+      control?: OrgAgentWorkOrderControl;
+      supersedePendingCompletion?: boolean;
+    } = {},
+  ): Promise<RunRecord> {
     const store = this.config.orgGroupAgentStore;
     const runStore = this.config.runStore;
     if (!store || !runStore?.upsertPending)
       throw new Error('ORG_AGENT_WORK_ORDER_STORE_UNAVAILABLE');
     const work = await store.getWorkOrder(tenantId, workOrderId);
     if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
-    const previousAttempt = (await store.listWorkAttempts(tenantId, workOrderId)).at(-1);
+    const attempts = await store.listWorkAttempts(tenantId, workOrderId);
+    const previousAttempt = attempts.at(-1);
+    if (previousAttempt?.status === 'completed' && previousAttempt.publishState === 'pending'
+      && options.allowPendingArtifacts !== true)
+      throw new Error('ORG_AGENT_ARTIFACT_PUBLISH_REQUIRED_BEFORE_RETRY');
     const previous = previousAttempt ? await runStore.get(previousAttempt.runtimeRunId) : null;
     const metadata = previous ? parseBackgroundTaskMetadata(previous) : null;
     if (!previous || !metadata || metadata.taskType !== 'agent' || !metadata.orgAgentChannel) {
@@ -233,6 +397,17 @@ export class OrgAgentBackgroundWorkCoordinator {
     }
     if (!metadata.sharedReadOnlySubPath)
       throw new Error('ORG_AGENT_WORK_ORDER_SHARED_ROOT_MISSING');
+    const earliestAttempt = attempts[0];
+    const earliestRun = earliestAttempt?.runtimeRunId === previous.runId
+      ? previous
+      : earliestAttempt
+        ? await runStore.get(earliestAttempt.runtimeRunId)
+        : null;
+    const earliestBasePrompt = earliestRun && typeof earliestRun.metadata.basePrompt === 'string'
+      && earliestRun.metadata.basePrompt.length > 0 ? earliestRun.metadata.basePrompt : undefined;
+    const earliestPrompt = earliestRun && typeof earliestRun.metadata.prompt === 'string'
+      && earliestRun.metadata.prompt.length > 0 ? earliestRun.metadata.prompt : undefined;
+    const basePrompt = earliestBasePrompt ?? earliestPrompt ?? metadata.basePrompt ?? metadata.prompt;
     const catalog = resolveSessionCatalog(this.config);
     const previousSession = await catalog.get(previous.sessionId);
     if (!previousSession) throw new Error('ORG_AGENT_WORK_ORDER_SESSION_MISSING');
@@ -248,8 +423,12 @@ export class OrgAgentBackgroundWorkCoordinator {
       taskId,
       attemptNo: nextAttemptNo,
     });
-    await mkdir(layout.taskRoot, { recursive: true });
-    await store.reopenWorkOrder({ tenantId, workOrderId, expectedVersion });
+      await mkdir(join(layout.taskRoot, 'artifacts'), { recursive: true });
+    const queuedWork = await store.queueWorkOrderAttempt({
+      tenantId, workOrderId, expectedVersion,
+      ...(options.control ? { control: options.control } : {}),
+      ...(options.supersedePendingCompletion ? { supersedePendingCompletion: true } : {}),
+    });
     try {
       await catalog.upsert(
         createRuntimeSessionRecord({
@@ -275,6 +454,17 @@ export class OrgAgentBackgroundWorkCoordinator {
           ...(previousSession.principal ? { principal: previousSession.principal } : {}),
         }),
       );
+      await store.createWorkAttempt({
+        tenantId,
+        workOrderId,
+        runtimeRunId: taskId,
+        attemptId: layout.attemptId,
+        parentAttemptId: previousAttempt?.attemptId,
+        taskWorkspaceId: layout.taskWorkspaceId,
+        sandboxScopeId: layout.sandboxScopeId,
+        mountSubPath: layout.mountSubPath,
+        sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
+      });
       await runStore.upsertPending({
         runId: taskId,
         sessionId,
@@ -290,9 +480,16 @@ export class OrgAgentBackgroundWorkCoordinator {
           ...previous.metadata,
           backgroundTaskReady: false,
           backgroundTaskVersion: 2,
+          description: queuedWork.title,
+          basePrompt,
+          prompt: withWorkOrderControlPrompt(basePrompt, queuedWork),
+          agentType: queuedWork.control.workerType,
+          workOrderShortId: queuedWork.shortId,
+          workOrderControlRevision: queuedWork.control.revision,
           workOrderId,
           attemptId: layout.attemptId,
           attemptNo: nextAttemptNo,
+          ...(previousAttempt ? { parentAttemptId: previousAttempt.attemptId } : {}),
           cwd: layout.taskRoot,
           workspaceId: layout.taskWorkspaceId,
           mountSubPath: layout.mountSubPath,
@@ -308,26 +505,87 @@ export class OrgAgentBackgroundWorkCoordinator {
           lifecycleFinishedAt: null,
         },
       });
-      await store.createWorkAttempt({
-        tenantId,
-        workOrderId,
-        runtimeRunId: taskId,
-        attemptId: layout.attemptId,
-        parentAttemptId: previousAttempt?.attemptId,
-        taskWorkspaceId: layout.taskWorkspaceId,
-        sandboxScopeId: layout.sandboxScopeId,
-        mountSubPath: layout.mountSubPath,
-        sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
-      });
-      const activated = await runStore.markStatus(taskId, 'pending', 'background_agent_retry_started', {
+      const activate = runStore.activateStagedOrgAgentBackgroundTask;
+      if (!activate) throw new Error('ORG_AGENT_STAGED_ACTIVATION_UNAVAILABLE');
+      const activated = await activate.call(runStore, taskId, 'background_agent_retry_started', {
         backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
       });
       if (!activated) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_ACTIVATION_FAILED');
       return activated;
     } catch (error) {
-      await this.failSetup(tenantId, workOrderId, taskId, layout.taskRoot, error);
+      await this.failSetup(
+        tenantId,
+        workOrderId,
+        taskId,
+        layout.taskRoot,
+        error,
+        nextAttemptNo,
+      );
       throw error;
     }
+  }
+
+  async pause(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+  ): Promise<RunRecord | null> {
+    const store = this.config.orgGroupAgentStore;
+    const runStore = this.config.runStore;
+    if (!store || !runStore) throw new Error('ORG_AGENT_WORK_ORDER_STORE_UNAVAILABLE');
+    const work = await store.getWorkOrder(tenantId, workOrderId);
+    if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
+    const attempt = (await store.listWorkAttempts(tenantId, workOrderId))
+      .find(item => item.attemptNo === work.currentAttemptNo);
+    const task = attempt ? await runStore.get(attempt.runtimeRunId) : null;
+    if (task && isRunTerminal(task.status)) {
+      const state = task.status === 'completed' ? 'completed'
+        : task.status === 'cancelled' ? 'cancelled' : 'failed';
+      await this.syncTerminal(
+        task, state,
+        parseStoredResult(task.metadata.backgroundResult) ?? terminalResult(state, task.statusReason ?? state),
+        task.statusReason,
+      );
+      throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_TERMINAL_RACE');
+    }
+    if (task && !isRunTerminal(task.status)) {
+      const stopped = await markBackgroundTaskTerminal(runStore, task.runId, 'cancelled', '组织群任务已暂停', {
+        backgroundResult: failedResult('cancelled', '组织群任务已暂停，恢复时会创建新 attempt'),
+        wakeState: 'pending',
+        backgroundFinishedAt: new Date().toISOString(),
+        orgAgentAttemptSuperseded: true,
+        orgAgentPauseAttemptNo: work.currentAttemptNo,
+      });
+      if (!stopped) {
+        const current = await runStore.get(task.runId);
+        if (!current || current.status !== 'cancelled' || current.metadata.orgAgentAttemptSuperseded !== true)
+          throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_RUN_CONFLICT');
+      }
+      runtimeRunController.abort(task.runId);
+      await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
+    }
+    await store.pauseWorkOrder({ tenantId, workOrderId, expectedVersion });
+    return task;
+  }
+
+  async reconcileSuperseded(record: RunRecord): Promise<boolean> {
+    const metadata = parseBackgroundTaskMetadata(record);
+    const store = this.config.orgGroupAgentStore;
+    if (!store || !metadata?.workOrderId || !metadata.orgAgentChannel
+      || record.metadata.orgAgentAttemptSuperseded !== true) return true;
+    const tenantId = metadata.orgAgentChannel.agentPrincipal.tenantId;
+    const [work, attempts] = await Promise.all([
+      store.getWorkOrder(tenantId, metadata.workOrderId),
+      store.listWorkAttempts(tenantId, metadata.workOrderId),
+    ]);
+    const attempt = attempts.find(item => item.runtimeRunId === record.runId);
+    if (!work || !attempt || attempt.attemptNo !== work.currentAttemptNo) return true;
+    if (work.state === 'paused' && attempt.status === 'cancelled') return true;
+    if (['completed', 'failed', 'cancelled'].includes(work.state)) return true;
+    if (record.status !== 'cancelled' || !['queued', 'running', 'waiting_input'].includes(work.state))
+      return false;
+    await store.pauseWorkOrder({ tenantId, workOrderId: work.workOrderId, expectedVersion: work.version });
+    return true;
   }
 
   async failSetup(
@@ -336,6 +594,7 @@ export class OrgAgentBackgroundWorkCoordinator {
     taskId: string,
     taskRoot: string,
     error: unknown,
+    expectedAttemptNo?: number,
   ): Promise<void> {
     const store = this.config.orgGroupAgentStore!;
     const message = error instanceof Error ? error.message : String(error);
@@ -346,7 +605,7 @@ export class OrgAgentBackgroundWorkCoordinator {
       artifacts: [],
       writeScope: [taskRoot],
     };
-    await store.transitionWorkAttempt({
+    const failedAttempt = await store.transitionWorkAttempt({
       tenantId,
       runtimeRunId: taskId,
       status: 'failed',
@@ -354,7 +613,12 @@ export class OrgAgentBackgroundWorkCoordinator {
       failure: message,
     });
     const current = await store.getWorkOrder(tenantId, workOrderId);
-    if (current && !isWorkTerminal(current.state))
+    const ownsCurrentAttempt = expectedAttemptNo === undefined
+      ? failedAttempt?.attemptNo === current?.currentAttemptNo
+      : failedAttempt
+        ? failedAttempt.attemptNo === expectedAttemptNo && current?.currentAttemptNo === expectedAttemptNo
+        : current?.state === 'queued' && current.currentAttemptNo === expectedAttemptNo - 1;
+    if (current && ownsCurrentAttempt && !isWorkTerminal(current.state))
       await store.transitionWorkOrder({
         tenantId,
         workOrderId,
@@ -363,6 +627,14 @@ export class OrgAgentBackgroundWorkCoordinator {
         resultEnvelope: envelope,
       });
   }
+}
+
+function withWorkOrderControlPrompt(basePrompt: string, work: OrgAgentWorkOrder): string {
+  if (work.control.supplements.length === 0) return basePrompt;
+  const additions = work.control.supplements.map((item, index) => (
+    `${index + 1}. [${item.kind === 'review' ? '复核要求' : '补充要求'}] ${item.text}`
+  )).join('\n');
+  return `${basePrompt}\n\n<work-order-continuation revision="${work.control.revision}">\n${additions}\n</work-order-continuation>`;
 }
 
 export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boolean {
@@ -401,6 +673,21 @@ function failedResult(status: 'failed' | 'cancelled', message: string): StoredBa
     status,
     text: '',
     errorMessage: message,
+    totalTokens: 0,
+    toolUseCount: 0,
+    turnCount: 0,
+    durationMs: 0,
+  };
+}
+
+function terminalResult(
+  status: 'completed' | 'failed' | 'cancelled',
+  message: string,
+): StoredBackgroundResult {
+  return {
+    status,
+    text: status === 'completed' ? message : '',
+    ...(status === 'completed' ? {} : { errorMessage: message }),
     totalTokens: 0,
     toolUseCount: 0,
     turnCount: 0,

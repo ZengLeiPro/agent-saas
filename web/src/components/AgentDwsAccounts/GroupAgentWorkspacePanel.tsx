@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { authFetch } from '@/lib/authFetch';
+import { WorkOrderControls } from './WorkOrderControls';
 
 interface Binding {
   bindingId: string;
@@ -27,7 +28,7 @@ interface Binding {
   revision: number;
   policy: {
     enabled: boolean;
-    membership: 'members';
+    membership: 'members' | 'members_and_guests';
     guest: 'deny' | 'shared_read_only';
     taskVisibility: 'conversation' | 'requester_only';
     completion: 'reply_to_work_conversation' | 'silent';
@@ -45,10 +46,21 @@ interface Binding {
 
 interface WorkOrder {
   workOrderId: string;
+  shortId: string;
   title: string;
   state: string;
   version: number;
   currentAttemptNo: number;
+  control: {
+    revision: number;
+    workerType: 'general' | 'explore';
+    supplements: Array<{
+      text: string;
+      actorOpenId: string;
+      createdAt: string;
+      kind: 'supplement' | 'review';
+    }>;
+  };
   updatedAt: string;
   attempts: Array<{
     attemptId: string;
@@ -58,6 +70,13 @@ interface WorkOrder {
     sandboxScopeId?: string;
     mountSubPath?: string;
     sharedReadOnlySubPath?: string;
+    publishState: 'pending' | 'published' | 'conflict' | 'rejected';
+    artifactManifest?: {
+      version?: number;
+      files?: Array<{ path: string; digest: string; size: number }>;
+      totalBytes?: number;
+      publishedRoot?: string;
+    };
   }>;
 }
 interface Memory {
@@ -289,17 +308,54 @@ export function GroupAgentWorkspacePanel({
                         重试
                       </Button>
                     ) : null}
+                    {work.state === 'completed'
+                      && work.attempts.at(-1)?.publishState === 'pending' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={Boolean(busy)}
+                          onClick={() => void mutate(
+                            `publish:${work.workOrderId}`,
+                            `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/work-orders/${encodeURIComponent(work.workOrderId)}/action`,
+                            { action: 'publish', expectedVersion: work.version },
+                          )}
+                        >
+                          发布产物
+                        </Button>
+                      ) : null}
                   </div>
+                  <WorkOrderControls
+                    workOrder={work}
+                    disabled={Boolean(busy)}
+                    onAction={(action, extra = {}) =>
+                      mutate(
+                        `${action}:${work.workOrderId}`,
+                        `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/work-orders/${encodeURIComponent(work.workOrderId)}/action`,
+                        { action, expectedVersion: work.version, ...extra },
+                      )
+                    }
+                  />
                   <details className="mt-2 text-xs text-muted-foreground">
                     <summary className="cursor-pointer">查看执行证据</summary>
                     <div className="mt-2 space-y-1 font-mono">
-                      <div>WorkOrder {work.workOrderId}</div>
+                      <div>WorkOrder {work.shortId} · {work.workOrderId}</div>
+                      <div>Worker {work.control.workerType} · 控制版本 {work.control.revision}</div>
+                      {work.control.supplements.map((supplement, index) => (
+                        <div key={`${supplement.createdAt}:${index}`}>
+                          {supplement.kind} · {supplement.actorOpenId} · {supplement.text}
+                        </div>
+                      ))}
                       {work.attempts.map((attempt, index) => (
                         <div key={attempt.attemptId}>
                           #{index + 1} {attempt.status} · {attempt.attemptId} · run{' '}
                           {attempt.runtimeRunId}
                           {attempt.taskWorkspaceId ? ` · workspace ${attempt.taskWorkspaceId}` : ''}
                           {attempt.sandboxScopeId ? ` · sandbox ${attempt.sandboxScopeId}` : ''}
+                          {` · publish ${attempt.publishState}`}
+                          {attempt.artifactManifest?.files
+                            ? ` · artifacts ${attempt.artifactManifest.files.length}` : ''}
+                          {attempt.artifactManifest?.publishedRoot
+                            ? ` · published ${attempt.artifactManifest.publishedRoot}` : ''}
                         </div>
                       ))}
                     </div>
@@ -451,6 +507,11 @@ function BindingEditor({
   const [liveDeny, setLiveDeny] = useState(binding.policy.liveDeny);
   const [completion, setCompletion] = useState(binding.policy.completion);
   const [guest, setGuest] = useState(binding.policy.guest);
+  const [displayName, setDisplayName] = useState(binding.effectiveConfig.identity.displayName ?? '');
+  const [contextEnabled, setContextEnabled] = useState(binding.effectiveConfig.knowledge.contextEnabled);
+  const [taskVisibility, setTaskVisibility] = useState(binding.policy.taskVisibility);
+  const [triggerRoles, setTriggerRoles] = useState(binding.effectiveConfig.access.triggerRoles);
+  const [approvalRoles, setApprovalRoles] = useState(binding.effectiveConfig.access.approvalRoles);
   const [skills, setSkills] = useState(binding.effectiveConfig.capabilities.skillIds.join(', '));
   const [tools, setTools] = useState(binding.effectiveConfig.capabilities.toolNames.join(', '));
   const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds.join(', '));
@@ -467,14 +528,26 @@ function BindingEditor({
             conversationId: binding.conversationId,
             expectedRevision: binding.revision,
             enabled,
-            policy: { ...binding.policy, enabled, liveDeny, completion, guest },
+            policy: {
+              ...binding.policy,
+              enabled,
+              liveDeny,
+              completion,
+              guest,
+              taskVisibility,
+              membership: guest === 'shared_read_only' ? 'members_and_guests' : 'members',
+            },
             effectiveConfig: {
               ...binding.effectiveConfig,
+              identity: { displayName: displayName.trim() || undefined },
               knowledge: {
-                contextEnabled: binding.effectiveConfig.knowledge.contextEnabled,
+                contextEnabled,
                 sourceIds: csv(sources),
               },
               capabilities: { skillIds: csv(skills), toolNames: csv(tools) },
+              access: { triggerRoles, approvalRoles },
+              // 当前钉钉入口只接收群内 @ 事件；这不是可由界面放开的能力。
+              speech: { proactive: false, requireMention: true },
             },
           }),
         },
@@ -505,24 +578,90 @@ function BindingEditor({
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div>
+          <Label htmlFor={`display-name-${binding.bindingId}`}>前台显示名</Label>
+          <Input
+            id={`display-name-${binding.bindingId}`}
+            value={displayName}
+            placeholder="默认使用账号显示名"
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+        </div>
+        <div>
           <Label>技能 ID</Label>
           <Input value={skills} onChange={(event) => setSkills(event.target.value)} />
         </div>
         <div>
           <Label>工具名</Label>
           <Input value={tools} onChange={(event) => setTools(event.target.value)} />
+          <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <Switch
+              checked={csv(tools).includes('DwsBusiness')}
+              onCheckedChange={(checked) => {
+                const next = csv(tools).filter((name) => name !== 'DwsBusiness');
+                setTools((checked ? [...next, 'DwsBusiness'] : next).join(', '));
+              }}
+              aria-label="启用钉钉业务工具"
+            />
+            启用钉钉业务工具（共享群受动作矩阵约束）
+          </label>
         </div>
         <div>
           <Label>知识源 ID</Label>
           <Input value={sources} onChange={(event) => setSources(event.target.value)} />
         </div>
       </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={contextEnabled}
+            onCheckedChange={setContextEnabled}
+            aria-label="启用企业上下文"
+          />
+          启用企业上下文
+        </label>
+        <p className="text-xs text-muted-foreground md:col-span-2">
+          启用后须配置知识源，并在工具名中保留 ContextSearch 与 ContextGet；服务端会按当前群绑定再次校验。
+        </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <div>
+          <Label>任务可见范围</Label>
+          <Select
+            value={taskVisibility}
+            onValueChange={(value) => setTaskVisibility(value as Binding['policy']['taskVisibility'])}
+          >
+            <SelectTrigger aria-label="任务可见范围">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="conversation">同一群话题可见</SelectItem>
+              <SelectItem value="requester_only">仅发起人可见</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <RoleToggles
+          label="可触发角色"
+          selected={triggerRoles}
+          onChange={setTriggerRoles}
+          idPrefix={`trigger-role-${binding.bindingId}`}
+        />
+        <RoleToggles
+          label="可审批/管理角色"
+          selected={approvalRoles}
+          onChange={setApprovalRoles}
+          idPrefix={`approval-role-${binding.bindingId}`}
+        />
+      </div>
+      <div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">发言触发：</span>
+        当前仅支持群内 @ 前台账号触发；必须 @，不支持主动发言。
+      </div>
       <div className="flex flex-wrap gap-3">
         <Select
           value={guest}
           onValueChange={(value) => setGuest(value as Binding['policy']['guest'])}
         >
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-48" aria-label="游客访问">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -534,7 +673,7 @@ function BindingEditor({
           value={completion}
           onValueChange={(value) => setCompletion(value as Binding['policy']['completion'])}
         >
-          <SelectTrigger className="w-56">
+          <SelectTrigger className="w-56" aria-label="完成投递">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -564,5 +703,37 @@ function BindingEditor({
         </pre>
       </details>
     </section>
+  );
+}
+
+function RoleToggles({
+  label,
+  selected,
+  onChange,
+  idPrefix,
+}: {
+  label: string;
+  selected: string[];
+  onChange(value: string[]): void;
+  idPrefix: string;
+}) {
+  const toggle = (role: 'member' | 'org_admin', checked: boolean) => {
+    onChange(checked ? [...new Set([...selected, role])] : selected.filter((item) => item !== role));
+  };
+  return (
+    <fieldset className="space-y-1">
+      <legend className="text-sm font-medium">{label}</legend>
+      {(['member', 'org_admin'] as const).map((role) => (
+        <label key={role} className="mr-3 inline-flex items-center gap-2 text-sm">
+          <Switch
+            checked={selected.includes(role)}
+            onCheckedChange={(checked) => toggle(role, checked)}
+            aria-label={`${label}：${role}`}
+            id={`${idPrefix}-${role}`}
+          />
+          {role === 'member' ? '成员' : '组织管理员'}
+        </label>
+      ))}
+    </fieldset>
   );
 }

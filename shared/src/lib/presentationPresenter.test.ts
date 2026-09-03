@@ -139,7 +139,7 @@ describe('Tool presenter', () => {
     }
   });
 
-  it('keeps raw card detail behind the shared three-gate decision only', () => {
+  it('keeps raw card detail behind the resolved session debug permission', () => {
     const item = toolItem(
       'completed',
       { title: '调试摘要' },
@@ -147,11 +147,7 @@ describe('Tool presenter', () => {
       'RAW_RESULT_SENTINEL',
     );
     const closed = selectToolPresentation(item);
-    const open = selectToolPresentation(item, {
-      debugBuild: true,
-      authenticatedAdmin: true,
-      explicitSessionToggle: true,
-    });
+    const open = selectToolPresentation(item, { explicitSessionToggle: true });
     expect(JSON.stringify(selectPresentationCardViewModel(item, closed))).not.toContain(
       'RAW_INPUT_SENTINEL',
     );
@@ -270,22 +266,18 @@ describe('BusinessStep presenter', () => {
 });
 
 describe('raw disclosure policy and hostile structures', () => {
-  const booleans = [false, true] as const;
-  for (const debugBuild of booleans) {
-    for (const authenticatedAdmin of booleans) {
-      for (const explicitSessionToggle of booleans) {
-        it(`enforces debug/admin/session gates: ${Number(debugBuild)}${Number(authenticatedAdmin)}${Number(explicitSessionToggle)}`, () => {
-          const gate = { debugBuild, authenticatedAdmin, explicitSessionToggle };
-          const expected = debugBuild && authenticatedAdmin && explicitSessionToggle;
-          expect(canShowRawPresentation(gate)).toBe(expected);
-          expect(selectToolPresentation(toolItem(), gate).showRaw).toBe(expected);
-          expect(
-            selectBusinessStepPresentation({ content: '步骤', status: 'pending' }, gate).showRaw,
-          ).toBe(expected);
-        });
-      }
-    }
-  }
+  it.each([
+    [{ explicitSessionToggle: true }, true],
+    [{ sessionRawEnabled: true }, true],
+    [{ explicitSessionToggle: false }, false],
+    [undefined, false],
+  ] as const)('只按已解析的会话调试权限决定 raw disclosure：%j', (gate, expected) => {
+    expect(canShowRawPresentation(gate)).toBe(expected);
+    expect(selectToolPresentation(toolItem(), gate).showRaw).toBe(expected);
+    expect(
+      selectBusinessStepPresentation({ content: '步骤', status: 'pending' }, gate).showRaw,
+    ).toBe(expected);
+  });
 
   it('does not invoke getters/toJSON and survives cycles/depth/oversized arrays', () => {
     let getterCalls = 0;

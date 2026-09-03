@@ -72,6 +72,14 @@ describe('M40-04 ToolBlock canonical 状态与退出码徽标', () => {
     expect(screen.getByText('已取消')).toBeTruthy();
   });
 
+  it('桌面工具行保持紧凑，粗指针设备保留 44px 点击高度', () => {
+    renderBlock('completed');
+    const trigger = screen.getByRole('button', { name: /钉钉 · 待办 · create/ });
+    expect(trigger.className).toContain('min-h-6');
+    expect(trigger.className).toContain('[@media(pointer:coarse)]:min-h-11');
+    expect(trigger.className).not.toMatch(/(?:^|\s)min-h-11(?:\s|$)/);
+  });
+
   it.each(['completed', 'failed', 'cancelled'] as const)('终态 %s 不残留 spinner', (status) => {
     const { container } = renderBlock(status);
     expect(container.querySelector('.animate-spin')).toBeNull();

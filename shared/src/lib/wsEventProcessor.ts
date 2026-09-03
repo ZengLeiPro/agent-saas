@@ -961,9 +961,15 @@ export function processWsEvent(
   }
   if (data.type === "pending_interactions") {
     if (data.sessionId !== (activeSessionId ?? latestSessionId?.value)) return;
+    const livePendingIds = new Set(msg.messagesRef.current.flatMap((message) =>
+      (message.type === 'permission_request' || message.type === 'ask_user') && message.status === 'pending'
+        ? [message.interactionId]
+        : [],
+    ));
     commitInteractionProjection(msg, projectPendingInteractionSnapshot(
       msg.messagesRef.current, data.interactions, data.sessionId ?? activeSessionId ?? latestSessionId.value ?? '',
       ctx.resolvedInteractionIdsRef?.current,
+      livePendingIds,
     ));
     if (data.sessionId) ctx.onInteractionsChanged?.(data.sessionId);
     return;

@@ -131,6 +131,46 @@ describe('interaction projection', () => {
     ).toBe(false);
   });
 
+  it('collapses a historical Answered plus pending duplicate when a stale request arrives', () => {
+    const messages: MessageItem[] = [
+      { id: 'answered', type: 'ask_user', interactionId: 'duplicate', questions, status: 'answered', answers: { q: 'yes' } },
+      { id: 'pending', type: 'ask_user', interactionId: 'duplicate', questions, status: 'pending' },
+      { id: 'waiting', type: 'runtime_status', status: 'waiting_user', content: '待补充', streaming: true },
+    ];
+    const projected = projectInteractionRequest(messages, {
+      type: 'ask_user', interactionId: 'duplicate', version: 1, order: 1, questions,
+    });
+    expect(projected.filter((message) => message.type === 'ask_user')).toEqual([
+      expect.objectContaining({ id: 'answered', status: 'answered' }),
+    ]);
+    expect(projected.some((message) => message.type === 'runtime_status' && message.status === 'waiting_user')).toBe(false);
+  });
+
+  it('does not let an older WS pending snapshot delete a newer live interaction', () => {
+    const messages: MessageItem[] = [];
+    const context = createContext(messages);
+    processWsEvent(
+      { type: 'ask_user', interactionId: 'new-live', version: 2, order: 2, questions },
+      context,
+      { currentBlockIndex: -1, currentBlockType: null },
+      { value: 's' },
+      's',
+    );
+    processWsEvent(
+      { type: 'pending_interactions', sessionId: 's', interactions: [
+        { type: 'ask_user', interactionId: 'old-snapshot', version: 1, order: 1, questions },
+      ] },
+      context,
+      { currentBlockIndex: -1, currentBlockType: null },
+      { value: 's' },
+      's',
+    );
+    expect(messages.filter((message) => message.type === 'ask_user').map((message) => message.interactionId)).toEqual([
+      'new-live',
+      'old-snapshot',
+    ]);
+  });
+
   it('applies a repeated failed terminal once without deleting adjacent messages', () => {
     const messages: MessageItem[] = [
       {

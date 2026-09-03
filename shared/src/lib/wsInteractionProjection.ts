@@ -143,8 +143,9 @@ export function projectInteractionRequest(
   const matches = next.flatMap((message, index) =>
     isInteractionMessage(message) && message.interactionId === request.interactionId ? [index] : [],
   );
-  if (matches.some((index) => isTerminalInteractionMessage(next[index] as InteractionMessage)))
-    return withPendingRuntimeStatus(next);
+  if (matches.some((index) => isTerminalInteractionMessage(next[index] as InteractionMessage))) {
+    return projectInteractionResolution(next, request.interactionId);
+  }
   const first = matches[0];
   const projected = requestToMessage(
     request,

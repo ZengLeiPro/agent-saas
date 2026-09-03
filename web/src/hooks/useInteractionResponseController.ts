@@ -288,17 +288,26 @@ export function useInteractionResponseController(options: Options) {
     [currentSessionId, releaseResponse],
   );
 
+  const handlePermissionResponse = useCallback(
+    (interactionId: string, allow: boolean) =>
+      respondToInteraction(interactionId, 'permission_request', {
+        allow,
+        message: allow ? undefined : 'User denied',
+      }),
+    [respondToInteraction],
+  );
+  const handleAskUserResponse = useCallback(
+    (interactionId: string, answers: AskUserAnswers) =>
+      respondToInteraction(interactionId, 'ask_user', { answers }),
+    [respondToInteraction],
+  );
+
   return {
     releaseAllResponses,
     resolveInteractionResponse,
     syncInteractionRuntime,
     finalizeInteractionProjection,
-    handlePermissionResponse: (interactionId: string, allow: boolean) =>
-      respondToInteraction(interactionId, 'permission_request', {
-        allow,
-        message: allow ? undefined : 'User denied',
-      }),
-    handleAskUserResponse: (interactionId: string, answers: AskUserAnswers) =>
-      respondToInteraction(interactionId, 'ask_user', { answers }),
+    handlePermissionResponse,
+    handleAskUserResponse,
   };
 }

@@ -385,8 +385,8 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
-      ALIYUN_AK: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-      ALIYUN_SK: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      ACR_AK: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
+      ACR_SK: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
       ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
       ACR_REPO_ID: crr-csx99pbexlsw5qqv
       ACR_BUILD_RULE_ID: crbr-xgrdo809of1uj6in
@@ -539,8 +539,8 @@ jobs:
           ACR_WEBHOOK_REDELIVERY_TOKEN: ${{ secrets.ACS_WEBHOOK_REDELIVERY_TOKEN }}
         run: |
           set -euo pipefail
-          : "${ALIYUN_AK:?Missing secret ALIYUN_ACCESS_KEY_ID}"
-          : "${ALIYUN_SK:?Missing secret ALIYUN_ACCESS_KEY_SECRET}"
+          : "${ACR_AK:?Missing secret ACR_READ_ACCESS_KEY_ID}"
+          : "${ACR_SK:?Missing secret ACR_READ_ACCESS_KEY_SECRET}"
           SHA6="${GITHUB_SHA:0:6}"
           MAX_PENDING_POLLS=40
           MAX_BUILDING_POLLS=60
@@ -553,22 +553,42 @@ jobs:
           query_errors=0
           build_record_found=false
           redelivery_checked=false
+          records_file="$RUNNER_TEMP/acr-build-records.json"
+          query_error_file="$RUNNER_TEMP/acr-build-records.error"
           echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
           while true; do
             poll_index=$((poll_index + 1))
+            set +e
             aliyun cr ListRepoBuildRecord \
-              --mode AK --access-key-id "$ALIYUN_AK" --access-key-secret "$ALIYUN_SK" \
+              --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
               --region "$ACR_REGION_ID" \
               --InstanceId "$ACR_INSTANCE_ID" \
               --RepoId "$ACR_REPO_ID" \
-              --PageNo 1 --PageSize 20 >/tmp/records.json 2>/dev/null || true
-            result=$(python3 - "$SHA6" <<'PY'
-          import json, sys
+              --PageNo 1 --PageSize 20 >"$records_file" 2>"$query_error_file"
+            query_status=$?
+            set -e
+            result=$(python3 - "$SHA6" "$query_status" "$records_file" "$query_error_file" <<'PY'
+          import json, pathlib, sys
+
           sha6 = sys.argv[1]
+          query_status = int(sys.argv[2])
+          records_path = pathlib.Path(sys.argv[3])
+          error_path = pathlib.Path(sys.argv[4])
+
+          def clean(value):
+              return ' '.join(str(value or '').replace('::', ':').split())[:500]
+
           try:
-              data = json.load(open('/tmp/records.json'))
-          except Exception:
-              print('PARSE_ERROR'); raise SystemExit
+              data = json.loads(records_path.read_text())
+          except Exception as error:
+              detail = clean(error_path.read_text(errors='replace')) or clean(error)
+              print(f'QUERY_ERROR\t\tCLI exit {query_status}: {detail}')
+              raise SystemExit
+          if query_status != 0 or data.get('Code') != 'success' or data.get('IsSuccess') is not True:
+              detail = clean(data.get('Message')) or clean(error_path.read_text(errors='replace'))
+              code = clean(data.get('Code')) or 'unknown'
+              print(f'QUERY_ERROR\t\tCLI exit {query_status}, code {code}: {detail}')
+              raise SystemExit
           for r in data.get('BuildRecords', []):
               tag = (r.get('Image') or {}).get('ImageTag', '')
               if tag.endswith('-' + sha6):
@@ -580,6 +600,7 @@ jobs:
             )
             bstatus=$(echo "$result" | cut -f1)
             btag=$(echo "$result" | cut -f2 -s)
+            bdetail=$(echo "$result" | cut -f3- -s)
             echo "  [$poll_index] $bstatus ${btag:-}"
             case "$bstatus" in
               SUCCESS)
@@ -623,10 +644,11 @@ jobs:
                   exit 1
                 fi
                 ;;
-              PARSE_ERROR)
+              QUERY_ERROR)
                 query_errors=$((query_errors + 1))
+                echo "::warning title=ACR query failed::${bdetail:-Unknown ACR API error}"
                 if [ "$query_errors" -ge "$MAX_QUERY_ERRORS" ]; then
-                  echo "::error title=ACR query failed::Unable to parse ACR build records for $query_errors consecutive checks."
+                  echo "::error title=ACR query failed::Unable to query ACR build records for $query_errors consecutive checks."
                   exit 1
                 fi
                 ;;
@@ -666,7 +688,7 @@ jobs:
           set -euo pipefail
           image_tag='${{ steps.wait.outputs.image_tag }}'
           aliyun cr GetRepoTag \
-            --mode AK --access-key-id "$ALIYUN_AK" --access-key-secret "$ALIYUN_SK" \
+            --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
             --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
             --RepoId "$ACR_REPO_ID" --Tag "$image_tag" > "$RUNNER_TEMP/acr-tag.json"
           raw_digest="$(jq -r .Digest "$RUNNER_TEMP/acr-tag.json")"

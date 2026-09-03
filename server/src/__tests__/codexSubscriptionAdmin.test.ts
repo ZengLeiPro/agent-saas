@@ -301,6 +301,7 @@ describe('Codex subscription admin router', () => {
     expect(twoState.credentials).toHaveLength(2);
     const firstId = twoState.credentials[0].id as string;
     const secondId = twoState.credentials[1].id as string;
+    expect(closeWebSockets).toHaveBeenLastCalledWith([secondId]);
 
     const reorder = await fetch(`${baseUrl}/credentials/order`, {
       method: 'PUT',
@@ -322,5 +323,6 @@ describe('Codex subscription admin router', () => {
     expect(remaining.credentials).toHaveLength(1);
     expect(remaining.credentials[0].id).toBe(firstId);
     expect(closeWebSockets).toHaveBeenCalledTimes(3);
+    expect(closeWebSockets).toHaveBeenLastCalledWith([secondId]);
   });
 });

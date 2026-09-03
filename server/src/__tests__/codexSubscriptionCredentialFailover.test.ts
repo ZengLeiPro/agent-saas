@@ -292,11 +292,11 @@ describe('Codex subscription credential failover', () => {
     });
   });
 
-  it('OAuth HTTP 5xx 即使错误体包含 invalid_grant 也不会切换账号', async () => {
+  it.each([500, 502, 503, 504])('OAuth HTTP %i 即使错误体命中凭据文本也不会切换账号', async (status) => {
     const { manager } = await createFixture();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      error: 'invalid_grant',
-    }), { status: 500, headers: { 'content-type': 'application/json' } }));
+      error: 'secret not found: token 缺少',
+    }), { status, headers: { 'content-type': 'application/json' } }));
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('', { status: 401 }));
     const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
 
@@ -304,7 +304,7 @@ describe('Codex subscription credential failover', () => {
       serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
       context,
       clientRequestId: 'oauth-5xx-request',
-    })).rejects.toThrow(/OAuth refresh 失败（HTTP 500）/);
+    })).rejects.toThrow(new RegExp(`OAuth refresh 失败（HTTP ${status}）`));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((await manager.getStatuses())[0]).toMatchObject({ availability: 'available' });

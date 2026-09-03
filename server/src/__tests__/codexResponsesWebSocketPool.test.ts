@@ -330,6 +330,7 @@ describe('CodexResponsesWebSocketPool', () => {
 
     const changedOriginatorPending = pool.execute({
       ...request(body(input)),
+      credentialGeneration: 2,
       originator: 'kaiyan-agent',
     });
     await waitForSend(changedOriginatorSocket);
@@ -342,10 +343,11 @@ describe('CodexResponsesWebSocketPool', () => {
     expect(connector.mock.calls[4]?.[0]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({ originator: 'kaiyan-agent' }),
     }));
-    expect(originalSocket.readyState).toBe(1);
-    expect(changedAccountSocket.readyState).toBe(1);
-    pool.closeCredentialRefs(['credential-1']);
     expect(originalSocket.readyState).toBe(3);
+    expect(changedAccountSocket.readyState).toBe(3);
+    expect(changedGenerationSocket.readyState).toBe(1);
+    pool.closeCredentialRefs(['credential-1']);
+    expect(changedGenerationSocket.readyState).toBe(3);
     expect(changedCredentialSocket.readyState).toBe(1);
     pool.close();
   });

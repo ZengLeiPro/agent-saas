@@ -15,7 +15,7 @@ export interface CreateCodexSubscriptionAdminRouterOptions {
   config: AppConfig;
   credentialManager: CodexCredentialManager;
   deviceAuthService: CodexDeviceAuthService;
-  closeWebSockets?: () => void;
+  closeWebSockets?: (credentialRefs?: readonly string[]) => void;
   configMutationService?: AdminConfigMutationService;
 }
 
@@ -63,7 +63,9 @@ async function persistConfig(
       if (!candidate.codexSubscription) throw new Error('codexSubscription 配置无效');
       const previous = options.credentialManager.getConfiguration();
       options.config.codexSubscription = candidate.codexSubscription;
-      if (shouldCloseWebSockets(previous, candidate.codexSubscription)) options.closeWebSockets?.();
+      const invalidation = webSocketInvalidation(previous, candidate.codexSubscription);
+      if (invalidation === 'all') options.closeWebSockets?.();
+      else if (invalidation.length > 0) options.closeWebSockets?.(invalidation);
     },
   });
   return result.config.codexSubscription!;
@@ -217,7 +219,7 @@ export function createCodexSubscriptionAdminRouter(
         }
         throw error;
       }
-      if (replaceCredentialRef) options.closeWebSockets?.();
+      if (replaceCredentialRef) options.closeWebSockets?.([replaceCredentialRef]);
       options.deviceAuthService.complete(req.params.sessionId);
       res.json({ status: 'completed', ...(await publicState(options)) });
     } catch (error) {
@@ -287,14 +289,15 @@ export function createCodexSubscriptionAdminRouter(
   return router;
 }
 
-function shouldCloseWebSockets(
+function webSocketInvalidation(
   previous: ReturnType<CodexCredentialManager['getConfiguration']>,
   next: CodexSubscriptionConfig,
-): boolean {
-  if (previous.enabled !== next.enabled || previous.websocketEnabled !== next.websocketEnabled) return true;
-  if (previous.endpoint !== (next.endpoint ?? previous.endpoint)) return true;
-  if (previous.originator !== (next.originator ?? previous.originator)) return true;
-  const previousRefs = new Set(previous.credentialRefs);
-  const nextRefs = new Set(next.credentialRefs ?? (next.credentialRef ? [next.credentialRef] : []));
-  return previousRefs.size !== nextRefs.size || Array.from(previousRefs).some((ref) => !nextRefs.has(ref));
+): 'all' | string[] {
+  if (previous.enabled !== next.enabled || previous.websocketEnabled !== next.websocketEnabled) return 'all';
+  if (previous.endpoint !== (next.endpoint ?? previous.endpoint)) return 'all';
+  if (previous.originator !== (next.originator ?? previous.originator)) return 'all';
+  const previousRefs = previous.credentialRefs;
+  const nextRefs = next.credentialRefs ?? (next.credentialRef ? [next.credentialRef] : []);
+  return [...new Set([...previousRefs, ...nextRefs])]
+    .filter((ref) => previousRefs.includes(ref) !== nextRefs.includes(ref));
 }

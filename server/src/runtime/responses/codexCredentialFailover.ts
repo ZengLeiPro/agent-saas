@@ -171,13 +171,14 @@ export async function isCodexAccountUnavailableResponse(response: Response): Pro
 }
 
 export function isPermanentCredentialError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/secret not found|凭据格式损坏|凭据字段不完整|token 缺少/i.test(message)) return true;
   const oauthError = findOAuthResponseError(error);
-  return !!oauthError
-    && oauthError.status >= 400
-    && oauthError.status < 500
-    && ['invalid_grant', 'invalid_token'].includes(oauthError.code ?? '');
+  if (oauthError) {
+    return oauthError.status >= 400
+      && oauthError.status < 500
+      && ['invalid_grant', 'invalid_token'].includes(oauthError.code ?? '');
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return /secret not found|凭据格式损坏|凭据字段不完整|token 缺少/i.test(message);
 }
 
 export function credentialFailureGeneration(error: unknown): number {
@@ -187,8 +188,10 @@ export function credentialFailureGeneration(error: unknown): number {
 }
 
 export function credentialFailureCode(error: unknown): string {
-  const oauthCode = findOAuthResponseError(error)?.code;
+  const oauthError = findOAuthResponseError(error);
+  const oauthCode = oauthError?.code;
   if (oauthCode === 'invalid_grant' || oauthCode === 'invalid_token') return oauthCode;
+  if (oauthError) return 'credential_unavailable';
   const message = error instanceof Error ? error.message : String(error);
   if (/secret not found/i.test(message)) return 'credential_not_found';
   if (/格式损坏|字段不完整/i.test(message)) return 'credential_invalid';

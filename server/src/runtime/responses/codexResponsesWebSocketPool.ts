@@ -47,6 +47,7 @@ interface RequestSnapshot {
 interface PoolEntry {
   key: string;
   credentialRef: string;
+  credentialGeneration: number;
   socket: EgressWebSocket;
   connectedAt: number;
   lastUsedAt: number;
@@ -118,6 +119,10 @@ export class CodexResponsesWebSocketPool {
     const logicalBody = parseLogicalBody(input.serializedBody);
     this.sweep();
     const key = poolKey(input);
+    for (const entry of this.entries.values()) {
+      if (entry.credentialRef === input.credentialRef
+        && entry.credentialGeneration !== input.credentialGeneration) this.discard(entry, 'credential_rotated');
+    }
     const cooldown = this.connectCooldowns.get(key);
     if (cooldown && cooldown.until > this.now()) {
       throw new CodexWebSocketUnavailableError(
@@ -229,6 +234,7 @@ export class CodexResponsesWebSocketPool {
     const entry: PoolEntry = {
       key,
       credentialRef: input.credentialRef,
+      credentialGeneration: input.credentialGeneration,
       socket,
       connectedAt: now,
       lastUsedAt: now,
@@ -483,9 +489,6 @@ export class CodexResponsesWebSocketPool {
         const detail = compactError(candidate.error ?? candidate.message);
         pendingSocketError = { detail, empty: detail === 'unknown_error' };
         if (socketErrorSettleTimer) return;
-        // Undici 8.9 在底层连接异常时同步先发 error、再发 close（其 #onSocketClose）。
-        // 额外容纳实现把 close 排到下一任务的情况；若只发 error，0ms timer 仍会关闭连接
-        // 并由 cleanup 清理全部 request listener/timer。
         socketErrorSettleTimer = setTimeout(() => failSocketInterruption(), 25);
         socketErrorSettleTimer.unref?.();
       };
@@ -536,7 +539,6 @@ export class CodexResponsesWebSocketPool {
   private sweep(): void {
     const now = this.now();
     for (const [key, cooldown] of this.connectCooldowns) {
-      // 过期后仍保留短期失败计数，下一次失败才能升级退避；成功建连会立即清零。
       if (cooldown.until <= now - 60 * 60_000) this.connectCooldowns.delete(key);
     }
     for (const entry of this.entries.values()) {
@@ -712,7 +714,6 @@ function responseOutputFromEvent(event: Record<string, unknown>): unknown[] | un
   return Array.isArray(output) ? output : undefined;
 }
 
-/** 映射为 ResponsesApiAdapter 下一轮 full-history 会构造的 input item 形态。 */
 function normalizeResponseOutputItem(item: unknown): unknown {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   const value = item as Record<string, unknown>;

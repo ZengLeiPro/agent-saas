@@ -108,7 +108,7 @@ describe('Codex credential concurrency', () => {
     }, 'missing-credential')).rejects.toThrow(/secret not found/);
   });
 
-  it('共享锁内绕过 HttpSecretVault 进程缓存并刷新权威 generation', async () => {
+  it('共享锁内绕过 HttpSecretVault 缓存并推进 refresh generation fence', async () => {
     const { vaultA, vaultB, oauthRefreshTokens, fetchImpl } = sharedHttpVaults();
     const config: CodexSubscriptionRuntimeConfig = { enabled: true };
     const lock = new LocalCodexCredentialLock();
@@ -132,5 +132,8 @@ describe('Codex credential concurrency', () => {
     expect(refreshed.refreshToken).toBe('refreshed:new-login-refresh');
     expect(refreshed.generation).toBe(3);
     expect(refreshed.accountId).toBe('acct-primary');
+    await managerA.markQuotaCooldown(original.credentialRef, 'stale-quota', 1);
+    await managerA.markAuthUnavailable(original.credentialRef, 'stale-auth', 1);
+    await expect(managerA.getRuntimeState(original.credentialRef)).resolves.toBeUndefined();
   });
 });

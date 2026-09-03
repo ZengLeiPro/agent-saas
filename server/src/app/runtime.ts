@@ -1516,8 +1516,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const resolvedModels = await resolveModelsConfig(config.models, secretVault);
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   configureImageGenPricing(config.imageGenTools?.pricing);
-  // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron。
-  // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
+  // 模型解析器会对齐磁盘配置，让 runtime-worker 感知 ws-only 进程写入。
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd,
@@ -1529,6 +1528,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
     // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
     onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
+    // STT 凭据更新失败只告警，不中断其他共享配置刷新。
     onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
     onCodexSubscriptionUpdated: (refs) => { if (refs) codexWebSocketPool.closeCredentialRefs(refs); else codexWebSocketPool.close(); },
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
@@ -2915,7 +2915,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     secretVault,
     codexCredentialManager,
     codexDeviceAuthService,
-    codexWebSocketShutdown: () => codexWebSocketPool.close(),
+    codexWebSocketShutdown: () => codexWebSocketPool.close(), codexWebSocketCredentialShutdown: refs => codexWebSocketPool.closeCredentialRefs(refs),
     userStore,
     authEpochAuthority,
     dwsConnectionStore,

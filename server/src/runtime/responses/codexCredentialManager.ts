@@ -347,7 +347,7 @@ export class CodexCredentialManager {
       return {
         id: credentialRef,
         configured: true,
-        // access token 到期不代表账号断开：refresh token 会在下一次模型请求前自动续期。
+        // access token 到期不代表账号断开，模型请求前会自动 refresh。
         connected: true,
         accountBindingHash: hashAccountBinding(bundle.accountId),
         accountIdHint: bundle.accountId.slice(-6),
@@ -425,6 +425,7 @@ export class CodexCredentialManager {
           JSON.stringify(next),
           systemVaultCaller('rotate'),
         );
+        await this.runtimeStateStore.clear(credentialRef, next.generation);
         this.telemetry.recordRefreshSuccess(next.generation);
         return next;
       } catch (error) {

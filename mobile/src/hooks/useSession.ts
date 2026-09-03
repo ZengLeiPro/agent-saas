@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type {
   ApiSessionListItem,
   BoundaryIdentity,
@@ -33,6 +33,7 @@ import {
   loadSessionListCache,
 } from "../lib/sessionListCache";
 import { injectCompactionMessages } from "../lib/compaction";
+import { createMobileMessageCacheForIdentity } from "../platform/mobileMessageCache";
 
 export interface SessionCallbacks {
   resetMessages: () => void;
@@ -115,6 +116,16 @@ export function useSession(
   options?: SessionOptions,
 ): SessionState {
   const identity = options?.identity ?? null;
+  const identityKey = identity
+    ? `${identity.tenantId}:${identity.userId}:${identity.generation}`
+    : 'anonymous';
+  const identityKeyRef = useRef(identityKey);
+  identityKeyRef.current = identityKey;
+  // 每个 hook 固定其身份 namespace，避免旧异步响应跟随全局 active identity 漂移。
+  const messageCache = useMemo(
+    () => createMobileMessageCacheForIdentity(identity),
+    [identityKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const [sessionId, setSessionId] = useState<string | null>(
     options?.initialSessionId ?? null,
   );
@@ -154,6 +165,34 @@ export function useSession(
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
 
+  useEffect(() => {
+    loadNonceRef.current += 1;
+    pagerRef.current = createSessionListPagerState();
+    historyCursorRef.current.clear();
+    loadingEarlierSessionIdsRef.current.clear();
+    cbRef.current.cancelActiveStream();
+    cbRef.current.resetMessages();
+    setSessionId(options?.initialSessionId ?? null);
+    setSessions([]);
+    setSessionsHydrated(false);
+    setHasMore(true);
+    setIsLoadingSessions(false);
+    setIsLoadingMore(false);
+    setIsLoadingMessages(false);
+    setHasMoreHistory(false);
+    setIsLoadingEarlier(false);
+    setSessionOwner(null);
+    setTokenUsage(null);
+    setContextUsage(null);
+    return () => {
+      loadNonceRef.current += 1;
+      if (identityKeyRef.current === identityKey) {
+        identityKeyRef.current = `disposed:${identityKey}`;
+      }
+      cbRef.current.cancelActiveStream();
+    };
+  }, [identityKey]); // identity generation 是强制内存边界
+
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const hasMoreRef = useRef(hasMore);
@@ -168,6 +207,8 @@ export function useSession(
 
   const loadSessions = useCallback(
     async (silent = false, opts?: { fresh?: boolean; skipMerge?: boolean }) => {
+      const requestIdentityKey = identityKeyRef.current;
+      const isCurrentIdentity = () => identityKeyRef.current === requestIdentityKey;
       const refreshing = beginSessionListRefresh(pagerRef.current);
       pagerRef.current = refreshing;
       const generation = refreshing.generation;
@@ -177,8 +218,9 @@ export function useSession(
         const response = await authFetch(
           `/api/sessions?limit=50${viewAsParamRef.current}${freshParam}`,
         );
-        if (response.ok) {
+        if (response.ok && isCurrentIdentity()) {
           const data = (await response.json()) as SessionListPage;
+          if (!isCurrentIdentity()) return;
           const page = { sessions: data.sessions || [], hasMore: data.hasMore ?? false, nextCursor: data.nextCursor };
           const next = data.nextCursor !== undefined || !data.hasMore
             ? mergeSessionListPage(pagerRef.current, { ...page, generation, requestCursor: null })
@@ -192,13 +234,15 @@ export function useSession(
       } catch (err) {
         console.error("加载会话列表失败:", err);
       } finally {
-        if (!silent) setIsLoadingSessions(false);
+        if (!silent && isCurrentIdentity()) setIsLoadingSessions(false);
       }
     },
     [commitPager],
   );
 
   const loadMoreSessions = useCallback(async () => {
+    const requestIdentityKey = identityKeyRef.current;
+    const isCurrentIdentity = () => identityKeyRef.current === requestIdentityKey;
     const pager = pagerRef.current;
     if (!pager.hasMore || isLoadingMoreRef.current) return;
     const requestCursor = pager.nextCursor;
@@ -214,8 +258,9 @@ export function useSession(
       const response = await authFetch(
         `/api/sessions?limit=50${pageParam}${viewAsParamRef.current}`,
       );
-      if (response.ok) {
+      if (response.ok && isCurrentIdentity()) {
         const data = (await response.json()) as SessionListPage;
+        if (!isCurrentIdentity()) return;
         const next = pager.pagingMode === 'cursor'
           ? mergeSessionListPage(pagerRef.current, {
               sessions: data.sessions || [], hasMore: data.hasMore ?? false,
@@ -229,21 +274,25 @@ export function useSession(
     } catch (err) {
       console.error("加载更多会话失败:", err);
     } finally {
-      setIsLoadingMore(false);
+      if (isCurrentIdentity()) setIsLoadingMore(false);
     }
   }, [commitPager]);
 
+  // stats 同时绑定 identity 与当前会话，避免慢响应覆盖新会话头部。
   const fetchTokenUsage = useCallback(async (id: string) => {
+    const requestIdentityKey = identityKeyRef.current;
+    const isCurrentIdentity = () => identityKeyRef.current === requestIdentityKey;
     try {
       const response = await authFetch(
         `/api/sessions/${encodeURIComponent(id)}/stats`,
       );
-      if (response.ok) {
+      if (response.ok && isCurrentIdentity()) {
         const data = (await response.json()) as {
           tokenUsage?: TokenUsage;
           contextUsage?: ContextUsageData;
           totalCostUsd?: number | null;
         };
+        if (!isCurrentIdentity() || sessionIdRef.current !== id) return;
         const usage = data.tokenUsage
           ? { ...data.tokenUsage, totalCostUsd: data.totalCostUsd ?? null }
           : null;
@@ -258,7 +307,8 @@ export function useSession(
   const loadSessionDetail = useCallback(
     async (id: string, opts?: { silent?: boolean; preserveTail?: boolean }) => {
       const nonce = ++loadNonceRef.current;
-      const isStale = () => loadNonceRef.current !== nonce;
+      const requestIdentityKey = identityKeyRef.current;
+      const isStale = () => loadNonceRef.current !== nonce || identityKeyRef.current !== requestIdentityKey;
       const platform = getPlatform();
 
       // silent 模式（后台恢复、WS 重连等）不显示 loading 指示器
@@ -274,7 +324,7 @@ export function useSession(
       // preserveTail 场景（done 后同会话刷新）：本地内存里已有最新尾部，cached 反而是更旧的快照，
       // 跳过以免闪回。
       if (!canPreserveTail) {
-        const cached = await platform.messageCache.load(id);
+        const cached = await messageCache.load(id);
         if (isStale()) return;
         if (cached) {
           cbRef.current.setMessages(cached);
@@ -400,9 +450,9 @@ export function useSession(
           });
           setHasMoreHistory(pageHasMore);
           void fetchTokenUsage(id);
-          platform.messageCache.save(id, finalMsgs);
+          messageCache.save(id, finalMsgs);
         } else if (response.status === 404 || response.status === 403) {
-          void platform.messageCache.clear(id);
+          void messageCache.clear(id);
           void platform.storage.removeItem(`agentChat.model.${id}`);
           removeSession(id);
           setSessionOwner(null);
@@ -414,10 +464,12 @@ export function useSession(
         if (!isStale()) setIsLoadingMessages(false);
       }
     },
-    [fetchTokenUsage],
+    [fetchTokenUsage, messageCache],
   );
 
   const loadEarlierMessages = useCallback(async () => {
+    const requestIdentityKey = identityKeyRef.current;
+    const isCurrentIdentity = () => identityKeyRef.current === requestIdentityKey;
     const id = sessionIdRef.current;
     const cursorState = id ? historyCursorRef.current.get(id) : undefined;
     if (!id || !cursorState?.hasMore || !cursorState.nextCursor
@@ -427,8 +479,9 @@ export function useSession(
     try {
       const params = new URLSearchParams({ before: cursorState.nextCursor, limit: '50', silent: '1' });
       const response = await authFetch(`/api/sessions/${encodeURIComponent(id)}?${params.toString()}`);
-      if (!response.ok || sessionIdRef.current !== id) return;
+      if (!response.ok || sessionIdRef.current !== id || !isCurrentIdentity()) return;
       const data = await response.json() as ApiSessionDetail;
+      if (!isCurrentIdentity()) return;
       if (cursorState.historyRevision && data.historyRevision
         && cursorState.historyRevision !== data.historyRevision) {
         await loadSessionDetail(id, { silent: true, preserveTail: true });
@@ -447,7 +500,7 @@ export function useSession(
       setHasMoreHistory(hasMore);
     } finally {
       loadingEarlierSessionIdsRef.current.delete(id);
-      if (sessionIdRef.current === id) setIsLoadingEarlier(false);
+      if (sessionIdRef.current === id && isCurrentIdentity()) setIsLoadingEarlier(false);
     }
   }, [loadSessionDetail, sessionOwner?.username]);
 
@@ -471,7 +524,7 @@ export function useSession(
         if (!response.ok) return;
 
         const platform = getPlatform();
-        await platform.messageCache.clear(idToDelete);
+        await messageCache.clear(idToDelete);
         await platform.storage.removeItem(`agentChat.model.${idToDelete}`);
 
         setDeleteSessionId(null);
@@ -493,7 +546,7 @@ export function useSession(
         console.error("删除会话失败:", err);
       }
     },
-    [deleteSessionId, loadSessionDetail, loadSessions, sessionId, sessions],
+    [deleteSessionId, loadSessionDetail, loadSessions, messageCache, sessionId, sessions],
   );
 
   const updateSessionTitle = useCallback((targetId: string, title: string) => {
@@ -710,7 +763,7 @@ export function useSession(
     return () => {
       cancelled = true;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [identityKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Register refresh bus
   useEffect(() => {

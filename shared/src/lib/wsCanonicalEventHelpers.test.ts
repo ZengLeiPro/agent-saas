@@ -61,7 +61,7 @@ describe('WS canonical event integration', () => {
     expect(JSON.stringify(error)).not.toMatch(/WS_SECRET|workspace|stack trace/);
   });
 
-  it('interaction_resolved：denied/workflow failure/expired 显示服务端原因', () => {
+  it('interaction_resolved：仅在当前会话显示 denied/workflow failure/expired 原因', () => {
     const ctrl = makeController([
       { id: 'p', type: 'permission_request', interactionId: 'failed', toolName: 'T', toolInput: '', status: 'pending' },
     ]);
@@ -72,7 +72,7 @@ describe('WS canonical event integration', () => {
       status: 'failed',
       response: { allow: false },
       reason: 'Workflow approval unavailable',
-    }, makeContext(ctrl), { currentBlockIndex: -1, currentBlockType: null }, { value: null }, null);
+    }, makeContext(ctrl), { currentBlockIndex: -1, currentBlockType: null }, { value: 's' }, 's');
     expect(ctrl.messages).toContainEqual(expect.objectContaining({
       type: 'system-error',
       content: '交互未完成：Workflow approval unavailable',

@@ -28,10 +28,10 @@ import { sha256File } from '../updates/sha256File';
 
 const CHECK_COOLDOWN_MS = 30 * 60 * 1000;
 const MAX_MANIFEST_BYTES = 64 * 1024;
-const HIGHEST_ACCEPTED_PREFIX = 'agentSaas.enterpriseUpdater.highestAccepted';
+const HIGHEST_INSTALLED_PREFIX = 'agentSaas.enterpriseUpdater.highestInstalled.v2';
 
-function acceptedVersionKey(config: EnterpriseUpdaterRuntimeConfig): string {
-  return `${HIGHEST_ACCEPTED_PREFIX}:${config.expectedPackage}:${config.keyId}`;
+function installedVersionKey(config: EnterpriseUpdaterRuntimeConfig): string {
+  return `${HIGHEST_INSTALLED_PREFIX}:${config.expectedPackage}:${config.keyId}`;
 }
 
 function parsePersistedVersion(value: string | null): number {
@@ -130,9 +130,18 @@ export function useEnterpriseUpdateChecker(config: EnterpriseUpdaterRuntimeConfi
     let apkUri: string | null = null;
 
     try {
-      const versionKey = acceptedVersionKey(config);
-      const highestAcceptedVersionCode = parsePersistedVersion(
+      const versionKey = installedVersionKey(config);
+      const persistedInstalledVersionCode = parsePersistedVersion(
         await AsyncStorage.getItem(versionKey),
+      );
+      // 只有当前真正运行起来的已安装包才能抬高 anti-rollback floor。
+      // 启动系统安装器不等于安装成功，候选 manifest 不能提前进入 floor。
+      if (config.installedVersionCode > persistedInstalledVersionCode) {
+        await AsyncStorage.setItem(versionKey, String(config.installedVersionCode));
+      }
+      const highestAcceptedVersionCode = Math.max(
+        config.installedVersionCode,
+        persistedInstalledVersionCode,
       );
       const manifestValue = await fetchManifest(config.manifestUrl);
       const parsed = parseEnterpriseUpdateManifest(manifestValue);
@@ -163,9 +172,7 @@ export function useEnterpriseUpdateChecker(config: EnterpriseUpdaterRuntimeConfi
                 try {
                   // Re-hash and re-verify immediately before invoking the package installer.
                   await verifyLocalApk(apkUri!, manifestValue, policy);
-                  // Persist the anti-rollback floor only when the user accepts
-                  // installation; choosing “later” must remain actionable.
-                  await AsyncStorage.setItem(versionKey, String(manifest.versionCode));
+                  // startActivityAsync 只证明安装器被拉起；安装成功必须由新版本下次启动后确认。
                   await installApk(apkUri!);
                 } catch (error) {
                   reportUpdaterFailure(error);

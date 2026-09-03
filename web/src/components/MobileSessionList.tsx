@@ -21,9 +21,10 @@ import { useGroups } from "@/hooks/useGroups";
 import { getSortedGroupItems } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
-import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel } from "@/types/sidebar";
+import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel } from "@/types/sidebar";
 import type { SessionGroup } from "@/types/sessionGroup";
 import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
+import { MobileSessionMetadata } from "./MobileSessionMetadata";
 
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
@@ -350,13 +351,7 @@ export function MobileSessionList({
               )}
             </span>
           </div>
-          <div className="mt-1 text-xs text-muted-foreground/60">
-            <span>{sourceDisplayText(s.source)}</span>
-            <span> · {s.agentTarget ? (s.agentTarget.kind === 'personal' ? '个人 Agent' : s.orgAgentName || '企业专家') : '绑定不可验证'}</span>
-            {isAdmin && s.owner && (
-              <span> - {s.owner.realName || s.owner.username}</span>
-            )}
-          </div>
+          <MobileSessionMetadata session={s} isAdmin={isAdmin} />
         </div>
       );
 

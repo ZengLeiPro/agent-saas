@@ -148,6 +148,26 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     expect(container.querySelector(".rounded-full.bg-destructive.size-2")).toBeNull();
   });
 
+  it.each(["single", "double"] as const)("%s 布局不显示默认的个人 Agent 标记", (sidebarLayout) => {
+    renderSidebar("chat", [{
+      ...session,
+      agentTarget: { kind: "personal", tenantId: "tenant-1" },
+    }], sidebarLayout);
+
+    expect(screen.queryByLabelText("Agent：个人 Agent")).toBeNull();
+    expect(screen.queryByText("个人 Agent")).toBeNull();
+  });
+
+  it.each(["single", "double"] as const)("%s 布局保留企业专家标记", (sidebarLayout) => {
+    renderSidebar("chat", [{
+      ...session,
+      orgAgentName: "产品选型助手",
+      agentTarget: { kind: "org-agent", tenantId: "tenant-1", orgAgentId: "agent-1" },
+    }], sidebarLayout);
+
+    expect(screen.getAllByLabelText("企业专家：产品选型助手").length).toBeGreaterThan(0);
+  });
+
   it.each([
     ["waiting_user", "待补充"],
     ["waiting_approval", "待处理"],

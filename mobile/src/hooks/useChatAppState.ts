@@ -349,6 +349,7 @@ export function useChatAppStateCore(): ChatAppState {
   const lastEventCursorRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
   const handledTerminalKeysRef = useRef(new Set<string>());
+  const resolvedInteractionIdsRef = useRef(new Set<string>());
 
   interface SessionRuntimeState {
     streamId: string | null;
@@ -1224,6 +1225,7 @@ export function useChatAppStateCore(): ChatAppState {
         streamIdRef,
         runIdRef,
         handledTerminalKeysRef,
+        resolvedInteractionIdsRef,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
@@ -1498,6 +1500,7 @@ export function useChatAppStateCore(): ChatAppState {
         streamIdRef,
         runIdRef,
         handledTerminalKeysRef,
+        resolvedInteractionIdsRef,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,

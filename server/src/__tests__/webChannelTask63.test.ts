@@ -144,7 +144,7 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
     channels.push(channel);
     const ws = new FakeWebSocket();
 
-    const snapshot = (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId);
+    const snapshot = (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId, USER.sub);
     await scanStarted;
     const interactionId = `ask-during-scan-${randomUUID()}`;
     const response = interactionStore.create(interactionId, 'ask_user', {
@@ -181,10 +181,12 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
     );
     channels.push(channel);
     const ws = new FakeWebSocket();
+    (channel as any).eventBufferStore.create(sessionId, USER.sub);
     const log = new UserEventLog('sync-final-sample');
     (channel as any).wsServer = {
       userEventLog: log,
       hasUserEventEpochMismatch: () => true,
+      refreshAuthoritativeUser: () => true,
       destroy: () => {},
     };
 
@@ -265,7 +267,7 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
     }));
   });
 
-  it('durable 已解决的 ask_user 不会从残留 buffer 再次恢复', async () => {
+  it('durable 已解决的 ask_user 用权威空快照清除残留状态', async () => {
     const sessionId = randomUUID();
     const eventStore = {
       list: async () => [{
@@ -293,7 +295,149 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
 
     await (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId);
 
+    expect(ws.sent.find((message) => message.data?.type === 'pending_interactions')?.data.interactions)
+      .toEqual([]);
+  });
+
+  it('durable-only 未决 ask_user 在最终权威快照中保留', async () => {
+    const sessionId = randomUUID();
+    const eventStore = {
+      list: async () => [{
+        id: 'requested-1',
+        timestamp: '2026-09-03T04:00:00.000Z',
+        type: 'interaction_requested' as const,
+        sessionId,
+        runId: 'run-durable-only',
+        userId: USER.sub,
+        interactionId: 'ask-durable-only',
+        interactionType: 'ask_user' as const,
+        version: 7,
+        order: 7,
+        questions: [],
+      }],
+    } as any;
+    const channel = new WebChannel(
+      {
+        executionConfig: createExecutionConfig(),
+        runtimeEventStoreFor: () => eventStore,
+      },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId);
+
+    expect(ws.sent.find((message) => message.data?.type === 'pending_interactions')?.data.interactions)
+      .toContainEqual(expect.objectContaining({ interactionId: 'ask-durable-only', version: 7 }));
+  });
+
+  it('durable 交互真值读取失败时不伪造权威空快照', async () => {
+    const sessionId = randomUUID();
+    const channel = new WebChannel(
+      {
+        executionConfig: createExecutionConfig(),
+        runtimeEventStoreFor: () => ({ list: async () => { throw new Error('event store unavailable'); } }) as any,
+      },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId);
+
     expect(ws.sent.some((message) => message.data?.type === 'pending_interactions')).toBe(false);
+  });
+
+  it('durable 快照不泄露 owner 字段并脱敏 approval 参数', async () => {
+    const sessionId = randomUUID();
+    const eventStore = {
+      list: async () => [{
+        id: 'approval-requested-1',
+        timestamp: '2026-09-03T04:00:00.000Z',
+        type: 'interaction_requested' as const,
+        sessionId,
+        userId: USER.sub,
+        interactionId: 'approval-secret',
+        interactionType: 'approval' as const,
+        toolInput: { command: 'deploy', nested: { password: 'pw' }, token: 'secret' },
+      }],
+    } as any;
+    const channel = new WebChannel(
+      { executionConfig: createExecutionConfig(), runtimeEventStoreFor: () => eventStore },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId, USER.sub);
+
+    const item = ws.sent.find((message) => message.data?.type === 'pending_interactions')?.data.interactions[0];
+    expect(item).toEqual(expect.objectContaining({
+      interactionId: 'approval-secret',
+      toolInput: { command: 'deploy', nested: { password: '[REDACTED]' }, token: '[REDACTED]' },
+    }));
+    expect(item).not.toHaveProperty('userId');
+    expect(item).not.toHaveProperty('sessionId');
+  });
+
+  it('同租户普通用户不能读取他人的 durable interaction', async () => {
+    const sessionId = randomUUID();
+    const eventStore = {
+      list: async () => [{
+        id: 'other-requested-1',
+        timestamp: '2026-09-03T04:00:00.000Z',
+        type: 'interaction_requested' as const,
+        sessionId,
+        userId: 'another-user',
+        interactionId: 'ask-other-owner',
+        interactionType: 'ask_user' as const,
+        questions: [],
+      }],
+    } as any;
+    const channel = new WebChannel(
+      { executionConfig: createExecutionConfig(), runtimeEventStoreFor: () => eventStore },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    await (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId);
+
+    expect(ws.sent.some((message) => message.data?.type === 'pending_interactions')).toBe(false);
+  });
+
+  it('终采样出现多个 owner 时不伪造权威空快照', async () => {
+    const sessionId = randomUUID();
+    let finishScan!: (events: any[]) => void;
+    let markScanStarted!: () => void;
+    const scanStarted = new Promise<void>((resolve) => { markScanStarted = resolve; });
+    const eventStore = {
+      list: () => new Promise<any[]>((resolve) => {
+        finishScan = resolve;
+        markScanStarted();
+      }),
+    } as any;
+    const channel = new WebChannel(
+      { executionConfig: createExecutionConfig(), runtimeEventStoreFor: () => eventStore },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+    const snapshot = (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId, USER.sub);
+    await scanStarted;
+    const interactionId = `other-owner-${randomUUID()}`;
+    const response = interactionStore.create(interactionId, 'ask_user', {
+      sessionId,
+      userId: 'another-user',
+      questions: [],
+    });
+    finishScan([]);
+    await snapshot;
+
+    expect(ws.sent.some((message) => message.data?.type === 'pending_interactions')).toBe(false);
+    interactionStore.reject(interactionId, 'cleanup');
+    await expect(response).rejects.toThrow('cleanup');
   });
 
   it('非本人用户 resume 已完成 buffer：不推送他人 ask_user（安全回归，review CHANGES_REQUESTED）', async () => {

@@ -2082,8 +2082,8 @@ export class WebChannel implements BaseChannel {
     return this.runtimeRecovery.replayDurableRuntimeEvents(client, sessionId, store, options);
   }
 
-  private pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
-    return this.runtimeRecovery.pushPendingInteractions(client, sessionId, tenantId);
+  private pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string, ownerUserId?: string): Promise<void> {
+    return this.runtimeRecovery.pushPendingInteractions(client, sessionId, tenantId, ownerUserId);
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────

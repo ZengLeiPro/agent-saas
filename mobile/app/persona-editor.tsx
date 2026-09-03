@@ -15,6 +15,7 @@ import { X, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Markdown from 'react-native-markdown-display';
+import { cjkMarkdownIt } from '../src/lib/markdownIt';
 import { useColors, spacing, typography } from '../src/theme';
 import { createMarkdownStyles } from '../src/components/chat/markdownStyles';
 import { createMarkdownRules } from '../src/components/chat/markdownRules';
@@ -222,7 +223,9 @@ export default function PersonaEditorScreen() {
                 contentContainerStyle={{ paddingBottom: insets.bottom + spacing.xl }}
               >
                 {body ? (
-                  <Markdown style={mdStyles} rules={mdRules}>{body}</Markdown>
+                  <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={mdRules}>
+                    {body}
+                  </Markdown>
                 ) : (
                   <Text style={styles.placeholder}>{config.emptyText}</Text>
                 )}

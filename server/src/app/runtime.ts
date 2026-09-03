@@ -215,7 +215,7 @@ import { setConnectorDictionary, setTenantConnectorDictionaries } from '../agent
 import { UploadManager } from '../uploads/manager.js';
 import { migrateCronGroups } from '../data/groups/migrate.js';
 import {
-  findTranscriptPathBySessionId,
+  listExistingTranscriptSessionIds,
   findTranscriptPathByTenantAndSessionId,
 } from '../data/transcripts/store.js';
 import { runStartupMigrations } from '../data/migrations/startup.js';
@@ -2518,10 +2518,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // Backfill cron groups from historical run logs (one-time migration)
     await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
 
-    // Prune orphaned sessionIds from groups (transcripts deleted outside API)
-    const pruned = await groupStore.pruneOrphanedSessionIds(
-      async (sid) => (await findTranscriptPathBySessionId(sid)) !== null,
-    );
+    // Prune orphaned sessionIds（transcripts 被 API 外删除）。必须先建一次索引：逐个查会
+    // 退化成 O(N×M)，实测 2,220 个 id × 17k 文件 ≈ 113s，全程阻塞 scheduler 启动。
+    const existingSessionIds = await listExistingTranscriptSessionIds();
+    const pruned = await groupStore.pruneOrphanedSessionIds(async (sid) => existingSessionIds.has(sid));
     if (pruned > 0) {
       serverLogger.info(`Groups: pruned ${pruned} orphaned sessionIds`);
     }

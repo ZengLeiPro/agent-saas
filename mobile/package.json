@@ -77,7 +77,10 @@
     "expo-status-bar": "~55.0.6",
     "expo-video": "~55.0.21",
     "lucide-react-native": "^1.24.0",
+    "markdown-it": "10.0.0",
+    "markdown-it-cjk-friendly": "3.0.0",
     "marked": "^18.0.0",
+    "marked-cjk-friendly": "0.1.1",
     "react": "19.2.0",
     "react-native": "0.83.10",
     "react-native-gesture-handler": "~2.30.0",
@@ -92,6 +95,7 @@
     "expo-local-authentication": "~55.0.18"
   },
   "devDependencies": {
+    "@types/markdown-it": "14.2.0",
     "@types/react": "~19.2.2",
     "eas-cli": "18.1.0",
     "typescript": "~5.9.2",

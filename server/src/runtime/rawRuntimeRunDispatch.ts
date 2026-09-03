@@ -2615,7 +2615,7 @@ export async function loadRawRuntimeWakeState(
   const eventStore = createEventStoreForSession(config, session);
   const eventTenantId = resolveEventTenantId(config, session.tenantId, undefined, `wake state ${sessionId}`);
   const approvalStore = createApprovalStoreForSession(config, session, eventStore);
-  const events = await eventStore.list(eventTenantId, sessionId, { replayMode: 'bounded' });
+  const events = await eventStore.list(eventTenantId, sessionId, { replayMode: 'checkpoint' });
   const approvals = await approvalStore.list(sessionId);
   const replayState = buildRuntimeReplayState(events, approvals, sessionId);
   return { session, events, approvals, replayState };

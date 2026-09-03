@@ -234,6 +234,7 @@ export class AgentToolProvider implements ToolProvider {
       throw err;
     }
 
+    const content = await this.formatOutcome(outcome, context);
     await this.appendParentEvent(parentEventStore, {
       type: 'subagent_finished',
       runId: context.runId!,
@@ -259,7 +260,7 @@ export class AgentToolProvider implements ToolProvider {
         : {}),
     });
 
-    return { content: await this.formatOutcome(outcome, context) };
+    return { content };
   }
 
   /**

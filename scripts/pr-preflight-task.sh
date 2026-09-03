@@ -30,6 +30,7 @@ case "$task" in
     ;;
 
   postgres)
+    # 显式清单是快速动态合约门禁，新增关键 PG 合约必须在此登记。
     require_test_database
     pnpm -F server exec vitest run \
       src/__tests__/codexCredentialRuntimeState.pg.test.ts \
@@ -40,7 +41,8 @@ case "$task" in
       src/__tests__/governanceSchemaMigration.pg.test.ts \
       src/__tests__/governanceProjectionPool.pg.test.ts \
       src/__tests__/pgRunStoreSteering.pg.test.ts \
-      src/__tests__/pgToolInvocationTerminalGate.pg.test.ts
+      src/__tests__/pgToolInvocationTerminalGate.pg.test.ts \
+      src/__tests__/sandboxScopeActivity.pg.test.ts
     ;;
 
   web)

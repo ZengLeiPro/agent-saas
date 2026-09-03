@@ -9,6 +9,7 @@ import {
   type AgentTarget,
   type AgentTargetIdentitySnapshot,
   type SandboxProfile,
+  type SandboxWorkloadDescriptor,
 } from '@agent/shared';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
 import {
@@ -90,6 +91,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   /** 平台内部来源；memory_consolidation 会话保留审计数据但不对用户展示。 */
   sessionSource?: 'taskboard_execution' | 'memory_consolidation';
   memoryAutomationEligible?: boolean;
+  /** 顶层 Sandbox workload 分类；子会话继承父值，禁止按 sessionId 形状推断。 */
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
 }
 
 export function getMetaPath(transcriptPath: string): string {

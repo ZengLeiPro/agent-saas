@@ -4,10 +4,10 @@
 # Format: repo-relative-path max-lines scope
 # Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
 
-acs-orchestrator/src/sandboxManager.test.ts	1689	test
-acs-orchestrator/src/sandboxManager.ts	1172	production
+acs-orchestrator/src/sandboxManager.test.ts	1677	test
+acs-orchestrator/src/sandboxManager.ts	1152	production
 acs-orchestrator/src/snatManager.test.ts	854	test
-server/src/__tests__/appConfig.test.ts	894	test
+server/src/__tests__/appConfig.test.ts	877	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test
 server/src/__tests__/memoryPoll.test.ts	970	test
@@ -26,10 +26,10 @@ server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1477	production
 server/src/app/config.ts	1426	production
-server/src/app/routes.ts	1153	production
-server/src/app/runtime.ts	3056	production
+server/src/app/routes.ts	1152	production
+server/src/app/runtime.ts	3037	production
 server/src/app/runtimeGovernanceConnectors.ts	1246	production
-server/src/channels/web/channel.ts	4358	production
+server/src/channels/web/channel.ts	4348	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2001	production
@@ -38,7 +38,7 @@ server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3317	production
 server/src/routes/skills.ts	1394	production
 server/src/runtime/rawAgentLoop.ts	3936	production
-server/src/runtime/rawRuntimeRunDispatch.ts	3090	production
+server/src/runtime/rawRuntimeRunDispatch.ts	3088	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1316	production
 server/src/runtime/types.ts	1126	production

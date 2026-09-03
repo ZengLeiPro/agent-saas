@@ -61,6 +61,7 @@ import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 
 interface StreamStatus {
   active: boolean;
+  // Remaining fields mirror the web channel's optional stream snapshot.
   streamId?: string;
   runId?: string;
   status?: string;
@@ -141,6 +142,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     }
     app.use('/api', createSessionsRouter({
       agentCwd,
+      sandboxSessionDeletion: async () => 'not_required',
       ...(opts.dingtalkSessionsBasePath ? { dingtalkSessionsBasePath: opts.dingtalkSessionsBasePath } : {}),
       ...(opts.getStreamStatus ? { getStreamStatus: opts.getStreamStatus } : {}),
       ...(opts.groupStore ? { groupStore: opts.groupStore } : {}),

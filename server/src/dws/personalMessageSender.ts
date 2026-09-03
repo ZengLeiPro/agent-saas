@@ -14,6 +14,8 @@ import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 
 const DWS_MESSAGE_TIMEOUT_MS = 60_000;
+const DWS_PERSONAL_MESSAGE_WORKLOAD = { class: 'interactive' } as const;
+
 export const DWS_PERSONAL_MESSAGE_MAX_CHARACTERS = 12_000;
 export const DWS_PERSONAL_MESSAGE_TRUNCATION_MARKER = '\n\n[消息已截断]';
 
@@ -83,6 +85,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
           mountSubPath,
           executionTarget: 'server-remote',
           sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+          workload: DWS_PERSONAL_MESSAGE_WORKLOAD,
         },
       },
     });

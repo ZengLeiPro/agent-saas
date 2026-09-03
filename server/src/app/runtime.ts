@@ -81,6 +81,7 @@ import { AutoCompactionService } from '../runtime/autoCompaction.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
+import { PgSandboxLifecycleStore, SandboxLifecycleService } from '../runtime/sandboxLifecycleService.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
 import { DispatchMetricsStore } from '../engine/metricsStore.js';
 import { getPublicModelList } from './models.js';
@@ -97,6 +98,7 @@ import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
+import { resolveServerRemoteDispatchConfig } from './serverRemoteConfig.js';
 import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
 import { resolveImageUnderstandingModelConfigs } from './imageUnderstandingModelConfigs.js';
@@ -453,7 +455,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       skillsWarmup.state = 'failed';
       skillsWarmup.error = 'skills config corrupted';
     } else {
-
     // 1. 将 pool 文件系统新增的 skill 写入 poolVisibility（补全缺失条目）
     const discovered = skillConfigStore.syncWithPool(currentPoolIds);
     if (discovered > 0) {
@@ -645,9 +646,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       channel: 'memory_embedding',
     });
   };
-  let billingAuditTimer: NodeJS.Timeout | undefined;
-  let runtimeEventRetention: RuntimeEventRetention | undefined, runtimeScheduler: RuntimeScheduler | undefined;
-  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined, runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  let billingAuditTimer: NodeJS.Timeout | undefined; let sandboxLifecycleService: SandboxLifecycleService | undefined; let runtimeEventRetention: RuntimeEventRetention | undefined; let runtimeScheduler: RuntimeScheduler | undefined;
+  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined; let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined; // singleton worker state
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );
@@ -1074,7 +1074,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       systemMetricsCollector?.stop();
       alertNotifier?.stop(); taskboardStatusNotificationWorker?.stop();
       await taskboardExecutionCoordinator?.stop();
-      terminalEventOutboxDispatcher.stop();
+      terminalEventOutboxDispatcher.stop(); sandboxLifecycleService?.stop();
       await runtimeScheduler?.stop();
       await runtimeOutboundStreamRelay?.flushAll();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
@@ -1465,48 +1465,30 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     logger: serverLogger.child('TenantHand'),
   });
-  // Sandbox 预热（2026-07-31 冷启动治理）：用户打开会话页即 fire-and-forget 预热
-  // ACS Sandbox，让 30s+ 冷启动与打字/LLM 首轮并行。未配置 tenantRemoteHands
-  // 的环境（本地开发/测试）service 内部找不到 ACS hand 自然跳过。
   const sandboxWarmupService = new SandboxWarmupService({
     agentCwd,
     sessionCatalog, handStore: pgHandStore,
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     tenantRemoteHandResolver,
     isExecutionEnabled: isRuntimeExecutionEnabled,
+    ...(artifactShareStore ? { withSessionAdmissionLock: <T>(sessionId: string, operation: () => Promise<T>) => artifactShareStore!.withSessionLock(sessionId, operation) } : {}),
     logger: serverLogger.child('SandboxWarmup'),
   });
-  // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
-  // 仍按 plaintext 接收。authTokenRef 走 vault.getSecret(actor:'system')；inline
-  // authToken 直接透传。两者互斥由 schema 保证。
-  const resolvedServerRemote = await (async () => {
-    const sr = config.serverRemote;
-    if (!sr) return undefined;
-    let authToken: string | undefined;
-    if (sr.authTokenRef) {
-      try {
-        authToken = await secretVault.getSecret(sr.authTokenRef, {
-          actor: 'system',
-          userId: '__system__',
-          scopes: ['secret:server_remote:read'],
-        });
-      } catch (err) {
-        throw new Error(
-          `serverRemote.authTokenRef "${sr.authTokenRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    } else if (sr.authToken) {
-      authToken = sr.authToken;
-    }
-    if (!authToken) {
-      throw new Error('serverRemote 凭证解析失败：authToken/authTokenRef 都为空（schema 应已拦截）');
-    }
-    return {
-      baseUrl: sr.baseUrl,
-      authToken,
-      ...(sr.invokeTimeoutMs !== undefined ? { invokeTimeoutMs: sr.invokeTimeoutMs } : {}),
-    };
-  })();
+  // serverRemote 凭证在装配层解析为 plaintext；两种凭证形式互斥。
+  const resolvedServerRemote = await resolveServerRemoteDispatchConfig(config.serverRemote, secretVault);
+  if (pgRunStore) {
+    sandboxLifecycleService = new SandboxLifecycleService({
+      agentCwd,
+      store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable),
+      runStore: pgRunStore, sessionCatalog, handStore: pgHandStore,
+      tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver,
+      ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
+      resolveServerRemoteAuthToken: authTokenRef => secretVault.getSecret(authTokenRef, {
+        actor: 'system', userId: '__system__', scopes: ['secret:server_remote:read'],
+      }),
+      logger: serverLogger.child('SandboxLifecycle'),
+    });
+  }
   const connectorAcsConfigured = hasAcsConnector(config.tenantRemoteHands?.hands);
   const resolveConnectorServerRemote = createConnectorServerRemoteResolver({ defaultRemote: resolvedServerRemote,
     eligibleHands: user => selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {
@@ -2557,9 +2539,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     billingService: () => billingService,
     tenantStore,
     allowedOrigins: config.server.corsOrigins,
-    // 专职 Agent + LLM 话题门禁（2026-07 唯恩批次）。getGuardrailModelConfigs
-    // 必须是 getter：热更后 channel 每次调用都取到最新链。guardrailEventStore
-    // 仅 PG backend 存在，file backend 降级 log。
+    // 专职 Agent + LLM 话题门禁：模型链用 getter 热更；guardrailEventStore 仅 PG backend 存在。
     orgAgentStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     guardrailEventStore,
@@ -2578,6 +2558,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryWriteDelegationEnabled: (tenantId) => tenantId
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
+    ...(artifactShareStore ? { withSessionAdmissionLock: <T>(sessionId: string, operation: () => Promise<T>) => artifactShareStore!.withSessionLock(sessionId, operation) } : {}),
     ...(runtimeScheduler && pgRunStore ? {
       enqueueRuntime: {
         scheduler: runtimeScheduler,
@@ -2674,7 +2655,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           serverLogger.info(`Run cancel delivered via event bridge: run=${event.runId} reason=${event.reason ?? 'run_cancel_requested'}`);
         }
       }
-      if (event.type === 'run_finished' || event.type === 'run_started') {
+      if (enableSingletonWorkers) sandboxLifecycleService?.observeRuntimeEvent(event); if (event.type === 'run_finished' || event.type === 'run_started') {
         // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
         memoryConsolidationEngine?.wake();
       }
@@ -2693,7 +2674,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }, 5_000);
       cancelDeliveryRetryTimer.unref?.();
     }
-    serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify; terminal outbox recovery started');
+    if (enableSingletonWorkers) sandboxLifecycleService?.start(); serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify; terminal outbox recovery started');
   }
   if (runtimeScheduler && enableSchedulerWorker) {
     await runtimeScheduler.start();
@@ -2896,7 +2877,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     processCwd,
     sessionBasePath,
     agentCwd,
-    sandboxWarmupService,
+    sandboxWarmupService, ...(sandboxLifecycleService ? { sandboxLifecycleService } : {}),
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,

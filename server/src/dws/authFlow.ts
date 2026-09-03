@@ -18,6 +18,7 @@ import { hasExactDwsConnectionProfile, type DwsConnectionStore } from './store.j
 const DWS_DEVICE_FLOW_TIMEOUT_MS = 15 * 60 * 1_000;
 const DWS_AUTH_URL_BASE = 'https://login.dingtalk.com/oauth2/device/verify.htm';
 const MAX_DEVICE_FLOW_OUTPUT_CHARS = 32_000;
+const DWS_AUTH_WORKLOAD = { class: 'interactive' } as const;
 
 export interface DwsDeviceAuthorization {
   userCode: string;
@@ -102,6 +103,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
           mountSubPath,
           executionTarget: 'server-remote',
           sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+          workload: DWS_AUTH_WORKLOAD,
         },
       },
     })) {
@@ -165,6 +167,7 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
             mountSubPath,
             executionTarget: 'server-remote',
           sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+          workload: DWS_AUTH_WORKLOAD,
           },
         },
       });

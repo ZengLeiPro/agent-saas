@@ -64,7 +64,13 @@ function kubectlFailingFirstList(): { kubectl: Kubectl; listCalls: () => number 
       }
       if (args[0] === 'get') {
         if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-        return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+        return {
+          stdout: JSON.stringify({
+            metadata: { uid: 'uid-capacity', resourceVersion: '1', annotations: {} },
+            status: { phase: 'Running' },
+          }),
+          stderr: '', exitCode: 0, signal: null,
+        };
       }
       if (args[0] === 'apply') {
         created = true;
@@ -111,10 +117,16 @@ describe('ensureCapacity 硬门禁', () => {
         if (args[0] === 'get') {
           const name = args[1]?.split('/').at(-1) ?? '';
           return running.has(name)
-            ? { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null }
+            ? {
+                stdout: JSON.stringify({
+                  metadata: { uid: `uid-${name}`, resourceVersion: '1', annotations: {} },
+                  status: { phase: 'Running' },
+                }),
+                stderr: '', exitCode: 0, signal: null,
+              }
             : { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
         }
-        if (args[0] === 'apply') {
+        if (args[0] === 'apply' || args[0] === 'create') {
           notifyApplyStarted();
           await applyGate;
           void options.input;
@@ -122,7 +134,7 @@ describe('ensureCapacity 硬门禁', () => {
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch' || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+        throw new Error(`unexpected kubectl invocation: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
     const manager = new SandboxManager(
@@ -157,7 +169,7 @@ describe('ensureCapacity 硬门禁', () => {
         if (args[0] === 'get') return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
         if (args[0] === 'patch' || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         if (args[0] === 'apply') return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+        throw new Error(`unexpected kubectl invocation: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
     // lifecycle 关掉 → 不做回收，直接走配额硬检查

@@ -106,6 +106,13 @@ export function ChatInput({
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const isComposingRef = useRef(false);
+  const currentSessionIdRef = useRef(sessionId);
+  currentSessionIdRef.current = sessionId;
+  const warmupInputStateRef = useRef({
+    sessionId,
+    hasValidText: Boolean(input.trim()),
+  });
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -131,6 +138,36 @@ export function ChatInput({
   useEffect(() => {
     adjustHeight();
   }, [input, adjustHeight]);
+
+  useEffect(() => {
+    const hasValidText = Boolean(input.trim());
+    const previous = warmupInputStateRef.current;
+
+    // 切换会话只重新武装下一次真实输入，不把加载出的既有草稿本身当成首字。
+    if (previous.sessionId !== sessionId) {
+      isComposingRef.current = false;
+      warmupInputStateRef.current = { sessionId, hasValidText: false };
+      return;
+    }
+    if (isComposingRef.current) return;
+
+    // 只把同一挂载实例中真实观察到的“有效 → 空白”视为一轮结束。
+    // 初始空白或切换 session 时的空白不能解锁，否则重挂载会反复预热。
+    if (sessionId && previous.sessionId === sessionId && previous.hasValidText && !hasValidText) {
+      warmedSessionIds.delete(sessionId);
+    }
+    warmupInputStateRef.current = { sessionId, hasValidText };
+  }, [input, sessionId]);
+
+  const observeWarmupTransition = (value: string) => {
+    const hasValidText = Boolean(value.trim());
+    const previous = warmupInputStateRef.current;
+    if (previous.sessionId === sessionId) {
+      if (previous.hasValidText && !hasValidText && sessionId) warmedSessionIds.delete(sessionId);
+      if (!previous.hasValidText && hasValidText) warmupSessionOnce(sessionId, value);
+    }
+    warmupInputStateRef.current = { sessionId, hasValidText };
+  };
 
   // 通过 visualViewport resize 检测键盘弹出/收起
   useEffect(() => {
@@ -175,17 +212,17 @@ export function ChatInput({
   // Chrome: keydown(isComposing=true) → compositionend — isComposing 可靠
   // Safari: compositionend → keydown(isComposing=false) — isComposing 不可靠
   // 用 ref 手动跟踪 composition 状态，compositionend 延迟清除以覆盖 Safari 的 keydown
-  const isComposingRef = useRef(false);
-
   const handleCompositionStart = () => {
     isComposingRef.current = true;
   };
 
   const handleCompositionEnd = (event: React.CompositionEvent<HTMLTextAreaElement>) => {
     const value = event.currentTarget.value;
+    const compositionSessionId = sessionId;
     setTimeout(() => {
+      if (currentSessionIdRef.current !== compositionSessionId) return;
       isComposingRef.current = false;
-      warmupSessionOnce(sessionId, value);
+      observeWarmupTransition(value);
     }, 0);
   };
 
@@ -410,7 +447,7 @@ export function ChatInput({
                   if (isDisabled) return;
                   const value = e.target.value;
                   onInputChange(value);
-                  if (!isComposingRef.current) warmupSessionOnce(sessionId, value);
+                  if (!isComposingRef.current) observeWarmupTransition(value);
                 }}
                 onKeyDown={handleKeyDown}
                 onCompositionStart={handleCompositionStart}
@@ -435,6 +472,7 @@ export function ChatInput({
             {/* 底部工具栏 */}
             <div className="flex items-center justify-between px-4 pb-3">
               <div className="flex items-center gap-0.5">
+                {/* Keep controls mounted while the Popover closes so the lazy asset dialog retains its state. */}
                 <Popover open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
                   <PopoverTrigger asChild>
                     <button
@@ -453,17 +491,15 @@ export function ChatInput({
                       <Plus className="size-5" />
                     </button>
                   </PopoverTrigger>
-                  {attachmentMenuOpen && (
-                    <AttachmentControls
-                      onLocalFile={() => {
-                        setAttachmentMenuOpen(false);
-                        localFileInputRef.current?.click();
-                      }}
-                      onMenuOpenChange={setAttachmentMenuOpen}
-                      onAssetConfirm={onAssetSelect}
-                      disabled={attachmentDisabled}
-                    />
-                  )}
+                  <AttachmentControls
+                    onLocalFile={() => {
+                      setAttachmentMenuOpen(false);
+                      localFileInputRef.current?.click();
+                    }}
+                    onMenuOpenChange={setAttachmentMenuOpen}
+                    onAssetConfirm={onAssetSelect}
+                    disabled={attachmentDisabled}
+                  />
                 </Popover>
                 <input
                   ref={localFileInputRef}

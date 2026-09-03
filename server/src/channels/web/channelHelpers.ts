@@ -1,7 +1,20 @@
 import { isPlatformAdmin } from '../../auth/types.js';
+import { findTranscriptOrMetaPathBySessionId } from '../../data/transcripts/index.js';
+import { readSessionMeta } from '../../data/transcripts/meta.js';
 import type { TenantStore } from '../../data/tenants/store.js';
 import type { ChannelContext, ContextUsageData } from '../../types/index.js';
+import type { WebChannelRuntimeConfig } from './channelConfig.js';
 import type { WsClient } from './wsServer.js';
+
+export async function isWebSessionDeleted(
+  config: Pick<WebChannelRuntimeConfig, 'enqueueRuntime'> & { agentCwd?: string },
+  sessionId: string,
+): Promise<boolean> {
+  const runtime = config.enqueueRuntime?.enabled === false ? undefined : config.enqueueRuntime;
+  if ((runtime ? await runtime.sessionCatalog.get(sessionId).catch(() => null) : null)?.deletedAt) return true;
+  const path = config.agentCwd ? await findTranscriptOrMetaPathBySessionId(sessionId) : null;
+  return Boolean(path && (await readSessionMeta(path))?.deletedAt);
+}
 
 /** 活动日志只保留操作元数据，禁止写入消息正文或摘要。 */
 export function buildChatMessageActivityDetail(

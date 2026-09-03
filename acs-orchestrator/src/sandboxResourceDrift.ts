@@ -17,8 +17,12 @@ const RESOURCE_KEYS: Array<keyof SandboxResourceOverride> = [
   'memoryLimit',
 ];
 
+// singleflight 只有完整 provision 目标一致才能直接复用 leader 结果。
 export function sameResourceTarget(left: SandboxRef, right: SandboxRef): boolean {
-  return RESOURCE_KEYS.every((key) => left.resources?.[key] === right.resources?.[key]);
+  return RESOURCE_KEYS.every((key) => left.resources?.[key] === right.resources?.[key])
+    && left.workload?.class === right.workload?.class
+    && left.workload?.taskKind === right.workload?.taskKind
+    && left.workload?.purpose === right.workload?.purpose;
 }
 
 export function sandboxResourceTarget(

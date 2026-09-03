@@ -183,6 +183,7 @@ describe('DWS auth keepalive', () => {
       id: 'ws_kaiyan__ky000000000001',
       mountSubPath: 'workspaces/kaiyan/ky000000000001',
       sessionId: 'dws-keepalive-ky000000000001',
+      workload: { class: 'cron' },
     });
     expect(JSON.stringify(wire)).not.toContain('server-token');
   });

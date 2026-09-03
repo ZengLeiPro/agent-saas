@@ -643,7 +643,7 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
-      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources,
+      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources, workload: context.workload,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
@@ -1788,7 +1788,7 @@ export class RawAgentLoop implements AgentLoop {
         topLevelSessionId: context.topLevelSessionId,
         workspaceId: context.workspaceId,
         sandboxScopeId: context.sandboxScopeId,
-        mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources,
+        mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources, workload: context.workload,
         executionTarget: context.executionTarget,
         sandboxPolicy: context.sandboxPolicy,
       });
@@ -2222,7 +2222,7 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: resumeContext.topLevelSessionId,
       workspaceId: resumeContext.workspaceId,
       sandboxScopeId: resumeContext.sandboxScopeId,
-      mountSubPath: resumeContext.mountSubPath, sandboxResources: resumeContext.sandboxResources,
+      mountSubPath: resumeContext.mountSubPath, sandboxResources: resumeContext.sandboxResources, workload: resumeContext.workload,
       executionTarget: approval.executionTarget ?? pendingState.approvalRequest?.executionTarget ?? resumeContext.executionTarget,
       sandboxPolicy: resumeContext.sandboxPolicy,
     });
@@ -2409,7 +2409,7 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
-      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources,
+      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources, workload: context.workload,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });

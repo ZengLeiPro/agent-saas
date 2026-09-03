@@ -111,7 +111,6 @@ const dingtalkRobotConfigSchema = z.object({
   appSecret: z.string().min(1, 'appSecret 不能为空'),
   verifySignature: z.boolean().optional(),
 });
-
 type NormalizedDingtalkConfig = {
   enabled?: boolean;
   mode?: 'webhook' | 'stream';
@@ -1254,11 +1253,12 @@ export const appConfigSchema = z.object({
   toolControls: toolControlsConfigSchema,
   systemPrompts: systemPromptsConfigSchema,
 }).superRefine((value, ctx) => {
-  if ((value.tenantRemoteHands?.hands.length ?? 0) > 0 && value.runtimeEventStore?.backend !== 'pg') {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['tenantRemoteHands'],
-      message: 'tenantRemoteHands requires runtimeEventStore.backend="pg" so durable HandStore/RunStore are available',
+  const pgRequirements = [    [(value.tenantRemoteHands?.hands.length ?? 0) > 0, 'tenantRemoteHands', 'so durable HandStore/RunStore are available'],
+    [Boolean(value.serverRemote), 'serverRemote', 'for durable Sandbox lifecycle cleanup'],
+] as const;
+  for (const [enabled, path, reason] of pgRequirements) {    if (enabled && value.runtimeEventStore?.backend !== 'pg') ctx.addIssue({
+      code: z.ZodIssueCode.custom, path: [path],
+      message: `${path} requires runtimeEventStore.backend="pg" ${reason}`,
     });
   }
   for (const [groupIndex, group] of (value.models?.groups ?? []).entries()) {

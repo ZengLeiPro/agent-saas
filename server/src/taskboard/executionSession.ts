@@ -1,4 +1,5 @@
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
+import type { TaskBoardExecutionPurpose, TaskBoardTaskKind } from '../../../shared/src/types/taskboard.js';
 import {
   createRuntimeSessionRecord,
   type RuntimeSessionRecord,
@@ -15,6 +16,8 @@ export async function reuseTaskboardSession(input: {
   executionIdentity: TaskboardIdentity;
   modelRef: string;
   executionTarget: ExecutionTargetKind;
+  taskKind?: TaskBoardTaskKind;
+  purpose?: TaskBoardExecutionPurpose;
 }): Promise<RuntimeSessionRecord> {
   const {
     sessionCatalog,
@@ -53,6 +56,11 @@ export async function reuseTaskboardSession(input: {
     sessionSource: 'taskboard_execution',
     memoryAutomationEligible: false,
     memoryPolicyVersion: 'v2',
+    sandboxWorkloadDescriptor: {
+      kind: 'taskboard',
+      ...(input.taskKind ? { taskKind: input.taskKind } : {}),
+      ...(input.purpose ? { purpose: input.purpose } : {}),
+    },
   });
   if (!existing) return fresh;
   return {
@@ -68,6 +76,11 @@ export async function reuseTaskboardSession(input: {
     sessionSource: 'taskboard_execution',
     memoryAutomationEligible: false,
     memoryPolicyVersion: 'v2',
+    sandboxWorkloadDescriptor: {
+      kind: 'taskboard',
+      ...(input.taskKind ? { taskKind: input.taskKind } : {}),
+      ...(input.purpose ? { purpose: input.purpose } : {}),
+    },
     updatedAt: new Date().toISOString(),
   };
 }

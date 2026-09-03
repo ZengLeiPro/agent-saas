@@ -539,7 +539,7 @@ describePg('PgTaskboardStore contract', () => {
     const firstLease = await store.claimExecutionDispatch('run-a', 'lease-a');
     expect(firstLease).toMatchObject({
       runId: 'run-a',
-      executionId: 'execution-a',
+      executionId: 'execution-a', taskKind: 'delivery', purpose: 'work',
       attemptCount: 1,
       leaseId: 'lease-a',
       payload: { run: { runId: 'run-a' }, session: { sessionId: 'session-a' } },
@@ -635,7 +635,7 @@ describePg('PgTaskboardStore contract', () => {
     ]));
     expect(await store.claimExecutionDispatch('run-review', 'review-lease')).toMatchObject({
       executionId: 'execution-review',
-      runId: 'run-review',
+      runId: 'run-review', taskKind: 'delivery', purpose: 'review',
       sessionId: 'session-a',
     });
     const approved = await store.moveTaskFromExecution(alice, 'run-review', 'ready_to_merge');

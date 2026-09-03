@@ -83,6 +83,37 @@ describe('DWS Personal Stream exact-profile retry circuit', () => {
     await gateway.stop();
   });
 
+  it('classifies the personal event stream Sandbox as cron', async () => {
+    let wire: Record<string, any> | undefined;
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.body) {
+        const candidate = JSON.parse(String(init.body)) as Record<string, any>;
+        if (candidate.toolName) wire = candidate;
+      }
+      const completed = {
+        type: 'completed', response: { status: 'error', content: '', error: 'stream ended' },
+      };
+      return new Response(`data: ${JSON.stringify(completed)}\n\n`, {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    }) as typeof fetch;
+    const store = {
+      claimRuntimeLease: vi.fn(async () => true),
+      renewRuntimeLease: vi.fn(async () => true),
+      releaseRuntimeLease: vi.fn(async () => undefined),
+      updateRuntimeStatus: vi.fn(async () => undefined),
+    } as unknown as AgentDwsAccountStore;
+    const gateway = new DwsPersonalEventGateway({
+      agentCwd: '/tmp/agent', accountStore: store, fetchImpl,
+      resolveServerRemote: async () => ({ baseUrl: 'http://acs', authToken: 'token' }),
+    });
+
+    await gateway.startAccount(account);
+    await vi.waitFor(() => expect(wire).toBeDefined());
+    expect(wire?.context.workspace.workload).toEqual({ class: 'cron' });
+    await gateway.stop();
+  });
+
   it('does not claim a stream while unified execution maintenance is active', async () => {
     const claimRuntimeLease = vi.fn(async () => true);
     const gateway = new DwsPersonalEventGateway({

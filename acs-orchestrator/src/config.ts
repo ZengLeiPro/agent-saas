@@ -61,6 +61,8 @@ export interface AcsOrchestratorConfig {
   imageCacheEnabled: boolean;
   skipProvisionOnSameRecipe: boolean;
   lifecycleEnabled: boolean;
+  /** 新 workload-aware 回收策略；shadow 只展示决策，enforce 才据此删除。 */
+  lifecyclePolicyMode?: 'shadow' | 'enforce';
   sandboxCleanupIntervalMs: number;
   sandboxIdlePauseMs: number;
   sandboxTtlMs: number;
@@ -107,6 +109,12 @@ export interface AcsReleaseIdentity {
   sandboxImageDigest: string;
   namespace: string;
   configFingerprint: string;
+}
+
+export function lifecyclePolicyHealth(
+  config: Pick<AcsOrchestratorConfig, 'lifecyclePolicyMode'>,
+) {
+  return { lifecyclePolicyMode: config.lifecyclePolicyMode ?? 'shadow' };
 }
 
 export function releaseIdentityHealth(identity: AcsReleaseIdentity | undefined) {
@@ -269,6 +277,12 @@ function readBoolEnv(name: string, fallback: boolean): boolean {
   if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
   if (['0', 'false', 'no', 'off'].includes(raw)) return false;
   throw new Error(`${name} 非法: ${process.env[name]}（仅支持 true/false）`);
+}
+
+function readLifecyclePolicyMode(): 'shadow' | 'enforce' {
+  const raw = process.env.ACS_SANDBOX_LIFECYCLE_POLICY_MODE?.trim() || 'shadow';
+  if (raw === 'shadow' || raw === 'enforce') return raw;
+  throw new Error(`ACS_SANDBOX_LIFECYCLE_POLICY_MODE 非法: ${raw}`);
 }
 
 function readLogLevel(): AcsOrchestratorConfig['logLevel'] {
@@ -662,6 +676,7 @@ export function loadConfigFromEnv(): AcsOrchestratorConfig {
     imageCacheEnabled: readBoolEnv('ACS_SANDBOX_IMAGE_CACHE_ENABLED', true),
     skipProvisionOnSameRecipe: readBoolEnv('ACS_SKIP_PROVISION_ON_SAME_RECIPE', true),
     lifecycleEnabled: readBoolEnv('ACS_SANDBOX_LIFECYCLE_ENABLED', true),
+    lifecyclePolicyMode: readLifecyclePolicyMode(),
     sandboxCleanupIntervalMs: readIntEnv('ACS_SANDBOX_CLEANUP_INTERVAL_MS', 60_000, {
       min: 10_000,
       max: 24 * 60 * 60_000,

@@ -118,8 +118,10 @@ describe('session share routes', () => {
 
   async function writeSharedSession(options: {
     includeFileMarkers?: boolean;
+    fileMarkerPaths?: string[];
     inlineMediaPath?: string;
     sensitiveContent?: string;
+    toolResultContent?: string;
   } = {}): Promise<{ sessionId: string; transcriptPath: string }> {
     const sessionId = randomUUID();
     const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
@@ -164,7 +166,7 @@ describe('session share routes', () => {
         message: {
           role: 'user',
           content: [
-            { type: 'tool_result', tool_use_id: 'toolu_1', content: '订单 A 已完成' },
+            { type: 'tool_result', tool_use_id: 'toolu_1', content: options.toolResultContent ?? '订单 A 已完成' },
           ],
         },
       },
@@ -176,8 +178,10 @@ describe('session share routes', () => {
           role: 'assistant',
           content: [{
             type: 'text',
-            text: options.includeFileMarkers
-              ? '订单 A 已完成。\n[FILE]{"filePath":"assets/20260708/demo.html"}[/FILE]\n[FILE]{"filePath":"assets/20260708/demo.pdf"}[/FILE]\n[FILE]{"filePath":"assets/20260708/escape.txt"}[/FILE]'
+            text: options.fileMarkerPaths
+              ? `订单 A 已完成。\n${options.fileMarkerPaths.map((filePath) => `[FILE]{"filePath":"${filePath}"}[/FILE]`).join('\n')}`
+              : options.includeFileMarkers
+                ? '订单 A 已完成。\n[FILE]{"filePath":"assets/20260708/demo.html"}[/FILE]\n[FILE]{"filePath":"assets/20260708/demo.pdf"}[/FILE]'
               : options.inlineMediaPath
                 ? `订单 A 已完成。\n![效果图](${options.inlineMediaPath})`
                 : '订单 A 已完成。',
@@ -196,7 +200,7 @@ describe('session share routes', () => {
       const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       expect(created.status).toBe(200);
       const createdJson = await created.json() as { enabled: boolean; url: string; debugMode: boolean };
@@ -255,7 +259,7 @@ describe('session share routes', () => {
       const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-test-user': 'other' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       expect(response.status).toBe(403);
     } finally {
@@ -270,7 +274,7 @@ describe('session share routes', () => {
       const missingConfirmation = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePaths: [] }),
+        body: JSON.stringify({}),
       });
       expect(missingConfirmation.status).toBe(400);
 
@@ -278,7 +282,7 @@ describe('session share routes', () => {
       const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       expect(created.status).toBe(200);
       const createdJson = await created.json() as { expiresAt: string };
@@ -291,7 +295,6 @@ describe('session share routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           confirmPublicText: true,
-          filePaths: [],
           expiresAt: new Date(Date.now() + 31 * 24 * 60 * 60 * 1_000).toISOString(),
         }),
       });
@@ -310,7 +313,7 @@ describe('session share routes', () => {
       const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       expect(response.status).toBe(200);
       const token = ((await response.json()) as { url: string }).url.split('/').pop()!;
@@ -343,7 +346,7 @@ describe('session share routes', () => {
         const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+          body: JSON.stringify({ confirmPublicText: true }),
         });
         expect(response.status).toBe(200);
       }
@@ -373,7 +376,7 @@ describe('session share routes', () => {
       const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       const createdJson = await created.json() as { url: string };
       const token = createdJson.url.split('/').pop()!;
@@ -404,17 +407,10 @@ describe('session share routes', () => {
         files: [{ relativePath: imagePath, fileName: 'result.png', inlineInBody: true }],
       });
 
-      const missingInlineMedia = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [] }),
-      });
-      expect(missingInlineMedia.status).toBe(400);
-
       const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [imagePath] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       expect(created.status).toBe(200);
       const createdJson = await created.json() as { url: string };
@@ -451,7 +447,7 @@ describe('session share routes', () => {
       const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmPublicText: true, filePaths: [imagePath] }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       expect(created.status).toBe(422);
     } finally {
@@ -459,7 +455,7 @@ describe('session share routes', () => {
     }
   });
 
-  it('只允许读取快照显式引用且未越出工作区的文件', async () => {
+  it('自动分享会话引用的成果文件，不允许读取未引用文件', async () => {
     const { sessionId } = await writeSharedSession({ includeFileMarkers: true });
     const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
     const relPath = 'assets/20260708/demo.html';
@@ -477,10 +473,7 @@ describe('session share routes', () => {
       const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          confirmPublicText: true,
-          filePaths: [relPath, pdfRelPath],
-        }),
+        body: JSON.stringify({ confirmPublicText: true }),
       });
       const createdJson = await created.json() as { url: string };
       const token = createdJson.url.split('/').pop()!;
@@ -529,6 +522,110 @@ describe('session share routes', () => {
 
       const symlinkEscape = await fetch(`${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent('assets/20260708/escape.txt')}`);
       expect(symlinkEscape.status).toBe(403);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('包含数十个成果文件的会话无需逐项选择即可完整分享', async () => {
+    const fileMarkerPaths = Array.from(
+      { length: 40 },
+      (_, index) => `assets/20260904/成果文件-${String(index + 1).padStart(2, '0')}.txt`,
+    );
+    const { sessionId } = await writeSharedSession({ fileMarkerPaths });
+    const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
+    await mkdir(join(userCwd, 'assets/20260904'), { recursive: true });
+    await Promise.all(fileMarkerPaths.map((filePath, index) => writeFile(
+      join(userCwd, filePath),
+      `RESULT_${index + 1}`,
+    )));
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPublicText: true }),
+      });
+      expect(created.status).toBe(200);
+      const token = ((await created.json()) as { url: string }).url.split('/').pop()!;
+
+      const publicShare = await fetch(`${baseUrl}/api/share/sessions/${token}`);
+      expect(publicShare.status).toBe(200);
+      const publicShareJson = await publicShare.json() as {
+        detail: { allowedFiles: Array<{ relativePath: string }> };
+      };
+      expect(publicShareJson.detail.allowedFiles).toHaveLength(40);
+      expect(publicShareJson.detail.allowedFiles.map((file) => file.relativePath)).toEqual(fileMarkerPaths);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('兼容旧前端的成果文件子集选择', async () => {
+    const selectedPath = 'assets/20260904/公开.txt';
+    const omittedPath = 'assets/20260904/不公开.txt';
+    const { sessionId } = await writeSharedSession({ fileMarkerPaths: [selectedPath, omittedPath] });
+    const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
+    await mkdir(join(userCwd, 'assets/20260904'), { recursive: true });
+    await writeFile(join(userCwd, selectedPath), 'PUBLIC');
+    await writeFile(join(userCwd, omittedPath), 'PRIVATE');
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPublicText: true, filePaths: [selectedPath] }),
+      });
+      expect(created.status).toBe(200);
+      const token = ((await created.json()) as { url: string }).url.split('/').pop()!;
+
+      const publicShare = await fetch(`${baseUrl}/api/share/sessions/${token}`);
+      const publicShareJson = await publicShare.json() as {
+        detail: { allowedFiles: Array<{ relativePath: string }>; blocks: Array<{ content: string }> };
+      };
+      expect(publicShareJson.detail.allowedFiles.map((file) => file.relativePath)).toEqual([selectedPath]);
+      expect(JSON.stringify(publicShareJson.detail.blocks)).not.toContain(omittedPath);
+
+      const omitted = await fetch(
+        `${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent(omittedPath)}`,
+      );
+      expect(omitted.status).toBe(403);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('不会公开仅由隐藏工具结果引用的文件', async () => {
+    const hiddenPath = 'assets/20260904/内部诊断.txt';
+    const { sessionId } = await writeSharedSession({
+      toolResultContent: `[FILE]{"filePath":"${hiddenPath}"}[/FILE]`,
+    });
+    const userCwd = deps.resolveUserCwd(agentCwd, TEST_USER);
+    await mkdir(join(userCwd, 'assets/20260904'), { recursive: true });
+    await writeFile(join(userCwd, hiddenPath), 'INTERNAL');
+
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const created = await fetch(`${baseUrl}/api/sessions/${sessionId}/share`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmPublicText: true }),
+      });
+      expect(created.status).toBe(200);
+      const token = ((await created.json()) as { url: string }).url.split('/').pop()!;
+
+      const publicShare = await fetch(`${baseUrl}/api/share/sessions/${token}`);
+      const publicShareJson = await publicShare.json() as {
+        detail: { allowedFiles: Array<{ relativePath: string }> };
+      };
+      expect(publicShareJson.detail.allowedFiles).toEqual([]);
+
+      const hidden = await fetch(
+        `${baseUrl}/api/share/sessions/${token}/file?path=${encodeURIComponent(hiddenPath)}`,
+      );
+      expect(hidden.status).toBe(403);
     } finally {
       await stopServer(server);
     }

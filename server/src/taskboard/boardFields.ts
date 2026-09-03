@@ -2,6 +2,7 @@ import {
   TASKBOARD_ALLOWED_ACTIONS,
   TASKBOARD_DEFAULT_PROMPT,
   TASKBOARD_EXECUTION_PURPOSES,
+  TASKBOARD_STAGE_DEFAULT_PROMPTS,
   type TaskBoard,
   type TaskBoardAllowedAction,
   type TaskBoardExecutionPurpose,
@@ -50,9 +51,12 @@ export function boardStageModelsMigrationSql(boardsTable: string): string {
 }
 
 export function boardStagePromptsMigrationSql(boardsTable: string): string {
+  const defaultPrompts = quoteSqlLiteral(JSON.stringify(TASKBOARD_STAGE_DEFAULT_PROMPTS));
   return `
     ALTER TABLE ${boardsTable}
-      ADD COLUMN IF NOT EXISTS stage_prompts JSONB NOT NULL DEFAULT '{}'::jsonb
+      ADD COLUMN IF NOT EXISTS stage_prompts JSONB NOT NULL DEFAULT ${defaultPrompts}::jsonb;
+    ALTER TABLE ${boardsTable}
+      ALTER COLUMN stage_prompts SET DEFAULT ${defaultPrompts}::jsonb
   `;
 }
 

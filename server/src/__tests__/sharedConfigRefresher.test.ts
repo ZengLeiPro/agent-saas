@@ -101,39 +101,31 @@ describe('createSharedConfigRefresher', () => {
 
   it('跨进程热更新完整 Codex 配置，并让同一个 CredentialManager 立即读取新账号顺序', () => {
     const initial = {
-      enabled: true,
-      websocketEnabled: true,
+      enabled: true, websocketEnabled: true, quotaCooldownMinutes: 60,
       credentialRef: 'credential-old-primary',
       credentialRefs: ['credential-old-primary', 'credential-old-secondary'],
-      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
-      originator: 'codex-tui',
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses', originator: 'codex-tui',
     } satisfies NonNullable<AppConfig['codexSubscription']>;
     const replacement = {
-      enabled: false,
-      websocketEnabled: false,
+      enabled: true, websocketEnabled: true, quotaCooldownMinutes: 120,
       credentialRef: 'credential-new-primary',
       credentialRefs: ['credential-new-primary', 'credential-old-primary'],
-      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
-      originator: 'kaiyan-agent',
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses', originator: 'codex-tui',
     } satisfies NonNullable<AppConfig['codexSubscription']>;
     writeCodexConfig(dir, initial);
     const config = {
       models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
       codexSubscription: structuredClone(initial),
     } as unknown as AppConfig;
-    const manager = new CodexCredentialManager({
-      vault: new InMemorySecretVault(),
-      getConfig: () => config.codexSubscription,
-    });
+    const manager = new CodexCredentialManager({ vault: new InMemorySecretVault(),
+      getConfig: () => config.codexSubscription });
     const logs: string[] = [];
+    const invalidatedRefs: Array<readonly string[] | undefined> = [];
     let clock = 10_000;
-    const refresher = createSharedConfigRefresher({
-      config,
-      processCwd: dir,
+    const refresher = createSharedConfigRefresher({ config, processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       logger: { info: (message) => logs.push(message), warn: () => {} },
-      now: () => clock,
-    });
+      onCodexSubscriptionUpdated: (refs) => invalidatedRefs.push(refs), now: () => clock });
 
     expect(manager.getCredentialRefs()).toEqual(initial.credentialRefs);
     writeCodexConfig(dir, replacement);
@@ -144,13 +136,15 @@ describe('createSharedConfigRefresher', () => {
     expect(config.codexSubscription?.credentialRef).toBe(replacement.credentialRefs[0]);
     expect(manager.getCredentialRefs()).toEqual(replacement.credentialRefs);
     expect(manager.getConfiguration()).toMatchObject({
-      enabled: false,
-      websocketEnabled: false,
+      enabled: true,
+      websocketEnabled: true,
+      quotaCooldownMinutes: 120,
       endpoint: replacement.endpoint,
       originator: replacement.originator,
     });
+    expect(invalidatedRefs).toEqual([['credential-old-secondary', 'credential-new-primary']]);
     expect(logs.filter((message) => message.includes('Codex 订阅配置'))).toEqual([
-      '[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=false / websocketEnabled=false / credentialCount=2',
+      '[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=true / websocketEnabled=true / credentialCount=2',
     ]);
     expect(logs.join('\n')).not.toContain('credential-new-primary');
   });
@@ -159,6 +153,7 @@ describe('createSharedConfigRefresher', () => {
     const initial = {
       enabled: true,
       websocketEnabled: true,
+      quotaCooldownMinutes: 60,
       credentialRef: 'credential-a',
       credentialRefs: ['credential-a', 'credential-b'],
       endpoint: 'https://chatgpt.com/backend-api/codex/responses',
@@ -177,12 +172,14 @@ describe('createSharedConfigRefresher', () => {
       codexSubscription: structuredClone(initial),
     } as unknown as AppConfig;
     const logs: string[] = [];
+    const invalidations: Array<readonly string[] | undefined> = [];
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       logger: { info: (message) => logs.push(message), warn: () => {} },
+      onCodexSubscriptionUpdated: (refs) => invalidations.push(refs),
       now: () => clock,
     });
 
@@ -191,12 +188,14 @@ describe('createSharedConfigRefresher', () => {
     refresher.refreshIfChanged();
     expect(config.codexSubscription).toEqual(disabled);
     expect(config.codexSubscription?.credentialRefs).not.toContain('credential-a');
+    expect(invalidations).toEqual([undefined]);
 
     const reenabled = { ...disabled, enabled: true, websocketEnabled: true };
     writeCodexConfig(dir, reenabled);
     clock += 5_000;
     refresher.refreshIfChanged();
     expect(config.codexSubscription).toMatchObject({ enabled: true, websocketEnabled: true });
+    expect(invalidations).toEqual([undefined, undefined]);
 
     const codexConfigAfterToggle = config.codexSubscription;
     const codexLogCountAfterToggle = logs.filter((message) => message.includes('Codex 订阅配置')).length;
@@ -207,11 +206,13 @@ describe('createSharedConfigRefresher', () => {
     expect(config.codexSubscription).toBe(codexConfigAfterToggle);
     expect(logs.filter((message) => message.includes('Codex 订阅配置')))
       .toHaveLength(codexLogCountAfterToggle);
+    expect(invalidations).toHaveLength(2);
 
     writeCodexConfig(dir, undefined, [BASE_GROUP, QWEN_GROUP]);
     clock += 5_000;
     refresher.refreshIfChanged();
     expect(config.codexSubscription).toBeUndefined();
+    expect(invalidations).toEqual([undefined, undefined, undefined]);
     expect(logs.at(-1)).toBe(
       '[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=false / websocketEnabled=false / credentialCount=0',
     );

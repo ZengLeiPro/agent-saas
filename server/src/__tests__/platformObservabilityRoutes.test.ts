@@ -315,6 +315,7 @@ describe('platform observability router', () => {
     expect(healthSql).toHaveLength(3);
     expect(healthSql.filter((sql) => sql.includes('requested_at'))).toHaveLength(2);
     expect(healthSql.join('\n')).toContain("status IN ('completed','failed','cancelled','orphaned')");
+    expect(healthSql.every((sql) => sql.includes('sandboxCleanupCarrier'))).toBe(true);
     expect(healthSql.join('\n')).not.toContain('run_finished');
   });
 
@@ -344,6 +345,7 @@ describe('platform observability router', () => {
     const [runSql] = runQuery.mock.calls[0]! as unknown as [unknown, unknown[]];
     const [sessionSql] = sessionQuery.mock.calls[0]! as unknown as [unknown, unknown[]];
     expect(String(runSql)).toContain("AT TIME ZONE 'Asia/Shanghai'");
+    expect(String(runSql)).toContain('sandboxCleanupCarrier');
     expect(String(sessionSql)).toContain("AT TIME ZONE 'Asia/Shanghai'");
   });
 

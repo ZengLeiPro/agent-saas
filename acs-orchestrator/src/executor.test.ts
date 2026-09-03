@@ -20,6 +20,7 @@ describe('runner stderr logging', () => {
 });
 
 describe('AcsExecutor active sandbox tracking', () => {
+  // Process-local busy tracking is paired with a short renewable persisted lease.
   it('rejects a duplicate invocation id without spawning a second runner', async () => {
     const ref: SandboxRef = {
       name: 'as-active',
@@ -31,6 +32,9 @@ describe('AcsExecutor active sandbox tracking', () => {
     const child = fakeChild();
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
     const spawn = vi.fn(() => child);
@@ -85,6 +89,9 @@ describe('AcsExecutor active sandbox tracking', () => {
     const startup = new Promise<void>((resolve) => { finishStartup = resolve; });
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => { await startup; return ref; }),
     } as unknown as SandboxManager;
     const spawn = vi.fn();
@@ -120,7 +127,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     expect(executor.cancel('inv-aborted-startup')).toBe(false);
   });
 
-  it('adds the trusted sandbox identity to runner correlation', async () => {
+  it('adds the trusted sandbox identity to runner correlation while maintaining its lease', async () => {
     const ref: SandboxRef = {
       name: 'as-correlation',
       workspaceId: 'ws_kaiyan__u-1',
@@ -133,6 +140,9 @@ describe('AcsExecutor active sandbox tracking', () => {
     child.stdin.on('data', (chunk) => { runnerInput += String(chunk); });
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
     let spawnInput: string | undefined;
@@ -188,6 +198,9 @@ describe('AcsExecutor active sandbox tracking', () => {
     const activeRegistry = new ActiveSandboxRegistry();
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => {
         throw new Error('startup failed');
       }),
@@ -228,6 +241,9 @@ describe('AcsExecutor active sandbox tracking', () => {
     const child = fakeChild();
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
     const kubectl = {
@@ -269,50 +285,162 @@ describe('AcsExecutor active sandbox tracking', () => {
     expect(activeRegistry.isBusy(ref.name)).toBe(false);
   });
 
-  it('persists background shell lifecycle protection before returning the final response', async () => {
+  it('periodically renews the persisted invocation lease while a long tool is still running', async () => {
+    vi.useFakeTimers();
+    try {
+      const ref: SandboxRef = {
+        name: 'as-lease-renew',
+        workspaceId: 'ws_kaiyan__u-1',
+        sandboxScopeId: 'ws_kaiyan__u-1',
+        sessionId: 'session-1',
+        mountSubPath: 'workspaces/kaiyan/u-1',
+      };
+      const child = fakeChild();
+      const setActiveInvocationLease = vi.fn(async () => 'uid-1');
+      const completeInvocation = vi.fn(async () => 'uid-1');
+      const sandboxManager = {
+        ref: () => ref,
+        ensureRunning: vi.fn(async () => ref),
+        setActiveInvocationLease,
+        completeInvocation,
+        touch: vi.fn(async () => undefined),
+      } as unknown as SandboxManager;
+      const executor = new AcsExecutor(
+        baseConfig(),
+        { spawn: vi.fn(() => child) } as unknown as Kubectl,
+        sandboxManager,
+        noopLogger,
+        undefined,
+        { persistentRunner: false },
+      );
+
+      const result = executor.execute({
+        toolName: 'Read',
+        input: { path: 'README.md' },
+        context: { invocationId: 'inv-renew', workspace: {
+          id: ref.workspaceId, sessionId: ref.sessionId, sandboxScopeId: ref.sandboxScopeId,
+        } },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(setActiveInvocationLease).toHaveBeenCalledTimes(1);
+      const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]?.[1] as string;
+      expect(leaseKey).toMatch(/^inv-renew:/u);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
+
+      child.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'ok' } })}\n`);
+      child.emit('close', 0, null);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(result).resolves.toMatchObject({ status: 'success' });
+      expect(completeInvocation).toHaveBeenCalledWith(ref.name, leaseKey, expect.any(Date), 'uid-1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the sandbox busy until lease removal and last-active touch commit atomically', async () => {
     const ref: SandboxRef = {
-      name: 'as-background',
+      name: 'as-finally-order',
       workspaceId: 'ws_kaiyan__u-1',
       sandboxScopeId: 'ws_kaiyan__u-1',
       sessionId: 'session-1',
       mountSubPath: 'workspaces/kaiyan/u-1',
     };
     const child = fakeChild();
-    const setBackgroundShellProtection = vi.fn(async () => undefined);
+    const setActiveInvocationLease = vi.fn(async () => 'uid-1');
+    let completionStarted!: () => void;
+    let releaseCompletion!: () => void;
+    const completionPending = new Promise<void>((resolve) => { completionStarted = resolve; });
+    const completionBlocked = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+    const completeInvocation = vi.fn(async () => {
+      completionStarted();
+      await completionBlocked;
+      return 'uid-1';
+    });
+    const activeRegistry = new ActiveSandboxRegistry();
     const sandboxManager = {
       ref: () => ref,
       ensureRunning: vi.fn(async () => ref),
-      setBackgroundShellProtection,
+      setActiveInvocationLease,
+      completeInvocation,
     } as unknown as SandboxManager;
-    const kubectl = { spawn: vi.fn(() => child) } as unknown as Kubectl;
-    const executor = new AcsExecutor(baseConfig(), kubectl, sandboxManager, noopLogger, undefined, { persistentRunner: false });
-    const protectedUntil = '2026-07-20T00:00:00.000Z';
-
-    const resultPromise = executor.execute({
-      toolName: 'Shell',
-      input: { command: 'sleep 60', mode: 'background' },
-      context: {
-        workspace: {
-          id: ref.workspaceId,
-          sessionId: ref.sessionId,
-          sandboxScopeId: ref.sandboxScopeId,
-          mountSubPath: ref.mountSubPath,
-        },
-      },
+    const config = { ...baseConfig(), sandboxWaitTimeoutMs: 30_000 };
+    const executor = new AcsExecutor(
+      config,
+      { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager,
+      noopLogger,
+      activeRegistry,
+      { persistentRunner: false },
+    );
+    const result = executor.execute({
+      toolName: 'Read',
+      input: { path: 'README.md' },
+      context: { invocationId: 'inv-finally', workspace: {
+        id: ref.workspaceId, sessionId: ref.sessionId, sandboxScopeId: ref.sandboxScopeId,
+      } },
     });
-    await vi.waitFor(() => expect(kubectl.spawn).toHaveBeenCalledOnce());
-    child.stdout.end(`${JSON.stringify({
-      kind: 'final',
-      response: {
-        status: 'success',
-        content: '{}',
-        metadata: { backgroundShell: { taskId: 'shell-bg-task-1', status: 'running', protectedUntil } },
-      },
-    })}\n`);
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    child.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'ok' } })}\n`);
     child.emit('close', 0, null);
+    await completionPending;
 
-    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
-    expect(setBackgroundShellProtection).toHaveBeenCalledWith(ref.name, protectedUntil);
+    const leaseCalls = setActiveInvocationLease.mock.calls as unknown[][];
+    const leaseKey = leaseCalls[0]?.[1] as string;
+    const completionFence = leaseCalls.at(-1)?.[2] as string;
+    expect(Date.parse(completionFence) - Date.now()).toBeGreaterThan(6 * config.sandboxWaitTimeoutMs);
+    expect(activeRegistry.isBusy(ref.name)).toBe(true);
+    expect(completeInvocation).toHaveBeenCalledWith(ref.name, leaseKey, expect.any(Date), 'uid-1');
+    releaseCompletion();
+    await expect(result).resolves.toMatchObject({ status: 'success' });
+    expect(activeRegistry.isBusy(ref.name)).toBe(false);
+  });
+
+  it('re-establishes a long fence after atomic completion fails and preserves the original execution error', async () => {
+    const ref: SandboxRef = {
+      name: 'as-finally-error',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    const setActiveInvocationLease = vi.fn(async () => 'uid-1');
+    const completeInvocation = vi.fn()
+      .mockRejectedValueOnce(new Error('completion CAS failed'))
+      .mockResolvedValue('uid-1');
+    const warn = vi.fn();
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+      setActiveInvocationLease,
+      completeInvocation,
+      getSandboxUid: vi.fn(async () => 'uid-1'),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(),
+      { spawn: vi.fn(() => { throw new Error('runner spawn failed'); }) } as unknown as Kubectl,
+      sandboxManager,
+      { ...noopLogger, warn },
+      undefined,
+      { persistentRunner: false, backgroundRecoveryRetryMs: 1 },
+    );
+
+    await expect(executor.execute({
+      toolName: 'Read',
+      input: { path: 'README.md' },
+      context: { invocationId: 'inv-error', workspace: {
+        id: ref.workspaceId, sessionId: ref.sessionId, sandboxScopeId: ref.sandboxScopeId,
+      } },
+    })).rejects.toThrow('runner spawn failed');
+    await vi.waitFor(() => expect(completeInvocation).toHaveBeenCalledTimes(2));
+    expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
+      ref.name, expect.any(String), expect.any(String), 'uid-1', undefined,
+      'completion_pending', expect.any(String),
+    );
+    const recoveryFence = (setActiveInvocationLease.mock.calls as unknown[][]).at(-1)?.[2] as string;
+    expect((setActiveInvocationLease.mock.calls as unknown[][]).at(-1)?.[6]).toEqual(expect.any(String));
+    expect(Date.parse(recoveryFence) - Date.now()).toBeGreaterThan(50_000);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('invocation_completion_failed'));
   });
 });
 
@@ -332,7 +460,7 @@ function fakeChild(): EventEmitter & { stdin: PassThrough; stdout: PassThrough; 
 
 const noopLogger = {
   info() {},
-  warn() {},
+  warn(_message?: string) {},
   error() {},
 };
 
@@ -415,6 +543,9 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
     const child = fakeChild();
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
     const spawn = vi.fn(() => child);
@@ -450,6 +581,7 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
 });
 
 describe('AcsExecutor sandbox resource override', () => {
+  // Resource conversion and lifecycle bookkeeping must coexist on the same execution path.
   it('converts wire resources through provision semantics and passes them to ensureRunning', async () => {
     const resources = { cpuLimit: '1', memoryLimit: '2048Mi' };
     const ref: SandboxRef = {
@@ -466,7 +598,13 @@ describe('AcsExecutor sandbox resource override', () => {
     const executor = new AcsExecutor(
       baseConfig(),
       { spawn: vi.fn(() => child) } as unknown as Kubectl,
-      { ref: refFn, ensureRunning } as unknown as SandboxManager,
+      {
+        ref: refFn,
+        ensureRunning,
+        setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+        touch: vi.fn(async () => undefined),
+      } as unknown as SandboxManager,
       noopLogger,
       undefined,
       { persistentRunner: false },
@@ -530,7 +668,13 @@ describe('persistent sandbox runner', () => {
       return child;
     });
     const ensureRunning = vi.fn(async () => ref);
-    const sandboxManager = { ref: () => ref, ensureRunning } as unknown as SandboxManager;
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
+    } as unknown as SandboxManager;
     const executor = new AcsExecutor(baseConfig(), { spawn } as unknown as Kubectl, sandboxManager, noopLogger);
     const request = {
       toolName: 'Read',

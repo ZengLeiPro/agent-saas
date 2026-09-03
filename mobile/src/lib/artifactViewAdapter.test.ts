@@ -13,7 +13,8 @@ const grant = (viewKind: ArtifactReadGrant['descriptor']['viewKind'], requiresWa
 
 describe('M50-02 Mobile Artifact safe-view parity', () => {
   it.each([
-    ['image', 'native-image'], ['pdf', 'native-pdf'], ['text', 'native-text'],
+    ['image', 'native-image'], ['pdf', 'native-pdf'], ['markdown', 'native-text'],
+    ['html', 'download-only'], ['text', 'native-text'], ['source', 'native-text'],
     ['audio', 'native-audio'], ['video', 'native-video'], ['download-only', 'download-only'],
   ] as const)('maps %s without WebView execution', (kind, expected) => {
     expect(selectMobileArtifactViewer(grant(kind))).toBe(expected);

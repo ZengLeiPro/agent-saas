@@ -158,6 +158,21 @@ describe('records', () => {
     expect(grid?.children).toHaveLength(4);
   });
 
+  it.each([3, 4, 5, 6])('业务步骤侧栏的 %i 个 facts 始终使用两个等宽可收缩列', (count) => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'grid', title: '任务字段',
+      items: Array.from({ length: count }, (_, index) => ({ label: `字段 ${index + 1}`, value: `值 ${index + 1}` })),
+    }]} ctx={{ recordsSurface: 'business-step' }} />);
+
+    const records = container.querySelector('[data-records-block]');
+    const grid = container.querySelector('[data-records-grid]');
+    expect(records?.className).toContain('w-full');
+    expect(records?.className).toContain('overflow-hidden');
+    expect(grid?.className).toContain('grid-cols-[repeat(2,minmax(0,1fr))]');
+    expect(grid?.className).not.toContain('sm:grid-cols-[repeat(3,minmax(0,max-content))]');
+    expect(grid?.children).toHaveLength(count);
+  });
+
   it('comparison 使用跨行稳定的紧凑首列和差异列，基准与当前列等分，移动端按单项卡片重排并突出差异', () => {
     const longValue = '这是一段需要在比较列内换行的长文本'.repeat(8);
     const { container } = render(<PresentationBlocks blocks={[{
@@ -203,6 +218,26 @@ describe('records', () => {
     expect(screen.getByText('+12 天').className).not.toContain('max-w-64');
     expect(screen.getByText('+12 天').className).toContain('text-warning');
     expect(screen.getByText('一致').className).toContain('text-success');
+  });
+
+  it('业务步骤侧栏的 comparison 使用容器断点，并保留默认渲染不变', () => {
+    const { container } = render(<PresentationBlocks blocks={[{
+      kind: 'records', layout: 'comparison', title: '订单差异',
+      items: [{ label: '税号', baseline: 'A-01', current: 'A-02', delta: '不一致' }],
+    }]} ctx={{ recordsSurface: 'business-step' }} />);
+
+    const records = container.querySelector('[data-records-block]');
+    const header = container.querySelector('[data-comparison-table]')?.firstElementChild;
+    const row = container.querySelector('[data-comparison-row] button');
+    expect(records?.className).toContain('business-step-comparison-scroll');
+    expect(records?.className).not.toContain('sm:overflow-x-auto');
+    expect(records?.getAttribute('tabindex')).toBeNull();
+    expect(records?.getAttribute('aria-label')).toBeNull();
+    expect(records?.firstElementChild?.className).toContain('business-step-comparison-width');
+    expect(records?.firstElementChild?.className).not.toContain('sm:min-w-[36rem]');
+    expect(header?.className).toContain('business-step-comparison-header');
+    expect(row?.className).toContain('business-step-comparison-track');
+    expect(row?.className).not.toContain('sm:grid-cols-[9rem_repeat(2,minmax(8rem,1fr))_8rem_0.875rem]');
   });
 
   it('checklist 使用品牌色标题栏并按 tone 显示判定图标', () => {

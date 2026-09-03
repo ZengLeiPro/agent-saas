@@ -72,7 +72,7 @@ export async function reapExpiredRunLiveness(
     await client.query('BEGIN');
     // Orphan first so a row made stale in this transaction cannot skip the grace phase.
     const orphaned = await client.query<{ row_json: RunRecord }>(`
-      WITH candidates AS (
+      WITH candidates AS MATERIALIZED (
         SELECT run_id
         FROM ${context.runsTable}
         WHERE status = 'running'
@@ -82,6 +82,8 @@ export async function reapExpiredRunLiveness(
         ORDER BY liveness_detected_at ASC, run_id ASC
         LIMIT $2
         FOR UPDATE SKIP LOCKED
+      ), transition_time AS MATERIALIZED (
+        SELECT clock_timestamp() AS now FROM candidates LIMIT 1
       )
       UPDATE ${context.runsTable} run
       SET status = 'orphaned',
@@ -96,23 +98,28 @@ export async function reapExpiredRunLiveness(
             SELECT 1 FROM ${context.toolInvocationsTable} invocation
             WHERE invocation.run_id = run.run_id AND invocation.status = 'running'
           ) THEN 'external_tool_outcome_unknown' ELSE 'lease_expired' END,
-          liveness_detected_at = $3::timestamptz,
+          liveness_detected_at = transition_time.now,
           liveness_version = run.liveness_version + 1,
-          updated_at = $3::timestamptz,
-          metadata = (run.metadata || jsonb_build_object(
+          updated_at = transition_time.now,
+          metadata = ((run.metadata || jsonb_build_object(
             'livenessTerminalizedBy', 'reaper',
             'externalToolOutcomeUnknown', EXISTS (
               SELECT 1 FROM ${context.toolInvocationsTable} invocation
               WHERE invocation.run_id = run.run_id AND invocation.status = 'running'
             )
-          )) - 'wakeMessage'
-      FROM candidates
+          )) - 'wakeMessage') || jsonb_build_object(
+            'sandboxLifecycleTerminalAt', COALESCE(
+              run.metadata->>'sandboxLifecycleTerminalAt',
+              transition_time.now::text
+            )
+          )
+      FROM candidates, transition_time
       WHERE run.run_id = candidates.run_id
         AND run.status = 'running'
         AND run.liveness_state = 'stale'
         AND run.liveness_detected_at <= $1::timestamptz
       RETURNING row_to_json(run.*) AS row_json
-    `, [staleBefore, boundedLimit, now.toISOString()]);
+    `, [staleBefore, boundedLimit]);
     const remaining = Math.max(0, boundedLimit - orphaned.rows.length);
     const stale = remaining === 0 ? { rows: [] as Array<{ row_json: RunRecord }> } : await client.query<{ row_json: RunRecord }>(`
       WITH candidates AS (

@@ -454,7 +454,7 @@ interface DwsRemoteJsonExecutorOptions {
   transportFactory?: DwsContextRuntimeOptions['transportFactory'];
 }
 
-/** Executes deterministic DWS argv in the account's isolated connector workspace. */
+/** Executes scheduled DWS argv in the account's isolated cron connector workspace. */
 export class DwsRemoteJsonExecutor implements DwsCliJsonExecutor {
   constructor(private readonly options: DwsRemoteJsonExecutorOptions) {}
 
@@ -495,6 +495,7 @@ export class DwsRemoteJsonExecutor implements DwsCliJsonExecutor {
           sandboxScopeId: `${workspaceId}__dws_context`,
           mountSubPath,
           executionTarget: 'server-remote',
+          workload: { class: 'cron' },
           sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
         },
       },

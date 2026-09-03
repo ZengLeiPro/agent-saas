@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import { sandboxResourceOverride } from './provision.js';
-import { parseWarmupResources } from './protocol.js';
+import { parseWarmupRequest, parseWarmupResources } from './protocol.js';
 
 describe('warmup resource parsing', () => {
   it.each([
@@ -32,5 +32,32 @@ describe('warmup resource parsing', () => {
 
   it('allows omitted resources for legacy SessionCatalog records', () => {
     expect(parseWarmupResources(undefined)).toEqual({ ok: true });
+  });
+
+  it('parses and preserves workload for /warmup ensureRunning', () => {
+    expect(parseWarmupRequest({
+      workspaceId: 'ws_kaiyan__u1',
+      sessionId: 'session-1',
+      sandboxScopeId: 'scope-1',
+      workload: { class: 'taskboard' },
+      resources: { cpu: '1', memoryMb: 2048 },
+    })).toEqual({
+      ok: true,
+      value: {
+        workspaceId: 'ws_kaiyan__u1',
+        sessionId: 'session-1',
+        sandboxScopeId: 'scope-1',
+        workload: { class: 'taskboard' },
+        resources: { cpu: '1', memoryMb: 2048 },
+      },
+    });
+  });
+
+  it('rejects an invalid /warmup workload instead of silently downgrading it', () => {
+    expect(parseWarmupRequest({
+      workspaceId: 'ws_kaiyan__u1',
+      sessionId: 'session-1',
+      workload: { class: 'batch' },
+    })).toMatchObject({ ok: false });
   });
 });

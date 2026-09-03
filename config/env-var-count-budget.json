@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "TASK-318 为每个 Runtime 实例配置私有 ConfigIdentity 快照路径并保护匿名 readiness；TASK-331 增加移动端 V1 fail-closed 发布 SHA、原生 OAuth、生产 telemetry 配置及 Web DEV 构建标志",
-  "updatedAt": "2026-09-01",
+  "reason": "TASK-318 增加 Runtime 私有 ConfigIdentity 快照；TASK-331 增加移动端 V1 配置；TASK-341 增加 Sandbox lifecycle 策略配置",
+  "updatedAt": "2026-09-02",
   "domains": {
     "server": {
       "budget": 63,
@@ -72,7 +72,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 41,
+      "budget": 42,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -96,6 +96,7 @@
         "ACS_SANDBOX_IMAGE",
         "ACS_SANDBOX_IMAGE_PULL_POLICY",
         "ACS_SANDBOX_KIND",
+        "ACS_SANDBOX_LIFECYCLE_POLICY_MODE",
         "ACS_SANDBOX_MEMORY_LIMIT",
         "ACS_SANDBOX_MEMORY_REQUEST",
         "ACS_SNAT_ENTRY_NAME_PREFIX",

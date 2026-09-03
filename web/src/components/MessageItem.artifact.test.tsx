@@ -5,7 +5,8 @@ import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
 import { MessageItem } from './MessageItem';
 import type { MessageItem as MessageItemType } from './types';
 
-vi.mock('@/components/artifacts/ArtifactPreviewDialog', () => ({
+vi.mock('@/components/artifacts/ArtifactPreviewDialog', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/components/artifacts/ArtifactPreviewDialog')>(),
   ArtifactPreviewDialog: ({ artifactId, onDock }: { artifactId: string; onDock?: () => void }) => (
     <div role="dialog" aria-label="Artifact 预览">
       {artifactId}
@@ -77,7 +78,12 @@ describe('MessageItem Artifact 卡片', () => {
 
   it('下载按钮请求 attachment URL 而不影响文件卡预览', async () => {
     authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
-      url: 'https://api.example.com/api/artifacts/artifact-1/content?token=signed&download=true',
+      readUrl: 'https://api.example.com/api/artifacts/artifact-1/content?token=signed&download=true',
+      descriptor: {
+        artifactId: 'artifact-1', name: '验收报告.pdf', safeMime: 'application/pdf', size: 1024,
+        digest: 'a'.repeat(64), viewKind: 'pdf', activeContent: false, requiresWarning: false,
+        expiresAt: '2030-01-01T00:00:00.000Z', correlationId: 'corr',
+      },
     }), { status: 200 }));
     const clicked: Array<{ href: string; download: string }> = [];
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
@@ -101,7 +107,7 @@ describe('MessageItem Artifact 卡片', () => {
 
       fireEvent.click(screen.getByRole('button', { name: '下载 验收报告.pdf' }));
       await waitFor(() => expect(clicked).toHaveLength(1));
-      expect(authFetchMock).toHaveBeenCalledWith('/api/artifacts/artifact-1/read-url?download=true');
+      expect(authFetchMock).toHaveBeenCalledWith('/api/artifacts/artifact-1/read-url?viewPolicyVersion=2&download=true', expect.objectContaining({ cache: 'no-store' }));
       expect(clicked).toEqual([{
         href: 'https://api.example.com/api/artifacts/artifact-1/content?token=signed&download=true',
         download: '验收报告.pdf',
@@ -110,6 +116,31 @@ describe('MessageItem Artifact 卡片', () => {
     } finally {
       clickSpy.mockRestore();
     }
+  });
+
+  it('主动内容从文件卡下载时也必须二次确认', async () => {
+    authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      readUrl: 'https://api.example.com/api/artifacts/artifact-1/content?token=signed',
+      descriptor: {
+        artifactId: 'artifact-1', name: 'run.sh', safeMime: 'text/plain; charset=utf-8', size: 10,
+        digest: 'a'.repeat(64), viewKind: 'source', activeContent: true, requiresWarning: true,
+        expiresAt: '2030-01-01T00:00:00.000Z', correlationId: 'corr',
+      },
+    }), { status: 200 }));
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    render(
+      <FilePreviewProvider value={{ openPreview: vi.fn() }}>
+        <MessageItem message={{
+          id: 'artifact-card-active-download', type: 'file_download', fileName: 'run.sh', fileType: 'file',
+          filePath: 'artifacts/artifact-1/run.sh', fileSize: 10, artifactId: 'artifact-1', mimeType: 'text/plain',
+        }} index={0} />
+      </FilePreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '下载 run.sh' }));
+    await waitFor(() => expect(confirmSpy).toHaveBeenCalledOnce());
+    expect(clickSpy).not.toHaveBeenCalled();
   });
 
   it('匿名 Session Share 中 Artifact 明确只读，不提供预览或下载入口', async () => {

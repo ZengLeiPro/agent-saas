@@ -11,7 +11,7 @@ export type {
   PlatformDeps,
 } from './platform/types';
 
-// Types - re-export everything from types/index
+// Types - re-export the public runtime and product contracts from types/index
 export {
   ACTIVITY_TYPES,
   formatTokenCount,
@@ -84,6 +84,7 @@ export type {
   WsEvent,
   RuntimeFailureKind,
   RuntimeRecoveryAction,
+  SandboxWorkloadDescriptor,
   AuthUser,
   LoginCredentials,
   SmsLoginCredentials,
@@ -271,7 +272,9 @@ export {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
-  TASKBOARD_DEFAULT_STAGE_PROMPT,
+  TASKBOARD_DEFAULT_WORK_PROMPT,
+  TASKBOARD_DEFAULT_REVIEW_PROMPT,
+  TASKBOARD_DEFAULT_MERGE_PROMPT,
   TASKBOARD_STAGE_DEFAULT_PROMPTS,
   buildScenarioPrompt,
 } from './types/index';

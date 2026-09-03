@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   applyRuntimeConfigPatch,
+  lifecyclePolicyHealth,
   loadConfigFromEnv,
   parseRuntimeConfigPatch,
   releaseIdentityHealth,
@@ -17,7 +18,7 @@ import {
   MAX_BODY_BYTES,
   buildToolsResponse,
   parseProvisionRecipe,
-  parseWarmupResources,
+  parseWarmupRequest,
   parseWireRequest,
 } from './protocol.js';
 import { Provisioner, sandboxResourceOverride } from './provision.js';
@@ -40,6 +41,7 @@ import {
 } from './sandboxHttp.js';
 import { AlertDispatcher, type AcsAlert } from './alerts.js';
 import { SandboxLifecycleController } from './lifecycleController.js';
+import { handleSandboxLifecycleRoute, matchSandboxLifecycleRoute } from './sandboxLifecycleRoutes.js';
 const config = loadConfigFromEnv();
 
 const logger = {
@@ -69,6 +71,7 @@ const STREAM_HEARTBEAT_MS = 25_000;
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
 let inflightRequests = 0;
 let draining = false;
+const effectiveInflightRequests = () => inflightRequests + executor.backgroundRecoveryCount();
 async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   inflightRequests++;
   try {
@@ -84,7 +87,7 @@ const snatOperations = new SnatOperations({
   emitAlert,
   logger,
   drainDeadlineMs: config.drainDeadlineMs,
-  inflightRequests: () => inflightRequests,
+  inflightRequests: effectiveInflightRequests,
   lifecycleRunning: () => lifecycleController.isLifecycleRunning(),
   backgroundMutationRunning: () => lifecycleController.isBackgroundMutationRunning(),
   ...(config.runtimeConfigPath
@@ -157,6 +160,16 @@ const server = createServer((req, res) => {
     if (draining)
       return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
     void withInflight(() => snatOperations.handleRestoreCancel(req, res));
+    return;
+  }
+
+  const sandboxLifecycleRoute = matchSandboxLifecycleRoute(req.url);
+  if (sandboxLifecycleRoute) {
+    void withInflight(() => handleSandboxLifecycleRoute(req, res, sandboxLifecycleRoute, {
+      sandboxManager,
+      authorize,
+      busySandboxNames: activeBusySandboxNames,
+    }));
     return;
   }
 
@@ -339,10 +352,11 @@ async function handleHealth(res: ServerResponse): Promise<void> {
     status: ok ? 'ok' : 'unhealthy',
     // drain 期间 CI 脚本轮询 inflight,为 0 时才 SIGTERM
     draining,
-    inflight: inflightRequests,
+    inflight: effectiveInflightRequests(),
     ...snatOperations.healthState(),
     backend: 'acs-agent-sandbox',
     ...releaseIdentityHealth(config.releaseIdentity),
+    ...lifecyclePolicyHealth(config),
     namespace: config.namespace,
     sandboxKind: config.sandboxKind,
     image: config.sandboxImage,
@@ -604,26 +618,11 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
   }
   const body = await readJson(req, res);
   if (!body.ok) return;
-  const raw = body.value as Record<string, unknown>;
-  const workspaceId = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
-  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
-  const sandboxScopeId =
-    typeof raw.sandboxScopeId === 'string' && raw.sandboxScopeId.trim()
-      ? raw.sandboxScopeId.trim()
-      : undefined;
-  const mountSubPath =
-    typeof raw.mountSubPath === 'string' && raw.mountSubPath.trim()
-      ? raw.mountSubPath.trim()
-      : undefined;
-  if (!workspaceId || !sessionId) {
-    return sendJson(res, 400, { status: 'error', error: 'workspaceId and sessionId are required' });
-  }
-  const parsedResources = parseWarmupResources(raw.resources);
-  if (!parsedResources.ok) {
-    return sendJson(res, 400, { status: 'error', error: parsedResources.error });
-  }
-  const resourceOverride = parsedResources.value
-    ? sandboxResourceOverride({ workspaceId, resources: parsedResources.value }, config)
+  const parsed = parseWarmupRequest(body.value);
+  if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });
+  const { workspaceId, sessionId, sandboxScopeId, mountSubPath, workload } = parsed.value;
+  const resourceOverride = parsed.value.resources
+    ? sandboxResourceOverride({ workspaceId, resources: parsed.value.resources }, config)
     : undefined;
   const ensureInput = {
     workspaceId,
@@ -631,6 +630,7 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
     sandboxScopeId,
     mountSubPath,
     ...(resourceOverride ? { resources: resourceOverride } : {}),
+    ...(workload ? { workload } : {}),
   };
   let ref: ReturnType<typeof sandboxManager.ref>;
   try {
@@ -941,7 +941,7 @@ process.on('SIGINT', shutdown);
 process.on('SIGUSR2', () => {
   if (draining) return;
   draining = true;
-  logger.info(`SIGUSR2 received — entering drain mode (inflight=${inflightRequests})`);
+  logger.info(`SIGUSR2 received — entering drain mode (inflight=${effectiveInflightRequests()})`);
   lifecycleController.stop();
   // 停接新连接; 已建立连接 keep-alive 上的新请求会拿到 draining=true 状态或
   // 长运行路径的 503。已在跑的 handler 通过 withInflight 计数,进度不受影响。
@@ -950,7 +950,7 @@ process.on('SIGUSR2', () => {
   });
   const startedAt = Date.now();
   const poll = setInterval(() => {
-    if (inflightRequests === 0) {
+    if (effectiveInflightRequests() === 0) {
       clearInterval(poll);
       logger.info('drain complete, exiting cleanly');
       process.exit(0);
@@ -958,11 +958,11 @@ process.on('SIGUSR2', () => {
     if (Date.now() - startedAt >= config.drainDeadlineMs) {
       clearInterval(poll);
       logger.warn(
-        `drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${inflightRequests})`,
+        `drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${effectiveInflightRequests()})`,
       );
       process.exit(1);
     }
-    logger.info(`draining... inflight=${inflightRequests}`);
+    logger.info(`draining... inflight=${effectiveInflightRequests()}`);
   }, 2_000);
   poll.unref();
 });

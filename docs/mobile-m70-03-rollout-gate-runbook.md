@@ -56,7 +56,9 @@ production 不接受 mock、simulator、test fixture、`pending_external_approva
 
 ## 标准执行
 
-`Mobile M70-03 Staged Rollout Gate` 只接受 `workflow_call` / `workflow_dispatch`，按以下顺序运行：
+仓库内原 `Mobile M70-03 Staged Rollout Gate` 与暂停入口已在 PR #417 删除，当前**没有可执行的生产灰度入口**。在发布负责人提供受保护的外部发布系统，或建立只接受 protected `main` / 签名 RC tag、固定 validator、protected environment 与短期凭据的入口前，本节仅定义目标顺序，生产 Gate 必须保持 blocked；不得恢复允许任意目标 SHA 进入 secret job 的旧 workflow。
+
+受保护入口必须按以下顺序运行：
 
 1. 下载指定 run/name 的不可变证据，验证同 SHA/release/artifact 与 production policy；
 2. 等待目标阶段 protected environment 人工审批；
@@ -71,7 +73,7 @@ build、submit 与 rollout 始终分离；本流程没有 EAS build/submit。有
 收到 `stopped` receipt 后立即：
 
 1. 创建 P0/P1 incident，记录 incident owner、release、stage、cohort、hard-stop 独立计数、telemetry/support snapshot digest；
-2. 使用 `Mobile M70-03 Pause or Rollback`。该流程只消费验签成功且 `status=stopped` 的 receipt，只允许 `pause` 或 `rollback`；普通 pass/paused receipt、`resume`、override 均拒绝；
+2. 使用受保护发布系统中的暂停/回滚入口；当前仓库入口已删除，因此未重建前由发布负责人按阻塞流程人工处置。新入口只消费验签成功且 `status=stopped` 的 receipt，只允许 `pause` 或 `rollback`；普通 pass/paused receipt、`resume`、override 均拒绝；
 3. 执行 capability kill switch，停止对应身份/消息执行/上传能力。kill-switch 的具体命令由外部 provider adapter 实现，仓库只给出 command contract，不臆造供应商命令；
 4. support owner 建立工单视图，标记受影响 cohort、可见错误、重复执行风险，冻结自动重试；
 5. 保全 adapter receipt、dashboard query、snapshot、stage receipt、incident 与支持工单引用。

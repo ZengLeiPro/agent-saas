@@ -72,7 +72,7 @@ describe("artifactShareApi", () => {
     authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ descriptor, readUrl: "/api/artifacts/artifact-1/content?token=secret" }), { status: 200 }));
     const grant = await getArtifactReadGrant("artifact-1");
     expect(grant.descriptor).toEqual(descriptor);
-    expect(authFetchMock).toHaveBeenCalledWith("/api/artifacts/artifact-1/read-url", expect.objectContaining({ cache: "no-store" }));
+    expect(authFetchMock).toHaveBeenCalledWith("/api/artifacts/artifact-1/read-url?viewPolicyVersion=2", expect.objectContaining({ cache: "no-store" }));
 
     authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ url: "https://evil.test/x", path: "/tmp/x", html: "<script/>" }), { status: 200 }));
     await expect(getArtifactReadGrant("artifact-1")).rejects.toThrow("安全描述符无效");

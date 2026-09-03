@@ -25,6 +25,8 @@ describe('Taskboard automatic review', () => {
         executionId: review.executionId,
         outboxExecutionId: review.executionId,
         taskId: task.id,
+        taskKind: task.kind ?? 'delivery',
+        purpose: review.purpose ?? 'review',
         sessionId: review.sessionId,
         tenantId: identity.tenantId,
         ownerUserId: identity.ownerUserId,

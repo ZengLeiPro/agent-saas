@@ -115,16 +115,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // - 控制面与查询类路由由 app 统一注册
   // 兼容原权限治理挂载点；平台管理员现已统一为完整权限。
   app.use('/api', enforcePlatformWritePolicy);
-  const {
-    config,
-    agentCwd,
-    sharedDir,
-    tenantSkillsRootDir,
-    sessionBasePath,
-    dingtalkDeps,
-    cronRuntime,
-    dispatchMetricsStore,
-  } = runtime;
+  const { config, agentCwd, sharedDir, tenantSkillsRootDir, sessionBasePath,
+    dingtalkDeps, cronRuntime, dispatchMetricsStore } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
   const { configMutationService, getEffectiveConfigStatus, getAdminConfigStatus } =
     createRuntimeConfigGovernance({
@@ -132,8 +124,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       processRole: runtime.processRole,
       recoveryGate: runtime.configRuntimeRecoveryGate,
-      onConfigCommitted: (text, permit) =>
-        publishAdminCommittedConfigIdentity(runtime, text, permit),
+      onConfigCommitted: (text, permit) => publishAdminCommittedConfigIdentity(runtime, text, permit),
       onConfigInvalidated: runtime.invalidateSharedConfigIdentity,
     });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
@@ -350,9 +341,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactShareStore,
         runtime.artifactService,
       ),
-      sessionProjectionStore: runtime.runtimeSessionProjectionStore,
-      sessionReadStateStore: runtime.sessionReadStateStore,
-      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),
+      sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
         : undefined,
@@ -414,7 +404,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       configMutationService,
       credentialManager: runtime.codexCredentialManager,
       deviceAuthService: runtime.codexDeviceAuthService,
-      closeWebSockets: runtime.codexWebSocketShutdown,
+      closeWebSockets: (refs) => refs && runtime.codexWebSocketCredentialShutdown
+        ? runtime.codexWebSocketCredentialShutdown(refs)
+        : runtime.codexWebSocketShutdown?.(),
     }),
   );
   app.use(

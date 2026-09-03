@@ -7,6 +7,8 @@ export interface PermanentSessionDeletionOptions {
   hasTranscript: boolean;
   artifactLifecycle?: SessionArtifactLifecycle;
   isStillDeleted(): Promise<boolean>;
+  /** Runs under the same session lock, after tombstone revalidation and before physical deletion. */
+  beforePhysicalDelete?(): Promise<void>;
   deleteTranscriptPreservingMeta(): Promise<boolean>;
   deleteMetaAndSidecar(): Promise<boolean>;
 }
@@ -18,6 +20,7 @@ export interface PermanentSessionDeletionOptions {
 export async function permanentlyDeleteSession(options: PermanentSessionDeletionOptions): Promise<boolean> {
   const remove = async () => {
     if (!await options.isStillDeleted()) return false;
+    await options.beforePhysicalDelete?.();
     await options.artifactLifecycle?.revokeShares(options.sessionId, options.ownerUserId);
     if (options.hasTranscript && !await options.deleteTranscriptPreservingMeta()) return false;
     await options.artifactLifecycle?.purgeArtifacts(options.sessionId);

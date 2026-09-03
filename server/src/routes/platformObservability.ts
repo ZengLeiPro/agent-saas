@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-
 import type { AppConfig } from '../app/config.js';
 import { isPlatformAdmin } from '../auth/types.js';
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
@@ -512,6 +511,7 @@ async function queryPlatformTrends(options: PlatformObservabilityRouterOptions, 
         ((now() AT TIME ZONE 'Asia/Shanghai')::date - ($1::int - 1))::timestamp
         AT TIME ZONE 'Asia/Shanghai'
       )
+        AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
       GROUP BY 1
       ORDER BY 1
     `, [days]) ?? Promise.resolve({ rows: [] as PlatformRunTrendRow[] }),
@@ -565,14 +565,11 @@ function shanghaiDateKeys(days: number): string[] {
 }
 
 async function maybePushRunMatch(
-  matches: SearchMatch[],
-  options: PlatformObservabilityRouterOptions,
-  q: string,
-  tenantId?: string,
+  matches: SearchMatch[], options: PlatformObservabilityRouterOptions, q: string, tenantId?: string,
 ): Promise<void> {
   if (!RUN_ID_RE.test(q) || !options.runStore) return;
   const params: unknown[] = [q];
-  const clauses = ['run_id = $1'];
+  const clauses = ["run_id = $1", "COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'"];
   if (tenantId) {
     params.push(tenantId);
     clauses.push(`tenant_id = $${params.length}`);
@@ -810,16 +807,15 @@ async function queryTenantBalances(options: PlatformObservabilityRouterOptions, 
 async function queryTenantLastRunActivity(options: PlatformObservabilityRouterOptions, tenantId?: string): Promise<Map<string, string>> {
   if (!options.runStore) return new Map();
   const params: unknown[] = [];
-  const clauses: string[] = [];
+  const clauses = ["COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'"];
   if (tenantId) {
     params.push(tenantId);
     clauses.push(`tenant_id = $${params.length}`);
   }
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
   const result = await options.runStore.pool.query<{ tenant_id: string; latest_at: Date | string | null }>(
     `SELECT tenant_id, max(updated_at) AS latest_at
      FROM ${options.runStore.runsTable}
-     ${where}
+     WHERE ${clauses.join(' AND ')}
      GROUP BY tenant_id`,
     params,
   );
@@ -878,6 +874,7 @@ async function queryUserRunSummary(
      WHERE tenant_id = $1
        AND user_id = $2
        AND updated_at >= now() - interval '30 days'
+       AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
      GROUP BY status`,
     [tenantId, userId],
   );
@@ -915,7 +912,6 @@ async function queryUserCostSummary(
     lastActiveAt: toIsoOrNull(result.rows[0]?.latest_at),
   };
 }
-
 async function queryRunsBySession(
   options: PlatformObservabilityRouterOptions,
   sessionId: string,
@@ -926,6 +922,7 @@ async function queryRunsBySession(
     `SELECT row_to_json(r.*) AS row_json
      FROM ${options.runStore.runsTable} r
      WHERE tenant_id = $1 AND session_id = $2
+       AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
      ORDER BY updated_at DESC
      LIMIT 200`,
     [tenantId, sessionId],
@@ -948,7 +945,10 @@ async function queryRunsPage(
 ): Promise<{ items: Array<Record<string, unknown>>; nextCursor?: string }> {
   const runStore = options.runStore!;
   const params: unknown[] = [];
-  const clauses = [`updated_at >= now() - ($${pushParam(params, query.hours)}::int * interval '1 hour')`];
+  const clauses = [
+    `updated_at >= now() - ($${pushParam(params, query.hours)}::int * interval '1 hour')`,
+    "COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'",
+  ];
   if (query.tenantId) clauses.push(`tenant_id = $${pushParam(params, query.tenantId)}`);
   if (query.userId) clauses.push(`user_id = $${pushParam(params, query.userId)}`);
   if (query.sessionId) clauses.push(`session_id = $${pushParam(params, query.sessionId)}`);

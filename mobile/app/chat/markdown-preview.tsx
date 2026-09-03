@@ -10,6 +10,7 @@ import { authFetch } from '@agent/shared';
 import { fileCacheService } from '../../src/services/fileCacheService';
 import { textContentCache } from '../../src/services/textContentCache';
 import Markdown from 'react-native-markdown-display';
+import { cjkMarkdownIt } from '../../src/lib/markdownIt';
 import { createMarkdownStyles } from '../../src/components/chat/markdownStyles';
 import { createMarkdownRules } from '../../src/components/chat/markdownRules';
 import { useColors, spacing, typography, useChatTypography } from '../../src/theme';
@@ -201,7 +202,9 @@ export default function MarkdownPreviewScreen() {
           style={styles.scrollView}
           contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + spacing.md }]}
         >
-          <Markdown style={mdStyles} rules={rules}>{content}</Markdown>
+          <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
+            {content}
+          </Markdown>
           {lightboxUri && (
             <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
           )}

@@ -1,6 +1,7 @@
 import importlib.util
 import ipaddress
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,7 @@ ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
 ACS_BROWSER_E2E = REPO_ROOT / 'scripts' / 'acs-browser-lease-e2e.mjs'
 ACS_ROLLBACK_COMPATIBILITY = REPO_ROOT / 'scripts' / 'check-acs-shared-rollback-compatibility.mjs'
 ACS_PRODUCTION_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'production.env'
+ACS_STAGING_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'staging.env'
 DOCKERFILE = REPO_ROOT / 'Dockerfile'
 
 
@@ -161,6 +163,7 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
                 ['node', str(ACS_ROLLBACK_COMPATIBILITY), str(health_path),
                  str(rollback_path), str(candidate_path)],
                 text=True, capture_output=True, check=False,
+                env={**os.environ, 'NODE_NO_WARNINGS': '1'},
             )
 
     def test_accepts_only_identical_healthy_shared_config(self):
@@ -214,6 +217,9 @@ class AcsProductionSnatConfigTest(unittest.TestCase):
         address_capacity = sum(ipaddress.ip_network(cidr).num_addresses for cidr in configured)
         self.assertEqual(max_running, 7_000)
         self.assertEqual(int(values['ACS_SANDBOX_TTL_MS']), 30 * 60_000)
+        self.assertEqual(values['ACS_SANDBOX_LIFECYCLE_POLICY_MODE'], 'enforce')
+        staging_env = ACS_STAGING_ENV.read_text(encoding='utf-8')
+        self.assertIn('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce\n', staging_env)
         self.assertEqual(int(values['ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES']), 10_000_000)
         self.assertEqual(int(values['ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB']), 20_000 * 1024)
         self.assertLessEqual(max_running, address_capacity)
@@ -273,6 +279,18 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
+    def test_direct_deploy_requires_enforced_lifecycle_policy_from_health(self):
+        self.assertIn(
+            "lifecycleEnabled: health.lifecycle?.enabled",
+            self.deploy_script,
+        )
+        self.assertIn("lifecycleEnabled: true", self.deploy_script)
+        self.assertIn("lifecyclePolicyMode: health.lifecyclePolicyMode", self.deploy_script)
+        self.assertIn("lifecyclePolicyMode: 'enforce'", self.deploy_script)
+        gate_start = self.deploy_script.index("const actual = { ...(health.runtimeConfig || {})")
+        rollback = self.deploy_script.index("  rollback\n  exit 1\n", gate_start)
+        self.assertGreater(rollback, gate_start)
+
     def test_test_fixtures_are_contract_only_and_never_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('acs-orchestrator/src/sandboxManagerTestFixtures.ts\n')
@@ -288,7 +306,7 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
-    def test_mixed_publish_and_contract_changes_run_both_gates(self):
+    def test_mixed_changes_run_publish_and_contract_gates(self):
         self.assertIn(
             "if: needs.changes.outputs.contract_check == 'true'",
             self.workflow,
@@ -368,6 +386,16 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             "'x-acs-maintenance-bypass': 'deploy-smoke-v1'",
             ACS_BROWSER_E2E.read_text(encoding='utf-8'),
         )
+
+    def test_deploy_smoke_provision_and_execute_are_explicitly_classified(self):
+        workload = r'\"workload\":{\"class\":\"deploy-smoke\"}'
+        smoke_section = self.deploy_script.split(
+            '# ── 5. Smoke: provision + execute 真实拉新镜像跑通 ──', 1,
+        )[1]
+        provision, execute = smoke_section.split('if [ "$SMOKE_OK" = "true" ]; then', 1)
+        self.assertIn(workload, provision, 'provision smoke 缺少 workload 分类')
+        self.assertIn(workload, execute, 'execute smoke 缺少 workload 分类')
+        self.assertEqual(smoke_section.count(workload), 2)
 
 
 class AcsToolContentJsonTest(unittest.TestCase):

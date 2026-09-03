@@ -196,8 +196,36 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(oldWorkerDrain).toBeGreaterThan(-1);
     expect(authorityRefresh).toBeGreaterThan(oldWorkerDrain);
     expect(workflow).toContain('worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value');
+    // 保留主线后续的恢复预算与候选 PID 稳定性门禁；兼容 rollback 已迁入独立 helper。
+    expect(workflow).toContain('WORKER_CANDIDATE_INITIAL_PID="$worker_pid"');
+    expect(workflow).toContain('WORKER_POST_DRAIN_READY=0');
+    expect(workflow).toContain('REMOTE_DEPLOY_START_EPOCH=$(date +%s)');
+    expect(workflow).toContain('START_EPOCH=$REMOTE_DEPLOY_START_EPOCH');
+    expect(workflow).toContain('DEPLOY_ROLLBACK_RESERVE_SECONDS=300');
+    expect(workflow).toContain('invalid REMOTE_DEPLOY_TIMEOUT_SECONDS=');
+    expect(workflow).toContain('invalid REMOTE_DEPLOY_START_EPOCH=');
+    expect(workflow).toContain('DEPLOY_FAILSAFE_DEADLINE_EPOCH=');
+    expect(workflow).toContain('ensure_pre_switch_budget()');
+    expect(workflow).toContain('ensure_pre_switch_budget "runtime-worker-authority-refresh"');
+    expect(workflow).toContain('ensure_pre_switch_budget "runtime-worker-authority-confirmed"');
+    expect(workflow).toContain('ensure_pre_switch_budget "web-readiness"');
+    expect(workflow).toContain('ensure_pre_switch_budget "web-warmup"');
+    expect(workflow.indexOf('ensure_pre_switch_budget "nginx-config"')).toBeLessThan(
+      workflow.indexOf('UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"'),
+    );
+    expect(workflow).not.toContain('ensure_pre_switch_budget "nginx-switch"');
+    expect(workflow).toContain('WORKER_POST_DRAIN_DEADLINE_EPOCH=');
+    expect(workflow).toContain('runtime worker candidate restarted during old drain and recovered');
+    expect(workflow).toContain('runtime worker candidate failed readiness after old drain');
+    expect(workflow).not.toContain(
+      'runtime worker candidate identity changed before authority refresh',
+    );
     expect(workflow).toContain('kill -USR1 "$worker_pid"');
+    expect(workflow).toContain('runtime worker candidate changed after authority refresh');
+    expect(workflow).toContain('[ "$worker_current_pid" != "$worker_pid" ]');
+    expect(workflow).toContain('deployment failsafe deadline reached before traffic switch');
     expect(workflow).toContain('WORKER_DRAIN_TIMEOUT=960');
+    expect(workflow).toContain('WORKER_POST_DRAIN_WAITED=$((WORKER_POST_DRAIN_WAITED + 1))');
     expect(workflow).toContain('WORKER_ACTIVE_DRAIN_COMPLETED=1');
     expect(workflow).toContain('recover interrupted runtime worker drain before rollout');
     expect(workflow).toContain(
@@ -230,10 +258,16 @@ describe('Runtime Worker 生产部署契约', () => {
     );
     expect(runtimeSource).toContain('createRuntimeEventRetentionAdmissionGuard(');
     expect(runtimeSource).toContain('admissionGuard: runtimeAdmissionGuard');
-    expect(runtimeSource).toContain('enableSingletonWorkers && config.runtimeEventRetention?.enabled === true');
-    expect(runtimeSource).toContain("startupFailureMode: processRole === 'runtime-worker' ? 'throw'");
+    expect(runtimeSource).toContain(
+      'enableSingletonWorkers && config.runtimeEventRetention?.enabled === true',
+    );
+    expect(runtimeSource).toContain(
+      "startupFailureMode: processRole === 'runtime-worker' ? 'throw'",
+    );
     expect(runtimeSource).toContain('statusAuthorityTable: systemMetricsStore?.systemMetricsTable');
-    expect(retentionSource).toContain('runtime-worker failed to establish RuntimeEventRetention status authority');
+    expect(retentionSource).toContain(
+      'runtime-worker failed to establish RuntimeEventRetention status authority',
+    );
     expect(retentionSource).toContain('withExecutionAuthority');
     expect(retentionSource).toContain('this.startupRetryTimer = setTimeout(');
     expect(runtimeSource).toContain('await runtimeEventRetention?.quiesce()');

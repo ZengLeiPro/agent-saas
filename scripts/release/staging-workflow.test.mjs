@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
@@ -326,6 +329,11 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy.indexOf('trap finish EXIT # one-shot dispatcher') <
       deploy.indexOf('install_staging_unit \\\n  "$UNIT_DIR/agent-saas-server-staging.service.template"'),
   );
+  assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_ENABLED=true/u);
+  assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce/u);
+  assert.match(deploy, /acs\.lifecycle\?\.enabled !== true/u);
+  assert.match(deploy, /acs\.lifecyclePolicyMode !== 'enforce'/u);
+  assert.match(deploy, /trap finish EXIT/u, 'deployment must retain its cleanup trap');
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
 
@@ -371,6 +379,53 @@ test('Staging deploy cleanup is best-effort and every temporary path is run-atte
     deploy,
     /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
   );
+});
+
+test('Staging health gate rejects shadow mode before commit so EXIT trap rolls back', async () => {
+  const deploy = await readFile(deployPath, 'utf8');
+  const validator = deploy.match(
+    /node - "\$MANIFEST_PATH" "\$acs_health_probe" <<'NODE'\n([\s\S]*?)\nNODE\n\ninstall -m 0444/u,
+  )?.[1];
+  assert.ok(validator, 'Staging ACS health validator must remain executable as an isolated contract');
+  assert.ok(deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") < deploy.indexOf('deployment_committed=true'));
+  assert.match(
+    deploy,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
+  );
+
+  const root = await mkdtemp(join(tmpdir(), 'staging-health-'));
+  try {
+    const manifest = {
+      releaseId: 'release-1', releaseSha: 'sha-1',
+      components: { acs: {
+        sourceSha: 'acs-sha', orchestratorArtifactDigest: 'sha256:orchestrator',
+        sandboxImageDigest: 'sha256:sandbox',
+      } },
+    };
+    const acs = {
+      environment: 'staging', releaseId: manifest.releaseId, sourceSha: manifest.components.acs.sourceSha,
+      orchestratorArtifactDigest: manifest.components.acs.orchestratorArtifactDigest,
+      sandboxImageDigest: manifest.components.acs.sandboxImageDigest,
+      namespace: 'agent-saas-staging', lifecycle: { enabled: true }, lifecyclePolicyMode: 'shadow',
+    };
+    const paths = [join(root, 'manifest.json'), join(root, 'acs.json')];
+    await Promise.all([
+      writeFile(paths[0], JSON.stringify(manifest)),
+      writeFile(paths[1], JSON.stringify(acs)),
+    ]);
+    const shadow = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    assert.notEqual(shadow.status, 0, 'shadow response must fail the deployment health gate');
+
+    await writeFile(paths[1], JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }));
+    const disabled = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    assert.notEqual(disabled.status, 0, 'disabled lifecycle controller must fail the deployment health gate');
+
+    await writeFile(paths[1], JSON.stringify({ ...acs, lifecyclePolicyMode: 'enforce' }));
+    const enforce = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    assert.equal(enforce.status, 0, enforce.stderr);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('resource plan records provisioned resources ready for first deployment', async () => {

@@ -57,16 +57,14 @@ import { useTenantBillingAllowance, type BillingAllowance, type TenantBillingSum
 import { AddAccountDialog } from "@/components/AddAccountDialog";
 import { LogoutAccountDialog } from "@/components/LogoutAccountDialog";
 import { getAccountKey, type SavedAccountSummary } from "@/lib/savedAccounts";
-import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
+import type { ChatSessionIndexItem } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { DeferredUnifiedAnalysisSidebar, preloadUnifiedAnalysisSidebar } from "@/components/DeferredUnifiedAnalysisSidebar";
 import { DeferredUnifiedSettingsSidebar, preloadUnifiedSettingsSidebar } from "@/components/DeferredUnifiedSettingsSidebar";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "@/types/sidebar";
 import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
-import type { GovernanceRouteState } from "@/lib/governanceNavigation";
-import type { AdminSettingsTarget } from "@/lib/urlSync";
-import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
+import type { DesktopSessionSidebarProps } from "./desktopSessionSidebarTypes";
 import {
   CompactSessionGroupLeadingIcon,
   SessionGroupGlyph,
@@ -79,46 +77,6 @@ import {
   SessionSelectionActions,
   SidebarNav,
 } from "./DesktopSessionSidebarControls";
-
-interface DesktopSessionSidebarProps {
-  sessions: ChatSessionIndexItem[];
-  activeSessionId: string | null;
-  onSelect: (sessionId: string) => void;
-  onNew: (groupId?: string | null) => void;
-  onDelete?: (sessionId: string) => void;
-  onDeleteMany?: (sessionIds: string[]) => void;
-  onRename?: (sessionId: string, newTitle: string) => Promise<boolean>;
-  onAutoTitle?: (sessionId: string) => Promise<boolean>;
-  onCompact?: () => Promise<void>;
-  isLoading?: boolean;
-  className?: string;
-  activeTab?: AppTab;
-  onTabChange?: (tab: AppTab) => void;
-  onOpenSettings?: (section?: SettingsSectionId) => void;
-  onOpenAnalysis?: () => void;
-  /** 统一分析模式与设置模式一样，会替换整块主侧边栏。 */
-  analysisMode?: boolean; analysisRoute?: GovernanceRouteState | null; onAnalysisNavigate?: (routeId: string) => void; onCloseAnalysis?: () => void;
-  /** 统一设置模式会替换整块主侧边栏，而不是再打开一层弹窗。 */
-  settingsMode?: boolean;
-  settingsTarget?: "personal" | AdminSettingsTarget;
-  activeSettingsSection?: string;
-  onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void; onCloseSettings?: () => void;
-  isAdmin?: boolean;
-  settingsAccess?: ManagementSettingsAccess;
-  /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
-  isPlatformAdmin?: boolean;
-  hasMore?: boolean;
-  isLoadingMore?: boolean;
-  onLoadMore?: () => void;
-  onLoadGroupSessions?: (groupId: string) => Promise<void>;
-  hidden?: boolean;
-  /** 收起侧边栏（入口在侧边栏 header；收起后展开入口回到内容区 header） */
-  onCollapse?: () => void;
-  onPreviewTrashSession?: (id: string | null) => void;
-  trashPreviewSessionId?: string | null;
-  sidebarLayout?: "double" | "single";
-  personalAgentEnabled?: boolean;
-}
 
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
@@ -341,14 +299,14 @@ function SessionRow({
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
         </span>
-        {session.agentTarget && (
+        {session.agentTarget?.kind === 'org-agent' && (
           <span
             className="flex max-w-24 shrink-0 items-center gap-1 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
-            title={session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || "企业专家"}
-            aria-label={`Agent：${session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || '企业专家'}`}
+            title={session.orgAgentName || "企业专家"}
+            aria-label={`企业专家：${session.orgAgentName || "企业专家"}`}
           >
             <Bot className="size-3" />
-            <span className="truncate">{session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || "企业专家"}</span>
+            <span className="truncate">{session.orgAgentName || "企业专家"}</span>
           </span>
         )}
         <span
@@ -418,11 +376,11 @@ function SessionRow({
               </span>
             )}
             <span className="truncate">{session.title || "新会话"}</span>
-            {session.agentTarget && (
+            {session.agentTarget?.kind === 'org-agent' && (
               <span
                 className="ml-1 flex size-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
-                title={session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || "企业专家"}
-                aria-label={`Agent：${session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || '企业专家'}`}
+                title={session.orgAgentName || "企业专家"}
+                aria-label={`企业专家：${session.orgAgentName || "企业专家"}`}
               >
                 <Bot className="size-3" />
               </span>
@@ -983,6 +941,7 @@ export function DesktopSessionSidebar({
   trashPreviewSessionId,
   sidebarLayout = "double",
   personalAgentEnabled = true,
+  responsiveMode = "none",
 }: DesktopSessionSidebarProps) {
   const { user: authUser, accounts, switchAccount, authEnabled } = useAuth();
   const { summary: billingSummary, allowance: billingAllowance } = useTenantBillingAllowance(authUser?.tenantId);
@@ -1701,12 +1660,11 @@ export function DesktopSessionSidebar({
       <aside
         className={cn(
           "relative flex h-full shrink-0 flex-col bg-background",
-          hidden && "hidden",
+          (hidden || responsiveMode === "hidden") && "hidden",
           className,
         )}
         style={{ width: singlePanelWidth }}
-        // @ts-expect-error -- inert is a valid HTML attribute, React types lag behind
-        inert={hidden ? "" : undefined}
+        {...{ inert: hidden || responsiveMode === "hidden" ? true : undefined }}
       >
         <SidebarBrandHeader onCollapse={onCollapse} />
 
@@ -1921,22 +1879,21 @@ export function DesktopSessionSidebar({
     <aside
       className={cn(
         "relative flex h-full shrink-0 bg-background",
-        hidden && "hidden",
+        (hidden || responsiveMode === "hidden") && "hidden",
         className,
       )}
       style={{
         width:
-          subPanelOpen || showTrash
+          responsiveMode !== "secondary-hidden" && (subPanelOpen || showTrash)
             ? mainPanelWidth + subPanelWidth
             : mainPanelWidth,
       }}
-      // @ts-expect-error -- inert is a valid HTML attribute, React types lag behind
-      inert={hidden ? "" : undefined}
+      {...{ inert: hidden || responsiveMode === "hidden" ? true : undefined }}
     >
       <div className="flex h-full w-full">
         {/* 左主栏：导航 + 分组目录(可拖动调宽) */}
         <div
-          className={cn("relative flex h-full shrink-0 flex-col", (subPanelOpen || showTrash) && "border-r border-black/[0.08]")}
+          className={cn("relative flex h-full shrink-0 flex-col", responsiveMode !== "secondary-hidden" && (subPanelOpen || showTrash) && "border-r border-black/[0.08]")}
           style={{ width: mainPanelWidth }} data-testid="desktop-sidebar-main-panel"
         >
           {/* Header: 品牌徽标 + 收起侧边栏 */}
@@ -2220,8 +2177,10 @@ export function DesktopSessionSidebar({
         {/* 右子栏：会话列表 / 回收站 */}
         {(subPanelOpen || showTrash) && (
           <div
-            className="flex min-w-0 shrink-0 flex-col bg-background"
+            className={cn("flex min-w-0 shrink-0 flex-col bg-background", responsiveMode === "secondary-hidden" && "hidden")}
             style={{ width: subPanelWidth }}
+            data-testid="desktop-sidebar-secondary-panel" aria-hidden={responsiveMode === "secondary-hidden" || undefined}
+            {...{ inert: responsiveMode === "secondary-hidden" ? true : undefined }}
           >
             {showTrash && isAdmin ? (
               <TrashView
@@ -2370,7 +2329,7 @@ export function DesktopSessionSidebar({
       </div>
 
       {/* 子栏拖动条:贴 aside 右边线,控制 subPanelWidth */}
-      {(subPanelOpen || (showTrash && isAdmin)) && (
+      {responsiveMode !== "secondary-hidden" && (subPanelOpen || (showTrash && isAdmin)) && (
         <div
           className="group absolute inset-y-0 right-0 z-20 w-1 cursor-col-resize"
           onMouseDown={onSubResizeMouseDown}

@@ -558,8 +558,8 @@ describe('wsEventProcessor runtime and tool execution status', () => {
   });
 });
 
-describe('wsEventProcessor pending interaction replay', () => {
-  it('adds pending ask_user and plan approval messages without duplicating existing interactionIds', () => {
+describe('wsEventProcessor current-session interaction replay', () => {
+  it('adds current-session ask_user and plan approval messages without duplicating interactionIds', () => {
     const { messages, ctx } = createTestRig([
       {
         id: 'existing',
@@ -572,7 +572,7 @@ describe('wsEventProcessor pending interaction replay', () => {
     ]);
 
     process({
-      type: 'pending_interactions',
+      type: 'pending_interactions', sessionId: 'session-1',
       interactions: [
         {
           interactionId: 'plan-1',

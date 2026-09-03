@@ -829,14 +829,17 @@ jobs:
         run: |
           # 覆盖冷安装、双候选准备、App authority 原子提交、双 ready/warmup 与旧实例观察。
           REMOTE_DEPLOY_TIMEOUT_SECONDS=2600
+          REMOTE_DEPLOY_START_EPOCH=$(date +%s)
           echo "Remote deploy timeout: ${REMOTE_DEPLOY_TIMEOUT_SECONDS}s"
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' GITHUB_RUN_ID='${GITHUB_RUN_ID}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' bash -s" <<'REMOTE'
+            "REMOTE_DEPLOY_TIMEOUT_SECONDS='$REMOTE_DEPLOY_TIMEOUT_SECONDS' REMOTE_DEPLOY_START_EPOCH='$REMOTE_DEPLOY_START_EPOCH' DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' GITHUB_RUN_ID='${GITHUB_RUN_ID}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' bash -s" <<'REMOTE'
           # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
           set -Eeuo pipefail
 
+          : "${REMOTE_DEPLOY_TIMEOUT_SECONDS:?missing REMOTE_DEPLOY_TIMEOUT_SECONDS}"
+          : "${REMOTE_DEPLOY_START_EPOCH:?missing REMOTE_DEPLOY_START_EPOCH}"
           : "${DEPLOY_ROOT:?missing DEPLOY_ROOT}"
           : "${SERVICE_NAME:?missing SERVICE_NAME}"
           : "${RELEASE_TGZ:?missing RELEASE_TGZ}"
@@ -847,6 +850,8 @@ jobs:
           : "${WORKER_DEPLOY_REQUIRED:?missing WORKER_DEPLOY_REQUIRED}"
           : "${GITHUB_RUN_ID:?missing GITHUB_RUN_ID}"
           : "${GITHUB_RUN_ATTEMPT:?missing GITHUB_RUN_ATTEMPT}"
+          case "$REMOTE_DEPLOY_TIMEOUT_SECONDS" in ''|*[!0-9]*) echo "invalid REMOTE_DEPLOY_TIMEOUT_SECONDS=$REMOTE_DEPLOY_TIMEOUT_SECONDS"; exit 1 ;; esac
+          case "$REMOTE_DEPLOY_START_EPOCH" in ''|*[!0-9]*) echo "invalid REMOTE_DEPLOY_START_EPOCH=$REMOTE_DEPLOY_START_EPOCH"; exit 1 ;; esac
           case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
           actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
           test "$actual_archive_digest" = "$SERVER_ARTIFACT_DIGEST"
@@ -879,7 +884,9 @@ jobs:
           MAINTENANCE_SERVICE="agent-saas-deploy-maintenance.service"
           MAINTENANCE_TIMER="agent-saas-deploy-maintenance.timer"
 
-          START_EPOCH=$(date +%s)
+          START_EPOCH=$REMOTE_DEPLOY_START_EPOCH
+          DEPLOY_ROLLBACK_RESERVE_SECONDS=300
+          DEPLOY_FAILSAFE_DEADLINE_EPOCH=$((START_EPOCH + REMOTE_DEPLOY_TIMEOUT_SECONDS - DEPLOY_ROLLBACK_RESERVE_SECONDS))
           LEGACY_DRAIN_DEADLINE_EPOCH=$((START_EPOCH + 1600))
           elapsed_seconds() {
             echo $(( $(date +%s) - START_EPOCH ))
@@ -1224,6 +1231,14 @@ jobs:
               AGENT_SAAS_COMPAT_ROLLBACK_STATE="$ROLLBACK_STATE_DIR" \
               "$ROLLBACK_STATE_DIR/rollback.sh"
             exit 1
+          }
+
+          ensure_pre_switch_budget() {
+            local phase="$1"
+            if [ "$(date +%s)" -ge "$DEPLOY_FAILSAFE_DEADLINE_EPOCH" ]; then
+              log "ERROR: deployment failsafe deadline reached before traffic switch: phase=$phase reserve=${DEPLOY_ROLLBACK_RESERVE_SECONDS}s"
+              rollback_idle_and_exit
+            fi
           }
 
           recover_interrupted_runtime_worker_drain() {
@@ -1613,6 +1628,7 @@ jobs:
               log "ERROR: runtime worker candidate process failed readiness before Web start"
               rollback_idle_and_exit
             fi
+            WORKER_CANDIDATE_INITIAL_PID="$worker_pid"
 
             if [ -n "${WORKER_ACTIVE:-}" ] && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
               OLD_WORKER_PIDFILE="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid"
@@ -1636,6 +1652,7 @@ jobs:
             log "runtime worker prepared without authority commit: color=$WORKER_IDLE release=$RELEASE_ID"
 
             refresh_worker_candidate_authority() {
+              ensure_pre_switch_budget "runtime-worker-post-commit-pre-drain"
               if [ -n "${WORKER_ACTIVE:-}" ] && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
                 WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=1
                 if ! systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
@@ -1659,23 +1676,44 @@ jobs:
                     log "ERROR: active runtime worker did not drain within ${WORKER_DRAIN_TIMEOUT}s"
                     rollback_idle_and_exit
                   fi
+                  ensure_pre_switch_budget "runtime-worker-post-commit-drain"
                   sleep 5
                   WORKER_OLD_WAITED=$((WORKER_OLD_WAITED + 5))
                 done
                 WORKER_ACTIVE_DRAIN_COMPLETED=1
                 log "active runtime worker drained after App commit: color=$WORKER_ACTIVE waited=${WORKER_OLD_WAITED}s"
               fi
+              ensure_pre_switch_budget "runtime-worker-post-commit-post-drain"
 
               WORKER_CANDIDATE_PIDFILE="/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid"
             WORKER_CANDIDATE_READYFILE="/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready"
-            worker_pid=$(cat "$WORKER_CANDIDATE_PIDFILE" 2>/dev/null || true)
-            worker_ready_pid=$(cat "$WORKER_CANDIDATE_READYFILE" 2>/dev/null || true)
-            worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value 2>/dev/null || true)
-            if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
-              || [ -z "$worker_pid" ] || [ "$worker_pid" != "$worker_ready_pid" ] \
-              || [ "$worker_pid" != "$worker_main_pid" ] || ! kill -0 "$worker_pid" 2>/dev/null; then
-              log "ERROR: runtime worker candidate identity changed before authority refresh: color=$WORKER_IDLE"
+            WORKER_POST_DRAIN_READY=0
+            WORKER_POST_DRAIN_WAITED=0
+            WORKER_POST_DRAIN_DEADLINE_EPOCH=$(( $(date +%s) + 180 ))
+            for _ in $(seq 1 180); do
+              worker_pid=$(cat "$WORKER_CANDIDATE_PIDFILE" 2>/dev/null || true)
+              worker_ready_pid=$(cat "$WORKER_CANDIDATE_READYFILE" 2>/dev/null || true)
+              worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value 2>/dev/null || true)
+              if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
+                && [ -n "$worker_pid" ] && [ "$worker_pid" = "$worker_ready_pid" ] \
+                && [ "$worker_pid" = "$worker_main_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
+                WORKER_POST_DRAIN_READY=1
+                break
+              fi
+              if [ "$(date +%s)" -ge "$WORKER_POST_DRAIN_DEADLINE_EPOCH" ] \
+                || [ "$(date +%s)" -ge "$DEPLOY_FAILSAFE_DEADLINE_EPOCH" ]; then
+                break
+              fi
+              sleep 1
+              WORKER_POST_DRAIN_WAITED=$((WORKER_POST_DRAIN_WAITED + 1))
+            done
+            if [ "$WORKER_POST_DRAIN_READY" -ne 1 ]; then
+              log "ERROR: runtime worker candidate failed readiness after old drain: color=$WORKER_IDLE waited=${WORKER_POST_DRAIN_WAITED}s"
               rollback_idle_and_exit
+            fi
+            ensure_pre_switch_budget "runtime-worker-recovered"
+            if [ "$worker_pid" != "$WORKER_CANDIDATE_INITIAL_PID" ]; then
+              log "runtime worker candidate restarted during old drain and recovered: color=$WORKER_IDLE old_pid=$WORKER_CANDIDATE_INITIAL_PID current_pid=$worker_pid waited=${WORKER_POST_DRAIN_WAITED}s"
             fi
             WORKER_AUTHORITY_ACK="${WORKER_CANDIDATE_READYFILE}.authority"
             rm -f "$WORKER_AUTHORITY_ACK"
@@ -1690,12 +1728,23 @@ jobs:
                 WORKER_AUTHORITY_REFRESHED=1
                 break
               fi
+              ensure_pre_switch_budget "runtime-worker-authority-refresh"
               sleep 1
             done
             if [ "$WORKER_AUTHORITY_REFRESHED" -ne 1 ]; then
               log "ERROR: runtime worker authority refresh timed out: color=$WORKER_IDLE pid=$worker_pid"
               rollback_idle_and_exit
             fi
+              worker_current_pid=$(cat "$WORKER_CANDIDATE_PIDFILE" 2>/dev/null || true)
+              worker_ready_pid=$(cat "$WORKER_CANDIDATE_READYFILE" 2>/dev/null || true)
+              worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value 2>/dev/null || true)
+              if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
+                || [ "$worker_current_pid" != "$worker_pid" ] || [ "$worker_ready_pid" != "$worker_pid" ] \
+                || [ "$worker_main_pid" != "$worker_pid" ] || ! kill -0 "$worker_pid" 2>/dev/null; then
+                log "ERROR: runtime worker candidate changed after authority refresh: color=$WORKER_IDLE pid=$worker_pid"
+                rollback_idle_and_exit
+              fi
+              ensure_pre_switch_budget "runtime-worker-authority-confirmed"
               log "runtime worker authority refreshed after atomic App commit: color=$WORKER_IDLE release=$RELEASE_ID"
             }
             log "runtime worker handoff staged until final App authority commit: color=$WORKER_IDLE release=$RELEASE_ID"
@@ -1724,6 +1773,7 @@ jobs:
             if [ $((READY_WAITED % 10)) -eq 0 ]; then
               log "waiting ready waited=${READY_WAITED}s"
             fi
+            ensure_pre_switch_budget "web-readiness"
             sleep 1
             READY_WAITED=$((READY_WAITED + 1))
           done
@@ -1784,6 +1834,7 @@ jobs:
             if [ $((WARMUP_WAITED % 30)) -eq 0 ]; then
               log "warmup state=${WARMUP_STATE:-unknown} waited=${WARMUP_WAITED}s"
             fi
+            ensure_pre_switch_budget "web-warmup"
             sleep 5
             WARMUP_WAITED=$((WARMUP_WAITED + 5))
           done
@@ -1815,6 +1866,7 @@ jobs:
             ' "$body"
           }
 
+          ensure_pre_switch_budget "pre-smoke"
           log "smoke check on idle port $IDLE_PORT"
           if ! curl -fsS -m 5 "$HEALTHZ_URL" >/dev/null 2>&1; then
             log "smoke FAILED: $HEALTHZ_URL not 200"
@@ -1828,6 +1880,7 @@ jobs:
           log "smoke ok: healthz 200, drain status: $SMOKE_DRAIN_STATUS"
 
           # ── 9. 准备候选 nginx 配置：只写磁盘并 nginx -t，不提前暴露新 API ──
+          ensure_pre_switch_budget "nginx-config"
           UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"
           API_SITE_BAK="/tmp/agent-api-kaiyan.conf.bak.$$"
           UPSTREAM_HAD_ORIGINAL=0

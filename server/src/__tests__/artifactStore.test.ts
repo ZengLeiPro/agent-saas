@@ -82,6 +82,26 @@ describe('LocalArtifactBlobStore', () => {
     }
   });
 
+  it('infers Artifact MIME from the filename when the producer omits it', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'artifact-mime-'));
+    try {
+      const service = new ArtifactService({
+        runtimeEnvironment: 'test',
+        artifactStore: new InMemoryArtifactStore(),
+        blobStore: new LocalArtifactBlobStore({ rootDir: root }),
+        agentCwd: root,
+      });
+      await expect(service.createFromBytes({ sessionId: 'session-1', data: '# Markdown', fileName: '说明.md' }))
+        .resolves.toMatchObject({ mimeType: 'text/markdown' });
+      await expect(service.createFromBytes({ sessionId: 'session-1', data: '<!doctype html>', fileName: '演示.html' }))
+        .resolves.toMatchObject({ mimeType: 'text/html' });
+      await expect(service.createFromBytes({ sessionId: 'session-1', data: '{}', fileName: 'data.unknown' }))
+        .resolves.toMatchObject({ mimeType: undefined });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('createFromWorkspaceFile rejects an ancestor symlink instead of reading outside the workspace', async () => {
     const base = await mkdtemp(path.join(os.tmpdir(), 'artifact-boundary-'));
     const root = path.join(base, 'workspace');

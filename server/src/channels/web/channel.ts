@@ -37,6 +37,7 @@ import {
   canViewContextUsageDetails,
   canViewContextUsageDetailsForUser,
   isPlatformAdminUser,
+  isWebSessionDeleted,
   redactContextUsageDetails,
 } from './channelHelpers.js';
 import {
@@ -54,7 +55,7 @@ import {
   writeSessionMetaIfAbsent,
   addSessionCost,
   ensureSessionAgentTargetBinding,
-  resolveSessionAgentTarget,
+  resolveSessionAgentTargetForAccess,
   type SessionMeta,
 } from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
@@ -133,40 +134,11 @@ import {
 } from '@agent/shared';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
-import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
+import type { ModelResolver, WebChannelConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
 import { getRuntimeStreamStatus, handleRuntimeStreamSocketClose, WebRuntimeRecovery } from './runtimeRecovery.js';
-export type { ModelResolver } from './channelConfig.js';
+export type { ModelResolver, WebChannelConfig } from './channelConfig.js';
 
-/**
- * Public WebChannel construction contract.
- *
- * Web-facing paths and adapters stay beside the channel orchestrator, while
- * runtime/store integrations live in channelConfig.ts to keep this file under
- * its grandfathered line ceiling without changing the exported API.
- * Keeping this facade here also preserves existing type-only import paths.
- * Consumers do not need to know how the contract is partitioned internally.
- */
-export interface WebChannelConfig extends WebChannelRuntimeConfig {
-  /** Server timezone used when formatting channel output. */
-  timezone?: string;
-  /** Optional overrides for web message rendering. */
-  displayConfig?: WebMessageDisplayConfig;
-  /** Default agent workspace root. */
-  agentCwd?: string;
-  /** Shared resource root. */
-  sharedDir?: string;
-  /** Login activity JSONL path. */
-  loginLogFilePath?: string;
-  /** Tenant-aware model reference resolver. */
-  modelResolver?: ModelResolver;
-  /** User lookup used for channel identity and preferences. */
-  userStore?: UserStore;
-  /** Secret used to authenticate WebSocket connections when authEnabled is true. */
-  jwtSecret?: string;
-  /** Reports whether shutdown draining has begun. */
-  getIsDraining?: () => boolean;
-}
 export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
 interface ActiveStreamEntry {
@@ -1149,7 +1121,7 @@ export class WebChannel implements BaseChannel {
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
     const previousWs = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
-    const clientMsgId = adaptWebChatSubmission(msg).clientMsgId;
+    const stableMsg = structuredClone(msg); const adaptedSubmission = adaptWebChatSubmission(stableMsg); const clientMsgId = adaptedSubmission.clientMsgId;
     const submissionKey = clientMsgId
       ? `${client.user?.tenantId ?? 'tenant'}|${client.user?.sub ?? 'anon'}|${clientMsgId}`
       : undefined;
@@ -1160,7 +1132,7 @@ export class WebChannel implements BaseChannel {
       ? [previousWs, previousSubmission]
       : [previousWs];
     const next = Promise.all(dependencies.map((dependency) => dependency.catch(() => undefined)))
-      .then(() => this.processChatMessage(client, msg));
+      .then(() => this.processChatMessage(client, stableMsg, adaptedSubmission));
     this.chatProcessingTails.set(client.ws, next);
     if (submissionKey) this.submissionProcessingTails.set(submissionKey, next);
     const cleanup = () => {
@@ -1296,14 +1268,25 @@ export class WebChannel implements BaseChannel {
   }
 
   private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
-    // 在 resolve 前捕获 interaction revision/order（resolve 会删除 entry）。
+    const sessionId = interactionStore.get(interactionId)?.sessionId ?? interactionStore.getSessionId(interactionId) ?? fallbackSessionId;
+    const admissionLock = this.config.withSessionAdmissionLock;
+    const resolve = (lockHeld: boolean) => this.resolveInteractionAdmitted(client, interactionId, response, sessionId, lockHeld, clientAttemptId);
+    return sessionId && admissionLock ? admissionLock(sessionId, () => resolve(true)) : resolve(false);
+  }
+
+  private async resolveInteractionAdmitted(client: WsClient, interactionId: string, response: Record<string, unknown>, admittedSessionId: string | undefined, admissionLockHeld: boolean, clientAttemptId?: string): Promise<void> {
+    // resolve 会删除 entry；锁内重读 sessionId，避免等待期间陈旧。
     const pendingInteraction = interactionStore.get(interactionId);
-    const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
+    const currentSessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
+    if (currentSessionId && currentSessionId !== admittedSessionId) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction session changed; please retry'); return; }
+    if (currentSessionId && this.config.withSessionAdmissionLock && !admissionLockHeld) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction session admission lock was not acquired'); return; }
+    const sessionId = admittedSessionId ?? currentSessionId;
     const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
     if (orgAgentAccessError) {
       this.sendRespond(client, interactionId, clientAttemptId, orgAgentAccessError);
       return;
     }
+    if (sessionId && await isWebSessionDeleted(this.config, sessionId)) { this.sendRespond(client, interactionId, clientAttemptId, 'Session has been deleted'); return; }
     if (
       pendingInteraction?.type === 'permission_request'
       && pendingInteraction.runId
@@ -1336,7 +1319,7 @@ export class WebChannel implements BaseChannel {
     }
     const resolved = interactionStore.resolve(interactionId, durableResponse);
     if (!resolved) {
-      const resumed = await this.tryResumePersistedInteraction(client, interactionId, durableResponse as Record<string, unknown>, fallbackSessionId, clientAttemptId);
+      const resumed = await this.tryResumePersistedInteraction(client, interactionId, durableResponse as Record<string, unknown>, sessionId, clientAttemptId);
       if (!resumed) {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction not found or expired');
       }
@@ -2103,9 +2086,14 @@ export class WebChannel implements BaseChannel {
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
-  private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
+  private async processChatMessage(client: WsClient, msg: WsChatMessage, adaptedSubmission = adaptWebChatSubmission(msg)): Promise<void> {
+    const process = () => this.processChatMessageAdmitted(client, msg, adaptedSubmission);
+    const sessionId = adaptedSubmission.sessionId;
+    return sessionId && this.config.withSessionAdmissionLock ? this.config.withSessionAdmissionLock(sessionId, process) : process();
+  }
+
+  private async processChatMessageAdmitted(client: WsClient, msg: WsChatMessage, adaptedSubmission: ReturnType<typeof adaptWebChatSubmission>): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
-    const adaptedSubmission = adaptWebChatSubmission(msg);
     const message = adaptedSubmission.text;
     const sessionId = adaptedSubmission.sessionId;
     const model = adaptedSubmission.model;
@@ -2205,6 +2193,8 @@ export class WebChannel implements BaseChannel {
       this.sendChatRejected(ws, clientMsgId, reasonCode, adaptedSubmission.issue.message);
       return;
     }
+
+    if (sessionId && await isWebSessionDeleted(this.config, sessionId)) { this.sendChatRejected(ws, clientMsgId, 'access_denied', '会话已删除，请先恢复会话'); return; }
 
     // 1) Drain 拦截（服务端优雅关闭期间）
     if (this.config.getIsDraining?.()) {
@@ -2572,29 +2562,9 @@ export class WebChannel implements BaseChannel {
     const gateTenantId = gateIdentity?.tenantId ?? anonymousDefaultTenant;
     let agentTarget: AgentTarget;
     if (validSessionId) {
-      let resolvedTarget = resolveSessionAgentTarget(gateSessionMeta, gateTenantId);
-      if (
-        resolvedTarget.status === 'unproven'
-        && anonymousDefaultTenant
-        && gateTranscriptPath
-        && gateSessionMeta
-        && gateSessionMeta.agentTarget === undefined
-        && !gateSessionMeta.orgAgentId
-        && (gateSessionMeta.tenantId === undefined || gateSessionMeta.tenantId === anonymousDefaultTenant)
-      ) {
-        // No-auth ownerless sessions retain connection ownership semantics, but their legacy
-        // personal target is upgraded server-side to the one permitted default tenant.
-        // Do not synthesize a user/session owner: resume, abort and ask_user stay WS-bound.
-        agentTarget = { kind: 'personal', tenantId: anonymousDefaultTenant };
-        try {
-          gateSessionMeta = await ensureSessionAgentTargetBinding(gateTranscriptPath, agentTarget);
-          resolvedTarget = { status: 'bound', target: agentTarget, needsMigration: false };
-        } catch {
-          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '会话 Agent 绑定迁移失败，已阻止继续发送');
-          return;
-        }
-      }
+      // 缺 canonical agentTarget 且无 orgAgentId 的 N-1 会话由 access 解析兜底为 personal，
+      // 并带 needsMigration 走下方既有迁移路径把绑定落盘（惰性升级，不做批量回填）。
+      const resolvedTarget = resolveSessionAgentTargetForAccess(gateSessionMeta, gateTenantId);
       if (resolvedTarget.status === 'unproven') {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
         this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '历史会话缺少可证明的 Agent 绑定，已阻止继续发送');

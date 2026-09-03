@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { TASKBOARD_STAGE_DEFAULT_PROMPTS } from '../../../shared/src/types/taskboard.js';
 import type {
   TaskBoardExecution,
   TaskBoardExecutionCancelInput,
@@ -269,6 +270,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionIdentity: launch.executionIdentity,
       modelRef: launch.model.ref,
       executionTarget: launch.executionTarget,
+      taskKind: launch.modelContext.taskKind,
+      purpose: targetExecution.purpose,
     });
     const runId = context.continuationRunId ?? `taskboard-comment-${commentId}`;
     const run = {
@@ -285,6 +288,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardContinuation: true,
         taskboardTaskId: taskId,
         taskboardCommentId: commentId,
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: session.sandboxWorkloadDescriptor,
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,
@@ -377,6 +382,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionIdentity: launch.executionIdentity,
       modelRef: launch.model.ref,
       executionTarget: launch.executionTarget,
+      taskKind: launch.modelContext.taskKind,
+      purpose,
     });
     const runId = `taskboard-execution-${executionId}`;
     const run = {
@@ -394,6 +401,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
         ...sessionDescriptor.integrationMetadata,
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: session.sandboxWorkloadDescriptor,
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,
@@ -716,7 +725,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       const boardPrompt = context.boardPrompt.trim();
       // The merge key supplies configuration only; the durable Integration Execution remains purpose=work.
       const stagePurpose = context.task.kind === 'integration' ? 'merge' : context.execution.purpose;
-      const stagePrompt = context.stagePrompts?.[stagePurpose]?.trim();
+      const stagePrompt = context.stagePrompts?.[stagePurpose]?.trim()
+        || TASKBOARD_STAGE_DEFAULT_PROMPTS[stagePurpose];
       return {
         ...record,
         metadata: {
@@ -761,6 +771,7 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         : targetExecution?.purpose;
       const stagePrompt = stagePurpose
         ? continuationContext.stagePrompts?.[stagePurpose]?.trim()
+          || TASKBOARD_STAGE_DEFAULT_PROMPTS[stagePurpose]
         : undefined;
       return boardPrompt || stagePrompt
         ? { ...record, metadata: {

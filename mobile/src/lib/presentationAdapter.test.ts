@@ -6,7 +6,7 @@ import {
   adaptUnknownPresentationForMobile,
 } from './presentationAdapter';
 
-describe('M40-04 Mobile shared presentation adapter', () => {
+describe('M40-04 / TASK-375 Mobile shared presentation adapter', () => {
   it('consumes RenderModel + card contracts without exposing raw data to non-debug semantics', () => {
     const item = selectRenderModel({
       messages: [
@@ -30,6 +30,29 @@ describe('M40-04 Mobile shared presentation adapter', () => {
     expect(surface.accessibility.label).toContain('已完成');
     expect(JSON.stringify(surface)).not.toContain('MOBILE_RAW_INPUT');
     expect(JSON.stringify(surface)).not.toContain('MOBILE_RAW_RESULT');
+  });
+
+  it('keeps standalone tool_result raw data behind all three disclosure gates', () => {
+    const item = selectRenderModel({
+      messages: [{
+        id: 'orphan-result',
+        type: 'tool_result',
+        toolId: 'missing-call',
+        toolName: 'Read',
+        result: 'MOBILE_STANDALONE_RAW_RESULT',
+      }],
+    }).items[0];
+
+    const closed = adaptToolPresentationForMobile(item);
+    expect(closed.presentation.showRaw).toBe(false);
+    expect(JSON.stringify(closed)).not.toContain('MOBILE_STANDALONE_RAW_RESULT');
+
+    const opened = adaptToolPresentationForMobile(item, {
+      debugBuild: true,
+      authenticatedAdmin: true,
+      explicitSessionToggle: true,
+    });
+    expect(opened.presentation.showRaw).toBe(true);
   });
 
   it('retains a BusinessStep checklist projection from the shared presenter', () => {

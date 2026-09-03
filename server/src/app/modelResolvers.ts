@@ -66,6 +66,8 @@ export function createModelResolvers(params: {
   prepareSttUpdate?: (
     next: AppConfig['stt'],
   ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
+  /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
+  onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
   resolveRuntimeModels?: (
     next: NonNullable<AppConfig['models']>,
@@ -105,6 +107,9 @@ export function createModelResolvers(params: {
       ? { prepareWebToolsUpdate: params.prepareWebToolsUpdate }
       : {}),
     ...(params.prepareSttUpdate ? { prepareSttUpdate: params.prepareSttUpdate } : {}),
+    ...(params.onCodexSubscriptionUpdated
+      ? { onCodexSubscriptionUpdated: params.onCodexSubscriptionUpdated }
+      : {}),
     onModelsUpdated: async (nextConfig) => {
       if (!nextConfig.models) throw new Error('models 未配置');
       const resolved = params.resolveRuntimeModels

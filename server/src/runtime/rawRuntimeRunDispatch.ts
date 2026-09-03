@@ -160,8 +160,8 @@ import {
   createTenantRemoteHandAuthTokenResolver,
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
-import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement } from './runtimeHandRegistration.js';
-import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
+import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement, resolveSandboxWorkloadDescriptor, toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
+import { cancelDeletedSessionWake, cancelDeletedSessionWakeIfPresent, deletedSessionResumeError, restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
 import { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 export { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 import {
@@ -200,6 +200,7 @@ const logger = createLogger('RawRuntime');
 
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
+import { serverRemoteHandRegistrationOptions } from './serverRemoteHandRegistration.js';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
@@ -948,6 +949,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     const resumeSessionId = options.resumeSessionId ?? context.resumeSessionId;
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
+    if (existingSession?.deletedAt) return yield deletedSessionResumeError(resumeSessionId!);
     const identitySource = context.sessionOwner || context.user;
     const replayResolution = await resolveMemoryConsolidationReplaySource(
       sessionCatalog,
@@ -1115,8 +1117,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // 新会话首次落库时定版记忆策略，resume 只读既有 pin；
     // 后台 profile、专职 org Agent 与非用户通道固定 v1，避免与 L2 双写。
     // memory_consolidate 的隐藏来源由 createRuntimeSessionRecord 根据 toolProfile 固化。
-    const isTaskboardExecution = existingSession?.sessionSource === 'taskboard_execution'
-      || sessionId.startsWith('taskboard-');
+    const sandboxWorkloadDescriptor = resolveSandboxWorkloadDescriptor(existingSession?.sandboxWorkloadDescriptor, replaySourceSession?.sandboxWorkloadDescriptor, options.sandboxWorkloadDescriptor, toolProfile, context.channel);
+    const isTaskboardExecution = sandboxWorkloadDescriptor.kind === 'taskboard' || existingSession?.sessionSource === 'taskboard_execution';
     const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
       existing: existingSession ?? replaySourceSession,
       delegationEnabled: config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true,
@@ -1156,7 +1158,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         modelRef: sessionModelRef,
         executionTarget,
-        status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
+        status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined, sandboxWorkloadDescriptor,
         ...(replaySourceSession ? {
           sessionSource: 'memory_consolidation' as const,
           memoryAutomationEligible: false,
@@ -1181,7 +1183,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
       ...(orgAgentId ? { orgAgentId } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
-      memoryPolicyVersion,
+      memoryPolicyVersion, sandboxWorkloadDescriptor,
       ...(isTaskboardExecution ? {
         sessionSource: 'taskboard_execution' as const,
         memoryAutomationEligible: false,
@@ -1193,7 +1195,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
-    // per-session Sandbox：本路径是顶层会话（交互/cron/taskboard 均在此创建），
+    // per-session Sandbox：本路径是已分类的顶层 workload（交互/cron/taskboard/memory），
     // 故顶层组键＝自身 sessionId。子 Agent 与后台任务不走这里，它们继承父值。
     const sandboxScopeId = deriveSandboxScopeId({
       workspaceId: sessionRecord.workspaceId ?? sessionId,
@@ -1228,7 +1230,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         transcriptPath,
         modelRef: sessionModelRef, username: sessionRecord.username, userRole: sessionRecord.userRole, ...(orgAgentId ? { orgAgentId } : {}), ...(sessionRecord.executionRole ? { executionRole: sessionRecord.executionRole } : {}), ...(orgAgent?.runtime?.executionMode ? { executionMode: orgAgent.runtime.executionMode } : {}), ...(options.dispatcherCompletion ? { dispatcherCompletion: true } : {}),
         outputTransactionMode: resolveModelOutputTransactionMode(context),
-        sandboxScopeId,
+        sandboxScopeId, sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
@@ -1291,9 +1293,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       workspaceMountSubPath,
       topLevelSessionId: sessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
-      sandboxProfile: sessionRecord.sandboxProfile,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
+      sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -1424,7 +1425,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         workspaceId: sessionRecord.workspaceId ?? sessionId,
         topLevelSessionId: sessionId,
-        sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, sessionId, executionTarget),
+        sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, sessionId, executionTarget), workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
         mountSubPath: workspaceMountSubPath,
         tenantId: sessionRecord.tenantId,
         executionTarget,
@@ -1680,8 +1681,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       return;
     }
     const existingSession = await sessionCatalog.get(request.sessionId);
-    const cwd = request.cwd ?? existingSession?.cwd;
-    const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
+    if (existingSession?.deletedAt) return yield deletedSessionResumeError(request.sessionId);
+    const cwd = request.cwd ?? existingSession?.cwd; const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
     if (!cwd || !transcriptPath) {
       yield { type: 'error', error: `Raw approval resume 找不到 session 元数据: ${request.sessionId}` };
       return;
@@ -1865,7 +1866,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, approvalId: request.approvalId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
+      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, approvalId: request.approvalId, sandboxScopeId, sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
@@ -1896,9 +1897,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       topLevelSessionId: request.sessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
-      sandboxProfile: sessionRecord.sandboxProfile,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
+      sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -2071,7 +2071,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
           topLevelSessionId: request.sessionId,
-          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget),
+          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget), workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
@@ -2155,8 +2155,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       return;
     }
     const existingSession = await sessionCatalog.get(request.sessionId);
-    const cwd = request.cwd ?? existingSession?.cwd;
-    const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
+    if (existingSession?.deletedAt) return yield deletedSessionResumeError(request.sessionId);
+    const cwd = request.cwd ?? existingSession?.cwd; const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
     if (!cwd || !transcriptPath) {
       yield { type: 'error', error: `Raw interaction resume 找不到 session 元数据: ${request.sessionId}` };
       return;
@@ -2348,7 +2348,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       executionTarget,
       workspaceId: sessionRecord.workspaceId,
       sandboxScopeId,
-      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, interactionId: request.interactionId, sandboxScopeId, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
+      metadata: { cwd, transcriptPath, modelRef: sessionModelRef, outputTransactionMode: resumeOutputTransactionMode, interactionId: request.interactionId, sandboxScopeId, sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor, ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}), ...(approvalPolicy ? { approvalPolicy } : {}), ...(resumeToolProfile ? { toolProfile: resumeToolProfile } : {}), ...(boundProfile ? profileRunMetadata(boundProfile) : {}) },
     });
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
@@ -2379,9 +2379,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       topLevelSessionId: request.sessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
-      sandboxProfile: sessionRecord.sandboxProfile,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
+      sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -2555,7 +2554,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
           topLevelSessionId: request.sessionId,
-          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget),
+          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget), workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
@@ -2611,8 +2610,7 @@ export async function loadRawRuntimeWakeState(
   config: RawRuntimeRunDispatchConfig,
   sessionId: string,
 ): Promise<RawRuntimeWakeState | null> {
-  const sessionCatalog = resolveSessionCatalog(config);
-  const session = await sessionCatalog.get(sessionId);
+  const sessionCatalog = resolveSessionCatalog(config); const session = await sessionCatalog.get(sessionId);
   if (!session) return null;
   const eventStore = createEventStoreForSession(config, session);
   const eventTenantId = resolveEventTenantId(config, session.tenantId, undefined, `wake state ${sessionId}`);
@@ -2622,7 +2620,6 @@ export async function loadRawRuntimeWakeState(
   const replayState = buildRuntimeReplayState(events, approvals, sessionId);
   return { session, events, approvals, replayState };
 }
-
 export async function wakeRuntimeSession(
   config: RawRuntimeRunDispatchConfig,
   run: RunRecord,
@@ -2631,17 +2628,18 @@ export async function wakeRuntimeSession(
   if (await config.refreshSharedConfig?.() === false) throw new Error('共享配置刷新失败，请重试');
   const sessionCatalog = resolveSessionCatalog(config);
   const session = await restoreRuntimeSessionForWake(sessionCatalog, run);
-  if (!session) {
-    throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
-  }
+  if (!session) throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
+  if (session.deletedAt) return cancelDeletedSessionWake(run, options.lease, config.runStore);
   const eventTenantId = resolveEventTenantId(config, session.tenantId, run.tenantId, `wake run ${run.runId}`);
   // durable 后台 Agent 走独立子 loop；仅 pending 首跑 execute，过期 running 由 scheduler 先冻结。
   if (run.metadata?.backgroundTask === true) {
+    if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return;
     if (!config.backgroundTasks) throw new Error('background task runtime is not configured');
     await config.backgroundTasks.execute(run, options.lease);
     return;
   }
   if (session.kind === 'subagent' || run.metadata?.subagent === true) {
+    if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return;
     await orphanUnrecoverableSubagentWake({
       runStore: config.runStore,
       eventStore: new RunStateTrackingEventStore(
@@ -2936,7 +2934,7 @@ export async function wakeRuntimeSession(
     sessionOwner,
     targetCwd: session.cwd,
   };
-  const dispatch = createRawRuntimeRunDispatch(config);
+  if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return; const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();
   const drainHandoff: RuntimeDrainHandoffState = { requested: false };
   runtimeRunController.register(run.runId, abortController, {

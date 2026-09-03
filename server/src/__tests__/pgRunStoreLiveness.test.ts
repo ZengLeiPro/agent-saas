@@ -27,6 +27,21 @@ describe('PgRunStore M40-02 liveness and explicit recovery SQL contract', () => 
     expect(result?.liveness).toMatchObject({ state: 'busy', reasonCode: `heartbeat_${source}`, version: 2 });
   });
 
+  it('uses post-lock database time and records terminalAt for explicit message cancellation', async () => {
+    let cancellationSql = '';
+    const query = vi.fn(async (sql: string, params: unknown[]) => {
+      cancellationSql = sql;
+      expect(params).toEqual(['user-1', 'client-1', 'explicit_cancel']);
+      return { rows: [] };
+    });
+    const queries = new PgRunStoreQueries({ query } as never, 'runtime_runs', 'runtime_message_submissions', 'runtime_steering_inputs');
+    await queries.cancelUserMessageByClientMsgId('user-1', 'client-1', 'explicit_cancel', new Date('2026-08-30T00:00:10.000Z'));
+    expect(cancellationSql).toContain('locked AS MATERIALIZED');
+    expect(cancellationSql).toContain('SELECT clock_timestamp() AS now FROM locked');
+    expect(cancellationSql).toContain('updated_at = cancellation_time.now');
+    expect(cancellationSql).toContain("'sandboxLifecycleTerminalAt'");
+  });
+
   it('orders the reaper orphan pass before stale marking and uses row-level CAS fencing', async () => {
     const statements: string[] = [];
     let pass = 0;
@@ -72,6 +87,10 @@ describe('PgRunStore M40-02 liveness and explicit recovery SQL contract', () => 
     expect(orphanSql).toContain("invocation.status = 'running'");
     expect(orphanSql).toContain("'external_tool_outcome_unknown'");
     expect(orphanSql).toContain("status = 'orphaned'");
+    expect(orphanSql).toContain('transition_time AS MATERIALIZED');
+    expect(orphanSql).toContain('SELECT clock_timestamp() AS now FROM candidates');
+    expect(orphanSql).toContain('updated_at = transition_time.now');
+    expect(orphanSql).toContain("'sandboxLifecycleTerminalAt'");
   });
 
   it('creates one explicit retry run for the same clientMsgId while leaving the orphan terminal', async () => {

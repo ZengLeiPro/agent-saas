@@ -68,6 +68,8 @@ export type {
   RuntimeFailureKind,
   RuntimeRecoveryAction,
 } from "./runtimeFailure";
+// Sandbox workload ownership is authored by the Server runtime.
+export type { SandboxWorkloadDescriptor } from "./sandboxWorkload";
 
 export type {
   AuthUser,
@@ -78,7 +80,11 @@ export type {
   UserPreferences,
   TenantFeatureFlags,
 } from "./auth";
-export type { ModelItem, ModelGroup, ModelList } from "./models";
+export type {
+  ModelItem,
+  ModelGroup,
+  ModelList,
+} from "./models";
 
 export type { ChatSessionIndexItem, AppTab, SessionRuntimeStatus } from "./sidebar";
 export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "./sidebar";
@@ -185,7 +191,9 @@ export {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
-  TASKBOARD_DEFAULT_STAGE_PROMPT,
+  TASKBOARD_DEFAULT_WORK_PROMPT,
+  TASKBOARD_DEFAULT_REVIEW_PROMPT,
+  TASKBOARD_DEFAULT_MERGE_PROMPT,
   TASKBOARD_STAGE_DEFAULT_PROMPTS,
 } from "./taskboard";
 export type {

@@ -100,6 +100,7 @@ export interface TaskboardIntegrationDispatchCandidate {
 }
 
 export interface TaskboardExecutionDispatchPayload {
+  /** Durable outbox payload remains v1; canonicalization handles its legacy shape. */
   version: 1;
   session: RuntimeSessionRecord;
   run: UpsertRunInput;
@@ -153,6 +154,8 @@ export interface TaskboardExecutionDispatch {
   executionId: string;
   outboxExecutionId: string;
   taskId: string;
+  taskKind: TaskBoardTaskKind;
+  purpose: TaskBoardExecutionPurpose;
   sessionId: string;
   tenantId: string;
   ownerUserId: string;
@@ -170,6 +173,7 @@ export interface TaskboardExecutionReconcileCandidate {
   leaseId: string;
 }
 
+/** Authoritative task launch context loaded from the task/board rows. */
 export interface TaskboardExecutionModelContext {
   taskModel?: string;
   /** 任务按执行阶段配置的模型覆盖；优先于旧版全阶段 taskModel。 */
@@ -177,7 +181,7 @@ export interface TaskboardExecutionModelContext {
   boardModel?: string;
   /** 看板按执行阶段配置的默认模型；解析优先级：任务阶段模型 > 任务旧模型 > 看板阶段模型 > 看板模型。 */
   boardStageModels?: TaskBoardStageModels;
-  taskKind?: 'delivery' | 'integration' | 'remediation';
+  taskKind?: TaskBoardTaskKind;
   taskStatus?: TaskBoardStatus;
   workflowVersion?: 2 | 3;
   integrationDurableSessionId?: string;

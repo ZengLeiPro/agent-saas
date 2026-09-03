@@ -647,9 +647,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
             },
           },
         });
-        expect(overflow.recovery.session.queueSnapshot.items.map((item: any) => item.status)).toEqual([
-          'queued', 'completed',
-        ]);
+        expect(overflow.recovery.session.queueSnapshot.items).toEqual([]);
       } finally {
         interactionStore.resolve(interactionId, { answers: {} });
         await pendingResponse;

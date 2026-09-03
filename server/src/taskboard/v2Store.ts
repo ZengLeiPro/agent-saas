@@ -12,6 +12,7 @@ import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
+import { applyExecutionContextBudget } from './executionContextBudget.js';
 import { fenceTaskExecutions } from './workflow/commandService.js';
 import {
   commentExecutionJoin,
@@ -481,20 +482,25 @@ export async function getExecutionContextV2(
       loaded.board,
       identity.ownerUserId,
     );
+    const bounded = applyExecutionContextBudget({
+      changes: page.map(rowToChange),
+      ...(comments ? { comments: comments.rows.map(rowToComment) } : {}),
+      ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
+      hasMore: changeRows.rows.length > limit,
+    });
     return {
       board: contextBoard,
       task: loaded.task,
-      ...(comments ? { comments: comments.rows.map(rowToComment) } : {}),
-      ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
+      ...(bounded.comments ? { comments: bounded.comments } : {}),
+      ...(bounded.executions ? { executions: bounded.executions } : {}),
       ...(sources ? { integrationSources: sources.rows.map(rowToIntegrationSource) } : {}),
       ...(include.has('integrationSources') && loaded.task.kind === 'integration' && loaded.task.workflowVersion === 3
         ? { integrationAgent: await loadExecutionIntegrationAgent(client, options.integrationSourcesTable, taskId) } : {}),
-      ...(page.length ? { changes: page.map(rowToChange) } : {}),
+      ...(bounded.changes.length ? { changes: bounded.changes } : {}),
+      ...(bounded.truncation ? { truncation: bounded.truncation } : {}),
       asOfSeq,
-      ...(page.length && changeRows.rows.length > limit
-        ? { nextCursor: String(page[page.length - 1]!.seq) }
-        : {}),
-      hasMore: changeRows.rows.length > limit,
+      ...(bounded.nextCursor ? { nextCursor: bounded.nextCursor } : {}),
+      hasMore: bounded.hasMore,
       contract,
     };
   } finally {

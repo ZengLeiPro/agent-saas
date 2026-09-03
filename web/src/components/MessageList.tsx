@@ -36,76 +36,13 @@ import {
   useHistoryAnchorRestoration,
 } from './useHistoryAnchorRestoration';
 import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
+import { groupIntoBubbles, type BubbleRenderItem } from './groupIntoBubbles';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
 const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepFlow })));
 const BusinessStepProcessEvent = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepProcessEvent })));
 const HISTORY_LOAD_TRIGGER_PX = 80;
 const HISTORY_LOAD_REARM_PX = 160; // hysteresis avoids duplicate page retries
-// ---------------------------------------------------------------------------
-// AI 气泡分组，与移动端 groupIntoBubbles() 保持一致。
-
-interface AiBubbleGroup {
-  type: 'ai_bubble';
-  id: string;
-  items: RenderItem[];
-}
-
-type BubbleRenderItem = RenderItem | AiBubbleGroup;
-
-/**
- * Groups consecutive AI render items into a single bubble.
- * A bubble ends when a `text` or `voice` item is encountered (terminal output).
- * User / user-voice items are never grouped — they render standalone.
- */
-function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
-  const result: BubbleRenderItem[] = [];
-  let currentGroup: RenderItem[] = [];
-
-  const flushGroup = () => {
-    if (currentGroup.length === 0) return;
-    result.push({
-      type: 'ai_bubble' as const,
-      id: `bubble-${currentGroup[0].id}`,
-      items: [...currentGroup],
-    });
-    currentGroup = [];
-  };
-
-  for (const item of items) {
-    // file_download 两条路径,分别处理:
-    //  - [FILE] 标记路径(无 artifactId): MessageItem 在 text 内联展开,顶层跳过。
-    //  - legacy artifact_created 事件(有 artifactId): 无关联 text 载体,作为独立顶层项
-    //    渲染(flushGroup 后 push,不进 AI bubble 避免与 thinking/tool_use 混排)。
-    if (item.type === 'file_download') {
-      if (!item.artifactId) continue;
-      flushGroup();
-      result.push(item);
-      continue;
-    }
-    if (item.type === 'user' || item.type === 'user-voice') {
-      flushGroup();
-      result.push(item);
-    } else if (item.type === 'system-error' || item.type === 'system_event') {
-      // 系统事件与会话级错误都是独立中性信息，不归属用户或 AI 气泡。
-      flushGroup();
-      result.push(item);
-    } else if (asCompactionItem(item)) {
-      // 压缩状态条/分界线：横铺独立渲染单元（水平线风格,非气泡）
-      flushGroup();
-      result.push(item);
-    } else if (item.type === 'text' || item.type === 'voice') {
-      currentGroup.push(item);
-      flushGroup();
-    } else {
-      currentGroup.push(item);
-    }
-  }
-
-  flushGroup();
-  return result;
-}
-
 // ---------------------------------------------------------------------------
 // Header helpers
 // ---------------------------------------------------------------------------
@@ -336,8 +273,6 @@ export const MessageList = memo(function MessageList({
     detailsOpen: businessStepDetailsOpen,
     selectStep: selectBusinessStep,
     clearSelection: clearBusinessStepSelection,
-    selectRelative: selectRelativeBusinessStep,
-    returnToCurrent: returnToCurrentBusinessStep,
   } = useBusinessStepDetail({
     groupedMessages,
     sessionId,
@@ -363,7 +298,7 @@ export const MessageList = memo(function MessageList({
   // Loading rows remain outside the virtualized bubble region, as before.
   const lastItem = bubbleItems[lastRenderIdx];
   // queued（排队插话）气泡不是「等待 AI 响应的最后一条消息」（2026-08-04 P2-8）：
-  // 它还没被 Agent 看到，其下渲染「正在思考」会与「已排队」自相矛盾。
+  // 它还没被 Agent 看到，其下渲染运行状态会与「已排队」自相矛盾。
   const showAgentLoading = loading && (!lastItem || (lastItem.type !== 'ai_bubble' && lastItem.type !== 'activity_group' && lastItem.type === 'user' && lastItem.status !== 'queued'));
   const showCenterLoading = isLoadingMessages && messages.length === 0 && !loading;
   const showSyncLoading = isLoadingMessages && messages.length > 0 && !loading;
@@ -742,15 +677,10 @@ export const MessageList = memo(function MessageList({
     plan: selectedBusinessStepPlan,
     followMode: businessStepFollowMode,
     debugMode,
-    onPrevious: selectedBusinessStepDetail.stepIndex > 1
-      ? () => selectRelativeBusinessStep(-1)
-      : undefined,
-    onNext: selectedBusinessStepDetail.stepIndex < selectedBusinessStepDetail.stepCount
-      ? () => selectRelativeBusinessStep(1)
-      : undefined,
-    onReturnCurrent: selectedBusinessStepPlan.currentTodoKey
-      ? returnToCurrentBusinessStep
-      : undefined,
+    onSelectStep: (todoKey: string) => {
+      if (!businessStepSelection) return;
+      selectBusinessStep({ ...businessStepSelection, todoKey });
+    },
     onClose: () => clearBusinessStepSelection(),
     renderItem: renderBusinessDetailItem,
   } : null;
@@ -1044,7 +974,7 @@ export const MessageList = memo(function MessageList({
             <div className={cn('pb-2', HEADER_FLOW_PADDING_CLASS)}>
               <div className="flex items-center gap-1.5 py-0.5 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground/70" />
-                <span>正在思考</span>
+                <span>处理中</span>
                 <span className="animate-pulse">...</span>
               </div>
             </div>

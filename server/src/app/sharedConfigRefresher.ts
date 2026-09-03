@@ -134,6 +134,12 @@ function readStamp(filePath: string): FileStamp | undefined {
   return readSnapshot(filePath)?.stamp;
 }
 
+function codexCredentialRefs(config: AppConfig['codexSubscription']): string[] {
+  return config?.credentialRefs?.length
+    ? config.credentialRefs
+    : config?.credentialRef ? [config.credentialRef] : [];
+}
+
 function sameStamp(a: FileStamp | undefined, b: FileStamp | undefined): boolean {
   if (!a || !b) return a === b;
   return (
@@ -190,6 +196,8 @@ export function createSharedConfigRefresher(params: {
   onConfigReloaded?: () => void;
   /** 应用新配置前的门禁；支持异步校验，失败时保留旧内存配置。 */
   validateConfigReload?: (next: AppConfig) => void | Promise<void>;
+  /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
+  onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -321,6 +329,7 @@ export function createSharedConfigRefresher(params: {
 
   function publishConfigFile(
     nextConfig: AppConfig,
+    previousConfig: AppConfig,
     stamp: FileStamp,
     changes: ConfigChanges,
   ): void {
@@ -333,11 +342,15 @@ export function createSharedConfigRefresher(params: {
     if (changes.systemPrompts) logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
     if (changes.toolControls) logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
     if (changes.codexSubscription) {
-      const refs = nextConfig.codexSubscription?.credentialRefs?.length
-        ? nextConfig.codexSubscription.credentialRefs
-        : nextConfig.codexSubscription?.credentialRef
-          ? [nextConfig.codexSubscription.credentialRef]
-          : [];
+      const previousRefs = codexCredentialRefs(previousConfig.codexSubscription);
+      const refs = codexCredentialRefs(nextConfig.codexSubscription);
+      const closeAll = previousConfig.codexSubscription?.enabled !== nextConfig.codexSubscription?.enabled
+        || previousConfig.codexSubscription?.websocketEnabled !== nextConfig.codexSubscription?.websocketEnabled
+        || previousConfig.codexSubscription?.endpoint !== nextConfig.codexSubscription?.endpoint
+        || previousConfig.codexSubscription?.originator !== nextConfig.codexSubscription?.originator;
+      const changedRefs = [...new Set([...previousRefs, ...refs])]
+        .filter((ref) => previousRefs.includes(ref) !== refs.includes(ref));
+      params.onCodexSubscriptionUpdated?.(closeAll ? undefined : changedRefs);
       logger?.info(
         `[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=${nextConfig.codexSubscription?.enabled === true} / ` +
           `websocketEnabled=${nextConfig.codexSubscription?.websocketEnabled === true} / ` +
@@ -407,7 +420,12 @@ export function createSharedConfigRefresher(params: {
     return finalizeSharedConfigTransaction({
       steps,
       isCandidateCurrent: () => sameStamp(readStamp(configPath), params.stamp),
-      publish: () => publishConfigFile(params.nextConfig, params.stamp, params.changes),
+      publish: () => publishConfigFile(
+        params.nextConfig,
+        params.previousConfig,
+        params.stamp,
+        params.changes,
+      ),
       onFailure: ({ error, rollbackErrors }) => {
         configRefreshNeedsRetry = true;
         for (const rollbackError of rollbackErrors)

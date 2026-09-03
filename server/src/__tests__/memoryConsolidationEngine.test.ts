@@ -772,7 +772,7 @@ describe('MemoryConsolidationEngine TaskBoard exclusion', () => {
     }));
     expect(dispatchOptions).toHaveLength(1);
     expect(dispatchOptions[0]).toEqual(expect.objectContaining({
-      memoryConsolidationSourceSessionId: 'source-session',
+      memoryConsolidationSourceSessionId: 'source-session', sandboxWorkloadDescriptor: { kind: 'memory' },
       skipMemory: true,
       approvalPolicy: { autoApproveTools: true },
       maxTurns: 1_000,

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { serverLogger } from '../utils/logger.js';
 
@@ -16,14 +17,23 @@ export function startKbPreviewScheduler(processCwd: string): KbPreviewScheduler 
   let child: ChildProcess | null = null;
   let stopped = false;
 
+  // 生产 release 只交付 prod 依赖，既没有 pnpm workspace 根也没有 devDependency tsx，
+  // 因此不能用 `pnpm -F server run kb:previews`（实测自 2026-07-13 起每 15 分钟失败一次，
+  // 预览停更 52 天）。改为执行 build 预编译出的 dist 入口，与 dist/admin 同策略。
+  const entryPath = resolve(processCwd, 'dist/jobs/kb-previews.mjs');
   const run = () => {
     if (stopped || child) return;
-    const pnpm = 'pnpm';
-    const args = ['-F', 'server', 'run', 'kb:previews', '--', '--root', kbRootDir];
-    const command = process.platform === 'win32' ? pnpm : 'nice';
-    const commandArgs = process.platform === 'win32' ? args : ['-n', '10', pnpm, ...args];
+    if (!existsSync(entryPath)) {
+      // 未 build 的开发环境没有该产物；跳过而不是每轮 spawn 失败刷错误日志。
+      serverLogger.info(`[KB Preview] generator entry not built, skipping: ${entryPath}`);
+      return;
+    }
+    const node = process.execPath;
+    const args = [entryPath, '--root', kbRootDir];
+    const command = process.platform === 'win32' ? node : 'nice';
+    const commandArgs = process.platform === 'win32' ? args : ['-n', '10', node, ...args];
     child = spawn(command, commandArgs, {
-      cwd: resolve(processCwd, '..'),
+      cwd: processCwd,
       env: { ...process.env, KB_PREVIEW_SCHEDULER_CHILD: '1' },
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],

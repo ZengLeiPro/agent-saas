@@ -272,8 +272,9 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['auth', 'login'] })).toBe('dangerous');
   });
 
-  it('非 DWS 入站 Run 使用当前专家精确 profile 执行并写入治理审计', async () => {
+  it('非 DWS 入站 Run 使用当前专家精确 profile，并把 Run workload 传给 transport', async () => {
     const { provider, invoke, auditStore, context, executionAudit } = setup();
+    context.workspace.workload = { class: 'taskboard', taskKind: 'delivery', purpose: 'work' };
 
     await expect(provider.invoke({
       toolId: 'DwsBusiness',
@@ -287,6 +288,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(request.input.command).toContain("'--profile' 'agent-corp:agent-user' '--format' 'json'");
     expect(request.context.workspace).toMatchObject({
       userId: 'account-a', tenantId: 'tenant-a', executionTarget: 'server-remote',
+      workload: { class: 'taskboard', taskKind: 'delivery', purpose: 'work' },
     });
     expect(executionAudit.record).toHaveBeenCalledWith(expect.objectContaining({
       error: expect.not.stringContaining('agent-corp:agent-user'),
@@ -670,6 +672,7 @@ describe('DwsBusinessToolProvider', () => {
     }, context)).resolves.toMatchObject({ content: '{"ok":true}' });
 
     expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'drive' 'recent' '--help' '--profile' 'requester-corp:requester-user'");
+    expect(invoke.mock.calls[0]![0].context.workspace.workload).toEqual({ class: 'cron' });
     expect(auditStore.events[0]).toMatchObject({
       targetType: 'user',
       targetId: 'user-a',

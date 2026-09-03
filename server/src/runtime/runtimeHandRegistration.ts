@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'crypto';
 
-import type { SandboxProfile } from '@agent/shared';
+import type { SandboxProfile, SandboxWorkloadDescriptor } from '@agent/shared';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
-import type { ExecutionTargetKind, ToolDescriptor } from '../agent/toolRuntime.js';
+import type { ExecutionTargetKind, SandboxWorkloadWireDescriptor, ToolDescriptor } from '../agent/toolRuntime.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
 import { HandManager } from './handManager.js';
 import {
@@ -26,6 +26,7 @@ import {
   type RuntimeIsolationRequirement,
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
+// Workload classification is fixed at the Server creation boundary; memory consolidation is isolated on first creation.
 
 /**
  * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
@@ -57,6 +58,30 @@ export function deriveSandboxScopeId(input: {
     : input.workspaceId;
   if (!input.topLevelSessionId) return base;
   return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
+}
+
+/** Workload classification is immutable once persisted; explicit creation input beats replay. */
+export function resolveSandboxWorkloadDescriptor(
+  existing: SandboxWorkloadDescriptor | undefined,
+  replay: SandboxWorkloadDescriptor | undefined,
+  requested: SandboxWorkloadDescriptor | undefined,
+  toolProfile: unknown,
+  channel: string,
+): SandboxWorkloadDescriptor {
+  const requestedDescriptor = requested ?? (toolProfile ? { kind: 'memory' as const } : undefined);
+  return existing ?? requestedDescriptor ?? replay ?? (channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
+}
+
+export function toAcsSandboxWorkloadDescriptor(
+  descriptor: SandboxWorkloadDescriptor | undefined,
+): SandboxWorkloadWireDescriptor {
+  const value = descriptor ?? { kind: 'interactive' as const };
+  if (value.kind !== 'taskboard') return { class: value.kind };
+  return {
+    class: 'taskboard',
+    ...(value.taskKind ? { taskKind: value.taskKind } : {}),
+    ...(value.purpose ? { purpose: value.purpose } : {}),
+  };
 }
 
 function buildWorkspaceRecipe(
@@ -93,8 +118,10 @@ export async function ensureRuntimeHandRegistered(params: {
    */
   topLevelSessionId?: string;
   endpoint?: string;
+  serverRemoteAuthTokenRef?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   sandboxProfile?: SandboxProfile;
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   sandboxResources?: SandboxResources;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
   tenantRemoteHandResolver?: TenantRemoteHandAuthTokenResolver;
@@ -165,7 +192,9 @@ export async function ensureRuntimeHandRegistered(params: {
     : profileRecipeBase;
   const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
-    params.executionTarget === 'server-remote' ? profileRecipe : undefined,
+    params.executionTarget === 'server-remote'
+      ? { ...profileRecipe, workload: toAcsSandboxWorkloadDescriptor(params.sandboxWorkloadDescriptor) }
+      : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
     params.topLevelSessionId,
@@ -234,6 +263,9 @@ export async function ensureRuntimeHandRegistered(params: {
   const defaultProvisionGeneration = randomUUID();
   const initialProvisionMetadata = {
     registeredBy: 'rawRuntimeRunDispatch',
+    ...(params.executionTarget === 'server-remote'
+      ? { serverRemoteAuthTokenRef: params.serverRemoteAuthTokenRef ?? null }
+      : {}),
     provisionFailure: null,
     provisionRecoveryToken: null,
     provisionRecoveryClaimedAtMs: null,
@@ -416,11 +448,18 @@ export async function ensureRuntimeHandRegistered(params: {
 
     const tenantRecipe = buildWorkspaceRecipe(
       remoteWorkspaceId,
-      hand.recipe,
+      {
+        ...hand.recipe,
+        // Runtime classification belongs to this session/run. A tenant hand may
+        // provide static repo/resources/setup/mount defaults, but its configured
+        // workload must never override the persisted dispatch descriptor.
+        workload: toAcsSandboxWorkloadDescriptor(params.sandboxWorkloadDescriptor),
+      },
       params.sessionId,
       params.workspaceMountSubPath,
       params.topLevelSessionId,
     );
+    // Digest the effective recipe, including the per-dispatch workload override.
     const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
     const tenantProvisionGeneration = randomUUID();
     await manager.provision({

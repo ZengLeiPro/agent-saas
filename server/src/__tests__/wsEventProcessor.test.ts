@@ -602,7 +602,7 @@ describe('wsEventProcessor current-session interaction replay', () => {
     }, ctx);
 
     expect(messages).toHaveLength(4);
-    expect(messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
+    expect(messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_approval', content: '待处理' });
     expect(messages[2]).toMatchObject({
       type: 'permission_request',
       interactionId: 'plan-2',

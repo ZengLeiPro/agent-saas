@@ -9,16 +9,24 @@ import { formatRuntimeFailureMessage, isInsufficientCreditsFailure, isSameRunMes
 import { hasTrailingActiveWork, resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
 import { normalizeToolPresentation } from './toolPresentation';
 import { normalizeToolResultMetadata } from './toolResultMetadata';
-import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
+import { isDedicatedToolName } from './wsToolDisplay';
 import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
-import { applyInteractionResolution } from './wsInteractionResolution';
 import { claimTerminalEvent } from './wsTerminalEventHelpers';
+import { interactionKey } from './interactionProtocol';
+import {
+  isRememberedResolvedInteraction,
+  projectInteractionRequest,
+  projectInteractionResolution,
+  projectPendingInteractionSnapshot,
+  rememberResolvedInteraction,
+} from './wsInteractionProjection';
 import {
   applyCanonicalProjection,
   applyCanonicalTimelineProjection,
   handleCanonicalChatRejected,
   handleCanonicalWsError,
 } from './wsCanonicalEventHelpers';
+
 export { resolvePlanModeDisplay } from './wsToolDisplay';
 import {
   findUserMsgIndexByClientId,
@@ -26,6 +34,12 @@ import {
   type WsBlockState,
   type WsProcessingContext,
 } from './wsEventProcessorHelpers';
+
+function commitInteractionProjection(msg: MessagesController, next: MessageItem[]): void {
+  msg.messagesRef.current.splice(0, msg.messagesRef.current.length, ...next);
+  msg.setMessages?.(next, { scrollToBottom: false });
+}
+
 export function upsertRuntimeStatusMessage(
   msg: MessagesController,
   status: RuntimeStatus,
@@ -580,27 +594,18 @@ export function processWsEvent(
   }
 
   if (data.type === "permission_request") {
-    upsertRuntimeStatusMessage(msg, "waiting_approval");
-    const { name, description } = resolvePlanModeDisplay(
-      data.toolName, formatPermissionInput(data.toolInput), data.planContent, data.displayName,
-    );
-    msg.addMessage({
-      type: "permission_request", interactionId: data.interactionId,
-      ...(data.version !== undefined ? { interactionVersion: data.version } : {}),
-      ...(data.order !== undefined ? { interactionOrder: data.order } : {}),
-      toolName: name, toolInput: description, status: "pending",
-    });
+    const sessionId = activeSessionId ?? latestSessionId.value ?? '';
+    if (sessionId && isRememberedResolvedInteraction(ctx.resolvedInteractionIdsRef?.current, sessionId, data.interactionId)) return;
+    commitInteractionProjection(msg, projectInteractionRequest(msg.messagesRef.current, data));
+    if (sessionId) ctx.onInteractionsChanged?.(sessionId);
     return;
   }
 
   if (data.type === "ask_user") {
-    upsertRuntimeStatusMessage(msg, "waiting_user");
-    msg.addMessage({
-      type: "ask_user", interactionId: data.interactionId,
-      ...(data.version !== undefined ? { interactionVersion: data.version } : {}),
-      ...(data.order !== undefined ? { interactionOrder: data.order } : {}),
-      questions: data.questions, status: "pending",
-    });
+    const sessionId = activeSessionId ?? latestSessionId.value ?? '';
+    if (sessionId && isRememberedResolvedInteraction(ctx.resolvedInteractionIdsRef?.current, sessionId, data.interactionId)) return;
+    commitInteractionProjection(msg, projectInteractionRequest(msg.messagesRef.current, data));
+    if (sessionId) ctx.onInteractionsChanged?.(sessionId);
     return;
   }
 
@@ -938,70 +943,29 @@ export function processWsEvent(
   }
   if (data.type === "interaction_resolved") {
     if (data.sessionId !== (activeSessionId ?? latestSessionId?.value)) return;
-    const msgs = msg.messagesRef.current;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if ('interactionId' in m && (m as Record<string, unknown>).interactionId === data.interactionId) {
-        if (
-          (m.type === 'permission_request' && m.status === 'pending')
-          || (m.type === 'ask_user' && m.status === 'pending')
-        ) {
-          // Legacy broadcasts carry no response; preserve pending instead of
-          // inventing an approval decision.
-          applyInteractionResolution(msg, i, data.response);
-          if ((data.status === 'rejected' || data.status === 'failed' || data.status === 'expired') && data.reason) {
-            msg.addMessage({
-              type: 'system-error', severity: 'error',
-              content: data.status === 'expired' ? `交互已超时：${data.reason}` : `交互未完成：${data.reason}`,
-              timestamp: Date.now(),
-            });
-          }
-        }
-        break;
-      }
-    }
+    const canonicalTerminal = Boolean(data.response || data.status);
+    if (!canonicalTerminal) return;
+    if (isRememberedResolvedInteraction(ctx.resolvedInteractionIdsRef?.current, data.sessionId, data.interactionId)) return;
+    const terminalKey = `interaction:${interactionKey(data.sessionId, data.interactionId)}`;
+    if (ctx.handledTerminalKeysRef?.current.has(terminalKey)) return;
+    ctx.handledTerminalKeysRef?.current.add(terminalKey);
+    if (ctx.resolvedInteractionIdsRef) rememberResolvedInteraction(ctx.resolvedInteractionIdsRef.current, data.sessionId, data.interactionId);
+    commitInteractionProjection(msg, projectInteractionResolution(msg.messagesRef.current, data.interactionId, data.response));
+    if ((data.status === 'rejected' || data.status === 'failed' || data.status === 'expired') && data.reason) msg.addMessage({
+      type: 'system-error', severity: 'error',
+      content: data.status === 'expired' ? `交互已超时：${data.reason}` : `交互未完成：${data.reason}`, timestamp: Date.now(),
+    });
+    ctx.onInteractionResolved?.(data.sessionId, data.interactionId);
+    ctx.onInteractionsChanged?.(data.sessionId);
     return;
   }
   if (data.type === "pending_interactions") {
     if (data.sessionId !== (activeSessionId ?? latestSessionId?.value)) return;
-    const authoritativeIds = new Set<string>(data.interactions.map((interaction) => interaction.interactionId));
-    // Snapshot replacement removes stale pending cards; local submit/outbox state is never trusted during recovery.
-    const staleIndexes = msg.messagesRef.current.flatMap((message, index) => (
-      (message.type === 'permission_request' || message.type === 'ask_user')
-      && message.status === 'pending' && !authoritativeIds.has(message.interactionId) ? [index] : []
-    )).reverse();
-    for (const index of staleIndexes) msg.messagesRef.current.splice(index, 1);
-    if (staleIndexes.length) msg.setMessages?.([...msg.messagesRef.current]);
-    const existingIds = new Set(
-      msg.messagesRef.current
-        .filter(m => 'interactionId' in m && m.interactionId)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map(m => (m as any).interactionId as string)
-    );
-    for (const interaction of data.interactions) {
-      if (interaction.type === 'permission_request' || interaction.type === 'approval') {
-        upsertRuntimeStatusMessage(msg, 'waiting_approval');
-      } else if (interaction.type === 'ask_user') {
-        upsertRuntimeStatusMessage(msg, 'waiting_user');
-      }
-      if (existingIds.has(interaction.interactionId)) continue;
-      if (interaction.type === 'permission_request' && interaction.toolName) {
-        const { name, description } = resolvePlanModeDisplay(
-          interaction.toolName, formatPermissionInput(interaction.toolInput), interaction.planContent, interaction.displayName,
-        );
-        msg.addMessage({
-          type: "permission_request", interactionId: interaction.interactionId,
-          interactionVersion: interaction.version, interactionOrder: interaction.order,
-          toolName: name, toolInput: description, status: "pending",
-        });
-      } else if (interaction.type === 'ask_user' && interaction.questions) {
-        msg.addMessage({
-          type: "ask_user", interactionId: interaction.interactionId,
-          interactionVersion: interaction.version, interactionOrder: interaction.order,
-          questions: interaction.questions, status: "pending",
-        });
-      }
-    }
+    commitInteractionProjection(msg, projectPendingInteractionSnapshot(
+      msg.messagesRef.current, data.interactions, data.sessionId ?? activeSessionId ?? latestSessionId.value ?? '',
+      ctx.resolvedInteractionIdsRef?.current,
+    ));
+    if (data.sessionId) ctx.onInteractionsChanged?.(data.sessionId);
     return;
   }
 }

@@ -1,3 +1,4 @@
+import { redactInteractionCredentials } from '@agent/shared';
 import type { WebSocket } from 'ws';
 import { chatLogger } from '../../utils/logger.js';
 import { findTranscriptOrMetaPathBySessionId } from '../../data/transcripts/index.js';
@@ -5,7 +6,7 @@ import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { projectRunLiveness, type RunLiveness } from '../../runtime/runLiveness.js';
 import type { EventStore } from '../../runtime/types.js';
 import type { RunStore } from '../../runtime/runStore.js';
-import { loadResolvedInteractionIds, scanBufferForPendingInteractions } from './interactionRecovery.js';
+import { loadDurableInteractionSnapshot, scanBufferForPendingInteractions } from './interactionRecovery.js';
 import { interactionStore } from './interactionStore.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { getDurableEventCursor, isDurableCursorAtOrBefore, projectRuntimePlatformEvent, type RuntimeStreamProjectionState } from './runtimeEventProjection.js';
@@ -133,7 +134,7 @@ export class WebRuntimeRecovery {
       const pendingAccessError = bufferEntry?.userId
         ? this.host.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
         : this.host.anonymousBindingAccessError(client, activeEntry?.ws);
-      if (bufferEntry && !pendingAccessError) await this.pushPendingInteractions(client, sid);
+      if (bufferEntry && !pendingAccessError) await this.pushPendingInteractions(client, sid, undefined, bufferEntry.userId);
       return;
     }
 
@@ -172,7 +173,7 @@ export class WebRuntimeRecovery {
       && this.host.wsActiveStream.get(client.ws) === activeStreamId,
     );
     if (alreadyDirectBound) {
-      await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
+      await this.pushPendingInteractions(client, sid, durableBinding?.tenantId, bufferEntry.userId);
       return;
     }
 
@@ -248,7 +249,7 @@ export class WebRuntimeRecovery {
       });
     }
 
-    await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
+    await this.pushPendingInteractions(client, sid, durableBinding?.tenantId, bufferEntry.userId);
   }
 
   private async tryReplayDurableRuntimeEvents(
@@ -315,7 +316,7 @@ export class WebRuntimeRecovery {
       const closeSub = this.host.resumeSubscriptions.get(client.ws);
       if (closeSub) { closeSub(); this.host.resumeSubscriptions.delete(client.ws); }
     });
-    await this.pushPendingInteractions(client, sessionId, tenantId);
+    await this.pushPendingInteractions(client, sessionId, tenantId, activeRun.userId);
     return true;
   }
 
@@ -421,11 +422,12 @@ export class WebRuntimeRecovery {
       ...(msg.networkGeneration !== undefined ? { networkGeneration: msg.networkGeneration } : {}),
     };
     if (wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
+      const finalizeSnapshot = await this.prepareAuthoritativeSyncSessionSnapshot(client, msg.sessionId);
       this.host.wsSend(client.ws, {
         ...buildSyncOverflowFrame(
           currentSeq,
           epoch,
-          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+          finalizeSnapshot?.(),
         ),
         ...correlation,
       });
@@ -434,11 +436,12 @@ export class WebRuntimeRecovery {
 
     const result = eventLog.getEventsAfter(userId, msg.lastSeq);
     if (result.gapDetected) {
+      const finalizeSnapshot = await this.prepareAuthoritativeSyncSessionSnapshot(client, msg.sessionId);
       this.host.wsSend(client.ws, {
         ...buildSyncOverflowFrame(
           currentSeq,
           epoch,
-          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+          finalizeSnapshot?.(),
         ),
         ...correlation,
       });
@@ -453,14 +456,16 @@ export class WebRuntimeRecovery {
     }
   }
 
-  private async buildAuthoritativeSyncSessionSnapshot(
+  private async prepareAuthoritativeSyncSessionSnapshot(
     client: WsClient,
     requestedSessionId?: string,
-  ): Promise<SyncSessionSnapshot | undefined> {
+  ): Promise<(() => SyncSessionSnapshot) | undefined> {
     const sessionId = requestedSessionId ?? this.host.wsSessionAffinity.get(client.ws);
     if (!sessionId) return undefined;
     const snapshot: SyncSessionSnapshot = { sessionId };
     const runStore = this.host.config.enqueueRuntime?.runStore;
+    let authorizedOwnerUserId: string | undefined;
+    let authorizedTenantId = client.user?.tenantId;
     if (runStore?.listUserMessagesBySession) {
       const runs = await runStore.listUserMessagesBySession(sessionId);
       const first = runs[0];
@@ -468,41 +473,94 @@ export class WebRuntimeRecovery {
         tenantId: first.tenantId,
         ownerUserId: first.userId,
       })) return undefined;
+      authorizedOwnerUserId = first?.userId;
+      authorizedTenantId = first?.tenantId ?? authorizedTenantId;
       snapshot.queueSnapshot = buildChatQueueSnapshot(sessionId, runs);
     }
     snapshot.runtime = await this.host.getStreamStatus(sessionId);
-    snapshot.pendingInteractions = await this.getAuthoritativePendingInteractions(
+    const finalizePendingInteractions = await this.prepareAuthoritativePendingInteractions(
       client,
       sessionId,
-      client.user?.tenantId,
+      authorizedTenantId,
+      authorizedOwnerUserId,
     );
-    return snapshot;
+    return () => {
+      const pendingInteractions = finalizePendingInteractions?.();
+      return {
+        ...snapshot,
+        ...(pendingInteractions ? { pendingInteractions } : {}),
+      };
+    };
   }
 
-  private async getAuthoritativePendingInteractions(
+  private async prepareAuthoritativePendingInteractions(
     client: WsClient,
     sessionId: string,
     tenantId?: string,
-  ): Promise<SyncPendingInteractionSnapshot[]> {
-    const pending = interactionStore.getPendingInteractions(sessionId);
-    const ownerIds = new Set(pending.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
-    if (ownerIds.size > 1) return [];
-    const ownerUserId = this.host.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
+    authorizedOwnerUserId?: string,
+  ): Promise<(() => SyncPendingInteractionSnapshot[] | null) | null> {
+    const pendingBeforeScan = interactionStore.getPendingInteractions(sessionId, { includeTransient: true });
+    const ownerIds = new Set(pendingBeforeScan.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
+    if (authorizedOwnerUserId) ownerIds.add(authorizedOwnerUserId);
+    const bufferOwnerUserId = this.host.eventBufferStore.get(sessionId)?.userId;
+    if (bufferOwnerUserId) ownerIds.add(bufferOwnerUserId);
+    if (ownerIds.size > 1) return null;
+    const ownerUserId = ownerIds.values().next().value;
     const scopedTenantId = tenantId ?? this.host.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
-    if (this.host.config.runtimeEventStoreFor && !scopedTenantId) return [];
-    const resolvedIds = this.host.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.host.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
-    const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
-    const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
+    if (this.host.config.runtimeEventStoreFor && !scopedTenantId) {
+      return null;
+    }
+    const durable = this.host.config.runtimeEventStoreFor
+      ? await loadDurableInteractionSnapshot(
+        await this.host.getRuntimeEventStoreForSession(sessionId, scopedTenantId!),
+        scopedTenantId!,
+        sessionId,
+      )
+      : { pending: [], resolvedIds: new Set<string>(), ownerIds: new Set<string>() };
+    if (!durable) return null;
+    for (const ownerId of durable.ownerIds) ownerIds.add(ownerId);
+    if (ownerIds.size > 1 || (this.host.config.runtimeEventStoreFor && ownerIds.size === 0)) return null;
+    const ownerUserIdAfterRead = ownerIds.values().next().value;
+    if (this.host.sensitiveActionAccessError(client, {
+      tenantId: scopedTenantId,
+      ...(ownerUserIdAfterRead ? { ownerUserId: ownerUserIdAfterRead } : {}),
+    })) return null;
+    // The caller invokes this finalizer in the same synchronous stack as wsSend. That closes
+    // every async return boundary without relying on process-local counters across workers.
+    return () => {
+      const pending = interactionStore.getPendingInteractions(sessionId, { includeTransient: true });
+      for (const entry of pending) {
+        const ownerId = interactionStore.get(entry.interactionId)?.userId;
+        if (ownerId) ownerIds.add(ownerId);
+      }
+      if (ownerIds.size > 1) return null;
+      const unresolved = pending.filter((entry) => !durable.resolvedIds.has(entry.interactionId));
+      const existingIds = new Set(unresolved.map((entry) => entry.interactionId));
+      for (const entry of durable.pending) {
+        if (existingIds.has(entry.interactionId) || interactionStore.getCompleted(sessionId, entry.interactionId)) continue;
+        unresolved.push(entry);
+        existingIds.add(entry.interactionId);
+      }
+      const excluded = new Set([...durable.resolvedIds, ...existingIds]);
 
-    const recovered = scanBufferForPendingInteractions(this.host.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
-    if (recovered.length > 0) unresolved.push(...recovered);
-    return unresolved;
+      const recovered = scanBufferForPendingInteractions(this.host.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
+      if (recovered.length > 0) unresolved.push(...recovered.filter(
+        (entry) => !interactionStore.getCompleted(sessionId, entry.interactionId),
+      ));
+      return unresolved.map((entry) => entry.type === 'approval'
+        ? { ...entry, toolInput: redactInteractionCredentials(entry.toolInput) as Record<string, unknown> | undefined }
+        : entry);
+    };
   }
 
-  async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
-    const unresolved = await this.getAuthoritativePendingInteractions(client, sessionId, tenantId);
-    // Resume preserves N-1 frame ordering when empty; sync snapshots still carry authoritative [].
-    if (unresolved.length > 0) this.host.wsSend(client.ws, { type: 'pending_interactions', sessionId, interactions: unresolved });
+  async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string, ownerUserId?: string): Promise<void> {
+    const finalizePendingInteractions = await this.prepareAuthoritativePendingInteractions(client, sessionId, tenantId, ownerUserId);
+    if (!finalizePendingInteractions) return;
+    const unresolved = finalizePendingInteractions();
+    if (!unresolved) return;
+    this.host.wsSend(client.ws, {
+      type: 'pending_interactions', sessionId, interactions: unresolved,
+    });
   }
 
 }

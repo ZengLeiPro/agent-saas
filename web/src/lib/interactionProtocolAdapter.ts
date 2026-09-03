@@ -5,6 +5,7 @@ import {
   type InteractionIdentity,
   type InteractionResponseRequest,
   type WsEvent,
+  type WsSyncSessionSnapshot,
 } from '@agent/shared';
 
 /** Web transport-only adapter; lifecycle decisions remain in the shared reducer. */
@@ -23,6 +24,16 @@ export function webInteractionAckEvent(event: Extract<WsEvent, { type: 'respond_
   return {
     type: 'ack', ...identity, requestId, status: event.status ?? 'rejected',
     reason: event.reason ?? event.error, retryable: event.retryable,
+  };
+}
+
+export function webPendingInteractionsEvent(
+  snapshot: WsSyncSessionSnapshot,
+): Extract<WsEvent, { type: 'pending_interactions' }> {
+  return {
+    type: 'pending_interactions',
+    sessionId: snapshot.sessionId,
+    interactions: snapshot.pendingInteractions ?? [],
   };
 }
 

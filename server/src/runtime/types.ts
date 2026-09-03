@@ -831,7 +831,7 @@ export type PlatformEvent =
     streamId?: string;
     content: string;
   }
-  | {
+  | ({
     id: string;
     timestamp: string;
     type: 'interaction_requested';
@@ -847,7 +847,7 @@ export type PlatformEvent =
     displayName?: string;
     questions?: unknown;
     toolInput?: unknown;
-  }
+  } & { version?: number; order?: number })
   | {
     id: string;
     timestamp: string;

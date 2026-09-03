@@ -15,6 +15,7 @@ export interface WireWorkspaceRef {
   sessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
+  sharedReadOnlySubPath?: string;
   sandboxResources?: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'>;
   executionTarget?: string;
   workload?: SandboxWorkloadDescriptor;
@@ -217,6 +218,8 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
   if (!sessionId) return { ok: false, error: 'context.workspace.sessionId 必须为非空字符串（用于会话审计与 runner 上下文）' };
   const mountSubPath = parseMountSubPath(workspace.mountSubPath);
   if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
+  const sharedReadOnlySubPath = parseMountSubPath(workspace.sharedReadOnlySubPath);
+  if (sharedReadOnlySubPath.error) return { ok: false, error: `sharedReadOnlySubPath: ${sharedReadOnlySubPath.error}` };
   const sandboxScopeId = typeof workspace.sandboxScopeId === 'string' && workspace.sandboxScopeId.trim()
     ? workspace.sandboxScopeId.trim()
     : undefined;
@@ -262,6 +265,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
           sessionId,
           ...(sandboxScope.value ? { sandboxScopeId: sandboxScope.value } : {}),
           ...(mountSubPath.value ? { mountSubPath: mountSubPath.value } : {}),
+          ...(sharedReadOnlySubPath.value ? { sharedReadOnlySubPath: sharedReadOnlySubPath.value } : {}),
           ...(sandboxResources.value ? { sandboxResources: sandboxResources.value } : {}),
           ...(workload?.ok ? { workload: workload.value } : {}),
           ...(typeof workspace.userId === 'string' ? { userId: workspace.userId } : {}),

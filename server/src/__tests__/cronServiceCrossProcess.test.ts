@@ -47,6 +47,9 @@ function createService(
     appendRunLog?: CronServiceDeps["appendRunLog"];
     notify?: CronServiceDeps["notify"];
     tryAcquireRunLease?: CronServiceDeps["tryAcquireRunLease"];
+    inspectRuntimeRun?: CronServiceDeps["inspectRuntimeRun"];
+    cancelRuntimeRun?: CronServiceDeps["cancelRuntimeRun"];
+    runtimeRunPollMs?: number;
   } = {},
 ): CronService {
   return new CronService({
@@ -57,6 +60,9 @@ function createService(
     tryAcquireRunLease: options.tryAcquireRunLease,
     executeJob: options.executeJob ?? (async () => ({ status: "ok" })),
     appendRunLog: options.appendRunLog ?? (async () => {}),
+    inspectRuntimeRun: options.inspectRuntimeRun,
+    cancelRuntimeRun: options.cancelRuntimeRun,
+    runtimeRunPollMs: options.runtimeRunPollMs,
     notify: options.notify,
   });
 }

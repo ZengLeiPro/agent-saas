@@ -10,7 +10,7 @@
  *   - 404 not found、runs / run details 分支（409 无 transcript）
  *   - /validate、/status
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -48,7 +48,11 @@ const PLATFORM_ADMIN: JwtPayload = {
 };
 
 /** 用内存 deps 装配一个真实 CronService；预置 jobs 直接作为初始加载集。 */
-function makeService(runsDir: string, initialJobs: CronJob[]): CronService {
+function makeService(
+  runsDir: string,
+  initialJobs: CronJob[],
+  overrides: Partial<CronServiceDeps> = {},
+): CronService {
   // 用可变引用持有当前 jobs，saveJobs 回写，模拟持久化
   let stored = initialJobs;
   const deps: CronServiceDeps = {
@@ -64,6 +68,7 @@ function makeService(runsDir: string, initialJobs: CronJob[]): CronService {
     appendRunLog: async (entry) => {
       await appendRunLog(entry, { runsDir }).catch(() => {});
     },
+    ...overrides,
   };
   return new CronService(deps);
 }
@@ -476,6 +481,49 @@ describe("cron routes coverage", () => {
       attempt: 2,
       deduplicated: false,
     });
+  });
+
+  it("显式取消只终结关联 Runtime Run，不等价于禁用未来调度", async () => {
+    const cancelRuntimeRun = vi.fn(async ({ runtimeRunId, sessionId, reason }) => ({
+      runId: runtimeRunId, sessionId, status: "cancelled" as const, statusReason: reason,
+    }));
+    const service = makeService(runsDir, [makeJob({
+      id: "job-1",
+      owner: OWNER.sub,
+      state: {
+        runningAtMs: 1_699_999_999_000,
+        runningRunId: "cron-run-1",
+        runningLeaseId: "lease-1",
+        executionLedger: [{
+          idempotencyKey: "cron:job-1:request:req-1",
+          runId: "cron-run-1",
+          startedAtMs: 1_699_999_999_000,
+          claimedAtMs: 1_699_999_999_000,
+          runningAtMs: 1_699_999_999_000,
+          status: "running",
+          ownerId: "owner-1",
+          leaseId: "lease-1",
+          leaseVersion: 1,
+          trigger: "manual",
+          requestId: "req-1",
+          attempt: 1,
+          sessionId: "session-1",
+          runtimeRunId: "runtime-run-1",
+        }],
+      },
+    })], { cancelRuntimeRun });
+    const denied = await startServer(service, runsDir, OTHER);
+    servers.push(denied.server);
+    expect((await fetch(`${denied.baseUrl}/api/cron/jobs/job-1/runs/cron-run-1/cancel`, { method: "POST" })).status).toBe(403);
+
+    const owner = await startServer(service, runsDir, OWNER);
+    servers.push(owner.server);
+    const response = await fetch(`${owner.baseUrl}/api/cron/jobs/job-1/runs/cron-run-1/cancel`, { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, runId: "cron-run-1" });
+    expect(cancelRuntimeRun).toHaveBeenCalledTimes(1);
+    expect((await service.get("job-1"))?.enabled).toBe(true);
+    expect((await service.get("job-1"))?.state.runningRunId).toBeUndefined();
   });
 
   it("retry API 保持 owner 权限边界", async () => {

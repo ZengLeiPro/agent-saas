@@ -30,7 +30,7 @@ server/src/app/routes.ts	1152	production
 server/src/app/runtime.ts	3037	production
 server/src/app/runtimeGovernanceConnectors.ts	1246	production
 server/src/channels/web/channel.ts	4348	production
-server/src/cron/service.ts	1084	production
+server/src/cron/service.ts	1082	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2001	production
 server/src/routes/auth.ts	1779	production

@@ -338,9 +338,19 @@ describe('ACS deployment and classifier contract', () => {
   });
 
   it('只接受 exact SHA 镜像并对缺失构建记录快速失败', () => {
+    const waitStep = workflow.slice(
+      workflow.indexOf('- name: Wait for ACR auto-build of HEAD'),
+      workflow.indexOf('- name: Resolve immutable ACS image'),
+    );
     expect(workflow).toContain('SHA6="${GITHUB_SHA:0:6}"');
     expect(workflow).toContain('MAX_MISSING_POLLS=6');
     expect(workflow).toContain('MAX_QUERY_ERRORS=3');
+    expect(workflow).toContain('secrets.ACR_READ_ACCESS_KEY_ID');
+    expect(workflow).toContain('secrets.ACR_READ_ACCESS_KEY_SECRET');
+    expect(workflow).toContain("data.get('Code') != 'success'");
+    expect(workflow).toContain("data.get('IsSuccess') is not True");
+    expect(workflow).toContain('Unable to query ACR build records');
+    expect(waitStep).not.toContain('2>/dev/null || true');
     expect(workflow).toContain("tag.endswith('-' + sha6)");
     expect(workflow).toContain('a later image will not be substituted');
     expect(workflow).not.toContain('for i in $(seq 1 60)');

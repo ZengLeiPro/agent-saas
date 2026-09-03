@@ -341,7 +341,7 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     expect(screen.queryByText("会话 A")).toBeNull();
     expect(screen.getByText("平台分析")).toBeTruthy();
     expect(screen.getByText("组织分析")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "运行" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "运行追踪" }).getAttribute("aria-current")).toBe("page");
 
     fireEvent.click(screen.getByRole("button", { name: "执行效率" }));
     expect(onAnalysisNavigate).toHaveBeenCalledWith("platform.runtime.efficiency");
@@ -360,7 +360,7 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
       },
       settingsMode: true,
       settingsTarget: "platform",
-      activeSettingsSection: "models",
+      activeSettingsSection: "platform-models",
       onCloseSettings,
       onSettingsNavigate,
     });
@@ -372,11 +372,11 @@ describe("桌面侧边栏会话交互与视觉状态", () => {
     expect(screen.queryByText("会话 A")).toBeNull();
     expect(screen.getByText("个人设置")).toBeTruthy();
     expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);
-    expect(screen.getByText("平台管理")).toBeTruthy();
+    expect(screen.getByText("平台运营")).toBeTruthy();
     expect(screen.getByRole("button", { name: "模型" }).getAttribute("aria-current")).toBe("page");
 
     fireEvent.click(screen.getByRole("button", { name: "系统配置" }));
-    expect(onSettingsNavigate).toHaveBeenCalledWith("platform", "system");
+    expect(onSettingsNavigate).toHaveBeenCalledWith("platform", "platform-system");
     fireEvent.click(screen.getByRole("button", { name: "返回主界面" }));
     expect(onCloseSettings).toHaveBeenCalledOnce();
   });

@@ -3,6 +3,7 @@ import { Boxes, TriangleAlert } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { PlatformBillingManager } from '@/components/BillingManager';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -320,16 +321,16 @@ function ScopeEditor({ tenantId, scope, onChanged }: { tenantId: string; scope: 
 }
 
 export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: string; route: GovernanceRouteState }) {
-  const tab = route.tab ?? "overview";
-  const request = useMemo(() => tab === "configuration" ? null : () => governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), [tab, tenantId]);
-  const requestKey = `platform-tenant:${tenantId}:${tab === "configuration" ? "settings" : "entitlements"}`;
+  const tab = route.tab === "configuration" ? "entitlements" : route.tab ?? "overview";
+  const request = useMemo(() => () => governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), [tenantId]);
+  const requestKey = `platform-tenant:${tenantId}:entitlements`;
   const { data, loading, error, retry } = useGovernanceRequest(request, requestKey);
-  if (tab === "configuration") return <div><Header title="组织配置" description="配置目标组织的平台级能力授权；组织和成员均不能越过本级授权。" /><TenantDebugModeSetting tenantId={tenantId} level="platform" /></div>;
   if (loading) return <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在读取组织治理数据…</div>;
   if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   const entitlement = data?.entitlement;
 
-  if (tab === "entitlements") return <div><Header title="权益与配额" description="展示治理权威值、来源与版本；无权威预览时不开放编辑。" />
+  if (tab === "entitlements") return <div className="space-y-5"><Header title="权益与配额" description="展示治理权威值、来源与版本；无权威预览时不开放编辑。" />
+    <TenantDebugModeSetting tenantId={tenantId} level="platform" />
     {!entitlement ? <Empty>该组织尚无治理 Entitlement。</Empty> : <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Fact label="状态" value={localizedValue(entitlement.status, statusLabels)} /><Fact label="来源" value={localizedValue(entitlement.source, sourceLabels)} /><Fact label="版本" value={`v${entitlement.version}`} /><Fact label="到期" value={entitlement.effectiveTo ? new Date(entitlement.effectiveTo).toLocaleString() : "未设置"} /></div>
       <div className="rounded-xl border bg-card p-4"><div className="mb-3 font-medium">硬上限</div>{Object.keys(entitlement.limits).length ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(entitlement.limits).map(([key, value]) => <Fact key={key} label={key} value={String(value)} compact />)}</div> : <span className="text-sm text-muted-foreground">未配置覆盖上限</span>}</div>
@@ -341,7 +342,7 @@ export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: 
     {!data?.scopes.length ? <Empty>该组织尚无治理资源范围记录。</Empty> : <div className="grid gap-3 md:grid-cols-2">{data.scopes.map(scope => <div key={scope.resourceType} className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between gap-3"><span className="font-medium">{localizedValue(scope.resourceType, resourceTypeLabels)}</span><Badge variant="outline">{scope.mode === "all" ? "全部允许" : `已选 ${scope.resourceIds.length}`}</Badge></div><div className="mt-2 text-xs text-muted-foreground">{localizedValue(scope.source, sourceLabels)} · v{scope.version}</div>{scope.mode === "selected" && <div className="mt-3 break-all text-xs">{scope.resourceIds.join("、") || "没有已选资源"}</div>}<ScopeEditor tenantId={tenantId} scope={scope} onChanged={retry} /></div>)}</div>}
   </div>;
 
-  if (tab === "billing") return <div><Header title="计费" description="只呈现已有真实商业字段，不捏造订单、续费或自动降级状态机。" /><Empty>计费明细继续使用现有平台计费页面；本组织详情尚未提供统一计费聚合 DTO。</Empty></div>;
+  if (tab === "billing") return <PlatformBillingManager key={tenantId} tenantId={tenantId} />;
   if (tab === "security-lifecycle") return <div><Header title="安全与生命周期" description="组织暂停与恢复执行预览→基线校验→审计回执；删除继续走持久化变更任务。" /><TenantLifecyclePanel key={tenantId} tenantId={tenantId} /></div>;
   return <div><Header title="组织治理概览" description="组织权益、资源范围和策略均来自治理事实源。" />
     <div className="grid gap-3 sm:grid-cols-3"><Fact label="权益状态" value={entitlement ? localizedValue(entitlement.status, statusLabels) : "未配置"} /><Fact label="资源范围" value={`${data?.scopes.length ?? 0} 类`} /><Fact label="组织策略" value={`${data?.policies.length ?? 0} 项`} /></div>

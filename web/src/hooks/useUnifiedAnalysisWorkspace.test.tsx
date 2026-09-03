@@ -96,7 +96,7 @@ describe("统一分析工作区实时作用域导航", () => {
       userId: "u1",
     }));
 
-    await userEvent.click(screen.getByRole("button", { name: "运行" }));
+    await userEvent.click(screen.getByRole("button", { name: "运行追踪" }));
 
     expect(window.location.pathname).toBe("/platform-console/runtime/runs");
     expect(Object.fromEntries(new URLSearchParams(window.location.search))).toEqual({

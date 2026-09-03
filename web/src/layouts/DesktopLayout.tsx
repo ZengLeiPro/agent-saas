@@ -24,7 +24,7 @@ import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useDesktopLayoutProtection } from "./useDesktopLayoutProtection";
 import { getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
-const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
+const ManagementWorkspaceContent = lazy(() => import('@/components/ManagementShell/ManagementWorkspaceContent').then(m => ({ default: m.ManagementWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
 const FilePreviewPanel = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewPanel })));
@@ -34,15 +34,9 @@ const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m 
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SettingsContent = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsContent })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
-const PlatformAdminHeaderControls = lazy(() => import("@/components/PlatformAdmin/PlatformAdminHeaderControls").then(m => ({ default: m.PlatformAdminHeaderControls })));
-const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHeaderControls").then(m => ({ default: m.TenantAdminHeaderControls })));
-import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import {
-  CompanyInfoSectionPanel, CronManager, EfficiencyViewPanel, GovernanceConsole,
-  ManagementSettingsAccessGate, McpManagerPanel, MemoryPollingManagerPanel,
-  ModelManagerPanel, OrgAgentManagerPanel, PlatformAdminShell, SettingsDirtyBoundary,
-  SignupConfigManagerPanel, SkillManagerPanel, TenantAdminShell, TenantManager,
-  TenantRemoteHandsManagerPanel, ToolControlsManagerPanel, UsageDashboard, UserManager,
+  CronManager, McpManagerPanel, ModelManagerPanel, SettingsDirtyBoundary,
+  SkillManagerPanel, TenantManager, UsageDashboard,
 } from "./lazySettingsComponents";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
@@ -72,7 +66,7 @@ const SuspenseFallback = (
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
-    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
@@ -91,7 +85,7 @@ export function DesktopLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
 
-  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth(); const [organizationSettingsTargetId, setOrganizationSettingsTargetId] = useState<string | null>();
+  const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth();
   const {
     mode: settingsMode,
     target: settingsTarget,
@@ -102,7 +96,7 @@ export function DesktopLayout(props: LayoutProps) {
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
-    openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin, organizationSettingsTargetId,
+    openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin, organizationSettingsTargetId: undefined,
     governanceRoute, closeOrganizationSettings: closeSettings,
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
@@ -222,8 +216,6 @@ export function DesktopLayout(props: LayoutProps) {
   const [usageMounted, setUsageMounted] = useState(false);
   const [mcpMounted, setMcpMounted] = useState(false);
   const [modelsMounted, setModelsMounted] = useState(false);
-  const [tenantAdminMounted, setTenantAdminMounted] = useState(false);
-  const [platformAdminMounted, setPlatformAdminMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
   const [capabilitiesMounted, setCapabilitiesMounted] = useState(false);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
@@ -240,10 +232,8 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "usage" && !usageMounted && isAdmin) setUsageMounted(true);
     if (activeTab === "mcp" && !mcpMounted) setMcpMounted(true);
     if (activeTab === "models" && !modelsMounted && isPlatformAdmin) setModelsMounted(true);
-    if (activeTab === "tenant-admin" && !tenantAdminMounted) setTenantAdminMounted(true);
-    if (activeTab === "platform-admin" && !platformAdminMounted) setPlatformAdminMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
-  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, tenantAdminMounted, platformAdminMounted, trashMounted, isAdmin, isPlatformAdmin]);
+  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, trashMounted, isAdmin, isPlatformAdmin]);
 
   // ---- 场景库「试一试」链路 ----
   // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
@@ -346,37 +336,6 @@ export function DesktopLayout(props: LayoutProps) {
     const fallback = legacyRoleFallbackTab({ activeTab, personalAgentEnabled, isAdmin, isPlatformAdmin });
     if (fallback) setActiveTab(fallback);
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
-
-  if (!analysisMode && activeTab === "platform-admin" && governanceRoute?.area === "platform") {
-    return (
-      <Suspense fallback={SuspenseFallback}>
-        <SettingsDirtyBoundary>{(dirtyController) => (
-        <ManagementSettingsAccessGate scope="platform" target="platform" access={managementAccess}
-          onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
-          <PlatformAdminShell
-            renderTenants={() => <TenantManager />}
-            renderSignupConfig={() => <SignupConfigManagerPanel />}
-            renderModels={() => <ModelManagerPanel />}
-            renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-            renderToolControls={() => <ToolControlsManagerPanel />}
-            renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-            renderSkills={() => <SkillManagerPanel mode="platform" />}
-            renderEfficiency={() => <EfficiencyViewPanel />}
-            activeSection={platformAdminSection}
-            entityId={platformAdminEntityId}
-            onSectionChange={setPlatformAdminRoute}
-            settingsOpen={false}
-            settingsSection="tenants"
-            onSettingsSectionChange={() => undefined}
-            onSettingsClose={() => undefined}
-            governanceRoute={governanceRoute}
-            governanceContentOnly
-          />
-          </GovernanceConsole></ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
-      </Suspense>
-    );
-  }
 
   return (
     <div ref={layoutProtection.containerRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -488,24 +447,6 @@ export function DesktopLayout(props: LayoutProps) {
               </div>
             ) : null}
           </div>
-          {!analysisMode && activeTab === "platform-admin" && (
-            <Suspense fallback={null}>
-              <PlatformAdminHeaderControls
-                active={platformAdminSection}
-                onActiveChange={(section) => setPlatformAdminRoute(section)}
-                className="min-w-0 flex-1"
-              />
-            </Suspense>
-          )}
-          {!analysisMode && activeTab === "tenant-admin" && (
-            <Suspense fallback={null}>
-              <TenantAdminHeaderControls
-                active={tenantAdminSection}
-                onActiveChange={setTenantAdminRoute}
-                className="min-w-0 flex-1"
-              />
-            </Suspense>
-          )}
           <div
             ref={setCronHeaderActionsTarget}
             className={cn(
@@ -713,62 +654,6 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
 
-        {tenantAdminMounted && !analysisMode && (
-          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "tenant-admin" && "hidden")}>
-            <Suspense fallback={SuspenseFallback}>
-              <ManagementSettingsAccessGate scope="tenant" target="tenant"
-                access={managementAccess} onRetry={managementAccess.retry}
-                onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-              <TenantAdminShell
-                renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-                renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-                renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-            renderFiles={() => (
-              <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
-            )}
-                renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-                settingsOpen={false}
-                settingsSection="users"
-                onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-                onSettingsClose={closeAdminSettings}
-                activeAnalysisSection={tenantAdminSection}
-                onAnalysisSectionChange={setTenantAdminRoute}
-                headerControlsPlacement="none"
-              />
-              </ManagementSettingsAccessGate>
-            </Suspense>
-          </div>
-        )}
-        {platformAdminMounted && !analysisMode && (
-          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "platform-admin" && "hidden")}>
-            <Suspense fallback={SuspenseFallback}>
-              <ManagementSettingsAccessGate scope="platform" target="platform"
-                access={managementAccess} onRetry={managementAccess.retry}
-                onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-              <PlatformAdminShell
-                renderTenants={() => <TenantManager />}
-                renderSignupConfig={() => <SignupConfigManagerPanel />}
-                renderModels={() => <ModelManagerPanel />}
-                renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-                renderToolControls={() => <ToolControlsManagerPanel />}
-                renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                renderSkills={() => <SkillManagerPanel mode="platform" />}
-                renderEfficiency={() => <EfficiencyViewPanel />}
-                activeSection={platformAdminSection}
-                entityId={platformAdminEntityId}
-                onSectionChange={setPlatformAdminRoute}
-                settingsOpen={false}
-                settingsSection="tenants"
-                onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-                onSettingsClose={closeAdminSettings}
-                headerControlsPlacement="none"
-              />
-              </ManagementSettingsAccessGate>
-            </Suspense>
-          </div>
-        )}
-
         {trashMounted && (
           <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "trash" && "hidden")}>
             <TrashView
@@ -828,11 +713,20 @@ export function DesktopLayout(props: LayoutProps) {
             />
           </Suspense>
         )}
-        {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
-          openFilePreview={handleOpenFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
-        {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (
+        {(analysisMode || (settingsMode && settingsTarget !== 'personal')) && governanceRoute && (
+          <ManagementWorkspaceContent
+            route={governanceRoute}
+            access={managementAccess}
+            onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
+            openFilePreview={handleOpenFilePreview}
+            platformAdminSection={platformAdminSection}
+            platformAdminEntityId={platformAdminEntityId}
+            setPlatformAdminRoute={setPlatformAdminRoute}
+          />
+        )}
+        {settingsMode && settingsTarget === 'personal' && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
-            <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
+            <div className="h-full min-h-0">
               <Suspense fallback={SuspenseFallback}>
                 <SettingsContent
                   open
@@ -865,52 +759,6 @@ export function DesktopLayout(props: LayoutProps) {
                 />
               </Suspense>
             </div>
-
-            <Suspense fallback={SuspenseFallback}>
-              <ManagementSettingsAccessGate scope="tenant" target={settingsTarget} access={managementAccess} onRetry={managementAccess.retry} onReturnPersonal={() => handleSettingsNavigate("personal", settingsSection)} persistAfterVisit>
-                <TenantAdminShell
-                    renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-                    renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-                    renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                    renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-                    renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-                    renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-                    renderAutomation={() => <CronManager />}
-                    settingsOpen={settingsTarget === "tenant"}
-                    settingsContentOnly={governanceRoute?.area !== "organization"}
-                    governanceRoute={governanceRoute?.area === "organization" ? governanceRoute : null}
-                    governanceContentOnly={governanceRoute?.area === "organization"}
-                    governanceContentEmbedded
-                    onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
-                    settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
-                    onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
-                    onSettingsClose={handleCloseUnifiedSettings}
-                />
-              </ManagementSettingsAccessGate>
-            </Suspense>
-
-            <Suspense fallback={SuspenseFallback}>
-              <ManagementSettingsAccessGate scope="platform" target={settingsTarget} access={managementAccess} onRetry={managementAccess.retry} onReturnPersonal={() => handleSettingsNavigate("personal", settingsSection)} persistAfterVisit>
-                <PlatformAdminShell
-                    renderTenants={() => <TenantManager />}
-                    renderSignupConfig={() => <SignupConfigManagerPanel />}
-                    renderModels={() => <ModelManagerPanel />}
-                    renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-                    renderToolControls={() => <ToolControlsManagerPanel />}
-                    renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                    renderSkills={() => <SkillManagerPanel mode="platform" />}
-                    renderEfficiency={() => <EfficiencyViewPanel />}
-                    activeSection={platformAdminSection}
-                    entityId={platformAdminEntityId}
-                    onSectionChange={setPlatformAdminRoute}
-                    settingsOpen={settingsTarget === "platform"}
-                    settingsContentOnly
-                    settingsSection={(settingsTarget === "platform" ? activeSettingsSection : "tenants") as PlatformSection}
-                    onSettingsSectionChange={(section) => handleSettingsNavigate("platform", section)}
-                    onSettingsClose={handleCloseUnifiedSettings}
-                />
-              </ManagementSettingsAccessGate>
-            </Suspense>
           </div>
         )}</SettingsDirtyBoundary></Suspense>}
         </div>

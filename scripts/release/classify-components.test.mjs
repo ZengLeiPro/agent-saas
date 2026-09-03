@@ -67,6 +67,20 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: ['web', 'api', 'runtimeWorker', 'acs'],
     blockingReason: null,
   });
+  for (const path of ['Dockerfile', 'config/runtime-dependency-contract.json']) {
+    assert.deepEqual(classifyPath(path), {
+      components: ['web', 'api', 'runtimeWorker', 'acs'],
+      blockingReason: null,
+    });
+  }
+  assert.deepEqual(classifyPath('scripts/release/runtime-dependency.mjs'), {
+    components: ['api', 'runtimeWorker', 'acs'],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/release/artifact-lib.mjs'), {
+    components: ['api', 'runtimeWorker', 'acs'],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('scripts/release/preflight.mjs'), {
     components: [],
     blockingReason: null,

@@ -48,9 +48,11 @@ mutation 前 **fail closed**。该入口不再接受 `force_ecs`，`deploy-ecs` 
 Promotion 正式链路。
 
 Web-only compatibility 将 OSS 入口、ECS recovery Web 与 trusted Production identity
-作为一个可补偿事务：最终现场读回、identity 写入或确认读回任一步失败，都会恢复上一版
-OSS/recovery Web 和原 trusted identity，并在权威读回证明三者一致后以失败结束。若补偿或
-证明失败，必须人工处置，不能把该次运行视为发布成功。
+作为一个可补偿事务。事务在读取基线前取得 `/run/lock/agent-saas/promotion.lock`，并持续持有到
+identity commit 完成，或失败补偿与权威读回证明结束；锁租约丢失时禁止继续 mutation 或无锁
+补偿。最终现场读回、identity 写入或确认读回任一步失败，都会恢复上一版 OSS/recovery Web
+和原 trusted identity，并在权威读回证明三者一致后以失败结束。若补偿或证明失败，必须人工
+处置，不能把该次运行视为发布成功。
 
 `deploy-ecs` 蓝绿流程概要（远端脚本 13 步详解见[零停机部署](zero-downtime-deployment.md)）：
 
@@ -71,7 +73,8 @@ fail-fast，旧 all-in-one 拓扑保持不动。
 
 `deploy-web-oss` 在 OSS 线上门禁通过后，将同一份 `web/dist` 打包上传到
 `/opt/agent-saas-web-recovery/releases/<sha>`，校验 `index.html`/`sw.js` 后原子切换
-`current`，并保留原 `current` 为 `previous`。随后 CI 用 `--resolve` 绕过公网 DNS，
+`current`，并保留原 `current` 为 `previous`。该切换与 OSS 入口 mutation 共享上述主机锁。
+随后 CI 用 `--resolve` 绕过公网 DNS，
 直连 ECS 的 `agent.kaiyan.net` vhost，验证 TLS、`X-Agent-Saas-Recovery` 和完整
 `index.html`。`assets/` 与 `workbox-*` 同步到只增不删的 `shared-root`，上传包保留在
 `agent-saas-web-recovery/artifacts`，均不自动清理；任一步失败都会把 recovery

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   baselineFromState,
-  isRecoverableProductionState,
+  parseProductionState,
+  productionStateMatchesManifestPrefix,
   validateApprovalReason,
 } from './promotionGateCli.js';
-import type { ReleaseManifest } from '@agent/shared';
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
@@ -37,37 +37,13 @@ describe('promotion gate evidence', () => {
     });
   });
 
-  it('accepts only a component-wise mix of the frozen baseline and immutable target for recovery', () => {
-    const oldSha = 'c'.repeat(40);
-    const oldDigest = `sha256:${'d'.repeat(64)}`;
-    const baseline = {
-      web: { sourceSha: oldSha, artifactDigest: oldDigest },
-      api: { sourceSha: oldSha, artifactDigest: oldDigest },
-      runtimeWorker: { sourceSha: oldSha, artifactDigest: oldDigest },
-      acs: {
-        sourceSha: oldSha,
-        orchestratorArtifactDigest: oldDigest,
-        sandboxImageDigest: oldDigest,
-      },
-    };
-    const manifest = {
-      productionBaseline: baseline,
+  it('runtime-parses the production state before comparing a promotion baseline', () => {
+    const component = { gitSha: SHA, artifactDigest: DIGEST };
+    const valid = {
       components: {
-        web: { sourceSha: SHA, artifactDigest: DIGEST },
-        api: { sourceSha: SHA, artifactDigest: DIGEST },
-        runtimeWorker: { sourceSha: SHA, artifactDigest: DIGEST },
-        acs: {
-          sourceSha: SHA,
-          orchestratorArtifactDigest: DIGEST,
-          sandboxImageDigest: DIGEST,
-        },
-      },
-    } as ReleaseManifest;
-    const partial = {
-      components: {
-        web: { gitSha: oldSha, artifactDigest: oldDigest },
-        api: { gitSha: SHA, artifactDigest: DIGEST },
-        runtimeWorker: { gitSha: SHA, artifactDigest: DIGEST },
+        web: component,
+        api: component,
+        runtimeWorker: component,
         acs: {
           gitSha: SHA,
           orchestratorArtifactDigest: DIGEST,
@@ -75,9 +51,80 @@ describe('promotion gate evidence', () => {
         },
       },
     };
-    expect(isRecoverableProductionState(partial, manifest)).toBe(true);
-    partial.components.web = { gitSha: 'e'.repeat(40), artifactDigest: oldDigest };
-    expect(isRecoverableProductionState(partial, manifest)).toBe(false);
+    expect(parseProductionState(valid)).toEqual(valid);
+    expect(() =>
+      parseProductionState({
+        ...valid,
+        components: {
+          ...valid.components,
+          runtimeWorker: { gitSha: SHA, artifactDigest: 'sha256:tampered' },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('accepts exactly the ACS → App → Web prefixes for resumable production', () => {
+    const baselineSha = 'c'.repeat(40);
+    const targetSha = 'd'.repeat(40);
+    const baselineDigest = `sha256:${'e'.repeat(64)}`;
+    const targetDigest = `sha256:${'f'.repeat(64)}`;
+    const matrix = (gitSha: string, artifactDigest: string) => ({
+      web: { sourceSha: gitSha, artifactDigest },
+      api: { sourceSha: gitSha, artifactDigest },
+      runtimeWorker: { sourceSha: gitSha, artifactDigest },
+      acs: {
+        sourceSha: gitSha,
+        orchestratorArtifactDigest: artifactDigest,
+        sandboxImageDigest: artifactDigest,
+      },
+    });
+    const manifest = {
+      productionBaseline: matrix(baselineSha, baselineDigest),
+      components: {
+        ...matrix(targetSha, targetDigest),
+        web: { ...matrix(targetSha, targetDigest).web, action: 'deploy' as const },
+        api: { ...matrix(targetSha, targetDigest).api, action: 'deploy' as const },
+        runtimeWorker: {
+          ...matrix(targetSha, targetDigest).runtimeWorker,
+          action: 'deploy' as const,
+        },
+        acs: { ...matrix(targetSha, targetDigest).acs, action: 'deploy' as const },
+      },
+    };
+    const state = (components: ReturnType<typeof matrix>) => ({
+      components: {
+        web: { gitSha: components.web.sourceSha, artifactDigest: components.web.artifactDigest },
+        api: { gitSha: components.api.sourceSha, artifactDigest: components.api.artifactDigest },
+        runtimeWorker: {
+          gitSha: components.runtimeWorker.sourceSha,
+          artifactDigest: components.runtimeWorker.artifactDigest,
+        },
+        acs: {
+          gitSha: components.acs.sourceSha,
+          orchestratorArtifactDigest: components.acs.orchestratorArtifactDigest,
+          sandboxImageDigest: components.acs.sandboxImageDigest,
+        },
+      },
+    });
+
+    const baseline = matrix(baselineSha, baselineDigest);
+    const afterAcs = structuredClone(baseline);
+    afterAcs.acs = matrix(targetSha, targetDigest).acs;
+    const afterApp = structuredClone(afterAcs);
+    afterApp.api = matrix(targetSha, targetDigest).api;
+    afterApp.runtimeWorker = matrix(targetSha, targetDigest).runtimeWorker;
+    const fullTarget = matrix(targetSha, targetDigest);
+    for (const prefix of [baseline, afterAcs, afterApp, fullTarget]) {
+      expect(productionStateMatchesManifestPrefix(manifest, state(prefix))).toBe(true);
+    }
+
+    const skippedAcs = structuredClone(baseline);
+    skippedAcs.api = matrix(targetSha, targetDigest).api;
+    skippedAcs.runtimeWorker = matrix(targetSha, targetDigest).runtimeWorker;
+    expect(productionStateMatchesManifestPrefix(manifest, state(skippedAcs))).toBe(false);
+    const drifted = structuredClone(afterAcs);
+    drifted.web.sourceSha = '9'.repeat(40);
+    expect(productionStateMatchesManifestPrefix(manifest, state(drifted))).toBe(false);
   });
 
   it('requires structured approval bound to the exact release and Manifest', () => {

@@ -11,7 +11,8 @@
 #   contract_check=true|false 仅需契约门禁（typecheck + test, 不判定需部署）
 #   reason=...                publish/contract 命中原因（分号分隔; 无则 none）
 #   skipped=...               未命中 ACS 面的输入（分号分隔; 无则 none）
-# 注意: ACS/release、workload descriptor 契约与纯测试文件归 contract_check；
+# 注意: managed unit 与安装 helper 属于 ACS 生产运行契约，任一变化都必须发布。
+# ACS/release、workload descriptor 契约与纯测试文件归 contract_check；
 #   它们只跑测试门禁，不触发全量部署。
 # ============================================================================
 set -euo pipefail
@@ -94,12 +95,12 @@ is_publish_path() {
   fi
   case "$1" in
     acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts)
-      # 纯测试与测试辅助文件不判定需要发布（归 contract_check）
+      # 纯测试及其辅助文件不判定需要发布（归 contract_check）
       return 1
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-bundle-inputs.txt|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/upload-oss-object-immutable.sh|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-bundle-inputs.txt|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/manage-acs-systemd-unit.sh|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)

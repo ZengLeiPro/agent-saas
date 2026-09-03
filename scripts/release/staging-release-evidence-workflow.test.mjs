@@ -47,12 +47,29 @@ test('Staging evidence stage safely reuses or creates one immutable same-SHA rec
   assert.match(workflow, /aliyun --secure oss cp[\s\S]*--region "\$RELEASE_RECORD_OSS_REGION"/u);
   assert.doesNotMatch(workflow, /aliyun --region "\$RELEASE_RECORD_OSS_REGION" --secure/u);
   assert.match(workflow, /resolve-baseline-artifacts\.mjs/u);
+  assert.match(workflow, /baseline-artifacts\.json/u);
   assert.match(workflow, /produce-release-evidence\.mjs/u);
   assert.match(workflow, /cat "\$RUNNER_TEMP\/classification\.json" >&2/u);
   assert.match(workflow, /publish-release-evidence\.mjs/u);
   assert.match(workflow, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.match(workflow, /RELEASE_EVIDENCE_READ_TOKEN/u);
   assert.doesNotMatch(workflow, /compatibility|N\/N\+1/u);
+});
+
+test('Staging and Promotion verify component-scoped selected runtime identities', async () => {
+  const [staging, promotion] = await Promise.all([
+    readFile(stagingWorkflowPath, 'utf8'),
+    readFile(promotionWorkflowPath, 'utf8'),
+  ]);
+  for (const workflow of [staging, promotion]) {
+    assert.match(workflow, /runtimeDependencies\.server\.uri/u);
+    assert.match(workflow, /runtimeDependencies\.acs\.uri/u);
+    assert.match(workflow, /verify-selected-release-artifacts\.mjs/u);
+  }
+  assert.doesNotMatch(
+    promotion,
+    /cp "\$RUNNER_TEMP\/release\/artifact-index\.json" "\$RUNNER_TEMP\/selected/u,
+  );
 });
 
 test('Evidence write identity stays inside the production pre-stage and out of deployment jobs', async () => {

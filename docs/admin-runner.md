@@ -13,10 +13,11 @@ migration / backfill / repair / maintenance 类一次性运维脚本（`server/s
   预编译到 `server/dist/admin/<command>.mjs`（`--packages=external`，与 `dist/index.js`
   的外部化策略一致）。运行时直接用该 release 的 prod `node_modules` 解析 `pg` 等依赖，
   不需要 `tsx`，也不需要源码检出。
-- `server/dist/admin/manifest.json` 记录每个入口的源文件、sha256 与 size。
+- `server/dist/admin/manifest.json` 记录每个入口的源文件、sha256、size，以及与主 Server
+  相同的 Runtime dependency contract digest；自动导入的 Runtime guard 也单独记录 sha256 与 size。
 - `scripts/release/build-release.mjs` 出包时 fail-closed 校验：manifest 必须存在、命令集
-  必须与 `ADMIN_RUNNER_ENTRIES` 受控清单一致、每个入口字节摘要必须与 manifest 一致；
-  任一失败直接拒绝出 release。
+  必须与 `ADMIN_RUNNER_ENTRIES` 受控清单一致、每个入口及 Runtime guard 的内容和字节摘要必须
+  与受控实现及 manifest 一致；任一失败直接拒绝出 release。
 - 安装侧 `verify-installed-release.mjs` 的 contentDigest 对 `server/` 全目录（含
   `dist/admin`）逐文件取证，Admin Runner 与 `dist/index.js` 一起被密封/校验。
 
@@ -53,7 +54,9 @@ export NODE_ENV=production
 export AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
 
 cd "$release"
-node dist/admin/<command>.mjs …   # 先 dry-run，再按各脚本门禁显式授权写入
+/usr/bin/node dist/runtime-dependency.mjs \
+  --manifest=runtime-dependencies.json --component=adminRunner --production=true
+/usr/bin/node dist/admin/<command>.mjs …   # 先 dry-run，再按各脚本门禁显式授权写入
 ```
 
 要点：
@@ -63,7 +66,8 @@ node dist/admin/<command>.mjs …   # 先 dry-run，再按各脚本门禁显式�
 - `migrate-platform-tenant-pantheon` 的 `--data-dir/--config-dir/--workspace-shared`
   默认值已适配 release 布局（`<release>/server/data`、`<release>/server/config`、
   `<release>/workspace-shared`），通常无需显式传路径；仍可显式覆盖。
-- Node 用系统 `/usr/bin/node`（与 systemd `ExecStart` 同一运行时），版本 >= 22。
+- Node 用系统 `/usr/bin/node`（与 systemd `ExecStart` 同一运行时）；执行前必须通过
+  release 内 `runtime-dependencies.json` 声明的精确版本与架构门禁，不能只判断 major。
 - Staging 环境代码在 `/opt/agent-saas-staging/current/server`，working directory 是
   `/mnt/agent-saas-staging/runtime/server`，按同样方式替换路径即可。
 

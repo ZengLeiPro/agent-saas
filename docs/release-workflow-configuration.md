@@ -162,9 +162,9 @@ ready release ID/SHA、2 小时确认窗口及 5 分钟 live/evidence 新鲜度�
 不同内容或 receipt 缺失都 fail closed。OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
 仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。升级前已存在、尚未携带 migration binding 的旧 `promoting` 记录只允许原样 hydrate 供审计读取；兼容读取不会补写或推断 digest，也不会放宽任何新的 `promoting` append，停在旧 `promoting` 的历史不能由新代码直接补成 `completed`。
 
-`failed_before_change` 的安全重试尾链允许 `approved → promoting → failed_before_change`，但其中 `promoting` 必须带完整 Manifest、plan 与生产 before/target digest；悬空 `promoting`、缺失绑定或任何 post-mutation outcome 都不能重试。`rolled_back` 只能由部署脚本或 Web 恢复 trap 实际执行后的 rollback 证据，加上完整权威读回确认为原生产矩阵后得出；Web、ACS、App receipt 必须一次性提供固定 `acs/app/web` 全集，且每项只能包含布尔 `attempted/succeeded`；缺项、未知项、非法类型、`attempted=false,succeeded=true` 或旧 aggregate flag 都直接 `needs_human`。Web、ACS、App receipt 均区分 attempted/succeeded；ACS/App 只有 symlink/env/identity、byte seal、服务与入口恢复并验证后才写 succeeded，Web 只有 identity 与 `index.html` 都恢复并从 OSS 按字节回读一致才算 succeeded，失败时即使 identity 回到 before 也必须 `needs_human`。单纯的 deploy step failure 不构成 rollback 证据，trap 安装前失败且现场仍为 before 只记 `failed_before_change`；durable `promoting` 后若 Deployment API 失败，复用 promoting 前已上传的只读 reader 通过 SSH stdout 完成现场读回，确认零 runtime mutation 后可记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。
+`failed_before_change` 的安全重试尾链允许 `approved → promoting → failed_before_change`，但 durable `promoting` 已代表生产变更窗口开启：后续批准必须携带绑定当前 release ID、Manifest digest、`recoveryMode=retry_after_change` 与非空人工原因的结构化复核证据。普通 approval、悬空 `promoting`、缺失绑定或任何未经复核的 post-mutation outcome 都不能重试。`rolled_back` 只能由部署脚本或 Web 恢复 trap 实际执行后的 rollback 证据，加上完整权威读回确认为原生产矩阵后得出；Web、ACS、App receipt 必须一次性提供固定 `acs/app/web` 全集，且每项只能包含布尔 `attempted/succeeded`；缺项、未知项、非法类型、`attempted=false,succeeded=true` 或旧 aggregate flag 都直接 `needs_human`。Web、ACS、App receipt 均区分 attempted/succeeded；ACS/App 只有 symlink/env/identity、byte seal、服务与入口恢复并验证后才写 succeeded，Web 只有 identity 与 `index.html` 都恢复并从 OSS 按字节回读一致才算 succeeded，失败时即使 identity 回到 before 也必须 `needs_human`。单纯的 deploy step failure 不构成 rollback 证据，trap 安装前失败且现场仍为 before 只记 `failed_before_change`；durable `promoting` 后若 Deployment API 失败，复用 promoting 前已上传的只读 reader 通过 SSH stdout 完成现场读回，确认零 runtime mutation 后可记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。
 
-Production Promotion 的成功状态还硬性依赖 trusted identity 写入后的确认读回：只有 readback step
+Production Promotion 的成功状态还硬性依赖共享主机锁内的 live read、trusted identity 单次写入与确认读回：只有 readback step
 成功且输出 `target_match=true`，才允许从 reconcile 的 `completed` 推进到最终 `completed` 或
 `awaiting_expand_confirmation`；identity 写入或 `production-confirmed.json` 回读失败一律记录
 `needs_human`，即使物理组件已等于目标也不能宣称发布完成。
@@ -184,7 +184,9 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   `refs/heads/main`。App 入口已收窄为显式确认的 Web-only publish：计划必须证明生产 active ECS SHA
   到目标 SHA 不含 Server/API/Runtime Worker 影响；只要需要 ECS 变更或分类无法证明，就会在任何
   生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 不再可达，
-  因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会在 OSS mutation 前枚举四个入口、
+  因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会在读取生产基线前取得共享
+  `/run/lock/agent-saas/promotion.lock` 远端租约，并持有到 identity commit，或失败补偿与权威证明
+  结束；租约丢失时禁止继续 mutation 或无锁补偿。随后在 OSS mutation 前枚举四个入口、
   `icons/`、`kaikai-presets/`、favicon/avatar 与 Workbox 等全部可覆盖键，用事务 manifest 记录每个键
   原先是 present 还是 missing；present 内容和对象 headers/metadata 同时进入事务镜像，内容还要与 recovery Web 基线按字节核对。最终现场读回在 Web-only 路径中还必须先证明未发布的 API、Runtime Worker、ACS 与 mutation 前冻结 identity 完全一致；写入后 confirmed readback 再按忽略 `deployedAt` 的完整四组件矩阵与现场比较，不能只验证 Web。identity
   写入或确认读回失败时，必须恢复 present 键、删除事务新增的 missing 键，并恢复 recovery Web 与原

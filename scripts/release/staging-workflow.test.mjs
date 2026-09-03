@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
@@ -97,13 +97,27 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   const webEntryIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/index.html" --force');
   assert.ok(webIdentityIndex > 0 && webIdentityIndex < webEntryIndex);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
+  assert.match(workflow, /Materialize and verify selected Manifest artifacts/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.match(workflow, /\.artifacts\.stagingRuntimeAssets\.path/u);
-  assert.match(workflow, /test "\$runtime_path" = staging-runtime-assets\.tgz/u);
+  assert.match(workflow, /test "\$staging_runtime_path" = staging-runtime-assets\.tgz/u);
   assert.match(workflow, /STAGING_RUNTIME_ASSETS_PATH='\$remote\/staging-runtime-assets\.tgz'/u);
   assert.match(workflow, /--argjson runtimeSummary/u);
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
+  assert.ok(
+    workflow.indexOf('staging-runtime-summary.json') <
+      workflow.indexOf('publish-release-record.mjs'),
+  );
   assert.match(workflow, /\$\{\{ runner\.temp \}\}\/staging-runtime-summary\.json/u);
+  assert.match(workflow, /publish-release-record\.mjs[\s\S]*\$RUNNER_TEMP\/selected/u);
+  assert.ok(
+    workflow.indexOf('Materialize and verify selected Manifest artifacts') <
+      workflow.indexOf('Create immutable RC tag, Release and built attestation'),
+  );
+  assert.ok(
+    workflow.indexOf('verify-selected-release-artifacts.mjs') <
+      workflow.indexOf('publish-release-record.mjs'),
+  );
   assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);
   assert.match(workflow, /test -f "\$RUNNER_TEMP\/\$evidence"/u);
   assert.match(workflow, /if-no-files-found: warn/u);
@@ -158,10 +172,13 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
     readFile(e2eAuthPath, 'utf8'),
   ]);
   assert.match(workflow, /name: 预发验收/u);
+  assert.match(workflow, /NODE_VERSION: '22\.23\.1'/u);
+  assert.match(workflow, /node-version: \$\{\{ env\.NODE_VERSION \}\}/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
+  assert.match(workflow, /Setup exact Runtime contract Node/u);
   assert.match(workflow, /Verify exact RC is still active on Staging/u);
   assert.match(workflow, /staging-web-identity\.json/u);
   assert.match(workflow, /staging-api-ready\.json/u);
@@ -241,6 +258,47 @@ test('Staging browser authentication is preloaded without recording the password
   assert.doesNotMatch(helpers, /getByLabel\('密码'\)\.fill/u);
   assert.match(helpers, /getByRole\('textbox', \{ name: '消息输入' \}\)/u);
   assert.match(chatInput, /aria-label="消息输入"/u);
+});
+
+test('installed Staging units accept the persistent config path and reject the legacy path', async () => {
+  const deploy = await readFile(deployPath, 'utf8');
+  const functionStart = deploy.indexOf('verify_staging_unit_environment() {');
+  const functionEnd = deploy.indexOf('\n}\n\nruntime_dir=', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const verifier = deploy.slice(functionStart, functionEnd + 2);
+  const config = 'AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json';
+  const api = `${config} AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready`;
+  const worker = `${config} AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready`;
+  const run = (apiEnvironment, workerEnvironment) =>
+    spawnSync('bash', [
+      '-c',
+      `${verifier}\nverify_staging_unit_environment "$1" "$2"`,
+      'bash',
+      apiEnvironment,
+      workerEnvironment,
+    ]);
+
+  assert.equal(run(api, worker).status, 0);
+  assert.notEqual(
+    run(
+      api.replace(
+        '/var/lib/agent-saas-staging/config/config.json',
+        '/etc/agent-saas-staging/config.json',
+      ),
+      worker,
+    ).status,
+    0,
+  );
+  assert.notEqual(
+    run(
+      api,
+      worker.replace(
+        '/var/lib/agent-saas-staging/config/config.json',
+        '/etc/agent-saas-staging/config.json',
+      ),
+    ).status,
+    0,
+  );
 });
 
 test('target deployment consumes bundles with component identities and only Staging paths', async () => {
@@ -383,17 +441,22 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
     /node - "\$MANIFEST_PATH" "\$state_root\/api-ready\.json" "\$state_root\/acs-health\.json" <<'NODE'\n([\s\S]*?)\nNODE\n\ninstall -m 0444/u,
   )?.[1];
   assert.ok(validator, 'Staging health validator must remain executable as an isolated contract');
-  assert.ok(deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") < deploy.indexOf('deployment_committed=true'));
+  assert.ok(
+    deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") <
+      deploy.indexOf('deployment_committed=true'),
+  );
   assert.match(deploy, /if \[ "\$deployment_committed" = false \]; then rollback; fi/u);
 
   const root = await mkdtemp(join(tmpdir(), 'staging-health-'));
   try {
     const manifest = {
-      releaseId: 'release-1', releaseSha: 'sha-1',
+      releaseId: 'release-1',
+      releaseSha: 'sha-1',
       components: {
         api: { sourceSha: 'api-sha' },
         acs: {
-          sourceSha: 'acs-sha', orchestratorArtifactDigest: 'sha256:orchestrator',
+          sourceSha: 'acs-sha',
+          orchestratorArtifactDigest: 'sha256:orchestrator',
           sandboxImageDigest: 'sha256:sandbox',
         },
       },
@@ -402,10 +465,14 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
       release: { releaseId: manifest.releaseId, releaseSha: manifest.components.api.sourceSha },
     };
     const acs = {
-      environment: 'staging', releaseId: manifest.releaseId, sourceSha: manifest.components.acs.sourceSha,
+      environment: 'staging',
+      releaseId: manifest.releaseId,
+      sourceSha: manifest.components.acs.sourceSha,
       orchestratorArtifactDigest: manifest.components.acs.orchestratorArtifactDigest,
       sandboxImageDigest: manifest.components.acs.sandboxImageDigest,
-      namespace: 'agent-saas-staging', lifecycle: { enabled: true }, lifecyclePolicyMode: 'shadow',
+      namespace: 'agent-saas-staging',
+      lifecycle: { enabled: true },
+      lifecyclePolicyMode: 'shadow',
     };
     const paths = [join(root, 'manifest.json'), join(root, 'api.json'), join(root, 'acs.json')];
     await Promise.all([
@@ -413,15 +480,31 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
       writeFile(paths[1], JSON.stringify(api)),
       writeFile(paths[2], JSON.stringify(acs)),
     ]);
-    const shadow = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    const shadow = spawnSync(process.execPath, ['-', ...paths], {
+      input: validator,
+      encoding: 'utf8',
+    });
     assert.notEqual(shadow.status, 0, 'shadow response must fail the deployment health gate');
 
-    await writeFile(paths[2], JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }));
-    const disabled = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
-    assert.notEqual(disabled.status, 0, 'disabled lifecycle controller must fail the deployment health gate');
+    await writeFile(
+      paths[2],
+      JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }),
+    );
+    const disabled = spawnSync(process.execPath, ['-', ...paths], {
+      input: validator,
+      encoding: 'utf8',
+    });
+    assert.notEqual(
+      disabled.status,
+      0,
+      'disabled lifecycle controller must fail the deployment health gate',
+    );
 
     await writeFile(paths[2], JSON.stringify({ ...acs, lifecyclePolicyMode: 'enforce' }));
-    const enforce = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    const enforce = spawnSync(process.execPath, ['-', ...paths], {
+      input: validator,
+      encoding: 'utf8',
+    });
     assert.equal(enforce.status, 0, enforce.stderr);
   } finally {
     await rm(root, { recursive: true, force: true });

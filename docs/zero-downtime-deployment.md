@@ -119,15 +119,17 @@ Shared、技能源、依赖、部署配置或未知路径，或生产基线/分�
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
 只允许一个批次从 build 走到 Web OSS 发布结束；普通 push CI 使用独立 `run_id`，不受
-生产发布队列影响。远端脚本还会非阻塞获取
-`/run/lock/agent-saas-deploy.lock` 的 `flock`，覆盖手工 SSH 等绕过 GitHub Actions 的入口。
-两层任一冲突都不会等待或打断在途发布，后发远端批次直接失败并删除自己的独立上传包。
+生产发布队列影响。所有生产入口共享 `/run/lock/agent-saas/promotion.lock`：Web-only
+compatibility 在读取基线前创建远端锁租约，并持续持有到 identity commit，或失败补偿与
+权威证明结束；ECS 与 Promotion mutation 也必须取得同一把 `flock`。这覆盖手工 SSH 等绕过
+GitHub Actions 的入口，锁租约丢失时禁止继续 mutation 或无锁补偿。
 
 deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与脚本注释一致）：
 
+<!-- prettier-ignore -->
 | 步 | 动作 | 失败时 |
 | --- | --- | --- |
-| 0 | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
+| 0 | 获取共享 Production `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
 | 1 | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue|green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口 | 直接退出，什么都没动 |
 | 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
 | 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
@@ -163,6 +165,7 @@ CI 侧还有两个配套 step（不在远端脚本内）：
 
 路由定义在 `server/src/routes/health.ts`，生产挂载于 `/api` 前缀下：
 
+<!-- prettier-ignore -->
 | 端点 | 谁用 | 返回 | 何时 503 |
 | --- | --- | --- | --- |
 | `/api/healthz` | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining` | draining 时 |

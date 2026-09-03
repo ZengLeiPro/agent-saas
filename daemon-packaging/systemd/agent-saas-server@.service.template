@@ -43,6 +43,7 @@ Environment=AGENT_SAAS_ENVIRONMENT=production
 Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 Environment=AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-server-%i.draining
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-server-%i.draining
+ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs --manifest=runtime-dependencies.json --component=server --production=true
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 # on-failure：drain 自退（exit 0）不复活，崩溃仍自动拉起
 Restart=on-failure

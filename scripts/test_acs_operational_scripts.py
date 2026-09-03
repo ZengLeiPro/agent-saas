@@ -169,7 +169,9 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
     def test_accepts_only_identical_healthy_shared_config(self):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['sharedCidrCount'], 2)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload['compatible'])
+        self.assertEqual(payload['sharedCidrCount'], 2)
 
     def test_rejects_candidate_drift_or_incomplete_running_coverage(self):
         cases = [
@@ -180,7 +182,8 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
         ]
         for result in cases:
             self.assertEqual(result.returncode, 1)
-            self.assertFalse(json.loads(result.stderr)['compatible'])
+            payload = json.loads(result.stderr.strip().splitlines()[-1])
+            self.assertFalse(payload['compatible'])
 
 
 class AcsDockerfileWorkspaceInjectionTest(unittest.TestCase):
@@ -255,7 +258,7 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         cls.workflow = ACS_WORKFLOW.read_text(encoding='utf-8')
         cls.deploy_script = ACS_DEPLOY_SCRIPT.read_text(encoding='utf-8')
 
-    def test_externalizes_remote_deploy_script_below_github_expression_limit(self):
+    def test_externalizes_remote_deploy_script_and_keeps_syntax_valid(self):
         self.assertIn('< scripts/deploy-acs-orchestrator.sh', self.workflow)
         self.assertNotIn("<<'REMOTE'", self.workflow)
         syntax = subprocess.run(
@@ -295,6 +298,60 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('contract_check=false', classified.stdout)
         self.assertIn('reason=pnpm-lock.yaml runtime dependency resolution', classified.stdout)
         self.assertIn('skipped=none', classified.stdout)
+    def test_direct_deploy_recovers_restart_and_reload_failures(self):
+        self.assertIn('scripts/release/manage-acs-systemd-unit.sh', self.workflow)
+        self.assertIn(
+            'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+            self.workflow,
+        )
+        classifier = ACS_CLASSIFIER.read_text(encoding='utf-8')
+        self.assertIn('scripts/release/manage-acs-systemd-unit.sh', classifier)
+        self.assertIn(
+            'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+            classifier,
+        )
+        staged_environment = self.deploy_script.index(
+            'python3 "$RUNTIME_PREFLIGHT_DIR/scripts/apply-orchestrator-env.py"'
+        )
+        guard = self.deploy_script.index(
+            '"$ACS_NODE" "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs"'
+        )
+        install = self.deploy_script.index('install_acs_managed_unit')
+        replacement = self.deploy_script.index('PROCESS_REPLACED=true')
+        restart = self.deploy_script.index(
+            '"$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"', replacement
+        )
+        # restart 自身失败时也必须进入显式 rollback，而不是走“尚未替换”的轻量 cleanup。
+        self.assertIn('ACS_NODE=/usr/bin/node', self.deploy_script)
+        self.assertIn('--environment-file="$runtime_environment_file"', self.deploy_script)
+        self.assertIn('--environment-file="$ENV_FILE"', self.deploy_script)
+        self.assertNotIn('. "$runtime_environment_file"', self.deploy_script)
+        self.assertNotIn('. "$ENV_FILE"', self.deploy_script)
+        self.assertIn(
+            '--print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE',
+            self.deploy_script,
+        )
+        self.assertLess(staged_environment, guard)
+        self.assertLess(guard, install)
+        self.assertLess(
+            self.deploy_script.index('--environment-file="$ENV_FILE"'), replacement
+        )
+        self.assertLess(
+            self.deploy_script.index('--print-environment=ACS_ORCH_AUTH_TOKEN'), replacement
+        )
+        self.assertLess(install, replacement)
+        self.assertLess(replacement, restart)
+        self.assertIn('Restart=on-failure 不会在 drain 的 clean exit(0) 后自动拉起', self.deploy_script)
+        self.assertLess(self.deploy_script.index('rollback() {'), restart)
+        self.assertIn(
+            'if ! "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"; then',
+            self.deploy_script,
+        )
+        self.assertIn('candidate restart failed; rolling back the managed unit', self.deploy_script)
+        self.assertIn('|| unit_restore_status=$?', self.deploy_script)
+        self.assertIn('|| restart_status=$?', self.deploy_script)
+        self.assertGreaterEqual(self.deploy_script.count('restore_acs_managed_unit'), 2)
+        self.assertIn('ACS_UNIT_HAD_PREVIOUS=false', self.deploy_script)
 
     def test_direct_deploy_requires_enforced_lifecycle_policy_from_health(self):
         self.assertIn(
@@ -305,7 +362,7 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn("lifecyclePolicyMode: health.lifecyclePolicyMode", self.deploy_script)
         self.assertIn("lifecyclePolicyMode: 'enforce'", self.deploy_script)
         gate_start = self.deploy_script.index("const actual = { ...(health.runtimeConfig || {})")
-        rollback = self.deploy_script.index("  rollback\n  exit 1\n", gate_start)
+        rollback = self.deploy_script.index("  rollback_and_exit 1\n", gate_start)
         self.assertGreater(rollback, gate_start)
 
     def test_test_fixtures_are_contract_only_and_never_publish(self):

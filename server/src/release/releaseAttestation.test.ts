@@ -40,6 +40,20 @@ function confirmationReason(overrides: Record<string, unknown> = {}) {
 function log(digest = DIGEST) {
   return new ReleaseAttestationLog('rc-20260825-01', digest, { now: () => NOW });
 }
+function appendRecoveryApproval(entry: ReleaseAttestationLog, operationKey: string) {
+  return entry.append({
+    state: 'approved',
+    operationKey,
+    actor: 'release-bot',
+    manifestDigest: DIGEST,
+    reason: JSON.stringify({
+      releaseId: 'rc-20260825-01',
+      manifestDigest: DIGEST,
+      recoveryMode: 'retry_after_change',
+      reason: 'reviewed exact post-mutation recovery prefix',
+    }),
+  });
+}
 function append(
   entry: ReleaseAttestationLog,
   state: Parameters<ReleaseAttestationLog['append']>[0]['state'],
@@ -66,7 +80,7 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.isPromotable()).toBe(true);
   });
 
-  it('allows a newly reasoned approval only after a proven failure before change', () => {
+  it('requires reviewed recovery after a durable promoting marker', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
@@ -84,7 +98,10 @@ describe('ReleaseAttestationLog', () => {
     append(closedAttempt, 'approved');
     append(closedAttempt, 'promoting');
     append(closedAttempt, 'failed_before_change');
-    append(closedAttempt, 'approved', 'safe-reapproval');
+    expect(() => append(closedAttempt, 'approved', 'unsafe-reapproval')).toThrow(
+      /Illegal or late/u,
+    );
+    appendRecoveryApproval(closedAttempt, 'reviewed-reapproval');
     expect(closedAttempt.currentState()).toBe('approved');
 
     const neverVerified = log();
@@ -287,6 +304,25 @@ describe('ReleaseAttestationLog', () => {
     expect(none.currentState()).toBe('completed');
   });
 
+  it('preserves post-mutation recovery across a later pre-write failure', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved', 'approval-1');
+    append(entries, 'promoting', 'promoting-1');
+    append(entries, 'needs_human', 'needs-human-1');
+    appendRecoveryApproval(entries, 'recovery-approval-1');
+    append(entries, 'failed_before_change', 'recovery-pre-write-failure');
+    appendRecoveryApproval(entries, 'recovery-approval-2');
+    append(entries, 'promoting', 'promoting-2');
+    append(entries, 'needs_human', 'needs-human-2');
+    appendRecoveryApproval(entries, 'recovery-approval-3');
+    append(entries, 'promoting', 'promoting-3');
+    append(entries, 'completed');
+    expect(entries.currentState()).toBe('completed');
+  });
+
   it('makes an identical operation idempotent but rejects divergent replay and late receipts', () => {
     const entries = log();
     const first = append(entries, 'built', 'build-1');
@@ -409,7 +445,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: DIGEST,
         isMainAncestor: true,
         minimumPromotableShaSatisfied: true,
-        productionBaselineMatches: true,
+        productionStateIsResumable: true,
         expiresAt: '2026-08-26T12:00:00.000Z',
       },
       { now: () => NOW },
@@ -422,7 +458,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: `sha256:${'b'.repeat(64)}`,
         isMainAncestor: true,
         minimumPromotableShaSatisfied: true,
-        productionBaselineMatches: true,
+        productionStateIsResumable: true,
         expiresAt: '2026-08-26T12:00:00.000Z',
       },
       { now: () => NOW },
@@ -438,7 +474,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: DIGEST,
         isMainAncestor: false,
         minimumPromotableShaSatisfied: false,
-        productionBaselineMatches: false,
+        productionStateIsResumable: false,
         expiresAt: '2000-01-01T00:00:00.000Z',
       },
       { now: () => NOW },
@@ -448,7 +484,7 @@ describe('ReleaseAttestationLog', () => {
       blockingReasons: expect.arrayContaining([
         'Release SHA is not reachable from main.',
         'Release SHA is below the minimum promotable SHA.',
-        'Current production component matrix drifted from the frozen baseline.',
+        'Current production component matrix is outside the resumable Manifest prefix.',
         'Release promotion approval has expired.',
       ]),
     });
@@ -466,7 +502,7 @@ describe('ReleaseAttestationLog', () => {
       expectedManifestDigest: DIGEST,
       isMainAncestor: true,
       minimumPromotableShaSatisfied: true,
-      productionBaselineMatches: true,
+      productionStateIsResumable: true,
       expiresAt: '2026-08-25T12:00:00.001Z',
     };
 
@@ -492,8 +528,22 @@ describe('ReleaseAttestationLog', () => {
     });
   });
 
-  it.each(['failed_before_change', 'partial_failed', 'rolled_back', 'needs_human'] as const)(
-    'records truthful terminal promotion outcome %s without allowing later completion',
+  it('does not route rejected or superseded RCs through another failure outcome', () => {
+    for (const terminal of ['rejected', 'superseded'] as const) {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      append(entries, terminal);
+      expect(() => append(entries, 'failed_before_change', `forged-${terminal}`)).toThrow(
+        /Illegal or late/u,
+      );
+    }
+  });
+
+  it.each(['failed_before_change', 'partial_failed', 'rolled_back'] as const)(
+    'keeps post-mutation terminal promotion outcome %s from reaching late completion',
     (outcome) => {
       const entries = log();
       append(entries, 'built');

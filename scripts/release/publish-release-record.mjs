@@ -3,15 +3,34 @@ import { mkdir, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 import { verifyArtifactIndex } from './verify-artifact.mjs';
+import { verifySelectedReleaseArtifacts } from './verify-selected-release-artifacts.mjs';
+import {
+  assertManifestIndexBindings,
+  validateReleaseManifestAuthoritatively,
+  verifyReleaseRecordFiles,
+} from './verify-release-record.mjs';
 
-export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoot }) {
+export async function publishReleaseRecord({
+  manifestPath,
+  indexPath,
+  recordsRoot,
+  selectedDirectory,
+}) {
   const manifest = JSON.parse(await readFile(resolve(manifestPath), 'utf8'));
   if (!/^rc-\d{8}-\d{2,}$/u.test(manifest.releaseId ?? '')) throw new Error('Invalid releaseId');
+  validateReleaseManifestAuthoritatively(manifestPath, manifest.releaseId);
+  if (!selectedDirectory)
+    throw new Error('Selected Release artifacts must be verified before publishing a record');
+  await verifySelectedReleaseArtifacts({
+    manifestPath,
+    directory: selectedDirectory,
+  });
   const index = await verifyArtifactIndex(indexPath, manifest.releaseSha);
+  assertManifestIndexBindings(manifest, index);
   const { digest: manifestDigest, ...manifestContent } = manifest;
   const calculatedManifestDigest = digestBuffer(
     Buffer.concat([
-      Buffer.from('agent-saas-release-manifest-v1\0'),
+      Buffer.from(`agent-saas-release-manifest-v${manifest.schemaVersion}\0`),
       Buffer.from(canonicalJson(manifestContent)),
     ]),
   );
@@ -24,7 +43,12 @@ export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoo
   const lock = await open(lockPath, 'wx', 0o600);
   try {
     try {
-      const existing = JSON.parse(await readFile(join(target, 'record.json'), 'utf8'));
+      const existing = await verifyReleaseRecordFiles({
+        recordPath: join(target, 'record.json'),
+        manifestPath: join(target, 'manifest.json'),
+        indexPath: join(target, 'artifact-index.json'),
+        validateManifest: false,
+      });
       if (
         existing.manifestDigest === manifestDigest &&
         existing.manifestFileDigest === manifestFileDigest &&
@@ -53,6 +77,12 @@ export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoo
       flag: 'wx',
     });
     await writeFile(join(staging, 'record.json'), `${canonicalJson(record)}\n`, { flag: 'wx' });
+    await verifyReleaseRecordFiles({
+      recordPath: join(staging, 'record.json'),
+      manifestPath: join(staging, 'manifest.json'),
+      indexPath: join(staging, 'artifact-index.json'),
+      validateManifest: false,
+    });
     await rename(staging, target);
     return record;
   } finally {
@@ -62,10 +92,12 @@ export async function publishReleaseRecord({ manifestPath, indexPath, recordsRoo
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [manifestPath, indexPath, recordsRoot] = process.argv.slice(2);
-  if (!manifestPath || !indexPath || !recordsRoot)
-    throw new Error('usage: publish-release-record.mjs <manifest> <index> <records-root>');
-  publishReleaseRecord({ manifestPath, indexPath, recordsRoot }).then((record) =>
+  const [manifestPath, indexPath, recordsRoot, selectedDirectory] = process.argv.slice(2);
+  if (!manifestPath || !indexPath || !recordsRoot || !selectedDirectory)
+    throw new Error(
+      'usage: publish-release-record.mjs <manifest> <index> <records-root> <selected-directory>',
+    );
+  publishReleaseRecord({ manifestPath, indexPath, recordsRoot, selectedDirectory }).then((record) =>
     process.stdout.write(`${JSON.stringify(record, null, 2)}\n`),
   );
 }

@@ -67,7 +67,8 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'needs_human',
   'superseded',
 ]);
-// Post-mutation failure states are terminal for Promotion; only failed_before_change can re-enter approval.
+// durable promoting 后即使现场证明尚未变更，也只能经人工复核证据重新进入批准；
+// post-mutation failure states 同样不能未经复核直接重试。
 // awaiting_expand_confirmation 只能由带完整绑定证据的专用确认操作进入 completed。
 const FAILURE_STATES = new Set<ReleaseState>([
   'failed_before_change',
@@ -77,30 +78,74 @@ const FAILURE_STATES = new Set<ReleaseState>([
   'needs_human',
   'superseded',
 ]);
+const RETRYABLE_PRE_MUTATION_STATES = new Set<ReleaseState>([
+  'approved',
+  'failed_before_change',
+  'needs_human',
+]);
 
-function isRetryablePromotionTail(entries: readonly ReleaseAttestation[]): boolean {
-  if (entries.length === 0) return false;
-  let index = 0;
-  while (index < entries.length) {
-    if (entries[index]?.state !== 'approved') return false;
-    index += 1;
-    if (index === entries.length) return true;
-    if (entries[index]?.state === 'promoting') {
-      if (
-        !promotionContext(
-          entries[index]?.reason,
-          entries[index]!.releaseId,
-          entries[index]!.manifestDigest,
+function hasReviewedMutationRecoveryTail(tail: readonly ReleaseAttestation[]): boolean {
+  let mutationSeen = false;
+  let reviewedCurrentMutation = false;
+  for (let index = 0; index < tail.length; index += 1) {
+    const state = tail[index]?.state;
+    const previousState = tail[index - 1]?.state;
+    if (!mutationSeen) {
+      if (state === 'promoting') {
+        const entry = tail[index]!;
+        if (
+          previousState !== 'approved' ||
+          !promotionContext(entry.reason, entry.releaseId, entry.manifestDigest)
         )
+          return false;
+        mutationSeen = true;
+        reviewedCurrentMutation = false;
+      } else if (!state || !RETRYABLE_PRE_MUTATION_STATES.has(state)) return false;
+      continue;
+    }
+    if (state === 'promoting') {
+      const entry = tail[index]!;
+      if (
+        previousState !== 'approved' ||
+        !reviewedCurrentMutation ||
+        !promotionContext(entry.reason, entry.releaseId, entry.manifestDigest)
       )
         return false;
-      index += 1;
-      if (index >= entries.length || entries[index]?.state !== 'failed_before_change') return false;
-      index += 1;
-    } else if (entries[index]?.state === 'failed_before_change') index += 1;
-    else return false;
+      reviewedCurrentMutation = false;
+    } else if (state === 'needs_human') {
+      if (previousState !== 'promoting' && previousState !== 'needs_human') return false;
+      reviewedCurrentMutation = true;
+    } else if (state === 'approved') {
+      if (
+        !reviewedCurrentMutation ||
+        (previousState !== 'needs_human' && previousState !== 'failed_before_change')
+      )
+        return false;
+    } else if (state === 'failed_before_change') {
+      if (previousState === 'promoting') reviewedCurrentMutation = true;
+      else if (!reviewedCurrentMutation || previousState !== 'approved') return false;
+    } else return false;
   }
-  return true;
+  return mutationSeen && reviewedCurrentMutation;
+}
+
+function isReviewedRecoveryApproval(
+  input: Pick<ReleaseAttestation, 'state' | 'reason' | 'manifestDigest'>,
+  releaseId: string,
+): boolean {
+  if (input.state !== 'approved' || !input.reason) return false;
+  try {
+    const evidence = JSON.parse(input.reason) as Record<string, unknown>;
+    return (
+      evidence.releaseId === releaseId &&
+      evidence.manifestDigest === input.manifestDigest &&
+      evidence.recoveryMode === 'retry_after_change' &&
+      typeof evidence.reason === 'string' &&
+      evidence.reason.trim().length > 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 function assertDigest(digest: string): void {
@@ -325,7 +370,12 @@ export class ReleaseAttestationLog {
     const retryAfterFailureBeforeChange =
       current === 'failed_before_change' &&
       input.state === 'approved' &&
-      isRetryablePromotionTail(retryTail);
+      retryTail.some((entry) => entry.state === 'approved') &&
+      retryTail.every((entry) => RETRYABLE_PRE_MUTATION_STATES.has(entry.state));
+    const retryAfterReviewedMutation =
+      (current === 'needs_human' || current === 'failed_before_change') &&
+      isReviewedRecoveryApproval(input, this.releaseId) &&
+      hasReviewedMutationRecoveryTail(retryTail);
     let boundPromotionContext: PromotionContext | null = null;
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
       const entry = this.entries[index];
@@ -358,16 +408,18 @@ export class ReleaseAttestationLog {
         awaitingAtMs,
       );
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
-    const failure =
-      FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
+    const failureTransition =
+      FAILURE_STATES.has(input.state) &&
+      !['completed', 'revoked', 'rejected', 'superseded'].includes(current);
     if (
       !sequential &&
       !retryAfterFailureBeforeChange &&
+      !retryAfterReviewedMutation &&
       !promotionOutcome &&
       !replayingLegacyCompletion &&
       !expandConfirmation &&
       !revocation &&
-      !failure
+      !failureTransition
     )
       throw new Error(`Illegal or late RC attestation transition: ${current} -> ${input.state}`);
 

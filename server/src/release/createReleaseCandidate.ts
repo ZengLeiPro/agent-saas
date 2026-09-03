@@ -1,16 +1,24 @@
 import type {
   ReleaseComponent,
   ReleaseComponentMatrix,
-  ReleaseManifest,
   ReleaseManifestContent,
-} from '@agent/shared';
-import { releaseManifestContentSchema } from '@agent/shared';
+  ReleaseManifestContentV2,
+  ReleaseManifestV2,
+} from '@agent/shared/schemas/releaseManifest';
+import { releaseManifestContentSchema } from '@agent/shared/schemas/releaseManifest';
 import { calculateManifestDigest } from './releaseManifestStore.js';
 
 interface ArtifactEntry {
   uri: string;
   digest: string;
   size: number;
+}
+
+interface RuntimeDependencyArtifact extends ArtifactEntry {
+  sourceSha: string;
+  identityDigest: string;
+  dependencyDigest: string;
+  contractDigest: string;
 }
 
 export interface ReleaseCandidateEvidence {
@@ -28,19 +36,24 @@ export interface ReleaseCandidateEvidence {
   builtArtifacts: {
     serverBundle: ArtifactEntry;
     webAssets: ArtifactEntry;
+    runtimeDependencies: RuntimeDependencyArtifact;
     acsOrchestrator?: ArtifactEntry;
     acsImage?: { repository: string; digest: string };
   };
   baselineArtifacts: {
     serverBundle: ArtifactEntry;
     webAssets: ArtifactEntry;
+    runtimeDependencies: {
+      server?: RuntimeDependencyArtifact;
+      acs?: RuntimeDependencyArtifact;
+    };
     acsOrchestrator: ArtifactEntry;
     acsImage: { repository: string; digest: string };
   };
   migrationPlan: ReleaseManifestContent['migrationPlan'];
 }
 
-export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): ReleaseManifest {
+export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): ReleaseManifestV2 {
   const affected = new Set(evidence.affectedComponents);
   if (affected.has('api') !== affected.has('runtimeWorker')) {
     throw new Error('API and Runtime Worker must deploy or keep together');
@@ -58,8 +71,20 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     ? evidence.builtArtifacts.acsImage
     : evidence.baselineArtifacts.acsImage;
   if (!acsArtifact || !acsImage) throw new Error('ACS deploy requires exact immutable artifacts');
+  const serverRuntime = affected.has('api')
+    ? evidence.builtArtifacts.runtimeDependencies
+    : evidence.baselineArtifacts.runtimeDependencies.server;
+  const acsRuntime = affected.has('acs')
+    ? evidence.builtArtifacts.runtimeDependencies
+    : evidence.baselineArtifacts.runtimeDependencies.acs;
+  if (!serverRuntime) {
+    throw new Error('A kept Server requires its baseline Runtime Dependency Identity');
+  }
+  if (!acsRuntime) {
+    throw new Error('A kept ACS requires its baseline Runtime Dependency Identity');
+  }
 
-  const components: ReleaseManifestContent['components'] = {
+  const components: ReleaseManifestContentV2['components'] = {
     web: {
       action: affected.has('web') ? 'deploy' : 'keep',
       sourceSha: affected.has('web')
@@ -91,7 +116,7 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     },
   };
   const content = releaseManifestContentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     releaseId: evidence.releaseId,
     releaseSha: evidence.releaseSha,
     tag: evidence.releaseId,
@@ -105,6 +130,10 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     artifacts: {
       serverBundle: serverArtifact,
       webAssets: webArtifact,
+      runtimeDependencies: {
+        server: serverRuntime,
+        acs: acsRuntime,
+      },
       acsOrchestrator: { ...acsArtifact, required: affected.has('acs') },
       acsImage: { ...acsImage, required: affected.has('acs') },
     },
@@ -117,5 +146,7 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     migrationPlan: evidence.migrationPlan,
     rollbackTargets: evidence.productionBaseline,
   });
+  if (content.schemaVersion !== 2)
+    throw new Error('Release candidate writer must emit Manifest v2');
   return Object.freeze({ ...content, digest: calculateManifestDigest(content) });
 }

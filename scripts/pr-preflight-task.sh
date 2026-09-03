@@ -12,6 +12,7 @@ case "$task" in
   checks)
     pnpm check:ratchets
     pnpm test:release-contracts
+    pnpm check:runtime-dependencies
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline
     pnpm -F server build

@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '22.23.1'
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
   ACR_REPO_ID: crr-csx99pbexlsw5qqv
   ACR_REGION_ID: cn-shenzhen
@@ -619,6 +619,49 @@ jobs:
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
           echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
 
+      - name: Materialize and verify selected Manifest artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/selected"
+          fetch() {
+            local uri="$1" target="$2"
+            case "$uri" in
+              oss://*) aliyun --secure oss cp "$uri" "$target" --region "$RELEASE_RECORD_OSS_REGION" ;;
+              https://*) curl -fsSL --retry 3 "$uri" -o "$target" ;;
+              *) echo "Unsupported immutable artifact URI: $uri" >&2; return 1 ;;
+            esac
+          }
+          for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
+            set -- $pair
+            uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
+            fetch "$uri" "$RUNNER_TEMP/selected/$2"
+          done
+          if [ "$(jq -r .schemaVersion "$RUNNER_TEMP/manifest.json")" = 2 ]; then
+            fetch "$(jq -r .artifacts.runtimeDependencies.server.uri "$RUNNER_TEMP/manifest.json")" \
+              "$RUNNER_TEMP/selected/runtime-dependencies-server.json"
+            fetch "$(jq -r .artifacts.runtimeDependencies.acs.uri "$RUNNER_TEMP/manifest.json")" \
+              "$RUNNER_TEMP/selected/runtime-dependencies-acs.json"
+          fi
+          node scripts/release/verify-selected-release-artifacts.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/selected"
+          staging_runtime_path="$(jq -r .artifacts.stagingRuntimeAssets.path "$RUNNER_TEMP/release/artifact-index.json")"
+          staging_runtime_digest="$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")"
+          test "$staging_runtime_path" = staging-runtime-assets.tgz
+          cp "$RUNNER_TEMP/release/$staging_runtime_path" \
+            "$RUNNER_TEMP/selected/staging-runtime-assets.tgz"
+          test "sha256:$(sha256sum "$RUNNER_TEMP/selected/staging-runtime-assets.tgz" | cut -d' ' -f1)" = \
+            "$staging_runtime_digest"
+          jq -n \
+            --arg releaseId "$STAGING_RELEASE_ID" \
+            --arg manifestDigest "$MANIFEST_DIGEST" \
+            --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg stagingRuntimeAssetsDigest "$staging_runtime_digest" \
+            '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}' \
+            > "$RUNNER_TEMP/staging-runtime-summary.json"
+
       - name: Create immutable RC tag, Release and built attestation
         if: env.REUSE_RC != 'true'
         env:
@@ -655,7 +698,7 @@ jobs:
               --recursive --region "$RELEASE_RECORD_OSS_REGION"
           fi
           node scripts/release/publish-release-record.mjs "$RUNNER_TEMP/manifest.json" \
-            "$RUNNER_TEMP/release/artifact-index.json" "$records_root"
+            "$RUNNER_TEMP/release/artifact-index.json" "$records_root" "$RUNNER_TEMP/selected"
           for file in manifest.json artifact-index.json record.json; do
             bash scripts/release/upload-oss-object-immutable.sh \
               "$records_root/$STAGING_RELEASE_ID/$file" "$record_uri/$file"
@@ -668,42 +711,6 @@ jobs:
             --title "$STAGING_RELEASE_ID" --notes "$DISPATCH_REASON" \
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release/artifact-index.json" \
             "$snapshot_path"
-
-      - name: Materialize selected Manifest artifacts
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/selected"
-          fetch() {
-            local uri="$1" target="$2"
-            case "$uri" in
-              oss://*) aliyun --secure oss cp "$uri" "$target" --region "$RELEASE_RECORD_OSS_REGION" ;;
-              https://*) curl -fsSL --retry 3 "$uri" -o "$target" ;;
-              *) echo "Unsupported immutable artifact URI: $uri" >&2; return 1 ;;
-            esac
-          }
-          for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
-            set -- $pair
-            uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
-            digest="$(jq -r ".artifacts.$1.digest" "$RUNNER_TEMP/manifest.json")"
-            fetch "$uri" "$RUNNER_TEMP/selected/$2"
-            test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
-          done
-          runtime_path="$(jq -r .artifacts.stagingRuntimeAssets.path "$RUNNER_TEMP/release/artifact-index.json")"
-          runtime_digest="$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")"
-          test "$runtime_path" = staging-runtime-assets.tgz
-          cp "$RUNNER_TEMP/release/$runtime_path" "$RUNNER_TEMP/selected/staging-runtime-assets.tgz"
-          test "sha256:$(sha256sum "$RUNNER_TEMP/selected/staging-runtime-assets.tgz" | cut -d' ' -f1)" = \
-            "$runtime_digest"
-          jq -n \
-            --arg releaseId "$STAGING_RELEASE_ID" \
-            --arg manifestDigest "$MANIFEST_DIGEST" \
-            --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg stagingRuntimeAssetsDigest "$runtime_digest" \
-            '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}' \
-            > "$RUNNER_TEMP/staging-runtime-summary.json"
 
       - name: Create GitHub Staging Deployment
         env:

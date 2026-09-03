@@ -1,6 +1,130 @@
 #!/usr/bin/env bash
-# 由 ACS workflow 通过 SSH stdin 执行；保持远程部署与回滚为单一事务。
+# 由 ACS workflow 通过 SSH stdin 执行；保持依赖预检、远程部署与回滚为单一事务。
 set -euo pipefail
+
+PRESERVE_ACS_UNIT_BAK=false
+ACS_ROLLBACK_ATTEMPTED=false
+
+cleanup_acs_unit_backup() {
+  if [ "${PRESERVE_ACS_UNIT_BAK:-false}" = true ]; then
+    echo "preserving ACS unit backup for manual recovery: ${ACS_UNIT_BAK:-unknown}" >&2
+    return 0
+  fi
+  [ -n "${ACS_UNIT_BAK:-}" ] && rm -f "$ACS_UNIT_BAK"
+}
+
+rollback() {
+  # 每个恢复边界独立累计状态；任何单点故障都不得截断后续 unit/restart 恢复。
+  ACS_ROLLBACK_ATTEMPTED=true
+  local rollback_status=0 unit_restore_status=0 restart_status=0 health_ok=false
+  set +e
+  echo "ROLLING BACK SNAT, release link, identity, env, managed unit, and runtime config..."
+
+  if [ ! -d "$PREVIOUS_APP_DIR" ]; then
+    echo "previous content-addressed release is unavailable; continuing best-effort rollback" >&2
+    rollback_status=1
+  fi
+  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" = "true" ]; then
+    echo "rollback retains the verified identical shared SNAT config (digest=$SNAT_ROLLBACK_DIGEST)"
+  elif [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
+    echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."
+    "$SYSTEMCTL_BIN" stop "$ACS_SERVICE_NAME" || rollback_status=1
+    timeout 600s node "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js" \
+      >/tmp/acs-offline-snat-restore.json || rollback_status=1
+    node -e "const r=require('/tmp/acs-offline-snat-restore.json');if(r.status!=='ok'||r.rollbackPrepared!==true||r.report.available!==r.report.checked)process.exit(1)" \
+      || rollback_status=1
+    if [ "$rollback_status" -eq 0 ]; then SNAT_ROLLBACK_PREPARED=true; fi
+  elif [ "$SNAT_ROLLBACK_PREPARED" != "true" ]; then
+    echo "neither per-Pod SNAT nor an identical shared rollback config was verified" >&2
+    rollback_status=1
+  fi
+
+  cp "$ENV_BAK" "$ENV_FILE" || rollback_status=1
+  cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE" || rollback_status=1
+  if [ "$HAD_IDENTITY" = "true" ]; then
+    cp "$IDENTITY_BAK" "$IDENTITY_FILE" || rollback_status=1
+  else
+    rm -f "$IDENTITY_FILE" || rollback_status=1
+  fi
+  if [ "$RUNTIME_IDENTITY_UPDATED" = "true" ]; then
+    if cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"; then
+      RUNTIME_IDENTITY_UPDATED=false
+    else
+      rollback_status=1
+    fi
+  fi
+  if [ -d "$PREVIOUS_APP_DIR" ]; then
+    if ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"; then
+      CURRENT_LINK_UPDATED=false
+    else
+      rollback_status=1
+    fi
+  fi
+  rm -f "$SNAT_OPERATION_STATE_FILE" || rollback_status=1
+
+  if [ "$ACS_UNIT_UPDATED" = true ]; then
+    restore_acs_managed_unit \
+      "$ACS_UNIT_PATH" "$ACS_UNIT_BAK" "$ACS_UNIT_HAD_PREVIOUS" "$SYSTEMCTL_BIN" \
+      || unit_restore_status=$?
+    if [ "$unit_restore_status" -eq 0 ]; then
+      ACS_UNIT_UPDATED=false
+    else
+      rollback_status=1
+      PRESERVE_ACS_UNIT_BAK=true
+    fi
+  fi
+
+  "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME" || restart_status=$?
+  if [ "$restart_status" -ne 0 ]; then
+    rollback_status=1
+    echo 'rollback could not restart the previous ACS service; manual intervention required' >&2
+  else
+    for _ in $(seq 1 "${ROLLBACK_HEALTH_ATTEMPTS:-60}"); do
+      if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
+        health_ok=true
+        echo "rollback health ok"
+        break
+      fi
+      sleep "${ROLLBACK_HEALTH_INTERVAL_SECONDS:-1}"
+    done
+    if [ "$health_ok" != true ]; then
+      rollback_status=1
+      echo "ROLLBACK HEALTH ALSO FAILED — manual intervention required" >&2
+    fi
+  fi
+
+  if [ "$rollback_status" -ne 0 ]; then
+    PRESERVE_ACS_UNIT_BAK=true
+    echo 'ACS direct rollback completed with one or more recovery failures' >&2
+    return 70
+  fi
+  return 0
+}
+
+rollback_and_exit() {
+  local deploy_status="${1:-1}" rollback_status=0
+  rollback || rollback_status=$?
+  if [ "$rollback_status" -ne 0 ]; then exit "$rollback_status"; fi
+  exit "$deploy_status"
+}
+
+ACS_DIRECT_CLEANUP_TRAP_TEST=false
+case "${1:-}" in
+  --test-acs-direct-rollback|--test-acs-direct-cleanup-trap)
+    restore_acs_managed_unit() {
+      "$ROLLBACK_TEST_BIN/restore_acs_managed_unit" "$@"
+    }
+    if [ "$1" = --test-acs-direct-rollback ]; then
+      rollback_status=0
+      rollback || rollback_status=$?
+      cleanup_acs_unit_backup
+      exit "$rollback_status"
+    fi
+    ACS_DIRECT_CLEANUP_TRAP_TEST=true
+    ;;
+esac
+
+if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" != true ]; then
 : "${IMAGE:?missing IMAGE}"
 : "${IMAGE_TAG:?missing IMAGE_TAG}"
 : "${IMAGE_DIGEST:?missing IMAGE_DIGEST}"
@@ -8,11 +132,18 @@ set -euo pipefail
 : "${COMPAT_RELEASE_ID:?missing COMPAT_RELEASE_ID}"
 : "${ECS_DEPLOY_ROOT:?missing ECS_DEPLOY_ROOT}"
 : "${ACS_SERVICE_NAME:?missing ACS_SERVICE_NAME}"
+: "${GITHUB_RUN_ID:?missing GITHUB_RUN_ID}"
+: "${GITHUB_SHA:?missing GITHUB_SHA}"
 
 printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
 printf '%s' "$ORCHESTRATOR_ARTIFACT_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
 printf '%s' "$COMPAT_RELEASE_ID" | grep -Eq '^rc-[0-9]{8}-[0-9]{2,}$'
 printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
+
+lock=/run/lock/agent-saas/promotion.lock
+mkdir -p "$(dirname "$lock")"
+exec 9>"$lock"
+flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
 
 CURRENT_LINK="$ECS_DEPLOY_ROOT/acs-current"
 if [ ! -L "$CURRENT_LINK" ]; then
@@ -26,16 +157,17 @@ ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
 IDENTITY_FILE="/etc/agent-saas/acs-release-identity.json"
 IDENTITY_STATE_CAPTURED=false
 RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
-test -s "$RUNTIME_IDENTITY_FILE"
-node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
-  "$RUNTIME_IDENTITY_FILE"
 RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
-cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
-runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
-printf '{}\n' > "$runtime_identity_probe.candidate"
-mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
-rm -f "$runtime_identity_probe"
 RUNTIME_IDENTITY_UPDATED=false
+RUNTIME_PREFLIGHT_DIR=""
+ACS_NODE=/usr/bin/node
+SYSTEMCTL_BIN=/usr/bin/systemctl
+ACS_UNIT_PATH=/etc/systemd/system/agent-saas-acs-orchestrator.service
+ACS_UNIT_BAK="/tmp/agent-saas-acs-unit-before-${GITHUB_RUN_ID}"
+ACS_UNIT_HAD_PREVIOUS=false
+ACS_UNIT_UPDATED=false
+PRODUCTION_CLEANUP_ARMED=false
+CURRENT_LINK_UPDATED=false
 RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
 # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
 # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
@@ -46,11 +178,37 @@ SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
 SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
 SMOKE_WORKSPACE_DIR="/mnt/agent-saas/${SMOKE_MOUNT}"
 SMOKE_CLEANUP_ERROR="/tmp/acs-smoke-workspace-cleanup-${GITHUB_RUN_ID}.err"
+fi
 
 cleanup() {
-  # EXIT trap 只做资源回收，不能用清理竞态覆盖真实部署结果。
-  local deploy_status=$?
+  # EXIT trap 既回收资源，也兜住进程替换后未显式包装的失败；显式 rollback_and_exit
+  # 已设置 ACS_ROLLBACK_ATTEMPTED，避免同一失败被重复回滚。
+  local deploy_status=$? rollback_status=0
   set +e
+  if [ "$deploy_status" -ne 0 ] \
+    && [ "${PROCESS_REPLACED:-false}" = "true" ] \
+    && [ "${ACS_ROLLBACK_ATTEMPTED:-false}" != "true" ]; then
+    rollback || rollback_status=$?
+  fi
+  if [ "$deploy_status" -ne 0 ] \
+    && [ "${ACS_UNIT_UPDATED:-false}" = "true" ] \
+    && [ "${PROCESS_REPLACED:-false}" != "true" ]; then
+    if restore_acs_managed_unit \
+      "$ACS_UNIT_PATH" "$ACS_UNIT_BAK" "$ACS_UNIT_HAD_PREVIOUS" "$SYSTEMCTL_BIN"; then
+      ACS_UNIT_UPDATED=false
+    else
+      PRESERVE_ACS_UNIT_BAK=true
+      echo 'failed to restore ACS managed unit; manual intervention required' >&2
+    fi
+  fi
+  if [ "${PRODUCTION_CLEANUP_ARMED:-false}" != "true" ]; then
+    case "${RUNTIME_PREFLIGHT_DIR:-}" in
+      /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
+    esac
+    rm -f "$RELEASE_TGZ"
+    cleanup_acs_unit_backup
+    return "$deploy_status"
+  fi
   local sandbox_cleanup_safe=true
   if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
     if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
@@ -172,17 +330,90 @@ EOF
         rm -f "$IDENTITY_FILE"
       fi
     fi
-    ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
+    if [ "${CURRENT_LINK_UPDATED:-false}" = "true" ]; then
+      ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
+      CURRENT_LINK_UPDATED=false
+    fi
     [ -n "${SNAT_OPERATION_STATE_FILE:-}" ] && rm -f "$SNAT_OPERATION_STATE_FILE"
   fi
-  rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
+  case "${RUNTIME_PREFLIGHT_DIR:-}" in
+    /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
+  esac
+  rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" \
+    /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
+  cleanup_acs_unit_backup
+  if [ "$rollback_status" -ne 0 ]; then
+    echo "ACS direct deployment failed with status $deploy_status; rollback status $rollback_status" >&2
+    trap - EXIT HUP INT TERM
+    exit "$rollback_status"
+  fi
   return "$deploy_status"
 }
 trap cleanup EXIT
 
+if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" = true ]; then
+  false
+fi
+
 # ── 1. 安装按 artifact digest 寻址的 orchestrator release（旧进程零影响）──
 actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
 test "$actual_archive_digest" = "$ORCHESTRATOR_ARTIFACT_DIGEST"
+
+# 先在 /tmp 解包，并用 systemd 最终 ExecStart 的同一个 /usr/bin/node 执行 Runtime guard。
+# guard 与 managed unit 校验通过前，不得写入 /etc 或落下持久 release 目录。
+RUNTIME_PREFLIGHT_DIR="$(mktemp -d "/tmp/agent-saas-runtime-preflight-${GITHUB_RUN_ID}-XXXXXX")"
+tar -xzf "$RELEASE_TGZ" -C "$RUNTIME_PREFLIGHT_DIR"
+test -x "$ACS_NODE"
+test -x "$SYSTEMCTL_BIN"
+test -f "$ENV_FILE"
+test -s "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json"
+unit_helper="$RUNTIME_PREFLIGHT_DIR/scripts/release/manage-acs-systemd-unit.sh"
+unit_source="$RUNTIME_PREFLIGHT_DIR/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template"
+desired_environment_file="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/config/production.env"
+runtime_environment_file="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator.env"
+test -s "$unit_helper"
+test -s "$desired_environment_file"
+# 在 /tmp 构造最终 EnvironmentFile：仓库声明的 SNAT 模式会先应用，自定义 CLI 路径原样保留。
+# Runtime guard 自己按 systemd EnvironmentFile 语义解析，禁止 source/eval 生产 env。
+install -m 0600 "$ENV_FILE" "$runtime_environment_file"
+python3 "$RUNTIME_PREFLIGHT_DIR/scripts/apply-orchestrator-env.py" \
+  --desired "$desired_environment_file" \
+  --target "$runtime_environment_file"
+# shellcheck disable=SC1090
+. "$unit_helper"
+validate_acs_managed_unit "$unit_source" "$ACS_NODE" "$ACS_SERVICE_NAME"
+assert_no_acs_managed_unit_dropins "$ACS_SERVICE_NAME"
+"$ACS_NODE" "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+  --manifest="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json" \
+  --component=acsOrchestrator --environment-file="$runtime_environment_file" --production=true
+
+# Runtime guard 通过后，在进程替换前原子安装受管 unit；首次升级允许 /etc 下无旧 unit，
+# 失败时 cleanup/rollback 会恢复旧 unit 或移除本次新增 override 并 daemon-reload。
+if [ -L "$ACS_UNIT_PATH" ] || { [ -e "$ACS_UNIT_PATH" ] && [ ! -f "$ACS_UNIT_PATH" ]; }; then
+  echo "ACS managed unit target must be absent or a regular file: $ACS_UNIT_PATH" >&2
+  exit 1
+fi
+if [ -f "$ACS_UNIT_PATH" ]; then
+  ACS_UNIT_HAD_PREVIOUS=true
+  install -m 0644 "$ACS_UNIT_PATH" "$ACS_UNIT_BAK"
+fi
+ACS_UNIT_UPDATED=true
+install_acs_managed_unit "$unit_source" "$ACS_UNIT_PATH" "$SYSTEMCTL_BIN"
+assert_no_acs_managed_unit_dropins "$ACS_SERVICE_NAME"
+rm -rf -- "$RUNTIME_PREFLIGHT_DIR"
+RUNTIME_PREFLIGHT_DIR=""
+PRODUCTION_CLEANUP_ARMED=true
+
+# Runtime guard 通过后才读取、备份并探测生产 identity 写入边界。
+test -s "$RUNTIME_IDENTITY_FILE"
+node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
+  "$RUNTIME_IDENTITY_FILE"
+cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
+runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
+printf '{}\n' > "$runtime_identity_probe.candidate"
+mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
+rm -f "$runtime_identity_probe"
+
 if [ -d "$APP_DIR" ]; then
   node "$APP_DIR/scripts/release/verify-installed-release.mjs" \
     --action verify --root "$APP_DIR" --component acs >/dev/null
@@ -245,14 +476,26 @@ if [ -f "$DESIRED_ENV" ]; then
     --desired "$DESIRED_ENV" \
     --target "$ENV_FILE" \
     --runtime-config-target "$RUNTIME_CONFIG_FILE"
+  # 最终 unit 将读取这个同一 EnvironmentFile；在旧进程 drain 前再次校验实际落盘值。
+  "$ACS_NODE" "$APP_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+    --manifest="$APP_DIR/acs-orchestrator/runtime-dependencies.json" \
+    --component=acsOrchestrator --environment-file="$ENV_FILE" --production=true
 else
   echo "未找到声明式运行配置 $DESIRED_ENV，拒绝部署" >&2
   exit 1
 fi
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
+# 部署事务只读取自身需要的非 Runtime 字段；通过 NUL 分隔传值，不 source/eval EnvironmentFile。
+unset ACS_ORCH_AUTH_TOKEN ACS_KUBECONFIG
+ACS_NAMESPACE=agent-saas-coding
+shopt -s lastpipe
+"$ACS_NODE" "$APP_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+  --environment-file="$ENV_FILE" \
+  --print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE \
+  | while IFS= read -r -d '' environment_key && IFS= read -r -d '' environment_value; do
+      printf -v "$environment_key" '%s' "$environment_value"
+      export "$environment_key"
+    done
+shopt -u lastpipe
 : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
 AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 SNAT_OPERATION_STATE_FILE="${RUNTIME_CONFIG_FILE}.snat-operation-state.json"
@@ -317,9 +560,11 @@ node "$APP_DIR/scripts/release/write-compatibility-acs-identity.mjs" \
   --namespace "${ACS_NAMESPACE:-agent-saas-coding}" \
   --config-fingerprint "$CONFIG_FINGERPRINT" >/dev/null
 ln -sfn "$APP_DIR" "$CURRENT_LINK"
+CURRENT_LINK_UPDATED=true
 
-# ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
-#      systemd Restart=always 5s 后自动拉起新代码+新 env ──
+
+# ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后 clean exit →
+#      当前事务显式 systemctl restart 拉起新代码、新 env 与 managed unit ──
 # 2026-07-15 修复：SIGUSR2 必须送达注册了 handler 的 node 本体。
 # ExecStart 是 pnpm wrapper 时 MainPID 是 wrapper 的 node 进程——它不
 # 转发 SIGUSR2 且收到即被默认动作终止（drain 静默失效、inflight 被
@@ -332,7 +577,7 @@ if [ -f "$ORCH_PIDFILE" ] && kill -0 "$(cat "$ORCH_PIDFILE")" 2>/dev/null; then
   DRAIN_PID=$(cat "$ORCH_PIDFILE")
   echo "draining orchestrator pid=$DRAIN_PID (SIGUSR2 via pidfile)..."
 else
-  MAIN_PID=$(systemctl show -p MainPID --value "$ACS_SERVICE_NAME" 2>/dev/null || echo 0)
+  MAIN_PID=$("$SYSTEMCTL_BIN" show -p MainPID --value "$ACS_SERVICE_NAME" 2>/dev/null || echo 0)
   if [ -n "$MAIN_PID" ] && [ "$MAIN_PID" != "0" ]; then
     DRAIN_PID="$MAIN_PID"
     echo "WARN: pidfile missing/stale; SIGUSR2 to MainPID=$MAIN_PID (wrapper may swallow it)"
@@ -359,9 +604,15 @@ if [ "$RESTART_FALLBACK" = "0" ]; then
   fi
 fi
 if [ "$RESTART_FALLBACK" = "1" ]; then
-  systemctl restart "$ACS_SERVICE_NAME"
+  echo 'restarting orchestrator without a confirmed graceful drain'
 fi
+# Restart=on-failure 不会在 drain 的 clean exit(0) 后自动拉起；无论 drain 是否
+# 优雅完成，都必须由当前受锁事务显式 restart，确保 managed unit 与候选 symlink 生效。
 PROCESS_REPLACED=true
+if ! "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"; then
+  echo 'candidate restart failed; rolling back the managed unit and previous release' >&2
+  rollback_and_exit 1
+fi
 
 # ── 4. 等新进程 health 且 image 已切换 ──
 HEALTH_OK=false
@@ -375,59 +626,10 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 
-rollback() {
-  echo "ROLLING BACK SNAT, release link, identity, env and runtime config..."
-  if [ ! -d "$PREVIOUS_APP_DIR" ]; then
-    echo "previous content-addressed release is unavailable; refusing rollback" >&2
-    return 1
-  fi
-  if [ "$SNAT_ROLLBACK_PREPARED" != "true" ] \
-    && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ] \
-    && [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" != "true" ]; then
-    echo "neither per-Pod SNAT nor an identical shared rollback config was verified; refusing rollback" >&2
-    return 1
-  fi
-  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" = "true" ]; then
-    echo "rollback retains the verified identical shared SNAT config (digest=$SNAT_ROLLBACK_DIGEST)"
-  fi
-  if [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
-    echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."
-    systemctl stop "$ACS_SERVICE_NAME"
-    timeout 600s node "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js" \
-      >/tmp/acs-offline-snat-restore.json
-    node -e "const r=require('/tmp/acs-offline-snat-restore.json');if(r.status!=='ok'||r.rollbackPrepared!==true||r.report.available!==r.report.checked)process.exit(1)"
-    SNAT_ROLLBACK_PREPARED=true
-  fi
-  cp "$ENV_BAK" "$ENV_FILE"
-  cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
-  if [ "$HAD_IDENTITY" = "true" ]; then
-    cp "$IDENTITY_BAK" "$IDENTITY_FILE"
-  else
-    rm -f "$IDENTITY_FILE"
-  fi
-  if [ "$RUNTIME_IDENTITY_UPDATED" = "true" ]; then
-    cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
-    RUNTIME_IDENTITY_UPDATED=false
-  fi
-  ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
-  rm -f "$SNAT_OPERATION_STATE_FILE"
-  systemctl restart "$ACS_SERVICE_NAME"
-  for _ in $(seq 1 60); do
-    if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
-      echo "rollback health ok"
-      return 0
-    fi
-    sleep 1
-  done
-  echo "ROLLBACK HEALTH ALSO FAILED — manual intervention required" >&2
-  return 1
-}
-
 if [ "$HEALTH_OK" != "true" ]; then
   echo "health/image check failed after 120s" >&2
   journalctl -u "$ACS_SERVICE_NAME" -n 100 --no-pager || true
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 
 EXPECTED_MAX_RUNNING="$(grep '^ACS_SANDBOX_MAX_RUNNING=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
@@ -461,8 +663,7 @@ if (mismatch.length > 0) {
 }
 NODE
 then
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 echo "runtime config and lifecycle policy gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_RUNNING enabled=true mode=enforce"
 
@@ -516,8 +717,7 @@ if [ "$SMOKE_OK" != "true" ]; then
     # shellcheck disable=SC2086
     kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get events --sort-by=.lastTimestamp 2>/dev/null | tail -20 || true
   fi
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 
 if command -v kubectl >/dev/null 2>&1; then
@@ -620,8 +820,7 @@ for identity_attempt in $(seq 1 10); do
 done
 if [ "$IDENTITY_SYNCED" != "true" ]; then
   echo "Production runtime identity failed to converge after ACS deployment; rolling ACS back" >&2
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 rm -rf "$IDENTITY_SYNC_DIR"
 echo "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"

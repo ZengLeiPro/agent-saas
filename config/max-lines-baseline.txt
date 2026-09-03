@@ -52,4 +52,4 @@ web/src/components/MessageItem.tsx	1091	production
 web/src/components/MessageList.tsx	1016	production
 web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3125	production
+web/src/hooks/useChatAppState.ts	3103	production

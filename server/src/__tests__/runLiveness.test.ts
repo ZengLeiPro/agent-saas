@@ -6,7 +6,7 @@ import {
   type LivenessReapResult,
   type RunHeartbeatSource,
 } from '../runtime/runLiveness.js';
-import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
+import type { RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 

@@ -19,6 +19,7 @@ const ANDROID_DISTRIBUTION_TARGETS = Object.freeze([...ANDROID_DISTRIBUTIONS, 'b
 const BUILD_PLATFORMS = Object.freeze(['android', 'ios']);
 const VERIFICATION_STATES = Object.freeze(['pending-external-verification', 'verified']);
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const LEGACY_KY_AGENT_ASC_APP_ID = '6760248115';
 const REQUEST_INSTALL_PACKAGES = 'android.permission.REQUEST_INSTALL_PACKAGES';
 const INSTALL_PERMISSION_PLUGIN = './plugins/withInstallPermission';
 const SEMVER_PATTERN =
@@ -127,13 +128,16 @@ function validateManifestSchema(manifest) {
     'verification',
     'oauthCallback',
   ]);
-  if (manifest.schemaVersion !== 3) fail('release manifest.schemaVersion must be 3');
+  if (manifest.schemaVersion !== 4) fail('release manifest.schemaVersion must be 4');
 
   assertExactKeys(manifest.identity, 'release manifest.identity', [
     'displayName',
     'slug',
     'scheme',
     'iosBundleIdentifier',
+    'iosAscAppId',
+    'iosAppleTeamId',
+    'iosAppGroupIdentifier',
     'androidPackage',
     'easProjectId',
     'easOwner',
@@ -149,6 +153,18 @@ function validateManifestSchema(manifest) {
   }
   if (!/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(manifest.identity.iosBundleIdentifier)) {
     fail('release manifest.identity.iosBundleIdentifier has an invalid bundle identifier');
+  }
+  if (!/^\d{10,}$/.test(manifest.identity.iosAscAppId)) {
+    fail('release manifest.identity.iosAscAppId has an invalid App Store Connect app ID');
+  }
+  if (manifest.identity.iosAscAppId === LEGACY_KY_AGENT_ASC_APP_ID) {
+    fail('release manifest.identity.iosAscAppId must not reuse the legacy KY Agent app');
+  }
+  if (!/^[A-Z0-9]{10}$/.test(manifest.identity.iosAppleTeamId)) {
+    fail('release manifest.identity.iosAppleTeamId has an invalid Apple Team ID');
+  }
+  if (!/^group\.[A-Za-z0-9][A-Za-z0-9.-]+$/.test(manifest.identity.iosAppGroupIdentifier)) {
+    fail('release manifest.identity.iosAppGroupIdentifier has an invalid App Group identifier');
   }
   if (
     !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(manifest.identity.androidPackage)
@@ -166,12 +182,23 @@ function validateManifestSchema(manifest) {
     fail('release manifest.identity.easOwner has an invalid EAS account name');
   }
 
-  assertExactKeys(manifest.oauthCallback, 'release manifest.oauthCallback', ['profiles']);
+  assertExactKeys(manifest.oauthCallback, 'release manifest.oauthCallback', ['enabled', 'profiles']);
+  assertExactKeys(manifest.oauthCallback.enabled, 'release manifest.oauthCallback.enabled', RELEASE_PROFILES);
   assertExactKeys(manifest.oauthCallback.profiles, 'release manifest.oauthCallback.profiles', RELEASE_PROFILES);
   for (const profile of RELEASE_PROFILES) {
+    const enabled = manifest.oauthCallback.enabled[profile];
+    if (typeof enabled !== 'boolean') {
+      fail(`release manifest.oauthCallback.enabled.${profile} must be a boolean`);
+    }
     const entries = manifest.oauthCallback.profiles[profile];
     if (!Array.isArray(entries) || new Set(entries).size !== entries.length) {
       fail(`release manifest.oauthCallback.profiles.${profile} must be a unique URL array`);
+    }
+    if (!enabled && entries.length > 0) {
+      fail(`release manifest.oauthCallback.profiles.${profile} must be empty when OAuth is disabled`);
+    }
+    if (enabled && entries.length === 0) {
+      fail(`release manifest.oauthCallback.profiles.${profile} must not be empty when OAuth is enabled`);
     }
     for (const entry of entries) {
       let callback;
@@ -272,7 +299,6 @@ function validateManifestSchema(manifest) {
 function assertProductionReady(manifest, context) {
   if (context.profile !== 'production') return;
   const blockers = [];
-  if (manifest.oauthCallback.profiles.production.length === 0) blockers.push('production OAuth callback domain is missing');
   if (manifest.target.profile === null) blockers.push('target.profile is missing');
   else if (manifest.target.profile !== context.profile) {
     blockers.push(
@@ -300,7 +326,6 @@ function assertProductionReady(manifest, context) {
     }
   }
 
-  if (manifest.target.gitSha === null) blockers.push('target.gitSha is missing');
   if (!context.sourceGitSha) blockers.push('source Git SHA is unavailable');
   else if (
     manifest.target.gitSha &&
@@ -316,11 +341,8 @@ function assertProductionReady(manifest, context) {
   if (manifest.verification.versions !== 'verified') {
     blockers.push('versions are pending external verification');
   }
-  if (manifest.version.androidVersionCode === null) {
+  if (context.platform !== 'ios' && manifest.version.androidVersionCode === null) {
     blockers.push('androidVersionCode is missing');
-  }
-  for (const [key, value] of Object.entries(manifest.version.latestPublished)) {
-    if (value === null) blockers.push(`latestPublished.${key} is missing`);
   }
   if (blockers.length) {
     fail(`Production release is blocked:\n- ${blockers.join('\n- ')}`);
@@ -602,6 +624,12 @@ function assertEasVersionPolicy(easConfig, label, { requireProfiles = false } = 
   if (buildProfiles.production.env?.MOBILE_ANDROID_DISTRIBUTION) {
     fail(`${label} build.production must remain distribution-ambiguous and fail closed`);
   }
+  if (buildProfiles.production.distribution !== 'store') {
+    fail(`${label} build.production.distribution must be store for the iOS release profile`);
+  }
+  if (buildProfiles.production.ios?.credentialsSource !== 'remote') {
+    fail(`${label} build.production.ios.credentialsSource must be remote`);
+  }
   const expectedProfiles = {
     'production-store': {
       distribution: 'store',
@@ -637,6 +665,75 @@ function assertEasVersionPolicy(easConfig, label, { requireProfiles = false } = 
   }
 }
 
+function assertProductionBuildEnvironment(easConfig, manifest) {
+  const environment = easConfig.build?.production?.env ?? {};
+  const required = [
+    'EXPO_PUBLIC_MOBILE_API_ORIGIN',
+    'EXPO_PUBLIC_MOBILE_API_ALLOWLIST',
+    'EXPO_PUBLIC_MOBILE_WS_ALLOWLIST',
+  ];
+  for (const name of required) {
+    assertNonEmptyString(environment[name], `mobile/eas.json build.production.env.${name}`);
+  }
+  let apiOrigin;
+  let wsOrigin;
+  try {
+    apiOrigin = new URL(environment.EXPO_PUBLIC_MOBILE_API_ORIGIN);
+    wsOrigin = new URL(environment.EXPO_PUBLIC_MOBILE_WS_ALLOWLIST);
+  } catch {
+    fail('mobile/eas.json production service origins must be valid URLs');
+  }
+  if (
+    apiOrigin.protocol !== 'https:' ||
+    apiOrigin.username ||
+    apiOrigin.password ||
+    apiOrigin.pathname !== '/' ||
+    apiOrigin.search ||
+    apiOrigin.hash
+  ) {
+    fail('mobile/eas.json production API origin must be a credential-free HTTPS origin');
+  }
+  if (
+    wsOrigin.protocol !== 'wss:' ||
+    wsOrigin.username ||
+    wsOrigin.password ||
+    wsOrigin.pathname !== '/' ||
+    wsOrigin.search ||
+    wsOrigin.hash
+  ) {
+    fail('mobile/eas.json production WebSocket allowlist must contain a WSS origin');
+  }
+  const apiAllowlist = environment.EXPO_PUBLIC_MOBILE_API_ALLOWLIST
+    .split(/[\n,]/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!apiAllowlist.includes(apiOrigin.origin)) {
+    fail('mobile/eas.json production API origin is absent from its allowlist');
+  }
+  if (wsOrigin.host !== apiOrigin.host) {
+    fail('mobile/eas.json production API and WebSocket origins must use the same host');
+  }
+  if (environment.MOBILE_IOS_APPLE_TEAM_ID !== manifest.identity.iosAppleTeamId) {
+    fail('mobile/eas.json production Apple Team ID does not match the release manifest');
+  }
+  if (
+    environment.MOBILE_IOS_SHARE_APP_GROUP !==
+    manifest.identity.iosAppGroupIdentifier
+  ) {
+    fail('mobile/eas.json production App Group does not match the release manifest');
+  }
+}
+
+function assertIosSubmitConfiguration(easConfig, manifest) {
+  const submitProfile = easConfig.submit?.production;
+  assertRecord(submitProfile, 'mobile/eas.json submit.production');
+  const ios = submitProfile.ios;
+  assertRecord(ios, 'mobile/eas.json submit.production.ios');
+  if (ios.ascAppId !== manifest.identity.iosAscAppId) {
+    fail('mobile/eas.json production ascAppId does not match the release manifest');
+  }
+}
+
 function createArtifactIdentity(manifest, context) {
   return {
     schemaVersion: manifest.schemaVersion,
@@ -646,7 +743,7 @@ function createArtifactIdentity(manifest, context) {
     target: {
       profile: manifest.target.profile ?? 'not-set',
       distribution: manifest.target.distribution ?? 'not-set',
-      gitSha: manifest.target.gitSha ?? 'not-set',
+      gitSha: manifest.target.gitSha ?? context.sourceGitSha ?? 'not-set',
     },
     identity: { ...manifest.identity },
     version: {
@@ -658,7 +755,10 @@ function createArtifactIdentity(manifest, context) {
       enterpriseUpdater: context.enterpriseUpdater?.enabled === true,
     },
     verification: { ...manifest.verification },
-    oauthCallback: { allowlist: [...manifest.oauthCallback.profiles[context.profile]] },
+    oauthCallback: {
+      enabled: manifest.oauthCallback.enabled[context.profile],
+      allowlist: [...manifest.oauthCallback.profiles[context.profile]],
+    },
   };
 }
 
@@ -713,6 +813,10 @@ function createExpoConfig(staticExpoConfig, options = {}) {
       ...(staticExpoConfig.ios ?? {}),
       bundleIdentifier: manifest.identity.iosBundleIdentifier,
       buildNumber: String(manifest.version.iosBuildNumber),
+      infoPlist: {
+        ...(staticExpoConfig.ios?.infoPlist ?? {}),
+        AgentSaaSReleaseSourceGitSHA: artifactIdentity.sourceGitSha,
+      },
       entitlements: {
         ...(staticExpoConfig.ios?.entitlements ?? {}),
         ...(httpsCallbacks.length ? { 'com.apple.developer.associated-domains': httpsCallbacks.map(url => `applinks:${url.host}`) } : {}),
@@ -736,7 +840,10 @@ function createExpoConfig(staticExpoConfig, options = {}) {
         projectId: manifest.identity.easProjectId,
       },
       releaseManifest: artifactIdentity,
-      oauthCallback: { allowlist: [...callbackAllowlist] },
+      oauthCallback: {
+        enabled: manifest.oauthCallback.enabled[context.profile],
+        allowlist: [...callbackAllowlist],
+      },
       androidDistribution: {
         flavor: context.distribution ?? 'unselected',
         artifactType,
@@ -771,6 +878,11 @@ function assertExpoIdentityMatchesManifest(expoConfig, manifest, context) {
       manifest.identity.iosBundleIdentifier,
     ],
     ['ios.buildNumber', expoConfig.ios?.buildNumber, String(manifest.version.iosBuildNumber)],
+    [
+      'ios.infoPlist.AgentSaaSReleaseSourceGitSHA',
+      expoConfig.ios?.infoPlist?.AgentSaaSReleaseSourceGitSHA,
+      expectedArtifact.sourceGitSha,
+    ],
     ['android.package', expoConfig.android?.package, manifest.identity.androidPackage],
     ['extra.eas.projectId', expoConfig.extra?.eas?.projectId, manifest.identity.easProjectId],
   ];
@@ -891,6 +1003,8 @@ function verifyRepositoryReleaseConfiguration({
   assertProductionReady(manifest, context);
   assertStaticExpoConfigHasNoReleaseFields(staticExpoConfig);
   assertEasVersionPolicy(mobileEasConfig, 'mobile/eas.json', { requireProfiles: true });
+  assertProductionBuildEnvironment(mobileEasConfig, manifest);
+  assertIosSubmitConfiguration(mobileEasConfig, manifest);
   assertEasVersionPolicy(rootEasConfig, 'root eas.json guard');
   const resolvedExpoConfig =
     expoConfig ?? createExpoConfig(staticExpoConfig, { manifest, context });
@@ -910,6 +1024,8 @@ module.exports = {
   STATIC_EXPO_CONFIG_PATH,
   ReleaseManifestError,
   assertEasVersionPolicy,
+  assertIosSubmitConfiguration,
+  assertProductionBuildEnvironment,
   assertExpoIdentityMatchesManifest,
   assertProductionReady,
   assertStaticExpoConfigHasNoReleaseFields,

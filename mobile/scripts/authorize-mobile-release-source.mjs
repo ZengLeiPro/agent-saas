@@ -100,12 +100,16 @@ export function authorizeReleaseSource(options) {
     fail('release manifest target.profile must be production');
   if (manifest.target.gitSha?.toLowerCase() !== commitOid)
     fail('release manifest target.gitSha does not match commitOid');
-  if (Object.values(manifest.verification).some((state) => state !== 'verified'))
-    fail('release manifest verification is incomplete');
-  if (!manifest.oauthCallback.profiles.production.length)
+  if (manifest.verification.identity !== 'verified' || manifest.verification.versions !== 'verified')
+    fail('release manifest identity/version verification is incomplete');
+  if (profile !== 'ios-store' && manifest.verification.distribution !== 'verified')
+    fail('release manifest distribution verification is incomplete');
+  if (manifest.oauthCallback.enabled.production && !manifest.oauthCallback.profiles.production.length)
     fail('release manifest production OAuth callback is missing');
-  if (!manifest.version.androidVersionCode || !manifest.version.iosBuildNumber)
-    fail('release manifest build versions are incomplete');
+  if (profile === 'ios-store' && !manifest.version.iosBuildNumber)
+    fail('release manifest iOS build version is incomplete');
+  if (profile !== 'ios-store' && !manifest.version.androidVersionCode)
+    fail('release manifest Android build version is incomplete');
   const expectedDistribution =
     profile === 'android-store' ? 'store' : profile === 'android-enterprise' ? 'enterprise' : null;
   if (
@@ -177,6 +181,9 @@ export function authorizeReleaseSource(options) {
       profile === 'ios-store'
         ? manifest.identity.iosBundleIdentifier
         : manifest.identity.androidPackage,
+    iosTeamId: profile === 'ios-store' ? manifest.identity.iosAppleTeamId : null,
+    iosAppGroup:
+      profile === 'ios-store' ? manifest.identity.iosAppGroupIdentifier : null,
     version: manifest.version.marketingVersion,
     buildNumber: profile === 'ios-store' ? manifest.version.iosBuildNumber : null,
     versionCode: profile === 'ios-store' ? null : manifest.version.androidVersionCode,

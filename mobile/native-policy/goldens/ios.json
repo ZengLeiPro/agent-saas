@@ -5,17 +5,16 @@
       {
         "path": "ios/<app>/AgentSaaS.entitlements",
         "values": {
-          "com.apple.security.application-groups": [
-            "group.test-fixture.com.agentsaas.mobile"
+          "com.apple.security.application-groups": ["group.test-fixture.com.agentsaas.mobile"],
+          "keychain-access-groups": [
+            "$(AppIdentifierPrefix)group.test-fixture.com.agentsaas.mobile"
           ]
         }
       },
       {
         "path": "ios/<app>Share/ShareExtension.entitlements",
         "values": {
-          "com.apple.security.application-groups": [
-            "group.test-fixture.com.agentsaas.mobile"
-          ]
+          "com.apple.security.application-groups": ["group.test-fixture.com.agentsaas.mobile"]
         }
       }
     ],
@@ -23,10 +22,7 @@
       "backgroundModes": [],
       "bundleIdentifierValue": "$(PRODUCT_BUNDLE_IDENTIFIER)",
       "transportSecurity": {},
-      "urlSchemes": [
-        "agent-saas",
-        "com.agentsaas.mobile"
-      ],
+      "urlSchemes": ["agent-saas", "com.agentsaas.mobile"],
       "usageDescriptions": {
         "NSCameraUsageDescription": "用于在用户选择拍照时拍摄并上传附件",
         "NSFaceIDUsageDescription": "用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面",
@@ -41,9 +37,7 @@
           "NSPrivacyAccessedAPITypes": [
             {
               "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
-              "NSPrivacyAccessedAPITypeReasons": [
-                "CA92.1"
-              ]
+              "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
             }
           ],
           "NSPrivacyCollectedDataTypes": [],
@@ -57,9 +51,7 @@
           "NSPrivacyAccessedAPITypes": [
             {
               "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
-              "NSPrivacyAccessedAPITypeReasons": [
-                "CA92.1"
-              ]
+              "NSPrivacyAccessedAPITypeReasons": ["CA92.1"]
             }
           ],
           "NSPrivacyCollectedDataTypes": [],
@@ -69,13 +61,8 @@
       }
     ],
     "xcode": {
-      "bundleIdentifiers": [
-        "com.agentsaas.mobile",
-        "com.agentsaas.mobile.share-extension"
-      ],
-      "developmentTeams": [
-        "TESTTEAM01"
-      ]
+      "bundleIdentifiers": ["com.agentsaas.mobile", "com.agentsaas.mobile.share-extension"],
+      "developmentTeams": ["TESTTEAM01"]
     }
   },
   "profile": "ios",

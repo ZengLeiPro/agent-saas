@@ -275,28 +275,32 @@ export function validateBuildEvidence(document, options = {}) {
   iso(document.buildCompletedAt, 'buildCompletedAt');
   if (Date.parse(document.buildCompletedAt) < Date.parse(document.buildStartedAt))
     fail('buildCompletedAt predates buildStartedAt');
-  if (!Array.isArray(document.profiles) || document.profiles.length !== 3)
-    fail('profiles must contain exactly three entries');
+  if (
+    !Array.isArray(document.profiles) ||
+    document.profiles.length < 1 ||
+    document.profiles.length > PROFILES.length
+  )
+    fail('profiles must contain between one and three entries');
   const profiles = document.profiles.map((profile) =>
     validateProfile(record(profile, 'profile'), document),
   );
   const names = profiles.map(({ profile }) => profile);
-  if (new Set(names).size !== 3 || !PROFILES.every((name) => names.includes(name)))
-    fail('all three release profiles are required exactly once');
+  if (new Set(names).size !== names.length)
+    fail('release profiles must be unique');
   const easIds = profiles.map(({ easBuildId }) => easBuildId);
   if (new Set(easIds).size !== easIds.length) fail('EAS build ID was replayed across profiles');
   for (const id of easIds)
     if (options.replay?.easBuildIds?.has(id)) fail(`EAS build ID ${id} was replayed`);
-  const ios = profiles.find(({ profile }) => profile === 'ios-store');
+  const baseline = profiles[0];
   for (const profile of profiles) {
-    same(profile.appId, ios.appId, `${profile.profile}.appId`);
-    same(profile.version, ios.version, `${profile.profile}.version`);
+    same(profile.appId, baseline.appId, `${profile.profile}.appId`);
+    same(profile.version, baseline.version, `${profile.profile}.version`);
   }
-  same(
-    profiles.find(({ profile }) => profile === 'android-store').versionCode,
-    profiles.find(({ profile }) => profile === 'android-enterprise').versionCode,
-    'Android versionCode',
-  );
+  const androidStore = profiles.find(({ profile }) => profile === 'android-store');
+  const androidEnterprise = profiles.find(({ profile }) => profile === 'android-enterprise');
+  if (androidStore && androidEnterprise) {
+    same(androidStore.versionCode, androidEnterprise.versionCode, 'Android versionCode');
+  }
   validateEnvelope(document, options);
   return document;
 }

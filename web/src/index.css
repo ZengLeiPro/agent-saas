@@ -332,9 +332,11 @@
 }
 
 @layer components {
-  /* 内容区域居中容器 - 消息列表、输入框、文件上传共用 */
+  /* 内容区域居中容器 - 消息列表、输入框、文件上传共用。
+     留白随主对话区域宽度变化，在受挤压时仍保留舒适边距。 */
   .content-container {
-    @apply mx-auto max-w-3xl md:max-w-4xl px-3;
+    @apply mx-auto max-w-3xl md:max-w-4xl;
+    padding-inline: clamp(1rem, 4%, 2rem);
   }
   /* Markdown 消息的 prose 样式预设 */
   .prose-chat {

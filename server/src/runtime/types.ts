@@ -829,7 +829,7 @@ export type PlatformEvent =
     streamId?: string;
     content: string;
   }
-  | {
+  | ({
     id: string;
     timestamp: string;
     type: 'interaction_requested';
@@ -845,7 +845,7 @@ export type PlatformEvent =
     displayName?: string;
     questions?: unknown;
     toolInput?: unknown;
-  }
+  } & { version?: number; order?: number })
   | {
     id: string;
     timestamp: string;
@@ -1107,7 +1107,7 @@ export type PlatformEvent =
     resultPreview?: string;
   };
 
-export type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEventInput } from './runtimeEventStoreTypes.js';
+export type { EventAppendContext, EventListOptions, EventListPage, EventReplayLoadStats, EventStore, PlatformEventInput } from './runtimeEventStoreTypes.js';
 
 export { INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES, isInternalModelDiagnosticEvent } from './eventDiagnostics.js';
 

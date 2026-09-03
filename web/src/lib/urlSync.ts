@@ -149,19 +149,6 @@ export function isSettingsPath(pathname = window.location.pathname): boolean {
   return pathname === '/settings' || pathname.startsWith('/settings/');
 }
 
-function matchAdminSettingsPath(pathname: string): AdminSettingsState | null {
-  for (const target of ['tenant', 'platform'] as const) {
-    const prefix = `/${target}-admin/settings`;
-    if (pathname === prefix) return { target, section: settingsFallbackSection(target) };
-    if (!pathname.startsWith(`${prefix}/`)) continue;
-    const encodedSection = pathname.slice(prefix.length + 1);
-    if (!encodedSection || encodedSection.includes('/')) return null;
-    const section = decodeSegment(encodedSection);
-    return isSettingsSectionId(target, section) ? { target, section } : null;
-  }
-  return null;
-}
-
 function decodeSegment(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -326,13 +313,7 @@ function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | '
 
 /** 解析 pathname → URL state；search 只由 platform-admin 路由读取，常规 buildUrl 仍只管理 pathname */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
-  // 平台设置仍保留现有 modal；tenant 旧 settings URL 必须交给 Governance parser
-  // canonical 到唯一的组织管理 route，不再复活第二套组织设置 renderer。
-  const adminSettings = matchAdminSettingsPath(pathname);
-  if (adminSettings?.target === 'platform') {
-    return parsed({ tab: 'platform-admin', sessionId: null, settingsSection: null, adminSettings });
-  }
-
+  // 旧管理设置 URL 也统一交给 Governance parser，canonical 到唯一管理路由。
   const governance = parseGovernanceUrl(`${pathname}${search}`);
   if (governance.kind === 'route') {
     const route = governance.route;

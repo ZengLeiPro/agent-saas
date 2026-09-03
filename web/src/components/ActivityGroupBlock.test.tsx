@@ -34,6 +34,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(toggle.className).toContain('py-1');
     expect(toggle.lastElementChild?.classList.contains('lucide-chevron-right')).toBe(true);
     fireEvent.click(toggle);
+    expect(toggle.parentElement?.parentElement?.querySelector('.flex.flex-col')?.className).toContain('gap-2');
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);
   });
 

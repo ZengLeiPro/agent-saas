@@ -11,6 +11,11 @@ describe('interactionStore disconnect behavior', () => {
       toolName: 'Write',
     });
 
+    expect(interactionStore.getPendingInteractions('session-1')).toEqual([]);
+    expect(interactionStore.getPendingInteractions('session-1', { includeTransient: true })).toEqual([
+      expect.objectContaining({ interactionId, type: 'permission_request' }),
+    ]);
+
     interactionStore.rejectOnDisconnect(new Set([interactionId]), 'closed');
 
     await expect(promise).rejects.toThrow('closed');
@@ -180,4 +185,5 @@ describe('M20-07 active interaction session index', () => {
     await expect(promise).resolves.toEqual({ answers: {} });
     expect(interactionStore.getActiveInteraction('indexed-session')).toBeUndefined();
   });
+
 });

@@ -68,7 +68,7 @@ import {
 } from "../data/transcripts/finalOutput.js";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
 import { RuntimeContextUsageTracker } from "../runtime/contextUsage.js";
-import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjection.js";
+import { buildPendingInteractionsFromEvents, reconcileInMemoryPendingInteractions } from "../runtime/interactionProjection.js";
 import { auditLog } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
 import type { EventBus } from "../channels/web/eventBus.js";
@@ -85,6 +85,7 @@ import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
+import { resolveSessionShareFileSelection } from './sessionShareSelection.js';
 import {
   AGENT_TARGET_BINDING_VERSION,
   redactInteractionCredentials,
@@ -1930,11 +1931,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         confirmPublicText?: unknown;
         filePaths?: unknown;
       };
-      if (body.confirmPublicText !== true || !Array.isArray(body.filePaths)
-        || body.filePaths.length > 32
-        || body.filePaths.some((item) => typeof item !== 'string')
-        || new Set(body.filePaths).size !== body.filePaths.length) {
-        res.status(400).json({ error: "请确认公开正文并提交唯一的文件清单" });
+      if (body.confirmPublicText !== true) {
+        res.status(400).json({ error: "请确认公开当前会话" });
         return;
       }
       let expiresAt = new Date(Date.now() + DEFAULT_SESSION_SHARE_TTL_MS).toISOString();
@@ -1957,20 +1955,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
-      const selectedFilePaths = (body.filePaths as string[]).map(normalizeSessionShareFilePath);
-      if (selectedFilePaths.some((filePath) => !filePath)
-        || new Set(selectedFilePaths).size !== selectedFilePaths.length) {
-        res.status(400).json({ error: "文件清单包含无效或重复路径" });
-        return;
-      }
-      const normalizedSelectedFilePaths = selectedFilePaths as string[];
       const candidates = collectSessionShareCandidateFiles(built.detail.blocks);
       const candidatePaths = new Set(candidates.map((file) => file.relativePath));
-      const missingInlineFile = candidates.find(
-        (file) => file.inlineInBody && !normalizedSelectedFilePaths.includes(file.relativePath),
-      );
-      if (missingInlineFile) {
-        res.status(400).json({ error: "正文内嵌图片和视频必须随正文一并公开" });
+      const selection = resolveSessionShareFileSelection(body.filePaths, candidates);
+      if (!selection.ok) {
+        res.status(400).json({ error: selection.error });
         return;
       }
       const userCwd = resolveUserCwd(agentCwd, {
@@ -1979,8 +1968,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         role: "user",
         tenantId: req.user?.tenantId || DEFAULT_TENANT_ID,
       });
-      const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: normalizedSelectedFilePaths });
-      const frozenFiles = await freezeSessionShareFiles(normalizedSelectedFilePaths, candidatePaths, userCwd);
+      const projected = projectSessionShareSnapshot(built.detail, { selectedFilePaths: selection.filePaths });
+      const frozenFiles = await freezeSessionShareFiles(selection.filePaths, candidatePaths, userCwd);
       const record = await store.upsertActive({
         sessionId,
         tenantId: req.user?.tenantId || DEFAULT_TENANT_ID,
@@ -2930,7 +2919,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           }
         }
 
-        const pending = interactionStore.getPendingInteractions(sessionId);
+        const pending = interactionStore.getPendingInteractions(sessionId, { includeTransient: true });
         if (transcriptPath) {
           const eventTenantId = (await readSessionMeta(transcriptPath))?.tenantId
             ?? req.user?.tenantId
@@ -2946,7 +2935,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               "approval_resolved",
             ],
           });
-          const existingIds = new Set(pending.map((entry) => entry.interactionId));
+          const existingIds = reconcileInMemoryPendingInteractions(pending, durableInteractionEvents);
           for (const state of buildPendingInteractionsFromEvents(
             durableInteractionEvents,
             sessionId,

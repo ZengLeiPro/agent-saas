@@ -4,6 +4,7 @@ import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAcce
 import { closeAnalysisHistory, ensureAnalysisHistoryEntry, markAnalysisHistoryEntry } from "@/lib/analysisHistory";
 import { analysisNavigationRoute } from "@/lib/analysisNavigation";
 export { isAnalysisRoute } from "@/lib/analysisNavigation";
+import { managementPagesFor, managementRouteForPage } from '@/lib/managementNavigation';
 import { parseGovernanceUrl, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { buildUrl, navigateGovernance } from "@/lib/urlSync";
 import type { AppTab } from "@/types/sidebar";
@@ -28,9 +29,14 @@ export function useUnifiedAnalysisWorkspace({
 
   const open = useCallback(() => {
     const source = `${window.location.pathname}${window.location.search}`;
-    pushActiveTab(managementAccess.platformEntryAllowed ? "platform-admin" : "tenant-admin");
     markAnalysisHistoryEntry(source, 1);
-  }, [managementAccess.platformEntryAllowed, pushActiveTab]);
+    const area = managementAccess.platformEntryAllowed ? 'platform' : 'organization';
+    const firstPage = managementPagesFor('analytics', area)[0];
+    if (firstPage) {
+      pushActiveTab(area === 'platform' ? 'platform-admin' : 'tenant-admin');
+      navigateGovernance(managementRouteForPage(firstPage, governanceRoute, lastOrgIdRef.current));
+    }
+  }, [governanceRoute, managementAccess.platformEntryAllowed, pushActiveTab]);
   const close = useCallback(() => closeAnalysisHistory(() => setActiveTab("chat")), [setActiveTab]);
   const navigate = useCallback((routeId: string) => {
     const currentUrl = `${window.location.pathname}${window.location.search}`;

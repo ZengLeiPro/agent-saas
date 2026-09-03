@@ -106,6 +106,8 @@ export interface CronExecutionRecord {
   runId: string;
   startedAtMs: number;
   claimedAtMs: number;
+  /** 首次 claim 时的任务编辑版本；recovery 必须沿用，防止旧执行覆盖新 schedule。 */
+  scheduleUpdatedAtMs?: number;
   runningAtMs?: number;
   status: CronExecutionState;
   ownerId: string;
@@ -117,6 +119,13 @@ export interface CronExecutionRecord {
   attempt: number;
   parentRunId?: string;
   retryOf?: string;
+  /** Cron claim 阶段预分配，恢复时必须复用，禁止生成第二个会话/Runtime Run。 */
+  sessionId?: string;
+  runtimeRunId?: string;
+  runtimeTenantId?: string;
+  /** 同一逻辑执行被 Cron owner 接管的次数，仅用于诊断，不新增运行历史。 */
+  recoveryCount?: number;
+  lastRecoveredAtMs?: number;
   terminalStatus?: "ok" | "error" | "skipped";
   endedAtMs?: number;
 }

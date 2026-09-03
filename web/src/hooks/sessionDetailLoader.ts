@@ -292,6 +292,9 @@ export async function loadSessionDetailRequest(
       ...(oldestCursor ? { oldestCursor } : {}),
     });
 
+    const pendingAtRequestStart = new Set((deps.callbacksRef.current.getMessages?.() ?? finalMsgs)
+      .filter((message) => (message.type === 'permission_request' || message.type === 'ask_user') && message.status === 'pending')
+      .map((message) => (message as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }>).interactionId));
     void authFetch(
       `/api/chat/interactions/pending?sessionId=${encodeURIComponent(id)}`,
     ).then(async (pendingResponse) => {
@@ -300,10 +303,15 @@ export async function loadSessionDetailRequest(
     }).then((pendingList) => {
       if (!pendingList || isStale() || deps.sessionIdRef.current !== id) return;
       const currentMessages = deps.callbacksRef.current.getMessages?.() ?? finalMsgs;
+      const arrivedAfterRequest = new Set(currentMessages
+        .filter((message) => (message.type === 'permission_request' || message.type === 'ask_user') && message.status === 'pending'
+          && !pendingAtRequestStart.has((message as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }>).interactionId))
+        .map((message) => (message as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }>).interactionId));
       deps.callbacksRef.current.setMessages(
-        appendPendingInteractions(currentMessages, pendingList),
+        appendPendingInteractions(currentMessages, pendingList, id, deps.callbacksRef.current.getResolvedInteractionIds?.(), arrivedAfterRequest),
         { scrollToBottom: false },
       );
+      deps.callbacksRef.current.onInteractionsChanged?.(id);
     }).catch(() => {
       // pending check is best-effort
     });

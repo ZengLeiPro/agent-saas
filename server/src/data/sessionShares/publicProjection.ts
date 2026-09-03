@@ -365,6 +365,8 @@ export function collectSessionShareCandidateFiles(blocks: TranscriptBlock[]): Se
   };
 
   for (const block of blocks) {
+    // 只有公开页会保留的正文块才能贡献可下载文件；原始工具结果即使提到路径也不能扩张公开范围。
+    if (block.kind !== 'prompt' && block.kind !== 'text') continue;
     for (const attachment of block.attachments ?? []) {
       const normalized = attachment.relativePath
         ? normalizeSessionShareFilePath(attachment.relativePath)

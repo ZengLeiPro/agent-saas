@@ -364,11 +364,9 @@ export function MessageList({
 
   const { user } = useAuth();
   const presentationGate = useMemo(() => ({
-    debugBuild: typeof __DEV__ !== 'undefined' && __DEV__,
-    authenticatedAdmin: user?.role === 'admin',
     explicitSessionToggle: user?.debugMode === true
       && isDebugModeAvailable(user.tenantId, user.tenantFeatures),
-  }), [user?.debugMode, user?.role, user?.tenantFeatures, user?.tenantId]);
+  }), [user?.debugMode, user?.tenantFeatures, user?.tenantId]);
   const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
   const renderModel = useMemo(() => {
     const next = selectRenderModel({ messages }, previousRenderModelRef.current);

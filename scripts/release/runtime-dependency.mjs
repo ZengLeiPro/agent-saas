@@ -488,7 +488,9 @@ export function verifyRuntimeEnvironment({
         VERSION_CANDIDATE_PATTERN.test(token),
       );
       const normalizedVersion =
-        tool.name === 'kubectl' ? versionToken?.replace(/^[vV]/u, '') : versionToken;
+        tool.name === 'kubectl' || tool.name === 'dws'
+          ? versionToken?.replace(/^[vV]/u, '')
+          : versionToken;
       if (normalizedVersion !== tool.version || !VERSION_PATTERN.test(normalizedVersion ?? ''))
         throw new Error(`Runtime tool ${tool.name} version mismatch: expected ${tool.version}`);
     }

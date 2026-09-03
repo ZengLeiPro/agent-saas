@@ -653,7 +653,7 @@ interface MessageItemProps {
   voicePlayState?: import('@/hooks/useVoicePlayer').VoicePlayState;
   /** 是否显示思考、工具、技能/子任务等执行细节。 */
   debugMode?: boolean;
-  /** 仅表示共享三重门已授权 raw tool/error payload。 */
+  /** 仅表示当前会话的有效调试权限已授权 raw tool/error payload。 */
   rawPresentationMode?: boolean;
   sessionId?: string | null;
 }
@@ -1056,7 +1056,7 @@ export const MessageItem = memo(function MessageItem({
     );
   }
 
-  // Tool/error raw payloads render only after the shared three-gate presenter authorizes them.
+  // Tool/error raw payloads render only after the resolved session debug permission authorizes them.
   if (message.type === "system-error") {
     return (
       <SystemErrorMessage

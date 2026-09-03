@@ -212,7 +212,7 @@ function projectRuntimePlatformEventLegacy(
             : { value: event.input },
         }],
       };
-    case 'interaction_requested':
+    case 'interaction_requested': {
       // AskUserQuestion/permission_request 在运行进程写入 durable event 后，
       // Web 进程也必须投影到同一条会话流；否则刷新时 HTTP 能恢复，停留页面却没有实时卡片。
       if (event.interactionType !== 'ask_user' && event.interactionType !== 'permission_request') {
@@ -222,6 +222,8 @@ function projectRuntimePlatformEventLegacy(
         events: [{
           type: event.interactionType,
           interactionId: event.interactionId,
+          ...(event.version !== undefined ? { version: event.version } : {}),
+          ...(event.order !== undefined ? { order: event.order } : {}),
           ...(event.runId ? { runId: event.runId } : {}),
           ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
           ...(event.invocationId ? { invocationId: event.invocationId } : {}),
@@ -234,6 +236,18 @@ function projectRuntimePlatformEventLegacy(
             : {}),
         }],
       };
+    }
+    case 'interaction_resolved': {
+      return {
+        events: [{
+          type: 'interaction_resolved', sessionId: event.sessionId, interactionId: event.interactionId,
+          status: 'resolved',
+          ...(event.response && typeof event.response === 'object' && !Array.isArray(event.response)
+            ? { response: event.response as Record<string, unknown> }
+            : {}),
+        }],
+      };
+    }
     case 'assistant_stream_event': {
       if (event.phase === 'reset') {
         const state = getOrCreateRuntimeStreamProjectionState(options.streamStates, event.runId);

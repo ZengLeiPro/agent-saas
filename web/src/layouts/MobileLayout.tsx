@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Volume2, VolumeX, Loader2, X } from "lucide-react";
+import { ChevronLeft, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveApprovalTier } from "@/lib/approvalTier";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,9 @@ import { ExpertWelcome } from "@/components/experts/ExpertWelcome";
 import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import type { ScenarioItem } from "@agent/shared";
+import type { AppTab } from '@/types/sidebar';
+import { managementPageForRoute, managementPagesFor, managementRouteForPage } from '@/lib/managementNavigation';
+import { navigateGovernance } from '@/lib/urlSync';
 
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const MarkdownPreviewPanel = lazy(() => import("@/components/MarkdownPreviewPanel").then(m => ({ default: m.MarkdownPreviewPanel })));
@@ -40,14 +43,11 @@ const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscri
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const MobileSettingsModal = lazy(() => import("@/components/SettingsCenter/MobileSettingsModal"));
+const ManagementWorkspaceContent = lazy(() => import('@/components/ManagementShell/ManagementWorkspaceContent').then(m => ({ default: m.ManagementWorkspaceContent })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
-import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import {
-  CompanyInfoSectionPanel, CronManager, EfficiencyViewPanel, GovernanceConsole,
-  ManagementSettingsAccessGate, McpManagerPanel, MemoryPollingManagerPanel,
-  ModelManagerPanel, OrgAgentManagerPanel, PlatformAdminShell, SettingsDirtyBoundary,
-  SignupConfigManagerPanel, SkillManagerPanel, TenantAdminShell, TenantManager,
-  TenantRemoteHandsManagerPanel, ToolControlsManagerPanel, UsageDashboard, UserManager,
+  CronManager, McpManagerPanel, ModelManagerPanel, SkillManagerPanel,
+  TenantManager, UsageDashboard,
 } from "./lazySettingsComponents";
 
 const SuspenseFallback = (
@@ -59,8 +59,8 @@ const SuspenseFallback = (
 export function MobileLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
-    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
-    adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
+    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, setActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    adminSettings,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -111,13 +111,20 @@ export function MobileLayout(props: LayoutProps) {
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const organizationSettingsTargetId = useRef<string | null>(null);
   if (governanceRoute?.area === "organization") organizationSettingsTargetId.current = governanceRoute.orgId;
-  const returnToSettingsMenu = useCallback(() => {
-    openSettings(settingsSection);
-  }, [openSettings, settingsSection]);
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
     setActiveTab("chat");
   }, [setActiveTab]);
+  const handleMobileTabChange = useCallback((tab: AppTab) => {
+    if (tab === 'tenant-admin' || tab === 'platform-admin') {
+      const area = tab === 'platform-admin' ? 'platform' : 'organization';
+      const page = managementPagesFor('analytics', area)[0];
+      setActiveTab(tab);
+      if (page) navigateGovernance(managementRouteForPage(page, governanceRoute, organizationSettingsTargetId.current));
+      return;
+    }
+    setActiveTab(tab);
+  }, [governanceRoute, setActiveTab]);
   const handleBusinessStepPanelOpenChange = useCallback((open: boolean) => {
     setBusinessStepPanelOpen(open);
   }, []);
@@ -268,86 +275,18 @@ export function MobileLayout(props: LayoutProps) {
     };
   }, []);
 
-  if (activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
+  if (governanceRoute && managementPageForRoute(governanceRoute)) {
     return (
       <Suspense fallback={SuspenseFallback}>
-        <SettingsDirtyBoundary>{(dirtyController) => (
-        <ManagementSettingsAccessGate
-          scope="tenant"
-          target="tenant"
+        <ManagementWorkspaceContent
+          route={governanceRoute}
           access={managementAccess}
-          onRetry={managementAccess.retry}
           onReturnPersonal={handleReturnPersonalSettings}
-        >
-          <div className="flex h-full min-h-0 flex-col bg-card" data-testid="mobile-organization-settings">
-            <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
-              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(returnToSettingsMenu)} aria-label="返回设置菜单">
-                <ChevronLeft className="size-5" />
-              </button>
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold">设置 / 组织管理</span>
-              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(closeSettings)} aria-label="关闭设置">
-                <X className="size-5" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <TenantAdminShell
-                renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-                renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-                renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-                renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-                renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderAutomation={() => <CronManager />}
-                settingsOpen={false}
-                settingsSection="users"
-                onSettingsSectionChange={() => undefined}
-                onSettingsClose={() => undefined}
-                governanceRoute={governanceRoute}
-                governanceContentOnly
-                governanceContentEmbedded
-                dirtyController={dirtyController}
-              />
-            </div>
-          </div>
-        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
-      </Suspense>
-    );
-  }
-
-  if (activeTab === "platform-admin" && governanceRoute?.area === "platform") {
-    return (
-      <Suspense fallback={SuspenseFallback}>
-        <SettingsDirtyBoundary>{(dirtyController) => (
-        <ManagementSettingsAccessGate
-          scope="platform"
-          target="platform"
-          access={managementAccess}
-          onRetry={managementAccess.retry}
-          onReturnPersonal={handleReturnPersonalSettings}
-        >
-          <GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
-          <PlatformAdminShell
-            renderTenants={() => <TenantManager />}
-            renderSignupConfig={() => <SignupConfigManagerPanel />}
-            renderModels={() => <ModelManagerPanel />}
-            renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-            renderToolControls={() => <ToolControlsManagerPanel />}
-            renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-            renderSkills={() => <SkillManagerPanel mode="platform" />}
-            renderEfficiency={() => <EfficiencyViewPanel />}
-            activeSection={platformAdminSection}
-            entityId={platformAdminEntityId}
-            onSectionChange={setPlatformAdminRoute}
-            settingsOpen={false}
-            settingsSection="tenants"
-            onSettingsSectionChange={() => undefined}
-            onSettingsClose={() => undefined}
-            governanceRoute={governanceRoute}
-            governanceContentOnly
-          />
-          </GovernanceConsole>
-        </ManagementSettingsAccessGate>
-        )}</SettingsDirtyBoundary>
+          openFilePreview={handleOpenFilePreview}
+          platformAdminSection={platformAdminSection}
+          platformAdminEntityId={platformAdminEntityId}
+          setPlatformAdminRoute={setPlatformAdminRoute}
+        />
       </Suspense>
     );
   }
@@ -459,7 +398,7 @@ export function MobileLayout(props: LayoutProps) {
               onAutoTitle={autoTitleSession}
               isLoading={isLoadingSessions}
               activeTab={activeTab}
-              onTabChange={setActiveTab}
+              onTabChange={handleMobileTabChange}
               onOpenSettings={openSettings}
               isAdmin={isAdmin}
               className="w-full border-r-0"
@@ -473,61 +412,6 @@ export function MobileLayout(props: LayoutProps) {
               personalAgentEnabled={personalAgentEnabled}
               renderCronManager={() => <Suspense fallback={SuspenseFallback}><CronManager /></Suspense>}
               renderTenantManager={() => <Suspense fallback={SuspenseFallback}><TenantManager /></Suspense>}
-              renderTenantAdmin={adminSettings?.target === "tenant" ? undefined : () => (
-                <Suspense fallback={SuspenseFallback}>
-                  <ManagementSettingsAccessGate
-                    scope="tenant"
-                    target={activeTab === "tenant-admin" ? "tenant" : "personal"}
-                    access={managementAccess}
-                    onRetry={managementAccess.retry}
-                    onReturnPersonal={handleReturnPersonalSettings}
-                  >
-                  <TenantAdminShell
-                    renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-                    renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-                    renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                    renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-                    renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-                    renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-                    settingsOpen={adminSettings?.target === "tenant"}
-                    settingsSection={(adminSettings?.target === "tenant" ? adminSettings.section : "users") as TenantSection}
-                    onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-                    onSettingsClose={closeAdminSettings}
-                    activeAnalysisSection={tenantAdminSection}
-                    onAnalysisSectionChange={setTenantAdminRoute}
-                  />
-                  </ManagementSettingsAccessGate>
-                </Suspense>
-              )}
-              renderPlatformAdmin={adminSettings?.target === "platform" ? undefined : () => (
-                <Suspense fallback={SuspenseFallback}>
-                  <ManagementSettingsAccessGate
-                    scope="platform"
-                    target={activeTab === "platform-admin" ? "platform" : "personal"}
-                    access={managementAccess}
-                    onRetry={managementAccess.retry}
-                    onReturnPersonal={handleReturnPersonalSettings}
-                  >
-                  <PlatformAdminShell
-                    renderTenants={() => <TenantManager />}
-                    renderSignupConfig={() => <SignupConfigManagerPanel />}
-                    renderModels={() => <ModelManagerPanel />}
-                    renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-                    renderToolControls={() => <ToolControlsManagerPanel />}
-                    renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                    renderSkills={() => <SkillManagerPanel mode="platform" />}
-                    renderEfficiency={() => <EfficiencyViewPanel />}
-                    activeSection={platformAdminSection}
-                    entityId={platformAdminEntityId}
-                    onSectionChange={setPlatformAdminRoute}
-                    settingsOpen={adminSettings?.target === "platform"}
-                    settingsSection={(adminSettings?.target === "platform" ? adminSettings.section : "tenants") as PlatformSection}
-                    onSettingsSectionChange={(section) => setAdminSettingsSection(section)}
-                    onSettingsClose={closeAdminSettings}
-                  />
-                  </ManagementSettingsAccessGate>
-                </Suspense>
-              )}
               renderFileBrowser={() => (
                 <Suspense fallback={SuspenseFallback}>
                   <FileBrowserLazy
@@ -743,67 +627,7 @@ export function MobileLayout(props: LayoutProps) {
           tenantEntryAllowed={managementAccess.tenantEntryAllowed}
           platformEntryAllowed={managementAccess.platformEntryAllowed}
           organizationTargetId={organizationSettingsTargetId.current}
-          openAdminSettings={openAdminSettings}
         />
-
-        <SettingsDirtyBoundary>{(dirtyController) => (<>
-        {adminSettings?.target === "tenant" && (
-          <ManagementSettingsAccessGate
-            scope="tenant"
-            target={adminSettings.target}
-            access={managementAccess}
-            onRetry={managementAccess.retry}
-            onReturnPersonal={handleReturnPersonalSettings}
-          >
-            <TenantAdminShell
-            renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-            renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-            settingsOpen
-            settingsOnly
-            dirtyController={dirtyController}
-            settingsSection={adminSettings.section as TenantSection}
-            onSettingsSectionChange={(section) => dirtyController.requestNavigation(() => setAdminSettingsSection(section))}
-            onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}
-          />
-          </ManagementSettingsAccessGate>
-        )}
-        {adminSettings?.target === "platform" && (
-          <ManagementSettingsAccessGate
-            scope="platform"
-            target={adminSettings.target}
-            access={managementAccess}
-            onRetry={managementAccess.retry}
-            onReturnPersonal={handleReturnPersonalSettings}
-          >
-            <PlatformAdminShell
-            renderTenants={() => <TenantManager />}
-            renderSignupConfig={() => <SignupConfigManagerPanel />}
-            renderModels={() => <ModelManagerPanel />}
-            renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
-            renderToolControls={() => <ToolControlsManagerPanel />}
-            renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-            renderSkills={() => <SkillManagerPanel mode="platform" />}
-            renderEfficiency={() => <EfficiencyViewPanel />}
-            activeSection={platformAdminSection}
-            entityId={platformAdminEntityId}
-            onSectionChange={(section, entityId) => dirtyController.requestNavigation(() => setPlatformAdminRoute(section, entityId))}
-            settingsOpen
-            settingsOnly
-            settingsSection={adminSettings.section as PlatformSection}
-            onSettingsSectionChange={(section) => dirtyController.requestNavigation(() => setAdminSettingsSection(section))}
-            onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}
-          />
-          </ManagementSettingsAccessGate>
-        )}
-        </>)}</SettingsDirtyBoundary>
-        {/*
-          组织/平台管理弹窗可从任意页面打开：openAdminSettings 只推 settings URL，
-          不切 activeTab；弹窗统一由 settingsOnly shell 承载，关闭后回到原页面。
-        */}
       </Suspense>
     </>
   );

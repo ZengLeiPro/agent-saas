@@ -62,10 +62,8 @@ export interface SharedPresentation {
   showRaw: boolean;
 }
 
-/** The three independent raw-disclosure gates. Missing/malformed gates are closed. */
+/** Callers resolve platform, organization and user policy before this presentation boundary. */
 export interface RawPresentationGate {
-  debugBuild?: boolean;
-  authenticatedAdmin?: boolean;
   explicitSessionToggle?: boolean;
   /** Compatibility spelling for callers whose setting is named `sessionRawEnabled`. */
   sessionRawEnabled?: boolean;
@@ -401,11 +399,7 @@ function sanitizeDisplay(raw: unknown): PresentationBlock[] {
 
 export function canShowRawPresentation(gate: RawPresentationGate | undefined): boolean {
   const safe = record(boundedSnapshot(gate));
-  return (
-    safe?.debugBuild === true &&
-    safe.authenticatedAdmin === true &&
-    (safe.explicitSessionToggle === true || safe.sessionRawEnabled === true)
-  );
+  return safe?.explicitSessionToggle === true || safe?.sessionRawEnabled === true;
 }
 
 function toolTone(status: RenderTimelineStatus, businessStatus: unknown): PresentationTone {
@@ -735,7 +729,7 @@ export function presentationSemanticSignature(presentation: SharedPresentation):
 
 /**
  * Connects the shared presenter to the existing card contract. Raw summaries/details remain in the
- * card only when the shared three-gate policy authorizes them; closed surfaces are business-only.
+ * card only when the resolved session debug permission authorizes them; closed surfaces are business-only.
  */
 export function selectPresentationCardViewModel(
   item: RenderTimelineItem,

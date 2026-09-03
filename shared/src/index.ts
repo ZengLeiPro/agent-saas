@@ -388,8 +388,8 @@ export {
 // Lib - refresh bus
 export { registerRefresh, unregisterRefresh, refreshAll } from './lib/refreshBus';
 
-// Lib - auth fetch
-export { authFetch, setOnUnauthorized } from './lib/authFetch';
+// Lib - auth fetch / resource fetch
+export { authFetch, authFetchResource, setOnUnauthorized } from './lib/authFetch';
 
 // Lib - 安全 JSON 解析（content-type 非 JSON 时抛带上下文错误）
 export { parseJsonResponse } from './lib/parseJsonResponse';
@@ -711,6 +711,13 @@ export {
   upsertRuntimeStatusMessage,
 } from './lib/wsEventProcessor';
 export type { MessagesController, WsProcessingContext, WsBlockState } from './lib/wsEventProcessor';
+export {
+  isRememberedResolvedInteraction,
+  projectInteractionRequest,
+  projectInteractionResolution,
+  projectPendingInteractionSnapshot,
+  rememberResolvedInteraction,
+} from './lib/wsInteractionProjection';
 
 // Hooks
 export { useConnectionState } from './hooks/useConnectionState';

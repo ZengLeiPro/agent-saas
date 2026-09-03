@@ -12,7 +12,15 @@ beforeAll(() => {
 });
 
 vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => ({ user: { id: "user-1", username: "tester", debugMode: false } }),
+  useAuth: () => ({
+    user: {
+      id: "user-1",
+      username: "tester",
+      tenantId: "tenant-1",
+      debugMode: true,
+      tenantFeatures: { debugModeAllowed: true, debugModeEnabled: true },
+    },
+  }),
 }));
 
 vi.mock("@/hooks/useVoicePlayer", () => ({
@@ -32,6 +40,53 @@ const messages: MessageItem[] = [
 ];
 
 describe("MessageList 历史消息自动加载", () => {
+  it("生产调试模式可展开查看原始命令与结果", () => {
+    render(
+      <MessageList
+        messages={[{
+          id: "tool-debug",
+          type: "tool_use",
+          toolName: "Shell",
+          toolId: "call-debug",
+          toolInput: '{"command":"printf debug-visible"}',
+          result: "debug-result-visible",
+          resultReady: true,
+          executionStatus: "completed",
+        }]}
+        loading={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /已运行/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Shell/ }));
+    expect(screen.getByText(/printf debug-visible/)).toBeTruthy();
+    expect(screen.getByText("debug-result-visible")).toBeTruthy();
+  });
+
+  it("只读执行过程覆盖不开放原始命令与结果", () => {
+    render(
+      <MessageList
+        messages={[{
+          id: "tool-shared",
+          type: "tool_use",
+          toolName: "Shell",
+          toolId: "call-shared",
+          toolInput: '{"command":"printf must-stay-hidden"}',
+          result: "shared-result-must-stay-hidden",
+          resultReady: true,
+          executionStatus: "completed",
+        }]}
+        loading={false}
+        debugModeOverride
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /已运行/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Shell/ }));
+    expect(screen.queryByText(/must-stay-hidden/)).toBeNull();
+    expect(screen.queryByText("shared-result-must-stay-hidden")).toBeNull();
+  });
+
   it("每次滚动接近顶部只触发一页，明显离开后可再次触发", () => {
     const onLoadEarlier = vi.fn().mockResolvedValue(undefined);
     const scrollContainerRef = createRef<HTMLDivElement>();

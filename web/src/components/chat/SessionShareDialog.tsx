@@ -11,14 +11,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   getSessionShare,
-  getSessionSharePreview,
   revokeSessionShare,
   updateSessionShare,
   type SessionShareSummary,
-  type SessionSharePreview,
 } from "@/lib/sessionShareApi";
 import type { ChatSessionIndexItem } from "@/types/sidebar";
 
@@ -35,9 +32,6 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
   const [revoking, setRevoking] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<SessionSharePreview | null>(null);
-  const [confirmedPublicText, setConfirmedPublicText] = useState(false);
-  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!open || !session) return;
@@ -46,23 +40,13 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
     setError(null);
     setCopied(false);
     setShare(null);
-    setPreview(null);
-    setConfirmedPublicText(false);
-    setSelectedFilePaths(new Set());
-    Promise.allSettled([getSessionShare(session.id), getSessionSharePreview(session.id)])
-      .then(([shareResult, previewResult]) => {
+    void getSessionShare(session.id)
+      .then((nextShare) => {
         if (cancelled) return;
-        if (shareResult.status === "fulfilled") setShare(shareResult.value);
-        else setError(shareResult.reason instanceof Error ? shareResult.reason.message : String(shareResult.reason));
-        if (previewResult.status === "fulfilled") {
-          setPreview(previewResult.value);
-          setSelectedFilePaths(new Set(
-            previewResult.value.files
-              .filter((file) => file.inlineInBody)
-              .map((file) => file.relativePath),
-          ));
-        } else setError((current) => current
-          ?? (previewResult.reason instanceof Error ? previewResult.reason.message : String(previewResult.reason)));
+        setShare(nextShare);
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -82,11 +66,7 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
     setSaving(true);
     setError(null);
     try {
-      const next = await updateSessionShare(session.id, {
-        confirmPublicText: true,
-        filePaths: [...selectedFilePaths],
-        ...(preview?.defaultExpiresAt ? { expiresAt: preview.defaultExpiresAt } : {}),
-      });
+      const next = await updateSessionShare(session.id);
       setShare(next);
       setCopied(false);
     } catch (err) {
@@ -98,9 +78,13 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
 
   const handleCopy = async () => {
     if (!fullUrl) return;
-    await navigator.clipboard.writeText(fullUrl);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("复制失败，请手动复制链接");
+    }
   };
 
   const handleRevoke = async () => {
@@ -120,85 +104,37 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>分享会话</DialogTitle>
-          <DialogDescription>
-            生成当前会话的只读分享链接。公开页展示对话正文、安全的工具活动摘要和显式分享的成果文件；原始入参与结果不会公开。
-          </DialogDescription>
+          <DialogDescription>获得链接的人可以查看当前会话内容及其中的成果文件。</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="rounded-md border bg-muted/30 px-3 py-2">
-            <div className="truncate text-sm font-medium">{session?.title || "当前会话"}</div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-sm font-medium">分享链接</div>
-            <div className="flex gap-2">
-              <Input readOnly value={fullUrl || (loading ? "加载中..." : "尚未生成")} className="font-mono text-xs" />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                disabled={!fullUrl}
-                onClick={() => void handleCopy()}
-                title="复制链接"
-              >
-                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                disabled={!fullUrl}
-                onClick={() => fullUrl && window.open(fullUrl, "_blank", "noopener,noreferrer")}
-                title="打开链接"
-              >
-                <ExternalLink className="size-4" />
-              </Button>
+          <div className="min-w-0 rounded-md border bg-muted/30 px-3 py-2">
+            <div className="truncate text-sm font-medium" title={session?.title || "当前会话"}>
+              {session?.title || "当前会话"}
             </div>
           </div>
 
-          <div className="space-y-3 rounded-md border p-3 text-sm">
-            <label className="flex items-start gap-2">
-              <Checkbox
-                checked={confirmedPublicText}
-                disabled={!preview}
-                onCheckedChange={(checked) => setConfirmedPublicText(checked === true)}
-              />
-              <span>
-                我确认公开当前会话的 {preview?.blockCount ?? 0} 条用户/助手正文及工具活动摘要；原始工具入参和结果不会公开，系统会对正文中的凭据脱敏。
-              </span>
-            </label>
-            {(preview?.files.length ?? 0) > 0 ? (
-              <div className="space-y-2">
-                <div className="font-medium">选择要公开的成果文件（正文图片/视频会随正文公开）</div>
-                {preview!.files.map((file) => (
-                  <label key={file.relativePath} className="flex items-center gap-2">
-                    <Checkbox
-                      checked={selectedFilePaths.has(file.relativePath)}
-                      disabled={file.inlineInBody === true}
-                      onCheckedChange={(checked) => {
-                        setSelectedFilePaths((current) => {
-                          const next = new Set(current);
-                          if (checked === true) next.add(file.relativePath);
-                          else next.delete(file.relativePath);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span className="truncate" title={file.relativePath}>
-                      {file.fileName}{file.inlineInBody ? "（正文媒体）" : ""}
-                    </span>
-                  </label>
-                ))}
+          {share?.enabled && fullUrl ? (
+            <div className="min-w-0 space-y-2">
+              <div className="text-sm font-medium">分享链接</div>
+              <div className="flex min-w-0 gap-2">
+                <Input readOnly value={fullUrl} className="min-w-0 font-mono text-xs" aria-label="会话分享链接" />
+                <Button type="button" variant="outline" size="icon" onClick={() => void handleCopy()} title="复制链接" aria-label="复制链接" className="shrink-0">
+                  {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                </Button>
+                <Button type="button" variant="outline" size="icon" onClick={() => fullUrl && window.open(fullUrl, "_blank", "noopener,noreferrer")} title="打开链接" aria-label="打开链接" className="shrink-0">
+                  <ExternalLink className="size-4" />
+                </Button>
               </div>
-            ) : null}
-            <p className="text-xs text-muted-foreground">链接默认 7 天失效；文件会冻结为不可变快照，不再读取工作区同名文件。</p>
-          </div>
+              {share.expiresAt ? <p className="text-xs text-muted-foreground">链接将在 {new Date(share.expiresAt).toLocaleString()} 失效</p> : null}
+            </div>
+          ) : null}
 
-          {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+          {loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />正在读取分享状态...</div> : null}
+          {error && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">
@@ -214,9 +150,9 @@ export function SessionShareDialog({ open, session, onOpenChange }: SessionShare
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               关闭
             </Button>
-            <Button type="button" disabled={loading || saving || !session || !preview || !confirmedPublicText} onClick={() => void handleSave()}>
+            <Button type="button" disabled={loading || saving || revoking || !session} onClick={() => void handleSave()}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-              {share?.enabled ? "更新快照" : "生成链接"}
+              {share?.enabled ? "更新分享" : "生成链接"}
             </Button>
           </div>
         </DialogFooter>

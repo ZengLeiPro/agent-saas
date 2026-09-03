@@ -57,4 +57,32 @@ describe('Codex credential runtime state store', () => {
 
     await expect(store.get('credential-a')).resolves.toBeUndefined();
   });
+
+  it('clear 只推进更高 generation，不覆盖同代或更旧代的故障', async () => {
+    const store = new InMemoryCodexCredentialRuntimeStateStore();
+    await store.markAuthUnavailable('credential-auth', 'invalid_grant', 2);
+    await store.markQuotaCooldown(
+      'credential-quota',
+      '2099-09-02T12:10:00.000Z',
+      'insufficient_quota',
+      2,
+    );
+
+    await store.clear('credential-auth', 2);
+    await store.clear('credential-quota', 2);
+    await store.clear('credential-auth', 1);
+    await store.clear('credential-quota', 1);
+
+    await expect(store.get('credential-auth')).resolves.toMatchObject({
+      availability: 'auth_unavailable', credentialGeneration: 2,
+    });
+    await expect(store.get('credential-quota')).resolves.toMatchObject({
+      availability: 'quota_cooldown', credentialGeneration: 2,
+    });
+
+    await store.clear('credential-auth', 3);
+    await store.clear('credential-quota', 3);
+    await expect(store.get('credential-auth')).resolves.toBeUndefined();
+    await expect(store.get('credential-quota')).resolves.toBeUndefined();
+  });
 });

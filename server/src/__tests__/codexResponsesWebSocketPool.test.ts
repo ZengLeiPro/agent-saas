@@ -352,6 +352,35 @@ describe('CodexResponsesWebSocketPool', () => {
     pool.close();
   });
 
+  it('迟到的旧 generation 不关闭或取代已建立的新 generation 连接', async () => {
+    const currentSocket = new FakeWebSocket();
+    const connector = connectorFor(currentSocket);
+    connector.mockRejectedValue(new Error('旧 generation 不应建立连接'));
+    const pool = new CodexResponsesWebSocketPool(connector);
+    const input = [{ type: 'message', role: 'user', content: 'same request' }];
+
+    const currentPending = pool.execute({
+      ...request(body(input)),
+      accessToken: 'generation-2-token',
+      credentialGeneration: 2,
+    });
+    await waitForSend(currentSocket);
+    currentSocket.emit({ type: 'response.created', response: { id: 'resp-generation-2' } });
+    const currentResult = await currentPending;
+
+    await expect(pool.execute({
+      ...request(body(input)),
+      accessToken: 'stale-generation-1-token',
+      credentialGeneration: 1,
+    })).rejects.toMatchObject({ reason: 'credential_generation_stale' });
+    expect(connector).toHaveBeenCalledTimes(1);
+    expect(currentSocket.readyState).toBe(1);
+
+    complete(currentSocket, 'resp-generation-2');
+    await currentResult.response.text();
+    pool.close();
+  });
+
   it('模型请求属性变化时不猜测接力，直接在现有 socket 发完整历史重新锚定', async () => {
     const socket = new FakeWebSocket();
     const pool = new CodexResponsesWebSocketPool(connectorFor(socket));

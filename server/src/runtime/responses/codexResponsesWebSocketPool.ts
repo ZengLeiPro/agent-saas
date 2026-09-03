@@ -4,8 +4,20 @@ import type {
   EgressWebSocket,
   EgressWebSocketConnector,
 } from '../egressDispatcher.js';
+import {
+  CodexWebSocketCredentialStaleError,
+  CodexWebSocketQuotaExhaustedError,
+  CodexWebSocketReanchorError,
+  CodexWebSocketUnavailableError,
+} from './codexResponsesWebSocketErrors.js';
 import { ResponsesTransportStreamError } from './responsesTransport.js';
 import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
+
+export {
+  CodexWebSocketCredentialStaleError,
+  CodexWebSocketQuotaExhaustedError,
+  CodexWebSocketUnavailableError,
+} from './codexResponsesWebSocketErrors.js';
 
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 30_000;
 const DEFAULT_IDLE_EVENT_TIMEOUT_MS = 5 * 60_000;
@@ -71,33 +83,9 @@ interface ActiveRequestResult extends CodexWebSocketExecuteResult {
   entry: PoolEntry;
 }
 
-export class CodexWebSocketUnavailableError extends Error {
-  constructor(message: string, readonly reason: string) {
-    super(message);
-    this.name = 'CodexWebSocketUnavailableError';
-  }
-}
-
-export class CodexWebSocketQuotaExhaustedError extends CodexWebSocketUnavailableError {
-  readonly status = 429;
-  readonly code: string;
-
-  constructor(message: string, code?: string) {
-    super(message, 'quota_exhausted');
-    this.name = 'CodexWebSocketQuotaExhaustedError';
-    this.code = code ?? 'quota_exhausted';
-  }
-}
-
-class CodexWebSocketReanchorError extends Error {
-  constructor(readonly code: string) {
-    super(`Codex WebSocket requires full-history re-anchor: ${code}`);
-    this.name = 'CodexWebSocketReanchorError';
-  }
-}
-
 export class CodexResponsesWebSocketPool {
   private readonly entries = new Map<string, PoolEntry>();
+  private readonly credentialGenerations = new Map<string, number>();
   private readonly connectCooldowns = new Map<string, {
     until: number;
     reason: string;
@@ -119,9 +107,18 @@ export class CodexResponsesWebSocketPool {
     const logicalBody = parseLogicalBody(input.serializedBody);
     this.sweep();
     const key = poolKey(input);
-    for (const entry of this.entries.values()) {
-      if (entry.credentialRef === input.credentialRef
-        && entry.credentialGeneration !== input.credentialGeneration) this.discard(entry, 'credential_rotated');
+    const observedGeneration = this.credentialGenerations.get(input.credentialRef);
+    if (observedGeneration !== undefined && input.credentialGeneration < observedGeneration) {
+      throw new CodexWebSocketCredentialStaleError(
+        input.credentialRef, input.credentialGeneration, observedGeneration,
+      );
+    }
+    if (observedGeneration === undefined || input.credentialGeneration > observedGeneration) {
+      this.credentialGenerations.set(input.credentialRef, input.credentialGeneration);
+      for (const entry of this.entries.values()) {
+        if (entry.credentialRef === input.credentialRef
+          && entry.credentialGeneration < input.credentialGeneration) this.discard(entry, 'credential_rotated');
+      }
     }
     const cooldown = this.connectCooldowns.get(key);
     if (cooldown && cooldown.until > this.now()) {
@@ -177,6 +174,7 @@ export class CodexResponsesWebSocketPool {
     for (const entry of this.entries.values()) this.discard(entry, 'pool_shutdown');
     this.entries.clear();
     this.connectCooldowns.clear();
+    this.credentialGenerations.clear();
   }
 
   closeCredentialRefs(refs: readonly string[]): void {

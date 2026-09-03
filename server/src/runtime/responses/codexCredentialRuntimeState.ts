@@ -94,7 +94,7 @@ export class InMemoryCodexCredentialRuntimeStateStore implements CodexCredential
       return;
     }
     const current = this.states.get(credentialRef);
-    if (current && current.credentialGeneration > credentialGeneration) return;
+    if (current && current.credentialGeneration >= credentialGeneration) return;
     this.states.set(credentialRef, {
       credentialRef,
       availability: 'available',

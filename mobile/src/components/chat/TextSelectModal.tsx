@@ -3,8 +3,8 @@ import { Modal, View, Text, Pressable, StyleSheet, Platform } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { WebView } from 'react-native-webview';
-import { marked } from 'marked';
 import { useColors, typography, spacing } from '../../theme';
+import { parseMarkdownToHtml } from '../../lib/marked';
 import { useFontSize } from '../../theme';
 import type { ThemeColors } from '../../theme';
 
@@ -21,7 +21,7 @@ export function TextSelectModal({ visible, onClose, content }: TextSelectModalPr
 
   const html = useMemo(() => {
     if (!content) return '';
-    const rendered = marked.parse(content, { breaks: true }) as string;
+    const rendered = parseMarkdownToHtml(content, { breaks: true });
     return buildHtml(rendered, colors, scale);
   }, [content, colors, scale]);
 

@@ -133,7 +133,7 @@ describe('Governance Migration Control', () => {
     expect(sql).toContain('CREATE TRIGGER test_assignment_delete_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_preference_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_entitlement_projection_outbox');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(35);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(36);
   });
 
   it('tenantless shadow difference 使用同一空 tenant scope 自动 resolve', async () => {

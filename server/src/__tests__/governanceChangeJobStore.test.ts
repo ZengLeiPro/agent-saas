@@ -129,7 +129,7 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('unresolved_items_json');
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS ordinal INTEGER');
     expect(sql).toContain("'deletion_verification',9,'pending'");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(35);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(36);
   });
 
   it('按请求顺序持久化并返回分域 ordinal，通用 Job 也不依赖字母排序', async () => {

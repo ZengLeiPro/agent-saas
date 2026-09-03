@@ -17,7 +17,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
+describePg('Governance Schema V36 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const legacyV28Prefix = `legacy28_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -61,7 +61,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V35 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V36 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -106,7 +106,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 35 }, (_, index) => index + 1),
+      Array.from({ length: 36 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -277,7 +277,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
   }, 30_000);
 
-  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V35 仍幂等', async () => {
+  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V36 仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -581,7 +581,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
       `SELECT version FROM ${legacyPrefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 35 }, (_, index) => index + 1),
+      Array.from({ length: 36 }, (_, index) => index + 1),
     );
     const retentionTable = await pool.query<{ name: string | null }>(
       'SELECT to_regclass($1) AS name',
@@ -671,7 +671,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
       .rejects.toMatchObject({ code: '23514' });
   }, 30_000);
 
-  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V35', async () => {
+  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V36', async () => {
     const v32Prefix = v32RollbackPrefix;
     let injected = false;
     const failingPool = {

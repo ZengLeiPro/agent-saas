@@ -1,5 +1,6 @@
 import type { SessionAutomationRuntimeGuard } from '../sessionAutomationRuntimeGuard.js';
 import type { RunContext } from '../types.js';
+import type { RunLeaseAuthority } from '../runStore.js';
 
 export interface PreparedChildIdentity {
   childSessionId: string;
@@ -15,6 +16,7 @@ export class SessionAutomationBackgroundResource {
     private readonly context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'> | undefined,
     private readonly resourceKey: string,
     private readonly identity: PreparedChildIdentity,
+    private readonly leaseAuthority?: RunLeaseAuthority,
   ) {}
 
   async enqueuePrepared<T extends { status: string; metadata: Record<string, unknown> }>(
@@ -32,7 +34,7 @@ export class SessionAutomationBackgroundResource {
 
   async prepared(): Promise<void> {
     if (this.context) {
-      await this.guard?.recordBackgroundResource(this.context, this.resourceKey, this.identity, 'prepared');
+      await this.guard?.recordBackgroundResource(this.context, this.resourceKey, this.identity, 'prepared', this.leaseAuthority);
     }
   }
 
@@ -40,7 +42,7 @@ export class SessionAutomationBackgroundResource {
     if (identity.childSessionId !== this.identity.childSessionId || identity.childRunId !== this.identity.childRunId) {
       throw new Error('background child identity does not match prepared resource intent');
     }
-    if (this.context) await this.guard?.assertBackgroundResourcePrepared(this.context, this.resourceKey, identity);
+    if (this.context) await this.guard?.assertBackgroundResourcePrepared(this.context, this.resourceKey, identity, this.leaseAuthority);
   }
 
   async launching(identity: PreparedChildIdentity): Promise<void> {
@@ -48,19 +50,19 @@ export class SessionAutomationBackgroundResource {
       throw new Error('background child identity does not match prepared resource intent');
     }
     if (this.context) {
-      await this.guard?.claimBackgroundResourceLaunch(this.context, this.resourceKey, identity);
+      await this.guard?.claimBackgroundResourceLaunch(this.context, this.resourceKey, identity, this.leaseAuthority);
     }
   }
 
   async active(identity: PreparedChildIdentity): Promise<void> {
     await this.assertPrepared(identity);
-    if (this.context) await this.guard?.recordBackgroundResource(this.context, this.resourceKey, identity, 'active');
+    if (this.context) await this.guard?.recordBackgroundResource(this.context, this.resourceKey, identity, 'active', this.leaseAuthority);
   }
 
   async resolveFromAuthoritativeChild(workerStopped = false): Promise<BackgroundResourceResolution> {
     if (!this.context || !this.guard) return 'released';
     return this.guard.resolveBackgroundResourceFromChild(
-      this.context, this.resourceKey, this.identity, workerStopped,
+      this.context, this.resourceKey, this.identity, workerStopped, this.leaseAuthority,
     );
   }
 }

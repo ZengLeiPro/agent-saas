@@ -9,6 +9,7 @@ export const STEERING_RECOVERY_FAILURE_MESSAGE = '会话恢复连续失败，本
 export interface RuntimeWakeLease {
   runId: string;
   workerId?: string;
+  leaseToken?: string;
   renew(source?: RunHeartbeatSource): Promise<void>;
   release(finalStatus?: RunStatus, reason?: string): Promise<void>;
 }

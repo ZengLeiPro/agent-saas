@@ -25,6 +25,7 @@ export const SCHEDULER_STATE_READY = 'ready';
 export interface RunLease {
   runId: string;
   workerId: string;
+  leaseToken: string;
   expiresAt: string;
   renew(source?: RunHeartbeatSource): Promise<void>;
   release(finalStatus?: RunStatus, reason?: string): Promise<void>;
@@ -598,6 +599,7 @@ export class RuntimeScheduler {
       return;
     }
 
+    const leaseToken = randomUUID();
     const acquired = await this.options.runStore.acquireLease?.(
       record.runId,
       this.workerId,
@@ -608,6 +610,8 @@ export class RuntimeScheduler {
         foreground: classifyRun(record) === 'foreground',
         foregroundReservedRuns: this.foregroundReservedRuns,
       },
+      undefined,
+      leaseToken,
     );
     if (!acquired) {
       this.deferRun(record.runId);
@@ -735,18 +739,21 @@ export class RuntimeScheduler {
   }
 
   private createLease(record: RunRecord): RunLease {
+    const leaseToken = typeof record.metadata.runLeaseToken === 'string' ? record.metadata.runLeaseToken : '';
+    if (!leaseToken) throw new Error(`acquired run lease token missing: ${record.runId}`);
     let expiresAt = record.leaseExpiresAt ?? new Date(Date.now() + this.leaseMs).toISOString();
     let renewInFlight: Promise<void> | undefined;
     return {
       runId: record.runId,
       workerId: this.workerId,
+      leaseToken,
       get expiresAt() {
         return expiresAt;
       },
       renew: (source: RunHeartbeatSource = 'worker') => {
         if (renewInFlight) return renewInFlight;
         renewInFlight = (async () => {
-          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs, this.now(), source);
+          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs, this.now(), source, leaseToken);
           if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
           expiresAt = renewed.leaseExpiresAt ?? expiresAt;
         })().finally(() => {
@@ -755,7 +762,7 @@ export class RuntimeScheduler {
         return renewInFlight;
       },
       release: async (finalStatus?: RunStatus, reason?: string) => {
-        await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason);
+        await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason, leaseToken);
       },
     };
   }

@@ -416,11 +416,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       }).catch(() => undefined);
     }, CANCEL_POLL_MS);
     cancelTimer.unref?.();
-    const automationContext = buildBackgroundTaskAutomationContext(record, metadata);
-    const preparedIdentity = resolvePreparedChildIdentity(record, metadata);
-    const automationResource = new SessionAutomationBackgroundResource(
-      this.config.sessionAutomationRuntimeGuard, automationContext, record.runId, preparedIdentity,
-    );
+    const automationContext = buildBackgroundTaskAutomationContext(record, metadata), preparedIdentity = resolvePreparedChildIdentity(record, metadata);
+    const leaseAuthority = lease?.workerId && lease.leaseToken ? { workerId: lease.workerId, leaseToken: lease.leaseToken } : undefined;
+    const automationResource = new SessionAutomationBackgroundResource(this.config.sessionAutomationRuntimeGuard,
+      automationContext, record.runId, preparedIdentity, leaseAuthority);
     try {
       await this.config.runStore?.markStatus(record.runId, record.status, record.statusReason, {
         executionChildSessionId: preparedIdentity.childSessionId, executionChildRunId: preparedIdentity.childRunId,
@@ -476,30 +475,28 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         acquireChildLaunchAuthority: identity => automationResource.launching(identity), beforeChildSideEffects: identity => automationResource.assertPrepared(identity),
         beforeTenantRemoteProvision: identity => assertBackgroundRemoteDispatchBarrier(this.config.runStore,
           record.runId, abortController.signal, identity, () => automationResource.active(identity)),
-        onChildLaunchError: () => automationResource.resolveFromAuthoritativeChild(true).then(() => undefined), onChildRunCreated: async (identity) => { await automationResource.active(identity);
+        onChildLaunchError: async () => undefined, onChildRunCreated: async (identity) => { await automationResource.active(identity);
           await this.config.runStore?.markStatus(record.runId, 'running', 'background_task_started', {
             executionChildSessionId: identity.childSessionId, executionChildRunId: identity.childRunId,
           }); },
       });
       if (outcome.childSessionId !== preparedIdentity.childSessionId || outcome.childRunId !== preparedIdentity.childRunId)
         throw new Error('subagent outcome identity does not match prepared background child');
-      const resolution = await automationResource.resolveFromAuthoritativeChild(); if (resolution !== 'released') throw new Error('background child terminal state is unknown; reconciliation required'); await this.freezeOutcome(record, outcome);
-      const current = await this.config.runStore?.get(record.runId);
-      const finalStatus = current?.status ?? outcomeToRunStatus(outcome.status);
-      await lease?.release(finalStatus, current?.statusReason ?? `background_${outcome.status}`);
-    } catch (err) { await automationResource.resolveFromAuthoritativeChild(true).catch((resolutionError) => logger.warn(`后台子任务资源权威结算失败 task=${record.runId}: ${resolutionError instanceof Error ? resolutionError.message : String(resolutionError)}`));
-      const current = await this.config.runStore?.get(record.runId);
+      if (!await this.freezeOutcome(record, outcome, leaseAuthority)) return;
+      const resolution = await automationResource.resolveFromAuthoritativeChild(); if (resolution !== 'released') throw new Error('background child terminal state is unknown; reconciliation required');
+      const current = await this.config.runStore?.get(record.runId); await lease?.release(current?.status, current?.statusReason ?? `background_${outcome.status}`);
+    } catch (err) { const current = await this.config.runStore?.get(record.runId);
       if (current?.status === 'cancelled') {
         await this.config.runStore?.markStatus(record.runId, 'cancelled', current.statusReason, {
           backgroundResult: failureResult('cancelled', '后台任务已取消'),
           wakeState: 'pending',
           backgroundFinishedAt: new Date().toISOString(),
         });
-        await sessionCatalog.markStatus(record.sessionId, 'error').catch(() => undefined);
+        await sessionCatalog.markStatus(record.sessionId, 'error').catch(() => undefined); await automationResource.resolveFromAuthoritativeChild(true).catch((resolutionError) => logger.warn(`后台子任务取消后资源结算失败 task=${record.runId}: ${resolutionError instanceof Error ? resolutionError.message : String(resolutionError)}`));
         await lease?.release('cancelled', current.statusReason ?? 'background_task_cancelled');
-      } else {
-        const message = err instanceof Error ? err.message : String(err);
-        await this.freezeFailure(record, message, 'failed');
+      } else { const message = err instanceof Error ? err.message : String(err);
+        if (await this.freezeFailure(record, message, 'failed', message, leaseAuthority)) await automationResource.resolveFromAuthoritativeChild(true)
+          .catch((resolutionError) => logger.warn(`后台子任务资源权威结算失败 task=${record.runId}: ${resolutionError instanceof Error ? resolutionError.message : String(resolutionError)}`));
         await lease?.release('failed', message);
       }
     } finally {
@@ -862,7 +859,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');
     return task;
   }
-  private async freezeOutcome(record: RunRecord, outcome: SubagentOutcome): Promise<void> {
+  private async freezeOutcome(record: RunRecord, outcome: SubagentOutcome, leaseAuthority?: import('../runStore.js').RunLeaseAuthority): Promise<boolean> {
     const current = await this.config.runStore?.get(record.runId);
     if (current?.status === 'cancelled') {
       await this.config.runStore?.markStatus(record.runId, 'cancelled', current.statusReason, {
@@ -871,7 +868,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         backgroundFinishedAt: new Date().toISOString(),
       });
       await resolveSessionCatalog(this.config).markStatus(record.sessionId, 'error').catch(() => undefined);
-      return;
+      return false;
     }
     const stored = await persistResultText(record, outcome.text, outcome.childRunId);
     const safeErrorMessage = customerSafeRuntimeError(outcome.errorMessage, outcome.failureKind);
@@ -894,10 +891,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       backgroundResult: result,
       wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),
-    });
+    }, leaseAuthority);
     if (updated) await resolveSessionCatalog(this.config)
       .markStatus(record.sessionId, status === 'completed' ? 'finished' : 'error')
       .catch(() => undefined);
+    return Boolean(updated);
   }
 
   private async freezeFailure(
@@ -905,13 +903,15 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     message: string,
     status: 'failed' | 'cancelled',
     reason = message,
-  ): Promise<void> {
+    leaseAuthority?: import('../runStore.js').RunLeaseAuthority,
+  ): Promise<boolean> {
     const updated = await markBackgroundTaskTerminal(this.config.runStore!, await this.backgroundTaskEventStore(record),
       record, status, reason, {
       backgroundResult: failureResult(status, message), wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),
-    });
+    }, leaseAuthority);
     if (updated) await resolveSessionCatalog(this.config).markStatus(record.sessionId, 'error').catch(() => undefined);
+    return Boolean(updated);
   }
   private async backgroundTaskEventStore(record: RunRecord) { const taskSession = await resolveSessionCatalog(this.config).get(record.sessionId); if (!taskSession) throw new Error(`后台任务 session 不存在：${record.sessionId}`); return createEventStoreForSession(this.config, taskSession); }
 

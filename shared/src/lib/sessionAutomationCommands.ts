@@ -11,6 +11,7 @@ export class SessionAutomationParseError extends Error {
 }
 const DURATION = /^(\d+)(s|m|h|d)$/;
 const UNIT: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+export const DEFAULT_GOAL_BUDGET: Readonly<SessionAutomationBudget> = { maxTurns: 20, maxTokens: 250_000 };
 
 export function parseAutomationDuration(value: string, minimumMs = 60_000): number {
   const match = DURATION.exec(value);
@@ -93,5 +94,6 @@ export function parseSessionAutomationCommand(input: string): ParsedSessionAutom
   }
   const parsed = parseBudget(args);
   if (!parsed.prompt || parsed.prompt.length > 16_000) throw new SessionAutomationParseError('Goal condition 必须为 1..16000 字符');
-  return { family, action, spec: { kind: 'goal', mode: 'goal', condition: parsed.prompt, budget: parsed.budget } };
+  const budget = Object.keys(parsed.budget).length === 0 ? { ...DEFAULT_GOAL_BUDGET } : parsed.budget;
+  return { family, action, spec: { kind: 'goal', mode: 'goal', condition: parsed.prompt, budget } };
 }

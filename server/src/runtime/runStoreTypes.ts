@@ -199,6 +199,11 @@ export interface RunLeaseIdentity {
   sessionId: string;
 }
 
+export interface RunLeaseAuthority {
+  workerId: string;
+  leaseToken: string;
+}
+
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
@@ -297,6 +302,7 @@ export interface RunStore {
     status: RunStatus,
     reason?: string,
     metadataPatch?: Record<string, unknown>,
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
@@ -352,6 +358,7 @@ export interface RunStore {
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
     identity?: RunLeaseIdentity,
+    leaseToken?: string,
   ): Promise<RunRecord | null>;
   renewLease?(
     runId: string,
@@ -359,6 +366,7 @@ export interface RunStore {
     leaseMs: number,
     now?: Date,
     source?: RunHeartbeatSource,
+    leaseToken?: string,
   ): Promise<RunRecord | null>;
   /** Immediate activity pulse used by stream/tool/subagent execution paths (server-owned). */
   heartbeatRun?(
@@ -389,7 +397,7 @@ export interface RunStore {
     reason?: string,
     now?: Date,
   ): Promise<RunRecord | null>;
-  releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null>;
+  releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, leaseToken?: string): Promise<RunRecord | null>;
   /**
    * RFC v1 P0.4：增量更新 Responses API session state。
    * 用 COALESCE 让 null 显式清空，undefined 保留原值；delta 累加到 cumulative_input_tokens。

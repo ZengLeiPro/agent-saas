@@ -165,6 +165,21 @@ describePg('session automation terminal projector state machine (real PostgreSQL
     });
   }
 
+  it('publishes projection only after the terminal transaction commits', async () => {
+    const automation = await createAutomation({ kind: 'goal', mode: 'goal', continuationEpoch: 1,
+      spec: { kind: 'goal', mode: 'goal', condition: 'done', budget: { maxRuns: 2 } } });
+    const item = await dispatch({ ...automation, triggerKey: `goal:${automation.automationId}:1`, continuationEpoch: 1 });
+    const notifications: Record<string, unknown>[] = []; store.setNotifier((_owner, payload) => notifications.push(payload));
+    const projector = new SessionAutomationTerminalProjector(store, `after-commit-${randomUUID()}`),
+      event = { globalSequence: 1, tenantId, sessionId: automation.sessionId, runId: item.targetRunId,
+        status: 'completed' as const, progressFingerprint: 'same' }, originalTx = store.tx.bind(store);
+    store.tx = (async fn => originalTx(async client => { await fn(client);
+      throw new Error('forced terminal transaction rollback'); })) as typeof store.tx;
+    await expect(projector.project(event)).rejects.toThrow('forced terminal transaction rollback');
+    expect(notifications).toHaveLength(0); store.tx = originalTx;
+    expect(await projector.project(event)).toBe(true); expect(notifications).toHaveLength(1);
+    expect(await projector.project(event)).toBe(false); expect(notifications).toHaveLength(1);
+  });
   it('clears a stale fixed run after pause/run-now without changing generation-3 progress or anchor', async () => {
     const fixed = await createAutomation({
       kind: 'loop', mode: 'fixed', continuationEpoch: 5,

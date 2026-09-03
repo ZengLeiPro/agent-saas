@@ -73,9 +73,15 @@ describe('automation evaluator reducers, hashes, and evidence gates', () => {
     }];
     const first = extractRunProgressEvidence(events('run-1', 'completed artifact A'), 'completed');
     const replay = extractRunProgressEvidence(events('run-2', 'completed artifact A'), 'completed');
-    const progress = extractRunProgressEvidence(events('run-3', 'completed artifact B'), 'completed');
+    const rephrased = extractRunProgressEvidence(events('run-3', 'completed artifact B'), 'completed');
+    const progress = extractRunProgressEvidence([{
+      id: 'event-tool', timestamp: '2026-08-30T00:00:00.000Z', type: 'tool_result',
+      runId: 'run-4', sessionId: 'session', toolCallId: 'call-1', toolName: 'Write', content: 'wrote artifact B',
+    }], 'completed');
     expect(first.fingerprint).toBe(replay.fingerprint);
+    expect(rephrased.fingerprint).toBe(first.fingerprint);
     expect(progress.fingerprint).not.toBe(first.fingerprint);
+    expect(first.summary).toBe('completed artifact A');
     expect(first.evidenceRefs).toEqual(['event:event-run-1']);
   });
 

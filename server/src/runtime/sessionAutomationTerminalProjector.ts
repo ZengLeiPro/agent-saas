@@ -70,7 +70,7 @@ export class SessionAutomationTerminalProjector {
   }
 
   async project(event: AutomationTerminalEvent): Promise<boolean> {
-    return this.store.tx(async client => {
+    const result = await this.store.tx(async client => {
       await client.query(
         `INSERT INTO ${this.store.tables.consumers}(consumer_name,last_global_sequence) VALUES($1,0) ON CONFLICT DO NOTHING`,
         [this.consumerName],
@@ -79,7 +79,7 @@ export class SessionAutomationTerminalProjector {
         `SELECT last_global_sequence FROM ${this.store.tables.consumers} WHERE consumer_name=$1 FOR UPDATE`,
         [this.consumerName],
       );
-      if (Number(cursor.rows[0]?.last_global_sequence) >= event.globalSequence) return false;
+      if (Number(cursor.rows[0]?.last_global_sequence) >= event.globalSequence) return { processed: false };
 
       const execution = await client.query(
         `SELECT e.*,w.due_at AS wakeup_due_at,w.continuation_epoch AS wakeup_continuation_epoch,
@@ -104,6 +104,7 @@ export class SessionAutomationTerminalProjector {
         [event.tenantId, event.sessionId, event.runId],
       );
       const row = execution.rows[0];
+      let publishSnapshot: Parameters<PgSessionAutomationStore['publish']>[0] | undefined;
       if (row) {
         // Capture the durable execution phase before terminal projection mutates it. A prepared
         // execution with no provider/reservation facts is the only state-only pre-model proof.
@@ -448,7 +449,7 @@ export class SessionAutomationTerminalProjector {
         const next=await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
         if(next&&fenced){
           await this.store.event(client,next,'automation_execution_changed',{runId:event.runId,status:event.status,snapshot:next});
-          this.store.publish(next,'automation_execution_changed');
+          publishSnapshot=next;
         }
       }
 
@@ -457,8 +458,10 @@ export class SessionAutomationTerminalProjector {
             SET last_global_sequence=$2,updated_at=now() WHERE consumer_name=$1`,
         [this.consumerName, event.globalSequence],
       );
-      return true;
+      return { processed: true, publishSnapshot };
     });
+    if (result.publishSnapshot) this.store.publish(result.publishSnapshot,'automation_execution_changed');
+    return result.processed;
   }
 
   /** Explicit administration path for a proven deterministic, unrecoverable event only. */

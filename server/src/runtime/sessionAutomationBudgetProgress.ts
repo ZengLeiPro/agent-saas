@@ -140,7 +140,6 @@ export function extractRunProgressEvidence(events: readonly PlatformEvent[], ter
       if (!content) continue;
       summary = content;
       evidenceRefs.push(`event:${event.id}`);
-      facts.push({ type: event.type, content });
     } else if (event.type === 'tool_result') {
       const content = normalizeContent(event.content);
       if (!content) continue;

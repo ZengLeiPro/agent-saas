@@ -15,6 +15,7 @@ export async function renewRunLease(
   leaseMs: number,
   now = new Date(),
   source: RunHeartbeatSource = 'worker',
+  leaseToken?: string,
 ): Promise<RunRecord | null> {
   const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
   const result = await context.pool.query<{ row_json: RunRecord }>(`
@@ -28,10 +29,11 @@ export async function renewRunLease(
         updated_at = GREATEST(updated_at, $4::timestamptz)
     WHERE run_id = $1
       AND worker_id = $2
+      AND ($6::text IS NULL OR metadata->>'runLeaseToken' = $6)
       AND status = 'running'
       AND liveness_state IS DISTINCT FROM 'stale'
     RETURNING row_to_json(${context.runsTable}.*) AS row_json
-  `, [runId, workerId, leaseExpiresAt, now.toISOString(), `heartbeat_${source}`]);
+  `, [runId, workerId, leaseExpiresAt, now.toISOString(), `heartbeat_${source}`, leaseToken ?? null]);
   return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
 }
 

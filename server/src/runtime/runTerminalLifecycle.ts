@@ -43,6 +43,7 @@ export async function releaseRunLease(
   workerId: string,
   finalStatus?: RunStatus,
   reason?: string,
+  leaseToken?: string,
 ): Promise<RunRecord | null> {
   const now = new Date().toISOString();
   // Terminal status is a sink. The lease owner always clears worker/expiry, but
@@ -79,7 +80,8 @@ export async function releaseRunLease(
         END
     WHERE run_id = $1
       AND worker_id = $2
+      AND ($6::text IS NULL OR metadata->>'runLeaseToken' = $6)
     RETURNING row_to_json(${context.runsTable}.*) AS row_json
-  `, [runId, workerId, finalStatus ?? null, reason ?? null, now]);
+  `, [runId, workerId, finalStatus ?? null, reason ?? null, now, leaseToken ?? null]);
   return result.rows[0] ? context.normalizeRunRecord(result.rows[0].row_json) : null;
 }

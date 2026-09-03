@@ -1,4 +1,4 @@
-import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
+import type { RunLeaseAuthority, RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 import {
   SCHEDULER_STATE_METADATA_KEY,
   SCHEDULER_STATE_READY,
@@ -109,9 +109,12 @@ export class MemoryRunStore implements RunStore {
     status: RunStatus,
     reason?: string,
     metadataPatch: Record<string, unknown> = {},
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || !expectedStatuses.includes(record.status)) return null;
+    if (!record || !expectedStatuses.includes(record.status)
+      || (leaseAuthority && (record.workerId !== leaseAuthority.workerId
+        || record.metadata.runLeaseToken !== leaseAuthority.leaseToken))) return null;
     const now = new Date().toISOString();
     const updated: RunRecord = {
       ...record,
@@ -189,7 +192,7 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
+  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), _max?: number, _admission?: unknown, _identity?: unknown, leaseToken?: string): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;
     // 忠实复刻 pgRunStore.acquireLease 的原子 CAS 守卫：
@@ -209,14 +212,15 @@ export class MemoryRunStore implements RunStore {
       workerId,
       leaseExpiresAt: new Date(now.getTime() + leaseMs).toISOString(),
       updatedAt: now.toISOString(),
+      metadata: { ...record.metadata, ...(leaseToken ? { runLeaseToken: leaseToken } : {}) },
     };
     this.records.set(runId, updated);
     return updated;
   }
 
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), _source?: unknown, leaseToken?: string): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || record.workerId !== workerId) return null;
+    if (!record || record.workerId !== workerId || (leaseToken && record.metadata.runLeaseToken !== leaseToken)) return null;
     const requestedExpiry = now.getTime() + leaseMs;
     const currentExpiry = record.leaseExpiresAt ? Date.parse(record.leaseExpiresAt) : Number.NEGATIVE_INFINITY;
     const updated = {
@@ -228,9 +232,9 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null> {
+  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, leaseToken?: string): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || record.workerId !== workerId) return null;
+    if (!record || record.workerId !== workerId || (leaseToken && record.metadata.runLeaseToken !== leaseToken)) return null;
     const updated: RunRecord = {
       ...record,
       status: finalStatus ?? record.status,

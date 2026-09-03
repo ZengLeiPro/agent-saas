@@ -3,6 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDefaultExecutionTransportRegistry, type ToolCallContext } from '../agent/toolRuntime.js';
 import { DurableBackgroundTaskService } from './background/backgroundTaskService.js';
+import { markBackgroundTaskTerminal } from './background/backgroundTaskTerminal.js';
 import { PgEventStore } from './pgEventStore.js';
 import type { RawRuntimeRunDispatchConfig } from './rawRuntimeRunDispatch.js';
 import { PgRunStore } from './runStore.js';
@@ -139,6 +140,73 @@ describePg('automation background child recovery on PostgreSQL', () => {
     );
     return { setup, context, parentRunId, parentSessionId, childRunId, childSessionId };
   }
+
+  it('rejects stale worker resource release and parent terminal CAS after takeover', async () => {
+    const setup = await activeExecution();
+    const parentRunId = `bg-${randomUUID()}`;
+    const parentSessionId = `bg-session-${randomUUID()}`;
+    const childRunId = `child-${randomUUID()}`;
+    const childSessionId = `child-session-${randomUUID()}`;
+    const rootFence = { ...setup.context.automationFence!, runId: parentRunId,
+      rootSessionId: setup.sessionId, rootRunId: setup.dispatch.targetRunId };
+    const context = { tenantId, sessionId: parentSessionId, runId: parentRunId,
+      automationFence: rootFence } as RunContext;
+    await runs.createPending({
+      runId: parentRunId, tenantId, sessionId: parentSessionId, userId: 'user-a',
+      metadata: { backgroundTask: true, backgroundTaskReady: false, automationFence: rootFence,
+        executionChildSessionId: childSessionId, executionChildRunId: childRunId },
+    });
+    await guard.activateBackgroundResourceIntent(context, parentRunId, { childSessionId, childRunId });
+    const stale = await runs.acquireLease(parentRunId, 'worker-reused', 1, new Date(0), undefined, undefined, undefined, 'lease-1');
+    expect(stale).toMatchObject({ status: 'running', workerId: 'worker-reused', metadata: { runLeaseToken: 'lease-1' } });
+    await expect(guard.recoverInterruptedBackgroundChild(context, parentRunId, { childSessionId, childRunId }))
+      .resolves.toBe('requeued');
+    const current = await runs.acquireLease(parentRunId, 'worker-reused', 60_000, new Date(), undefined, undefined, undefined, 'lease-2');
+    expect(current).toMatchObject({ status: 'running', workerId: 'worker-reused', metadata: { runLeaseToken: 'lease-2' } });
+
+    await expect(guard.resolveBackgroundResourceFromChild(
+      context, parentRunId, { childSessionId, childRunId }, true,
+      { workerId: 'worker-reused', leaseToken: 'lease-1' },
+    )).rejects.toThrow('background_worker_lease_lost');
+    expect(await markBackgroundTaskTerminal(
+      runs, events, stale!, 'failed', 'stale worker', {},
+      { workerId: 'worker-reused', leaseToken: 'lease-1' },
+    )).toBeNull();
+    expect(await runs.get(parentRunId)).toMatchObject({
+      status: 'running', workerId: 'worker-reused', metadata: { runLeaseToken: 'lease-2' },
+    });
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE tenant_id=$1 AND resource_key=$2`,
+      [tenantId, parentRunId],
+    )).rows[0]?.state).toBe('prepared');
+
+    expect(await markBackgroundTaskTerminal(
+      runs, events, current!, 'failed', 'current worker', {},
+      { workerId: 'worker-reused', leaseToken: 'lease-2' },
+    )).toMatchObject({ status: 'failed', metadata: { backgroundTerminalLeaseToken: 'lease-2' } });
+    await expect(guard.resolveBackgroundResourceFromChild(
+      context, parentRunId, { childSessionId, childRunId }, true,
+      { workerId: 'worker-reused', leaseToken: 'lease-2' },
+    )).resolves.toBe('released');
+    await expect(runs.acquireLease(parentRunId, 'worker-3', 60_000, new Date(), undefined, undefined, undefined, 'lease-3'))
+      .resolves.toBeNull();
+  });
+
+  it('releases a launching missing child only for the lease token cancelled by the user', async () => {
+    const prepared = await preparedInterruptedChild('pending');
+    await pool.query(`DELETE FROM ${runs.runsTable} WHERE run_id=$1`, [prepared.childRunId]);
+    await pool.query(`UPDATE ${runs.runsTable} SET status='running',worker_id='worker-current',
+      metadata=metadata||'{"runLeaseToken":"lease-current"}'::jsonb WHERE run_id=$1`, [prepared.parentRunId]);
+    await guard.claimBackgroundResourceLaunch(prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+      { workerId: 'worker-current', leaseToken: 'lease-current' });
+    await runs.markStatus(prepared.parentRunId, 'cancelled', 'user_cancelled');
+    await expect(guard.resolveBackgroundResourceFromChild(prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, true,
+      { workerId: 'worker-current', leaseToken: 'lease-current' })).resolves.toBe('released');
+    expect((await pool.query(`SELECT state FROM ${store.tables.backgroundResources}
+      WHERE tenant_id=$1 AND resource_key=$2`, [tenantId, prepared.parentRunId])).rows[0]?.state).toBe('released');
+  });
 
   it('persists and restores background-agent lineage through resource lifecycle and first child admission', async () => {
     const setup = await activeExecution();

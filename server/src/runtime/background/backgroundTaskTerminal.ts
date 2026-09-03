@@ -1,5 +1,5 @@
 import { finalizeTerminalRun } from '../runTerminalCoordinator.js';
-import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
+import type { RunLeaseAuthority, RunRecord, RunStatus, RunStore } from '../runStore.js';
 import type { EventStore } from '../types.js';
 
 const ACTIVE_BACKGROUND_STATUSES = ['pending', 'running'] as const;
@@ -15,9 +15,13 @@ export async function markBackgroundTaskTerminal(
   status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled'>,
   reason?: string,
   metadataPatch: Record<string, unknown> = {},
+  leaseAuthority?: RunLeaseAuthority,
 ): Promise<RunRecord | null> {
   const tenantId = run.tenantId?.trim();
   if (!tenantId) throw new Error(`background terminal tenantId missing: ${run.runId}`);
+  const terminalPatch = leaseAuthority ? { ...metadataPatch,
+    backgroundTerminalWorkerId: leaseAuthority.workerId,
+    backgroundTerminalLeaseToken: leaseAuthority.leaseToken } : metadataPatch;
   const result = await finalizeTerminalRun({
     runStore,
     eventStore,
@@ -31,9 +35,11 @@ export async function markBackgroundTaskTerminal(
           ACTIVE_BACKGROUND_STATUSES,
           status,
           reason,
-          { ...metadataPatch, ...outboxPatch },
+          { ...terminalPatch, ...outboxPatch },
+          leaseAuthority,
         )
-      : runStore.markStatus(run.runId, status, reason, { ...metadataPatch, ...outboxPatch }),
+      : leaseAuthority ? Promise.resolve(null)
+        : runStore.markStatus(run.runId, status, reason, { ...terminalPatch, ...outboxPatch }),
     events: [{
       type: 'run_state_changed',
       runId: run.runId,

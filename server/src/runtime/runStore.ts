@@ -1200,7 +1200,7 @@ export class PgRunStore implements RunStore {
   async stagePendingRun(runId: string): Promise<RunRecord | null> { return this.queries.stagePendingRun(runId); }
   async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> { return this.queries.cancelPendingTaskboardRun(runId, reason); }
   async claimStateOnlyTerminalOutbox(runId: string, status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>, reason: string | undefined, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimStateOnlyTerminalOutbox(runId, status, reason, metadataPatch); }
-  async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch); }
+  async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}, leaseAuthority?: import('./runStoreTypes.js').RunLeaseAuthority): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch, leaseAuthority); }
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.patchMetadata(runId, metadataPatch); }
   async get(runId: string): Promise<RunRecord | null> { return this.queries.get(runId); }
   async cancelActiveByUser(userId: string, reason: string): Promise<number> { return this.queries.cancelActiveByUser(userId, reason); }
@@ -1221,11 +1221,11 @@ export class PgRunStore implements RunStore {
   async cancelStaleWaitingApproval(runId: string, cutoff: Date, reason: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     return this.queries.cancelStaleWaitingApproval(runId, cutoff, reason, metadataPatch);
   }
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission, identity?: RunLeaseIdentity): Promise<RunRecord | null> {
-    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission, identity);
+  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission, identity?: RunLeaseIdentity, leaseToken?: string): Promise<RunRecord | null> {
+    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission, identity, leaseToken);
   }
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker'): Promise<RunRecord | null> {
-    return this.queries.renewLease(runId, workerId, leaseMs, now, source);
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker', leaseToken?: string): Promise<RunRecord | null> {
+    return this.queries.renewLease(runId, workerId, leaseMs, now, source, leaseToken);
   }
   async heartbeatRun(runId: string, workerId: string, leaseMs: number, source: RunHeartbeatSource, now = new Date()): Promise<RunRecord | null> {
     return this.queries.renewLease(runId, workerId, leaseMs, now, source);
@@ -1306,11 +1306,11 @@ export class PgRunStore implements RunStore {
       encodePgEventNotifyPayload(events),
     ]).catch(() => undefined);
   }
-  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null> {
+  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, leaseToken?: string): Promise<RunRecord | null> {
     return releaseRunLease({
       pool: this.pool,
       runsTable: this.runsTable,
       normalizeRunRecord,
-    }, runId, workerId, finalStatus, reason);
+    }, runId, workerId, finalStatus, reason, leaseToken);
   }
 }

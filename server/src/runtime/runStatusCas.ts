@@ -1,4 +1,4 @@
-import type { PgPool, RunRecord, RunStatus } from './runStore.js';
+import type { PgPool, RunLeaseAuthority, RunRecord, RunStatus } from './runStore.js';
 
 interface RunStatusCasStore {
   pool: PgPool;
@@ -87,6 +87,7 @@ export async function markRunStatusIfCurrent(
   status: RunStatus,
   reason?: string,
   metadataPatch: Record<string, unknown> = {},
+  leaseAuthority?: RunLeaseAuthority,
 ): Promise<RunRecord | null> {
   if (expectedStatuses.length === 0) return null;
   const now = new Date().toISOString();
@@ -119,7 +120,9 @@ export async function markRunStatusIfCurrent(
         END
     WHERE run_id = $1
       AND status = ANY($2::text[])
+      AND ($7::text IS NULL OR (worker_id = $7 AND metadata->>'runLeaseToken' = $8))
     RETURNING row_to_json(${store.runsTable}.*) AS row_json
-  `, [runId, [...expectedStatuses], status, reason ?? null, now, JSON.stringify(metadataPatch)]);
+  `, [runId, [...expectedStatuses], status, reason ?? null, now, JSON.stringify(metadataPatch),
+    leaseAuthority?.workerId ?? null, leaseAuthority?.leaseToken ?? null]);
   return result.rows[0] ? store.normalizeRunRecord(result.rows[0].row_json) : null;
 }

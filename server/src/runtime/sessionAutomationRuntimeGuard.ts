@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'; // durable attempt and ledger identifiers
 import type pg from 'pg';
 import type { ModelUsage, RunContext } from './types.js';
+import type { RunLeaseAuthority } from './runStore.js';
 import { resolveAutomationBudgetReason } from './sessionAutomationBudgetProgress.js';
 import { sessionAutomationTables } from './sessionAutomationStoreSchema.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
@@ -625,7 +626,7 @@ export class SessionAutomationRuntimeGuard {
     );
   }
 
-  private async lockBackgroundAuthority(client: pg.PoolClient, lineage: AutomationLineage, requireInvokingRun: boolean): Promise<void> {
+  private async lockBackgroundAuthority(client: pg.PoolClient, lineage: AutomationLineage, requireInvokingRun: boolean, leaseAuthority?: RunLeaseAuthority): Promise<void> {
     await this.lockFenceAndResolveBudget(client, lineage);
     const root = await client.query(
       `SELECT 1 FROM ${this.runsTable}
@@ -638,8 +639,10 @@ export class SessionAutomationRuntimeGuard {
       const invoking = await client.query(
         `SELECT 1 FROM ${this.runsTable}
           WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 AND status='running'
+            AND ($4::text IS NULL OR (worker_id=$4 AND metadata->>'runLeaseToken'=$5))
           FOR UPDATE`,
-        [lineage.tenantId, lineage.invokingSessionId, lineage.invokingRunId],
+        [lineage.tenantId, lineage.invokingSessionId, lineage.invokingRunId,
+          leaseAuthority?.workerId ?? null, leaseAuthority?.leaseToken ?? null],
       );
       if (invoking.rowCount !== 1) throw new AutomationFenceRejectedError('invoking_run_not_running');
     }
@@ -702,6 +705,7 @@ export class SessionAutomationRuntimeGuard {
     resourceKey: string,
     identity: { childSessionId: string; childRunId: string },
     state: 'prepared' | 'active',
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<void> {
     const lineage = this.lineage(context as RunContext);
     if (!lineage) return;
@@ -712,6 +716,7 @@ export class SessionAutomationRuntimeGuard {
       let committed = false;
       try {
         await client.query('BEGIN');
+        await this.lockBackgroundAuthority(client, lineage, true, leaseAuthority);
         const authority = await client.query(
           `SELECT 1
              FROM ${this.tables.automations} a
@@ -761,7 +766,7 @@ export class SessionAutomationRuntimeGuard {
     } else {
       // The producer is the sole creator of prepared intent. A worker must never
       // resurrect stale authority with an UPSERT after clear/replace has swept it.
-      await this.assertBackgroundResourcePrepared(context, resourceKey, identity);
+      await this.assertBackgroundResourcePrepared(context, resourceKey, identity, leaseAuthority);
     }
   }
 
@@ -769,6 +774,7 @@ export class SessionAutomationRuntimeGuard {
     context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
     resourceKey: string,
     identity: { childSessionId: string; childRunId: string },
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<void> {
     this.assertExecutionEnabled();
     const lineage = this.lineage(context as RunContext);
@@ -777,7 +783,7 @@ export class SessionAutomationRuntimeGuard {
     let committed = false;
     try {
       await client.query('BEGIN');
-      await this.lockBackgroundAuthority(client, lineage, true);
+      await this.lockBackgroundAuthority(client, lineage, true, leaseAuthority);
       const claimed = await client.query(
         `UPDATE ${this.tables.backgroundResources}
             SET state='launching',metadata=metadata||$13::jsonb,version=version+1,updated_at=now()
@@ -808,6 +814,7 @@ export class SessionAutomationRuntimeGuard {
     resourceKey: string,
     identity: { childSessionId: string; childRunId: string },
     workerStopped = false,
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<'released' | 'result_unknown'> {
     const lineage = this.lineage(context as RunContext);
     if (!lineage) return 'released';
@@ -816,6 +823,19 @@ export class SessionAutomationRuntimeGuard {
     try {
       await client.query('BEGIN');
       await client.query(`SELECT 1 FROM ${this.tables.automations} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 FOR UPDATE`,[lineage.tenantId,lineage.sessionId,lineage.automationId]);
+      if (leaseAuthority) {
+        const owner = await client.query(
+          `SELECT 1 FROM ${this.runsTable} WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3
+            AND ((status='running' AND worker_id=$4 AND metadata->>'runLeaseToken'=$5)
+              OR (status IN ('completed','failed','cancelled')
+                AND metadata->>'backgroundTerminalWorkerId'=$4
+                AND metadata->>'backgroundTerminalLeaseToken'=$5)
+              OR (status='cancelled' AND metadata->>'runLeaseToken'=$5)) FOR UPDATE`,
+          [lineage.tenantId,lineage.invokingSessionId,lineage.invokingRunId,
+            leaseAuthority.workerId,leaseAuthority.leaseToken],
+        );
+        if(owner.rowCount!==1)throw new AutomationFenceRejectedError('background_worker_lease_lost');
+      }
       const resource = await client.query<{ background_resource_id: string; state: string }>(
         `SELECT background_resource_id,state FROM ${this.tables.backgroundResources}
           WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
@@ -894,6 +914,7 @@ export class SessionAutomationRuntimeGuard {
     context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
     resourceKey: string,
     identity: { childSessionId: string; childRunId: string },
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<void> {
     this.assertExecutionEnabled();
     const lineage = this.lineage(context as RunContext);
@@ -902,7 +923,7 @@ export class SessionAutomationRuntimeGuard {
     let committed = false;
     try {
       await client.query('BEGIN');
-      await this.lockBackgroundAuthority(client, lineage, true);
+      await this.lockBackgroundAuthority(client, lineage, true, leaseAuthority);
       const result = await client.query(
         `SELECT 1 FROM ${this.tables.backgroundResources}
           WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3

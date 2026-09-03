@@ -282,12 +282,13 @@ export class PgRunStoreQueries {
     status: RunStatus,
     reason?: string,
     metadataPatch: Record<string, unknown> = {},
+    leaseAuthority?: import('./runStoreTypes.js').RunLeaseAuthority,
   ): Promise<RunRecord | null> {
     return markRunStatusIfCurrent({
       pool: this.pool,
       runsTable: this.runsTable,
       normalizeRunRecord,
-    }, runId, expectedStatuses, status, reason, metadataPatch);
+    }, runId, expectedStatuses, status, reason, metadataPatch, leaseAuthority);
   }
 
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
@@ -533,6 +534,7 @@ export class PgRunStoreQueries {
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
     identity?: RunLeaseIdentity,
+    leaseToken?: string,
   ): Promise<RunRecord | null> {
     if (maxConcurrentRuns !== undefined && (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1)) {
       throw new Error('maxConcurrentRuns must be a positive integer');
@@ -640,10 +642,10 @@ export class PgRunStoreQueries {
             liveness_version = COALESCE(candidate.liveness_version, 0) + 1,
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
-            metadata = CASE
+            metadata = (CASE
               WHEN $5::boolean THEN jsonb_set(candidate.metadata, '{subagentCapacityInherited}', 'true'::jsonb, true)
               ELSE candidate.metadata - 'subagentCapacityInherited'
-            END
+            END) || CASE WHEN $6::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runLeaseToken',$6::text) END
         WHERE candidate.run_id = $1
           AND (
             candidate.status = 'pending'
@@ -700,7 +702,7 @@ export class PgRunStoreQueries {
               )
           )
         RETURNING row_to_json(candidate.*) AS row_json
-      `, [runId, workerId, leaseExpiresAt, nowIso, inheritsParentCapacity]);
+      `, [runId, workerId, leaseExpiresAt, nowIso, inheritsParentCapacity, leaseToken ?? null]);
       await client.query('COMMIT');
       return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
     } catch (err) {
@@ -717,8 +719,9 @@ export class PgRunStoreQueries {
     leaseMs: number,
     now = new Date(),
     source: RunHeartbeatSource = 'worker',
+    leaseToken?: string,
   ): Promise<RunRecord | null> {
-    return renewRunLease(this, runId, workerId, leaseMs, now, source);
+    return renewRunLease(this, runId, workerId, leaseMs, now, source, leaseToken);
   }
 
   async markLivenessStale(

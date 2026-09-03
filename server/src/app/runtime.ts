@@ -2496,8 +2496,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await cronLeadership?.stop();
     // 6. 先停任务看板恢复周期，避免 drain 期间继续 enqueue；再停 scheduler，
     //    不再 claim 新 run 并等 in-flight run 结清（两者 stop 均幂等）。
-    await sessionAutomationCoordinator?.stop(); await sessionAutomationEvaluator?.stop();
-    await sessionAutomationTerminalProjector?.stop();
+    await sessionAutomationCoordinator?.stop(); await sessionAutomationEvaluator?.stop(); await sessionAutomationTerminalProjector?.stop();
     await taskboardExecutionCoordinator?.stop();
     await runtimeScheduler?.stop();
   };

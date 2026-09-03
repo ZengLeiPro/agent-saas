@@ -720,7 +720,7 @@ describe("useChatAppState message delivery lifecycle", () => {
       generatedAt: "2026-08-15T01:00:00.000Z",
       items: [{
         sessionId: "session-authoritative", sourceRunId: "queued-snapshot", runId: "queued-snapshot",
-        clientMsgId: "client-snapshot", deliveryMode: "queue", status: "queued", content: "snapshot attachment",
+        targetRunId: "run-target", clientMsgId: "client-snapshot", deliveryMode: "queue", status: "queued", content: "snapshot attachment",
         attachments: [{ attachmentId: fileB.attachmentId!, name: fileB.originalName }],
       }],
     }));

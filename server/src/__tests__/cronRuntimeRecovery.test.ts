@@ -188,6 +188,42 @@ describe("Cron Runtime recovery identity", () => {
     expect(stored.state.executionLedger![0]).toMatchObject({ status: "terminal", terminalStatus: "ok", recoveryCount: 1 });
   });
 
+  it("retains the parent claim when Runtime inspection fails transiently and recovers later", async () => {
+    const lease = crashableRunLease();
+    let executeCalls = 0;
+    let logged = 0;
+    const { a, b, storePath } = await makePair({
+      tryAcquireRunLease: lease.tryAcquire,
+      executeJob: async () => { executeCalls += 1; return { status: "ok" }; },
+      inspectRuntimeRun: async () => { throw new Error("pg unavailable"); },
+      appendRunLog: async () => { logged += 1; },
+    });
+    const job = await a.add({ name: "inspect-transient", schedule: { kind: "at", atMs: Date.now() + 60_000 },
+      payload: { kind: "agentTurn", message: "run" } });
+    const claimed = await (a as any).claimJob(job.id, { trigger: "manual", requestId: "inspect-transient-1" });
+    lease.crashOwner();
+
+    await b.start(); started.push(b);
+    await waitFor(async () => (await loadJobs({ storePath }))[0]?.state.executionLedger?.[0]?.recoveryCount === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    let stored = (await loadJobs({ storePath }))[0]!;
+    expect(executeCalls).toBe(0);
+    expect(logged).toBe(0);
+    expect(stored.state.runningRunId).toBe(claimed.value.runId);
+    expect(stored.state.executionLedger![0].terminalStatus).toBeUndefined();
+
+    const recovered = createService(storePath, {
+      tryAcquireRunLease: lease.tryAcquire, executeJob: async () => { executeCalls += 1; return { status: "ok" }; },
+      inspectRuntimeRun: async () => ({ runId: claimed.value.runtimeRunId, sessionId: claimed.value.sessionId, status: "completed" }),
+      appendRunLog: async () => { logged += 1; }, runtimeRunPollMs: 5,
+    });
+    await recovered.start(); started.push(recovered);
+    await waitFor(() => logged === 1);
+    stored = (await loadJobs({ storePath }))[0]!;
+    expect(executeCalls).toBe(0);
+    expect(stored.state.executionLedger![0]).toMatchObject({ terminalStatus: "ok", recoveryCount: 2 });
+  });
+
   it("quarantines a legacy orphan without Runtime identity instead of redispatching or looping", async () => {
     const lease = crashableRunLease();
     let executeCalls = 0;

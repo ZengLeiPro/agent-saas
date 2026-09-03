@@ -42,6 +42,21 @@ function clearActiveExecution(job: CronJob): void {
   delete job.state.runningOwnerPid; delete job.state.runningOwnerHostname;
 }
 
+export class RuntimeObservationError extends Error {
+  constructor(runId: string, cause: unknown) {
+    super(`Runtime run observation failed: ${runId}`, { cause });
+    this.name = 'RuntimeObservationError';
+  }
+}
+
+export async function inspectLinkedRuntime(
+  inspect: NonNullable<CronRuntimeLinkDeps['inspectRuntimeRun']>,
+  runId: string,
+): Promise<CronLinkedRuntimeRun | null> {
+  try { return await inspect(runId); }
+  catch (error) { throw new RuntimeObservationError(runId, error); }
+}
+
 export function isRuntimeTerminal(status: CronLinkedRuntimeStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'orphaned';
 }
@@ -60,8 +75,8 @@ export async function waitForRuntimeTerminal(
   let current = run;
   while (!isRuntimeTerminal(current.status)) {
     await new Promise<void>((resolve) => { const timer = setTimeout(resolve, pollMs); timer.unref?.(); });
-    const inspected = await inspect(current.runId);
-    if (!inspected) throw new Error(`Linked Runtime run disappeared: ${current.runId}`);
+    const inspected = await inspectLinkedRuntime(inspect, current.runId);
+    if (!inspected) throw new RuntimeObservationError(current.runId, new Error('linked Runtime run disappeared'));
     current = inspected;
   }
   return runtimeResult(current);
@@ -108,7 +123,12 @@ export async function settleExplicitCancellation(
     current.state.lastRunAtMs = record.startedAtMs; current.state.lastStatus = status;
     current.state.lastError = error; current.state.lastDurationMs = Math.max(0, endedAtMs - record.startedAtMs);
     clearActiveExecution(current);
-    if (current.schedule.kind !== 'at' && current.enabled) current.state.nextRunAtMs = computeJobNextRunAtMs(current, endedAtMs);
+    if (current.schedule.kind === 'at' && record.trigger === 'schedule') {
+      delete current.state.nextRunAtMs;
+      if (status === 'ok') current.enabled = false;
+    } else if (current.schedule.kind !== 'at' && current.enabled) {
+      current.state.nextRunAtMs = computeJobNextRunAtMs(current, endedAtMs);
+    }
     return { changed: true, value: cloneJob(current) };
   });
   if (!outcome.changed) return { cancelled: true };

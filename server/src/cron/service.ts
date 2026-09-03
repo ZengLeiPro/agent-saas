@@ -21,8 +21,8 @@ import { claimCronJob, markCronClaimRunning, recoverCronClaim,
   type ClaimedJob, type CronRunLease, type CronRunRequest, type ExecutionInvocation,
 } from "./executionClaim.js";
 export type { CronRunLease } from "./executionClaim.js";
-import { cancelCronRun, cancelLinkedRuntime, isRuntimeTerminal, recoverOrphanCronClaims, runtimeResult,
-  settleExplicitCancellation, waitForRuntimeTerminal, type CronLinkedRuntimeRun,
+import { cancelCronRun, cancelLinkedRuntime, inspectLinkedRuntime, isRuntimeTerminal, recoverOrphanCronClaims, runtimeResult,
+  settleExplicitCancellation, waitForRuntimeTerminal, RuntimeObservationError, type CronLinkedRuntimeRun,
   type CronRuntimeLinkDeps,
 } from "./runtimeLink.js";
 
@@ -791,7 +791,7 @@ export class CronService {
       const hardTimeoutMs = jobTimeoutSec > 0 ? (jobTimeoutSec + 60) * 1000 : 0;
       ongoingExecution = (async () => {
         const linkedRun = claim.recovered && claim.runtimeRunId && this.deps.inspectRuntimeRun
-          ? await this.deps.inspectRuntimeRun(claim.runtimeRunId)
+          ? await inspectLinkedRuntime(this.deps.inspectRuntimeRun, claim.runtimeRunId)
           : null;
         let result = linkedRun
           ? await waitForRuntimeTerminal(linkedRun, this.deps.inspectRuntimeRun!, this.deps.runtimeRunPollMs)
@@ -803,7 +803,7 @@ export class CronService {
         // inspect→dispatch 之间若另一个 Runtime owner 先创建了同一 run，
         // raw dispatch 会 create-only 退让；此处回到权威 RunStore 等待同一终态。
         if (claim.recovered && claim.runtimeRunId && this.deps.inspectRuntimeRun) {
-          const authoritative = await this.deps.inspectRuntimeRun(claim.runtimeRunId);
+          const authoritative = await inspectLinkedRuntime(this.deps.inspectRuntimeRun, claim.runtimeRunId);
           if (authoritative) {
             result = isRuntimeTerminal(authoritative.status)
               ? runtimeResult(authoritative)
@@ -824,6 +824,7 @@ export class CronService {
       transcriptPath = result.transcriptPath;
       model = result.modelRef;
     } catch (err) {
+      if (err instanceof RuntimeObservationError) { cronLogger.warn(`Runtime state is uncertain; Cron claim retained: ${job.id} (${runId})`); return; }
       status = "error";
       executionTimedOut = err instanceof ServiceTimeoutError;
       error = String(err);
@@ -878,11 +879,11 @@ export class CronService {
 
       // A user/system edit during execution owns the new enabled/schedule and
       // nextRun state. Old completion may only release its matching claim.
-      if (!executionTimedOut && current.updatedAtMs === claimedUpdatedAtMs) {
-        if (current.schedule.kind === "at") {
-          current.state.nextRunAtMs = undefined;
+      if (current.updatedAtMs === claimedUpdatedAtMs) {
+        if (current.schedule.kind === "at" && trigger === "schedule") {
+          delete current.state.nextRunAtMs;
           if (status === "ok") current.enabled = false;
-        } else if (!forced && current.enabled) {
+        } else if (current.schedule.kind !== "at" && !forced && current.enabled) {
           current.state.nextRunAtMs = computeJobNextRunAtMs(current, endedAtMs);
         }
       }
@@ -1025,9 +1026,8 @@ export class CronService {
         this.clearRunningState(job);
         job.state.lastStatus = "error";
         job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline; linked Runtime run cancelled`;
-        if (job.schedule.kind !== "at" && job.enabled) {
-          job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
-        }
+        if (job.schedule.kind === "at" && execution.trigger === "schedule") delete job.state.nextRunAtMs;
+        else if (job.schedule.kind !== "at" && job.enabled) job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
         execution.status = "terminal";
         execution.terminalStatus = "error";
         execution.endedAtMs = nowMs;

@@ -8,6 +8,14 @@ const input = {
 };
 
 describe('Runtime create-only claim', () => {
+  it('普通 wake 即使支持 createPending 也必须续用 upsertPending', async () => {
+    const upsertPending = vi.fn(async () => ({ ...input, status: 'running' }));
+    const createPending = vi.fn();
+    await expect(claimRuntimeRun({ upsertPending, createPending } as unknown as RunStore, input, false)).resolves.toBe(true);
+    expect(upsertPending).toHaveBeenCalledWith(input);
+    expect(createPending).not.toHaveBeenCalled();
+  });
+
   it('预分配 runId 时拒绝退化到可复活旧状态的 upsertPending', async () => {
     const upsertPending = vi.fn();
     await expect(claimRuntimeRun({ upsertPending } as unknown as RunStore, input, true))

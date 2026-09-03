@@ -67,19 +67,25 @@ try {
   }
   if (outputDir) await page.screenshot({ path: `${outputDir}/平台分析-运行追踪.png` });
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForTimeout(250);
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    storageState: await page.context().storageState(),
+  });
+  const mobilePage = await mobileContext.newPage();
+  await mobilePage.goto(`${baseUrl}/platform-console/runtime/runs`, { waitUntil: 'domcontentloaded' });
+  await mobilePage.getByTestId('management-shell').waitFor();
   if (
-    (await page.getByTestId('management-shell').count()) !== 1 ||
-    (await page.getByTestId('management-scroll-container').count()) !== 1
+    (await mobilePage.getByTestId('management-shell').count()) !== 1 ||
+    (await mobilePage.getByTestId('management-scroll-container').count()) !== 1
   ) {
     throw new Error('移动端没有复用单一管理壳和滚动容器');
   }
-  const mobileOverflow = await page
+  const mobileOverflow = await mobilePage
     .getByTestId('management-shell')
     .evaluate((element) => element.scrollWidth > element.clientWidth + 1);
   if (mobileOverflow) throw new Error('移动端管理壳出现页面级横向溢出');
-  if (outputDir) await page.screenshot({ path: `${outputDir}/移动端-运行追踪.png` });
+  if (outputDir) await mobilePage.screenshot({ path: `${outputDir}/移动端-运行追踪.png` });
+  await mobileContext.close();
 
   if (runtimeErrors.length) throw new Error(runtimeErrors.join('\n'));
   console.log(

@@ -426,7 +426,7 @@ export const MessageItemView = React.memo(function MessageItemView({
     const anim = Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true });
     anim.start();
     return () => anim.stop();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   let content: React.ReactNode;
 
@@ -1562,7 +1562,7 @@ function FileDownloadCard({ message, onPreviewMd }: {
       // short, principal-bound grant. Mobile never executes artifact HTML in a WebView.
       if (artifactId) {
         let grant = await fetchMobileArtifactGrant(artifactId);
-        if (selectMobileArtifactViewer(grant) === 'download-only') {
+        if (selectMobileArtifactViewer(grant) === 'download-only' || grant.descriptor.requiresWarning) {
           const confirmed = await new Promise<boolean>((resolve) => Alert.alert(
             '确认下载此文件？',
             mobileArtifactWarning(grant),

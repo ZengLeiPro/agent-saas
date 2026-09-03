@@ -40,6 +40,7 @@ import {
 import type { CompactionMessageItem, CompactionStatusEvent } from "@/lib/compaction";
 import {
   InterjectionConsumptionRegistry,
+  projectAuthoritativeInterjections,
   reconcileQueuedInterjections,
 } from "@/lib/interjectionConsumption";
 import type { QueuedInterjection } from "@/lib/interjectionConsumption";
@@ -286,31 +287,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       outboxRef.current = outboxRef.current.filter((entry) => entry.clientMsgId !== item.clientMsgId);
       newSessionClientMsgIdsRef.current.delete(item.clientMsgId);
     }
-    const projected: QueuedInterjection[] = authoritativeItems
-      .filter((item) => ['queued', 'cancel_pending', 'cancelled', 'failed'].includes(item.status))
-      .map((item) => ({
-      clientMsgId: item.clientMsgId,
-      sessionId: item.sessionId,
-      sourceRunId: item.sourceRunId,
-      ...(item.targetRunId ? { targetRunId: item.targetRunId } : {}),
-      deliveryMode: item.deliveryMode,
-      ...(item.queuePosition !== undefined ? { queuePosition: item.queuePosition } : {}),
-      content: item.content ?? '',
-      ...(item.attachments?.length ? { attachments: item.attachments } : {}),
-      status: (item.status === 'cancelled' ? 'cancelled' : item.status === 'failed' ? 'failed' : 'queued') as QueuedInterjection['status'],
-      ...(item.reason ? { reason: item.reason } : {}),
-      createdAt: Date.parse(item.acceptedAt ?? '') || Date.now(),
-    }));
-    mutateQueuedInterjections((previous) => [
-      ...projected.map((item) => {
-        const local = previous.find((candidate) => candidate.clientMsgId === item.clientMsgId);
-        return local ? { ...local, ...item, ...(local.uploadedFiles ? { uploadedFiles: local.uploadedFiles } : {}) } : item;
-      }),
-      ...previous.filter((item) => (
-        !projected.some((candidate) => candidate.clientMsgId === item.clientMsgId)
-        && (item.status === 'sending' || item.status === 'verifying')
-      )),
-    ]);
+    mutateQueuedInterjections((previous) => projectAuthoritativeInterjections(
+      authoritativeItems, previous, consumedInterjectionsRef.current,
+    ));
   }, [mutateQueuedInterjections]);
   // Detail 快照与消费标记的对账保持稳定引用，供 session callbacks 复用。
   const reconcileServerInterjections = useCallback(
@@ -2154,7 +2133,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     });
 
     return unsub;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatchConnection, scheduleTerminalRuntimeProbe]);
 
   /** 内部：标记 bubble 为 failed（按 clientMsgId 或回退到 userMsgIndex） */

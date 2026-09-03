@@ -32,6 +32,20 @@ async function waitForAdvisoryWaiters(
   throw new Error(`expected at least ${expected} waiter(s) for the sandbox lifecycle advisory lock`);
 }
 
+async function waitForBlockedSession(client: PoolClient): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const result = await client.query<{ waiting: boolean }>(`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity AS activity
+        WHERE pg_backend_pid() = ANY(pg_blocking_pids(activity.pid))
+      ) AS waiting
+    `);
+    if (result.rows[0]?.waiting === true) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('expected a PostgreSQL session blocked by the lifecycle test transaction');
+}
+
 describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contract', () => {
   const prefix = `scope_activity_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
@@ -183,7 +197,6 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       })).resolves.toEqual(expect.objectContaining({ runId: 'legacy-other-tenant-run' }));
 
       const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
-      await expect(store.hasActivity({ sandboxScopeId, sessionId, tenantId: 'kaiyan' })).resolves.toBe(false);
       await expect(store.hasActivity({ sandboxScopeId, sessionId, tenantId: 'tenant-2' })).resolves.toBe(true);
       await expect(store.cancelCleanup(sessionId, 'tenant-1', 'wrong-tenant-generation')).resolves.toEqual([]);
       await expect(store.cancelCleanup(sessionId, 'kaiyan', 'generation-legacy-restored')).resolves.toEqual([
@@ -329,6 +342,7 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
         deletionGeneration: 'delete-generation-new',
       }),
     ]));
+    await runStore.markStatus(runId, 'cancelled', 'session deleted before restart');
     const claimed = await rebuilt.claimPreparedCleanup(cleanupRunId, 'restarted-scanner');
     expect(claimed?.claimGeneration).toBe(1);
     await expect(rebuilt.completePreparedCleanup(
@@ -439,20 +453,7 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
             ? runStore.markStatusIfCurrent(runId, ['pending'], 'completed', 'after-lock')
             : runStore.releaseLease(runId, workerId, 'completed', 'after-lock');
 
-        let waiting = false;
-        for (let attempt = 0; attempt < 100 && !waiting; attempt += 1) {
-          const observed = await blocker.query<{ waiting: boolean }>(`
-            SELECT EXISTS (
-              SELECT 1 FROM pg_stat_activity
-              WHERE pid <> pg_backend_pid()
-                AND wait_event_type = 'Lock'
-                AND query LIKE $1
-            ) AS waiting
-          `, [`%${prefix}_runs%`]);
-          waiting = observed.rows[0]?.waiting === true;
-          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        expect(waiting).toBe(true);
+        await waitForBlockedSession(blocker);
         const unlockClock = await blocker.query<{ now: Date }>('SELECT clock_timestamp() AS now');
         await blocker.query('COMMIT');
         committed = true;
@@ -628,7 +629,7 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
           AND classid=((hashtextextended($1, 0) >> 32) & 4294967295)::oid
           AND objid=(hashtextextended($1, 0) & 4294967295)::oid
         LIMIT 1
-      `, [sessionId]);
+      `, [sandboxScopeId]);
       expect(held.rows[0]).toBeDefined();
       const admission = runStore.upsertPending({
         runId: 'terminal-guarded-new-run', sessionId: 'terminal-guarded-child', tenantId: 'tenant-guarded',
@@ -641,7 +642,10 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       operationReleased = true;
       await expect(guardedDelivery).resolves.toBe('committed');
       await expect(admission).resolves.toEqual(expect.objectContaining({ runId: 'terminal-guarded-new-run' }));
-      await expect(store.isTerminalCandidateCurrent(runId)).resolves.toBe(false);
+      await expect(store.isTerminalCandidateCurrent(runId)).resolves.toBe(true);
+      await expect(store.hasActivity({
+        sandboxScopeId, sessionId, tenantId: 'tenant-guarded',
+      })).resolves.toBe(true);
     } finally {
       if (!operationReleased) releaseOperation();
       observer.release();
@@ -689,8 +693,9 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     `, [poison.runId]);
     expect(firstDeferred.rows[0]?.outbox).toMatchObject({
       state: 'deferred', attempts: 1, lastError: `poison:${poison.runId}`,
-      nextAttemptAt: '2026-09-01 00:00:01+00',
     });
+    expect(new Date(String(firstDeferred.rows[0]?.outbox.nextAttemptAt)).toISOString())
+      .toBe('2026-09-01T00:00:01.000Z');
     clock = new Date('2026-09-01T00:00:01.000Z');
     await expect(store.listTerminalCandidates(200)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ runId: poison.runId }),

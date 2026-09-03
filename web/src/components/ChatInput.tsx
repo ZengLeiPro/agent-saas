@@ -62,10 +62,6 @@ function warmupSessionOnce(sessionId: string | null | undefined, value: string):
   void warmupSessionSandbox(sessionId).catch(() => undefined);
 }
 
-function releaseSessionWarmup(sessionId: string | null | undefined): void {
-  if (sessionId) warmedSessionIds.delete(sessionId);
-}
-
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -115,18 +111,6 @@ export function ChatInput({
     hasValidText: Boolean(input.trim()),
   });
 
-  const observeWarmupInput = useCallback((value: string, shouldWarmup: boolean) => {
-    const hasValidText = Boolean(value.trim());
-    const previous = warmupInputStateRef.current;
-
-    if (previous.sessionId === sessionId && previous.hasValidText && !hasValidText) {
-      releaseSessionWarmup(sessionId);
-    }
-    warmupInputStateRef.current = { sessionId, hasValidText };
-
-    if (shouldWarmup) warmupSessionOnce(sessionId, value);
-  }, [sessionId]);
-
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
       if (isDisabled) return;
@@ -158,8 +142,8 @@ export function ChatInput({
 
     // 只把同一挂载实例中真实观察到的“有效 → 空白”视为一轮结束。
     // 初始空白或切换 session 时的空白不能解锁，否则重挂载会反复预热。
-    if (previous.sessionId === sessionId && previous.hasValidText && !hasValidText) {
-      releaseSessionWarmup(sessionId);
+    if (sessionId && previous.sessionId === sessionId && previous.hasValidText && !hasValidText) {
+      warmedSessionIds.delete(sessionId);
     }
     warmupInputStateRef.current = { sessionId, hasValidText };
   }, [input, sessionId]);
@@ -442,7 +426,7 @@ export function ChatInput({
                   if (isDisabled) return;
                   const value = e.target.value;
                   onInputChange(value);
-                  observeWarmupInput(value, !isComposingRef.current);
+                  if (!isComposingRef.current) warmupSessionOnce(sessionId, value);
                 }}
                 onKeyDown={handleKeyDown}
                 onCompositionStart={handleCompositionStart}

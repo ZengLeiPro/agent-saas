@@ -166,6 +166,10 @@ export interface OrgAgentWorkAttempt {
   publishState: 'pending' | 'published' | 'conflict' | 'rejected';
   checkpoint?: Record<string, unknown>;
   artifactManifest?: Record<string, unknown>;
+  resultEnvelope?: OrgAgentResultEnvelope;
+  failure?: string;
+  startedAt?: string;
+  completedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -230,6 +234,12 @@ export interface OrgGroupAgentStore {
     conversationId: string;
     messageIds: string[];
   }): Promise<OrgAgentWorkConversation | null>;
+  pinInboxRouting(input: {
+    inboxId: string;
+    conversationSpaceId: string;
+    workConversationId: string;
+    policyRevision: number;
+  }): Promise<void>;
   pinInboxContext(input: {
     inboxId: string;
     externalActor: OrgAgentChannelActorRef;
@@ -245,6 +255,7 @@ export interface OrgGroupAgentStore {
   ): Promise<DwsDeliveryIntent>;
   claimDelivery(deliveryId: string, owner: string, ttlMs: number): Promise<DwsDeliveryIntent>;
   claimNextDelivery(owner: string, ttlMs: number): Promise<DwsDeliveryIntent | null>;
+  reconcileAllExpiredDeliveries(limit?: number): Promise<number>;
   markDeliverySent(
     deliveryId: string,
     owner: string,
@@ -266,6 +277,7 @@ export interface OrgGroupAgentStore {
   ): Promise<DwsDeliveryIntent>;
   reconcileExpiredDeliveries(tenantId: string, accountId: string, limit?: number): Promise<number>;
   listDeliveries(tenantId: string, accountId: string, limit?: number): Promise<DwsDeliveryIntent[]>;
+  getDelivery(tenantId: string, deliveryId: string): Promise<DwsDeliveryIntent | null>;
   reconcileDelivery(input: {
     tenantId: string;
     deliveryId: string;
@@ -306,7 +318,9 @@ export interface OrgGroupAgentStore {
     failure?: string;
   }): Promise<OrgAgentWorkAttempt | null>;
   getWorkOrder(tenantId: string, workOrderId: string): Promise<OrgAgentWorkOrder | null>;
+  getWorkConversation(tenantId: string, workConversationId: string): Promise<OrgAgentWorkConversation | null>;
   listWorkOrders(tenantId: string, bindingId: string, limit?: number): Promise<OrgAgentWorkOrder[]>;
+  listStagedWorkOrders(staleBefore: Date, limit?: number): Promise<OrgAgentWorkOrder[]>;
   transitionWorkOrder(input: {
     tenantId: string;
     workOrderId: string;
@@ -352,6 +366,7 @@ export interface OrgGroupAgentStore {
     status?: 'active' | 'revoked' | 'deleted';
     limit?: number;
   }): Promise<OrgAgentMemory[]>;
+  getMemory(tenantId: string, memoryId: string): Promise<OrgAgentMemory | null>;
 }
 
 export const DEFAULT_ORG_AGENT_CHANNEL_POLICY: OrgAgentChannelPolicy = {

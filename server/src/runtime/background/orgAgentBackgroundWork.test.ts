@@ -30,8 +30,12 @@ const orgChannel = {
   },
   externalActorAssurance: 'mapped' as const,
   allowedToolNames: ['Agent'],
+  allowedSkillIds: [],
   allowedSourceIds: [],
   contextEnabled: false,
+  taskVisibility: 'conversation' as const,
+  triggerRoles: [],
+  approvalRoles: [],
   externalActor: {
     kind: 'external_user' as const,
     provider: 'dingtalk' as const,
@@ -85,7 +89,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
   it('creates a distinct retry attempt, session, workspace and pending runtime run', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-retry-'));
     roots.push(root);
-    const previous = previousRun('tenant-1/.agent-agent-1');
+    const previous = previousRun('tenant-1/.agent-agent-1/shared/binding-1/wc-1');
     const work = {
       workOrderId: 'work-1',
       tenantId: 'tenant-1',
@@ -114,17 +118,27 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       transitionWorkAttempt: vi.fn(),
       transitionWorkOrder: vi.fn(),
     } as unknown as OrgGroupAgentStore;
+    let stagedRunRecord: RunRecord | undefined;
     const upsertPending = vi
       .fn()
-      .mockImplementation(async (value) => ({
-        ...value,
+      .mockImplementation(async (value) => (stagedRunRecord = {
+        ...value as RunRecord,
         status: 'pending',
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        updatedAt: now(),
       }));
     const runStore = {
       get: vi.fn().mockResolvedValue(previous),
       upsertPending,
+      markStatus: vi.fn().mockImplementation(async (runId, status, _reason, metadata) => {
+        if (!stagedRunRecord) throw new Error('staged run missing');
+        stagedRunRecord = {
+          ...stagedRunRecord,
+          runId,
+          status,
+          metadata: { ...stagedRunRecord.metadata, ...metadata },
+        };
+        return stagedRunRecord;
+      }),
     } as unknown as RunStore;
     const upsertSession = vi.fn();
     const sessionCatalog = {
@@ -165,7 +179,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
         parentAttemptId: 'attempt-1',
         workOrderId: 'work-1',
         mountSubPath: expect.stringContaining('attempt-2'),
-        sharedReadOnlySubPath: 'tenant-1/.agent-agent-1',
+        sharedReadOnlySubPath: 'tenant-1/.agent-agent-1/shared/binding-1/wc-1',
       }),
     );
     expect(upsertSession).toHaveBeenCalledWith(
@@ -178,7 +192,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     expect(retried.metadata).toMatchObject({
       workOrderId: 'work-1',
       attemptNo: 2,
-      sharedReadOnlySubPath: 'tenant-1/.agent-agent-1',
+      sharedReadOnlySubPath: 'tenant-1/.agent-agent-1/shared/binding-1/wc-1',
     });
   });
 

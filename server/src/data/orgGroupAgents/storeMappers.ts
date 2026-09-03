@@ -143,6 +143,12 @@ export function mapWorkAttempt(row: Record<string, unknown>): OrgAgentWorkAttemp
     ...(row.artifact_manifest_json
       ? { artifactManifest: parseJson(row.artifact_manifest_json) }
       : {}),
+    ...(row.result_envelope_json
+      ? { resultEnvelope: parseJson(row.result_envelope_json) as unknown as OrgAgentWorkAttempt['resultEnvelope'] }
+      : {}),
+    ...(text(row.failure) ? { failure: text(row.failure) } : {}),
+    ...(row.started_at ? { startedAt: iso(row.started_at) } : {}),
+    ...(row.completed_at ? { completedAt: iso(row.completed_at) } : {}),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };

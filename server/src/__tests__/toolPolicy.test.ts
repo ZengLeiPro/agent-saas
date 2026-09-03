@@ -80,3 +80,33 @@ describe('DefaultToolPolicy 低风险常开档（TASK-256）', () => {
       .toEqual({ type: 'allow' });
   });
 });
+
+describe('DefaultToolPolicy 组织 Agent 群聊门禁', () => {
+  const livePolicy = async () => ({ allowed: true });
+  const channelContext = {
+    channel: 'dingtalk',
+    sessionOwner: { id: 'service-user', username: 'service', tenantId: 'tenant-1' },
+    orgAgentChannel: {
+      bindingId: 'binding-1', accountId: 'account-1', agentId: 'agent-1',
+      channelPrincipal: { provider: 'dingtalk', accountId: 'account-1', conversationId: 'group-1', kind: 'group' },
+      allowedToolNames: ['WriteTool'], approvalRoles: ['admin'], actorRole: 'member',
+    },
+  } as unknown as RunContext['channelContext'];
+
+  it('denies write tools when the current actor role is outside approvalRoles', async () => {
+    const policy = new DefaultToolPolicy(livePolicy);
+    const result = await policy.decide(descriptor({ id: 'WriteTool', name: 'WriteTool', risk: 'workspace_write' }), {}, {
+      channelContext,
+      approvalPolicy: { autoApproveTools: true },
+    } as RunContext);
+    expect(result).toEqual({ type: 'deny', reason: 'actor role cannot approve this ChannelBinding capability' });
+  });
+
+  it('still allows a safe tool for the same actor role', async () => {
+    const policy = new DefaultToolPolicy(livePolicy);
+    const result = await policy.decide(descriptor({ id: 'WriteTool', name: 'WriteTool', risk: 'safe' }), {}, {
+      channelContext,
+    } as RunContext);
+    expect(result).toEqual({ type: 'allow' });
+  });
+});

@@ -183,11 +183,23 @@ export class PgContextRecallService implements ContextRecallService {
         AND ($11::text[] IS NULL OR r.source_id=ANY($11::text[]))
         AND ($12::text IS NULL OR s.kind<>'dws'
           OR COALESCE(r.metadata_json->>'conversationId',r.metadata_json->>'conversation_id','')=$12)
+        AND ($13::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(r.metadata_json->>'bindingId',r.metadata_json->>'binding_id','')=$13)
+        AND ($14::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(r.metadata_json->>'conversationSpaceId',r.metadata_json->>'conversation_space_id','')=$14)
+        AND ($15::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(r.metadata_json->>'workConversationId',r.metadata_json->>'work_conversation_id','')=$15)
+        AND ($16::bigint IS NULL OR s.kind<>'dws'
+          OR COALESCE(r.metadata_json->>'policyRevision',r.metadata_json->>'policy_revision','')=$16::text)
       ORDER BY route_rank,COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) DESC,r.record_id
       LIMIT $9
     `, [request.subject.tenantId, collectionIds, request.query, escapedPattern, kinds, sources, from, to,
       scanLimit + 1, request.subject.userId, request.subject.channelScope?.allowedSourceIds ?? null,
-      request.subject.channelScope?.conversationId ?? null]);
+      request.subject.channelScope?.conversationId ?? null,
+      request.subject.channelScope?.bindingId ?? null,
+      request.subject.channelScope?.conversationSpaceId ?? null,
+      request.subject.channelScope?.workConversationId ?? null,
+      request.subject.channelScope?.policyRevision ?? null]);
     throwIfAborted(request.signal);
 
     const fetchedRows = result.rows as Row[];
@@ -307,8 +319,20 @@ export class PgContextRecallService implements ContextRecallService {
         ${chatPolicySql('v', 's', 'c', 'a')}
         AND ($7::text IS NULL OR s.kind<>'dws'
           OR COALESCE(v.metadata_json->>'conversationId',v.metadata_json->>'conversation_id','')=$7)
+        AND ($8::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(v.metadata_json->>'bindingId',v.metadata_json->>'binding_id','')=$8)
+        AND ($9::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(v.metadata_json->>'conversationSpaceId',v.metadata_json->>'conversation_space_id','')=$9)
+        AND ($10::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(v.metadata_json->>'workConversationId',v.metadata_json->>'work_conversation_id','')=$10)
+        AND ($11::bigint IS NULL OR s.kind<>'dws'
+          OR COALESCE(v.metadata_json->>'policyRevision',v.metadata_json->>'policy_revision','')=$11::text)
     `, [id.t, id.s, id.c, id.r, id.v, request.subject.userId,
-      request.subject.channelScope?.conversationId ?? null]);
+      request.subject.channelScope?.conversationId ?? null,
+      request.subject.channelScope?.bindingId ?? null,
+      request.subject.channelScope?.conversationSpaceId ?? null,
+      request.subject.channelScope?.workConversationId ?? null,
+      request.subject.channelScope?.policyRevision ?? null]);
     throwIfAborted(request.signal);
     if (!result.rows[0]) return { hit: null, degraded: false };
     const row = result.rows[0] as Row;

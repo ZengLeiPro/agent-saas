@@ -355,8 +355,13 @@ export interface ChannelContext {
     agentPrincipal: { kind: 'org_agent'; tenantId: string; agentId: string; accountId: string; workspaceId: string };
     externalActorAssurance: 'mapped' | 'unmapped' | 'ambiguous' | 'service';
     allowedToolNames: string[];
+    allowedSkillIds: string[];
     allowedSourceIds: string[];
     contextEnabled: boolean;
+    taskVisibility: 'conversation' | 'requester_only';
+    actorRole?: string;
+    triggerRoles: string[];
+    approvalRoles: string[];
     externalActor: {
       kind: 'external_user'; provider: 'dingtalk'; corpId: string; openId: string;
       displayName?: string; mappedUserId?: string; assurance: 'mapped' | 'unmapped' | 'ambiguous';

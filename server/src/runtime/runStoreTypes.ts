@@ -327,6 +327,7 @@ export interface RunStore {
   ): Promise<RunRecord[]>;
   /** 终态且完成通知仍待投递（或 delivering 超时）的后台任务。 */
   listPendingBackgroundTaskWakes?(staleBefore: Date, limit?: number): Promise<RunRecord[]>;
+  listStagedOrgAgentBackgroundTasks?(staleBefore: Date, limit?: number): Promise<RunRecord[]>;
   /** CAS 抢占一条完成通知；返回 null 表示已被其他 brain 抢走。 */
   claimBackgroundTaskWake?(runId: string, claimToken: string, staleBefore: Date): Promise<RunRecord | null>;
   /** CAS 完成通知投递，claimToken 不匹配时拒绝覆盖。 */

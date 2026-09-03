@@ -115,7 +115,8 @@ export interface LegacyDwsCompletionAccountSnapshot {
 export interface RawRuntimeRunDispatchConfig {
   orgGroupAgentStore?: OrgGroupAgentStore;
   orgAgentChannelPolicyEvaluator?: (input: {
-    tenantId: string; bindingId: string; toolName: string;
+    tenantId: string; bindingId: string; accountId: string; agentId: string;
+    conversationId: string; toolName: string;
   }) => Promise<{ allowed: boolean; reason?: string }>;
   agentCwd: string;
   uploadManager?: Pick<UploadManager, 'resolveAttachments'>;
@@ -232,6 +233,7 @@ export interface RawRuntimeRunDispatchConfig {
     workOrderId?: string;
     attemptId?: string;
     attemptFence?: number;
+    workConversationId?: string;
     accountId: string;
     profileId: string;
     corpId: string;

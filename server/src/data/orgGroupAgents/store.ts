@@ -227,6 +227,28 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     return result.rows[0] ? mapWorkConversation(result.rows[0] as Record<string, unknown>) : null;
   }
 
+  async pinInboxRouting(input: {
+    inboxId: string;
+    conversationSpaceId: string;
+    workConversationId: string;
+    policyRevision: number;
+  }): Promise<void> {
+    assertTexts(input.inboxId, input.conversationSpaceId, input.workConversationId);
+    const result = await this.pool.query(
+      `UPDATE ${this.inboxTable}
+      SET conversation_space_id=COALESCE(conversation_space_id,$2),
+          work_conversation_id=COALESCE(work_conversation_id,$3),
+          channel_policy_revision=COALESCE(channel_policy_revision,$4),updated_at=NOW()
+      WHERE inbox_id=$1
+        AND (conversation_space_id IS NULL OR conversation_space_id=$2)
+        AND (work_conversation_id IS NULL OR work_conversation_id=$3)
+        AND (channel_policy_revision IS NULL OR channel_policy_revision=$4)
+      RETURNING inbox_id`,
+      [input.inboxId, input.conversationSpaceId, input.workConversationId, input.policyRevision],
+    );
+    if (!result.rows[0]) throw new Error('ORG_AGENT_INBOX_NOT_FOUND');
+  }
+
   async pinInboxContext(input: {
     inboxId: string;
     externalActor: OrgAgentChannelActorRef;
@@ -346,6 +368,22 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     return result.rows[0] ? mapDelivery(result.rows[0] as Record<string, unknown>) : null;
   }
 
+  async reconcileAllExpiredDeliveries(limit = 100): Promise<number> {
+    const bounded = Math.max(1, Math.min(1_000, Math.trunc(limit)));
+    const result = await this.pool.query(
+      `WITH expired AS (
+      SELECT delivery_id FROM ${this.deliveriesTable}
+      WHERE delivery_state='sending' AND lease_expires_at<=NOW()
+      ORDER BY lease_expires_at,delivery_id FOR UPDATE SKIP LOCKED LIMIT $1
+    ) UPDATE ${this.deliveriesTable} delivery
+      SET delivery_state='unknown',lease_owner=NULL,lease_expires_at=NULL,
+          last_error='DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',completed_at=NOW(),updated_at=NOW()
+      FROM expired WHERE delivery.delivery_id=expired.delivery_id`,
+      [bounded],
+    );
+    return result.rowCount ?? 0;
+  }
+
   async markDeliverySent(
     deliveryId: string,
     owner: string,
@@ -390,7 +428,8 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       `UPDATE ${this.deliveriesTable}
       SET delivery_state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,last_error=$4,
           completed_at=NOW(),updated_at=NOW()
-      WHERE delivery_id=$1 AND delivery_state='sending' AND lease_owner=$2 AND lease_fence=$3 RETURNING *`,
+      WHERE delivery_id=$1 AND delivery_state='sending' AND lease_owner=$2 AND lease_fence=$3
+        AND lease_expires_at>NOW() RETURNING *`,
       [deliveryId, owner, fence, compactError(reason)],
     );
     if (!result.rows[0]) throw new Error('DWS_DELIVERY_LEASE_LOST');
@@ -431,6 +470,15 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       [tenantId, accountId, bounded],
     );
     return result.rows.map((row) => mapDelivery(row as Record<string, unknown>));
+  }
+
+  async getDelivery(tenantId: string, deliveryId: string): Promise<DwsDeliveryIntent | null> {
+    assertTexts(tenantId, deliveryId);
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.deliveriesTable} WHERE tenant_id=$1 AND delivery_id=$2`,
+      [tenantId, deliveryId],
+    );
+    return result.rows[0] ? mapDelivery(result.rows[0] as Record<string, unknown>) : null;
   }
 
   async reconcileDelivery(input: {
@@ -547,8 +595,8 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     try {
       await client.query('BEGIN');
       const work = await client.query(
-        `SELECT current_attempt_no FROM ${this.workOrdersTable}
-        WHERE tenant_id=$1 AND work_order_id=$2 AND state NOT IN ('completed','cancelled') FOR UPDATE`,
+        `SELECT current_attempt_no,state FROM ${this.workOrdersTable}
+        WHERE tenant_id=$1 AND work_order_id=$2 FOR UPDATE`,
         [input.tenantId, input.workOrderId],
       );
       if (!work.rows[0]) throw new Error('ORG_AGENT_WORK_ORDER_NOT_ATTEMPTABLE');
@@ -570,6 +618,8 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         await client.query('COMMIT');
         return attempt;
       }
+      if ((work.rows[0] as Record<string, unknown>).state !== 'queued')
+        throw new Error('ORG_AGENT_WORK_ORDER_NOT_ATTEMPTABLE');
       const attemptNo = Number((work.rows[0] as Record<string, unknown>).current_attempt_no) + 1;
       const result = await client.query(
         `INSERT INTO ${this.attemptsTable} (
@@ -613,6 +663,19 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       [tenantId, workOrderId],
     );
     return result.rows[0] ? mapWorkOrder(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async getWorkConversation(
+    tenantId: string,
+    workConversationId: string,
+  ): Promise<OrgAgentWorkConversation | null> {
+    assertTexts(tenantId, workConversationId);
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.conversationsTable}
+      WHERE tenant_id=$1 AND work_conversation_id=$2`,
+      [tenantId, workConversationId],
+    );
+    return result.rows[0] ? mapWorkConversation(result.rows[0] as Record<string, unknown>) : null;
   }
 
   async listWorkAttempts(tenantId: string, workOrderId: string): Promise<OrgAgentWorkAttempt[]> {
@@ -663,6 +726,17 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       `SELECT * FROM ${this.workOrdersTable}
       WHERE tenant_id=$1 AND binding_id=$2 ORDER BY updated_at DESC,work_order_id DESC LIMIT $3`,
       [tenantId, bindingId, bounded],
+    );
+    return result.rows.map((row) => mapWorkOrder(row as Record<string, unknown>));
+  }
+
+  async listStagedWorkOrders(staleBefore: Date, limit = 100): Promise<OrgAgentWorkOrder[]> {
+    const bounded = Math.max(1, Math.min(500, Math.trunc(limit)));
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.workOrdersTable}
+      WHERE state='queued' AND current_attempt_no=0 AND updated_at<$1
+      ORDER BY updated_at,work_order_id LIMIT $2`,
+      [staleBefore.toISOString(), bounded],
     );
     return result.rows.map((row) => mapWorkOrder(row as Record<string, unknown>));
   }
@@ -826,6 +900,15 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       ],
     );
     return result.rows.map((row) => mapMemory(row as Record<string, unknown>));
+  }
+
+  async getMemory(tenantId: string, memoryId: string): Promise<OrgAgentMemory | null> {
+    assertTexts(tenantId, memoryId);
+    const result = await this.pool.query(
+      `SELECT * FROM ${this.memoriesTable} WHERE tenant_id=$1 AND memory_id=$2`,
+      [tenantId, memoryId],
+    );
+    return result.rows[0] ? mapMemory(result.rows[0] as Record<string, unknown>) : null;
   }
 
   private async finishDelivery(

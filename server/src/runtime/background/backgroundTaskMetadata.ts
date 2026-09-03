@@ -274,17 +274,31 @@ function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAg
     ? raw.externalActorAssurance as NonNullable<ChannelContext['orgAgentChannel']>['externalActorAssurance'] : undefined;
   const allowedToolNames = Array.isArray(raw.allowedToolNames)
     && raw.allowedToolNames.every(item => typeof item === 'string') ? raw.allowedToolNames as string[] : undefined;
+  const allowedSkillIds = Array.isArray(raw.allowedSkillIds)
+    && raw.allowedSkillIds.every(item => typeof item === 'string') ? raw.allowedSkillIds as string[] : undefined;
   const allowedSourceIds = Array.isArray(raw.allowedSourceIds)
     && raw.allowedSourceIds.every(item => typeof item === 'string') ? raw.allowedSourceIds as string[] : undefined;
+  const triggerRoles = raw.triggerRoles === undefined ? [] : Array.isArray(raw.triggerRoles)
+    && raw.triggerRoles.every(item => typeof item === 'string') ? raw.triggerRoles as string[] : undefined;
+  const approvalRoles = raw.approvalRoles === undefined ? [] : Array.isArray(raw.approvalRoles)
+    && raw.approvalRoles.every(item => typeof item === 'string') ? raw.approvalRoles as string[] : undefined;
+  const taskVisibility = raw.taskVisibility === 'conversation' || raw.taskVisibility === 'requester_only'
+    ? raw.taskVisibility : undefined;
   const externalActor = parseExternalActor(raw.externalActor);
   const channelPrincipal = parseChannelPrincipal(raw.channelPrincipal);
   const agentPrincipal = parseAgentPrincipal(raw.agentPrincipal);
   if (!accountId || !agentId || !bindingId || !conversationSpaceId || !workConversationId
-    || !policyRevision || !assurance || !allowedToolNames || !allowedSourceIds || !externalActor || !channelPrincipal
+    || !policyRevision || !assurance || !allowedToolNames || !allowedSkillIds || !allowedSourceIds
+    || !triggerRoles || !approvalRoles
+    || !taskVisibility || !externalActor || !channelPrincipal
     || !agentPrincipal) return undefined;
   return { accountId, agentId, bindingId, conversationSpaceId, workConversationId, policyRevision,
-    agentPrincipal, externalActorAssurance: assurance, allowedToolNames, allowedSourceIds,
+    agentPrincipal, externalActorAssurance: assurance, allowedToolNames, allowedSkillIds, allowedSourceIds,
     contextEnabled: raw.contextEnabled === true,
+    taskVisibility,
+    ...(typeof raw.actorRole === 'string' ? { actorRole: raw.actorRole } : {}),
+    triggerRoles,
+    approvalRoles,
     externalActor, channelPrincipal };
 }
 

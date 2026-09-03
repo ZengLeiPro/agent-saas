@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
@@ -192,7 +192,7 @@ import { createConnectorServerRemoteResolver, hasAcsConnector } from './connecto
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { PgOrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
-import { createOrgAgentChannelPolicyEvaluator } from './orgAgentChannelPolicyEvaluator.js';
+import { createOrgAgentChannelPolicyRuntimeOptions } from './orgAgentChannelPolicyEvaluator.js';
 import { createRuntimeUserResolvers } from './runtimeUserResolvers.js';
 import { NotionAuthFlowService, NotionDeviceLoginRunner } from '../notion/authFlow.js';
 import { PgFeishuConnectionStore } from '../feishu/store.js';
@@ -254,6 +254,7 @@ import { VoiceTranscriptionService } from '../services/voiceTranscriptionService
 import {
   SAFE_SKILL_NAME_RE,
   createMemoryIndexService,
+  ensureDirectory,
   loadSettingsEnv,
 } from './runtimeSetupHelpers.js';
 import { createMemoryConsolidationScannerStatusHandler } from './runtimeMemoryConsolidationStatus.js';
@@ -270,12 +271,6 @@ import type {
   CreateRuntimeOptions,
   SkillsWarmupStatus,
 } from './runtimeContracts.js';
-function ensureDirectory(path: string, label: string): void {
-  if (!existsSync(path)) {
-    mkdirSync(path, { recursive: true });
-    serverLogger.info(`Created ${label}: ${path}`);
-  }
-}
 export async function createRuntime(options: CreateRuntimeOptions = {}): Promise<AppRuntime> {
   const processCwd = options.processCwd ?? process.cwd();
   const processRole = options.processRole ?? 'all';
@@ -1622,8 +1617,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
-    ...(orgGroupAgentStore ? { orgGroupAgentStore,
-      orgAgentChannelPolicyEvaluator: createOrgAgentChannelPolicyEvaluator(orgGroupAgentStore) } : {}),
+    ...createOrgAgentChannelPolicyRuntimeOptions(orgGroupAgentStore, agentDwsAccountStore, orgAgentStore),
     environmentStore,
     taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
@@ -1666,7 +1660,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     executionConfig, modelResolver,
     defaultModelResolver,
     ...(agentDwsAccountStore ? { resolveLegacyDwsCompletionAccount: (tenantId: string, accountId: string) => agentDwsAccountStore.getForTenant(tenantId, accountId) } : {}),
-    ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore) } : {}),
+    ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(
+      agentDwsMessageStore, orgGroupAgentStore,
+    ) } : {}),
     getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(config.models),
     getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,
     toolControls: config.toolControls,
@@ -1840,6 +1836,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       beforeTick: async () => {
         taskboardExecutionCoordinator?.wakeReconciliation();
         await sessionStatusReconciler?.runIfDue();
+        await rawRuntimeConfig.backgroundTasks!.reconcileStagedOrgWork();
         await rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries();
         await governanceProjectionReconciler?.reconcileBatch();
       },

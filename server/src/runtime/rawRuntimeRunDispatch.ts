@@ -142,6 +142,8 @@ import { createRuntimeSessionRecord, resolveSessionMemoryPolicy, FileSessionCata
 import { resolveSessionSandboxProfile, sandboxResourcesForSessionHand } from './sandboxProfile.js';
 import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
+import { buildOrgAgentChannelSkillFilter, buildOrgAgentSkillFilter } from './orgAgentSkillFilter.js';
+export { buildOrgAgentChannelSkillFilter, buildOrgAgentSkillFilter } from './orgAgentSkillFilter.js';
 import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
 import { claimRuntimeRun } from './runtimeRunClaim.js';
@@ -546,14 +548,6 @@ export function mergeOrgAgentBoundRuntimeProfile(
     },
   };
 }
-/** 专职 Agent skill 白名单 filter：固有能力与 MVP knowledge skill 合集（仅按 id 命中，防同名扩权）。 */
-export function buildOrgAgentSkillFilter(
-  agent: Pick<OrgAgentRecord, 'allowedSkills' | 'allowedKnowledge'>,
-): RuntimeSkillFilter {
-  const allowed = new Set(resolveOrgAgentRuntimeSkillIds(agent));
-  return (skill) => allowed.has(skill.id);
-}
-
 export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSkillFilter {
   const hasTenantAcsHand = availableHands.some((hand) => (
     typeof hand.metadata?.tenantRemoteHandId === 'string'
@@ -887,7 +881,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       agentPrincipal: context.orgAgentChannel?.agentPrincipal,
       userId: identitySource?.id,
     });
-    if (!runtimePrincipalMatches(existingSession?.principal, requestedPrincipal)) {
+    if (existingSession && !runtimePrincipalMatches(existingSession.principal, requestedPrincipal, existingSession)) {
       yield { type: 'error', error: 'Runtime session principal mismatch' };
       return;
     }
@@ -1277,7 +1271,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent ? undefined : identitySource?.username,
       // AND 组合：组织 Agent 的 service identity 跳过用户技能/MCP；其技能仍与 org 白名单取交集
       orgAgent
-        ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
+        ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent),
+            buildOrgAgentChannelSkillFilter(context.orgAgentChannel), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
       { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
@@ -1881,6 +1876,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         ? composeSkillFilters(
             resumeBaseSkillFilter,
             buildOrgAgentSkillFilter(orgAgent),
+            buildOrgAgentChannelSkillFilter(request.context.orgAgentChannel),
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           )
         : composeSkillFilters(
@@ -2364,6 +2360,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         ? composeSkillFilters(
             resumeBaseSkillFilter,
             buildOrgAgentSkillFilter(orgAgent),
+            buildOrgAgentChannelSkillFilter(request.context.orgAgentChannel),
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           )
         : composeSkillFilters(

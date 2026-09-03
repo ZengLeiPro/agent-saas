@@ -105,6 +105,8 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
           AND work_conversation_id IS NULL AND policy_revision IS NULL AND visibility IS NULL)
         OR (agent_id IS NOT NULL AND binding_id IS NOT NULL AND conversation_space_id IS NOT NULL
           AND work_conversation_id IS NOT NULL AND policy_revision IS NOT NULL AND visibility IS NOT NULL))
+      ,CHECK ((source_work_order_id IS NULL AND source_attempt_id IS NULL)
+        OR (source_work_order_id IS NOT NULL AND source_attempt_id IS NOT NULL))
     )`,
     `CREATE INDEX IF NOT EXISTS ${deliveries}_claim_idx
       ON ${deliveries}(delivery_state,created_at) WHERE delivery_state IN ('pending','sending')`,
@@ -156,18 +158,25 @@ export function governanceV36OrgGroupAgentStatements(prefix: string): string[] {
       publish_state TEXT NOT NULL DEFAULT 'pending' CHECK (publish_state IN ('pending','published','conflict','rejected')),
       checkpoint_json JSONB,
       artifact_manifest_json JSONB,
+      result_envelope_json JSONB,
+      failure TEXT,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (work_order_id,attempt_no),
       UNIQUE (runtime_run_id),
       UNIQUE (tenant_id,attempt_id),
+      UNIQUE (tenant_id,work_order_id,attempt_id),
       CHECK (checkpoint_json IS NULL OR (jsonb_typeof(checkpoint_json)='object' AND octet_length(checkpoint_json::text)<=1048576)),
-      CHECK (artifact_manifest_json IS NULL OR (jsonb_typeof(artifact_manifest_json)='object' AND octet_length(artifact_manifest_json::text)<=1048576))
+      CHECK (artifact_manifest_json IS NULL OR (jsonb_typeof(artifact_manifest_json)='object' AND octet_length(artifact_manifest_json::text)<=1048576)),
+      CHECK (result_envelope_json IS NULL OR (jsonb_typeof(result_envelope_json)='object' AND octet_length(result_envelope_json::text)<=1048576))
     )`,
     `ALTER TABLE ${deliveries} ADD CONSTRAINT ${prefix}_dwsd_work_fk
       FOREIGN KEY (tenant_id,source_work_order_id) REFERENCES ${workOrders}(tenant_id,work_order_id) NOT VALID`,
     `ALTER TABLE ${deliveries} ADD CONSTRAINT ${prefix}_dwsd_attempt_fk
-      FOREIGN KEY (tenant_id,source_attempt_id) REFERENCES ${attempts}(tenant_id,attempt_id) NOT VALID`,
+      FOREIGN KEY (tenant_id,source_work_order_id,source_attempt_id)
+        REFERENCES ${attempts}(tenant_id,work_order_id,attempt_id) NOT VALID`,
     `CREATE TABLE IF NOT EXISTS ${memories} (
       memory_id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,

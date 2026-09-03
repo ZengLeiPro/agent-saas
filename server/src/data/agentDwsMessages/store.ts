@@ -116,7 +116,12 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
             SELECT 1
             FROM ${this.inboxTable} active
             WHERE active.account_id=item.account_id
-              AND active.conversation_id=item.conversation_id
+              AND (
+                (item.work_conversation_id IS NOT NULL
+                  AND active.work_conversation_id=item.work_conversation_id)
+                OR (item.work_conversation_id IS NULL AND active.work_conversation_id IS NULL
+                  AND active.conversation_id=item.conversation_id)
+              )
               AND active.inbox_id<>item.inbox_id
               AND (active.state='processing' OR active.state='reply_pending')
               AND active.lease_expires_at > NOW()
@@ -125,7 +130,12 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
             SELECT 1
             FROM ${this.inboxTable} earlier
             WHERE earlier.account_id=item.account_id
-              AND earlier.conversation_id=item.conversation_id
+              AND (
+                (item.work_conversation_id IS NOT NULL
+                  AND earlier.work_conversation_id=item.work_conversation_id)
+                OR (item.work_conversation_id IS NULL AND earlier.work_conversation_id IS NULL
+                  AND earlier.conversation_id=item.conversation_id)
+              )
               AND earlier.state IN ('pending','processing','retry_wait','reply_pending')
               AND (
                 COALESCE(earlier.event_timestamp,earlier.created_at),
@@ -495,6 +505,8 @@ function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
     content: String(row.content),
     ...(row.event_timestamp ? { eventTimestamp: iso(row.event_timestamp) } : {}),
     payload: parsePayload(row.payload_json),
+    ...(optionalText(row.work_conversation_id)
+      ? { workConversationId: optionalText(row.work_conversation_id) } : {}),
     state: row.state as AgentDwsInboxRecord['state'],
     ...(optionalText(row.session_id) ? { sessionId: optionalText(row.session_id) } : {}),
     ...(optionalText(row.run_id) ? { runId: optionalText(row.run_id) } : {}),

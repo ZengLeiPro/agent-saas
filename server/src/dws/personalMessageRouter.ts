@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { relative, sep } from 'node:path';
 
 import type { AgentRunDispatch, AgentRunOptions } from '../agent/index.js';
 import { createEventConsumer } from '../channels/eventConsumer.js';
@@ -20,10 +22,16 @@ import {
   type OrgAgentWorkConversation,
   type OrgGroupAgentStore,
 } from '../data/orgGroupAgents/index.js';
+import { deriveOrgAgentSharedView } from '../runtime/orgAgentTaskWorkspace.js';
 import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
 import { resolveAgentCwd } from '../workspace/resolver.js';
+import {
+  extractOrgAgentRoutingFields,
+  ORG_AGENT_ROUTING_FIELD_NAMES,
+  pinActiveOrgAgentGroupRouting,
+} from './orgAgentInboxRouting.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import { deliverNextOrgAgentIntent } from './orgAgentDeliveryWorker.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
@@ -200,8 +208,11 @@ export class AgentDwsMessageRouter {
         corpId: account.corpId,
         dingtalkUserId: account.dingtalkUserId,
       },
-      routing: extractRoutingFields(event.raw),
+      routing: extractOrgAgentRoutingFields(event.raw),
       ...(event.senderName ? { senderName: event.senderName } : {}),
+    });
+    await pinActiveOrgAgentGroupRouting({
+      store: this.options.orgGroupAgentStore, account, event, item: result.record,
     });
     if (result.created) this.scheduleKick();
     return result.created;
@@ -388,6 +399,10 @@ export class AgentDwsMessageRouter {
         ? await this.options.resolveRequester(account, item.senderOpenDingtalkId, senderName)
         : null;
     const sharedResolution = await this.resolveSharedGroupContext(account, item, requester, senderName);
+    if (sharedResolution.state === 'ignored') {
+      await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+      return;
+    }
     if (sharedResolution.state === 'denied') {
       await this.rejectAccess(account, item, sharedResolution.reason, requester ?? undefined);
       return;
@@ -410,7 +425,7 @@ export class AgentDwsMessageRouter {
         await this.rejectAccess(account, item, authorization.reason ?? 'ACCESS_DENIED', requester);
         return;
       }
-    } else if (!serviceEvent && (!shared || shared.binding.policy.guest !== 'shared_read_only')) {
+    } else if (!serviceEvent && (!shared || !allowsGuestSharedRead(shared.binding))) {
       await this.rejectAccess(account, item, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS');
       return;
     }
@@ -530,6 +545,16 @@ export class AgentDwsMessageRouter {
   ): Promise<string> {
     const resolvedModel = this.options.resolveDefaultModel(account.tenantId);
     if (!resolvedModel) throw new Error('Agent DWS 当前组织没有可用的默认模型');
+    const agentRoot = resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId);
+    const agentMountSubPath = relative(this.options.agentCwd, agentRoot).split(sep).join('/');
+    const sharedView = shared ? deriveOrgAgentSharedView({
+      agentRoot,
+      agentMountSubPath,
+      bindingId: shared.binding.bindingId,
+      workConversationId: shared.workConversation.workConversationId,
+    }) : undefined;
+    if (sharedView) await mkdir(sharedView.root, { recursive: true });
+    const executionCwd = sharedView?.root ?? agentRoot;
     let resultText: string | undefined;
     const events = this.options.dispatch({
       channel: 'dingtalk',
@@ -564,17 +589,20 @@ export class AgentDwsMessageRouter {
           workspaceId: shared.binding.workspaceId },
         externalActorAssurance: shared.externalActor.kind === 'service_event' ? 'service' : shared.externalActor.assurance,
         allowedToolNames: sharedAllowedTools(shared),
+        allowedSkillIds: [...shared.binding.effectiveConfig.capabilities.skillIds],
         allowedSourceIds: [...shared.binding.effectiveConfig.knowledge.sourceIds],
-        contextEnabled: shared.externalActor.kind === 'external_user'
-          && (shared.externalActor.assurance === 'mapped' || shared.binding.policy.guest === 'shared_read_only')
-          && shared.binding.effectiveConfig.knowledge.contextEnabled,
+        contextEnabled: false,
+        taskVisibility: shared.binding.policy.taskVisibility,
+        ...(shared.requester?.role ? { actorRole: shared.requester.role } : {}),
+        triggerRoles: [...shared.binding.effectiveConfig.access.triggerRoles],
+        approvalRoles: [...shared.binding.effectiveConfig.access.approvalRoles],
         externalActor: shared.externalActor,
         channelPrincipal: { provider: 'dingtalk', accountId: shared.binding.accountId,
           conversationId: shared.binding.conversationId, kind: 'group' },
       } } : { sessionOwner: requester }),
-      targetCwd: resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId),
+      targetCwd: executionCwd,
     }, {
-      cwd: resolveAgentCwd(this.options.agentCwd, account.tenantId, account.agentId),
+      cwd: executionCwd,
       resumeSessionId: sessionId,
       orgAgentId: account.agentId,
       model: resolvedModel.model,
@@ -645,8 +673,31 @@ export class AgentDwsMessageRouter {
     if (!binding.enabled || !binding.policy.enabled) return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_DISABLED' };
     const serviceEvent = item.payload.source === 'background_task_completion';
     if (!serviceEvent && !item.senderOpenDingtalkId) return { state: 'denied', reason: 'REQUESTER_IDENTITY_MISSING' };
+    if (!serviceEvent && binding.effectiveConfig.access.triggerRoles.length > 0
+      && (!requester?.role || !binding.effectiveConfig.access.triggerRoles.includes(requester.role))) {
+      return { state: 'denied', reason: 'ORG_AGENT_TRIGGER_ROLE_DENIED' };
+    }
+    let serviceWorkConversationId: string | undefined;
+    if (serviceEvent) {
+      const workOrderId = typeof item.payload.workOrderId === 'string' ? item.payload.workOrderId : '';
+      const attemptId = typeof item.payload.attemptId === 'string' ? item.payload.attemptId : '';
+      const fence = Number.isSafeInteger(item.payload.attemptFence) ? Number(item.payload.attemptFence) : 0;
+      const work = workOrderId ? await store.getWorkOrder(account.tenantId, workOrderId) : null;
+      const attempt = work ? (await store.listWorkAttempts(account.tenantId, workOrderId))
+        .find(candidate => candidate.attemptId === attemptId) : undefined;
+      if (!work || !attempt || work.bindingId !== binding.bindingId
+        || attempt.runtimeRunId !== item.payload.backgroundTaskId || attempt.attemptNo !== fence
+        || work.currentAttemptNo !== fence || work.state !== attempt.status
+        || !['completed', 'failed', 'cancelled'].includes(work.state)) return { state: 'ignored' };
+      serviceWorkConversationId = work.workConversationId;
+    }
     const referencedMessages = routingMessageIds(item);
-    const existingConversation = await store.findWorkConversationByMessage({
+    const pinnedId = item.workConversationId ?? serviceWorkConversationId;
+    const pinnedConversation = pinnedId
+      ? await store.getWorkConversation(account.tenantId, pinnedId) : null;
+    if (pinnedConversation && pinnedConversation.bindingId !== binding.bindingId)
+      return { state: 'denied', reason: 'ORG_AGENT_WORK_CONVERSATION_BINDING_MISMATCH' };
+    const existingConversation = pinnedConversation ?? await store.findWorkConversationByMessage({
       tenantId: account.tenantId, bindingId: binding.bindingId, accountId: account.accountId,
       conversationId: item.conversationId, messageIds: referencedMessages,
     });
@@ -710,7 +761,8 @@ export class AgentDwsMessageRouter {
           ? { peerOpenId: item.senderOpenDingtalkId } : {}) },
       content: text, idempotencyKey,
     });
-    if (delivery.deliveryState === 'sent' || delivery.deliveryState === 'unknown') return;
+    if (delivery.deliveryState === 'sent' || delivery.deliveryState === 'unknown'
+      || delivery.deliveryState === 'dead_letter') return;
     if (shared) {
       const current = await this.options.orgGroupAgentStore.getBinding(
         shared.binding.tenantId, shared.binding.accountId, shared.binding.conversationId,
@@ -744,6 +796,7 @@ interface SharedGroupContext {
 
 type SharedGroupResolution =
   | { state: 'legacy' }
+  | { state: 'ignored' }
   | { state: 'denied'; reason: string }
   | { state: 'active'; context: SharedGroupContext };
 
@@ -815,14 +868,16 @@ function sharedAllowedTools(shared: SharedGroupContext): string[] {
   const alwaysPersonal = new Set(['MemoryCommand', 'UserActivityList']);
   if (shared.externalActor.kind === 'service_event') return [];
   if (shared.externalActor.assurance !== 'mapped') {
-    if (shared.binding.policy.guest !== 'shared_read_only'
-      || !shared.binding.effectiveConfig.knowledge.contextEnabled) return [];
-    return shared.binding.effectiveConfig.capabilities.toolNames.filter(name => contextTools.has(name));
+    return [];
   }
   return shared.binding.effectiveConfig.capabilities.toolNames.filter(name => (
     !alwaysPersonal.has(name)
-    && (shared.binding.effectiveConfig.knowledge.contextEnabled || !contextTools.has(name))
+    && !contextTools.has(name)
   ));
+}
+
+function allowsGuestSharedRead(binding: OrgAgentChannelBinding): boolean {
+  return binding.policy.membership === 'members_and_guests' && binding.policy.guest === 'shared_read_only';
 }
 
 function rejectionMessage(reason: string): string {
@@ -831,6 +886,7 @@ function rejectionMessage(reason: string): string {
     case 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS':
       return '我暂时无法确认你的组织身份。请先完成账号绑定，或联系管理员开放本群的访客共享读取权限。';
     case 'ORG_AGENT_AUDIENCE_DENIED':
+    case 'ORG_AGENT_TRIGGER_ROLE_DENIED':
       return '你目前不在这个 Agent 的可用范围内，请联系管理员调整成员范围。';
     case 'ORG_AGENT_UNAVAILABLE':
       return '这个 Agent 当前未启用，请联系管理员检查账号与 Agent 状态。';
@@ -855,23 +911,11 @@ function normalizeEventTimestamp(value: number): Date {
   return Number.isFinite(date.getTime()) ? date : new Date();
 }
 
-const ROUTING_FIELD_NAMES = [
-  'root_message_id', 'thread_id', 'parent_message_id', 'quote_message_id', 'reply_message_id',
-] as const;
-
-function extractRoutingFields(raw: Record<string, unknown>): Record<string, string> {
-  return Object.fromEntries(ROUTING_FIELD_NAMES.flatMap(key => {
-    const value = raw[key];
-    return typeof value === 'string' && value.trim() && value.length <= MAX_EVENT_ID_LENGTH
-      ? [[key, value.trim()]] : [];
-  }));
-}
-
 function routingMessageIds(item: AgentDwsInboxRecord): string[] {
   const routing = item.payload.routing;
   if (routing && typeof routing === 'object' && !Array.isArray(routing)) {
     const record = routing as Record<string, unknown>;
-    for (const key of ROUTING_FIELD_NAMES) {
+    for (const key of ORG_AGENT_ROUTING_FIELD_NAMES) {
       const value = record[key];
       if (typeof value === 'string' && value) return [value];
     }

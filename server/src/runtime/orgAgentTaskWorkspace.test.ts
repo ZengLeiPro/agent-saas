@@ -8,6 +8,7 @@ describe('deriveOrgAgentTaskWorkspace', () => {
       agentWorkspaceId: 'ws_tenant-a__agent_agent-a',
       agentRoot: '/nas/workspaces/tenant-a/.agent-agent-a',
       agentMountSubPath: 'workspaces/tenant-a/.agent-agent-a',
+      sharedReadOnlySubPath: 'workspaces/tenant-a/.agent-agent-a/shared/binding-a/work-a',
       taskId: 'bg-task-a',
       attemptNo: 1,
     });
@@ -15,13 +16,14 @@ describe('deriveOrgAgentTaskWorkspace', () => {
       agentWorkspaceId: 'ws_tenant-a__agent_agent-a',
       agentRoot: '/nas/workspaces/tenant-a/.agent-agent-a',
       agentMountSubPath: 'workspaces/tenant-a/.agent-agent-a',
+      sharedReadOnlySubPath: 'workspaces/tenant-a/.agent-agent-a/shared/binding-a/work-a',
       taskId: 'bg-task-a',
       attemptNo: 2,
     });
 
     expect(first.taskRoot).toBe('/nas/workspaces/tenant-a/.agent-agent-a/work/bg-task-a/attempt-1');
     expect(first.mountSubPath).toBe('workspaces/tenant-a/.agent-agent-a/work/bg-task-a/attempt-1');
-    expect(first.sharedReadOnlySubPath).toBe('workspaces/tenant-a/.agent-agent-a');
+    expect(first.sharedReadOnlySubPath).toBe('workspaces/tenant-a/.agent-agent-a/shared/binding-a/work-a');
     expect(first.sandboxScopeId).not.toBe(second.sandboxScopeId);
     expect(first.attemptId).not.toBe(second.attemptId);
   });
@@ -32,6 +34,7 @@ describe('deriveOrgAgentTaskWorkspace', () => {
         agentWorkspaceId: 'ws-a',
         agentRoot: '/workspace',
         agentMountSubPath: 'workspaces/a',
+        sharedReadOnlySubPath: 'workspaces/a/shared/binding-a/work-a',
         taskId: '../escape',
         attemptNo: 1,
       }),
@@ -41,6 +44,7 @@ describe('deriveOrgAgentTaskWorkspace', () => {
         agentWorkspaceId: 'ws-a',
         agentRoot: '/workspace',
         agentMountSubPath: 'workspaces/a',
+        sharedReadOnlySubPath: 'workspaces/a/shared/binding-a/work-a',
         taskId: 'task-a',
         attemptNo: 0,
       }),

@@ -12,6 +12,10 @@ import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEve
 import { PgRunStoreQueries } from './runStoreQueries.js';
 import { initializePgRunStoreSchema } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
+import {
+  listPendingBackgroundTaskWakes,
+  listStagedOrgAgentBackgroundTasks,
+} from './runStoreBackgroundQueries.js';
 import { acquireSandboxCleanupClaimGuard } from './sandboxRunAdmissionFence.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
 const { Pool } = pg;
@@ -1115,24 +1119,11 @@ export class PgRunStore implements RunStore {
   }
   hasTaskboardSessionActivity(sessionIds: string[], tenantId?: string): Promise<boolean> { return hasTaskboardSessionActivity(this, sessionIds, tenantId); }
   findBackgroundTasksByIdentifier(parentSessionId: string, identifier: string, options: Pick<ListBackgroundTasksOptions, 'userId' | 'tenantId'> = {}): Promise<RunRecord[]> { return this.queries.findBackgroundTasksByIdentifier(parentSessionId, identifier, options); }
-  async listPendingBackgroundTaskWakes(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
-    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(${this.runsTable}.*) AS row_json
-      FROM ${this.runsTable}
-      WHERE metadata->>'backgroundTask' = 'true'
-        AND status IN ('completed','failed','cancelled','orphaned')
-        AND (
-          COALESCE(metadata->>'wakeState', 'pending') = 'pending'
-          OR (
-            metadata->>'wakeState' = 'delivering'
-            AND COALESCE((metadata->>'wakeClaimedAt')::timestamptz, '-infinity'::timestamptz) < $1
-          )
-        )
-      ORDER BY updated_at ASC
-      LIMIT $2
-    `, [staleBefore.toISOString(), boundedLimit]);
-    return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
+  listPendingBackgroundTaskWakes(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
+    return listPendingBackgroundTaskWakes(this.pool, this.runsTable, staleBefore, limit);
+  }
+  listStagedOrgAgentBackgroundTasks(staleBefore: Date, limit = 50): Promise<RunRecord[]> {
+    return listStagedOrgAgentBackgroundTasks(this.pool, this.runsTable, staleBefore, limit);
   }
   async claimBackgroundTaskWake(
     runId: string,

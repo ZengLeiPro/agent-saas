@@ -5,10 +5,13 @@ import type { ToolCallContext } from '../../agent/toolRuntime.js';
 import type { OrgAgentResultEnvelope, OrgAgentWorkOrder } from '../../data/orgGroupAgents/index.js';
 import { resolveAgentCwd } from '../../workspace/resolver.js';
 import {
+  agentMountSubPathFromSharedView,
+  deriveOrgAgentSharedView,
   deriveOrgAgentTaskWorkspace,
   type OrgAgentTaskWorkspaceLayout,
 } from '../orgAgentTaskWorkspace.js';
 import { runtimeRunController } from '../runController.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
 import type { RunRecord, RunStatus } from '../runStore.js';
 import {
   resolveSessionCatalog,
@@ -30,14 +33,25 @@ export async function prepareOrgAgentBackgroundWork(input: {
 }): Promise<{ taskLayout?: OrgAgentTaskWorkspaceLayout; workOrder?: OrgAgentWorkOrder }> {
   const orgChannel = input.context.channelContext.orgAgentChannel;
   if (!orgChannel) return {};
+  const agentRoot = resolveAgentCwd(
+    input.config.agentCwd,
+    orgChannel.agentPrincipal.tenantId,
+    orgChannel.agentId,
+  );
+  const agentMountSubPath = input.context.workspace.mountSubPath ?? (() => {
+    throw new Error('组织群后台任务缺少 Agent workspace mount');
+  })();
+  const sharedView = deriveOrgAgentSharedView({
+    agentRoot,
+    agentMountSubPath,
+    bindingId: orgChannel.bindingId,
+    workConversationId: orgChannel.workConversationId,
+  });
   const taskLayout = deriveOrgAgentTaskWorkspace({
     agentWorkspaceId: orgChannel.agentPrincipal.workspaceId,
-    agentRoot: input.context.workspace.root,
-    agentMountSubPath:
-      input.context.workspace.mountSubPath ??
-      (() => {
-        throw new Error('组织群后台任务缺少 Agent workspace mount');
-      })(),
+    agentRoot,
+    agentMountSubPath,
+    sharedReadOnlySubPath: sharedView.mountSubPath,
     taskId: input.taskId,
     attemptNo: 1,
   });
@@ -52,16 +66,19 @@ export async function prepareOrgAgentBackgroundWork(input: {
           idempotencyKey: `work-order:${input.parentRunId}:${input.toolCallId}`,
           title: input.request.description,
           visibility:
-            orgChannel.externalActorAssurance === 'mapped' ? 'conversation' : 'requester_only',
+            orgChannel.taskVisibility === 'conversation' && orgChannel.externalActorAssurance === 'mapped'
+              ? 'conversation' : 'requester_only',
           createdByActor: orgChannel.externalActor,
           policySnapshot: {
             revision: orgChannel.policyRevision,
             allowedToolNames: orgChannel.allowedToolNames,
+            allowedSkillIds: orgChannel.allowedSkillIds,
             allowedSourceIds: orgChannel.allowedSourceIds,
             contextEnabled: orgChannel.contextEnabled,
           },
           cancelPolicy: {
-            mode: orgChannel.externalActorAssurance === 'mapped' ? 'conversation' : 'creator_only',
+            mode: orgChannel.taskVisibility === 'conversation' && orgChannel.externalActorAssurance === 'mapped'
+              ? 'conversation' : 'creator_only',
           },
         })
       : undefined;
@@ -112,15 +129,21 @@ export class OrgAgentBackgroundWorkCoordinator {
       artifacts: [],
       writeScope: [metadata.cwd],
     };
-    await this.config.orgGroupAgentStore.transitionWorkAttempt({
+    const transitionedAttempt = await this.config.orgGroupAgentStore.transitionWorkAttempt({
       tenantId,
       runtimeRunId: record.runId,
       status: state,
       resultEnvelope: envelope,
       ...(failure ? { failure } : {}),
     });
+    const attempt = transitionedAttempt ?? (await this.config.orgGroupAgentStore.listWorkAttempts(
+      tenantId, metadata.workOrderId,
+    )).find(item => item.runtimeRunId === record.runId);
+    if (!attempt || attempt.workOrderId !== metadata.workOrderId) return;
+    if (attempt.status !== state) throw new Error('ORG_AGENT_WORK_ATTEMPT_TERMINAL_CONFLICT');
     const work = await this.config.orgGroupAgentStore.getWorkOrder(tenantId, metadata.workOrderId);
     if (!work) throw new Error('ORG_AGENT_WORK_ORDER_MISSING');
+    if (attempt.attemptNo !== work.currentAttemptNo) return;
     if (isWorkTerminal(work.state)) {
       if (work.state !== state) throw new Error('ORG_AGENT_WORK_ORDER_TERMINAL_CONFLICT');
       return;
@@ -220,24 +243,14 @@ export class OrgAgentBackgroundWorkCoordinator {
     const layout = deriveOrgAgentTaskWorkspace({
       agentWorkspaceId: metadata.orgAgentChannel.agentPrincipal.workspaceId,
       agentRoot: resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId),
-      agentMountSubPath: metadata.sharedReadOnlySubPath,
+      agentMountSubPath: agentMountSubPathFromSharedView(metadata.sharedReadOnlySubPath),
+      sharedReadOnlySubPath: metadata.sharedReadOnlySubPath,
       taskId,
       attemptNo: nextAttemptNo,
     });
     await mkdir(layout.taskRoot, { recursive: true });
     await store.reopenWorkOrder({ tenantId, workOrderId, expectedVersion });
     try {
-      await store.createWorkAttempt({
-        tenantId,
-        workOrderId,
-        runtimeRunId: taskId,
-        attemptId: layout.attemptId,
-        parentAttemptId: previousAttempt?.attemptId,
-        taskWorkspaceId: layout.taskWorkspaceId,
-        sandboxScopeId: layout.sandboxScopeId,
-        mountSubPath: layout.mountSubPath,
-        sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
-      });
       await catalog.upsert(
         createRuntimeSessionRecord({
           sessionId,
@@ -249,7 +262,7 @@ export class OrgAgentBackgroundWorkCoordinator {
           cwd: layout.taskRoot,
           modelRef: previousSession.modelRef,
           sandboxProfile: previousSession.sandboxProfile,
-          executionTarget: previousSession.executionTarget,
+          executionTarget: 'server-remote',
           workspaceId: layout.taskWorkspaceId,
           status: 'idle',
           kind: 'subagent',
@@ -262,19 +275,21 @@ export class OrgAgentBackgroundWorkCoordinator {
           ...(previousSession.principal ? { principal: previousSession.principal } : {}),
         }),
       );
-      return await runStore.upsertPending({
+      await runStore.upsertPending({
         runId: taskId,
         sessionId,
         userId: previous.userId,
         tenantId,
         model: previous.model,
         channel: 'background_task',
-        executionTarget: previous.executionTarget,
+        executionTarget: 'server-remote',
         workspaceId: layout.taskWorkspaceId,
         sandboxScopeId: layout.sandboxScopeId,
         idempotencyKey: `work-order-retry:${workOrderId}:${nextAttemptNo}`,
         metadata: {
           ...previous.metadata,
+          backgroundTaskReady: false,
+          backgroundTaskVersion: 2,
           workOrderId,
           attemptId: layout.attemptId,
           attemptNo: nextAttemptNo,
@@ -283,19 +298,39 @@ export class OrgAgentBackgroundWorkCoordinator {
           mountSubPath: layout.mountSubPath,
           sandboxScopeId: layout.sandboxScopeId,
           sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
+          runtimeIsolationRequirement: {
+            tenantId, taskId: workOrderId, runId: taskId, sessionId,
+            workspaceId: layout.taskWorkspaceId, policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+          },
           wakeState: 'none',
           backgroundResult: null,
           backgroundFinishedAt: null,
           lifecycleFinishedAt: null,
         },
       });
+      await store.createWorkAttempt({
+        tenantId,
+        workOrderId,
+        runtimeRunId: taskId,
+        attemptId: layout.attemptId,
+        parentAttemptId: previousAttempt?.attemptId,
+        taskWorkspaceId: layout.taskWorkspaceId,
+        sandboxScopeId: layout.sandboxScopeId,
+        mountSubPath: layout.mountSubPath,
+        sharedReadOnlySubPath: layout.sharedReadOnlySubPath,
+      });
+      const activated = await runStore.markStatus(taskId, 'pending', 'background_agent_retry_started', {
+        backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
+      });
+      if (!activated) throw new Error('ORG_AGENT_WORK_ORDER_RETRY_ACTIVATION_FAILED');
+      return activated;
     } catch (error) {
-      await this.failRetrySetup(tenantId, workOrderId, taskId, layout.taskRoot, error);
+      await this.failSetup(tenantId, workOrderId, taskId, layout.taskRoot, error);
       throw error;
     }
   }
 
-  private async failRetrySetup(
+  async failSetup(
     tenantId: string,
     workOrderId: string,
     taskId: string,
@@ -345,7 +380,10 @@ export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boo
     return false;
   const creator = owner.externalActor;
   if (creator.kind !== 'external_user') return false;
-  if (owner.externalActorAssurance === 'mapped') {
+  const visibility = typeof task.metadata.visibility === 'string'
+    ? task.metadata.visibility
+    : owner.taskVisibility;
+  if (owner.externalActorAssurance === 'mapped' && visibility === 'conversation') {
     return (
       caller.externalActor.kind === 'external_user' && caller.externalActorAssurance === 'mapped'
     );

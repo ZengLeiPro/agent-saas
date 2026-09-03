@@ -22,6 +22,7 @@ export interface OrgAgentDeliveryWorkerOptions {
 export async function deliverNextOrgAgentIntent(
   options: OrgAgentDeliveryWorkerOptions,
 ): Promise<boolean> {
+  await options.store.reconcileAllExpiredDeliveries();
   const delivery = await options.store.claimNextDelivery(options.workerId, options.leaseTtlMs);
   if (!delivery) return false;
 

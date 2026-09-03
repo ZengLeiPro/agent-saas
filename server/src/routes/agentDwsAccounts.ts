@@ -229,6 +229,12 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!options.accountStore || !options.orgGroupAgentStore || !options.orgAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
     const parsed = groupWorkspaceUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    if (parsed.data.policy.membership === 'members' && parsed.data.policy.guest !== 'deny') {
+      return res.status(400).json({ error: '仅成员群策略不能开放游客只读' });
+    }
+    if (parsed.data.effectiveConfig.knowledge.contextEnabled) {
+      return res.status(400).json({ error: '话题级钉钉上下文索引尚未物化，当前不能启用群聊 Context' });
+    }
     const tenantId = tenantFor(req);
     if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
     const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
@@ -263,8 +269,13 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const parsed = deliveryReconcileSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
-    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
-    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    const [account, delivery] = await Promise.all([
+      options.accountStore.getForTenant(tenantId, req.params.accountId),
+      options.orgGroupAgentStore.getDelivery(tenantId, req.params.deliveryId),
+    ]);
+    if (!account || !delivery || delivery.accountId !== account.accountId) {
+      return res.status(404).json({ error: '账号或投递记录不存在' });
+    }
     return await runMutation(req, res, options, {
       action: 'org_agent.delivery.reconcile', tenantId, targetId: req.params.deliveryId,
       purpose: parsed.data.reason,
@@ -307,8 +318,17 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const parsed = memoryPromoteSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
-    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
-    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    const [account, memory] = await Promise.all([
+      options.accountStore.getForTenant(tenantId, req.params.accountId),
+      options.orgGroupAgentStore.getMemory(tenantId, req.params.memoryId),
+    ]);
+    if (!account || !memory || memory.agentId !== account.agentId) {
+      return res.status(404).json({ error: '账号或记忆不存在' });
+    }
+    if (memory.bindingId) {
+      const binding = await options.orgGroupAgentStore.getBindingById(tenantId, memory.bindingId);
+      if (!binding || binding.accountId !== account.accountId) return res.status(404).json({ error: '记忆不属于当前账号' });
+    }
     return await runMutation(req, res, options, {
       action: 'org_agent.memory.promote', tenantId, targetId: req.params.memoryId, purpose: parsed.data.reason,
     }, async () => ({ status: 200, body: { memory: await options.orgGroupAgentStore!.promoteMemory({
@@ -347,8 +367,17 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const parsed = memoryStatusSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
-    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
-    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    const [account, memory] = await Promise.all([
+      options.accountStore.getForTenant(tenantId, req.params.accountId),
+      options.orgGroupAgentStore.getMemory(tenantId, req.params.memoryId),
+    ]);
+    if (!account || !memory || memory.agentId !== account.agentId) {
+      return res.status(404).json({ error: '账号或记忆不存在' });
+    }
+    if (memory.bindingId) {
+      const binding = await options.orgGroupAgentStore.getBindingById(tenantId, memory.bindingId);
+      if (!binding || binding.accountId !== account.accountId) return res.status(404).json({ error: '记忆不属于当前账号' });
+    }
     return await runMutation(req, res, options, {
       action: `org_agent.memory.${parsed.data.status}`, tenantId, targetId: req.params.memoryId,
       purpose: `memory ${parsed.data.status}`,

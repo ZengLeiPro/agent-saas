@@ -71,6 +71,7 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', ['collection-a'], 'Quarterly plan', '%Quarterly plan%', ['document'], ['source-a'],
       '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 201, 'user-a', null, null,
+      null, null, null, null,
     ]);
     expect(result).toMatchObject({
       degraded: true,
@@ -106,7 +107,10 @@ describe('PgContextRecallService', () => {
 
     expect(query.mock.calls[0]![0]).toContain('r.source_id=ANY($11::text[])');
     expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'conversationId'");
-    expect(query.mock.calls[0]![1]?.slice(-2)).toEqual([['source-a'], 'group-a']);
+    expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'workConversationId'");
+    expect(query.mock.calls[0]![1]?.slice(-6)).toEqual([
+      ['source-a'], 'group-a', 'binding-a', 'space-a', 'work-conversation-a', 5,
+    ]);
   });
 
   it('adds only confirmed evidence-bound derived context to an already authorized source hit', async () => {

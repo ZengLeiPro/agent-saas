@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgGovernanceMigrationRunner } from '../data/governance-schema/migrations.js';
 import { PgOrgGroupAgentStore } from '../data/orgGroupAgents/store.js';
+import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/store.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -152,6 +153,20 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       mountSubPath: 'tasks/a',
       sharedReadOnlySubPath: 'shared/a',
     });
+    const terminalEnvelope = {
+      status: 'completed' as const, summary: '完成', facts: [], artifacts: [], writeScope: ['tasks/a'],
+    };
+    await store.transitionWorkAttempt({ tenantId: 'tenant-a', runtimeRunId: 'run-a',
+      status: 'completed', resultEnvelope: terminalEnvelope });
+    const runningWork = await store.getWorkOrder('tenant-a', work.workOrderId);
+    await store.transitionWorkOrder({ tenantId: 'tenant-a', workOrderId: work.workOrderId,
+      expectedVersion: runningWork!.version, state: 'completed', resultEnvelope: terminalEnvelope });
+    await expect(store.createWorkAttempt({
+      tenantId: 'tenant-a', workOrderId: work.workOrderId, runtimeRunId: 'run-a',
+      attemptId: 'attempt-a', taskWorkspaceId: 'task-workspace-a', sandboxScopeId: 'sandbox-a',
+      mountSubPath: 'tasks/a', sharedReadOnlySubPath: 'shared/a',
+    })).resolves.toMatchObject({ attemptId: 'attempt-a', status: 'completed',
+      resultEnvelope: terminalEnvelope });
 
     const intent = await store.createDelivery({
       tenantId: 'tenant-a',
@@ -231,6 +246,23 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     await expect(
       store.listMemories({ tenantId: 'tenant-b', agentId: 'agent-a', limit: 20 }),
     ).resolves.toEqual([]);
+
+    const expiring = await store.createDelivery({
+      tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'direct-expiring',
+      source: 'system', deliveryKind: 'system_notice', disposition: 'replied',
+      destination: { provider: 'dingtalk', accountId: 'account-a',
+        conversationId: 'direct-expiring', kind: 'direct', peerOpenId: 'member-a' },
+      content: '租约测试', idempotencyKey: 'delivery-expiring',
+    });
+    const expiringClaim = await store.claimDelivery(expiring.deliveryId, 'worker-expired', 60_000);
+    await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
+      SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE delivery_id=$1`, [expiring.deliveryId]);
+    await expect(store.markClaimedDeliveryDeadLetter(expiring.deliveryId, 'worker-expired',
+      expiringClaim.leaseFence, 'late failure')).rejects.toThrow('DWS_DELIVERY_LEASE_LOST');
+    await expect(store.reconcileAllExpiredDeliveries()).resolves.toBe(1);
+    await expect(store.getDelivery('tenant-a', expiring.deliveryId)).resolves.toMatchObject({
+      deliveryState: 'unknown', lastError: 'DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',
+    });
   });
 
   it('uses SKIP LOCKED claims so concurrent delivery workers never own the same intent', async () => {
@@ -263,5 +295,43 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     expect(new Set(claims.map((item) => item?.leaseOwner))).toEqual(
       new Set(['worker-b', 'worker-c']),
     );
+  });
+
+  it('serializes one WorkConversation while allowing different topics in the same group to run concurrently', async () => {
+    const shadow = await store.ensureShadowBinding({ tenantId: 'tenant-a', accountId: 'account-a',
+      agentId: 'agent-a', conversationId: 'group-parallel', channelKind: 'group',
+      workspaceId: 'agent-workspace-a' });
+    const binding = await store.updateBinding({ tenantId: 'tenant-a', accountId: 'account-a',
+      conversationId: 'group-parallel', expectedRevision: shadow.revision, enabled: true,
+      policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation',
+        completion: 'reply_to_work_conversation', liveDeny: false },
+      effectiveConfig: { identity: {}, knowledge: { contextEnabled: false, sourceIds: [] },
+        capabilities: { skillIds: [], toolNames: [] }, access: { triggerRoles: [], approvalRoles: [] },
+        speech: { proactive: false, requireMention: true } } });
+    const [topicA, topicB] = await Promise.all([
+      store.getOrCreateWorkConversation({ tenantId: 'tenant-a', bindingId: binding.bindingId, rootKey: 'root-a' }),
+      store.getOrCreateWorkConversation({ tenantId: 'tenant-a', bindingId: binding.bindingId, rootKey: 'root-b' }),
+    ]);
+    const inbox = new PgAgentDwsMessageStore(pool, prefix);
+    const rows = await Promise.all(['a1', 'b1', 'a2'].map(id => inbox.ingest({
+      tenantId: 'tenant-a', accountId: 'account-a', eventId: `parallel-${id}`,
+      eventType: 'user_im_message_receive_at', conversationId: 'group-parallel',
+      messageId: `message-${id}`, senderOpenDingtalkId: 'member-a', content: id,
+    }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
+      profileId: 'corp-a:agent-member-a', corpId: 'corp-a', dingtalkUserId: 'agent-member-a',
+    } })));
+    await Promise.all(rows.map((row, index) => store.pinInboxRouting({ inboxId: row.record.inboxId,
+      conversationSpaceId: binding.conversationSpaceId,
+      workConversationId: index === 1 ? topicB.workConversationId : topicA.workConversationId,
+      policyRevision: binding.revision })));
+
+    const first = await inbox.claimNext('inbox-worker-a', 60_000);
+    const second = await inbox.claimNext('inbox-worker-b', 60_000);
+    const blocked = await inbox.claimNext('inbox-worker-c', 60_000);
+
+    expect(new Set([first?.workConversationId, second?.workConversationId])).toEqual(
+      new Set([topicA.workConversationId, topicB.workConversationId]),
+    );
+    expect(blocked).toBeNull();
   });
 });

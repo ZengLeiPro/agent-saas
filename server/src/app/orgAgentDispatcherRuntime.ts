@@ -51,12 +51,13 @@ type DwsBackgroundCompletionInput = Parameters<
 
 export function createDwsBackgroundCompletionEnqueuer(
   messageStore: AgentDwsMessageStore,
+  orgGroupAgentStore?: RawRuntimeRunDispatchConfig['orgGroupAgentStore'],
 ): NonNullable<RawRuntimeRunDispatchConfig['enqueueDwsBackgroundCompletion']> {
   return async (input: DwsBackgroundCompletionInput): Promise<void> => {
     if (input.profileId !== `${input.corpId}:${input.dingtalkUserId}`) {
       throw new Error('Agent DWS background completion account identity is invalid');
     }
-    await messageStore.ingest({
+    const ingested = await messageStore.ingest({
       tenantId: input.tenantId,
       accountId: input.accountId,
       eventId: `background-task-completion:${input.taskId}`,
@@ -73,11 +74,24 @@ export function createDwsBackgroundCompletionEnqueuer(
       ...(input.workOrderId ? { workOrderId: input.workOrderId } : {}),
       ...(input.attemptId ? { attemptId: input.attemptId } : {}),
       ...(input.attemptFence !== undefined ? { attemptFence: input.attemptFence } : {}),
+      ...(input.workConversationId ? { workConversationId: input.workConversationId } : {}),
       accountIdentity: {
         profileId: input.profileId,
         corpId: input.corpId,
         dingtalkUserId: input.dingtalkUserId,
       },
     });
+    if (input.workConversationId && orgGroupAgentStore) {
+      const [conversation, binding] = await Promise.all([
+        orgGroupAgentStore.getWorkConversation(input.tenantId, input.workConversationId),
+        orgGroupAgentStore.getBinding(input.tenantId, input.accountId, input.conversationId),
+      ]);
+      if (!conversation || !binding || conversation.bindingId !== binding.bindingId) {
+        throw new Error('Agent DWS background completion work conversation is invalid');
+      }
+      await orgGroupAgentStore.pinInboxRouting({ inboxId: ingested.record.inboxId,
+        conversationSpaceId: binding.conversationSpaceId,
+        workConversationId: conversation.workConversationId, policyRevision: binding.revision });
+    }
   };
 }

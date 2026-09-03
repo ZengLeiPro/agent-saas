@@ -157,6 +157,47 @@ describe('background task DWS completion route', () => {
     );
   });
 
+  it('discards completion from a stale organization Agent attempt', async () => {
+    const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
+    const finishBackgroundTaskWake = vi.fn(async () => null);
+    const task = { ...parentRun({}), runId: 'run-attempt-1', tenantId: 'tenant-1' };
+    const metadata = {
+      taskType: 'agent' as const,
+      parentRunId: 'parent-run', parentSessionId: 'parent-session', parentToolCallId: 'call-1',
+      description: '执行任务', modelRef: 'model', cwd: '/workspace', workspaceId: 'ws-1',
+      parentChannel: 'dingtalk' as const, outputTransactionMode: 'terminal_buffered' as const,
+      parentOutputTransactionMode: 'terminal_buffered' as const,
+      prompt: '执行', agentType: 'general' as const, includeCompanyInfo: false,
+      workOrderId: 'work-1', attemptId: 'attempt-1', attemptNo: 1,
+      dwsCompletionRoute: {
+        accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+        conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all' as const,
+      },
+    };
+
+    await expect(deliverDwsBackgroundCompletion({
+      config: {
+        enqueueDwsBackgroundCompletion,
+        orgGroupAgentStore: {
+          getWorkOrder: vi.fn(async () => ({
+            workOrderId: 'work-1', workConversationId: 'wc-1', currentAttemptNo: 2, state: 'completed',
+          })),
+          listWorkAttempts: vi.fn(async () => [{
+            attemptId: 'attempt-1', attemptNo: 1, runtimeRunId: 'run-attempt-1', status: 'completed',
+          }]),
+        },
+      } as never,
+      runStore: { finishBackgroundTaskWake } as never,
+      task, metadata, claimToken: 'claim-stale',
+    })).resolves.toBe(true);
+
+    expect(enqueueDwsBackgroundCompletion).not.toHaveBeenCalled();
+    expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
+      'run-attempt-1', 'claim-stale', 'discarded',
+      { wakeDiscardReason: 'org_agent_completion_stale_attempt' },
+    );
+  });
+
   it('reconciles an unchanged legacy route to exact identity and consumes the wake without web fallback', async () => {
     const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
     const finishBackgroundTaskWake = vi.fn(async () => null);

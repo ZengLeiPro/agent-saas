@@ -44,6 +44,7 @@ export interface AgentDwsInboxRecord {
   content: string;
   eventTimestamp?: string;
   payload: AgentDwsPayload;
+  workConversationId?: string;
   state: AgentDwsInboxState;
   sessionId?: string;
   runId?: string;

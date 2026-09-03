@@ -15,7 +15,8 @@ const NEVER_AUTO_APPROVE_TOOLS = new Set<string>([
 
 export class DefaultToolPolicy implements ToolPolicy {
   constructor(private readonly liveOrgAgentChannelPolicy?: (input: {
-    tenantId: string; bindingId: string; toolName: string;
+    tenantId: string; bindingId: string; accountId: string; agentId: string;
+    conversationId: string; toolName: string;
   }) => Promise<{ allowed: boolean; reason?: string }>) {}
 
   async decide(descriptor: ToolDescriptor, input: unknown, _context: RunContext): Promise<ToolPolicyDecision> {
@@ -29,7 +30,9 @@ export class DefaultToolPolicy implements ToolPolicy {
       if (!tenantId || !this.liveOrgAgentChannelPolicy) {
         return { type: 'deny', reason: 'live ChannelBinding policy is unavailable' };
       }
-      const live = await this.liveOrgAgentChannelPolicy({ tenantId, bindingId: channelPolicy.bindingId, toolName: descriptor.name });
+      const live = await this.liveOrgAgentChannelPolicy({ tenantId, bindingId: channelPolicy.bindingId,
+        accountId: channelPolicy.accountId, agentId: channelPolicy.agentId,
+        conversationId: channelPolicy.channelPrincipal.conversationId, toolName: descriptor.name });
       if (!live.allowed) return { type: 'deny', reason: live.reason ?? 'live ChannelBinding policy denied the tool' };
     }
     // 授权模式（autoApprove）对所有已认证用户生效（2026-07-02 起）：
@@ -47,6 +50,10 @@ export class DefaultToolPolicy implements ToolPolicy {
       callPolicy = undefined;
     }
     const risk = callPolicy?.risk ?? descriptor.risk;
+    if (channelPolicy && risk !== 'safe' && channelPolicy.approvalRoles.length > 0
+      && (!channelPolicy.actorRole || !channelPolicy.approvalRoles.includes(channelPolicy.actorRole))) {
+      return { type: 'deny', reason: 'actor role cannot approve this ChannelBinding capability' };
+    }
     const neverAutoApprove = callPolicy?.neverAutoApprove === true
       || NEVER_AUTO_APPROVE_TOOLS.has(descriptor.id)
       || NEVER_AUTO_APPROVE_TOOLS.has(descriptor.name);

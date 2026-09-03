@@ -28,6 +28,13 @@ export function requestedSessionPrincipal(input: {
 export function runtimePrincipalMatches(
   pinned: RuntimeSessionRecord['principal'],
   requested: RuntimeSessionRecord['principal'],
+  legacy?: Pick<RuntimeSessionRecord, 'userId' | 'tenantId' | 'orgAgentId' | 'workspaceId'>,
 ): boolean {
-  return !pinned || !requested || JSON.stringify(pinned) === JSON.stringify(requested);
+  if (pinned && requested) return JSON.stringify(pinned) === JSON.stringify(requested);
+  if (pinned || !requested) return !pinned && !requested;
+  if (!legacy) return false;
+  if (requested.kind === 'user') return legacy.userId === requested.userId;
+  return legacy.tenantId === requested.tenantId
+    && legacy.orgAgentId === requested.agentId
+    && legacy.workspaceId === requested.workspaceId;
 }

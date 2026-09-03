@@ -85,6 +85,27 @@ export async function deliverDwsBackgroundCompletion(input: {
   if (!route) {
     return await discardUnreconciledLegacyRoute(input, 'dws_completion_route_invalid', routeVersion ?? 'invalid');
   }
+  let workConversationId: string | undefined;
+  if (metadata.workOrderId) {
+    if (!config.orgGroupAgentStore || !metadata.attemptId || !metadata.attemptNo) {
+      await runStore.finishBackgroundTaskWake!(task.runId, claimToken, 'discarded', {
+        wakeDiscardReason: 'org_agent_completion_identity_missing',
+      });
+      return true;
+    }
+    const work = await config.orgGroupAgentStore.getWorkOrder(task.tenantId, metadata.workOrderId);
+    const attempt = (await config.orgGroupAgentStore.listWorkAttempts(task.tenantId, metadata.workOrderId))
+      .find(item => item.attemptId === metadata.attemptId);
+    if (!work || !attempt || attempt.runtimeRunId !== task.runId
+      || attempt.attemptNo !== metadata.attemptNo || work.currentAttemptNo !== attempt.attemptNo
+      || work.state !== attempt.status || !['completed', 'failed', 'cancelled'].includes(work.state)) {
+      await runStore.finishBackgroundTaskWake!(task.runId, claimToken, 'discarded', {
+        wakeDiscardReason: 'org_agent_completion_stale_attempt',
+      });
+      return true;
+    }
+    workConversationId = work.workConversationId;
+  }
 
   const reconciliationPatch = legacyRoute ? {
     dwsCompletionRoute: route,
@@ -105,6 +126,7 @@ export async function deliverDwsBackgroundCompletion(input: {
     ...(metadata.workOrderId ? { workOrderId: metadata.workOrderId } : {}),
     ...(metadata.attemptId ? { attemptId: metadata.attemptId } : {}),
     ...(metadata.attemptNo ? { attemptFence: metadata.attemptNo } : {}),
+    ...(workConversationId ? { workConversationId } : {}),
     ...route,
     content: buildTaskNotification(task, metadata),
   });

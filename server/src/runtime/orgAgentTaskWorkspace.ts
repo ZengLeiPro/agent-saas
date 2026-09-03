@@ -12,10 +12,42 @@ export interface OrgAgentTaskWorkspaceLayout {
   sandboxScopeId: string;
 }
 
+export interface OrgAgentSharedViewLayout {
+  root: string;
+  mountSubPath: string;
+}
+
+export function deriveOrgAgentSharedView(input: {
+  agentRoot: string;
+  agentMountSubPath: string;
+  bindingId: string;
+  workConversationId: string;
+}): OrgAgentSharedViewLayout {
+  assertRelativePosix(input.agentMountSubPath);
+  if (!SAFE_SEGMENT.test(input.bindingId) || !SAFE_SEGMENT.test(input.workConversationId)) {
+    throw new Error('ORG_AGENT_SHARED_VIEW_ID_INVALID');
+  }
+  const relative = `shared/${input.bindingId}/${input.workConversationId}`;
+  return {
+    root: join(input.agentRoot, 'shared', input.bindingId, input.workConversationId),
+    mountSubPath: `${input.agentMountSubPath}/${relative}`,
+  };
+}
+
+export function agentMountSubPathFromSharedView(sharedReadOnlySubPath: string): string {
+  assertRelativePosix(sharedReadOnlySubPath);
+  const parts = sharedReadOnlySubPath.split('/');
+  if (parts.length < 4 || parts.at(-3) !== 'shared') {
+    throw new Error('ORG_AGENT_SHARED_VIEW_INVALID');
+  }
+  return parts.slice(0, -3).join('/');
+}
+
 export function deriveOrgAgentTaskWorkspace(input: {
   agentWorkspaceId: string;
   agentRoot: string;
   agentMountSubPath: string;
+  sharedReadOnlySubPath: string;
   taskId: string;
   attemptNo: number;
 }): OrgAgentTaskWorkspaceLayout {
@@ -24,6 +56,11 @@ export function deriveOrgAgentTaskWorkspace(input: {
   if (!Number.isSafeInteger(input.attemptNo) || input.attemptNo < 1)
     throw new Error('ORG_AGENT_ATTEMPT_INVALID');
   assertRelativePosix(input.agentMountSubPath);
+  assertRelativePosix(input.sharedReadOnlySubPath);
+  if (input.sharedReadOnlySubPath === input.agentMountSubPath
+    || input.sharedReadOnlySubPath.startsWith(`${input.agentMountSubPath}/work/`)) {
+    throw new Error('ORG_AGENT_SHARED_VIEW_TOO_BROAD');
+  }
   const digest = createHash('sha256')
     .update(`${input.taskId}:${input.attemptNo}`)
     .digest('base64url')
@@ -34,7 +71,7 @@ export function deriveOrgAgentTaskWorkspace(input: {
     taskWorkspaceId: `${input.agentWorkspaceId}__task_${digest}`,
     taskRoot: join(input.agentRoot, 'work', input.taskId, `attempt-${input.attemptNo}`),
     mountSubPath: `${input.agentMountSubPath}/${relativeTaskRoot}`,
-    sharedReadOnlySubPath: input.agentMountSubPath,
+    sharedReadOnlySubPath: input.sharedReadOnlySubPath,
     sandboxScopeId: `${input.agentWorkspaceId}__task_${digest}`,
   };
 }

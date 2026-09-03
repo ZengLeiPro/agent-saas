@@ -92,8 +92,8 @@ function setup(
       .fn()
       .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
-    fail: vi.fn(),
-    defer: vi.fn(),
+    fail: vi.fn().mockResolvedValue(undefined),
+    defer: vi.fn().mockResolvedValue(undefined),
     releaseClaim: vi.fn(),
     pinLegacyIdentityOrTerminate: vi.fn(),
     init: vi.fn(),
@@ -115,7 +115,7 @@ function setup(
     workspaceId: 'ws_tenant-a__agent_agent-a',
     policy: {
       enabled: true,
-      membership: 'members' as const,
+      membership: options.guestReadOnly ? ('members_and_guests' as const) : ('members' as const),
       guest: options.guestReadOnly ? ('shared_read_only' as const) : ('deny' as const),
       taskVisibility: 'conversation' as const,
       completion: 'reply_to_work_conversation' as const,
@@ -164,6 +164,7 @@ function setup(
     updatedAt: now,
   };
   const orgStore = {
+    reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
     claimNextDelivery: vi.fn().mockResolvedValue(null),
     ensureShadowBinding: vi.fn().mockResolvedValue(binding),
     getBinding: vi.fn().mockResolvedValue(binding),
@@ -179,7 +180,18 @@ function setup(
       updatedAt: now,
     }),
     findWorkConversationByMessage: vi.fn().mockResolvedValue(null),
+    getWorkConversation: vi.fn().mockResolvedValue(null),
     pinInboxContext: vi.fn(),
+    pinInboxRouting: vi.fn(),
+    getWorkOrder: vi.fn().mockResolvedValue({
+      workOrderId: 'work-a', tenantId: 'tenant-a', agentId: 'agent-a',
+      bindingId: 'channel-binding-a', workConversationId: 'workconv-a',
+      state: 'completed', currentAttemptNo: 1,
+    }),
+    listWorkAttempts: vi.fn().mockResolvedValue([{
+      attemptId: 'attempt-a', workOrderId: 'work-a', runtimeRunId: 'bg-a',
+      attemptNo: 1, status: 'completed',
+    }]),
     listMemories: vi.fn().mockResolvedValue([]),
     createDelivery: vi.fn().mockResolvedValue(delivery),
     claimDelivery: vi
@@ -212,7 +224,7 @@ function setup(
     tenantId: 'tenant-a',
   });
   const router = new AgentDwsMessageRouter({
-    agentCwd: '/workspace',
+    agentCwd: '/tmp',
     messageStore,
     orgGroupAgentStore: orgStore,
     accountStore: {
@@ -279,7 +291,7 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     expect(test.messageStore.complete).toHaveBeenCalledOnce();
   });
 
-  it('allows an unmapped guest only the configured shared context tools', async () => {
+  it('keeps an allowed guest in the group scope while topic Context is fail-closed', async () => {
     const test = setup({
       guestReadOnly: true,
       requesterOutcome: { status: 'unmapped', reason: 'DWS_IDENTITY_NOT_MAPPED' },
@@ -291,10 +303,10 @@ describe('AgentDwsMessageRouter organization group binding', () => {
         user: undefined,
         orgAgentChannel: expect.objectContaining({
           externalActorAssurance: 'unmapped',
-          contextEnabled: true,
+          contextEnabled: false,
         }),
       }),
-      expect.objectContaining({ allowedTools: ['ContextSearch', 'ContextGet'] }),
+      expect.objectContaining({ allowedTools: [] }),
       expect.any(Object),
     );
   });
@@ -306,8 +318,10 @@ describe('AgentDwsMessageRouter organization group binding', () => {
       payload: {
         ...item.payload,
         source: 'background_task_completion',
-        workOrderId: 'work-1',
-        attemptId: 'attempt-2',
+        backgroundTaskId: 'bg-a',
+        workOrderId: 'work-a',
+        attemptId: 'attempt-a',
+        attemptFence: 1,
       },
     };
     const test = setup({ claimed: completion });
@@ -319,7 +333,7 @@ describe('AgentDwsMessageRouter organization group binding', () => {
         user: undefined,
         orgAgentChannel: expect.objectContaining({
           externalActorAssurance: 'service',
-          externalActor: expect.objectContaining({ kind: 'service_event', workOrderId: 'work-1' }),
+          externalActor: expect.objectContaining({ kind: 'service_event', workOrderId: 'work-a' }),
         }),
       }),
       expect.objectContaining({ dispatcherCompletion: true, allowedTools: [] }),

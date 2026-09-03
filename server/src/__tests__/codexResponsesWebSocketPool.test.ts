@@ -6,6 +6,7 @@ import type {
 } from '../runtime/egressDispatcher.js';
 import {
   CodexResponsesWebSocketPool,
+  CodexWebSocketAccountUnavailableError,
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
 } from '../runtime/responses/codexResponsesWebSocketPool.js';
@@ -100,6 +101,8 @@ function request(serializedBody: string, signal?: AbortSignal) {
     accessToken: 'access-token',
     accountId: 'acct-1',
     accountBindingHash: 'binding-1',
+    credentialRef: 'credential-1',
+    credentialGeneration: 1,
     originator: 'codex-tui',
     serializedBody,
     tenantId: 'kaiyan',
@@ -275,11 +278,19 @@ describe('CodexResponsesWebSocketPool', () => {
     pool.close();
   });
 
-  it('账号绑定或 originator 变化时使用新连接，旧连接保持可用并自然过期', async () => {
+  it('账号绑定、credential identity、generation 或 originator 变化时使用新连接', async () => {
     const originalSocket = new FakeWebSocket();
     const changedAccountSocket = new FakeWebSocket();
+    const changedGenerationSocket = new FakeWebSocket();
+    const changedCredentialSocket = new FakeWebSocket();
     const changedOriginatorSocket = new FakeWebSocket();
-    const connector = connectorFor(originalSocket, changedAccountSocket, changedOriginatorSocket);
+    const connector = connectorFor(
+      originalSocket,
+      changedAccountSocket,
+      changedGenerationSocket,
+      changedCredentialSocket,
+      changedOriginatorSocket,
+    );
     const pool = new CodexResponsesWebSocketPool(connector);
     const input = [{ type: 'message', role: 'user', content: 'same request' }];
     await establish(pool, originalSocket, input, 'resp-original');
@@ -296,8 +307,31 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(changedAccountSocket, 'resp-account');
     await changedAccountResult.response.text();
 
+    const changedGenerationPending = pool.execute({
+      ...request(body(input)),
+      accessToken: 'reauthorized-token',
+      credentialGeneration: 2,
+    });
+    await waitForSend(changedGenerationSocket);
+    changedGenerationSocket.emit({ type: 'response.created', response: { id: 'resp-generation' } });
+    const changedGenerationResult = await changedGenerationPending;
+    complete(changedGenerationSocket, 'resp-generation');
+    await changedGenerationResult.response.text();
+
+    const changedCredentialPending = pool.execute({
+      ...request(body(input)),
+      accessToken: 'same-account-other-credential',
+      credentialRef: 'credential-2',
+    });
+    await waitForSend(changedCredentialSocket);
+    changedCredentialSocket.emit({ type: 'response.created', response: { id: 'resp-credential' } });
+    const changedCredentialResult = await changedCredentialPending;
+    complete(changedCredentialSocket, 'resp-credential');
+    await changedCredentialResult.response.text();
+
     const changedOriginatorPending = pool.execute({
       ...request(body(input)),
+      credentialGeneration: 2,
       originator: 'kaiyan-agent',
     });
     await waitForSend(changedOriginatorSocket);
@@ -306,12 +340,16 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(changedOriginatorSocket, 'resp-originator');
     await changedOriginatorResult.response.text();
 
-    expect(connector).toHaveBeenCalledTimes(3);
-    expect(connector.mock.calls[2]?.[0]).toEqual(expect.objectContaining({
+    expect(connector).toHaveBeenCalledTimes(5);
+    expect(connector.mock.calls[4]?.[0]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({ originator: 'kaiyan-agent' }),
     }));
-    expect(originalSocket.readyState).toBe(1);
-    expect(changedAccountSocket.readyState).toBe(1);
+    expect(originalSocket.readyState).toBe(3);
+    expect(changedAccountSocket.readyState).toBe(3);
+    expect(changedGenerationSocket.readyState).toBe(1);
+    pool.closeCredentialRefs(['credential-1']);
+    expect(changedGenerationSocket.readyState).toBe(3);
+    expect(changedCredentialSocket.readyState).toBe(1);
     pool.close();
   });
 
@@ -587,6 +625,44 @@ describe('CodexResponsesWebSocketPool', () => {
     await expect(pending).rejects.toBeInstanceOf(CodexWebSocketQuotaExhaustedError);
     await expect(pending).rejects.toMatchObject({ reason: 'quota_exhausted', code: 'insufficient_quota' });
     expect(socket.readyState).toBe(3);
+    pool.close();
+  });
+
+  it('WebSocket 首帧明确账号停用时标记为可切换账号', async () => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([
+      { type: 'message', role: 'user', content: 'first' },
+    ])));
+    await waitForSend(socket);
+    socket.emit({
+      type: 'error',
+      status_code: 403,
+      error: { code: 'account_disabled', message: 'account disabled' },
+    });
+
+    await expect(pending).rejects.toBeInstanceOf(CodexWebSocketAccountUnavailableError);
+    await expect(pending).rejects.toMatchObject({ code: 'account_disabled' });
+    expect(socket.readyState).toBe(3);
+    pool.close();
+  });
+
+  it.each([500, 502, 503, 504])('WebSocket HTTP %i 即使 body 命中额度文本也不切换账号', async (status) => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([
+      { type: 'message', role: 'user', content: 'first' },
+    ])));
+    await waitForSend(socket);
+    socket.emit({
+      type: 'response.failed',
+      status_code: status,
+      error: { code: 'insufficient_quota', message: 'temporary provider failure' },
+    });
+
+    const result = await pending;
+    expect(result.response.status).toBe(200);
+    expect(await result.response.text()).toContain('insufficient_quota');
     pool.close();
   });
 

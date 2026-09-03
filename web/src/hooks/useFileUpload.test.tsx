@@ -63,6 +63,27 @@ describe("useFileUpload 并发隔离", () => {
     expect(result.current.uploadedFiles.map((file) => file.originalName)).toEqual(["a.txt", "b.txt"]);
   });
 
+  it("允许带版本号的 HTML 文件进入上传，并展示服务端的真实拒绝原因", async () => {
+    mocks.authFetch.mockResolvedValueOnce(uploadResponse("Demo-V2.7 (1).html"));
+    const { result } = renderHook(() => useFileUpload("chat"));
+
+    await act(async () => {
+      await result.current.handlePaste(pasteEvent(new File(["<h1>Demo</h1>"], "Demo-V2.7 (1).html", { type: "text/html" })));
+    });
+    expect(mocks.authFetch).toHaveBeenCalledTimes(1);
+    expect(result.current.uploadedFiles[0]?.originalName).toBe("Demo-V2.7 (1).html");
+
+    mocks.authFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      success: false,
+      code: "UPLOAD_ARCHIVE_INVALID",
+      error: "ZIP 文件已损坏或无法读取",
+    }), { status: 422, headers: { "content-type": "application/json" } }));
+    await act(async () => {
+      await result.current.handlePaste(pasteEvent(new File(["broken"], "broken.zip", { type: "application/zip" })));
+    });
+    expect(result.current.uploadError).toBe("上传失败：ZIP 文件已损坏或无法读取");
+  });
+
   it("从资料库添加时调用服务端引用接口并保留 assets 路径", async () => {
     mocks.authFetch.mockResolvedValueOnce(new Response(JSON.stringify({
       success: true,

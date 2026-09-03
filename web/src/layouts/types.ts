@@ -101,11 +101,10 @@ export interface LayoutProps {
   dismissUploadError: () => void;
   setInput: (value: string) => void;
   sendMessage: () => Promise<void>;
-  interjectMessage: () => Promise<void>;
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
-  /** 插话队列区（2026-08-04 终态设计） */
+  /** 运行中发送的补充消息队列。 */
   queuedInterjections: QueuedInterjection[];
   cancelQueuedInterjection: (clientMsgId: string) => Promise<boolean>;
   editQueuedInterjection: (clientMsgId: string) => Promise<void>;

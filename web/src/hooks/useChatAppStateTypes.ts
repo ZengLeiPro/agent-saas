@@ -86,13 +86,12 @@ export interface ChatAppState {
   handleFileSelect: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handleAssetSelect: (paths: string[]) => Promise<void>;
   handlePaste: (event: ClipboardEvent) => Promise<void>;
+  /** 当前 run 运行时自动作为补充消息发送；空闲时正常开启下一次处理。 */
   sendMessage: () => Promise<void>;
-  /** 当前 run 运行时显式插话；普通 sendMessage 始终走串行 queue。 */
-  interjectMessage: () => Promise<void>;
   sendVoiceMessage: (wavBlob: Blob, durationMs: number) => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
-  /** 插话队列区（2026-08-04 终态设计） */
+  /** 运行中发送的补充消息队列。 */
   queuedInterjections: QueuedInterjection[];
   /** 撤回一条排队插话；too_late（已被消费）时返回 false */
   cancelQueuedInterjection: (clientMsgId: string) => Promise<boolean>;

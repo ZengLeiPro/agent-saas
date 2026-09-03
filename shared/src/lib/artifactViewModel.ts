@@ -29,6 +29,7 @@ export interface ArtifactViewPosition {
 
 export type ArtifactViewerErrorCode =
   | 'authentication_required'
+  | 'artifact_link_expired'
   | 'access_denied'
   | 'artifact_not_found'
   | 'artifact_deleted'
@@ -226,7 +227,8 @@ export function reduceArtifactViewer(state: ArtifactViewerState, event: Artifact
 
 export function artifactViewerError(status: number, reason?: string): ArtifactViewerError {
   if (reason === 'quarantine' || status === 423) return { code: 'artifact_quarantined', title: '文件已隔离', message: '安全策略已隔离此文件，无法查看或下载。', action: 'close', actionLabel: '关闭' };
-  if (status === 401) return { code: 'authentication_required', title: '查看凭证已失效', message: '请重新登录后再试。', action: 'sign-in', actionLabel: '重新登录' };
+  if (status === 401 && reason === 'expired') return { code: 'artifact_link_expired', title: '文件链接已失效', message: '文件链接已失效，请重试。', action: 'close', actionLabel: '关闭' };
+  if (status === 401) return { code: 'authentication_required', title: '登录状态已失效', message: '请重新登录后再试。', action: 'sign-in', actionLabel: '重新登录' };
   if (status === 403) return { code: 'access_denied', title: '无权查看文件', message: '当前账号或组织没有此文件的访问权限。', action: 'close', actionLabel: '关闭' };
   if (status === 404) return { code: 'artifact_not_found', title: '文件不可用', message: '文件不存在，或你已失去访问权限。', action: 'close', actionLabel: '关闭' };
   if (status === 410) return { code: 'artifact_deleted', title: '文件已删除', message: '此文件已被删除，无法恢复查看。', action: 'close', actionLabel: '关闭' };

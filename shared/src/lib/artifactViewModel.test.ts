@@ -64,13 +64,17 @@ describe('M50-02 canonical artifact policy', () => {
 });
 
 describe('M50-02 cross-platform artifact viewer state', () => {
-  it('refreshes expiry at most once and preserves position', () => {
+  it('refreshes a resource token at most once, preserves position and never requests sign-in', () => {
     let state = reduceArtifactViewer(createArtifactViewerState(), { type: 'open', artifactId: 'artifact_1', ownerKey: 'tenant:user' });
     state = reduceArtifactViewer(state, { type: 'position', position: { scrollTop: 120, page: 3, mediaTime: 42 } });
     state = reduceArtifactViewer(state, { type: 'expired' });
     expect(state).toMatchObject({ status: 'refreshing', refreshCount: 1, position: { scrollTop: 120, page: 3, mediaTime: 42 } });
     state = reduceArtifactViewer(state, { type: 'expired' });
-    expect(state).toMatchObject({ status: 'error', refreshCount: 1, error: { code: 'authentication_required' } });
+    expect(state).toMatchObject({
+      status: 'error',
+      refreshCount: 1,
+      error: { code: 'artifact_link_expired', message: '文件链接已失效，请重试。', action: 'close' },
+    });
   });
 
   it('clears the viewer on owner switch', () => {

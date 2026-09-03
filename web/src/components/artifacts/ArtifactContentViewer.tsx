@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CircleAlert, Download, FileQuestion, Loader2 } from "lucide-react";
-import { ARTIFACT_TEXT_MAX_BYTES, authFetch, type ArtifactReadGrant, type ArtifactViewPosition } from "@agent/shared";
+import { ARTIFACT_TEXT_MAX_BYTES, authFetchResource, type ArtifactReadGrant, type ArtifactViewPosition } from "@agent/shared";
 
 import { ArtifactMarkdownContent } from "@/components/artifacts/ArtifactMarkdownContent";
 import { Button } from "@/components/ui/button";
@@ -54,8 +54,9 @@ export function ArtifactContentViewer({
       return;
     }
     const headers: Record<string, string> = { "X-Artifact-Correlation-Id": descriptor.correlationId };
+    // 签名 Artifact URL 是资源凭证；其 401 不得失效当前登录会话。
     if (truncated) headers.Range = `bytes=0-${ARTIFACT_TEXT_MAX_BYTES - 1}`;
-    void authFetch(grant.readUrl, {
+    void authFetchResource(grant.readUrl, {
       signal: controller.signal,
       cache: "no-store",
       referrerPolicy: "no-referrer",
@@ -138,7 +139,7 @@ function decodeUtf8(bytes: Uint8Array, mayEndMidCharacter: boolean): string {
     try {
       return decoder.decode(bytes.subarray(0, bytes.byteLength - trim));
     } catch {
-      // Range may end in the middle of one UTF-8 code point; try the previous byte.
+      // Range 可能截断 UTF-8 字符，逐字节回退解码。
     }
   }
   throw new Error("文本预览编码不安全");

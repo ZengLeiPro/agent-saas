@@ -2496,8 +2496,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await cronLeadership?.stop();
     // 6. 先停任务看板恢复周期，避免 drain 期间继续 enqueue；再停 scheduler，
     //    不再 claim 新 run 并等 in-flight run 结清（两者 stop 均幂等）。
-    await sessionAutomationCoordinator?.stop();
-    await sessionAutomationEvaluator?.stop();
+    await sessionAutomationCoordinator?.stop(); await sessionAutomationEvaluator?.stop();
     await sessionAutomationTerminalProjector?.stop();
     await taskboardExecutionCoordinator?.stop();
     await runtimeScheduler?.stop();
@@ -2684,8 +2683,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (runtimeScheduler && enableSchedulerWorker) {
     await runtimeScheduler.start();
     sessionAutomationTerminalProjector?.start(pgEventStore!, { onError: (error) => serverLogger.error(`Session automation terminal recovery failed: ${error instanceof Error ? error.message : String(error)}`) });
-    sessionAutomationEvaluator?.start();
-    sessionAutomationCoordinator?.start();
+    sessionAutomationEvaluator?.start(); sessionAutomationCoordinator?.start();
     serverLogger.info(`RuntimeScheduler started: autoWake=${runtimeSchedulerAutoWake ? 'true' : 'false'}; session automation workers started`);
   } else if (runtimeScheduler) {
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);

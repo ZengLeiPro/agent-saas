@@ -12,10 +12,28 @@ import {
 const BASELINE = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
 const PATH = 'server/src/data/db/migrations.ts';
-// Production schema initializers from the runtime graph; inventory is contract-tested below.
-const STARTUP_SCHEMA_PATHS = [
-  'server/src/runtime/runStoreSchema.ts',
-  'server/src/data/connectorDictionaryStore.ts',
+function standaloneStartupSource(statement) {
+  return `export async function init(client) { await client.query(${JSON.stringify(statement)}); }`;
+}
+
+function parameterizedSchedulerStartupSource(statement) {
+  return `export class PgRuntimeSchedulerConfigStore { async init(defaultMaxConcurrentRuns: number): Promise<void> { await this.pool.query(${JSON.stringify(statement)}); } }`;
+}
+
+// 独立维护真实生产入口形态，禁止从被测 detector 生成这些 fixture。
+const STARTUP_SCHEMA_FIXTURES = [
+  {
+    path: 'server/src/runtime/runStoreSchema.ts',
+    source: standaloneStartupSource,
+  },
+  {
+    path: 'server/src/data/connectorDictionaryStore.ts',
+    source: standaloneStartupSource,
+  },
+  {
+    path: 'server/src/runtime/runtimeSchedulerConfigStore.ts',
+    source: parameterizedSchedulerStartupSource,
+  },
 ];
 
 function gitFixture({ baselines, targets = {}, diffs = {}, nameStatus = `M\t${PATH}` }) {
@@ -87,7 +105,7 @@ test('emits a deterministic baseline-bound no-migration plan', () => {
   );
 });
 
-test('keeps the production startup schema root inventory complete', () => {
+test('keeps the startup schema detector aligned with the explicit authority list', () => {
   const trackedSources = execFileSync(
     'git',
     [
@@ -107,31 +125,40 @@ test('keeps the production startup schema root inventory complete', () => {
   assert.deepEqual([...PRODUCTION_STARTUP_SCHEMA_ROOTS].sort(), trackedSources);
 });
 
-test('classifies destructive SQL in production startup schema roots regardless of filename', () => {
-  for (const startupPath of STARTUP_SCHEMA_PATHS) {
+test('authoritative inventory covers the parameterized scheduler startup entry', () => {
+  const startupPath = 'server/src/runtime/runtimeSchedulerConfigStore.ts';
+  const source = readFileSync(startupPath, 'utf8');
+  const runtime = readFileSync('server/src/app/runtime.ts', 'utf8');
+  assert.equal(PRODUCTION_STARTUP_SCHEMA_ROOTS.includes(startupPath), true);
+  assert.equal(isProductionStartupSchemaRootSource(startupPath, source), true);
+  assert.match(source, /async init\(defaultMaxConcurrentRuns: number\): Promise<void>/u);
+  assert.match(runtime, /await runtimeSchedulerConfigStore\.init\(defaultMaxConcurrentRuns\);/u);
+});
+
+test('classifies destructive SQL in production startup schema roots regardless of entry shape', () => {
+  for (const fixture of STARTUP_SCHEMA_FIXTURES) {
     for (const statement of [
       'ALTER TABLE runs DROP COLUMN payload',
       'ALTER TABLE runs RENAME COLUMN payload TO legacy_payload',
       'ALTER TABLE runs ALTER COLUMN payload SET NOT NULL',
       "UPDATE runs SET payload = '{}'",
     ]) {
-      const baselineSource =
-        "export async function init(client) { await client.query('CREATE TABLE runs(id text)'); }";
-      const targetSource = `export async function init(client) { await client.query(${JSON.stringify(statement)}); }`;
+      const baselineSource = fixture.source('CREATE TABLE runs(id text)');
+      const targetSource = fixture.source(statement);
       const result = plan(targetSource, addedSourceDiff(targetSource), {
-        changedPaths: [startupPath],
-        baselines: { [startupPath]: baselineSource },
-        targets: { [startupPath]: targetSource },
-        diffs: { [startupPath]: addedSourceDiff(targetSource) },
-        nameStatus: `M\t${startupPath}`,
+        changedPaths: [fixture.path],
+        baselines: { [fixture.path]: baselineSource },
+        targets: { [fixture.path]: targetSource },
+        diffs: { [fixture.path]: addedSourceDiff(targetSource) },
+        nameStatus: `M\t${fixture.path}`,
       });
-      assert.equal(result.ok, false, `${startupPath}: ${statement}`);
-      assert.equal(result.migrationPlan.phase, 'expand', `${startupPath}: ${statement}`);
+      assert.equal(result.ok, false, `${fixture.path}: ${statement}`);
+      assert.equal(result.migrationPlan.phase, 'expand', `${fixture.path}: ${statement}`);
       assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
       assert.match(
         result.blockingReasons.join('\n'),
         /contract or non-whitelisted|deletes or replaces baseline/u,
-        `${startupPath}: ${statement}`,
+        `${fixture.path}: ${statement}`,
       );
     }
   }

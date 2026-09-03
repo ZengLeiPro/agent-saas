@@ -78,6 +78,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/runtime/runStore.ts',
   'server/src/runtime/runStoreSchema.ts',
   'server/src/runtime/runTerminalOutboxStore.ts',
+  'server/src/runtime/runtimeSchedulerConfigStore.ts',
   'server/src/runtime/sessionProjectionStore.ts',
   'server/src/runtime/systemMetricsStore.ts',
   'server/src/runtime/toolInvocationStore.ts',
@@ -86,10 +87,10 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/webPush/store.ts',
   'server/src/workspace/materialization/store.ts',
 ]);
-// Roots are activated by changed path or by a changed provider in the same source domain;
-// the source-derived inventory contract keeps this authority list complete.
+// This explicit list is the production authority. Roots are activated by changed path or by a
+// changed provider in the same source domain; the detector below only catches newly changed roots.
 const STARTUP_SCHEMA_ENTRY_PATTERN =
-  /\b(?:async\s+)?(?:function\s+(?:init|initialize)[A-Za-z0-9_$]*\s*\(|(?:init|initialize[A-Za-z0-9_$]*)\s*\(\s*\)\s*:\s*Promise\s*<)/u;
+  /\b(?:async\s+)?(?:function\s+(?:init|initialize)[A-Za-z0-9_$]*\s*\(|(?:init|initialize[A-Za-z0-9_$]*)\s*\([^)]*\)\s*:\s*Promise\s*<)/u;
 // Future init/initialize modules are recognized when their own file changes.
 const SCHEMA_DDL_PATTERN =
   /\b(?:ALTER\s+TABLE|COMMENT\s+ON|CREATE\s+(?:(?:OR\s+REPLACE|UNIQUE)\s+)*(?:EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|VIEW)|DROP\s+(?:EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|VIEW)|GRANT\b|REVOKE\b|TRUNCATE(?:\s+TABLE)?\b)/iu;

@@ -594,6 +594,7 @@ jobs:
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
+    environment: production
     # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
     timeout-minutes: 55
     needs: [build, deploy_plan]
@@ -2396,6 +2397,7 @@ jobs:
   deploy-web-oss:
     name: Deploy Web to OSS
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 15
     # 只接受 deploy_plan 已证明无需 ECS，且不可达的 deploy-ecs 保持 skipped。
     needs: [build, deploy_plan, deploy-ecs]

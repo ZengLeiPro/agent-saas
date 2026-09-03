@@ -1,8 +1,11 @@
 # 发布 Workflow 外部配置
 
-Workflow 只消费明确命名的 GitHub Environment 配置，不在仓库保存密钥。首次运行前必须创建
-`staging` 和 `production` Environment；两者不设置 Required Reviewers，人工意图由
-`workflow_dispatch` 和追加式 attestation 记录。
+Workflow 代码只引用明确命名的 GitHub Secrets/Variables，所有生产变更 job 都显式绑定
+`production` Environment，仓库不保存密钥值。首次运行前必须创建 `staging` 和 `production`
+Environment；两者不设置 Required Reviewers，人工意图由 `workflow_dispatch` 和追加式 attestation
+记录。GitHub 不向 Workflow 暴露 Secret 的配置层级，因此管理员必须把下列生产凭据配置在
+`production` Environment，并删除同名 repository/organization Secret；静态代码只能证明 job 的
+Environment 绑定和引用名称，不能证明现场不存在同名高层级 Secret。
 
 ## staging
 
@@ -32,7 +35,12 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 ## production
 
 Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、
-`ECS_SSH_KEY`、`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
+`ECS_SSH_KEY`、`OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、
+`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
+
+App compatibility 的 `deploy-ecs`、`deploy-web-oss` 与 ACS compatibility 的 `build-deploy` job
+均显式绑定 `production` Environment。生产凭据的权威配置位置是该 Environment；不得配置同名
+repository/organization Secret 作为兜底，现场作用域仍需由 GitHub 管理员审计。
 
 `PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份，当前只供
 `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读使用；

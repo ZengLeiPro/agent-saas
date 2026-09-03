@@ -788,7 +788,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       document.removeEventListener('visibilitychange', attempt);
     };
   }, [markSessionRead, msg.scrollContainerRef, session.sessionId]);
-
   // 切换会话时清理 SDK 新 state，避免跨会话串扰
   // - notifications 是 user scope（跨会话保留？业务含义说是 REPL 级，切会话应该清）
   // - lastMemoryRecall / pluginInstallStatus 是 session scope，必须清

@@ -211,7 +211,6 @@ const logger = createLogger('RawRuntime');
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import { serverRemoteHandRegistrationOptions } from './serverRemoteHandRegistration.js';
-
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
  * RFC v1 P0.2：按 modelProviderOptions.protocol 路由 ModelAdapter。

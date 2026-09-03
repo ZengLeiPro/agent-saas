@@ -2452,7 +2452,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       await runMemoryPollReconcile?.();
     }
   };
-
   // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释；index.ts 调用）
   let runtimeDrainStarted = false;
   const beginRuntimeDrain = async (): Promise<void> => {
@@ -2505,7 +2504,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (enableSingletonWorkers) {
     // Backfill cron groups from historical run logs (one-time migration)
     await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
-
     // Prune orphaned sessionIds（transcripts 被 API 外删除）。必须先建一次索引：逐个查会
     // 退化成 O(N×M)，实测 2,220 个 id × 17k 文件 ≈ 113s，全程阻塞 scheduler 启动。
     const existingSessionIds = await listExistingTranscriptSessionIds();

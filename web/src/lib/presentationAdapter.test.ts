@@ -182,10 +182,10 @@ describe('M20-05 non-debug accessibility sensitive scan', () => {
     }
   });
 
-  it('opens raw only when build, authenticated admin, and session toggle are all true', () => {
+  it('opens raw only when the resolved session debug permission is true', () => {
     const item = toolItem();
-    const openGate = { debugBuild: true, authenticatedAdmin: true, explicitSessionToggle: true };
-    const closedGate = { debugBuild: true, authenticatedAdmin: true, explicitSessionToggle: false };
+    const openGate = { explicitSessionToggle: true };
+    const closedGate = { explicitSessionToggle: false };
     expect(JSON.stringify(adaptToolPresentationForWeb(item, closedGate))).not.toContain(
       'RAW_INPUT_SENTINEL',
     );

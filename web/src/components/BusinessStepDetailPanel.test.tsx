@@ -158,6 +158,9 @@ describe("BusinessStepDetailPanel", () => {
     render(<BusinessStepDetailPanel {...props()} />);
 
     expect(screen.getByText("任务步骤")).toBeTruthy();
+    const header = screen.getByText("任务步骤").closest("header");
+    expect(header?.className).toContain("bg-card");
+    expect(header?.className).not.toContain("bg-background");
     expect(screen.queryByText("已暂停跟随")).toBeNull();
     expect(screen.queryByRole("button", { name: "上一步" })).toBeNull();
     expect(screen.queryByRole("button", { name: "下一步" })).toBeNull();

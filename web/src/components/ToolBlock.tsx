@@ -78,7 +78,7 @@ interface ToolBlockProps {
   /** 结构化执行事实（exitCode 等）。有退出码时 ✓/✗ 判定优先用它。 */
   toolMetadata?: ToolResultMetadata;
   /**
-   * 是否呈现原始 payload。调用方只能传入共享三重门已经授权的结果。
+   * 是否呈现原始 payload。调用方只能传入当前会话有效调试权限的结果。
    */
   debugMode?: boolean;
   /**
@@ -129,11 +129,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
     kind: 'tool_activity',
     status: executionStatus ?? (streaming ? 'running' : 'pending'),
     content: [{ type: 'tool', toolName, input: toolInput, result, presentation }],
-  }, debugMode ? {
-    debugBuild: true,
-    authenticatedAdmin: true,
-    explicitSessionToggle: true,
-  } : undefined);
+  }, debugMode ? { explicitSessionToggle: true } : undefined);
   const showRaw = canonical.showRaw;
   const normalizedPresentation = useMemo(() => normalizeToolPresentation(presentation), [presentation]);
   const displayTitle = normalizedPresentation?.connector ? `连接器 · ${canonical.title}` : canonical.title;
@@ -159,7 +155,7 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
     <div>
       <button
         onClick={() => setIsExpanded(v => !v)}
-        className="flex min-h-11 max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="flex min-h-6 max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground [@media(pointer:coarse)]:min-h-11"
         aria-label={`${displayTitle}，${canonical.statusLabel}${canonical.summary ? `，${canonical.summary}` : ''}，${isExpanded ? '收起详情' : '展开详情'}`}
         aria-expanded={isExpanded}
       >

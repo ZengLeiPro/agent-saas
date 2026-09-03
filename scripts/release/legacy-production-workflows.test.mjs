@@ -41,7 +41,7 @@ test('legacy App and ACS workflows expose explicit manual compatibility deployme
   }
 });
 
-test('all legacy jobs reading production Secrets bind production Environment and match docs', async () => {
+test('all legacy jobs reading production Secrets bind exactly one production Environment and match docs', async () => {
   const app = await readFile(new URL('ci.yml', root), 'utf8');
   const acs = await readFile(new URL('acs-sandbox.yml', root), 'utf8');
   const productionSecrets = [
@@ -66,7 +66,13 @@ test('all legacy jobs reading production Secrets bind production Environment and
     );
     assert.deepEqual(readers, expectedReaders, `${name} production Secret readers`);
     for (const job of readers) {
-      assert.match(jobBlock(workflow, job), /^    environment: production$/mu, `${name}:${job}`);
+      const block = jobBlock(workflow, job);
+      assert.match(block, /^    environment: production$/mu, `${name}:${job}`);
+      assert.equal(
+        block.match(/^    environment: production$/gmu)?.length,
+        1,
+        `${name}:${job} must bind production Environment exactly once`,
+      );
     }
   }
 

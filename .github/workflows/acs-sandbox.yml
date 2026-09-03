@@ -3,7 +3,7 @@ name: ACS CI / Deploy
 on:
   pull_request:
     branches: [main]
-  # main push 始终进入 changes job，由 acs-classify.sh 作为唯一影响分类真源。
+  # 仅 main push 进入 changes job，由 acs-classify.sh 作为唯一影响分类真源。
   push:
     branches: [main]
   workflow_dispatch:
@@ -375,7 +375,6 @@ jobs:
     environment: production
     timeout-minutes: 75
     needs: [changes, gate]
-    environment: production
     concurrency:
       group: production-runtime
       cancel-in-progress: false

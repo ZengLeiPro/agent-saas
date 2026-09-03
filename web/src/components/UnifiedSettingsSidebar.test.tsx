@@ -34,7 +34,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
 
     expect(screen.getByText("个人设置")).toBeTruthy();
     expect(screen.queryByText("组织管理")).toBeNull();
-    expect(screen.queryByText("平台管理")).toBeNull();
+    expect(screen.queryByText("平台运营")).toBeNull();
   });
 
   it("分组间距清晰且激活项不显示左侧竖线", () => {
@@ -50,7 +50,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
   it("只按各自 snapshot allowed 显示管理分组", () => {
     const { rerender } = renderSidebar(access("ready", true, false));
     expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);
-    expect(screen.queryByText("平台管理")).toBeNull();
+    expect(screen.queryByText("平台运营")).toBeNull();
 
     rerender(
       <UnifiedSettingsSidebar
@@ -67,7 +67,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
       />,
     );
     expect(screen.queryByText("组织管理")).toBeNull();
-    expect(screen.getByText("平台管理")).toBeTruthy();
+    expect(screen.getByText("平台运营")).toBeTruthy();
   });
 
   it("个人设置页 snapshot error 显示明确重试入口", () => {
@@ -84,7 +84,7 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
 
     expect(screen.getByRole("status").textContent).toContain("正在验证管理权限");
     expect(screen.queryByText("组织管理")).toBeNull();
-    expect(screen.queryByText("平台管理")).toBeNull();
+    expect(screen.queryByText("平台运营")).toBeNull();
   });
 
   it("refreshing 保留旧 allow 分组并显示更新状态", () => {
@@ -92,23 +92,24 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
 
     expect(screen.getByRole("status").textContent).toContain("正在更新管理权限");
     expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("平台管理").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("平台运营").length).toBeGreaterThan(0);
   });
 
-  it("平台权限允许时显示三个补充管理入口", () => {
+  it("平台权限允许时显示归并后的平台配置入口", () => {
     renderSidebar(access("ready", false, true));
 
-    expect(screen.getByRole("button", { name: "平台管理员" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "智能体模板" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "环境模板" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "访问控制" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "模板" })).toBeTruthy();
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(20);
   });
 
-  it("组织分组只展示五个统一分类，不再出现第二治理入口", () => {
+  it("组织分组展示 17 个真实页面及四个配置分组", () => {
     renderSidebar(access("ready", true, false));
 
-    for (const label of ["组织总览", "成员与权限", "智能体与资源", "用量与治理", "组织设置"]) {
-      expect(screen.getByRole("button", { name: label })).toBeTruthy();
+    for (const label of ["构建 · 调用资产", "运行", "治理 · 边界", "组织设置"]) {
+      expect(screen.getByText(label)).toBeTruthy();
     }
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(25);
     expect(screen.queryByRole("button", { name: "进入组织治理" })).toBeNull();
   });
 });

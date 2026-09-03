@@ -44,7 +44,7 @@ describe("useUnifiedSettingsWorkspace", () => {
 
     expect(result.current.mode).toBe(true);
     expect(result.current.target).toBe("tenant");
-    expect(result.current.activeSection).toBe("members");
+    expect(result.current.activeSection).toBe("org-members");
   });
 
   it("切换组织分类经过 dirty guard，并保留点击瞬间的 org", async () => {
@@ -104,7 +104,7 @@ describe("useUnifiedSettingsWorkspace", () => {
     const closeOrganizationSettings = vi.fn();
     const { result } = renderHook(() => useUnifiedSettingsWorkspace({
       ...baseProps(),
-      governanceRoute: governanceRoute("organization.overview.overview"),
+      governanceRoute: governanceRoute("organization.members.list"),
       closeOrganizationSettings,
     }));
 

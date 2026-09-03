@@ -353,6 +353,10 @@ export function governanceRoute(routeId: string, options: Partial<Pick<Governanc
   return makeState(definition, options);
 }
 
+export function governanceRouteDefinition(routeId: string): GovernanceRouteDefinition | null {
+  return routesById.get(routeId) ?? null;
+}
+
 function parseRegistered(parts: readonly string[], params: URLSearchParams): GovernanceParseResult | null {
   for (const definition of routesByPath) {
     if (!definition.path.every((part, index) => parts[index] === part)) continue;

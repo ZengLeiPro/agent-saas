@@ -573,13 +573,13 @@ async function fetchBillingState(tenantId: string, includeAudit = true): Promise
 // PlatformBillingManager
 // ============================================================
 
-export function PlatformBillingManager() {
+export function PlatformBillingManager({ tenantId: fixedTenantId }: { tenantId?: string } = {}) {
   const { isSuperAdmin, platformReadOnly, canPlatform } = useAuth();
   const canAdjust = canPlatform("billing.adjust");
   const canOperateRuntime = canPlatform("runtime.operate");
   const canReadFinance = canPlatform("finance.read");
   const { tenants, loading: tenantsLoading } = useTenants();
-  const [selectedTenantId, setSelectedTenantId] = useState("");
+  const [selectedTenantId, setSelectedTenantId] = useState(fixedTenantId ?? "");
   const [pricingVersions, setPricingVersions] = useState<PricingVersion[]>([]);
   const [state, setState] = useState<BillingState>({ summary: null, policy: null, audit: null });
   const [draft, setDraft] = useState<PolicyDraft | null>(null);
@@ -766,7 +766,7 @@ export function PlatformBillingManager() {
         description="平台管理员配置组织积分账户、计费策略、价格版本与流水。客户侧只看到余额和消耗，不展示真实成本与毛利。"
         actions={
           <>
-            <Select value={selectedTenantId} onValueChange={setSelectedTenantId} disabled={tenantsLoading || tenants.length === 0}>
+            {!fixedTenantId ? <Select value={selectedTenantId} onValueChange={setSelectedTenantId} disabled={tenantsLoading || tenants.length === 0}>
               <SelectTrigger className="w-[240px] max-w-full">
                 <SelectValue placeholder={tenantsLoading ? "加载组织中" : "选择组织"} />
               </SelectTrigger>
@@ -777,7 +777,7 @@ export function PlatformBillingManager() {
                   </SelectItem>
                 ))}
               </SelectContent>
-            </Select>
+            </Select> : null}
             {activeTab === "overview" && draft && (
               <Button size="sm" onClick={() => { void savePolicy(); }} disabled={platformReadOnly || saving || loading}>
                 {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

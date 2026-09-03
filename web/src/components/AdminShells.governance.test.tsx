@@ -307,7 +307,7 @@ describe("AdminShells V2 内容适配", () => {
     expect(screen.queryByText("复用 UserManager")).toBeNull();
   });
 
-  it("账号与登录叶子复用完整 UserManager 账号操作能力", () => {
+  it("账号与登录旧叶子 canonical 复用治理成员页，不再挂载 UserManager", async () => {
     render(
       <TenantAdminShell
         {...commonTenantProps}
@@ -316,7 +316,8 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    expect(screen.getByText("复用 UserManager")).toBeTruthy();
+    expect(await screen.findByText("member-1")).toBeTruthy();
+    expect(screen.queryByText("复用 UserManager")).toBeNull();
   });
 
   it("MCP 服务叶子复用完整 Connector Catalog 管理能力", () => {
@@ -530,7 +531,7 @@ describe("AdminShells V2 内容适配", () => {
     ["organization.settings.general", "功能与配额", ["模型策略", "品牌", "安全"]],
     ["organization.settings.brand", "品牌", ["功能开关", "模型策略", "安全"]],
     ["organization.settings.security", "登录与安全", ["功能开关", "模型策略", "品牌"]],
-    ["organization.agents.model-tools", "模型与工具", ["功能开关", "品牌", "安全"]],
+    ["organization.agents.model-tools", "模型可用范围", ["功能开关", "品牌", "安全", "工具可用范围"]],
   ])("组织设置叶子 %s 只渲染对应配置区块", (routeId, expectedTitle, unrelatedTitles) => {
     render(
       <TenantAdminShell
@@ -540,12 +541,12 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
     expect(screen.getAllByText(expectedTitle).length).toBeGreaterThan(0);
-    const page = screen.getByTestId("organization-management-content").querySelector("main");
+    const page = screen.getByTestId("organization-management-content");
     for (const title of unrelatedTitles) expect(page?.textContent).not.toContain(title);
   });
 
-  it("模型与工具页同时挂载模型和工具 Entitlement 入口", () => {
-    render(
+  it("模型与工具页按 URL Tab 只挂载一个 Entitlement 入口", () => {
+    const { rerender } = render(
       <TenantAdminShell
         {...commonTenantProps}
         renderUsers={() => <div />}
@@ -553,6 +554,15 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: "模型可用范围" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "工具可用范围" })).toBeNull();
+    rerender(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        governanceRoute={governanceRoute("organization.agents.model-tools", { orgId: "acme", search: "?view=tools" })}
+      />,
+    );
     expect(screen.getByRole("heading", { name: "工具可用范围" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "模型可用范围" })).toBeNull();
   });
 });

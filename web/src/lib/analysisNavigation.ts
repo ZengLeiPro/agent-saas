@@ -1,19 +1,26 @@
 import {
+  Activity,
   Gauge,
   HardDrive,
   ListTree,
   MessageSquareText,
   ServerCog,
-  Users,
   type LucideIcon,
-} from "lucide-react";
+} from 'lucide-react';
 
-import { EntityIcons } from "@/lib/icons";
-import { governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
+import { EntityIcons } from '@/lib/icons';
+import {
+  managementPageForRoute,
+  managementPagesFor,
+  managementRouteForPage,
+  type ManagementPageDefinition,
+} from '@/lib/managementNavigation';
+import type { GovernanceRouteState } from '@/lib/governanceNavigation';
 
-export type AnalysisScope = "platform" | "organization";
+export type AnalysisScope = 'platform' | 'organization';
 
 export interface AnalysisNavigationItem {
+  pageId: string;
   routeId: string;
   label: string;
   icon: LucideIcon;
@@ -25,31 +32,37 @@ export interface AnalysisNavigationGroup {
   items: readonly AnalysisNavigationItem[];
 }
 
+const icons: Readonly<Record<string, LucideIcon>> = {
+  gauge: Gauge,
+  wallet: EntityIcons.billing,
+  message: MessageSquareText,
+  workflow: ListTree,
+  server: ServerCog,
+  'hard-drive': HardDrive,
+  activity: Activity,
+  history: EntityIcons.audit,
+  chart: EntityIcons.analytics,
+};
+
+function analysisItem(page: ManagementPageDefinition): AnalysisNavigationItem {
+  return {
+    pageId: page.id,
+    routeId: page.routeId,
+    label: page.label,
+    icon: icons[page.iconKey] ?? EntityIcons.analytics,
+  };
+}
+
 export const ANALYSIS_NAVIGATION: readonly AnalysisNavigationGroup[] = [
   {
-    scope: "platform",
-    label: "平台分析",
-    items: [
-      { routeId: "platform.overview.overview", label: "平台概览", icon: Gauge },
-      { routeId: "platform.org-business.tenants", label: "组织", icon: EntityIcons.org },
-      { routeId: "platform.org-business.users", label: "用户", icon: Users },
-      { routeId: "platform.runtime.sessions", label: "会话", icon: MessageSquareText },
-      { routeId: "platform.runtime.runs", label: "运行", icon: ListTree },
-      { routeId: "platform.runtime.environments", label: "执行环境", icon: ServerCog },
-      { routeId: "platform.runtime.infra", label: "系统资源", icon: HardDrive },
-      { routeId: "platform.governance.audit", label: "操作记录", icon: EntityIcons.audit },
-      { routeId: "platform.runtime.efficiency", label: "执行效率", icon: EntityIcons.analytics },
-    ],
+    scope: 'platform',
+    label: '平台分析',
+    items: managementPagesFor('analytics', 'platform').map(analysisItem),
   },
   {
-    scope: "organization",
-    label: "组织分析",
-    items: [
-      { routeId: "organization.overview.overview", label: "综合分析", icon: Gauge },
-      { routeId: "organization.governance.usage", label: "用量与计费", icon: EntityIcons.analytics },
-      { routeId: "organization.governance.qa", label: "会话质检", icon: MessageSquareText },
-      { routeId: "organization.governance.audit", label: "操作记录", icon: EntityIcons.audit },
-    ],
+    scope: 'organization',
+    label: '组织分析',
+    items: managementPagesFor('analytics', 'organization').map(analysisItem),
   },
 ];
 
@@ -61,18 +74,7 @@ export function getAnalysisNavigationItem(routeId: string | null | undefined) {
 }
 
 export function isAnalysisRoute(route: GovernanceRouteState | null | undefined): boolean {
-  return getAnalysisNavigationItem(route?.routeId) !== null;
-}
-
-function platformScopeSearch(search: string | null | undefined): string {
-  const current = new URLSearchParams(search ?? "");
-  const next = new URLSearchParams();
-  for (const key of ["tenantId", "userId"] as const) {
-    const value = current.get(key);
-    if (value) next.set(key, value);
-  }
-  const value = next.toString();
-  return value ? `?${value}` : "";
+  return managementPageForRoute(route)?.surface === 'analytics';
 }
 
 export function analysisNavigationRoute(
@@ -80,12 +82,16 @@ export function analysisNavigationRoute(
   currentRoute: GovernanceRouteState | null | undefined,
   fallbackOrgId: string | null = null,
 ): GovernanceRouteState | null {
-  const item = getAnalysisNavigationItem(routeId);
-  if (!item) return null;
-  return governanceRoute(routeId, {
-    orgId: item.scope === "organization"
-      ? (currentRoute?.area === "organization" ? currentRoute.orgId : fallbackOrgId)
-      : null,
-    search: item.scope === "platform" ? platformScopeSearch(currentRoute?.search) : "",
-  });
+  const page = managementPagesFor('analytics').find((candidate) => candidate.routeId === routeId);
+  if (!page) return null;
+  const route = managementRouteForPage(page, currentRoute, fallbackOrgId);
+  if (page.area !== 'platform') return route;
+  const current = new URLSearchParams(currentRoute?.search?.replace(/^\?/, '') ?? '');
+  const preserved = new URLSearchParams();
+  for (const key of ['tenantId', 'userId']) {
+    const value = current.get(key);
+    if (value) preserved.set(key, value);
+  }
+  const search = preserved.toString();
+  return { ...route, search: search ? `?${search}` : '' };
 }

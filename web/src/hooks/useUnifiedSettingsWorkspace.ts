@@ -3,6 +3,11 @@ import { useCallback, useRef } from "react";
 import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 import type { OrganizationSettingsWorkspaceId } from "@/components/OrganizationManagement/organizationManagementRegistry";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
+import {
+  managementPageById,
+  managementPageForRoute,
+  managementRouteForPage,
+} from '@/lib/managementNavigation';
 import { navigateSettingsRoute, type AdminSettingsState, type AdminSettingsTarget } from "@/lib/urlSync";
 import type { SettingsSectionId } from "@/types/settings";
 
@@ -36,11 +41,15 @@ export function useUnifiedSettingsWorkspace({
   governanceRoute?: GovernanceRouteState | null;
   closeOrganizationSettings?: () => void;
 }) {
-  const organizationRoute = governanceRoute?.area === "organization" ? governanceRoute : null;
-  const mode = settingsOpen || adminSettings !== null || organizationRoute !== null;
-  const target = organizationRoute ? "tenant" as const : settingsOpen ? "personal" as const : adminSettings?.target ?? "personal";
-  const activeSection = organizationRoute?.workspace
-    ?? (settingsOpen ? settingsSection : adminSettings?.section ?? "account-security");
+  const managementPage = managementPageForRoute(governanceRoute);
+  const configRoute = managementPage?.surface === 'config' ? governanceRoute ?? null : null;
+  const mode = settingsOpen || adminSettings !== null || configRoute !== null;
+  const target = configRoute
+    ? (configRoute.area === 'organization' ? 'tenant' as const : 'platform' as const)
+    : settingsOpen ? "personal" as const : adminSettings?.target ?? "personal";
+  const activeSection = configRoute && managementPage
+    ? managementPage.id
+    : (settingsOpen ? settingsSection : adminSettings?.section ?? "account-security");
   const dirtyControllerRef = useRef<SettingsDirtyController | null>(null);
   const onControllerChange = useCallback((controller: SettingsDirtyController | null) => {
     dirtyControllerRef.current = controller;
@@ -56,27 +65,38 @@ export function useUnifiedSettingsWorkspace({
         if (settingsOpen) setSettingsSection(section as SettingsSectionId);
         else openSettings(section as SettingsSectionId);
       } else if (nextTarget === "tenant") {
-        const orgId = organizationRoute?.orgId
-          ?? (isPlatformAdmin ? organizationSettingsTargetId ?? null : null);
+        const page = managementPageById(section);
+        const orgId = governanceRoute?.area === 'organization'
+          ? (governanceRoute.orgId ?? (isPlatformAdmin ? organizationSettingsTargetId ?? null : null))
+          : (isPlatformAdmin ? organizationSettingsTargetId ?? null : null);
+        if (page?.surface === 'config' && page.area === 'organization') {
+          navigateSettingsRoute(managementRouteForPage(page, governanceRoute, orgId));
+          return;
+        }
         void import("@/components/OrganizationManagement/organizationManagementRouting")
           .then(({ organizationWorkspaceRoute }) => {
             navigateSettingsRoute({
               ...organizationWorkspaceRoute(
                 section as OrganizationSettingsWorkspaceId,
-                organizationRoute,
+                governanceRoute?.area === 'organization' ? governanceRoute : null,
               ),
               orgId,
             });
           });
-      } else if (adminSettings?.target === nextTarget) setAdminSettingsSection(section);
-      else openAdminSettings(nextTarget, section);
+      } else {
+        const page = managementPageById(section);
+        if (page?.surface === 'config' && page.area === 'platform') {
+          navigateSettingsRoute(managementRouteForPage(page, governanceRoute));
+        } else if (adminSettings?.target === nextTarget) setAdminSettingsSection(section);
+        else openAdminSettings(nextTarget, section);
+      }
     });
-  }, [adminSettings?.target, isPlatformAdmin, openAdminSettings, openSettings, organizationRoute, organizationSettingsTargetId, requestNavigation, setAdminSettingsSection, setSettingsSection, settingsOpen]);
+  }, [adminSettings?.target, governanceRoute, isPlatformAdmin, openAdminSettings, openSettings, organizationSettingsTargetId, requestNavigation, setAdminSettingsSection, setSettingsSection, settingsOpen]);
   const close = useCallback(() => {
-    requestNavigation(organizationRoute && closeOrganizationSettings
+    requestNavigation(configRoute?.area === 'organization' && closeOrganizationSettings
       ? closeOrganizationSettings
       : settingsOpen ? closeSettings : closeAdminSettings);
-  }, [closeAdminSettings, closeOrganizationSettings, closeSettings, organizationRoute, requestNavigation, settingsOpen]);
+  }, [closeAdminSettings, closeOrganizationSettings, closeSettings, configRoute, requestNavigation, settingsOpen]);
   const open = useCallback((section: SettingsSectionId = "account-security") => {
     if (mode) navigate("personal", section);
     else openSettings(section);

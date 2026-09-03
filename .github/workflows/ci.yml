@@ -470,6 +470,7 @@ jobs:
   deploy_plan:
     name: Plan production deployment
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 5
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -598,8 +599,8 @@ jobs:
     # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
     timeout-minutes: 55
     needs: [build, deploy_plan]
-    # 保留旧 job 定义只为历史可追溯；deploy_plan 对任何 ecs_required=true 或
-    # 无法证明 Web-only 的 dispatch 都先失败，因此该 job 不再可达。
+    # 保留旧 job 定义只为历史可追溯；绑定 production 的 deploy_plan 对任何
+    # ecs_required=true 或无法证明 Web-only 的 dispatch 都先失败，因此该 job 不再可达。
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.deploy_plan.outputs.ecs_required == 'true'
     outputs:
       server_artifact_digest: ${{ steps.pack.outputs.server_artifact_digest }}

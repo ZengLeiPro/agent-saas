@@ -2507,27 +2507,19 @@ test('fails closed for removed migrations and unreadable baseline comparisons', 
   assert.match(noDiff.blockingReasons.join('\n'), /could not be compared/u);
 });
 
-test('real repository closure ignores unrelated TypeScript changes behind type-only edges', () => {
+test('real repository closure uses the PR base or a deterministic target-only fallback', () => {
   const event = process.env.GITHUB_EVENT_PATH
     ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'))
     : undefined;
   const target = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const eventBaseline = event?.pull_request?.base?.sha ?? event?.before;
-  let baseline = eventBaseline;
-  if (baseline) {
+  let baseline = target;
+  if (eventBaseline) {
     try {
-      execFileSync('git', ['cat-file', '-e', `${baseline}^{commit}`], { stdio: 'ignore' });
+      execFileSync('git', ['cat-file', '-e', `${eventBaseline}^{commit}`], { stdio: 'ignore' });
+      baseline = eventBaseline;
     } catch {
-      // GitHub PR checkout is shallow; the target tree still exercises the real runtime closure.
-      baseline = target;
-    }
-  } else {
-    try {
-      baseline = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
-        encoding: 'utf8',
-      }).trim();
-    } catch {
-      baseline = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+      // A shallow checkout cannot compare the event base; target-only still exercises the real closure.
     }
   }
   const result = createMigrationPlan({

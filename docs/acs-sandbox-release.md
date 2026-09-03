@@ -226,13 +226,20 @@ curl -sf http://127.0.0.1:3400/health
 - `Classify ACS Impact` 读取本次 push 的 changed files，输出 `publish` / `contract_check`。
 - `workflow_dispatch` 视为人工强制发布；非 main 手动触发只 build，不 deploy。
 - `publish=true` 时跑 typecheck、orchestrator tests 与 operational scripts；镜像由 GitHub push webhook 触发 ACR EE 源码构建。
-- `workflow_dispatch` 只接受当前 `GITHUB_SHA` 对应的不可变镜像，禁止用后继镜像替代。
+- `workflow_dispatch` 只接受当前 `GITHUB_SHA` 对应的不可变镜像，禁止用后继镜像替代；读取生产
+  Secret 的 `build-deploy` job 显式绑定 `production` Environment。
 - exact SHA 构建记录连续两次缺失时，按 `push + refs/heads/main + payload.after=GITHUB_SHA` 精确定位失败的 ACR webhook delivery，最多自动补投一次，然后继续原轮询；找不到或补投失败仍保持 fail-fast。
 - 将 orchestrator release 包上传到 ECS，更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`，并通过 drain 旧进程后由 systemd 拉起新版本。
 - 正式跑 `/provision + /execute Shell` smoke，断言 workspace venv 路径、base Python 包 import、`ACS_SANDBOX_DEPLOY_SMOKE_OK`。
 - `/health` 暴露当前 Sandbox image、runtime contract、capabilities、networkPolicy、SNAT 与 Sandbox inventory。
 - `publish=false && contract_check=true` 时只跑 `server` / `acs-orchestrator` typecheck 和 `acs-orchestrator` tests，不发布。
 
-Workflow 依赖 GitHub Secrets：`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ACS_WEBHOOK_REDELIVERY_TOKEN`。最后一项必须是仅授权 `ZengLeiPro/agent-saas`、Repository permissions 只有 `Webhooks: write` 的 fine-grained token；禁止复用个人 broad-scope token。集群 `acr-agentsaasacrprod` imagePullSecret 只用于拉取生产镜像，不作为 webhook 补投凭据。
+Workflow 的必需生产 Secrets 是 `ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
+`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`，均只配置在 `production` Environment。
+`ACS_WEBHOOK_REDELIVERY_TOKEN` 是可选恢复凭据：仅在当前 SHA 的 ACR 自动构建记录缺失时用于补投
+一次 GitHub webhook；正常命中构建记录时不需要，必须补投但未配置时 Workflow fail closed。该 token
+必须仅授权 `ZengLeiPro/agent-saas`，Repository permissions 只有 `Webhooks: write`，禁止复用个人
+broad-scope token。集群 `acr-agentsaasacrprod` imagePullSecret 只用于拉取生产镜像，不作为 webhook
+补投凭据。所有同名 Repository/organization Secret 在 Environment 迁移核验后必须删除。
 
 旧 tag 清理不是自动化的一部分。删除 ACR tag 仍需单独确认回滚窗口。

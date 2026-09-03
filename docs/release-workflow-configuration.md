@@ -34,13 +34,19 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 
 ## production
 
-Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、
+必需 Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、
 `ECS_SSH_KEY`、`OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、
 `PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
 
-App compatibility 的 `deploy-ecs`、`deploy-web-oss` 与 ACS compatibility 的 `build-deploy` job
-均显式绑定 `production` Environment。生产凭据的权威配置位置是该 Environment；不得配置同名
-repository/organization Secret 作为兜底，现场作用域仍需由 GitHub 管理员审计。
+可选恢复 Secret：`ACS_WEBHOOK_REDELIVERY_TOKEN`。它只供 ACS compatibility 在当前 SHA 的 ACR
+自动构建记录缺失时补投一次 GitHub webhook；必须配置在 `production` Environment，并限制为仅对
+`ZengLeiPro/agent-saas` 具有 `Webhooks: write` 的 fine-grained token。正常命中当前 SHA 构建记录时
+不需要它；需要补投但未配置时，`build-deploy` fail closed，不会改用个人 broad-scope token。
+
+App compatibility 的 `deploy_plan`、`deploy-ecs`、`deploy-web-oss` 与 ACS compatibility 的
+`build-deploy` job 均显式绑定 `production` Environment。生产凭据的权威配置位置是该 Environment；
+必须删除同名 repository/organization Secret，不能以高层级 Secret 作为兜底；现场作用域仍需由
+GitHub 管理员审计。
 
 `PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份，当前只供
 `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读使用；

@@ -1,5 +1,5 @@
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Suspense } from "react";
+import { CjkMarkdown } from "@/components/CjkMarkdown";
 
 const components: import("react-markdown").Components = {
   a: ({ node: _node, children, ...props }) => (
@@ -15,7 +15,9 @@ const components: import("react-markdown").Components = {
 export function TaskCommentMarkdown({ body }: { body: string }) {
   return (
     <div className="prose-chat mt-2 overflow-hidden break-words text-sm text-foreground">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{body}</ReactMarkdown>
+      <Suspense fallback={<div className="whitespace-pre-wrap">{body}</div>}>
+        <CjkMarkdown components={components}>{body}</CjkMarkdown>
+      </Suspense>
     </div>
   );
 }

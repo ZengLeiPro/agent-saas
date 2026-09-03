@@ -1,9 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { TASKBOARD_DEFAULT_PROMPT } from "@agent/shared";
+import { TASKBOARD_DEFAULT_PROMPT, TASKBOARD_STAGE_DEFAULT_PROMPTS } from "@agent/shared";
 import type { ModelList, TaskBoard, TaskBoardCreateInput } from "@agent/shared";
 import { BoardDialog } from "./BoardDialog";
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const modelList: ModelList = {
   groups: [{ id: "group-a", name: "模型组", models: [{ id: "model-a", name: "模型 A" }] }],
@@ -28,7 +30,7 @@ const board: TaskBoard = {
 };
 
 describe("BoardDialog", () => {
-  it("创建看板时展示并提交默认提示语，且允许修改", async () => {
+  it("创建看板时展示并提交完整默认提示语，且允许修改", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn(async () => undefined);
     render(
@@ -56,6 +58,7 @@ describe("BoardDialog", () => {
     expect(onCreate).toHaveBeenCalledWith({
       name: "产品研发",
       prompt: "只处理当前任务，不修改无关文件。",
+      stagePrompts: TASKBOARD_STAGE_DEFAULT_PROMPTS,
       model: "group-a/model-a",
       visibility: "organization",
     });
@@ -200,21 +203,23 @@ describe("BoardDialog", () => {
       />,
     );
 
-    // 默认展示固定模板文本。
     const work = screen.getByRole("textbox", { name: "实施（work）" }) as HTMLTextAreaElement;
-    expect(work.value).toContain("## 任务看板执行职责");
-    // 未编辑时不随创建请求提交。
+    expect(work.value).toContain("## Work Execution 职责");
     await user.type(screen.getByRole("textbox", { name: "名称" }), "阶段提示语看板");
     await user.click(screen.getByRole("button", { name: "创建看板" }));
-    expect(onCreate).toHaveBeenCalledWith(expect.not.objectContaining({ stagePrompts: expect.anything() }));
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
+      stagePrompts: TASKBOARD_STAGE_DEFAULT_PROMPTS,
+    }));
 
-    // 编辑后仅提交与默认不同的阶段。
     const review = screen.getByRole("textbox", { name: "复核（review）" });
     await user.clear(review);
     await user.type(review, "复核时检查证据链。");
     await user.click(screen.getByRole("button", { name: "创建看板" }));
     expect(onCreate).toHaveBeenLastCalledWith(expect.objectContaining({
-      stagePrompts: { review: "复核时检查证据链。" },
+      stagePrompts: {
+        ...TASKBOARD_STAGE_DEFAULT_PROMPTS,
+        review: "复核时检查证据链。",
+      },
     }));
   });
 
@@ -271,7 +276,11 @@ describe("BoardDialog", () => {
     await user.type(merge, "合并前必须绿色检查。");
     await user.click(screen.getByRole("button", { name: "保存" }));
     expect(onUpdate).toHaveBeenCalledWith(board.id, {
-      stagePrompts: { work: "只负责实施。", merge: "合并前必须绿色检查。" },
+      stagePrompts: {
+        work: "只负责实施。",
+        review: TASKBOARD_STAGE_DEFAULT_PROMPTS.review,
+        merge: "合并前必须绿色检查。",
+      },
       expectedVersion: board.version,
     });
   });

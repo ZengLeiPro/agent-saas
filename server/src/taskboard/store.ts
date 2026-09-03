@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg, { type PoolClient } from 'pg';
 import {
-  TASKBOARD_DEFAULT_PROMPT, type TaskBoard, type TaskBoardComment, type TaskBoardCommentCreateInput,
+  TASKBOARD_DEFAULT_PROMPT, TASKBOARD_STAGE_DEFAULT_PROMPTS, type TaskBoard, type TaskBoardComment, type TaskBoardCommentCreateInput,
   type TaskBoardCommentPatchInput, type TaskBoardCreateInput, type TaskBoardExecution,
   type TaskBoardExecutionCancelInput, type TaskBoardExecutionContextInput, type TaskBoardExecutionContextResponse, type TaskBoardExecutionFinishInput,
   type TaskBoardExecutionStartResult, type TaskBoardIntegrationBatchCreateInput, type TaskBoardIntegrationSource,
@@ -317,7 +317,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
            RETURNING id, owner_user_id, name, description, visibility, prompt, model, stage_models, stage_prompts, repository, integration_policy, version, archived_at, created_at, updated_at`,
           [
             boardId, identity.tenantId, identity.ownerUserId, name, description, visibility, prompt, model,
-            stageModelsToJson(input.stageModels), stagePromptsToJson(input.stagePrompts),
+            stageModelsToJson(input.stageModels), stagePromptsToJson({ ...TASKBOARD_STAGE_DEFAULT_PROMPTS, ...input.stagePrompts }),
             repository ? JSON.stringify(repository) : null,
             policy ? JSON.stringify(policy) : null, nextRunAt,
           ],

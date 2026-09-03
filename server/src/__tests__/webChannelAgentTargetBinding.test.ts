@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { normalizeChatSubmission, toCanonicalChatSubmissionWireMessage, type AgentTarget } from '@agent/shared';
 import { WebChannel } from '../channels/web/channel.js';
-import { readSessionMeta } from '../data/transcripts/meta.js';
+import { readSessionMeta, writeSessionMeta } from '../data/transcripts/meta.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
-import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
+import { createRuntimeSessionRecord, FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import type { UpsertRunInput } from '../runtime/runStore.js';
 import { enabledTenantStore, FakeWebSocket, flushMicrotasks, MemoryRunStore, wsClient } from './webChannelTestHelpers.js';
 
@@ -101,5 +101,49 @@ describe('WebChannel V1 agent target binding', () => {
       reason_code: 'invalid_submission',
     });
     expect(rig.enqueued).toHaveLength(1);
+  });
+
+  function legacySession(rig: { sessionCatalog: FileSessionCatalog }) {
+    return createRuntimeSessionRecord({
+      sessionId: randomUUID(),
+      userId: WAIN_USER.sub,
+      username: WAIN_USER.username,
+      userRole: WAIN_USER.role,
+      tenantId: WAIN_USER.tenantId,
+      channel: 'web',
+      cwd: (rig.sessionCatalog as any).options.agentCwd,
+    });
+  }
+
+  it('N-1 无证据历史会话兜底为 personal 并落盘 canonical target', async () => {
+    // 生产 9227 个会话 meta 中只有 6 个带 agentTarget；把「无 agentTarget + 无 orgAgentId
+    // + tenant 可证明」判成 unproven，等于让 9192 个历史会话全部只读。
+    const rig = await makeRig();
+    const legacy = legacySession(rig);
+    await rig.sessionCatalog.ensure(legacy);
+
+    await rig.sendRaw(canonicalMessage({ sessionId: legacy.sessionId }, 'v1-legacy-personal'));
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')).toBeUndefined();
+    expect(await readSessionMeta(legacy.transcriptPath)).toMatchObject({
+      agentTarget: { kind: 'personal', tenantId: 'wain' },
+      agentTargetBindingVersion: 1,
+    });
+  });
+
+  it('已写入但不可信的 agentTarget（跨租户）绝不被兜底降级为 personal', async () => {
+    const rig = await makeRig();
+    const crossTenant = legacySession(rig);
+    await rig.sessionCatalog.ensure(crossTenant);
+    const meta = await readSessionMeta(crossTenant.transcriptPath);
+    await writeSessionMeta(crossTenant.transcriptPath, {
+      ...meta!,
+      agentTarget: { kind: 'personal', tenantId: 'other-tenant' },
+    });
+
+    await rig.sendRaw(canonicalMessage({ sessionId: crossTenant.sessionId }, 'v1-cross-tenant-legacy'));
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data).toMatchObject({
+      reason_code: 'invalid_submission',
+    });
+    expect(rig.enqueued).toHaveLength(0);
   });
 });

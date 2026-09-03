@@ -103,6 +103,10 @@ export interface CreateCronRuntimeOptions {
   userActivityService?: ExecutorOptions['userActivityService'];
   memoryPoll?: ExecutorOptions['memoryPoll'];
   memoryConsolidationBridge?: ExecutorOptions['memoryConsolidationBridge'];
+  inspectRuntimeRun?: CronServiceDeps['inspectRuntimeRun'];
+  cancelRuntimeRun?: CronServiceDeps['cancelRuntimeRun'];
+  runtimeRunPollMs?: number;
+  resolveOwnerTenantId?: CronServiceDeps['resolveOwnerTenantId'];
 }
 
 export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntime {
@@ -171,6 +175,8 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       tenantStore: options.tenantStore,
       orgAgentStore: options.orgAgentStore,
       onSessionId: hooks?.onSessionId,
+      runtimeRunId: hooks?.runtimeRunId,
+      runtimeSessionId: hooks?.runtimeSessionId,
       tokenUsageStore: options.tokenUsageStore,
       skillConfigStore: options.skillConfigStore,
       skillMaterialization: options.skillMaterialization,
@@ -180,6 +186,10 @@ export function createCronRuntime(options: CreateCronRuntimeOptions): CronRuntim
       memoryConsolidationBridge: options.memoryConsolidationBridge,
     }),
     appendRunLog: (entry) => appendRunLog(entry, { runsDir: cronRunsDir }),
+    inspectRuntimeRun: options.inspectRuntimeRun,
+    cancelRuntimeRun: options.cancelRuntimeRun,
+    runtimeRunPollMs: options.runtimeRunPollMs,
+    resolveOwnerTenantId: options.resolveOwnerTenantId,
     notify,
     onEvent: options.onEvent,
     onSessionCreated: options.groupStore ? async (jobId, jobName, sessionId, owner) => {

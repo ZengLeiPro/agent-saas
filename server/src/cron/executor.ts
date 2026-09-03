@@ -72,6 +72,9 @@ export interface ExecutorOptions {
   orgAgentStore?: OrgAgentStore;
   /** session 创建时立即回调（不等执行完成），用于 pTimeout 场景保留 sessionId */
   onSessionId?: (sessionId: string, transcriptPath?: string) => void | Promise<void>;
+  /** Cron ledger 预分配的 Runtime 身份；首次派发与故障恢复必须复用。 */
+  runtimeRunId?: string;
+  runtimeSessionId?: string;
   /** Token 用量统计 store（可选） */
   tokenUsageStore?: TokenUsageStore;
   /** Skill 配置 store（用于 cron owner workspace 同步用户/组织 skill） */
@@ -502,6 +505,8 @@ async function executeAgentTurn(
         ...(modelProviderOptions ? { modelProviderOptions } : {}),
         persistSession: true,
         includePartialMessages: true,
+        ...(opts.runtimeRunId ? { runtimeRunId: opts.runtimeRunId } : {}),
+        ...(opts.runtimeSessionId ? { runtimeSessionId: opts.runtimeSessionId, runtimeRunCreateOnly: true } : {}),
         ...(job.orgAgentId ? { orgAgentId: job.orgAgentId } : {}),
         ...skipFlags,
         ...(overrides?.toolProfile ? { toolProfile: overrides.toolProfile } : {}),
@@ -511,6 +516,9 @@ async function executeAgentTurn(
       },
       {
         onSessionStart: (startedSessionId, startedTranscriptPath) => {
+          if (opts.runtimeSessionId && startedSessionId !== opts.runtimeSessionId) {
+            throw new Error(`Cron Runtime session identity mismatch: expected ${opts.runtimeSessionId}, got ${startedSessionId}`);
+          }
           sessionId = startedSessionId;
           transcriptPath = startedTranscriptPath ?? transcriptPath;
 

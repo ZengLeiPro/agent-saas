@@ -961,8 +961,14 @@ export function processWsEvent(
   }
   if (data.type === "pending_interactions") {
     if (data.sessionId !== (activeSessionId ?? latestSessionId?.value)) return;
+    const snapshotOrder = data.interactions.reduce(
+      (max, interaction) => Math.max(max, interaction.order ?? interaction.version ?? 0),
+      0,
+    );
     const livePendingIds = new Set(msg.messagesRef.current.flatMap((message) =>
-      (message.type === 'permission_request' || message.type === 'ask_user') && message.status === 'pending'
+      data.interactions.length > 0
+        && (message.type === 'permission_request' || message.type === 'ask_user') && message.status === 'pending'
+        && Number.isSafeInteger(message.interactionOrder) && message.interactionOrder! > snapshotOrder
         ? [message.interactionId]
         : [],
     ));

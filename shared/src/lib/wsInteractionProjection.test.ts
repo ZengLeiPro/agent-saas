@@ -171,6 +171,27 @@ describe('interaction projection', () => {
     ]);
   });
 
+  it('lets an authoritative empty WS snapshot clear a stale pending interaction', () => {
+    const messages: MessageItem[] = [];
+    const context = createContext(messages);
+    processWsEvent(
+      { type: 'ask_user', interactionId: 'stale', version: 1, order: 1, questions },
+      context,
+      { currentBlockIndex: -1, currentBlockType: null },
+      { value: 's' },
+      's',
+    );
+    processWsEvent(
+      { type: 'pending_interactions', sessionId: 's', interactions: [] },
+      context,
+      { currentBlockIndex: -1, currentBlockType: null },
+      { value: 's' },
+      's',
+    );
+    expect(messages.some((message) => message.type === 'ask_user')).toBe(false);
+    expect(messages.some((message) => message.type === 'runtime_status' && message.status === 'waiting_user')).toBe(false);
+  });
+
   it('applies a repeated failed terminal once without deleting adjacent messages', () => {
     const messages: MessageItem[] = [
       {

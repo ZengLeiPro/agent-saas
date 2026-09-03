@@ -345,14 +345,14 @@ export default function LoginScreen() {
             <View style={styles.serviceActions}>
               <TouchableOpacity
                 onPress={() => void handleReloadServiceConfig()}
-                disabled={checkingConfig}
+                disabled={checkingConfig || loading}
               >
                 <Text style={styles.serviceActionText}>
                   {checkingConfig ? "检查中…" : "重新检查"}
                 </Text>
               </TouchableOpacity>
               {serviceConfig.editable ? (
-                <TouchableOpacity onPress={handleChangeServiceOrigin}>
+                <TouchableOpacity onPress={handleChangeServiceOrigin} disabled={loading}>
                   <Text style={styles.serviceActionText}>切换服务</Text>
                 </TouchableOpacity>
               ) : null}

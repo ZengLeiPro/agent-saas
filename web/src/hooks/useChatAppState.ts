@@ -1502,7 +1502,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
       };
-      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current);
+      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current ?? sessionIdRef.current);
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
@@ -1695,7 +1695,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           });
         }
         if (inline?.pendingInteractions) {
-          projectRecoveredInteraction({ type: 'pending_interactions', interactions: inline.pendingInteractions });
+          projectRecoveredInteraction({ type: 'pending_interactions', sessionId: inline.sessionId, interactions: inline.pendingInteractions });
         }
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
@@ -2025,7 +2025,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const result = processWsEvent(
         data, ctx, wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        immediateSessionIdRef.current,
+        immediateSessionIdRef.current ?? sessionIdRef.current,
       );
       if (data.type === 'chat_rejected' && data.reason_code === 'server_draining') reconnectAfterServerDrain();
       // 新建会话 → replaceState（不创建历史记录）

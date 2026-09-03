@@ -8,7 +8,10 @@ import {
   type WsProcessingContext,
 } from "@agent/shared";
 
-function apply(initial: MessageItem, event: Extract<WsEvent, { type: "interaction_resolved" }>): MessageItem {
+function apply(
+  initial: MessageItem,
+  event: Extract<WsEvent, { type: "interaction_resolved" }>,
+): MessageItem {
   const messages = [initial];
   const msg: MessagesController = {
     messagesRef: { current: messages },
@@ -25,7 +28,7 @@ function apply(initial: MessageItem, event: Extract<WsEvent, { type: "interactio
     streamIdRef: { current: null },
     userMsgIndex: -1,
   } as unknown as WsProcessingContext;
-  processWsEvent(event, ctx, { currentBlockIndex: -1, currentBlockType: null }, { value: null }, null);
+  processWsEvent(event, ctx, { currentBlockIndex: -1, currentBlockType: null }, { value: event.sessionId }, event.sessionId);
   return messages[0];
 }
 

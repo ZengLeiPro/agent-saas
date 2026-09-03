@@ -8,7 +8,6 @@ import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager, brokenSandboxStateReason } from './sandboxManager.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
 import { isRawSandboxDelete, mockCurrentSandboxStatusReads } from './sandboxManagerLifecycleTestFixtures.js';
-
 describe('SandboxManager egress and runtime injection', () => {
   async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
     const applies: Array<Record<string, unknown>> = [];
@@ -1416,6 +1415,7 @@ describe('SandboxManager ensure fast path & coalescing', () => {
     expect(trafficPolicyApplies).toBe(1);
     expect(touchPatches).toBe(1);
   });
+
 
   it('pause 使快路径缓存失效：下一次 ensureRunning 重新完整校验', async () => {
     const config = baseConfig();

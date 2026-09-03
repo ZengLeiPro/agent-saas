@@ -3,7 +3,7 @@ import type { SandboxManager } from './sandboxManager.js';
 
 const MUTATION_CONFIRM_MARGIN_MS = 5_000;
 
-type CompletionRecoveryInput = {
+export type CompletionRecoveryInput = {
   config: AcsOrchestratorConfig;
   sandboxManager: SandboxManager;
   sandboxName: string;
@@ -55,6 +55,26 @@ export async function recoverInvocationCompletion(input: CompletionRecoveryInput
       return;
     } catch (err) {
       logger.warn(`invocation_completion_recovery_retry sandbox=${sandboxName}: ${errorMessage(err)}`);
+      await unrefDelay(input.retryMs);
+    }
+  }
+}
+
+export async function recoverHousekeepingLeaseClear(
+  input: Omit<CompletionRecoveryInput, 'config' | 'completedAt'>,
+): Promise<void> {
+  const { sandboxManager, sandboxName, leaseKey, expectedUid, logger } = input;
+  for (;;) {
+    try {
+      if (!await mutableOriginalExists(sandboxManager, sandboxName, expectedUid)) {
+        logger.info(`invocation_housekeeping_clear_recovery_original_gone sandbox=${sandboxName}`);
+        return;
+      }
+      await sandboxManager.setActiveInvocationLease(sandboxName, leaseKey, undefined, expectedUid);
+      logger.info(`invocation_housekeeping_clear_recovery_completed sandbox=${sandboxName}`);
+      return;
+    } catch (err) {
+      logger.warn(`invocation_housekeeping_clear_recovery_retry sandbox=${sandboxName}: ${errorMessage(err)}`);
       await unrefDelay(input.retryMs);
     }
   }

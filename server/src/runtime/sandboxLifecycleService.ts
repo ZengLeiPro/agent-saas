@@ -1,13 +1,15 @@
-import { randomUUID } from 'node:crypto';
-import { SandboxTerminalOutboxStore, type TerminalDeferredState, type TerminalLifecycleCandidate } from './sandboxTerminalOutboxStore.js';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  type TerminalDeferredState,
+  type TerminalLifecycleCandidate,
+} from './sandboxTerminalOutboxStore.js';
 export type { TerminalDeferredState } from './sandboxTerminalOutboxStore.js';
 import type { PlatformEvent } from './types.js';
 import type { HandStore } from './handStore.js';
 import type { RunStore } from './runStore.js';
-import type { PgPool } from './runStoreTypes.js';
-import { hasSandboxScopeActivity } from './runStoreSessionActivity.js';
-import { lockSandboxCleanupKeys } from './sandboxRunAdmissionFence.js';
 import type { SessionCatalog } from './sessionCatalog.js';
+import { PgSandboxLifecycleStore, type CleanupCandidate } from './sandboxLifecycleStore.js';
+export { PgSandboxLifecycleStore } from './sandboxLifecycleStore.js';
 import { deriveSandboxScopeId, deriveWorkspaceMountSubPath, type TenantRemoteHandDispatchConfig } from './rawRuntimeRunDispatch.js';
 import { runtimeRunController } from './runController.js';
 import { controlPlaneFetch } from './controlPlaneFetch.js';
@@ -34,472 +36,9 @@ export type SandboxDeletionResult =
   | 'queued'
   | 'deleted';
 
-interface CleanupCandidate extends SandboxLifecycleIdentity {
-  runId: string;
-  tenantId?: string;
-  userId?: string;
-  username?: string;
-  targetHandId: string;
-  deletionGeneration: string;
-  previousDeletionGeneration?: string;
-  claimId?: string;
-  claimGeneration?: number;
-}
-
-interface ActiveScopeRun {
-  runId: string;
-  sessionId: string;
-  tenantId?: string;
-  userId?: string;
-}
-
-interface LegacyCleanupCandidate extends SandboxLifecycleIdentity {
-  runId: string;
-  tenantId?: string;
-  userId?: string;
-  username?: string;
-}
-
 export interface SandboxLifecycleLogger {
   info(message: string): void;
   warn(message: string): void;
-}
-
-export class PgSandboxLifecycleStore {
-  private readonly terminalOutbox: SandboxTerminalOutboxStore;
-
-  constructor(
-    private readonly pool: PgPool,
-    private readonly runsTable: string,
-    private readonly steeringInputsTable: string,
-    private readonly now: () => Date = () => new Date(),
-  ) {
-    this.terminalOutbox = new SandboxTerminalOutboxStore(pool, runsTable, now);
-  }
-
-  listTerminalCandidates(limit = 100): Promise<TerminalLifecycleCandidate[]> {
-    return this.terminalOutbox.listCandidates(limit);
-  }
-
-  hasActivity(candidate: Pick<TerminalLifecycleCandidate, 'sandboxScopeId' | 'sessionId' | 'tenantId'>): Promise<boolean> {
-    return hasSandboxScopeActivity({ pool: this.pool, runsTable: this.runsTable, steeringInputsTable: this.steeringInputsTable }, {
-      sandboxScopeId: candidate.sandboxScopeId,
-      topLevelSessionId: candidate.sessionId,
-      ...(candidate.tenantId ? { tenantId: candidate.tenantId } : {}),
-    });
-  }
-
-  pinTerminalTargetHand(runId: string, targetHandId: string): Promise<string | undefined> {
-    return this.terminalOutbox.pinTargetHand(runId, targetHandId);
-  }
-
-  markTerminalDelivered(runId: string, deliveredAt: string): Promise<void> {
-    return this.terminalOutbox.markDelivered(runId, deliveredAt);
-  }
-
-  deferTerminalCandidate(runId: string, error: unknown, deferredAt?: string): Promise<TerminalDeferredState | undefined> {
-    return this.terminalOutbox.defer(runId, error, deferredAt);
-  }
-
-  async enqueueCleanup(
-    candidate: Omit<CleanupCandidate, 'runId' | 'claimId' | 'claimGeneration' | 'previousDeletionGeneration'> & { legacyRunId?: string },
-    options: { prepared?: boolean } = {},
-  ): Promise<CleanupCandidate | undefined> {
-    const payload = JSON.stringify({
-      state: options.prepared ? 'prepared' : 'pending', workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
-      sandboxScopeId: candidate.sandboxScopeId, tenantId: candidate.tenantId,
-      userId: candidate.userId, username: candidate.username, targetHandId: candidate.targetHandId,
-      queuedAt: new Date().toISOString(),
-    });
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await lockSandboxCleanupKeys(client, candidate.sessionId, candidate.sandboxScopeId);
-      const result = await client.query<Record<string, unknown>>(`
-      WITH active AS (
-        SELECT run_id, metadata->'sandboxCleanupOutbox'->>'state' AS state
-        FROM ${this.runsTable}
-        WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-          AND metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','cancelling','pending','claimed')
-          AND NULLIF(metadata->'sandboxCleanupOutbox'->>'targetHandId','') IS NOT NULL
-          AND NULLIF(metadata->'sandboxCleanupOutbox'->>'deletionGeneration','') IS NOT NULL
-        ORDER BY updated_at DESC LIMIT 1
-      ), legacy AS (
-        SELECT run_id FROM ${this.runsTable}
-        WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-          AND ($6::text IS NULL OR run_id=$6)
-          AND (metadata->'sandboxCleanupOutbox'->>'state'='pending'
-            OR (metadata->'sandboxCleanupOutbox'->>'state'='claimed'
-              AND metadata->'sandboxCleanupOutbox'->>'claimedAt' < $5::text))
-          AND (NULLIF(metadata->'sandboxCleanupOutbox'->>'targetHandId','') IS NULL
-            OR NULLIF(metadata->'sandboxCleanupOutbox'->>'deletionGeneration','') IS NULL)
-        ORDER BY updated_at DESC LIMIT 1
-      ), takeover AS (
-        UPDATE ${this.runsTable} AS run
-        SET metadata = jsonb_set(run.metadata, '{sandboxCleanupOutbox}',
-          $3::jsonb || jsonb_build_object(
-            'previousDeletionGeneration', NULLIF(run.metadata->'sandboxCleanupOutbox'->>'previousDeletionGeneration',''),
-            'deletionGeneration', $4::text
-          )), updated_at=NOW()
-        FROM active
-        WHERE $7::boolean AND active.state='prepared' AND run.run_id=active.run_id
-        RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
-                  run.metadata->'sandboxCleanupOutbox' AS cleanup
-      ), target AS (
-        SELECT run_id FROM legacy
-        UNION ALL
-        SELECT fallback.run_id FROM (
-          SELECT run_id FROM ${this.runsTable}
-          WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-          ORDER BY (metadata->>'sandboxWorkloadTopLevel' = 'true') DESC, updated_at DESC LIMIT 1
-        ) AS fallback WHERE $6::text IS NULL AND NOT EXISTS (SELECT 1 FROM legacy)
-      ), updated AS (
-        UPDATE ${this.runsTable} AS run
-        SET metadata = jsonb_set(run.metadata, '{sandboxCleanupOutbox}',
-          $3::jsonb || jsonb_build_object(
-            'previousDeletionGeneration', NULLIF(run.metadata->'sandboxCleanupOutbox'->>'deletionGeneration',''),
-            'deletionGeneration', $4::text
-          )), updated_at=NOW()
-        FROM target
-        WHERE run.run_id=target.run_id AND NOT EXISTS (SELECT 1 FROM active)
-          AND (COALESCE(run.metadata->'sandboxCleanupOutbox'->>'state','') NOT IN ('prepared','cancelling','pending','claimed')
-            OR EXISTS (SELECT 1 FROM legacy WHERE legacy.run_id=run.run_id))
-        RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
-                  run.metadata->'sandboxCleanupOutbox' AS cleanup
-      ), existing AS (
-        SELECT run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
-               run.metadata->'sandboxCleanupOutbox' AS cleanup
-        FROM ${this.runsTable} AS run JOIN active ON run.run_id=active.run_id
-        WHERE NOT EXISTS (SELECT 1 FROM takeover)
-      )
-      SELECT * FROM updated
-      UNION ALL SELECT * FROM takeover
-      UNION ALL SELECT * FROM existing
-      LIMIT 1
-      `, [candidate.sessionId, candidate.tenantId ?? null, payload, candidate.deletionGeneration,
-        new Date(Date.now() - 60_000).toISOString(), candidate.legacyRunId ?? null, options.prepared === true]);
-      await client.query('COMMIT');
-      const row = result.rows[0];
-      return row ? cleanupCandidateFromRow(row, asRecord(row.cleanup)) : undefined;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  // preparation/delivery（含 delivered/cancelled）的任一 durable 状态均由显式 restore 推进 generation fence。
-  async cancelCleanup(sessionId: string, tenantId: string | undefined, deletionGeneration: string): Promise<CleanupCandidate[]> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await client.query<Record<string, unknown>>(`
-      WITH cleanup_identity AS (
-        SELECT DISTINCT run.metadata->'sandboxCleanupOutbox'->>'sandboxScopeId' AS sandbox_scope_id
-        FROM ${this.runsTable} AS run
-        WHERE COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1
-          AND ($2::text IS NULL OR run.tenant_id=$2 OR run.tenant_id IS NULL)
-      ), lock_keys AS (
-        SELECT $1::text AS lock_key
-        UNION SELECT sandbox_scope_id FROM cleanup_identity
-      ), locked AS (
-        SELECT pg_advisory_xact_lock(hashtextextended(lock_key, 0))
-        FROM (SELECT lock_key FROM lock_keys WHERE lock_key IS NOT NULL ORDER BY lock_key) ordered
-      ), updated AS (
-        UPDATE ${this.runsTable} AS run
-        SET metadata = jsonb_set(run.metadata, '{sandboxCleanupOutbox}',
-          run.metadata->'sandboxCleanupOutbox' || jsonb_build_object(
-            'state','cancelled', 'cancelledAt',$3::text,
-            'previousDeletionGeneration', run.metadata->'sandboxCleanupOutbox'->>'deletionGeneration',
-            'deletionGeneration',$4::text, 'claimId',NULL
-          )), updated_at=NOW()
-        WHERE (SELECT COUNT(*) FROM locked) > 0
-          AND COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1
-          AND ($2::text IS NULL OR run.tenant_id=$2 OR run.tenant_id IS NULL)
-          AND run.metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','cancelling','pending','claimed','delivered','cancelled')
-        RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
-                  run.metadata->'sandboxCleanupOutbox' AS cleanup
-      ), existing AS (
-        SELECT run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
-               run.metadata->'sandboxCleanupOutbox' AS cleanup
-        FROM ${this.runsTable} AS run
-        WHERE COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1
-          AND ($2::text IS NULL OR run.tenant_id=$2 OR run.tenant_id IS NULL)
-          AND run.metadata->'sandboxCleanupOutbox'->>'state'='cancelled'
-          AND NOT EXISTS (SELECT 1 FROM updated)
-        ORDER BY run.updated_at DESC LIMIT 1
-      )
-      SELECT * FROM updated UNION ALL SELECT * FROM existing
-      `, [sessionId, tenantId ?? null, new Date().toISOString(), deletionGeneration]);
-      await client.query('COMMIT');
-      return result.rows.flatMap((row) => {
-        const cleanup = asRecord(row.cleanup);
-        if (!cleanupCandidateIsComplete(cleanup)) return [];
-        return [cleanupCandidateFromRow(row, cleanup)];
-      });
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async listPreparedCleanupCandidates(limit = 100): Promise<CleanupCandidate[]> {
-    const result = await this.pool.query<Record<string, unknown>>(`
-      SELECT run_id, tenant_id, user_id, metadata->>'username' AS username,
-             metadata->'sandboxCleanupOutbox' AS cleanup
-      FROM ${this.runsTable}
-      WHERE metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','cancelling')
-      ORDER BY updated_at ASC LIMIT $1
-    `, [limit]);
-    return result.rows.flatMap((row) => {
-      const cleanup = asRecord(row.cleanup);
-      return cleanupCandidateIsComplete(cleanup) ? [cleanupCandidateFromRow(row, cleanup)] : [];
-    });
-  }
-
-  async claimPreparedCleanup(runId: string, claimId: string): Promise<CleanupCandidate | undefined> {
-    const claimedAt = new Date().toISOString();
-    const staleBefore = new Date(Date.now() - 60_000).toISOString();
-    const result = await this.pool.query<Record<string, unknown>>(`
-      WITH cleanup_identity AS (
-        SELECT metadata->'sandboxCleanupOutbox'->>'sessionId' AS session_id,
-               metadata->'sandboxCleanupOutbox'->>'sandboxScopeId' AS sandbox_scope_id
-        FROM ${this.runsTable} WHERE run_id=$1
-      ), lock_keys AS (
-        SELECT session_id AS lock_key FROM cleanup_identity
-        UNION SELECT sandbox_scope_id FROM cleanup_identity
-      ), locked AS (
-        SELECT pg_advisory_xact_lock(hashtextextended(lock_key, 0))
-        FROM (SELECT lock_key FROM lock_keys WHERE lock_key IS NOT NULL ORDER BY lock_key) ordered
-      )
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        metadata->'sandboxCleanupOutbox' || jsonb_build_object(
-          'state','cancelling','claimId',$2::text,'claimedAt',$3::text,
-          'claimGeneration',COALESCE((metadata->'sandboxCleanupOutbox'->>'claimGeneration')::int,0)+1
-        )), updated_at=NOW()
-      WHERE run_id=$1 AND (SELECT COUNT(*) FROM locked) > 0
-        AND (metadata->'sandboxCleanupOutbox'->>'state'='prepared'
-        OR (metadata->'sandboxCleanupOutbox'->>'state'='cancelling'
-          AND (metadata->'sandboxCleanupOutbox'->>'claimedAt' IS NULL
-            OR metadata->'sandboxCleanupOutbox'->>'claimedAt' < $4::text)))
-      RETURNING run_id, tenant_id, user_id, metadata->>'username' AS username,
-                metadata->'sandboxCleanupOutbox' AS cleanup
-    `, [runId, claimId, claimedAt, staleBefore]);
-    const row = result.rows[0];
-    return row ? cleanupCandidateFromRow(row, asRecord(row.cleanup)) : undefined;
-  }
-
-  async isPreparedCleanupClaimCurrent(runId: string, claimId: string, claimGeneration: number): Promise<boolean> {
-    const result = await this.pool.query<{ current: boolean }>(`
-      SELECT EXISTS(SELECT 1 FROM ${this.runsTable} WHERE run_id=$1
-        AND metadata->'sandboxCleanupOutbox'->>'state'='cancelling'
-        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2
-        AND (metadata->'sandboxCleanupOutbox'->>'claimGeneration')::int=$3) AS current
-    `, [runId, claimId, claimGeneration]);
-    return result.rows[0]?.current === true;
-  }
-
-  async completePreparedCleanup(runId: string, claimId: string, claimGeneration: number): Promise<CleanupCandidate | undefined> {
-    const result = await this.pool.query<Record<string, unknown>>(`
-      WITH cleanup_identity AS (
-        SELECT metadata->'sandboxCleanupOutbox'->>'sessionId' AS session_id,
-               metadata->'sandboxCleanupOutbox'->>'sandboxScopeId' AS sandbox_scope_id
-        FROM ${this.runsTable} WHERE run_id=$1
-      ), lock_keys AS (
-        SELECT session_id AS lock_key FROM cleanup_identity
-        UNION SELECT sandbox_scope_id FROM cleanup_identity
-      ), locked AS (
-        SELECT pg_advisory_xact_lock(hashtextextended(lock_key, 0))
-        FROM (SELECT lock_key FROM lock_keys WHERE lock_key IS NOT NULL ORDER BY lock_key) ordered
-      )
-      UPDATE ${this.runsTable} AS cleanup_run
-      SET metadata = jsonb_set(cleanup_run.metadata, '{sandboxCleanupOutbox}',
-        cleanup_run.metadata->'sandboxCleanupOutbox' || jsonb_build_object(
-          'state','pending','cancelledScopeAt',NOW()::text,'claimId',NULL,'claimedAt',NULL
-        )), updated_at=NOW()
-      WHERE cleanup_run.run_id=$1
-        AND cleanup_run.metadata->'sandboxCleanupOutbox'->>'state'='cancelling'
-        AND cleanup_run.metadata->'sandboxCleanupOutbox'->>'claimId'=$2
-        AND (cleanup_run.metadata->'sandboxCleanupOutbox'->>'claimGeneration')::int=$3
-        AND (SELECT COUNT(*) FROM locked) > 0
-        AND NOT EXISTS (
-          SELECT 1 FROM ${this.runsTable} AS active
-          WHERE (
-            active.sandbox_scope_id=cleanup_run.metadata->'sandboxCleanupOutbox'->>'sandboxScopeId'
-            OR active.session_id=cleanup_run.metadata->'sandboxCleanupOutbox'->>'sessionId'
-            OR active.metadata->>'topLevelSessionId'=cleanup_run.metadata->'sandboxCleanupOutbox'->>'sessionId'
-          )
-            AND (cleanup_run.tenant_id IS NULL OR active.tenant_id=cleanup_run.tenant_id)
-            AND active.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
-        )
-      RETURNING cleanup_run.run_id, cleanup_run.tenant_id, cleanup_run.user_id,
-                cleanup_run.metadata->>'username' AS username,
-                cleanup_run.metadata->'sandboxCleanupOutbox' AS cleanup
-    `, [runId, claimId, claimGeneration]);
-    const row = result.rows[0];
-    return row ? cleanupCandidateFromRow(row, asRecord(row.cleanup)) : undefined;
-  }
-
-  async releasePreparedCleanupClaim(runId: string, claimId: string, claimGeneration: number): Promise<void> {
-    await this.pool.query(`
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        metadata->'sandboxCleanupOutbox' || jsonb_build_object('claimId',NULL,'claimedAt',NULL)), updated_at=NOW()
-      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='cancelling'
-        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2
-        AND (metadata->'sandboxCleanupOutbox'->>'claimGeneration')::int=$3
-    `, [runId, claimId, claimGeneration]);
-  }
-
-  async expireUncommittedPreparedCleanup(runId: string): Promise<boolean> {
-    const staleBefore = new Date(Date.now() - 60_000).toISOString();
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const identity = await client.query<{ session_id: string; sandbox_scope_id: string }>(`
-        SELECT metadata->'sandboxCleanupOutbox'->>'sessionId' AS session_id,
-               metadata->'sandboxCleanupOutbox'->>'sandboxScopeId' AS sandbox_scope_id
-        FROM ${this.runsTable} WHERE run_id=$1
-      `, [runId]);
-      const current = identity.rows[0];
-      if (!current?.session_id) {
-        await client.query('COMMIT');
-        return false;
-      }
-      await lockSandboxCleanupKeys(client, current.session_id, current.sandbox_scope_id);
-      const result = await client.query(`
-        UPDATE ${this.runsTable}
-        SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-          metadata->'sandboxCleanupOutbox' || jsonb_build_object(
-            'state','cancelled','cancelledAt',NOW()::text,'cancelReason','intent_without_tombstone'
-          )), updated_at=NOW()
-        WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='prepared'
-          AND COALESCE(metadata->'sandboxCleanupOutbox'->>'queuedAt','') < $2::text
-      `, [runId, staleBefore]);
-      await client.query('COMMIT');
-      return (result.rowCount ?? 0) > 0;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  // 只有 cancellation 完成后的完整 outbox 可投递；legacy record 先升级再 claim。
-  async listCleanupCandidates(limit = 100): Promise<CleanupCandidate[]> {
-    const staleBefore = new Date(Date.now() - 60_000).toISOString();
-    const result = await this.pool.query<Record<string, unknown>>(`
-      SELECT run_id, tenant_id, user_id, metadata->>'username' AS username,
-             metadata->'sandboxCleanupOutbox' AS cleanup
-      FROM ${this.runsTable}
-      WHERE metadata->'sandboxCleanupOutbox'->>'state' = 'pending'
-         OR (metadata->'sandboxCleanupOutbox'->>'state' = 'claimed'
-             AND metadata->'sandboxCleanupOutbox'->>'claimedAt' < $2::text)
-      ORDER BY updated_at ASC LIMIT $1
-    `, [limit, staleBefore]);
-    return result.rows.flatMap((row) => {
-      const cleanup = asRecord(row.cleanup);
-      if (!cleanupCandidateIsComplete(cleanup)) return [];
-      return [cleanupCandidateFromRow(row, cleanup)];
-    });
-  }
-
-  async listLegacyCleanupCandidates(limit = 100): Promise<LegacyCleanupCandidate[]> {
-    // 只升级超时 claim 或 pending legacy，prepared intent 必须先由 tombstone 激活。
-    const staleBefore = new Date(Date.now() - 60_000).toISOString();
-    const result = await this.pool.query<Record<string, unknown>>(`
-      SELECT run_id, tenant_id, user_id, metadata->>'username' AS username,
-             metadata->'sandboxCleanupOutbox' AS cleanup
-      FROM ${this.runsTable}
-      WHERE (metadata->'sandboxCleanupOutbox'->>'state'='pending'
-          OR (metadata->'sandboxCleanupOutbox'->>'state'='claimed'
-            AND metadata->'sandboxCleanupOutbox'->>'claimedAt' < $2::text))
-        AND (NULLIF(metadata->'sandboxCleanupOutbox'->>'targetHandId','') IS NULL
-          OR NULLIF(metadata->'sandboxCleanupOutbox'->>'deletionGeneration','') IS NULL)
-      ORDER BY updated_at ASC LIMIT $1
-    `, [limit, staleBefore]);
-    return result.rows.flatMap((row) => {
-      const cleanup = asRecord(row.cleanup);
-      const workspaceId = stringValue(cleanup.workspaceId);
-      const sessionId = stringValue(cleanup.sessionId);
-      const sandboxScopeId = stringValue(cleanup.sandboxScopeId);
-      if (!workspaceId || !sessionId || !sandboxScopeId) return [];
-      const tenantId = stringValue(cleanup.tenantId) ?? stringValue(row.tenant_id);
-      const userId = stringValue(cleanup.userId) ?? stringValue(row.user_id);
-      const username = stringValue(cleanup.username) ?? stringValue(row.username);
-      return [{
-        runId: String(row.run_id), workspaceId, sessionId, sandboxScopeId,
-        ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}), ...(username ? { username } : {}),
-      }];
-    });
-  }
-
-  async claimCleanup(runId: string, claimId: string): Promise<CleanupCandidate | undefined> {
-    const claimedAt = new Date().toISOString();
-    const staleBefore = new Date(Date.now() - 60_000).toISOString();
-    const result = await this.pool.query<Record<string, unknown>>(`
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        metadata->'sandboxCleanupOutbox' || jsonb_build_object('state','claimed','claimId',$2::text,'claimedAt',$3::text)), updated_at=NOW()
-      WHERE run_id=$1 AND (metadata->'sandboxCleanupOutbox'->>'state'='pending'
-        OR (metadata->'sandboxCleanupOutbox'->>'state'='claimed'
-          AND metadata->'sandboxCleanupOutbox'->>'claimedAt' < $4::text))
-      RETURNING run_id, tenant_id, user_id, metadata->>'username' AS username,
-                metadata->'sandboxCleanupOutbox' AS cleanup
-    `, [runId, claimId, claimedAt, staleBefore]);
-    const row = result.rows[0];
-    return row ? cleanupCandidateFromRow(row, asRecord(row.cleanup)) : undefined;
-  }
-
-  async isCleanupClaimCurrent(runId: string, claimId: string): Promise<boolean> {
-    const result = await this.pool.query<{ current: boolean }>(`
-      SELECT EXISTS(SELECT 1 FROM ${this.runsTable} WHERE run_id=$1
-        AND metadata->'sandboxCleanupOutbox'->>'state'='claimed'
-        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2) AS current
-    `, [runId, claimId]);
-    return result.rows[0]?.current === true;
-  }
-
-  async releaseCleanupClaim(runId: string, claimId: string): Promise<void> {
-    await this.pool.query(`
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        metadata->'sandboxCleanupOutbox' || jsonb_build_object('state','pending','claimId',NULL,'retryAt',$3::text)), updated_at=NOW()
-      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='claimed'
-        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2
-    `, [runId, claimId, new Date().toISOString()]);
-  }
-
-  async markCleanupDelivered(runId: string, claimId: string, deliveredAt: string): Promise<void> {
-    await this.pool.query(`
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        metadata->'sandboxCleanupOutbox' || jsonb_build_object('state','delivered','deliveredAt',$3::text)), updated_at=NOW()
-      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='claimed'
-        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2
-    `, [runId, claimId, deliveredAt]);
-  }
-
-  async listActiveScopeRuns(identity: SandboxLifecycleIdentity, tenantId?: string): Promise<ActiveScopeRun[]> {
-    const result = await this.pool.query<Record<string, unknown>>(`
-      SELECT run_id, session_id, tenant_id, user_id
-      FROM ${this.runsTable}
-      WHERE ($1::text = sandbox_scope_id OR session_id=$2 OR metadata->>'topLevelSessionId'=$2)
-        AND ($3::text IS NULL OR tenant_id=$3)
-        AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
-      ORDER BY requested_at ASC
-    `, [identity.sandboxScopeId, identity.sessionId, tenantId ?? null]);
-    return result.rows.map((row) => ({
-      runId: String(row.run_id), sessionId: String(row.session_id),
-      ...(typeof row.tenant_id === 'string' ? { tenantId: row.tenant_id } : {}),
-      ...(typeof row.user_id === 'string' ? { userId: row.user_id } : {}),
-    }));
-  }
 }
 
 export class AcsSandboxLifecycleClient {
@@ -579,6 +118,7 @@ export class SandboxLifecycleService {
     handStore?: Pick<HandStore, 'get' | 'listBySession'>;
     tenantRemoteHands: () => TenantRemoteHandDispatchConfig[] | undefined;
     tenantRemoteHandResolver: TenantRemoteHandAuthTokenResolver;
+    serverRemote?: { baseUrl: string; authToken: string };
     logger?: SandboxLifecycleLogger;
     fetchImpl?: typeof fetch;
     scanIntervalMs?: number;
@@ -631,8 +171,7 @@ export class SandboxLifecycleService {
   async prepareSessionDeletionIntent(sessionId: string): Promise<Exclude<SandboxDeletionResult, 'deleted'>> {
     try {
       const record = await this.options.sessionCatalog.get(sessionId);
-      // Hidden subagents share their parent's scope and are the only catalog shape that proves
-      // this session never independently owned an ACS Sandbox.
+      // Hidden subagents share their parent's scope; this proves they never independently owned an ACS Sandbox.
       if (record?.kind === 'subagent') return 'not_required';
       if (!record) return 'blocked';
       const resolved = await this.resolveSessionTarget(sessionId);
@@ -754,20 +293,23 @@ export class SandboxLifecycleService {
           workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
           sandboxScopeId: candidate.sandboxScopeId,
         };
-        const expectedActivityGeneration = await target.client.readLifecycleFence(lifecycleIdentity);
-        if (await this.options.store.hasActivity(candidate)) {
-          await this.deferTerminalCandidate(candidate.runId, new Error('sandbox scope became active before terminal commit'));
+        const timedOut = candidate.status === 'failed' && /timed?\s*out|timeout/i.test(candidate.statusReason ?? '');
+        const commit = await this.options.store.runWhileTerminalCandidateCurrent(candidate, async (terminalAt) => {
+          const expectedActivityGeneration = await target.client.readLifecycleFence(lifecycleIdentity);
+          await target.client.notifyTerminal({
+            workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
+            sandboxScopeId: candidate.sandboxScopeId,
+            terminalState: timedOut ? 'timed-out' : candidate.status === 'orphaned' ? 'failed' : candidate.status,
+            terminalAt, expectedActivityGeneration,
+            outcome: { runId: candidate.runId, status: candidate.status, ...(candidate.statusReason ? { reason: candidate.statusReason } : {}) },
+          });
+        });
+        if (commit !== 'committed') {
+          await this.deferTerminalCandidate(candidate.runId, new Error(
+            commit === 'active' ? 'sandbox scope became active before terminal commit' : 'sandbox terminal candidate was superseded',
+          ));
           continue;
         }
-        const timedOut = candidate.status === 'failed' && /timed?\s*out|timeout/i.test(candidate.statusReason ?? '');
-        await target.client.notifyTerminal({
-          workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
-          sandboxScopeId: candidate.sandboxScopeId,
-          terminalState: timedOut ? 'timed-out' : candidate.status === 'orphaned' ? 'failed' : candidate.status,
-          terminalAt: candidate.terminalAt, expectedActivityGeneration,
-          outcome: { runId: candidate.runId, status: candidate.status, ...(candidate.statusReason ? { reason: candidate.statusReason } : {}) },
-        });
-        await this.options.store.markTerminalDelivered(candidate.runId, this.currentTime().toISOString());
       } catch (error) {
         await this.deferTerminalCandidate(candidate.runId, error);
         this.warnCandidate('sandbox_terminal_notify_failed', candidate.runId, error);
@@ -895,16 +437,19 @@ export class SandboxLifecycleService {
   } | undefined> {
     const record = await this.options.sessionCatalog.get(sessionId);
     if (!record || record.kind === 'subagent') return undefined;
-    // server-remote.providerId 是本地 hand 类型，准确远端路由只认 metadata 或实际注册 hand。
     const hand = await this.options.handStore?.get(`${sessionId}:server-remote`);
     const pinnedTargetHandId = stringValue(hand?.metadata?.tenantRemoteHandId);
-    const registeredHands = pinnedTargetHandId ? [] : await this.options.handStore?.listBySession(sessionId).catch(() => []);
-    const registeredTargetHandId = pinnedTargetHandId ?? registeredHands
-      ?.map((registered) => stringValue(registered.metadata?.tenantRemoteHandId) ?? stringValue(registered.providerId))
-      .find((id) => id === 'agent-saas-acs')
-      ?? registeredHands
-        ?.map((registered) => stringValue(registered.metadata?.tenantRemoteHandId) ?? stringValue(registered.providerId))
-        .find((id) => id && /acs/i.test(id));
+    const registeredHands = pinnedTargetHandId
+      ? []
+      : await this.options.handStore?.listBySession(sessionId).catch(() => []);
+    const registeredIds = registeredHands
+      ?.map((registered) => stringValue(registered.metadata?.tenantRemoteHandId) ?? stringValue(registered.providerId));
+    const registeredTargetHandId = pinnedTargetHandId
+      ?? registeredIds?.find((id) => id === 'agent-saas-acs')
+      ?? registeredIds?.find((id) => id && /acs/i.test(id))
+      ?? (this.options.serverRemote && hand?.providerId === 'server-remote'
+        ? serverRemoteTargetHandId(this.options.serverRemote.baseUrl)
+        : undefined);
     const target = await this.resolveClient(
       sessionId,
       record.tenantId,
@@ -934,6 +479,7 @@ export class SandboxLifecycleService {
     knownRecord?: Awaited<ReturnType<SessionCatalog['get']>>,
     routing?: { userId?: string; username?: string; targetHandId?: string },
   ): Promise<{ client: AcsSandboxLifecycleClient; targetHandId: string } | undefined> {
+    if (routing?.targetHandId === 'server-remote') return undefined;
     const record = knownRecord ?? await this.options.sessionCatalog.get(sessionId);
     const configured = this.options.tenantRemoteHands() ?? [];
     const entry = routing?.targetHandId
@@ -948,47 +494,37 @@ export class SandboxLifecycleService {
           return candidates.find((hand) => hand.id === 'agent-saas-acs')
             ?? candidates.find((hand) => /acs/i.test(hand.id));
         })();
-    if (!entry) return undefined;
-    const resolved = await this.options.tenantRemoteHandResolver.resolveForRegister(entry);
+    if (entry) {
+      const resolved = await this.options.tenantRemoteHandResolver.resolveForRegister(entry);
+      return {
+        targetHandId: entry.id,
+        client: new AcsSandboxLifecycleClient({
+          baseUrl: resolved.baseUrl, authToken: resolved.authToken, fetchImpl: this.options.fetchImpl,
+        }),
+      };
+    }
+    if (!this.options.serverRemote || !routing?.targetHandId) return undefined;
+    const configuredServerRemoteTarget = serverRemoteTargetHandId(this.options.serverRemote.baseUrl);
+    if (routing.targetHandId !== configuredServerRemoteTarget) return undefined;
     return {
-      targetHandId: entry.id,
+      targetHandId: configuredServerRemoteTarget,
       client: new AcsSandboxLifecycleClient({
-        baseUrl: resolved.baseUrl, authToken: resolved.authToken, fetchImpl: this.options.fetchImpl,
+        baseUrl: this.options.serverRemote.baseUrl,
+        authToken: this.options.serverRemote.authToken,
+        fetchImpl: this.options.fetchImpl,
       }),
     };
   }
 }
 
+function serverRemoteTargetHandId(baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/+$/u, '');
+  const endpointHash = createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  return `server-remote:${endpointHash}`;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function cleanupCandidateIsComplete(cleanup: Record<string, unknown>): boolean {
-  return Boolean(
-    stringValue(cleanup.workspaceId)
-    && stringValue(cleanup.sessionId)
-    && stringValue(cleanup.sandboxScopeId)
-    && stringValue(cleanup.targetHandId)
-    && stringValue(cleanup.deletionGeneration),
-  );
-}
-
-function cleanupCandidateFromRow(row: Record<string, unknown>, cleanup: Record<string, unknown>): CleanupCandidate {
-  const tenantId = stringValue(cleanup.tenantId) ?? stringValue(row.tenant_id);
-  const userId = stringValue(cleanup.userId) ?? stringValue(row.user_id);
-  const username = stringValue(cleanup.username) ?? stringValue(row.username);
-  const claimId = stringValue(cleanup.claimId);
-  const previousDeletionGeneration = stringValue(cleanup.previousDeletionGeneration);
-  const claimGeneration = typeof cleanup.claimGeneration === 'number' ? cleanup.claimGeneration : undefined;
-  return {
-    runId: String(row.run_id), workspaceId: stringValue(cleanup.workspaceId)!,
-    sessionId: stringValue(cleanup.sessionId)!, sandboxScopeId: stringValue(cleanup.sandboxScopeId)!,
-    targetHandId: stringValue(cleanup.targetHandId)!, deletionGeneration: stringValue(cleanup.deletionGeneration)!,
-    ...(previousDeletionGeneration ? { previousDeletionGeneration } : {}),
-    ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}),
-    ...(username ? { username } : {}), ...(claimId ? { claimId } : {}),
-    ...(claimGeneration !== undefined ? { claimGeneration } : {}),
-  };
 }
 
 function newDeletionGeneration(nowMs = Date.now()): string {

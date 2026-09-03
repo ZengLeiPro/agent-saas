@@ -92,17 +92,17 @@ is_publish_path() {
   return 1
 }
 
-# Workload/lifecycle wire, Web/PG admission, config and restore paths must run the ACS contract suite,
-# including files that also require an ACS image publish and the contract tests themselves.
+# Workload/lifecycle wire, deletion routes, Web/PG admission, config and restore paths must run the ACS contract suite,
+# including files that also require an ACS image publish and all contract tests themselves.
 is_contract_check_path() {
   case "$1" in
     .github/workflows/deploy-staging.yml|.github/workflows/promote-release.yml|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/release/staging-workflow.test.mjs|scripts/release/promotion-workflow.test.mjs|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
       return 0
       ;;
-    shared/src/types/sandboxWorkload.ts|shared/src/types/index.ts|shared/src/index.ts|server/src/agent/types.ts|server/src/__tests__/acsDeployWorkflowContract.test.ts|server/src/__tests__/executionDispatchValidation.test.ts|server/src/__tests__/runtimeTombstoneAdmission.test.ts|server/src/__tests__/runtimeWakeSessionRestore.test.ts|server/src/__tests__/sandboxLifecycleService.test.ts|server/src/__tests__/sandboxRunAdmissionFence.test.ts|server/src/__tests__/sandboxScopeActivity.pg.test.ts|server/src/__tests__/sandboxWarmup.test.ts|server/src/__tests__/sessionCatalog.test.ts|server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts)
+    shared/src/types/sandboxWorkload.ts|shared/src/types/index.ts|shared/src/index.ts|server/src/agent/types.ts|server/src/__tests__/acsDeployWorkflowContract.test.ts|server/src/__tests__/appConfig.test.ts|server/src/__tests__/appServerRemoteConfig.test.ts|server/src/__tests__/executionDispatchValidation.test.ts|server/src/__tests__/runtimeTombstoneAdmission.test.ts|server/src/__tests__/runtimeWakeSessionRestore.test.ts|server/src/__tests__/sandboxLifecycleService.test.ts|server/src/__tests__/sandboxRunAdmissionFence.test.ts|server/src/__tests__/sandboxScopeActivity.pg.test.ts|server/src/__tests__/sandboxWarmup.test.ts|server/src/__tests__/sessionCatalog.test.ts|server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts)
       return 0
       ;;
-    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|server/src/runtime/runtimeWakeSessionRestore.ts|server/src/runtime/runtimeHandRegistration.ts|server/src/runtime/sessionCatalog.ts|server/src/runtime/sandboxRunAdmissionFence.ts|server/src/runtime/sandboxWarmup.ts|server/src/runtime/sandboxTerminalOutboxStore.ts|server/src/runtime/sandboxLifecycleService.ts|server/src/runtime/runStore.ts|server/src/runtime/types.ts|server/src/runtime/subagent/subagentRunner.ts|server/src/runtime/background/backgroundTaskMetadata.ts|server/src/runtime/background/backgroundTaskService.ts|server/src/app/runtime.ts|server/src/channels/web/channel.ts|server/src/channels/web/channelConfig.ts|server/src/channels/web/channelHelpers.ts)
+    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|server/src/runtime/runtimeWakeSessionRestore.ts|server/src/runtime/runtimeHandRegistration.ts|server/src/runtime/sessionCatalog.ts|server/src/runtime/sandboxRunAdmissionFence.ts|server/src/runtime/sandboxWarmup.ts|server/src/runtime/sandboxTerminalOutboxStore.ts|server/src/runtime/sandboxLifecycleStore.ts|server/src/runtime/sandboxLifecycleService.ts|server/src/routes/sandboxSessionDeletion.ts|server/src/routes/sessionPermanentDeletion.ts|server/src/runtime/runStatusCas.ts|server/src/runtime/runStoreQueries.ts|server/src/runtime/runStore.ts|server/src/runtime/types.ts|server/src/routes/sessions.ts|server/src/runtime/subagent/subagentRunner.ts|server/src/runtime/background/backgroundTaskMetadata.ts|server/src/runtime/background/backgroundTaskService.ts|server/src/app/config.ts|server/src/app/runtime.ts|server/src/channels/web/channel.ts|server/src/channels/web/channelConfig.ts|server/src/channels/web/channelHelpers.ts)
       return 0
       ;;
     server/src/taskboard/*|server/src/dws/*|server/src/feishu/*|server/src/context/sync/dwsContextRuntime.ts|server/src/cron/executor.ts|server/src/memory/consolidation/engine.ts|server/src/notion/authFlow.ts|server/src/data/transcripts/meta.ts)

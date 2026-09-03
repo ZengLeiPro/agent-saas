@@ -30,7 +30,7 @@ const request = {
   },
 };
 
-describe('AcsExecutor persisted invocation lease fail-closed and ownership', () => {
+describe('AcsExecutor persisted invocation lease, activity and ownership', () => {
   it.each([
     {
       caseName: 'first renewal is rejected',
@@ -95,6 +95,80 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('clears a reconcile lease without advancing user activity generation', async () => {
+    const child = fakeChild();
+    const setActiveInvocationLease = vi.fn(async () => 'uid-lease');
+    const completeInvocation = vi.fn(async () => 'uid-lease');
+    const manager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+      setActiveInvocationLease,
+      completeInvocation,
+      touch: vi.fn(async () => undefined),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      manager, noopLogger, new ActiveSandboxRegistry(), { persistentRunner: false },
+    );
+
+    const result = executor.execute({ ...request, toolName: '__BackgroundShellReconcile' });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    expect((setActiveInvocationLease.mock.calls as unknown[][])[0]?.[4]).toBeUndefined();
+    expect(manager.ensureRunning).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxScopeId: ref.sandboxScopeId }),
+      expect.objectContaining({ recordActivity: false }),
+    );
+
+    child.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'ok' } })}\n`);
+    child.emit('close', 0, null);
+    await expect(result).resolves.toMatchObject({ status: 'success' });
+    expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
+      ref.name, expect.any(String), undefined, 'uid-lease',
+    );
+    expect(completeInvocation).not.toHaveBeenCalled();
+  });
+
+  it('recovers a failed reconcile lease clear without recording user activity', async () => {
+    const child = fakeChild();
+    const setActiveInvocationLease = vi.fn()
+      .mockResolvedValueOnce('uid-lease')
+      .mockRejectedValueOnce(new Error('clear unavailable'))
+      .mockResolvedValueOnce('uid-lease');
+    const completeInvocation = vi.fn(async () => 'uid-lease');
+    const manager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+      getSandboxUid: vi.fn(async () => 'uid-lease'),
+      setActiveInvocationLease,
+      completeInvocation,
+      touch: vi.fn(async () => undefined),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      manager, noopLogger, new ActiveSandboxRegistry(),
+      { persistentRunner: false, backgroundRecoveryRetryMs: 1 },
+    );
+
+    const result = executor.execute({ ...request, toolName: '__BackgroundShellReconcile' });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    expect(manager.ensureRunning).toHaveBeenCalledWith(
+      expect.any(Object), expect.objectContaining({ recordActivity: false }),
+    );
+    child.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'ok' } })}\n`);
+    child.emit('close', 0, null);
+
+    await expect(result).resolves.toMatchObject({ status: 'success' });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledTimes(3));
+    expect(setActiveInvocationLease).toHaveBeenNthCalledWith(
+      2, ref.name, expect.any(String), undefined, 'uid-lease',
+    );
+    expect(setActiveInvocationLease).toHaveBeenNthCalledWith(
+      3, ref.name, expect.any(String), undefined, 'uid-lease',
+    );
+    expect(completeInvocation).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(executor.backgroundRecoveryCount()).toBe(0));
   });
 
   it('advances activity generation when a new attempt is admitted after an old fence read', async () => {

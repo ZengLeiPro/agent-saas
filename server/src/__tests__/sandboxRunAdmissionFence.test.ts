@@ -10,8 +10,9 @@ describe('sandbox Run admission fence SQL', () => {
     expect(sql).toContain('BEFORE INSERT OR UPDATE OF status, session_id, tenant_id, sandbox_scope_id, metadata');
   });
 
-  it('ignores the cleanup carrier itself but fail-closes legacy null tenants', () => {
+  it('ignores the cleanup carrier itself and isolates legacy null rows to kaiyan', () => {
     expect(sql).toContain('cleanup.run_id<>NEW.run_id');
-    expect(sql).toContain('NEW.tenant_id IS NULL OR cleanup.tenant_id IS NULL OR cleanup.tenant_id=NEW.tenant_id');
+    expect(sql).toContain("COALESCE(cleanup.tenant_id, 'kaiyan')=COALESCE(NEW.tenant_id, 'kaiyan')");
+    expect(sql).toContain("COALESCE(candidate.tenant_id, 'kaiyan')=COALESCE(NEW.tenant_id, 'kaiyan')");
   });
 });

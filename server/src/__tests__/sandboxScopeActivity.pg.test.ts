@@ -29,7 +29,7 @@ async function waitForAdvisoryWaiters(
     if (Number(result.rows[0]?.count ?? 0) >= expected) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`expected at least ${expected} waiter(s) for the prepared-intent advisory lock`);
+  throw new Error(`expected at least ${expected} waiter(s) for the sandbox lifecycle advisory lock`);
 }
 
 describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contract', () => {
@@ -128,16 +128,42 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     })).resolves.toEqual(expect.objectContaining({ runId: 'delivered-fence-restored' }));
   });
 
-  it('legacy null-tenant cleanup fences admission until explicit restore cancels the delivered carrier', async () => {
+  it('新子 Run admission 会重新打开已 delivered 的顶层 terminal carrier', async () => {
+    const sessionId = 'terminal-reopen-session';
+    const sandboxScopeId = 'terminal-reopen-scope';
+    await runStore.upsertPending({
+      runId: 'terminal-reopen-top', sessionId, tenantId: 'tenant-1',
+      workspaceId: 'workspace-reopen', sandboxScopeId, metadata: {
+        sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor: { kind: 'cron' },
+      },
+    });
+    await runStore.markStatus('terminal-reopen-top', 'completed');
+    const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+    await store.markTerminalDelivered('terminal-reopen-top', new Date().toISOString());
+    await expect(store.isTerminalCandidateCurrent('terminal-reopen-top')).resolves.toBe(false);
+
+    await runStore.upsertPending({
+      runId: 'terminal-reopen-child', sessionId: 'terminal-reopen-child-session', tenantId: 'tenant-1',
+      workspaceId: 'workspace-reopen', sandboxScopeId, metadata: { topLevelSessionId: sessionId },
+    });
+    await runStore.markStatus('terminal-reopen-child', 'completed');
+
+    await expect(store.isTerminalCandidateCurrent('terminal-reopen-top')).resolves.toBe(true);
+    await expect(store.listTerminalCandidates(500)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: 'terminal-reopen-top' }),
+    ]));
+  });
+
+  it('legacy null-tenant cleanup 仅约束 canonical kaiyan tenant，直到显式 restore', async () => {
     const sessionId = 'legacy-cleanup-session';
     const sandboxScopeId = 'legacy-cleanup-scope';
     await runStore.upsertPending({
-      runId: 'legacy-staged-run', sessionId, tenantId: 'tenant-1',
+      runId: 'legacy-staged-run', sessionId, tenantId: 'kaiyan',
       workspaceId: 'workspace-legacy', sandboxScopeId,
       metadata: { schedulerState: 'staged' },
     });
     await runStore.upsertPending({
-      runId: 'legacy-cleanup-carrier', sessionId: 'legacy-cleanup-carrier-session', tenantId: 'tenant-1',
+      runId: 'legacy-cleanup-carrier', sessionId: 'legacy-cleanup-carrier-session', tenantId: 'kaiyan',
       workspaceId: 'workspace-legacy', sandboxScopeId: 'legacy-cleanup-carrier-scope', metadata: {},
     });
     await runStore.markStatus('legacy-cleanup-carrier', 'cancelled', 'legacy cleanup');
@@ -146,37 +172,36 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     try {
       await pool.query(`UPDATE ${prefix}_runs SET tenant_id=NULL, metadata=jsonb_set(metadata,
         '{sandboxCleanupOutbox}', $2::jsonb) WHERE run_id=$1`, ['legacy-cleanup-carrier', JSON.stringify({
-      state: 'delivered', workspaceId: 'workspace-legacy', sessionId, sandboxScopeId,
-      targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-legacy',
-    })]);
+        state: 'delivered', workspaceId: 'workspace-legacy', sessionId, sandboxScopeId,
+        targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-legacy',
+      })]);
 
-    await expect(runStore.activateStagedRun('legacy-staged-run')).rejects.toThrow(/Sandbox cleanup is active/u);
-    await expect(runStore.upsertPending({
-      runId: 'legacy-new-tenant-run', sessionId, tenantId: 'tenant-2',
-      workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},
-    })).rejects.toThrow(/Sandbox cleanup is active/u);
-
-    const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
-    await expect(store.cancelCleanup(sessionId, 'tenant-1', 'generation-legacy-restored')).resolves.toEqual([
-      expect.objectContaining({
-        runId: 'legacy-cleanup-carrier', previousDeletionGeneration: 'generation-legacy',
-        deletionGeneration: 'generation-legacy-restored',
-      }),
-    ]);
-    await expect(runStore.activateStagedRun('legacy-staged-run')).resolves.toEqual(expect.objectContaining({
-      runId: 'legacy-staged-run', status: 'pending', metadata: expect.objectContaining({ schedulerState: 'ready' }),
-    }));
+      await expect(runStore.activateStagedRun('legacy-staged-run')).rejects.toThrow(/Sandbox cleanup is active/u);
       await expect(runStore.upsertPending({
-        runId: 'legacy-restored-run', sessionId, tenantId: 'tenant-2',
+        runId: 'legacy-other-tenant-run', sessionId, tenantId: 'tenant-2',
         workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},
-      })).resolves.toEqual(expect.objectContaining({ runId: 'legacy-restored-run' }));
+      })).resolves.toEqual(expect.objectContaining({ runId: 'legacy-other-tenant-run' }));
+
+      const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+      await expect(store.hasActivity({ sandboxScopeId, sessionId, tenantId: 'kaiyan' })).resolves.toBe(false);
+      await expect(store.hasActivity({ sandboxScopeId, sessionId, tenantId: 'tenant-2' })).resolves.toBe(true);
+      await expect(store.cancelCleanup(sessionId, 'tenant-1', 'wrong-tenant-generation')).resolves.toEqual([]);
+      await expect(store.cancelCleanup(sessionId, 'kaiyan', 'generation-legacy-restored')).resolves.toEqual([
+        expect.objectContaining({
+          runId: 'legacy-cleanup-carrier', previousDeletionGeneration: 'generation-legacy',
+          deletionGeneration: 'generation-legacy-restored',
+        }),
+      ]);
+      await expect(runStore.activateStagedRun('legacy-staged-run')).resolves.toEqual(expect.objectContaining({
+        runId: 'legacy-staged-run', status: 'pending', metadata: expect.objectContaining({ schedulerState: 'ready' }),
+      }));
     } finally {
-      await pool.query(`UPDATE ${prefix}_runs SET tenant_id='pantheon' WHERE tenant_id IS NULL`);
+      await pool.query(`UPDATE ${prefix}_runs SET tenant_id='kaiyan' WHERE tenant_id IS NULL`);
       await pool.query(`ALTER TABLE ${prefix}_runs ALTER COLUMN tenant_id SET NOT NULL`);
     }
   });
 
-  it('prepared cleanup fences late admission and guarded cancellation avoids carrier Run self-lock', async () => {
+  it('prepared cleanup fences late admission，且 guarded cancellation 避免 carrier Run self-lock', async () => {
     await runStore.upsertPending({
       runId: 'intent-run-1', sessionId: 'intent-session-1', tenantId: 'tenant-1',
       workspaceId: 'workspace-intent', sandboxScopeId: 'scope-intent', metadata: {},
@@ -189,12 +214,14 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     const store = new PgSandboxLifecycleStore(
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
     );
-    await store.enqueueCleanup({
+    const enqueued = await store.enqueueCleanup({
       workspaceId: 'workspace-intent', sessionId: 'intent-session-1', sandboxScopeId: 'scope-intent',
       tenantId: 'tenant-1', targetHandId: 'acs-old', deletionGeneration: 'generation-intent-1',
     }, { prepared: true });
+    const cleanupRunId = enqueued!.runId;
+    expect(cleanupRunId).toMatch(/^sandbox-cleanup-/u);
     await expect(store.listPreparedCleanupCandidates()).resolves.toEqual([
-      expect.objectContaining({ runId: 'intent-run-1', sessionId: 'intent-session-1' }),
+      expect.objectContaining({ runId: cleanupRunId, sessionId: 'intent-session-1' }),
     ]);
     await expect(store.listCleanupCandidates()).resolves.toEqual([]);
     await expect(runStore.upsertPending({
@@ -209,8 +236,8 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     })).rejects.toThrow(/Sandbox cleanup is active/u);
 
     const [first, second] = await Promise.all([
-      store.claimPreparedCleanup('intent-run-1', 'worker-a'),
-      store.claimPreparedCleanup('intent-run-1', 'worker-b'),
+      store.claimPreparedCleanup(cleanupRunId, 'worker-a'),
+      store.claimPreparedCleanup(cleanupRunId, 'worker-b'),
     ]);
     const owner = first ?? second;
     expect([first, second].filter(Boolean)).toHaveLength(1);
@@ -221,22 +248,22 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
     );
     await expect(rebuilt.completePreparedCleanup(
-      'intent-run-1', owner!.claimId!, owner!.claimGeneration!,
+      cleanupRunId, owner!.claimId!, owner!.claimGeneration!,
     )).resolves.toBeUndefined();
     const reason = 'session_deleted:intent-session-1';
     await expect(runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
       'intent-session-1', reason, 'intent-run-1', {
         type: 'run_cancel_requested', sessionId: 'intent-session-1', runId: 'intent-run-1', reason,
       }, 'tenant-1', {
-        cleanupRunId: 'intent-run-1', sessionId: 'intent-session-1', sandboxScopeId: 'scope-intent',
+        cleanupRunId, sessionId: 'intent-session-1', sandboxScopeId: 'scope-intent',
         claimId: owner!.claimId!, claimGeneration: owner!.claimGeneration!,
       },
     )).resolves.toEqual(expect.objectContaining({ targetCancelled: true }));
     await expect(rebuilt.completePreparedCleanup(
-      'intent-run-1', owner!.claimId!, owner!.claimGeneration!,
-    )).resolves.toEqual(expect.objectContaining({ runId: 'intent-run-1' }));
+      cleanupRunId, owner!.claimId!, owner!.claimGeneration!,
+    )).resolves.toEqual(expect.objectContaining({ runId: cleanupRunId }));
     await expect(rebuilt.listCleanupCandidates()).resolves.toEqual([
-      expect.objectContaining({ runId: 'intent-run-1', sessionId: 'intent-session-1' }),
+      expect.objectContaining({ runId: cleanupRunId, sessionId: 'intent-session-1' }),
     ]);
   });
 
@@ -253,13 +280,15 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       state: 'delivered', deletionGeneration: 'delete-generation-root',
     })]);
     const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
-    await store.enqueueCleanup({
+    const prepared = await store.enqueueCleanup({
       workspaceId: 'workspace-prepared-refresh', sessionId, sandboxScopeId,
       tenantId: 'tenant-1', targetHandId: 'acs-old', deletionGeneration: 'delete-generation-old',
     }, { prepared: true });
+    const cleanupRunId = prepared!.runId;
+    expect(cleanupRunId).not.toBe(runId);
     await pool.query(`UPDATE ${prefix}_runs SET metadata=jsonb_set(metadata,
       '{sandboxCleanupOutbox,queuedAt}', to_jsonb($2::text)) WHERE run_id=$1`, [
-      runId, '2000-01-01T00:00:00.000Z',
+      cleanupRunId, '2000-01-01T00:00:00.000Z',
     ]);
 
     const blocker = await pool.connect();
@@ -278,13 +307,13 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
         tenantId: 'tenant-1', targetHandId: 'acs-new', deletionGeneration: 'delete-generation-new',
       }, { prepared: true });
       await waitForAdvisoryWaiters(blocker, lock!, 1);
-      const expiry = store.expireUncommittedPreparedCleanup(runId);
+      const expiry = store.expireUncommittedPreparedCleanup(cleanupRunId);
       await waitForAdvisoryWaiters(blocker, lock!, 2);
       await blocker.query('COMMIT');
       committed = true;
 
       await expect(takeover).resolves.toEqual(expect.objectContaining({
-        runId, previousDeletionGeneration: 'delete-generation-root',
+        runId: cleanupRunId, previousDeletionGeneration: 'delete-generation-root',
         deletionGeneration: 'delete-generation-new', targetHandId: 'acs-new',
       }));
       await expect(expiry).resolves.toBe(false);
@@ -296,19 +325,20 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     const rebuilt = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
     await expect(rebuilt.listPreparedCleanupCandidates()).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
-        runId, previousDeletionGeneration: 'delete-generation-root',
+        runId: cleanupRunId, previousDeletionGeneration: 'delete-generation-root',
         deletionGeneration: 'delete-generation-new',
       }),
     ]));
-    await runStore.markStatus(runId, 'cancelled', 'session deleted before restart');
-    const claimed = await rebuilt.claimPreparedCleanup(runId, 'restarted-scanner');
+    const claimed = await rebuilt.claimPreparedCleanup(cleanupRunId, 'restarted-scanner');
     expect(claimed?.claimGeneration).toBe(1);
     await expect(rebuilt.completePreparedCleanup(
-      runId, claimed!.claimId!, claimed!.claimGeneration!,
-    )).resolves.toEqual(expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }));
+      cleanupRunId, claimed!.claimId!, claimed!.claimGeneration!,
+    )).resolves.toEqual(expect.objectContaining({
+      runId: cleanupRunId, deletionGeneration: 'delete-generation-new',
+    }));
     await expect(rebuilt.listCleanupCandidates()).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
-        runId, previousDeletionGeneration: 'delete-generation-root',
+        runId: cleanupRunId, previousDeletionGeneration: 'delete-generation-root',
         deletionGeneration: 'delete-generation-new',
       }),
     ]));
@@ -320,27 +350,29 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       workspaceId: 'workspace-takeover', sandboxScopeId: 'scope-takeover', metadata: {},
     });
     const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
-    await store.enqueueCleanup({
+    const prepared = await store.enqueueCleanup({
       workspaceId: 'workspace-takeover', sessionId: 'takeover-session-1', sandboxScopeId: 'scope-takeover',
       tenantId: 'tenant-1', targetHandId: 'acs-old', deletionGeneration: 'delete-generation-1',
     }, { prepared: true });
-    const crashed = await store.claimPreparedCleanup('takeover-run-1', 'crashed-worker');
+    const cleanupRunId = prepared!.runId;
+    expect(cleanupRunId).not.toBe('takeover-run-1');
+    const crashed = await store.claimPreparedCleanup(cleanupRunId, 'crashed-worker');
     expect(crashed?.claimGeneration).toBe(1);
     await pool.query(`UPDATE ${prefix}_runs SET metadata=jsonb_set(metadata,
       '{sandboxCleanupOutbox,claimedAt}', to_jsonb($2::text)) WHERE run_id=$1`, [
-      'takeover-run-1', '2000-01-01T00:00:00.000Z',
+      cleanupRunId, '2000-01-01T00:00:00.000Z',
     ]);
     const rebuilt = new PgSandboxLifecycleStore(
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
     );
-    const takeover = await rebuilt.claimPreparedCleanup('takeover-run-1', 'restarted-worker');
+    const takeover = await rebuilt.claimPreparedCleanup(cleanupRunId, 'restarted-worker');
     expect(takeover?.claimGeneration).toBe(2);
     await rebuilt.cancelCleanup('takeover-session-1', 'tenant-1', 'restore-generation-1');
     await expect(rebuilt.completePreparedCleanup(
-      'takeover-run-1', takeover!.claimId!, takeover!.claimGeneration!,
+      cleanupRunId, takeover!.claimId!, takeover!.claimGeneration!,
     )).resolves.toBeUndefined();
     await expect(rebuilt.listCleanupCandidates()).resolves.not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ runId: 'takeover-run-1' }),
+      expect.objectContaining({ runId: cleanupRunId }),
     ]));
   });
 
@@ -437,7 +469,45 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     30_000,
   );
 
-  it('A旧+B新只投B，且B delivered 后 A 永久不复活', async () => {
+  it.each([
+    { tenantId: 'tenant-meta-only', expectedTenantId: 'tenant-meta-only', suffix: 'tenant' },
+    { tenantId: undefined, expectedTenantId: 'kaiyan', suffix: 'legacy' },
+  ])('meta-only 预热会话（$suffix）可创建 cleanup carrier，并在 store 重建后继续投递', async ({
+    tenantId, expectedTenantId, suffix,
+  }) => {
+    const sessionId = `meta-only-session-${suffix}`;
+    const workspaceId = `workspace-meta-only-${suffix}`;
+    const sandboxScopeId = `scope-meta-only-${suffix}`;
+    const store = new PgSandboxLifecycleStore(
+      pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+    );
+    const enqueued = await store.enqueueCleanup({
+      sessionId, ...(tenantId ? { tenantId } : {}), userId: 'user-meta-only',
+      username: 'alice', workspaceId, sandboxScopeId,
+      targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-meta-only',
+    }, { prepared: true });
+
+    expect(enqueued).toMatchObject({
+      sessionId, tenantId: expectedTenantId,
+      targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-meta-only',
+    });
+    const carrier = await pool.query<{ status: string; tenant_id: string; carrier: string }>(`
+      SELECT status, tenant_id, metadata->>'sandboxCleanupCarrier' AS carrier
+      FROM ${prefix}_runs WHERE run_id=$1
+    `, [enqueued!.runId]);
+    expect(carrier.rows[0]).toEqual({ status: 'cancelled', tenant_id: expectedTenantId, carrier: 'true' });
+
+    const rebuilt = new PgSandboxLifecycleStore(
+      pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+    );
+    await expect(rebuilt.listPreparedCleanupCandidates(500)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: enqueued!.runId, sessionId }),
+    ]));
+    await expect(runStore.listBySession(sessionId)).resolves.toEqual([]);
+    await expect(runStore.listSessionIdsByTenant(expectedTenantId)).resolves.not.toContain(sessionId);
+  });
+
+  it('同 scope A旧+B新只投B，且B delivered 后 A 永久不复活', async () => {
     const scope = 'scope-terminal-order';
     await runStore.upsertPending({
       runId: 'terminal-a', sessionId: 'terminal-a-session', tenantId: 'tenant-1',
@@ -468,6 +538,8 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     const terminalB = afterB.find((candidate) => candidate.runId === 'terminal-b');
     expect(terminalB).toBeDefined();
     expect(afterB).not.toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'terminal-a' })]));
+    await expect(store.isTerminalCandidateCurrent('terminal-a')).resolves.toBe(false);
+    await expect(store.isTerminalCandidateCurrent('terminal-b')).resolves.toBe(true);
     await pool.query('SELECT pg_sleep(0.01)');
     await runStore.markStatus('terminal-a', 'completed', 'late-rewrite');
     const afterRewrite = await store.listTerminalCandidates();
@@ -475,12 +547,107 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     expect(afterRewrite).toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'terminal-b' })]));
     expect(afterRewrite).not.toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'terminal-a' })]));
     await store.markTerminalDelivered('terminal-b', new Date().toISOString());
-    const afterDelivery = await store.listTerminalCandidates();
-    expect(afterDelivery).not.toEqual(expect.arrayContaining([
+    await expect(store.isTerminalCandidateCurrent('terminal-b')).resolves.toBe(false);
+    const remainingCandidates = await store.listTerminalCandidates();
+    expect(remainingCandidates).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ runId: 'terminal-a' }),
       expect.objectContaining({ runId: 'terminal-b' }),
     ]));
   });
+
+  it('旧 terminal 在后续子 Run 完整结束后仍可携 scope 最后活动时间投递', async () => {
+    const runId = 'terminal-before-child';
+    const sessionId = 'terminal-before-child-session';
+    const sandboxScopeId = 'terminal-before-child-scope';
+    await runStore.upsertPending({
+      runId, sessionId, tenantId: 'tenant-legacy', workspaceId: 'workspace-before-child', sandboxScopeId,
+      metadata: { sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor: { kind: 'cron' } },
+    });
+    await runStore.markStatus(runId, 'completed');
+
+    await pool.query(`ALTER TABLE ${prefix}_runs ALTER COLUMN tenant_id DROP NOT NULL`);
+    try {
+      await pool.query(`UPDATE ${prefix}_runs SET tenant_id=NULL WHERE run_id=$1`, [runId]);
+      await runStore.upsertPending({
+        runId: 'terminal-after-child', sessionId: 'terminal-after-child-session', tenantId: 'kaiyan',
+        workspaceId: 'workspace-before-child', sandboxScopeId,
+        metadata: { topLevelSessionId: sessionId },
+      });
+      await runStore.markStatus('terminal-after-child', 'completed');
+
+      const store = new PgSandboxLifecycleStore(
+        pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+      );
+      await expect(store.hasActivity({ sandboxScopeId, sessionId, tenantId: 'kaiyan' })).resolves.toBe(false);
+      await expect(store.isTerminalCandidateCurrent(runId)).resolves.toBe(true);
+      let effectiveTerminalAt: string | undefined;
+      const candidate = (await store.listTerminalCandidates(500)).find((item) => item.runId === runId);
+      expect(candidate).toBeDefined();
+      await expect(store.runWhileTerminalCandidateCurrent(candidate!, async (terminalAt) => {
+        effectiveTerminalAt = terminalAt;
+      })).resolves.toBe('committed');
+      const child = await runStore.get('terminal-after-child');
+      expect(Date.parse(effectiveTerminalAt!)).toBeGreaterThanOrEqual(Date.parse(child!.updatedAt));
+    } finally {
+      await pool.query(`UPDATE ${prefix}_runs SET tenant_id='kaiyan' WHERE tenant_id IS NULL`);
+      await pool.query(`ALTER TABLE ${prefix}_runs ALTER COLUMN tenant_id SET NOT NULL`);
+    }
+  });
+
+  it('终态投递持有 admission lock，锁内复核到通知完成前不能接纳新 Run', async () => {
+    const runId = 'terminal-guarded';
+    const sessionId = 'terminal-guarded-session';
+    const sandboxScopeId = 'terminal-guarded-scope';
+    await runStore.upsertPending({
+      runId, sessionId, tenantId: 'tenant-guarded', workspaceId: 'workspace-guarded', sandboxScopeId,
+      metadata: { sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor: { kind: 'cron' } },
+    });
+    await runStore.markStatus(runId, 'completed');
+    const store = new PgSandboxLifecycleStore(
+      pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+    );
+    const candidate = (await store.listTerminalCandidates(500)).find((item) => item.runId === runId);
+    expect(candidate).toBeDefined();
+
+    let enterOperation!: () => void;
+    const operationEntered = new Promise<void>((resolve) => { enterOperation = resolve; });
+    let releaseOperation!: () => void;
+    const operationRelease = new Promise<void>((resolve) => { releaseOperation = resolve; });
+    const guardedDelivery = store.runWhileTerminalCandidateCurrent(candidate!, async () => {
+      enterOperation();
+      await operationRelease;
+    });
+    await operationEntered;
+
+    const observer = await pool.connect();
+    let operationReleased = false; // 确保断言失败时也释放 operation barrier
+    try {
+      const held = await observer.query<AdvisoryLockId>(`
+        SELECT classid::text, objid::text, objsubid FROM pg_locks
+        WHERE locktype='advisory' AND granted
+          AND classid=((hashtextextended($1, 0) >> 32) & 4294967295)::oid
+          AND objid=(hashtextextended($1, 0) & 4294967295)::oid
+        LIMIT 1
+      `, [sessionId]);
+      expect(held.rows[0]).toBeDefined();
+      const admission = runStore.upsertPending({
+        runId: 'terminal-guarded-new-run', sessionId: 'terminal-guarded-child', tenantId: 'tenant-guarded',
+        workspaceId: 'workspace-guarded', sandboxScopeId,
+        metadata: { topLevelSessionId: sessionId },
+      });
+      await waitForAdvisoryWaiters(observer, held.rows[0]!, 1);
+
+      releaseOperation();
+      operationReleased = true;
+      await expect(guardedDelivery).resolves.toBe('committed');
+      await expect(admission).resolves.toEqual(expect.objectContaining({ runId: 'terminal-guarded-new-run' }));
+      await expect(store.isTerminalCandidateCurrent(runId)).resolves.toBe(false);
+    } finally {
+      if (!operationReleased) releaseOperation();
+      observer.release();
+      await guardedDelivery.catch(() => undefined);
+    }
+  }, 30_000);
 
   it('100 个 deferred poison 不会长期挡住第 101 个健康候选，固定时钟退避可验证', async () => {
     const fixedNow = new Date('2026-09-01T00:00:00.000Z');

@@ -32,7 +32,6 @@ export class PgRunStore implements RunStore {
   readonly eventNotifyChannel: string;
   private readonly ownsPool: boolean;
   private readonly queries: PgRunStoreQueries;
-
   constructor(options: PgRunStoreOptions) {
     if (!options.pool && !options.connectionString) {
       throw new Error('PgRunStore requires either pool or connectionString');
@@ -56,7 +55,6 @@ export class PgRunStore implements RunStore {
       this.toolInvocationsTable,
     );
   }
-
   async init(): Promise<void> {
     await initializePgRunStoreSchema(this);
   }
@@ -736,15 +734,11 @@ export class PgRunStore implements RunStore {
     targetRunId: string | undefined,
     event: PlatformEventInput,
     tenantId: string,
-    cleanupGuard?: SandboxCleanupClaimGuard,
-  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
+    cleanupGuard?: SandboxCleanupClaimGuard): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
       reason,
-      targetRunId,
-      event,
-      tenantId,
-      cleanupGuard,
+      targetRunId, event, tenantId, cleanupGuard,
     );
     return {
       cancelled: result.cancelled,
@@ -760,8 +754,7 @@ export class PgRunStore implements RunStore {
     targetRunId: string | undefined,
     event: PlatformEventInput | undefined,
     tenantId: string,
-    cleanupGuard?: SandboxCleanupClaimGuard,
-  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
+    cleanupGuard?: SandboxCleanupClaimGuard): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
     let targetCancelled = false;
@@ -773,8 +766,7 @@ export class PgRunStore implements RunStore {
         `${this.runsTable}:message:${sessionId}`,
       ]);
       if (cleanupGuard && !await acquireSandboxCleanupClaimGuard(client, this.runsTable, cleanupGuard)) {
-        await client.query('COMMIT');
-        return { cancelled: [], targetCancelled: false, eventCreated: false };
+        await client.query('COMMIT'); return { cancelled: [], targetCancelled: false, eventCreated: false };
       }
       const now = new Date().toISOString();
       // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。

@@ -82,7 +82,6 @@ export type {
   SandboxResourceOverride,
   SandboxStaleImagePrewarmReport,
 } from './sandboxManagerTypes.js';
-
 export class SandboxBusyError extends Error {
   readonly statusCode = 409;
 }
@@ -108,6 +107,9 @@ const ENSURE_FAST_PATH_TTL_MS = 5 * 60_000;
 /** touch（lastActiveAt annotation patch，~0.2s）节流窗口；idle 判定为小时级，60s 精度足够。 */
 const TOUCH_THROTTLE_MS = 60_000;
 
+interface EnsureRunningOptions {
+  busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string; recordActivity?: boolean;
+}
 export class SandboxManager {
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
   readonly snatManager: SnatManager;
@@ -159,8 +161,7 @@ export class SandboxManager {
       ...(input.resources && Object.keys(input.resources).length ? { resources: input.resources } : {}),
       ...(input.workload ? { workload: input.workload } : {}),
     };
-  }
-  async ensureRunning(
+  }  async ensureRunning(
     input: {
       workspaceId: string;
       sessionId: string;
@@ -169,7 +170,7 @@ export class SandboxManager {
       resources?: SandboxResourceOverride;
       workload?: SandboxWorkloadDescriptor;
     },
-    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
+    options: EnsureRunningOptions = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
     while (true) {
@@ -195,10 +196,9 @@ export class SandboxManager {
       void promise.finally(() => this.ensureInFlight.get(ref.name) === tracked && this.ensureInFlight.delete(ref.name)).catch(() => {});
       return await promise;
     }
-  }
-  private async ensureRunningExclusive(
+  }  private async ensureRunningExclusive(
     ref: SandboxRef,
-    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string },
+    options: EnsureRunningOptions,
     mutationToken: symbol,
   ): Promise<SandboxRef> {
     const timing = createEnsureTiming(ref.name, this.logger);
@@ -279,17 +279,17 @@ export class SandboxManager {
         this.logger.info(`sandbox_created name=${ref.name} workspaceId=${ref.workspaceId} sessionId=${ref.sessionId}`);
         await this.waitForRunningAndEnsureSnat(ref, timing);
         this.markEnsureFastPathVerified(ref.name);
-        await timing.step('touch', () => this.touchThrottled(ref.name));
+        if (options.recordActivity !== false) await timing.step('touch', () => this.touchThrottled(ref.name));
         status = 'ok';
         return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
       }
       // already_running 快路径：5 分钟内已完整校验 networkPolicy+SNAT 的 Running
       // Sandbox，跳过两项 reconcile（合计 ~1.1s/次 kubectl/CLI 开销）。getStatus
-      // 上面已真查过 phase，Running 事实不依赖缓存。
+      // 上面已真查过 phase，Running 事实不依赖缓存；housekeeping 跳过 touch。
       if (existing.phase === 'Running' && this.isEnsureFastPathFresh(ref.name)) {
         path = 'already_running_fast';
         await timing.step('verifySnatCoverage', () => this.snatManager.assertSharedCidrCoverageForSandbox(ref));
-        await timing.step('touch', () => this.touchThrottled(ref.name));
+        if (options.recordActivity !== false) await timing.step('touch', () => this.touchThrottled(ref.name));
         status = 'ok';
         return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
       }
@@ -308,7 +308,7 @@ export class SandboxManager {
         await timing.step('ensureSnat', () => this.snatManager.ensureForSandbox(ref));
       }
       this.markEnsureFastPathVerified(ref.name);
-      await timing.step('touch', () => this.touchThrottled(ref.name));
+      if (options.recordActivity !== false) await timing.step('touch', () => this.touchThrottled(ref.name));
       status = 'ok';
       return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
     } finally {

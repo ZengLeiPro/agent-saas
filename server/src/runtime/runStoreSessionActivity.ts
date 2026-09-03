@@ -1,3 +1,4 @@
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import type { PgPool } from './runStoreTypes.js';
 
 export interface TaskboardSessionActivityStore {
@@ -15,19 +16,19 @@ export async function hasSandboxScopeActivity(
       EXISTS (
         SELECT 1 FROM ${store.runsTable} run
         WHERE ($1::text = run.sandbox_scope_id OR run.metadata->>'topLevelSessionId' = $2)
-          AND ($3::text IS NULL OR run.tenant_id = $3)
+          AND COALESCE(run.tenant_id, $4::text)=COALESCE($3::text, $4::text)
           AND run.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
       )
       OR EXISTS (
         SELECT 1 FROM ${store.runsTable} background
         WHERE background.metadata->>'backgroundTask' = 'true'
           AND ($1::text = background.sandbox_scope_id OR background.metadata->>'topLevelSessionId' = $2)
-          AND ($3::text IS NULL OR background.tenant_id = $3)
+          AND COALESCE(background.tenant_id, $4::text)=COALESCE($3::text, $4::text)
           AND background.status IN ('completed','failed','cancelled','orphaned')
           AND COALESCE(background.metadata->>'wakeState', 'pending') IN ('pending','delivering')
       )
     ) AS active
-  `, [input.sandboxScopeId, input.topLevelSessionId, input.tenantId ?? null]);
+  `, [input.sandboxScopeId, input.topLevelSessionId, input.tenantId ?? null, LEGACY_TENANT_ID]);
   return result.rows[0]?.active === true;
 }
 

@@ -1,6 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-
 import type { AcsOrchestratorConfig } from './config.js';
 import { Kubectl } from './kubectl.js';
 import type {
@@ -20,15 +19,13 @@ import {
   ACTIVE_INVOCATION_LEASE_MS,
   InvocationLeaseMonitor,
 } from './invocationLeaseMonitor.js';
-import { establishInvocationCompletionFence, recoverInvocationCompletion } from './invocationCompletionRecovery.js';
+import { establishInvocationCompletionFence, recoverHousekeepingLeaseClear, recoverInvocationCompletion } from './invocationCompletionRecovery.js';
 import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';
-
 interface InvocationEntry {
   controller: AbortController;
   child?: ChildProcessWithoutNullStreams;
   sandboxName?: string;
 }
-
 interface InvocationProtectionState {
   preserveInvocationLease: boolean;
   backgroundMetadataObserved?: boolean;
@@ -42,7 +39,6 @@ interface InvocationProtectionState {
     launchUncertain?: true;
   };
 }
-
 interface AcsExecutorOptions {
   persistentRunner?: boolean;
   terminateBackgroundTasks?: (ref: SandboxRef, taskIds: string[]) => Promise<void>;
@@ -126,7 +122,7 @@ export class AcsExecutor {
     let finalResponse: ToolInvocationResponse | undefined;
     let runError: unknown;
     const protectionState: InvocationProtectionState = { preserveInvocationLease: false };
-    const failForLease = (error: Error) => { // Runner termination is part of the lease fence.
+    const recordsUserActivity = request.toolName !== '__BackgroundShellReconcile'; const failForLease = (error: Error) => { // Runner termination is part of the lease fence.
       this.logger.error(
         `invocation_lease_lost sandbox=${ref.name} invocation=${invocationKey}: ${error.message}`,
       );
@@ -140,10 +136,11 @@ export class AcsExecutor {
       }
     };
     try {
-      await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
+      await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey, recordsUserActivity);
       const leaseUntilMs = Date.now() + ACTIVE_INVOCATION_LEASE_MS;
       sandboxUid = await this.sandboxManager.setActiveInvocationLease(
-        ref.name, leaseKey, new Date(leaseUntilMs).toISOString(), undefined, leaseKey,
+        ref.name, leaseKey, new Date(leaseUntilMs).toISOString(), undefined,
+        recordsUserActivity ? leaseKey : undefined,
         backgroundShellRequested ? 'background_pending' : 'executing',
       );
       if (!sandboxUid) throw new Error('invocation lease mutation did not return Sandbox UID');
@@ -265,16 +262,20 @@ export class AcsExecutor {
         leaseFailure = await leaseMonitor?.finish();
         if (shouldCompleteInvocation && sandboxUid && completedAt && !leaseFailure) {
           try {
-            await establishInvocationCompletionFence(
-              this.config, this.sandboxManager, ref.name, leaseKey, sandboxUid, completedAt,
-            );
+            if (recordsUserActivity) {
+              await establishInvocationCompletionFence(
+                this.config, this.sandboxManager, ref.name, leaseKey, sandboxUid, completedAt,
+              );
+            } else {
+              await this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey, undefined, sandboxUid);
+            }
           } catch (err) {
             completionFenceError = err;
           }
         }
       }
       options.signal?.removeEventListener('abort', onExternalAbort);
-      if (shouldCompleteInvocation && sandboxUid && completedAt && !leaseFailure) {
+      if (shouldCompleteInvocation && sandboxUid && completedAt && !leaseFailure && recordsUserActivity) {
         if (completionFenceError) {
           this.logger.warn(
             `invocation_completion_fence_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(completionFenceError)}`,
@@ -289,6 +290,10 @@ export class AcsExecutor {
           }
         }
       }
+      if (completionFenceError && !recordsUserActivity && sandboxUid) {
+        this.logger.warn(`invocation_housekeeping_clear_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(completionFenceError)}`);
+        this.startHousekeepingLeaseClearRecovery(ref, leaseKey, invocationKey, sandboxUid);
+      }
       this.invocations.delete(invocationKey);
       releaseActive?.();
       if (leaseFailure) {
@@ -302,7 +307,6 @@ export class AcsExecutor {
     if (runError) throw runError;
     if (finalResponse) yield { type: 'completed', response: finalResponse };
   }
-
   cancel(invocationId: string): boolean {
     const entry = this.invocations.get(invocationId);
     if (!entry) return false;
@@ -311,11 +315,9 @@ export class AcsExecutor {
     if (entry.sandboxName) this.persistentRunners.get(entry.sandboxName)?.cancel(invocationId);
     return true;
   }
-
   backgroundRecoveryCount(): number {
     return this.backgroundProtectionRecoveries.size + this.invocationCompletionRecoveries.size;
   }
-
   busySandboxNames(): Set<string> {
     return new Set(
       [...this.invocations.values()]
@@ -341,7 +343,6 @@ export class AcsExecutor {
       },
     });
   }
-
   /** Persist workspace protection or terminate only tasks owned by this invocation. */
   private async applyBackgroundShellProtection(
     ref: SandboxRef,
@@ -530,12 +531,24 @@ export class AcsExecutor {
       config: this.config, sandboxManager: this.sandboxManager, sandboxName: ref.name,
       leaseKey, expectedUid, completedAt, logger: this.logger,
       retryMs: Math.max(1, this.options.backgroundRecoveryRetryMs ?? 5_000),
-    }).catch((err) => {
-        this.logger.error(
-          `invocation_completion_recovery_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(err)}`,
-        );
-      })
-      .finally(() => this.invocationCompletionRecoveries.delete(promise));
+    }).catch((err) => this.logger.error(
+      `invocation_completion_recovery_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(err)}`,
+    )).finally(() => this.invocationCompletionRecoveries.delete(promise));
+    this.invocationCompletionRecoveries.add(promise);
+  }
+
+  private startHousekeepingLeaseClearRecovery(
+    ref: SandboxRef,
+    leaseKey: string,
+    invocationKey: string,
+    expectedUid: string,
+  ): void {
+    const promise = recoverHousekeepingLeaseClear({
+      sandboxManager: this.sandboxManager, sandboxName: ref.name, leaseKey, expectedUid,
+      logger: this.logger, retryMs: Math.max(1, this.options.backgroundRecoveryRetryMs ?? 5_000),
+    }).catch((err) => this.logger.error(
+      `invocation_housekeeping_clear_recovery_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(err)}`,
+    )).finally(() => this.invocationCompletionRecoveries.delete(promise));
     this.invocationCompletionRecoveries.add(promise);
   }
 
@@ -771,17 +784,19 @@ export class AcsExecutor {
       workload?: import('./sandboxLifecyclePolicy.js').SandboxWorkloadDescriptor;
     },
     invocationKey: string,
+    recordActivity = true,
   ): Promise<void> {
     const existingRunner = this.persistentRunners.get(ref.name);
     const resourceKey = JSON.stringify(ref.resources ?? null);
-    const ensureKey = `${ref.name}:${resourceKey}`;
-    const lastEnsure = this.ensureRunningAt.get(ensureKey) ?? 0;
+    const ensureKey = `${ref.name}:${resourceKey}:${recordActivity ? 'activity' : 'housekeeping'}`;
+    const lastEnsure = this.ensureRunningAt.get(ensureKey) ?? 0; // housekeeping 与用户活动缓存分离
     if (existingRunner?.isHealthy() && Date.now() - lastEnsure < 60_000) return;
     const pending = this.ensureRunningPromises.get(ensureKey);
     if (pending) return await pending;
     const ensure = this.sandboxManager.ensureRunning(identity, {
       busySandboxNames: this.busySandboxNames(),
       activeKey: invocationKey,
+      recordActivity,
     }).then((result) => {
       if (result.resourceDriftDeferred) this.ensureRunningAt.delete(ensureKey);
       else this.ensureRunningAt.set(ensureKey, Date.now());

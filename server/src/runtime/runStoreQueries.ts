@@ -418,6 +418,7 @@ export class PgRunStoreQueries {
       SELECT row_to_json(${this.runsTable}.*) AS row_json
       FROM ${this.runsTable}
       WHERE session_id = $1
+        AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
         AND ($2::timestamptz IS NULL OR updated_at < $2::timestamptz)
       ORDER BY updated_at DESC
       LIMIT $3
@@ -427,7 +428,9 @@ export class PgRunStoreQueries {
 
   async listSessionIdsByTenant(tenantId: string): Promise<string[]> {
     const result = await this.pool.query<{ session_id: string }>(
-      `SELECT DISTINCT session_id FROM ${this.runsTable} WHERE tenant_id = $1`,
+      `SELECT DISTINCT session_id FROM ${this.runsTable}
+       WHERE tenant_id = $1
+         AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'`,
       [tenantId],
     );
     return result.rows.map(row => row.session_id);

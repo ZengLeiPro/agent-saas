@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 const workflowPath = fileURLToPath(
   new URL('../../../.github/workflows/acs-sandbox.yml', import.meta.url),
 );
-const workflow = readFileSync(workflowPath, 'utf-8');
+const workflow = readFileSync(workflowPath, 'utf8');
 const ciWorkflow = readFileSync(fileURLToPath(new URL('../../../.github/workflows/ci.yml', import.meta.url)), 'utf-8');
 const classifierPath = fileURLToPath(
   new URL('../../../.github/scripts/acs-classify.sh', import.meta.url),
@@ -37,6 +37,7 @@ function classify(paths: string[]): Record<string, string> {
 
 const classificationCases = [
   { path: 'web/src/App.tsx', publish: 'false', contractCheck: 'false' },
+  { path: 'server/src/runtime/sandboxLifecycleStore.ts', publish: 'false', contractCheck: 'true' },
 
   { path: 'acs-orchestrator/src/config.ts', publish: 'true', contractCheck: 'false' },
   { path: 'scripts/release/deploy-staging-release.sh', publish: 'true', contractCheck: 'false' },
@@ -47,7 +48,7 @@ const classificationCases = [
   { path: 'server/src/agent/toolRuntime.ts', publish: 'true', contractCheck: 'false' },
   { path: 'server/src/runtime/httpTransport.ts', publish: 'true', contractCheck: 'false' },
   { path: 'server/src/runtime/handStore.ts', publish: 'true', contractCheck: 'false' },
-  // Web/application admission code, config and helpers ship in the ACS image and must run lifecycle contracts.
+  // Web/application admission code and helpers ship in the ACS image; deletion routes remain contract-only.
   { path: 'server/src/app/runtime.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channel.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channelConfig.ts', publish: 'true', contractCheck: 'true' },
@@ -62,9 +63,12 @@ const classificationCases = [
   { path: 'shared/src/types/index.ts', publish: 'false', contractCheck: 'true' },
   { path: 'shared/src/index.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/agent/types.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/appConfig.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/appServerRemoteConfig.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/sandboxRunAdmissionFence.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/sandboxScopeActivity.pg.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/app/config.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runtimeHandRegistration.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runtimeWakeSessionRestore.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/rawRuntimeRunDispatch.ts', publish: 'false', contractCheck: 'true' },
@@ -73,6 +77,11 @@ const classificationCases = [
   { path: 'server/src/runtime/sandboxWarmup.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/sandboxTerminalOutboxStore.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/sandboxLifecycleService.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/routes/sandboxSessionDeletion.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/routes/sessionPermanentDeletion.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runStatusCas.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runStoreQueries.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/routes/sessions.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runStore.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/types.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/subagent/subagentRunner.ts', publish: 'false', contractCheck: 'true' },
@@ -139,11 +148,17 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(3);
   });
 
-  it('由带 PostgreSQL 的动态 Server coverage 验证 sandboxScopeActivity PG 集成契约', () => {
+  it('由 PostgreSQL 快速合约与 Server coverage 双重验证 sandboxScopeActivity', () => {
+    const preflight = readFileSync(
+      fileURLToPath(new URL('../../../scripts/pr-preflight-task.sh', import.meta.url)),
+      'utf-8',
+    );
     expect(ciWorkflow).toContain('workspace: ${{ fromJSON(needs.coverage_scope.outputs.workspaces) }}');
     expect(ciWorkflow).toContain("image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}");
     expect(ciWorkflow).toContain('TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test');
     expect(ciWorkflow).toContain('bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"');
+    expect(ciWorkflow).toContain('bash scripts/pr-preflight-task.sh postgres');
+    expect(preflight).toContain('src/__tests__/sandboxScopeActivity.pg.test.ts');
   });
 
   it('在等待镜像前拒绝已经落后于 main 的 dispatch', () => {

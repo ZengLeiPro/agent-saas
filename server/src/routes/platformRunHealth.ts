@@ -25,18 +25,21 @@ export async function queryPlatformRunHealth(runStore?: PgRunStore): Promise<Pla
       `SELECT status, count(*)::text AS count
        FROM ${runStore.runsTable}
        WHERE status = ANY($1::text[])
+         AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
        GROUP BY status`,
       [ACTIVE_RUN_STATUSES],
     ),
     runStore.pool.query<{ count: string }>(
       `SELECT count(*)::text AS count
        FROM ${runStore.runsTable}
-       WHERE requested_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')`,
+       WHERE requested_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')
+         AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'`,
     ),
     runStore.pool.query<{ status: string; count: string }>(
       `SELECT status, count(*)::text AS count
        FROM ${runStore.runsTable}
        WHERE requested_at >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai')
+         AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
          AND status IN ('completed','failed','cancelled','orphaned')
        GROUP BY status`,
     ),

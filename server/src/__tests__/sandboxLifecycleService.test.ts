@@ -38,11 +38,11 @@ function cleanup(generation = 'generation-1') {
 }
 
 describe('PgSandboxLifecycleStore terminal candidate contract', () => {
-  it('delivered and legacy null-tenant cleanup fences admission until restore advances generation', async () => {
+  it('delivered cleanup normalizes legacy null tenant to kaiyan until restore advances generation', async () => {
     const admissionSql = sandboxRunAdmissionFenceSql('runtime_runs').join('\n');
     expect(admissionSql).toContain("'prepared','cancelling','pending','claimed','delivered'");
 
-    const query = vi.fn(async (sql: string) => {
+    const query = vi.fn(async (sql: string, _params?: unknown[]) => {
       if (sql.includes('WITH cleanup_identity AS')) {
         return {
           rows: [{
@@ -71,7 +71,9 @@ describe('PgSandboxLifecycleStore terminal candidate contract', () => {
     const cancelSql = query.mock.calls.map((call) => String(call[0])).find((sql) => sql.includes('WITH cleanup_identity AS'));
     expect(cancelSql).toContain("IN ('prepared','cancelling','pending','claimed','delivered','cancelled')");
     expect(cancelSql).toContain("COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1");
-    expect(cancelSql).toContain('run.tenant_id=$2 OR run.tenant_id IS NULL');
+    expect(cancelSql).toContain('COALESCE(run.tenant_id, $5::text)=COALESCE($2::text, $5::text)');
+    expect(query.mock.calls.find((call) => String(call[0]).includes('WITH cleanup_identity AS'))?.[1])
+      .toEqual(['session-1', 'tenant-1', expect.any(String), 'generation-restored', 'kaiyan']);
     expect(release).toHaveBeenCalledTimes(1);
   });
 
@@ -87,8 +89,8 @@ describe('PgSandboxLifecycleStore terminal candidate contract', () => {
     const text = String(sql);
     expect(text.indexOf('ROW_NUMBER() OVER')).toBeLessThan(text.indexOf("<> 'delivered'"));
     expect(text.indexOf('scope_rank = 1')).toBeLessThan(text.indexOf("<> 'deferred'"));
-    expect(text).toContain('PARTITION BY tenant_id, workspace_id, sandbox_scope_id');
-    expect(params).toEqual([100, fixed.toISOString()]);
+    expect(text).toContain('PARTITION BY COALESCE(tenant_id, $3::text), workspace_id, sandbox_scope_id');
+    expect(params).toEqual([100, fixed.toISOString(), 'kaiyan']);
   });
 });
 
@@ -115,7 +117,7 @@ describe('AcsSandboxLifecycleClient exact-scope contract', () => {
   });
 });
 
-describe('SandboxLifecycleService durable lifecycle protocol', () => {
+describe('SandboxLifecycleService durable lifecycle protocol, routing and recovery', () => {
   it('notifies a terminal top-level workload only after its entire scope is inactive', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
       String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-1' } : { status: 'ok' },
@@ -128,6 +130,10 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
         workload: { kind: 'cron' as const },
       }]),
       hasActivity: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
+      runWhileTerminalCandidateCurrent: vi.fn(async (candidate: { terminalAt: string }, operation: (terminalAt: string) => Promise<void>) => {
+        await operation(candidate.terminalAt);
+        return 'committed';
+      }),
       markTerminalDelivered: vi.fn(async () => undefined),
     };
     const service = new SandboxLifecycleService({
@@ -137,20 +143,20 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
       tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [remote()] }),
       fetchImpl,
     });
-    const scan = () => (service as unknown as { scan(): Promise<void> }).scan();
-    await scan();
+    const scanOnce = () => (service as unknown as { scan(): Promise<void> }).scan();
+    await scanOnce();
     expect(fetchImpl).not.toHaveBeenCalled();
-    await scan();
+    await scanOnce();
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
       'http://acs.test/sandboxes/lifecycle-fence', 'http://acs.test/sandboxes/lifecycle',
     ]);
     const terminalBody = JSON.parse(((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[1]![1] as RequestInit).body as string);
     expect(terminalBody.expectedActivityGeneration).toBe('activity-1');
-    expect(store.markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
+    expect(store.runWhileTerminalCandidateCurrent).toHaveBeenCalledOnce();
   });
 
-  it('does not notify when scope activity starts after reading the lifecycle fence', async () => {
+  it('does not read the lifecycle fence when the locked scope is active', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ activityGeneration: 'activity-old' }), { status: 200 })) as unknown as typeof fetch;
     const store = {
       listCleanupCandidates: vi.fn(async () => []),
@@ -158,7 +164,8 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
         ...identity, runId: 'run-racing', tenantId: 'tenant-1', targetHandId: 'agent-saas-acs',
         status: 'completed' as const, terminalAt: '2026-08-30T00:00:00.000Z', workload: { kind: 'cron' as const },
       }]),
-      hasActivity: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
+      hasActivity: vi.fn(async () => false),
+      runWhileTerminalCandidateCurrent: vi.fn(async () => 'active'),
       markTerminalDelivered: vi.fn(async () => undefined),
     };
     const service = new SandboxLifecycleService({
@@ -169,9 +176,7 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     });
 
     await (service as unknown as { scan(): Promise<void> }).scan();
-    expect(fetchImpl).toHaveBeenCalledOnce();
-    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])
-      .toBe('http://acs.test/sandboxes/lifecycle-fence');
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(store.markTerminalDelivered).not.toHaveBeenCalled();
   });
 
@@ -186,6 +191,10 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     const store = {
       listCleanupCandidates: vi.fn(async () => []), listTerminalCandidates: vi.fn(async () => [candidate()]),
       hasActivity: vi.fn(async () => false),
+      runWhileTerminalCandidateCurrent: vi.fn(async (candidate: { terminalAt: string }, operation: (terminalAt: string) => Promise<void>) => {
+        await operation(candidate.terminalAt);
+        return 'committed';
+      }),
       pinTerminalTargetHand: vi.fn(async (_runId: string, handId: string) => { pinned = handId; return handId; }),
       markTerminalDelivered,
     };
@@ -203,7 +212,8 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     });
     await (first as unknown as { scan(): Promise<void> }).scan();
     expect(pinned).toBe('acs-old');
-    expect(markTerminalDelivered).not.toHaveBeenCalled();
+    expect(markTerminalDelivered).toHaveBeenCalledTimes(0);
+    expect(store.runWhileTerminalCandidateCurrent).toHaveBeenCalledOnce();
 
     const recoveredFetch = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
       String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-recovered' } : {},
@@ -219,7 +229,129 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     expect((recoveredFetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
       'http://acs-old.test/sandboxes/lifecycle-fence', 'http://acs-old.test/sandboxes/lifecycle',
     ]);
-    expect(markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
+    expect(store.runWhileTerminalCandidateCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not route an unproven local session to the configured global serverRemote', async () => {
+    const enqueueCleanup = vi.fn(async () => cleanup());
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data', store: { enqueueCleanup } as never, runStore: {} as never,
+      sessionCatalog: { get: async () => session() },
+      handStore: { get: async () => null, listBySession: async () => [] },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote: { baseUrl: 'http://legacy-remote.test', authToken: 'legacy-token' },
+    });
+
+    await expect(service.prepareSessionDeletionIntent('session-1')).resolves.toBe('blocked');
+    expect(enqueueCleanup).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bare server-remote pin even when a tenant hand reuses that id', async () => {
+    const claimed = { ...cleanup(), targetHandId: 'server-remote', claimId: 'claim-1', claimGeneration: 1 };
+    const releaseCleanupClaim = vi.fn(async () => undefined);
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data',
+      store: {
+        listPreparedCleanupCandidates: vi.fn(async () => []),
+        listLegacyCleanupCandidates: vi.fn(async () => []),
+        listCleanupCandidates: vi.fn(async () => [cleanup()]),
+        claimCleanup: vi.fn(async () => claimed),
+        isCleanupClaimCurrent: vi.fn(async () => true),
+        releaseCleanupClaim,
+        listTerminalCandidates: vi.fn(async () => []),
+      } as never,
+      runStore: {} as never,
+      sessionCatalog: { get: async () => null },
+      tenantRemoteHands: () => [remote('server-remote', 'http://ambiguous-tenant-hand.test')],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({
+        tenantRemoteHands: () => [remote('server-remote', 'http://ambiguous-tenant-hand.test')],
+      }),
+      serverRemote: { baseUrl: 'http://legacy-remote.test', authToken: 'legacy-token' },
+      fetchImpl,
+    });
+
+    await (service as unknown as { scan(): Promise<void> }).scan();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(releaseCleanupClaim).toHaveBeenCalledOnce();
+  });
+
+  it('pins the serverRemote endpoint across session deletion and worker restart', async () => {
+    let phase: 'none' | 'prepared' | 'pending' | 'claimed' | 'delivered' | 'cancelled' = 'none';
+    let pending = { ...cleanup(), targetHandId: 'server-remote' };
+    const store = {
+      enqueueCleanup: vi.fn(async (candidate: typeof pending) => {
+        pending = { ...candidate, runId: 'server-remote-cleanup' };
+        phase = 'prepared';
+        return pending;
+      }),
+      listPreparedCleanupCandidates: vi.fn(async () => []),
+      listLegacyCleanupCandidates: vi.fn(async () => []),
+      listCleanupCandidates: vi.fn(async () => phase === 'pending' ? [pending] : []),
+      claimCleanup: vi.fn(async (_runId: string, claimId: string) => {
+        if (phase !== 'pending') return undefined;
+        phase = 'claimed';
+        return { ...pending, claimId };
+      }),
+      isCleanupClaimCurrent: vi.fn(async () => phase === 'claimed'),
+      releaseCleanupClaim: vi.fn(async () => { if (phase === 'claimed') phase = 'pending'; }),
+      markCleanupDelivered: vi.fn(async () => { phase = 'delivered'; }),
+      cancelCleanup: vi.fn(async (_sessionId: string, _tenantId: string | undefined, generation: string) => {
+        phase = 'cancelled';
+        return [{ ...pending, previousDeletionGeneration: pending.deletionGeneration, deletionGeneration: generation }];
+      }),
+      listTerminalCandidates: vi.fn(async () => []),
+    };
+    const serverRemote = { baseUrl: 'http://legacy-remote.test', authToken: 'legacy-token' };
+    const creator = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => session() },
+      handStore: {
+        get: async () => ({ providerId: 'server-remote', metadata: { recipe: { sandboxScopeId: 'scope-1' } } }) as never,
+        listBySession: async () => [],
+      },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote,
+    });
+    await expect(creator.prepareSessionDeletionIntent('session-1')).resolves.toBe('queued');
+    expect(pending.targetHandId).toMatch(/^server-remote:[0-9a-f]{16}$/u);
+
+    phase = 'pending';
+    const movedFetch = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const movedEndpoint = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => null },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote: { baseUrl: 'http://replacement-remote.test', authToken: 'replacement-token' },
+      fetchImpl: movedFetch,
+    });
+    await (movedEndpoint as unknown as { scan(): Promise<void> }).scan();
+    expect(phase).toBe('pending');
+    expect(movedFetch).not.toHaveBeenCalled();
+
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const restarted = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => null },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote, fetchImpl,
+    });
+    await (restarted as unknown as { scan(): Promise<void> }).scan();
+    expect(phase).toBe('delivered');
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
+      'http://legacy-remote.test/sandboxes/deletion-generation',
+      'http://legacy-remote.test/sandboxes/scope',
+    ]);
+
+    await restarted.cancelSessionDeletion('session-1');
+    expect(phase).toBe('cancelled');
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0])
+      .toBe('http://legacy-remote.test/sandboxes/deletion-generation');
   });
 
   it('distinguishes verified not_required from unresolved blocked and retries after target recovery', async () => {

@@ -456,7 +456,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       skillsWarmup.state = 'failed';
       skillsWarmup.error = 'skills config corrupted';
     } else {
-
     // 1. 将 pool 文件系统新增的 skill 写入 poolVisibility（补全缺失条目）
     const discovered = skillConfigStore.syncWithPool(currentPoolIds);
     if (discovered > 0) {
@@ -1467,7 +1466,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     logger: serverLogger.child('TenantHand'),
   });
-  // 用户打开会话页即 fire-and-forget 预热 ACS Sandbox；未配置 tenantRemoteHands 时自然跳过。
   const sandboxWarmupService = new SandboxWarmupService({
     agentCwd,
     sessionCatalog, handStore: pgHandStore,
@@ -1476,14 +1474,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     isExecutionEnabled: isRuntimeExecutionEnabled,
     ...(artifactShareStore ? { withSessionAdmissionLock: <T>(sessionId: string, operation: () => Promise<T>) => artifactShareStore!.withSessionLock(sessionId, operation) } : {}),
     logger: serverLogger.child('SandboxWarmup'),
-  }); if (pgRunStore) sandboxLifecycleService = new SandboxLifecycleService({ agentCwd, store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable), runStore: pgRunStore, sessionCatalog, handStore: pgHandStore, tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver, logger: serverLogger.child('SandboxLifecycle') });
-  // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
-  // 仍按 plaintext 接收。authTokenRef 走 vault.getSecret(actor:'system')；inline
-  // authToken 直接透传。两者互斥由 schema 保证。
+  });
+  // serverRemote 凭证在装配层解析为 plaintext；两种凭证形式互斥。
   const resolvedServerRemote = await (async () => {
     const sr = config.serverRemote;
-    if (!sr) return undefined;
-    let authToken: string | undefined;
+    if (!sr) return undefined; let authToken: string | undefined;
     if (sr.authTokenRef) {
       try {
         authToken = await secretVault.getSecret(sr.authTokenRef, {
@@ -1496,18 +1491,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           `serverRemote.authTokenRef "${sr.authTokenRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-    } else if (sr.authToken) {
-      authToken = sr.authToken;
-    }
+    } else if (sr.authToken) authToken = sr.authToken;
     if (!authToken) {
       throw new Error('serverRemote 凭证解析失败：authToken/authTokenRef 都为空（schema 应已拦截）');
     }
-    return {
-      baseUrl: sr.baseUrl,
-      authToken,
-      ...(sr.invokeTimeoutMs !== undefined ? { invokeTimeoutMs: sr.invokeTimeoutMs } : {}),
-    };
+    return { baseUrl: sr.baseUrl, authToken,
+      ...(sr.invokeTimeoutMs !== undefined ? { invokeTimeoutMs: sr.invokeTimeoutMs } : {}) };
   })();
+  if (pgRunStore) {
+    sandboxLifecycleService = new SandboxLifecycleService({
+      agentCwd,
+      store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable),
+      runStore: pgRunStore, sessionCatalog, handStore: pgHandStore,
+      tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver,
+      ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
+      logger: serverLogger.child('SandboxLifecycle'),
+    });
+  }
   const connectorAcsConfigured = hasAcsConnector(config.tenantRemoteHands?.hands);
   const resolveConnectorServerRemote = createConnectorServerRemoteResolver({ defaultRemote: resolvedServerRemote,
     eligibleHands: user => selectTenantRemoteHandsForRegistration(config.tenantRemoteHands?.hands, {

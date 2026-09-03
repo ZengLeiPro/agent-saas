@@ -228,8 +228,7 @@ describe('SandboxLifecycleService durable preparation, guarded claims and candid
 
   it('isolates legacy and terminal candidate resolver/credential failures', async () => {
     const enqueueCleanup = vi.fn(async () => baseCleanup);
-    const markTerminalDelivered = vi.fn(async () => undefined);
-    const terminal = (runId: string, targetHandId: string) => ({
+    const terminalCandidate = (runId: string, targetHandId: string) => ({
       ...baseCleanup, runId, targetHandId, status: 'completed' as const, terminalAt: deletedAt,
       workload: { kind: 'cron' as const },
     });
@@ -240,8 +239,12 @@ describe('SandboxLifecycleService durable preparation, guarded claims and candid
         { ...baseCleanup, runId: 'legacy-good', sessionId: 'legacy-good' },
       ]),
       enqueueCleanup, listCleanupCandidates: vi.fn(async () => []),
-      listTerminalCandidates: vi.fn(async () => [terminal('terminal-bad', 'acs-bad'), terminal('terminal-good', 'acs-good')]),
-      hasActivity: vi.fn(async () => false), markTerminalDelivered,
+      listTerminalCandidates: vi.fn(async () => [terminalCandidate('terminal-bad', 'acs-bad'), terminalCandidate('terminal-good', 'acs-good')]),
+      hasActivity: vi.fn(async () => false),
+      runWhileTerminalCandidateCurrent: vi.fn(async (candidate: { terminalAt: string }, operation: (terminalAt: string) => Promise<void>) => {
+        await operation(candidate.terminalAt);
+        return 'committed';
+      }),
     };
     const hands = [hand('acs-bad'), hand('acs-good')];
     const instance = service(store, {
@@ -270,8 +273,76 @@ describe('SandboxLifecycleService durable preparation, guarded claims and candid
     await scan(instance);
     expect(enqueueCleanup).toHaveBeenCalledTimes(1);
     expect(enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({ legacyRunId: 'legacy-good' }));
-    expect(markTerminalDelivered).toHaveBeenCalledOnce();
-    expect(markTerminalDelivered).toHaveBeenCalledWith('terminal-good', expect.any(String));
+    expect(store.runWhileTerminalCandidateCurrent).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a terminal snapshot superseded before lifecycle delivery', async () => {
+    const markTerminalDelivered = vi.fn(async () => undefined);
+    const deferTerminalCandidate = vi.fn(async () => undefined);
+    const store = {
+      listPreparedCleanupCandidates: vi.fn(async () => []),
+      listLegacyCleanupCandidates: vi.fn(async () => []),
+      listCleanupCandidates: vi.fn(async () => []),
+      listTerminalCandidates: vi.fn(async () => [{
+        ...baseCleanup, status: 'completed' as const, terminalAt: deletedAt,
+        workload: { kind: 'cron' as const },
+      }]),
+      hasActivity: vi.fn(async () => false),
+      runWhileTerminalCandidateCurrent: vi.fn(async () => 'superseded'),
+      deferTerminalCandidate,
+      markTerminalDelivered,
+    };
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+      String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-new' } : {},
+    ), { status: 200 })) as unknown as typeof fetch;
+
+    await scan(service(store, { fetchImpl }));
+
+    expect(deferTerminalCandidate).toHaveBeenCalledWith(baseCleanup.runId, expect.any(Error), expect.any(String));
+    expect(markTerminalDelivered).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('reads the ACS generation inside the terminal admission lock', async () => {
+    let lockHeld = false;
+    const markTerminalDelivered = vi.fn(async () => undefined);
+    const deferTerminalCandidate = vi.fn(async () => undefined);
+    const store = {
+      listPreparedCleanupCandidates: vi.fn(async () => []),
+      listLegacyCleanupCandidates: vi.fn(async () => []),
+      listCleanupCandidates: vi.fn(async () => []),
+      listTerminalCandidates: vi.fn(async () => [{
+        ...baseCleanup, status: 'completed' as const, terminalAt: deletedAt,
+        workload: { kind: 'cron' as const },
+      }]),
+      hasActivity: vi.fn(async () => false),
+      runWhileTerminalCandidateCurrent: vi.fn(async (
+        candidate: { terminalAt: string }, operation: (terminalAt: string) => Promise<void>,
+      ) => {
+        lockHeld = true;
+        await operation(candidate.terminalAt);
+        lockHeld = false;
+        return 'committed';
+      }),
+      deferTerminalCandidate,
+      markTerminalDelivered,
+    };
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (!lockHeld) return new Response(JSON.stringify({ error: 'lock not held' }), { status: 409 });
+      if (String(input).endsWith('/lifecycle-fence')) {
+        return new Response(JSON.stringify({ activityGeneration: 'activity-current' }), { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body)) as { expectedActivityGeneration?: string };
+      return body.expectedActivityGeneration === 'activity-current'
+        ? new Response('{}', { status: 200 })
+        : new Response(JSON.stringify({ error: 'activity generation changed' }), { status: 409 });
+    }) as unknown as typeof fetch;
+
+    await scan(service(store, { fetchImpl }));
+
+    expect(deferTerminalCandidate).not.toHaveBeenCalled();
+    expect(markTerminalDelivered).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('continues with later scanner queues when an earlier candidate list query fails', async () => {
@@ -291,7 +362,7 @@ describe('SandboxLifecycleService durable preparation, guarded claims and candid
     expect(delivered).toHaveBeenCalledOnce();
   });
 
-  it('expires stale prepared intents without a tombstone so they cannot starve the scanner head', async () => {
+  it('expires stale prepared intents without a tombstone, so they cannot starve the scanner head', async () => {
     const expire = vi.fn(async () => true);
     const store = {
       listPreparedCleanupCandidates: vi.fn(async () => [baseCleanup]),

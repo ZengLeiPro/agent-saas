@@ -18,6 +18,30 @@ describe('Cron Runtime identity', () => {
     cleanupDirs.clear();
   });
 
+  it('session_init 暴露后 direct lease 可被 Scheduler 抢占并使原 dispatch 退让', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'runtime-direct-lease-race-'));
+    cleanupDirs.add(cwd);
+    const acquireLease = vi.fn(async () => null);
+    const dispatch = createRawRuntimeRunDispatch({
+      agentCwd: cwd, sharedDir: SHARED_DIR, sessionCatalog: new MemorySessionCatalog(),
+      runStore: {
+        createPending: vi.fn(async (input: any) => ({ created: true, record: input })),
+        upsertPending: vi.fn(), acquireLease,
+      } as unknown as RunStore, memory: { enabled: false },
+    });
+    const events = dispatch(
+      { channel: 'cron', chatId: 'cron-job-race', content: '只运行一次' },
+      { channel: 'cron', sessionOwner: { id: 'user-1', username: 'owner', role: 'user', tenantId: TENANT_ID } },
+      { runtimeRunId: 'runtime-run-race', runtimeSessionId: 'runtime-session-race', runtimeRunCreateOnly: true,
+        modelConnection: { apiKey: 'sk-test' }, skipSystemPrompt: true },
+    );
+
+    expect(await events.next()).toMatchObject({ done: false, value: { type: 'session_init' } });
+    expect(acquireLease).not.toHaveBeenCalled();
+    expect(await events.next()).toMatchObject({ done: true });
+    expect(acquireLease).toHaveBeenCalledTimes(1);
+  });
+
   it('预分配 Runtime 身份命中已有 run 时 create-only 退让且不进入模型', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'runtime-create-only-'));
     cleanupDirs.add(cwd);

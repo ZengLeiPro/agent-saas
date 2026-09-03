@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CronService, type CronServiceDeps } from '../cron/service.js';
 import type { CronJob, CronRunLogEntry } from '../cron/types.js';
 
-function harness(timeoutSeconds = 1) {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function harness(timeoutSeconds = 1, cancel?: NonNullable<CronServiceDeps['cancelRuntimeRun']>) {
   let now = 1_000_000;
   const logs: CronRunLogEntry[] = [];
   const cancels: Parameters<NonNullable<CronServiceDeps['cancelRuntimeRun']>>[0][] = [];
@@ -11,7 +17,8 @@ function harness(timeoutSeconds = 1) {
     executeJob: async () => new Promise(() => {}), appendRunLog: async (entry) => { logs.push(entry); },
     cancelRuntimeRun: async (input) => {
       cancels.push(input);
-      return { runId: input.runtimeRunId, sessionId: input.sessionId, status: 'cancelled', statusReason: input.reason };
+      return cancel ? cancel(input)
+        : { runId: input.runtimeRunId, sessionId: input.sessionId, status: 'cancelled', statusReason: input.reason };
     },
     defaultTimeoutSeconds: timeoutSeconds,
   });
@@ -53,6 +60,36 @@ describe('scheduled-at terminal settlement', () => {
     await (h.service as any).checkStaleJobs();
     expect((await h.service.get(job.id))?.state.nextRunAtMs).toBeUndefined();
     expect(h.cancels).toHaveLength(1);
+  });
+
+  it('explicit cancel 等待 Runtime 时不删除并发编辑出的未来 at', async () => {
+    const entered = deferred<void>();
+    const terminal = deferred<{ runId: string; sessionId: string; status: 'cancelled' }>();
+    const h = harness(1, async () => { entered.resolve(); return terminal.promise; });
+    const { job, claim } = await scheduledClaim(h);
+    const cancelling = h.service.cancelRun(job.id, claim.runId);
+    await entered.promise;
+    h.setNow(1_000_002);
+    await h.service.update(job.id, { schedule: { kind: 'at', atMs: 9_999_999 } });
+    terminal.resolve({ runId: claim.runtimeRunId, sessionId: claim.sessionId, status: 'cancelled' });
+    await cancelling;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBe(9_999_999);
+  });
+
+  it('watchdog 等待 Runtime 时不删除并发编辑出的未来 at', async () => {
+    const entered = deferred<void>();
+    const terminal = deferred<{ runId: string; sessionId: string; status: 'cancelled' }>();
+    const h = harness(600, async () => { entered.resolve(); return terminal.promise; });
+    const { job, claim } = await scheduledClaim(h, 600);
+    void (h.service as any).executeClaimedJob(claim);
+    await Promise.resolve();
+    h.setNow(1_780_002);
+    const checking = (h.service as any).checkStaleJobs();
+    await entered.promise;
+    await h.service.update(job.id, { schedule: { kind: 'at', atMs: 9_999_999 } });
+    terminal.resolve({ runId: claim.runtimeRunId, sessionId: claim.sessionId, status: 'cancelled' });
+    await checking;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBe(9_999_999);
   });
 
   it('显式 cancel 清除已消费 at，但手工运行不误吞未来 at', async () => {

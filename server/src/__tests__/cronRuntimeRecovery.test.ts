@@ -188,6 +188,32 @@ describe("Cron Runtime recovery identity", () => {
     expect(stored.state.executionLedger![0]).toMatchObject({ status: "terminal", terminalStatus: "ok", recoveryCount: 1 });
   });
 
+  it("waits for authoritative Runtime terminal when Scheduler wins the first direct-dispatch lease", async () => {
+    let inspectCalls = 0;
+    const logs: Array<{ status: string; error?: string; sessionId?: string }> = [];
+    const { a } = await makePair({
+      executeJob: async (_job, hooks) => {
+        await hooks?.onSessionId?.(hooks.runtimeSessionId!);
+        return { status: "error", error: "Agent run ended without a successful terminal event" };
+      },
+      inspectRuntimeRun: async (runId) => ({
+        runId, sessionId: "scheduler-owned-session",
+        status: ++inspectCalls === 1 ? "running" : "completed",
+      }),
+      appendRunLog: async (entry) => { logs.push(entry); },
+      runtimeRunPollMs: 5,
+    });
+    const job = await a.add({ name: "first-dispatch-lease-race", schedule: { kind: "at", atMs: Date.now() + 60_000 },
+      payload: { kind: "agentTurn", message: "run" } });
+
+    await expect(a.runNow(job.id, { requestId: "first-dispatch-race-1" })).resolves.toMatchObject({ ran: true });
+    await waitFor(() => logs.length === 1);
+    expect(inspectCalls).toBe(2);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({ status: "ok", sessionId: "scheduler-owned-session" });
+    expect((await a.get(job.id))?.state.executionLedger?.[0]).toMatchObject({ terminalStatus: "ok" });
+  });
+
   it("retains the parent claim when Runtime inspection fails transiently and recovers later", async () => {
     const lease = crashableRunLease();
     let executeCalls = 0;

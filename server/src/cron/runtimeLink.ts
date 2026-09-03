@@ -123,7 +123,8 @@ export async function settleExplicitCancellation(
     current.state.lastRunAtMs = record.startedAtMs; current.state.lastStatus = status;
     current.state.lastError = error; current.state.lastDurationMs = Math.max(0, endedAtMs - record.startedAtMs);
     clearActiveExecution(current);
-    if (current.schedule.kind === 'at' && record.trigger === 'schedule') {
+    if (current.schedule.kind === 'at' && record.trigger === 'schedule'
+      && current.updatedAtMs === job.updatedAtMs && current.state.nextRunAtMs === record.scheduledAtMs) {
       delete current.state.nextRunAtMs;
       if (status === 'ok') current.enabled = false;
     } else if (current.schedule.kind !== 'at' && current.enabled) {

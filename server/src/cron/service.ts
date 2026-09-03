@@ -800,9 +800,8 @@ export class CronService {
               runtimeRunId: claim.runtimeRunId,
               runtimeSessionId: claim.sessionId,
             });
-        // inspect→dispatch 之间若另一个 Runtime owner 先创建了同一 run，
-        // raw dispatch 会 create-only 退让；此处回到权威 RunStore 等待同一终态。
-        if (claim.recovered && claim.runtimeRunId && this.deps.inspectRuntimeRun) {
+        // direct dispatch 退让时，首次与恢复执行都回到权威 RunStore，避免父 Cron 提前 error。
+        if (claim.runtimeRunId && this.deps.inspectRuntimeRun) {
           const authoritative = await inspectLinkedRuntime(this.deps.inspectRuntimeRun, claim.runtimeRunId);
           if (authoritative) {
             result = isRuntimeTerminal(authoritative.status)
@@ -880,7 +879,7 @@ export class CronService {
       // A user/system edit during execution owns the new enabled/schedule and
       // nextRun state. Old completion may only release its matching claim.
       if (current.updatedAtMs === claimedUpdatedAtMs) {
-        if (current.schedule.kind === "at" && trigger === "schedule") {
+        if (current.schedule.kind === "at" && trigger === "schedule" && current.state.nextRunAtMs === scheduledAtMs) {
           delete current.state.nextRunAtMs;
           if (status === "ok") current.enabled = false;
         } else if (current.schedule.kind !== "at" && !forced && current.enabled) {
@@ -986,7 +985,7 @@ export class CronService {
         const fallbackDurationMs = (this.getJobTimeoutSeconds(job) * 1000 || WATCHDOG_FALLBACK_TIMEOUT_MS)
           + WATCHDOG_OVERTIME_MS;
         return {
-          id: job.id, owner: job.owner, runningRunId: job.state.runningRunId, runningLeaseId: job.state.runningLeaseId,
+          id: job.id, owner: job.owner, updatedAtMs: job.updatedAtMs, runningRunId: job.state.runningRunId, runningLeaseId: job.state.runningLeaseId,
           execution: job.state.executionLedger?.find((record) => record.runId === job.state.runningRunId),
           startedAtMs, deadlineAtMs: job.state.runningDeadlineAtMs ?? startedAtMs + fallbackDurationMs,
         };
@@ -1026,7 +1025,8 @@ export class CronService {
         this.clearRunningState(job);
         job.state.lastStatus = "error";
         job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline; linked Runtime run cancelled`;
-        if (job.schedule.kind === "at" && execution.trigger === "schedule") delete job.state.nextRunAtMs;
+        if (job.schedule.kind === "at" && execution.trigger === "schedule"
+          && job.updatedAtMs === candidate.updatedAtMs && job.state.nextRunAtMs === execution.scheduledAtMs) delete job.state.nextRunAtMs;
         else if (job.schedule.kind !== "at" && job.enabled) job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
         execution.status = "terminal";
         execution.terminalStatus = "error";

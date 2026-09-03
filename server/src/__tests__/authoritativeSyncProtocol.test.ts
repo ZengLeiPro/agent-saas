@@ -67,8 +67,24 @@ describe('M20-03 server authoritative sync protocol', () => {
 
   it('carries structured code/correlation and reducer-compatible authoritative recovery data on overflow', () => {
     const queueSnapshot = buildChatQueueSnapshot('s1', [
-      run({ runId: 'queued-run', sessionId: 's1', status: 'pending', idempotencyKey: 'msg-queued' }),
-      run({ runId: 'done-run', sessionId: 's1', status: 'completed', idempotencyKey: 'msg-done' }),
+      run({
+        runId: 'queued-run', sessionId: 's1', status: 'pending', idempotencyKey: 'msg-queued',
+        metadata: {
+          chatSubmission: {
+            version: 1, text: 'queued', clientMsgId: 'msg-queued', target: { sessionId: 's1' },
+            deliveryMode: 'queue', attachments: [],
+          },
+        },
+      }),
+      run({
+        runId: 'done-run', sessionId: 's1', status: 'completed', idempotencyKey: 'msg-done',
+        metadata: {
+          chatSubmission: {
+            version: 1, text: 'done', clientMsgId: 'msg-done', target: { sessionId: 's1' },
+            deliveryMode: 'queue', attachments: [],
+          },
+        },
+      }),
     ]);
     const frame = buildSyncOverflowFrame(205, 'boot-a', {
       sessionId: 's1',

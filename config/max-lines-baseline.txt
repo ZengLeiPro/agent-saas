@@ -19,7 +19,7 @@ server/src/__tests__/sessionsRoutesMetaOnly.test.ts	812	test
 server/src/__tests__/skillsRouterTenantIsolation.test.ts	833	test
 server/src/__tests__/taskboardStore.pg.test.ts	818	test
 server/src/__tests__/toolRuntime.test.ts	1277	test
-server/src/__tests__/webChannelCoverage.test.ts	1669	test
+server/src/__tests__/webChannelCoverage.test.ts	1667	test
 server/src/__tests__/webChannelExecutionTarget.test.ts	801	test
 server/src/__tests__/webChannelReconnect.test.ts	856	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test

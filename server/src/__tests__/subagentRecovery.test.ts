@@ -91,7 +91,11 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
       tenantId: 'tenant-from-run',
     })).resolves.toBe(0);
 
-    expect(list).toHaveBeenCalledWith('tenant-from-run', 'parent-session-1');
+    expect(list).toHaveBeenCalledWith('tenant-from-run', 'parent-session-1', expect.objectContaining({
+      excludeTypes: [],
+      replayMode: 'checkpoint',
+      replayStats: expect.any(Function),
+    }));
   });
 
   it('rejects a mismatch between the authenticated run and session catalog tenants', async () => {
@@ -184,6 +188,48 @@ describe('reconcileInterruptedForegroundToolCalls', () => {
       toolCallId: 'agent-call-1',
       status: 'cancelled',
       error: expect.stringContaining('建立完成记录前中断'),
+    });
+  });
+
+  it('closes the parent invocation when subagent_finished exists but tool finalization was interrupted', async () => {
+    const eventStore = new MemoryEventStore();
+    await seedInterruptedAgentCall(eventStore);
+    await eventStore.append({
+      type: 'subagent_finished',
+      runId: 'parent-run-1',
+      sessionId: 'parent-session-1',
+      toolCallId: 'agent-call-1',
+      agentType: 'explore',
+      description: '最终安全复审',
+      childSessionId: 'child-session-1',
+      childRunId: 'child-run-1',
+      model: 'claude-opus-5[1m]',
+      status: 'completed',
+      totalTokens: 42,
+      toolUseCount: 2,
+      turnCount: 3,
+      durationMs: 1_000,
+      resultPreview: '复审完成',
+    });
+    const runStore = { get: vi.fn(), markStatus: vi.fn() } as unknown as RunStore;
+    const sessionCatalog = {
+      get: vi.fn(async () => ({ tenantId: 'tenant-subagent-recovery' })),
+      markStatus: vi.fn(),
+    } as unknown as SessionCatalog;
+
+    expect(await reconcileInterruptedForegroundToolCalls({
+      eventStore,
+      runStore,
+      sessionCatalog,
+      parentSessionId: 'parent-session-1',
+    })).toBe(1);
+    expect(runStore.get).not.toHaveBeenCalled();
+    expect(sessionCatalog.markStatus).not.toHaveBeenCalled();
+    expect(eventStore.events.filter((event) => event.type === 'subagent_finished')).toHaveLength(1);
+    expect(eventStore.events.find((event) => event.type === 'tool_invocation_completed')).toMatchObject({
+      invocationId: 'parent-run-1:agent-call-1',
+      status: 'cancelled',
+      error: expect.stringContaining('提交结果前中断'),
     });
   });
 

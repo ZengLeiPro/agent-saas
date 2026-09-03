@@ -1109,7 +1109,7 @@ export type PlatformEvent =
     resultPreview?: string;
   };
 
-export type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEventInput } from './runtimeEventStoreTypes.js';
+export type { EventAppendContext, EventListOptions, EventListPage, EventReplayLoadStats, EventStore, PlatformEventInput } from './runtimeEventStoreTypes.js';
 
 export { INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES, isInternalModelDiagnosticEvent } from './eventDiagnostics.js';
 

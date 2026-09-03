@@ -2,6 +2,7 @@ import { buildRuntimeReplayState } from '../replay.js';
 import type { RunStatus, RunStore } from '../runStore.js';
 import type { SessionCatalog } from '../sessionCatalog.js';
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../types.js';
+import { loadRuntimeReplayEvents } from '../replayEventWindow.js';
 
 const ACTIVE_RUN_STATUSES = new Set<RunStatus>([
   'pending',
@@ -47,7 +48,11 @@ export async function reconcileInterruptedForegroundToolCalls(
     throw new Error(`Foreground tool recovery tenant is missing for session ${options.parentSessionId}`);
   }
   const eventContext = { tenantId };
-  const events = await options.eventStore.list(tenantId, options.parentSessionId);
+  const events = (await loadRuntimeReplayEvents(
+    options.eventStore,
+    tenantId,
+    options.parentSessionId,
+  )).events;
   const replay = buildRuntimeReplayState(events, [], options.parentSessionId);
   let recovered = 0;
 

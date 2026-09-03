@@ -670,7 +670,7 @@ export class MemoryConsolidationEngine {
           cwd: effectiveCwd,
           approvalPolicy: { autoApproveTools: true },
           skipMemory: true,
-          abortController: abort,
+          abortController: abort, sandboxWorkloadDescriptor: { kind: 'memory' },
           memoryConsolidationSourceSessionId: state.sessionId,
         })[Symbol.asyncIterator]();
         for (;;) {

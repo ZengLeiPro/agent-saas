@@ -9,6 +9,7 @@ import {
   type AgentTarget,
   type AgentTargetIdentitySnapshot,
   type SandboxProfile,
+  type SandboxWorkloadDescriptor,
 } from '@agent/shared';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
 import {
@@ -90,6 +91,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   /** 平台内部来源；memory_consolidation 会话保留审计数据但不对用户展示。 */
   sessionSource?: 'taskboard_execution' | 'memory_consolidation';
   memoryAutomationEligible?: boolean;
+  /** 顶层 Sandbox workload 分类；子会话继承父值，禁止按 sessionId 形状推断。 */
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
 }
 
 export function getMetaPath(transcriptPath: string): string {
@@ -251,6 +254,44 @@ export function resolveSessionAgentTarget(
     };
   }
   return { status: 'unproven' };
+}
+
+/**
+ * N-1 历史会话的 legacy personal 判定。
+ *
+ * `agentTarget` 自 M20-06 起才写入 meta，此前所有会话都没有该字段；而 `orgAgentId`
+ * 自 2026-07 唯恩批次起对每个组织专家会话必写。因此「无 agentTarget + 无 orgAgentId
+ * + tenant 可证明一致」是一条完整证据链，不是把历史会话猜成 personal。缺 tenant 证据
+ * 时返回 null，调用方必须继续按 unproven 处理。
+ */
+export function resolveLegacyPersonalTarget(
+  meta: SessionMeta | null,
+  expectedTenantId?: string,
+): AgentTarget | null {
+  if (!meta || !expectedTenantId) return null;
+  if (meta.agentTarget !== undefined) return null;
+  if (meta.orgAgentId) return null;
+  if (meta.tenantId !== undefined && meta.tenantId !== expectedTenantId) return null;
+  return { kind: 'personal', tenantId: expectedTenantId };
+}
+
+/**
+ * 访问侧解析入口：在严格版之上补 N-1 legacy personal 兜底，并标记 needsMigration，
+ * 让调用方沿既有迁移路径把 canonical target 落盘（惰性升级，不做批量回填）。
+ *
+ * 不合成 user/session owner —— resume、abort 与 ask_user 仍保持各自既有的归属语义。
+ *
+ * ⚠️ 绑定写入路径（ensureSessionAgentTargetBinding）必须继续用严格版
+ * resolveSessionAgentTarget，否则历史个人会话会被允许改绑成组织专家。
+ */
+export function resolveSessionAgentTargetForAccess(
+  meta: SessionMeta | null,
+  expectedTenantId?: string,
+): SessionAgentTargetResolution {
+  const strict = resolveSessionAgentTarget(meta, expectedTenantId);
+  if (strict.status === 'bound') return strict;
+  const legacy = resolveLegacyPersonalTarget(meta, expectedTenantId);
+  return legacy ? { status: 'bound', target: legacy, needsMigration: true } : strict;
 }
 
 /**

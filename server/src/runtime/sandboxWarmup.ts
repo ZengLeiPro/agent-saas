@@ -1,4 +1,5 @@
 import { deriveSandboxScopeId, deriveWorkspaceMountSubPath, type TenantRemoteHandDispatchConfig } from './rawRuntimeRunDispatch.js';
+import { toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
 import { selectTenantRemoteHandsForRegistration, type TenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
 import type { SessionCatalog } from './sessionCatalog.js';
 import type { HandStore } from './handStore.js';
@@ -17,7 +18,7 @@ import { controlPlaneFetch } from './controlPlaneFetch.js';
  *
  * 安全边界：
  * - 纯旁路优化：所有失败仅记日志，绝不影响用户输入与正式执行链路；
- * - 只预热 sessionCatalog 已有 record 的会话（workspaceId/cwd 取 dispatch 写入的
+ * - 只预热 sessionCatalog 已有且未软删除的 record（workspaceId/cwd 取 dispatch 写入的
  *   真实值，推导函数与 dispatch 同源，保证预热的是同一个 Sandbox scope）；
  *   record 不存在（全新会话）直接放弃，绝不自行推导身份→workspace 映射；
  * - per-scope 节流（默认 60s），配合 orchestrator 侧 ensureRunning 同名合流，
@@ -44,6 +45,8 @@ export interface SandboxWarmupServiceOptions {
   /** warmup HTTP 超时，默认 5s（orchestrator 秒回 202，超时即视为失败记日志）。 */
   requestTimeoutMs?: number;
   isExecutionEnabled?: () => boolean | Promise<boolean>;
+  /** 与 Session 软删除共用的跨进程锁。 */
+  withSessionAdmissionLock?: <T>(sessionId: string, operation: () => Promise<T>) => Promise<T>;
 }
 
 const DEFAULT_THROTTLE_MS = 60_000;
@@ -83,8 +86,15 @@ export class SandboxWarmupService {
   /** 供测试与需要等待结果的调用方使用；正常业务路径用 fireForSession。 */
   async fireForSessionAsync(sessionId: string): Promise<'fired' | 'skipped'> {
     if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return 'skipped';
+    const fire = () => this.fireForSessionAdmitted(sessionId);
+    return this.options.withSessionAdmissionLock
+      ? this.options.withSessionAdmissionLock(sessionId, fire)
+      : fire();
+  }
+
+  private async fireForSessionAdmitted(sessionId: string): Promise<'fired' | 'skipped'> {
     const record = await this.options.sessionCatalog.get(sessionId);
-    if (!record) return 'skipped';
+    if (!record || record.deletedAt) return 'skipped';
     if (record.kind === 'subagent') return 'skipped';
 
     const entry = this.selectAcsHand({
@@ -136,6 +146,7 @@ export class SandboxWarmupService {
             ...(sandboxScopeId ? { sandboxScopeId } : {}),
             ...(mountSubPath ? { mountSubPath } : {}),
             ...(resources ? { resources } : {}),
+            workload: toAcsSandboxWorkloadDescriptor(record.sandboxWorkloadDescriptor),
           }),
           signal: controller.signal,
         },

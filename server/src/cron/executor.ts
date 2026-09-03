@@ -153,7 +153,7 @@ export async function executeJob(
 }
 
 /**
- * memory_poll 系统任务（2026-07-14 批次）：
+ * memory_poll 系统 workload（2026-07-14 批次）：
  *   - 忽略 payload.message，加载服务端版本化提示语（改提示语不用批量改 job）
  *   - 起 run 前先查最近 lookbackHours 有无用户主动消息，没有直接 skipped
  *     （多租户下大量不活跃用户每天空跑一次 LLM 是纯烧钱）
@@ -505,6 +505,7 @@ async function executeAgentTurn(
         ...(job.orgAgentId ? { orgAgentId: job.orgAgentId } : {}),
         ...skipFlags,
         ...(overrides?.toolProfile ? { toolProfile: overrides.toolProfile } : {}),
+        sandboxWorkloadDescriptor: { kind: overrides?.toolProfile ? 'memory' : 'cron' },
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(overrides?.executionTarget ? { executionTarget: overrides.executionTarget } : {}),
       },

@@ -169,7 +169,7 @@ describe('artifact routes', () => {
     }
   });
 
-  it('forces active signed content to attachment with sandbox headers', async () => {
+  it('serves active signed content inline only with a restrictive response sandbox', async () => {
     const artifact = await service.createFromBytes({
       sessionId: SESSION_ID,
       data: '<!doctype html><script>top.location="https://example.test"</script>',
@@ -178,11 +178,11 @@ describe('artifact routes', () => {
     });
     const { server, baseUrl } = await startServer(service, { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' });
     try {
-      const readUrl = await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?proxy=true`);
+      const readUrl = await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?proxy=true&viewPolicyVersion=2`);
       const signed = await readUrl.json() as { url: string; direct: boolean };
       expect(signed.direct).toBe(false);
       const content = await fetch(signed.url);
-      expect(content.headers.get('content-disposition')).toMatch(/^attachment;/);
+      expect(content.headers.get('content-disposition')).toMatch(/^inline;/);
       expect(content.headers.get('x-content-type-options')).toBe('nosniff');
       expect(content.headers.get('content-security-policy')).toContain('sandbox');
     } finally {
@@ -279,7 +279,7 @@ describe('artifact routes', () => {
     } finally { await stopServer(server); }
   });
 
-  it('serves valid PDF byte ranges/HEAD/304 and rejects invalid or unsupported ranges', async () => {
+  it('serves valid PDF and text byte ranges plus HEAD/304', async () => {
     const pdfData = Buffer.from('%PDF-1.7\n0123456789abcdefghijklmnopqrstuvwxyz');
     const pdf = await service.createFromBytes({ sessionId: SESSION_ID, data: pdfData, fileName: 'safe.pdf', mimeType: 'application/pdf' });
     const text = await service.createFromBytes({ sessionId: SESSION_ID, data: 'plain', fileName: 'safe.txt', mimeType: 'text/plain' });
@@ -305,16 +305,16 @@ describe('artifact routes', () => {
       expect((await fetch(pdfGrant.readUrl, { headers: { 'If-None-Match': etag } })).status).toBe(304);
 
       const textGrant = await (await fetch(`${baseUrl}/api/artifacts/${text.artifactId}/read-url`)).json() as { readUrl: string };
-      expect((await fetch(textGrant.readUrl, { headers: { Range: 'bytes=0-1' } })).status).toBe(416);
+      const textPartial = await fetch(textGrant.readUrl, { headers: { Range: 'bytes=0-1' } });
+      expect(textPartial.status).toBe(206);
+      await expect(textPartial.text()).resolves.toBe('pl');
     } finally { await stopServer(server); }
   });
 
-  it('forces spoofed, double-extension, active and scripted PDF files to warned attachment descriptors', async () => {
+  it('forces spoofed, double-extension and scripted PDF files to warned attachment descriptors', async () => {
     const cases = [
       { data: '<svg><script>alert(1)</script></svg>', fileName: 'photo.png', mimeType: 'image/png' },
       { data: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), fileName: 'invoice.html.png', mimeType: 'image/png' },
-      { data: '<!doctype html><script>alert(1)</script>', fileName: 'x.html', mimeType: 'text/html' },
-      { data: '<svg/>', fileName: 'x.svg', mimeType: 'image/svg+xml' },
       { data: '%PDF-1.7 /JavaScript /JS', fileName: 'x.pdf', mimeType: 'application/pdf' },
     ];
     const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
@@ -330,6 +330,39 @@ describe('artifact routes', () => {
         expect(content.headers.get('x-content-type-options')).toBe('nosniff');
         expect(content.headers.get('content-security-policy')).toContain('sandbox');
       }
+    } finally { await stopServer(server); }
+  });
+
+  it('infers Markdown MIME and grants active text only to the matching safe renderer', async () => {
+    const markdown = await service.createFromBytes({ sessionId: SESSION_ID, data: '# 安全预览', fileName: 'readme.md' });
+    const html = await service.createFromBytes({ sessionId: SESSION_ID, data: '<!doctype html><script>document.body.dataset.ran="1"</script>', fileName: 'demo.html' });
+    const svg = await service.createFromBytes({ sessionId: SESSION_ID, data: '<svg><script>alert(1)</script></svg>', fileName: 'icon.svg' });
+    expect(markdown.mimeType).toBe('text/markdown');
+    expect(html.mimeType).toBe('text/html');
+    expect(svg.mimeType).toBe('image/svg+xml');
+
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const { server, baseUrl } = await startServer(service, owner);
+    try {
+      const markdownGrant = await (await fetch(`${baseUrl}/api/artifacts/${markdown.artifactId}/read-url?viewPolicyVersion=2`)).json() as { descriptor: { viewKind: string; requiresWarning: boolean } };
+      expect(markdownGrant.descriptor).toMatchObject({ viewKind: 'markdown', requiresWarning: false });
+
+      const legacyMarkdownGrant = await (await fetch(`${baseUrl}/api/artifacts/${markdown.artifactId}/read-url`)).json() as { descriptor: { viewKind: string } };
+      expect(legacyMarkdownGrant.descriptor.viewKind).toBe('text');
+
+      const htmlGrant = await (await fetch(`${baseUrl}/api/artifacts/${html.artifactId}/read-url?viewPolicyVersion=2`)).json() as { readUrl: string; descriptor: { viewKind: string; activeContent: boolean; requiresWarning: boolean } };
+      expect(htmlGrant.descriptor).toMatchObject({ viewKind: 'html', activeContent: true, requiresWarning: true });
+      const htmlContent = await fetch(htmlGrant.readUrl);
+      expect(htmlContent.headers.get('content-disposition')).toMatch(/^inline;/);
+      expect(htmlContent.headers.get('content-security-policy')).toContain("default-src 'none'");
+
+      const legacyHtmlGrant = await (await fetch(`${baseUrl}/api/artifacts/${html.artifactId}/read-url`)).json() as { descriptor: { viewKind: string } };
+      expect(legacyHtmlGrant.descriptor.viewKind).toBe('download-only');
+
+      const svgGrant = await (await fetch(`${baseUrl}/api/artifacts/${svg.artifactId}/read-url?viewPolicyVersion=2`)).json() as { readUrl: string; descriptor: { viewKind: string; activeContent: boolean } };
+      expect(svgGrant.descriptor).toMatchObject({ viewKind: 'source', activeContent: true });
+      const svgContent = await fetch(svgGrant.readUrl);
+      expect(svgContent.headers.get('content-type')).toContain('text/plain');
     } finally { await stopServer(server); }
   });
 

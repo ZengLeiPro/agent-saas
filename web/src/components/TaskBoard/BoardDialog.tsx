@@ -231,14 +231,13 @@ export function BoardDialog({
         return trimmed ? [[purpose, trimmed] as const] : [];
       }),
     ) as TaskBoardStageModels;
-    // 只提交与系统默认模板不同的阶段（未覆盖阶段保持空白 → 执行时跟随系统固定模板更新）。
+    // 完整提交三阶段文本，避免新看板在运行时回退到与表单展示不同的旧模板。
     const normalizedStagePrompts = Object.fromEntries(
       (Object.keys(TASKBOARD_STAGE_DEFAULT_PROMPTS) as TaskBoardExecutionPurpose[]).flatMap((purpose) => {
         const value = stagePrompts[purpose];
         if (typeof value !== "string") return [];
         const trimmed = value.trim();
-        if (!trimmed || trimmed === TASKBOARD_STAGE_DEFAULT_PROMPTS[purpose]) return [];
-        return [[purpose, trimmed] as const];
+        return trimmed ? [[purpose, trimmed] as const] : [];
       }),
     ) as TaskBoardStagePrompts;
     const integrationPolicy: TaskBoardIntegrationPolicy = {
@@ -287,7 +286,7 @@ export function BoardDialog({
           name: normalizedName,
           ...(description.trim() ? { description: description.trim() } : {}),
           prompt: prompt.trim(),
-          ...(Object.keys(normalizedStagePrompts).length ? { stagePrompts: normalizedStagePrompts } : {}),
+          stagePrompts: normalizedStagePrompts,
           ...(model ? { model } : {}),
           ...(Object.keys(normalizedStageModels).length ? { stageModels: normalizedStageModels } : {}),
           visibility,

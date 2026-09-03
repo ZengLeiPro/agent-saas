@@ -33,7 +33,7 @@ import {
   readSessionMeta,
   writeSessionMeta,
   updateSessionMeta,
-  resolveSessionAgentTarget,
+  resolveSessionAgentTargetForAccess,
   type SessionMeta,
 } from "../data/transcripts/meta.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
@@ -80,6 +80,7 @@ import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/stor
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } from "../data/sessionShares/store.js";
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
+import { requireSandboxPhysicalDeletion, type SandboxSessionDeletionResult } from './sandboxSessionDeletion.js'; export type { SandboxSessionDeletionResult } from './sandboxSessionDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
@@ -333,7 +334,6 @@ async function getDurableSubagentUsage(
   return usage;
 }
 
-
 export interface SessionsRouterOptions {
   /** Agent 工作目录（用于推导 transcript projectKey） */
   agentCwd: string;
@@ -397,7 +397,8 @@ export interface SessionsRouterOptions {
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
-  sandboxWarmup?: (sessionId: string) => void;
+  sandboxWarmup?: (sessionId: string) => void; sandboxCleanupRequired?: boolean; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<Exclude<SandboxSessionDeletionResult, 'deleted'>>;
+  sandboxSessionDeletion?: (sessionId: string) => Promise<SandboxSessionDeletionResult>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
   /**
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
@@ -470,7 +471,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   } {
     if (!meta) return {};
-    const resolved = resolveSessionAgentTarget(meta, meta.tenantId);
+    const resolved = resolveSessionAgentTargetForAccess(meta, meta.tenantId);
     if (resolved.status === 'unproven') {
       return {
         orgAgentAvailable: false,
@@ -1725,7 +1726,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             sessionId: item.sessionId,
             ownerUserId: meta.userId,
             hasTranscript: item.hasTranscript,
-            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub),
+            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: () => requireSandboxPhysicalDeletion(options, item.sessionId),
             deleteTranscriptPreservingMeta: async () => !item.hasTranscript || (await deleteSession(item.sessionId, { preserveMeta: true })).deleted,
             deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true })).deleted,
           });
@@ -3034,8 +3035,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   /**
    * POST /api/sessions/:sessionId/restore
    *
-   * 从回收站恢复自己的会话（移除 deletedAt）。
-   * Owner-self only：只允许会话原 owner 恢复；任何 admin（含平台 admin / 组织 admin）
+   * 从回收站恢复自己的会话（先取消 durable cleanup，再移除 deletedAt）。
+   * Owner-self only：只允许会话原 owner 恢复，任何 admin（含平台 admin / 组织 admin）
    * 都不能代恢复他人会话。普通 user 也能恢复自己的。
    */
   router.post(
@@ -3071,9 +3072,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             res.status(400).json({ error: "Session is not deleted" });
             return;
           }
-
-          // 移除 deletedAt/deletedBy
-          const { deletedAt, deletedBy, ...rest } = meta;
+          // 先 CAS 取消 durable cleanup，再移除 tombstone；否则重试可能在恢复后删除新建 Sandbox。
+          if (options.sandboxCleanupRequired && !options.sandboxSessionRestore) { res.status(503).json({ error: "Sandbox restore 能力不可用" }); return; }
+          await options.sandboxSessionRestore?.(sessionId); const { deletedAt, deletedBy, ...rest } = meta;
           await writeSessionMeta(transcriptPath, rest as SessionMeta);
           auditLog(req, "session_restored", sessionId);
           sessionsListCache.clear();
@@ -3135,7 +3136,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           sessionId,
           ownerUserId: req.user.sub,
           hasTranscript,
-          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub),
+          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: () => requireSandboxPhysicalDeletion(options, sessionId),
           deleteTranscriptPreservingMeta: async () => !hasTranscript || (await deleteSession(sessionId, { preserveMeta: true })).deleted,
           deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(sessionId, { deleteSidecarDir: true })).deleted,
         });
@@ -3164,7 +3165,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   /**
    * DELETE /api/sessions/:sessionId
    *
-   * 软删除会话（写入 deletedAt，文件不物理删除）
+   * 软删除会话（写入 deletedAt，文件不物理删除；重复请求保持幂等）
    * 所有角色统一为软删除；非 admin 需归属校验
    */
   router.delete("/sessions/:sessionId", async (req: Request, res: Response) => {
@@ -3241,22 +3242,24 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
 
       const applySoftDelete = async (): Promise<boolean> => {
-        // 会话锁内重读 tombstone，避免排队期间的 restore/delete 改变被旧快照覆盖。
-        const currentMeta = await readSessionMeta(transcriptPath);
-        if (!currentMeta) throw new Error("Session not found"); if (currentMeta.deletedAt) return false;
+        if (options.sandboxCleanupRequired && !options.sandboxSessionDeletion) throw new Error("Sandbox cleanup 能力不可用"); const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
+        const priorVersion = Date.parse(currentMeta.updatedAt ?? currentMeta.createdAt) || 0;
+        const nextDeletedAt = new Date(Math.max(Date.now(), priorVersion + 1)).toISOString();
+        if (newlyDeleted) {
+          // prepared 不可投递；meta tombstone 成功后才进入 durable cancelling，缓存与事件由 cleanup 成功后补偿。
+          const intent = await options.sandboxSessionDeletionIntent?.(sessionId); if (intent === "blocked") throw new Error("Sandbox cleanup intent blocked");
+          await updateSessionMeta(transcriptPath, {
+            deletedAt: nextDeletedAt,
+            updatedAt: nextDeletedAt,
+            deletedBy: req.user?.username || "anonymous",
+          });
+        }
         await options.sessionShareStore?.revokeBySession(sessionId, currentMeta.userId).catch((err) => {
           apiLogger.warn(
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
-        const priorVersion = Date.parse(currentMeta.updatedAt ?? currentMeta.createdAt) || 0;
-        const deletedAt = new Date(Math.max(Date.now(), priorVersion + 1)).toISOString();
-        await updateSessionMeta(transcriptPath, {
-          deletedAt,
-          updatedAt: deletedAt,
-          deletedBy: req.user?.username || "anonymous",
-        });
-        return true;
+        const cleanup = await options.sandboxSessionDeletion?.(sessionId); if (cleanup === "blocked") throw new Error("Sandbox cleanup commit blocked"); return newlyDeleted;
       };
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)
@@ -3264,13 +3267,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const deletedMeta = await readSessionMeta(transcriptPath);
       const deletedAt = deletedMeta?.deletedAt ?? new Date().toISOString();
       const serverVersion = Date.parse(deletedAt) || Date.now();
-      if (!changed) {
-        res.json({ ok: true, softDeleted: true, ack: { status: "duplicate", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
-        return;
-      }
-
+      // cleanup 成功后补偿审计、缓存与删除事件；重复 DELETE 可幂等重放审计。
       auditLog(req, "session_soft_deleted", sessionId);
       sessionsListCache.clear();
+      // 广播是幂等状态通知，重复 DELETE 可再次投递以补偿前次 cleanup 失败。
       // 广播删除事件到操作者和资源 owner 的所有连接（前端效果：会话从列表消失）
       const broadcastUserIds = new Set<string>();
       if (req.user?.sub) broadcastUserIds.add(req.user.sub);
@@ -3298,7 +3298,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           }
         }
       }
-      res.json({ ok: true, softDeleted: true, ack: { status: "applied", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
+      res.json({ ok: true, softDeleted: true, ack: { status: changed ? "applied" : "duplicate", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {
@@ -3309,7 +3309,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(400).json({ error: msg });
         return;
       }
-      res.status(500).json({ error: msg });
+      res.status(msg.includes("Sandbox cleanup 能力不可用") ? 503 : 500).json({ error: msg });
     }
   });
 

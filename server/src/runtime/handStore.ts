@@ -1,5 +1,5 @@
 import pg from 'pg';
-import type { ExecutionTargetKind, ToolDescriptor, ToolRisk } from '../agent/toolRuntime.js';
+import type { ExecutionTargetKind, SandboxWorkloadWireDescriptor, ToolDescriptor, ToolRisk } from '../agent/toolRuntime.js';
 import { parseWorkspaceId } from './workspaceIdentity.js';
 
 const { Pool } = pg;
@@ -65,6 +65,8 @@ export interface WorkspaceRecipe {
   /** Stable transport idempotency key for crash-safe provisioning retries. */
   provisionKey?: string;
   resources?: { cpu?: string; memoryMb?: number; diskMb?: number; timeoutMs?: number };
+  /** ACS execution-plane descriptor. Its `class` is stable even when taskboard details evolve. */
+  workload?: SandboxWorkloadWireDescriptor;
 }
 
 export interface HandRecord {

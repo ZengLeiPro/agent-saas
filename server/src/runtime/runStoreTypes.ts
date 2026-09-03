@@ -204,6 +204,14 @@ export interface RunLeaseAuthority {
   leaseToken: string;
 }
 
+export interface SandboxCleanupClaimGuard {
+  cleanupRunId: string;
+  sessionId: string;
+  sandboxScopeId: string;
+  claimId: string;
+  claimGeneration: number;
+}
+
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
@@ -255,6 +263,7 @@ export interface RunStore {
     targetRunId: string | undefined,
     event: PlatformEventInput,
     tenantId: string,
+    cleanupGuard?: SandboxCleanupClaimGuard,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }>;
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
   listPendingSteeringBySession?(sessionId: string, tenantId?: string): Promise<SteeringInputRecord[]>;

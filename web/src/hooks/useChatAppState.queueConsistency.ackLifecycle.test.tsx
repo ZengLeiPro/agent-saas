@@ -170,6 +170,7 @@ describe("useChatAppState ACK lifecycle", () => {
 
     act(() => emit({
       type: "pending_interactions",
+      sessionId: "session-remote",
       interactions: [{
         type: "ask_user",
         interactionId: "ask-retry",
@@ -212,6 +213,7 @@ describe("useChatAppState ACK lifecycle", () => {
     await settleInitialResume("session-remote");
     act(() => emit({
       type: "pending_interactions",
+      sessionId: "session-remote",
       interactions: [{
         type: "permission_request",
         interactionId: "approval-canonical",
@@ -244,8 +246,10 @@ describe("useChatAppState ACK lifecycle", () => {
     ["approval-remote-allow", true, "allowed"],
     ["approval-remote-deny", false, "denied"],
   ] as const)("applies cross-connection canonical approval %s", async (interactionId, allow, status) => {
+    harness.session.sessionId = "session-remote";
+    harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
-    act(() => emit({ type: "pending_interactions", interactions: [{
+    act(() => emit({ type: "pending_interactions", sessionId: "session-remote", interactions: [{
       type: "permission_request", interactionId, toolName: "Shell", toolInput: { command: "echo test" },
     }] }));
     act(() => emit({ type: "interaction_resolved", sessionId: "session-remote", interactionId, response: { allow } }));
@@ -254,8 +258,10 @@ describe("useChatAppState ACK lifecycle", () => {
   });
 
   it("applies cross-connection canonical AskUser answer after a lost ACK and changed retry", async () => {
+    harness.session.sessionId = "session-remote";
+    harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
-    act(() => emit({ type: "pending_interactions", interactions: [{
+    act(() => emit({ type: "pending_interactions", sessionId: "session-remote", interactions: [{
       type: "ask_user", interactionId: "ask-remote", questions: [{ question: "q", header: "h", options: [], multiSelect: false }],
     }] }));
     act(() => emit({

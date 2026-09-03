@@ -12,8 +12,8 @@ const row = {
   metadata: {},
 };
 
-describe('PgRunStore wakeMessage 生命周期', () => {
-  it('markStatus 仅在终态合并 metadata 后原子移除 wakeMessage', async () => {
+describe('PgRunStore terminal metadata 生命周期', () => {
+  it('markStatus 锁后取库时钟，并在终态合并 metadata 后原子移除 wakeMessage', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     const pool = {
       query: async (sql: string, params: unknown[] = []) => {
@@ -31,13 +31,41 @@ describe('PgRunStore wakeMessage 生命周期', () => {
       result: 'ok',
     });
 
+    expect(queries[0].sql).toContain('WITH locked AS MATERIALIZED');
+    expect(queries[0].sql).toContain('FOR UPDATE');
+    expect(queries[0].sql).toContain('clock_timestamp() AS now FROM locked');
     expect(queries[0].sql).toContain("WHEN $2::text IN ('completed','failed','cancelled','orphaned')");
-    expect(queries[0].sql).toContain("THEN (metadata || $5::jsonb) - 'wakeMessage'");
-    expect(queries[0].sql).toContain('ELSE metadata || $5::jsonb');
+    expect(queries[0].sql).toContain("THEN ((run.metadata || $4::jsonb) - 'wakeMessage') || jsonb_build_object(");
+    expect(queries[0].sql).toContain("run.metadata->>'sandboxLifecycleTerminalAt'");
+    expect(queries[0].sql).toContain("WHEN run.status = 'orphaned' THEN run.updated_at::text");
+    expect(queries[0].sql).toContain("WHEN run.status = $2 AND $2::text IN ('completed','failed','cancelled','orphaned') THEN run.updated_at");
+    expect(queries[0].sql).toContain('ELSE transition_time.now');
+    expect(queries[0].sql).toContain('ELSE run.metadata || $4::jsonb');
     expect(queries[0].params[1]).toBe('completed');
+    expect(queries[0].params).toHaveLength(4);
   });
 
-  it('releaseLease 和等待审批超时终态也移除 wakeMessage', async () => {
+  it('markStatusIfCurrent 也使用 write-once terminalAt', async () => {
+    const queries: string[] = [];
+    const pool = {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return { rows: [{ row_json: row }] };
+      },
+    };
+    const store = new PgRunStore({ pool: pool as never });
+
+    await store.markStatusIfCurrent('run-1', ['running', 'completed'], 'completed', 'late');
+
+    expect(queries[0]).toContain('WITH locked AS MATERIALIZED');
+    expect(queries[0]).toContain('FOR UPDATE');
+    expect(queries[0]).toContain('clock_timestamp() AS now FROM locked');
+    expect(queries[0]).toContain("WHEN run.status = $3 AND $3::text IN ('completed','failed','cancelled','orphaned')");
+    expect(queries[0]).toContain("run.metadata->>'sandboxLifecycleTerminalAt'");
+    expect(queries[0]).toContain("WHEN run.status = 'orphaned' THEN run.updated_at::text");
+  });
+
+  it('releaseLease 保留首次终态时间，等待审批超时终态也移除 wakeMessage', async () => {
     const queries: string[] = [];
     const pool = {
       query: async (sql: string) => {
@@ -53,7 +81,12 @@ describe('PgRunStore wakeMessage 生命周期', () => {
     await store.releaseLease('run-1', 'worker-1', 'failed', 'boom');
     await store.cancelStaleWaitingApproval('run-1', new Date(), 'timeout');
 
-    expect(queries[0]).toContain("THEN metadata - 'wakeMessage'");
+    expect(queries[0]).toContain('WITH locked AS MATERIALIZED');
+    expect(queries[0]).toContain('FOR UPDATE');
+    expect(queries[0]).toContain('clock_timestamp() AS now FROM locked');
+    expect(queries[0]).toContain("THEN (run.metadata - 'wakeMessage') || jsonb_build_object(");
+    expect(queries[0]).toContain("THEN run.metadata->>'sandboxLifecycleTerminalAt' END");
+    expect(queries[0]).toContain('THEN run.updated_at ELSE transition_time.now END');
     expect(queries[1]).toContain("metadata = (metadata || $5::jsonb) - 'wakeMessage'");
   });
 

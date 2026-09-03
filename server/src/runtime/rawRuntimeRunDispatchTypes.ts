@@ -46,6 +46,7 @@ import type { UploadManager } from '../uploads/manager.js';
 export interface ServerRemoteDispatchConfig {
   baseUrl: string;
   authToken: string;
+  authTokenRef?: string;
   invokeTimeoutMs?: number;
   recipe?: Partial<WorkspaceRecipe>;
 }

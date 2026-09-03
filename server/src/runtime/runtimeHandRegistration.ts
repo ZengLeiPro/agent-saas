@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'crypto';
 
-import type { SandboxProfile } from '@agent/shared';
+import type { SandboxProfile, SandboxWorkloadDescriptor } from '@agent/shared';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
-import type { ExecutionTargetKind, ToolDescriptor } from '../agent/toolRuntime.js';
+import type { ExecutionTargetKind, SandboxWorkloadWireDescriptor, ToolDescriptor } from '../agent/toolRuntime.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
 import { HandManager } from './handManager.js';
 import {
@@ -28,6 +28,7 @@ import {
   type RuntimeIsolationRequirement,
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
+// Workload classification is fixed at the Server creation boundary; memory consolidation is isolated on first creation.
 
 /** Stable tenant-native Hand identity; the store still applies an independent tenant SQL fence. */
 export function deriveTenantHandId(tenantId: string, sessionId: string, providerId: string): string {
@@ -118,6 +119,30 @@ export function deriveSandboxScopeId(input: {
   return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
 }
 
+/** Workload classification is immutable once persisted; explicit creation input beats replay. */
+export function resolveSandboxWorkloadDescriptor(
+  existing: SandboxWorkloadDescriptor | undefined,
+  replay: SandboxWorkloadDescriptor | undefined,
+  requested: SandboxWorkloadDescriptor | undefined,
+  toolProfile: unknown,
+  channel: string,
+): SandboxWorkloadDescriptor {
+  const requestedDescriptor = requested ?? (toolProfile ? { kind: 'memory' as const } : undefined);
+  return existing ?? requestedDescriptor ?? replay ?? (channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
+}
+
+export function toAcsSandboxWorkloadDescriptor(
+  descriptor: SandboxWorkloadDescriptor | undefined,
+): SandboxWorkloadWireDescriptor {
+  const value = descriptor ?? { kind: 'interactive' as const };
+  if (value.kind !== 'taskboard') return { class: value.kind };
+  return {
+    class: 'taskboard',
+    ...(value.taskKind ? { taskKind: value.taskKind } : {}),
+    ...(value.purpose ? { purpose: value.purpose } : {}),
+  };
+}
+
 function buildWorkspaceRecipe(
   workspaceId: string,
   override?: Partial<WorkspaceRecipe>,
@@ -152,8 +177,10 @@ export async function ensureRuntimeHandRegistered(params: {
    */
   topLevelSessionId?: string;
   endpoint?: string;
+  serverRemoteAuthTokenRef?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   sandboxProfile?: SandboxProfile;
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   sandboxResources?: SandboxResources;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
   tenantRemoteHandResolver?: TenantRemoteHandAuthTokenResolver;
@@ -228,7 +255,9 @@ export async function ensureRuntimeHandRegistered(params: {
     : profileRecipeBase;
   const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
-    params.executionTarget === 'server-remote' ? profileRecipe : undefined,
+    params.executionTarget === 'server-remote'
+      ? { ...profileRecipe, workload: toAcsSandboxWorkloadDescriptor(params.sandboxWorkloadDescriptor) }
+      : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
     params.topLevelSessionId,
@@ -283,7 +312,9 @@ export async function ensureRuntimeHandRegistered(params: {
     : null;
   const reuseReadyDefaultHand = existingDefaultHand?.status === 'ready'
     && existingDefaultHand.recipeDigest === recipeDigest
-    && existingDefaultHand.metadata.provisionKey === provisionKey;
+    && existingDefaultHand.metadata.provisionKey === provisionKey
+    && (params.executionTarget !== 'server-remote'
+      || existingDefaultHand.metadata.serverRemoteAuthTokenRef === (params.serverRemoteAuthTokenRef ?? null));
   const defaultHandRegistration = {
     handId: defaultHandId,
     sessionId: params.sessionId,
@@ -308,6 +339,9 @@ export async function ensureRuntimeHandRegistered(params: {
   const initialProvisionMetadata = {
     registeredBy: 'rawRuntimeRunDispatch',
     provisionKey,
+    ...(params.executionTarget === 'server-remote'
+      ? { serverRemoteAuthTokenRef: params.serverRemoteAuthTokenRef ?? null }
+      : {}),
     provisionFailure: null,
     provisionRecoveryToken: null,
     provisionRecoveryClaimedAtMs: null,
@@ -528,7 +562,13 @@ export async function ensureRuntimeHandRegistered(params: {
 
     const tenantRecipe = buildWorkspaceRecipe(
       remoteWorkspaceId,
-      hand.recipe,
+      {
+        ...hand.recipe,
+        // Runtime classification belongs to this session/run. A tenant hand may
+        // provide static repo/resources/setup/mount defaults, but its configured
+        // workload must never override the persisted dispatch descriptor.
+        workload: toAcsSandboxWorkloadDescriptor(params.sandboxWorkloadDescriptor),
+      },
       params.sessionId,
       params.workspaceMountSubPath,
       params.topLevelSessionId,
@@ -536,6 +576,7 @@ export async function ensureRuntimeHandRegistered(params: {
     const fixedChildRunId = params.runId ?? params.sessionId;
     const tenantProvisionKey = deriveProvisionIdentity(handId, fixedChildRunId, tenantRecipe);
     tenantRecipe.provisionKey = tenantProvisionKey;
+    // Digest the effective recipe, including the per-dispatch workload override and stable provision identity.
     const tenantRecipeDigest = createHash('sha256').update(canonicalJson(tenantRecipe)).digest('hex');
     const tenantProvisionGeneration = tenantProvisionKey;
     // Unknown external results remain parked only within their generation until an explicit reconciler clears the durable fence.

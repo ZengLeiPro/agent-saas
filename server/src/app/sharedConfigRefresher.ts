@@ -37,6 +37,12 @@ function readStamp(filePath: string): FileStamp | undefined {
   }
 }
 
+function codexCredentialRefs(config: AppConfig['codexSubscription']): string[] {
+  return config?.credentialRefs?.length
+    ? config.credentialRefs
+    : config?.credentialRef ? [config.credentialRef] : [];
+}
+
 function sameStamp(a: FileStamp | undefined, b: FileStamp | undefined): boolean {
   if (!a || !b) return a === b;
   return a.mtimeMs === b.mtimeMs && a.size === b.size;
@@ -66,6 +72,8 @@ export function createSharedConfigRefresher(params: {
    * STT 变更回调。凭据需经 SecretVault 异步解析，行为与 webTools 一致。
    */
   onSttUpdated?: (next: AppConfig['stt']) => void;
+  /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
+  onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
   /** 模型持久化配置变化后，由调用方异步解析 SecretRef 并替换执行快照。 */
   onModelsUpdated?: (next: NonNullable<AppConfig['models']>) => void;
   tenantStore?: TenantStore;
@@ -196,16 +204,21 @@ export function createSharedConfigRefresher(params: {
       );
     }
 
-    const codexSubscriptionChanged = JSON.stringify(config.codexSubscription ?? null)
+    const previousCodexSubscription = config.codexSubscription;
+    const codexSubscriptionChanged = JSON.stringify(previousCodexSubscription ?? null)
       !== JSON.stringify(nextConfig.codexSubscription ?? null);
     if (codexSubscriptionChanged) {
       if (nextConfig.codexSubscription) config.codexSubscription = nextConfig.codexSubscription;
       else delete config.codexSubscription;
-      const refs = nextConfig.codexSubscription?.credentialRefs?.length
-        ? nextConfig.codexSubscription.credentialRefs
-        : nextConfig.codexSubscription?.credentialRef
-          ? [nextConfig.codexSubscription.credentialRef]
-          : [];
+      const previousRefs = codexCredentialRefs(previousCodexSubscription);
+      const refs = codexCredentialRefs(nextConfig.codexSubscription);
+      const closeAll = previousCodexSubscription?.enabled !== nextConfig.codexSubscription?.enabled
+        || previousCodexSubscription?.websocketEnabled !== nextConfig.codexSubscription?.websocketEnabled
+        || previousCodexSubscription?.endpoint !== nextConfig.codexSubscription?.endpoint
+        || previousCodexSubscription?.originator !== nextConfig.codexSubscription?.originator;
+      const changedRefs = [...new Set([...previousRefs, ...refs])]
+        .filter((ref) => previousRefs.includes(ref) !== refs.includes(ref));
+      params.onCodexSubscriptionUpdated?.(closeAll ? undefined : changedRefs);
       logger?.info(
         `[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=${nextConfig.codexSubscription?.enabled === true} / `
           + `websocketEnabled=${nextConfig.codexSubscription?.websocketEnabled === true} / `

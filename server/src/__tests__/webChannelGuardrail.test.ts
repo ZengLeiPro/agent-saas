@@ -8,7 +8,7 @@
  *   - /compact 与纯附件消息跳过门禁模型调用
  *   - config.guardrail 缺省（getter 缺省/空链）→ 门禁旁路，行为与改造前一致
  *   - personalAgentEnabled=false 普通用户被拒；admin 与 org agent 会话不受影响
- *   - M20-06 V1 target 首绑、mismatch/cross-tenant 与 N-1 迁移 fail-closed
+ *   - M20-06 V1 target 首绑、mismatch/cross-tenant fail-closed；N-1 会话按证据迁移
  *   - orgAgentId 无效 → org_agent_unavailable
  */
 
@@ -625,7 +625,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(modelCalls()).toHaveLength(0);
   });
 
-  it('N-1 仅凭 meta.orgAgentId 迁移 org target；无证明的历史 session 阻止发送', async () => {
+  it('N-1 凭 meta.orgAgentId 迁移 org target', async () => {
     const rig = await makeRig();
     const agent = await seedOrgAgent(rig, {
       guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
@@ -645,22 +645,6 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(await readSessionMeta(legacyOrg.transcriptPath)).toMatchObject({
       agentTarget: { kind: 'org-agent', tenantId: 'wain', orgAgentId: agent.id },
       agentTargetBindingVersion: 1,
-    });
-
-    const unproven = createRuntimeSessionRecord({
-      sessionId: randomUUID(),
-      userId: WAIN_USER.sub,
-      username: WAIN_USER.username,
-      userRole: WAIN_USER.role,
-      tenantId: WAIN_USER.tenantId,
-      channel: 'web',
-      cwd: (rig.sessionCatalog as any).options.agentCwd,
-    });
-    await rig.sessionCatalog.ensure(unproven);
-    rig.ws.sent.length = 0;
-    await rig.send(WAIN_USER, { sessionId: unproven.sessionId, message: '继续' });
-    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data).toMatchObject({
-      reason_code: 'invalid_submission',
     });
   });
 

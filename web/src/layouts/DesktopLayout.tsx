@@ -21,6 +21,7 @@ import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useChatRightPanelController } from "./useChatRightPanelController";
+import { useDesktopLayoutProtection } from "./useDesktopLayoutProtection";
 import { getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
 const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
@@ -77,7 +78,7 @@ export function DesktopLayout(props: LayoutProps) {
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, sandboxProfile, setSandboxProfile, uploading, uploadError, dismissUploadError, setInput,
-    sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
+    sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     automation, automationTimeline, automationPending, automationError, controlAutomation,
@@ -164,6 +165,36 @@ export function DesktopLayout(props: LayoutProps) {
       return next;
     });
   }, []);
+  const layoutProtection = useDesktopLayoutProtection({
+    enabled: !settingsMode && !analysisMode && (activeTab === "chat" || activeTab === "cron"),
+    sidebarLayout,
+    sidebarPersistentlyCollapsed: sidebarCollapsed,
+    panelOpen: showDockedPanel,
+    panelRatio: splitRatio,
+  });
+  const [responsiveSidebarRevealed, setResponsiveSidebarRevealed] = useState(false);
+  const responsiveSidebarOverlayOpen = layoutProtection.hideSidebar && responsiveSidebarRevealed;
+  useEffect(() => {
+    if (!layoutProtection.hideSidebar) {
+      setResponsiveSidebarRevealed(false);
+      return;
+    }
+    if (!responsiveSidebarRevealed) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setResponsiveSidebarRevealed(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [layoutProtection.hideSidebar, responsiveSidebarRevealed]);
+  const responsiveSidebarMode = layoutProtection.hideSidebar
+    ? responsiveSidebarOverlayOpen ? "secondary-hidden" : "hidden"
+    : layoutProtection.hideSecondarySidebar
+      ? "secondary-hidden"
+      : "none";
+  const panelOverlay = layoutProtection.overlayPanel && showDockedPanel;
+  const responsivePanelStyle = panelOverlay
+    ? { width: `min(${dockedPanelWidth}, calc(100% - 1rem))`, flexShrink: 0 }
+    : { width: dockedPanelWidth, flexShrink: 0 };
 
   const [cronHeaderNavigationTarget, setCronHeaderNavigationTarget] = useState<HTMLDivElement | null>(null);
   const [cronHeaderActionsTarget, setCronHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
@@ -344,7 +375,7 @@ export function DesktopLayout(props: LayoutProps) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div ref={layoutProtection.containerRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <DesktopSessionSidebar
         sessions={sidebarSessions}
         activeSessionId={sessionId}
@@ -373,19 +404,24 @@ export function DesktopLayout(props: LayoutProps) {
         onLoadMore={loadMoreSessions}
         onLoadGroupSessions={loadGroupSessions}
         hidden={settingsMode || analysisMode ? false : sidebarCollapsed}
-        onCollapse={settingsMode || analysisMode ? undefined : toggleSidebar}
+        onCollapse={settingsMode || analysisMode ? undefined : responsiveSidebarOverlayOpen ? () => setResponsiveSidebarRevealed(false) : toggleSidebar}
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
         personalAgentEnabled={personalAgentEnabled}
+        responsiveMode={responsiveSidebarMode}
+        className={cn(responsiveSidebarOverlayOpen && "absolute inset-y-0 left-0 z-50 shadow-2xl")}
       />
+      {responsiveSidebarOverlayOpen && (
+        <button type="button" className="absolute inset-0 z-40 bg-black/10" aria-label="关闭临时侧边栏" onClick={() => setResponsiveSidebarRevealed(false)} />
+      )}
 
       {/* 右侧内容区 */}
       <div
         ref={showDockedPanel ? splitContainerRef : undefined}
         className={cn(
-          "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
-          sidebarCollapsed && !settingsMode && !analysisMode && "ml-2.5",
+          "relative my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
+          (sidebarCollapsed || layoutProtection.hideSidebar) && !settingsMode && !analysisMode && "ml-2.5",
           chatFontLarge && "chat-font-large",
         )}
       >
@@ -416,12 +452,12 @@ export function DesktopLayout(props: LayoutProps) {
         >
           <div className={cn("flex min-w-0 items-center gap-2", activeTab === "chat" && "flex-1")}>
             {/* 侧边栏展开后，收起入口移到侧边栏 header；此处只在收起态承接展开入口 */}
-            {sidebarCollapsed && !settingsMode && !analysisMode && (
+            {(sidebarCollapsed || (layoutProtection.hideSidebar && !responsiveSidebarOverlayOpen)) && !settingsMode && !analysisMode && (
               <Button
                 variant="ghost"
                 size="icon"
                 className="size-9 shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
-                onClick={(e) => { e.stopPropagation(); toggleSidebar(); }}
+                onClick={(e) => { e.stopPropagation(); if (layoutProtection.hideSidebar) setResponsiveSidebarRevealed(true); else toggleSidebar(); }}
                 title="展开侧边栏"
               >
                 <PanelToggleIcon className="size-5" />
@@ -557,7 +593,6 @@ export function DesktopLayout(props: LayoutProps) {
               onDismissUploadError={dismissUploadError}
               onInputChange={setInput}
               onSend={() => { void handleSendMessage(); }}
-              onInterject={() => { void interjectMessage(); }}
               onStop={stopGeneration}
               stopping={stopping}
               queuedInterjections={queuedInterjections}
@@ -883,7 +918,7 @@ export function DesktopLayout(props: LayoutProps) {
 
         {rightPanelOpen && (
           <>
-            <div className={cn("w-2.5 shrink-0 items-center justify-center", showRightPanel ? "flex" : "hidden")}>
+            <div className={cn("w-2.5 shrink-0 items-center justify-center", showRightPanel && !panelOverlay ? "flex" : "hidden")}>
               <ResizablePanelDivider
                 label="调整右侧面板宽度"
                 onMouseDown={onDividerMouseDown}
@@ -891,8 +926,9 @@ export function DesktopLayout(props: LayoutProps) {
               />
             </div>
             <FloatingPanel
-              className={cn("min-w-0 flex-col", showRightPanel ? "flex" : "hidden")}
-              style={{ width: dockedPanelWidth, flexShrink: 0 }}
+              className={cn("min-w-0 flex-col", showRightPanel ? "flex" : "hidden", panelOverlay && "absolute inset-y-0 right-0 z-40")}
+              style={responsivePanelStyle}
+              data-responsive-panel-mode={panelOverlay ? "overlay" : "docked"}
             >
               {rightPanelKind === 'business-step' ? (
                 <div ref={setBusinessStepDetailHost} className="h-full min-h-0" data-business-step-detail-host />
@@ -945,14 +981,16 @@ export function DesktopLayout(props: LayoutProps) {
           </>
         )}
 
-        <div className={cn("w-2.5 shrink-0 items-center justify-center", showTaskDetailPanel ? "flex" : "hidden")}>
+        <div className={cn("w-2.5 shrink-0 items-center justify-center", showTaskDetailPanel && !panelOverlay ? "flex" : "hidden")}>
           <ResizablePanelDivider label="调整任务详情宽度" onMouseDown={onDividerMouseDown} onDoubleClick={onDividerDoubleClick} />
         </div>
         <div
           ref={setTaskDetailPanelTarget}
-          className={cn("min-w-0 flex-col", showTaskDetailPanel ? "flex" : "hidden")}
-          style={{ width: dockedPanelWidth, flexShrink: 0 }}
+          className={cn("min-w-0 flex-col", showTaskDetailPanel ? "flex" : "hidden", panelOverlay && "absolute inset-y-0 right-0 z-40")}
+          style={responsivePanelStyle}
+          data-responsive-panel-mode={panelOverlay ? "overlay" : "docked"}
         />
+        <span ref={layoutProtection.fontProbeRef} className="pointer-events-none absolute size-px invisible" style={{ width: "1rem" }} aria-hidden="true" />
       </div>
     </div>
   );

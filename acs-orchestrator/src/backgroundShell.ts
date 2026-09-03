@@ -19,6 +19,7 @@ export const MAX_BACKGROUND_SHELL_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_BACKGROUND_SHELL_READ_BYTES = 64 * 1024;
 
 const BACKGROUND_SHELL_WORKER_START_TIMEOUT_MS = 10_000;
+const UNREADABLE_BACKGROUND_SHELL_GRACE_MS = 60_000;
 const TASK_ID_PATTERN = /^shell-bg-[A-Za-z0-9-]{8,160}$/;
 const TASK_ROOT_SEGMENTS = ['.ky-agent', 'runtime', 'background-shell', 'tasks'] as const;
 const TERMINAL_STATUSES = new Set<BackgroundShellStatus>([
@@ -111,6 +112,8 @@ export interface BackgroundShellOutput {
   signal?: string | null;
   error?: string;
   protectedUntil?: string;
+  requestOwned?: boolean;
+  activeTaskIds: string[];
 }
 
 export async function startBackgroundShell(input: BackgroundShellStartInput): Promise<BackgroundShellOutput> {
@@ -127,7 +130,10 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
     if (existing.commandHash !== commandHash) {
       throw new Error(`background shell task id collision: ${input.taskId}`);
     }
-    return await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId });
+    return {
+      ...(await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId })),
+      requestOwned: false,
+    };
   }
 
   const requestedAt = now.toISOString();
@@ -184,7 +190,10 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
     throw err;
   }
   worker.unref();
-  return await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId });
+  return {
+    ...(await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId })),
+    requestOwned: true,
+  };
 }
 
 async function terminateUnacknowledgedWorker(worker: ChildProcess): Promise<void> {
@@ -251,7 +260,7 @@ export async function getBackgroundShellOutput(input: BackgroundShellOutputInput
   const limitBytes = Math.min(Math.max(Math.floor(input.limitBytes ?? 20_000), 1), MAX_BACKGROUND_SHELL_READ_BYTES);
   const stdout = await readLogSlice(join(taskDir, 'stdout.log'), initialStdoutOffset, limitBytes);
   const stderr = await readLogSlice(join(taskDir, 'stderr.log'), initialStderrOffset, limitBytes);
-  const protectedUntil = await activeBackgroundShellProtectedUntil(input.workspaceRoot);
+  const protection = await reconcileBackgroundShells(input.workspaceRoot);
   return {
     taskId: state.taskId,
     status: state.status,
@@ -274,10 +283,12 @@ export async function getBackgroundShellOutput(input: BackgroundShellOutputInput
     ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
     ...(state.signal !== undefined ? { signal: state.signal } : {}),
     ...(state.error ? { error: state.error } : {}),
-    ...(protectedUntil ? { protectedUntil } : {}),
+    ...(protection.protectedUntil ? { protectedUntil: protection.protectedUntil } : {}),
+    activeTaskIds: protection.activeTaskIds,
   };
 }
 
+/** 终止单个后台任务，并在返回前确认该任务状态已经进入终态。 */
 export async function killBackgroundShell(workspaceRoot: string, taskId: string): Promise<BackgroundShellOutput> {
   const taskDir = backgroundShellTaskDir(workspaceRoot, taskId);
   let state = await reconcileBackgroundShellState(taskDir);
@@ -320,7 +331,27 @@ export async function killBackgroundShell(workspaceRoot: string, taskId: string)
   return await getBackgroundShellOutput({ workspaceRoot, taskId });
 }
 
-export async function reconcileBackgroundShells(workspaceRoot: string): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
+export async function terminateBackgroundShellsFailClosed(
+  workspaceRoot: string,
+  taskIds: string[],
+): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
+  const requested = [...new Set(taskIds)];
+  if (requested.length === 0) throw new Error('background shell fail-closed requires owned task IDs');
+  let remaining = await reconcileBackgroundShells(workspaceRoot);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (const taskId of requested) await killBackgroundShell(workspaceRoot, taskId);
+    remaining = await reconcileBackgroundShells(workspaceRoot);
+    const stillActive = remaining.activeTaskIds.filter((taskId) => requested.includes(taskId));
+    if (stillActive.length === 0) return remaining;
+  }
+  const stillActive = remaining.activeTaskIds.filter((taskId) => requested.includes(taskId));
+  throw new Error(`background shell fail-closed verification failed: ${stillActive.join(',')}`);
+}
+
+export async function reconcileBackgroundShells(
+  workspaceRoot: string,
+  options: { strict?: boolean; now?: () => Date } = {},
+): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
   const root = backgroundShellTaskRoot(workspaceRoot);
   let entries: string[];
   try {
@@ -336,8 +367,20 @@ export async function reconcileBackgroundShells(workspaceRoot: string): Promise<
     try {
       const state = await reconcileBackgroundShellState(join(root, taskId));
       if (!isBackgroundShellTerminal(state.status)) active.push(state);
-    } catch {
-      // 单个损坏任务记录不能阻断同 workspace 其他任务的生命周期保护。
+    } catch (error) {
+      // 生命周期恢复必须把损坏/尚未写完的 task 视为未知活动；普通 inventory
+      // 仍可跳过单个坏记录，避免阻断其他任务的可观测性。超过 worker
+      // 最大寿命仍不可读时，持久化为 lost，避免坏目录永久钉住 Sandbox。
+      if (options.strict) {
+        const settled = await settleStaleUnreadableBackgroundShell(
+          join(root, taskId),
+          taskId,
+          options.now?.() ?? new Date(),
+        );
+        if (!settled) {
+          throw new Error(`background shell task state is unreadable: ${taskId}`, { cause: error });
+        }
+      }
     }
   }
   const protectedUntil = active
@@ -353,6 +396,36 @@ export async function reconcileBackgroundShells(workspaceRoot: string): Promise<
 
 export async function activeBackgroundShellProtectedUntil(workspaceRoot: string): Promise<string | undefined> {
   return (await reconcileBackgroundShells(workspaceRoot)).protectedUntil;
+}
+
+async function settleStaleUnreadableBackgroundShell(
+  taskDir: string,
+  taskId: string,
+  now: Date,
+): Promise<boolean> {
+  const taskDirStat = await stat(taskDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!taskDirStat) return true;
+  if (now.getTime() - taskDirStat.mtimeMs <= MAX_BACKGROUND_SHELL_TIMEOUT_MS + UNREADABLE_BACKGROUND_SHELL_GRACE_MS) {
+    return false;
+  }
+
+  const timestamp = now.toISOString();
+  await writeBackgroundShellState(taskDir, {
+    version: 1,
+    taskId,
+    commandHash: 'unreadable',
+    status: 'lost',
+    requestedAt: new Date(taskDirStat.mtimeMs).toISOString(),
+    updatedAt: timestamp,
+    expiresAt: timestamp,
+    timeoutMs: MAX_BACKGROUND_SHELL_TIMEOUT_MS,
+    completedAt: timestamp,
+    error: 'Background shell state remained unreadable beyond the maximum worker lifetime',
+  });
+  return true;
 }
 
 export async function readBackgroundShellState(taskDir: string): Promise<BackgroundShellState> {

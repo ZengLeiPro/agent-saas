@@ -84,7 +84,7 @@ describe('飞书官方 CLI 连接器', () => {
       .toMatchObject({ event: 'authorization_complete', user_open_id: 'ou_1' });
   });
 
-  it('在用户专属 Sandbox 依次执行固定 init/start/complete 动作', async () => {
+  it('在用户专属交互式 Sandbox 依次执行固定 init/start/complete 动作', async () => {
     const wires: Array<Record<string, any>> = [];
     const fetchImpl: typeof fetch = vi.fn(async (_input, init) => {
       const wire = JSON.parse(String(init?.body)) as Record<string, any>;
@@ -134,7 +134,9 @@ describe('飞书官方 CLI 连接器', () => {
       id: 'ws_kaiyan__ky000000000001',
       mountSubPath: 'workspaces/kaiyan/ky000000000001',
       userId: USER.id,
+      workload: { class: 'interactive' },
     });
+    expect(wires.every((wire) => wire.context.workspace.workload?.class === 'interactive')).toBe(true);
     expect(JSON.stringify(wires)).not.toContain('acs-token');
   });
 
@@ -241,13 +243,16 @@ describe('飞书官方 CLI 连接器', () => {
   });
 
   it('按官方 auth status JSON 契约识别可用且已校验的用户身份', async () => {
+    let wire: Record<string, any> | undefined;
     const runner = new FeishuAuthStatusRunner({
       agentCwd: '/mnt/agent-saas/workspaces',
       resolveServerRemote: vi.fn(async () => ({
         baseUrl: 'http://acs.internal',
         authToken: 'acs-token',
       })),
-      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+      fetchImpl: vi.fn(async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
         status: 'success',
         content: JSON.stringify({
           appId: 'cli_test',
@@ -268,7 +273,8 @@ describe('飞书官方 CLI 连接器', () => {
       }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      })) as typeof fetch,
+      });
+      }) as typeof fetch,
     });
 
     await expect(runner.check(USER, connection())).resolves.toMatchObject({
@@ -279,6 +285,7 @@ describe('飞书官方 CLI 连接器', () => {
       userName: 'Alice',
       refreshExpiresAt: '2026-07-28T03:30:00.000Z',
     });
+    expect(wire?.context.workspace.workload).toEqual({ class: 'cron' });
   });
 });
 

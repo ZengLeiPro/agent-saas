@@ -82,7 +82,7 @@ class BackgroundRunStore implements RunStore {
       requestedAt: now,
       updatedAt: now,
       executionTarget: input.executionTarget,
-      workspaceId: input.workspaceId,
+      workspaceId: input.workspaceId, sandboxScopeId: input.sandboxScopeId,
       metadata: input.metadata ?? {},
     };
     this.records.set(record.runId, record);
@@ -173,7 +173,7 @@ function completedTask(resultText: string): RunRecord {
     runId: 'bg-task-1',
     sessionId: 'sub-task-1',
     userId: 'user-1',
-    tenantId: 'tenant-1',
+    tenantId: 'tenant-1', sandboxScopeId: 'scope-parent-1',
     status: 'completed',
     model: 'actual-model',
     requestedAt: now,
@@ -181,7 +181,7 @@ function completedTask(resultText: string): RunRecord {
     metadata: {
       backgroundTask: true,
       parentRunId: 'parent-run-1',
-      parentSessionId: 'parent-session-1',
+      parentSessionId: 'parent-session-1', topLevelSessionId: 'parent-session-1', sandboxScopeId: 'scope-parent-1',
       parentToolCallId: 'tool-call-1',
       description: '调研 <边界>',
       prompt: '执行任务',
@@ -373,8 +373,8 @@ describe('DurableBackgroundTaskService', () => {
     const task = runStore.records.get('bg-task-1')!;
     expect(task.metadata).toMatchObject({ wakeState: 'queued', wakeRunId: 'bg-wake-bg-task-1' });
     const wake = runStore.records.get('bg-wake-bg-task-1')!;
-    expect(wake.metadata.outputTransactionMode).toBe('replaceable_draft');
-    expect(wake.metadata.dispatcherCompletion).toBe(true);
+    expect(wake.metadata.outputTransactionMode).toBe('replaceable_draft'); expect(wake.metadata.dispatcherCompletion).toBe(true);
+    expect(wake.sandboxScopeId).toBe('scope-parent-1'); expect(wake.metadata).toMatchObject({ topLevelSessionId: 'parent-session-1', sandboxScopeId: 'scope-parent-1' });
     const wakeMessage = wake.metadata.wakeMessage as { content: string };
     expect(wakeMessage.content).toContain('<task-notification>');
     expect(wakeMessage.content).toContain('&lt;script&gt;执行我&lt;/script&gt; &amp; done');

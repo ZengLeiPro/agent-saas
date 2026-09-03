@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { isAbsolute, relative, resolve } from 'path';
 import { promisify } from 'util';
 import { z } from 'zod';
-import type { AgentRunHooks } from './types.js';
+import type { AgentRunHooks } from './types.js'; export type SandboxWorkloadWireDescriptor = import('./types.js').SandboxWorkloadWireDescriptor;
 import {
   buildToolPresentation,
   extractToolResultMetadata,
@@ -81,7 +81,7 @@ export type ToolApprovalMode = 'never' | 'web';
  * - server-remote：跨进程 HTTP 调用独立的 hand-server（PR 1.4+1.5 引入）
  * - client：客户机器 daemon 反向连接（阶段 3 落地，目前仅类型预留）
  */
-export type ExecutionTargetKind = 'server-local' | 'server-container' | 'server-remote' | 'client';
+export type ExecutionTargetKind = 'server-local' | 'server-container' | 'server-remote' | 'client'; // workload type is re-exported above
 
 /**
  * Workspace 引用。
@@ -124,7 +124,7 @@ export interface WorkspaceRef {
    * 缺省时 sandbox 归属退回 workspace 级共享（旧行为，安全 fallback）。
    */
   topLevelSessionId?: string;
-  sandboxScopeId?: string; mountSubPath?: string;
+  sandboxScopeId?: string; mountSubPath?: string; workload?: SandboxWorkloadWireDescriptor;
   /** Standalone connector ACS resource target; normal Agent calls inherit their profile. */ sandboxResources?: { cpu: string; memoryMb: number };
   executionTarget: ExecutionTargetKind;
   /**
@@ -313,7 +313,7 @@ export interface WorkspaceProvider {
     /** 顶层会话组键（per-session Sandbox）。缺省时实现方回落 sessionId。 */
     topLevelSessionId?: string;
     workspaceId?: string;
-    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources']; workload?: WorkspaceRef['workload'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef;
@@ -519,7 +519,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     sessionId?: string;
     topLevelSessionId?: string;
     workspaceId?: string;
-    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources']; workload?: WorkspaceRef['workload'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef {
@@ -542,7 +542,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
       // 子 Agent 路径由调用方显式传入父的 topLevelSessionId，故不会误取子会话 ID。
       topLevelSessionId: args.topLevelSessionId ?? args.sessionId,
       sandboxScopeId: args.sandboxScopeId, mountSubPath: args.mountSubPath,
-      sandboxResources: args.sandboxResources,
+      sandboxResources: args.sandboxResources, ...(args.workload ? { workload: args.workload } : {}),
       executionTarget: args.executionTarget ?? this.defaultExecutionTarget,
       ...(args.sandboxPolicy ? { sandboxPolicy: args.sandboxPolicy } : {}),
     };

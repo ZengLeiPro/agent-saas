@@ -221,6 +221,7 @@ export class PgRuntimeSessionStatusReconciliationStore implements RuntimeSession
         SELECT run_id, status, updated_at
         FROM ${this.runsTable} run
         WHERE run.session_id = session.session_id
+          AND COALESCE(run.metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
         ORDER BY run.updated_at DESC, run.enqueue_seq DESC
         LIMIT 1
       ) latest ON latest.status = ANY($1::text[])
@@ -252,6 +253,7 @@ export class PgRuntimeSessionStatusReconciliationStore implements RuntimeSession
         SELECT run_id, status
         FROM ${this.runsTable} run
         WHERE run.session_id = session.session_id
+          AND COALESCE(run.metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
         ORDER BY run.updated_at DESC, run.enqueue_seq DESC
         LIMIT 1
       ) latest ON TRUE
@@ -295,11 +297,13 @@ export class PgRuntimeSessionStatusReconciliationStore implements RuntimeSession
         AND $3 = (
           SELECT latest.run_id FROM ${this.runsTable} latest
           WHERE latest.session_id = session.session_id
+            AND COALESCE(latest.metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
           ORDER BY latest.updated_at DESC, latest.enqueue_seq DESC LIMIT 1
         )
         AND $4 = (
           SELECT latest.status FROM ${this.runsTable} latest
           WHERE latest.session_id = session.session_id
+            AND COALESCE(latest.metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
           ORDER BY latest.updated_at DESC, latest.enqueue_seq DESC LIMIT 1
         )
     `,

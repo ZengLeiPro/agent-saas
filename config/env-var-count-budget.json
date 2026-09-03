@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "TASK-331 为移动端 V1 增加 fail-closed 发布 SHA、原生 OAuth 回调与生产 telemetry provider/owner/retention/signing 配置；Web 生命周期使用 Vite DEV 构建标志",
-  "updatedAt": "2026-09-01",
+  "reason": "TASK-331 移动端 V1 与 TASK-341 Sandbox lifecycle 灰度配置共同更新环境变量预算",
+  "updatedAt": "2026-09-02",
   "domains": {
     "server": {
       "budget": 62,
@@ -71,7 +71,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 41,
+      "budget": 42,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -95,6 +95,7 @@
         "ACS_SANDBOX_IMAGE",
         "ACS_SANDBOX_IMAGE_PULL_POLICY",
         "ACS_SANDBOX_KIND",
+        "ACS_SANDBOX_LIFECYCLE_POLICY_MODE",
         "ACS_SANDBOX_MEMORY_LIMIT",
         "ACS_SANDBOX_MEMORY_REQUEST",
         "ACS_SNAT_ENTRY_NAME_PREFIX",

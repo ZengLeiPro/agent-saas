@@ -1,0 +1,66 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const MOBILE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const readMobile = (path: string) => readFileSync(join(MOBILE_ROOT, path), 'utf8');
+
+describe('TASK-375 移动端 V1 复核整改', () => {
+  it('将身份 generation 作为认证请求和聊天内存的硬边界', () => {
+    const auth = readMobile('src/contexts/AuthContext.tsx');
+    const layout = readMobile('app/_layout.tsx');
+    const session = readMobile('src/hooks/useSession.ts');
+
+    expect(auth).toContain('const requestGeneration = identityRef.current.generation');
+    expect(auth).toContain('if (!token || !requestIsCurrent()) return');
+    expect(auth).toContain('identityRef.current.identity?.generation !== identity.generation');
+    expect(layout).toContain('<ChatAppStateProvider key={chatIdentityKey}>');
+    expect(session).toContain('identityKeyRef.current !== requestIdentityKey');
+    expect(session).toContain('cbRef.current.resetMessages()');
+  });
+
+  it('默认不把独立 tool_result raw payload 挂到渲染树', () => {
+    const source = readMobile('src/components/chat/MessageItem.tsx');
+
+    expect(source).toContain('<ToolResultBlock message={item} gate={presentationGate} />');
+    expect(source).toContain('expanded && canonical.showRaw ? parseToolResult(message.result) : null');
+    expect(source).toContain('disabled={!canonical.showRaw}');
+  });
+
+  it('TextSelect WebView 禁止脚本、外部导航和主动远程内容', () => {
+    const source = readMobile('src/components/chat/TextSelectModal.tsx');
+
+    expect(source).toContain("originWhitelist={['about:blank']}");
+    expect(source).toContain('javaScriptEnabled={false}');
+    expect(source).toContain("default-src 'none'");
+    expect(source).toContain(".replaceAll('<', '&lt;')");
+  });
+
+  it('ACK 未确认 intent 保留幂等键，interaction 生命周期绑定原会话', () => {
+    const source = readMobile('src/hooks/useChatAppState.ts');
+
+    expect(source).toContain('entry.state = "verifying"');
+    expect(source).toContain('message.clientMsgId,');
+    expect(source).toContain('pendingInteractionKey(currentSessionId, interactionId)');
+    expect(source).toContain('sessionId: pending.sessionId');
+    expect(source).toContain('if (sessionIdRef.current !== pending.sessionId) return');
+    expect(source).toContain('settleInteractionResponse(event.sessionId, event.interactionId)');
+  });
+
+  it('Enterprise anti-rollback floor 只由实际运行的安装版本抬高', () => {
+    const source = readMobile('src/hooks/useUpdateChecker.ts');
+
+    expect(source).toContain('highestInstalled.v2');
+    expect(source).toContain('String(config.installedVersionCode)');
+    expect(source).not.toContain('String(manifest.versionCode)');
+  });
+
+  it('固定高度的交互区提供可滚动容器', () => {
+    const source = readMobile('app/chat/[sessionId].tsx');
+
+    expect(source).toContain('style={styles.interactionScroll}');
+    expect(source).toContain('nestedScrollEnabled');
+    expect(source).toContain('keyboardShouldPersistTaps="handled"');
+  });
+});

@@ -41,7 +41,7 @@ function projectAttachments(run: RunRecord): ChatQueueAttachment[] | undefined {
   }));
 }
 
-/** Project one durable run. Missing correlation metadata means it is not a V1 chat submission. */
+/** Project one accepted chat submission; internal runs with an idempotency key are not messages. */
 export type ServerChatQueueItem = ChatQueueItem & { liveness: RunLiveness };
 export type ServerChatQueueSnapshot = Omit<ChatQueueSnapshot, 'items'> & { items: ServerChatQueueItem[] };
 
@@ -49,10 +49,13 @@ export function projectChatQueueItem(
   run: RunRecord,
   queuePosition?: number,
 ): ServerChatQueueItem | undefined {
-  const clientMsgId = stringMetadata(run, 'clientMsgId') ?? run.idempotencyKey;
-  if (!clientMsgId) return undefined;
   const parsed = parseCanonicalChatSubmission(run.metadata?.chatSubmission);
   const wakeMessage = run.metadata?.wakeMessage as { content?: unknown } | undefined;
+  const legacyContent = typeof wakeMessage?.content === 'string' ? wakeMessage.content : undefined;
+  const clientMsgId = parsed.ok
+    ? parsed.value.clientMsgId
+    : legacyContent !== undefined ? stringMetadata(run, 'clientMsgId') : undefined;
+  if (!clientMsgId) return undefined;
   const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' : 'queue';
   const targetRunId = deliveryMode === 'steer'
     ? stringMetadata(run, 'steeringTargetRunId')
@@ -61,7 +64,7 @@ export function projectChatQueueItem(
   const attachments = projectAttachments(run);
   const content = parsed.ok
     ? parsed.value.text
-    : typeof wakeMessage?.content === 'string' ? wakeMessage.content : undefined;
+    : legacyContent;
   return {
     sessionId: run.sessionId,
     clientMsgId,
@@ -92,9 +95,10 @@ export function buildChatQueueSnapshot(
   const items = runs.flatMap((run) => {
     if (run.sessionId !== sessionId) return [];
     const status = projectChatQueueStatus(run);
-    const position = status === 'queued' ? pendingPosition++ : undefined;
-    const item = projectChatQueueItem(run, position);
-    return item ? [item] : [];
+    const item = projectChatQueueItem(run, status === 'queued' ? pendingPosition : undefined);
+    if (!item) return [];
+    if (status === 'queued') pendingPosition += 1;
+    return [item];
   });
   return { version: CHAT_QUEUE_SNAPSHOT_VERSION, sessionId, items, generatedAt };
 }

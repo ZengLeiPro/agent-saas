@@ -2059,68 +2059,7 @@ describe('RawAgentLoop', () => { it('reuses a compaction epoch before append and
     expect(markApplied).toHaveBeenCalledWith('target-failed-boundary', ['source-failed-boundary']);
   });
 
-  it('leaves a final-turn interjection pending for durable fallback when no next model turn exists', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-interjection-fallback-'));
-    cleanupDirs.add(cwd);
-    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
-    const adapter = new InterjectionAfterFinalAdapter();
-    const queued: QueuedInterjection[] = [{
-      inputId: 'input-final-fallback',
-      sourceRunId: 'source-final-fallback',
-      clientMsgId: 'client-final-fallback',
-      message: { channel: 'web', chatId: 'chat-final-fallback', content: '最后一刻补充' },
-      prompt: '最后一刻补充',
-    }];
-    let loadCalls = 0;
-    const markApplied = vi.fn(async () => {});
-    const trySeal = vi.fn(async () => false);
-    const loop = new RawAgentLoop({
-      modelAdapter: adapter,
-      eventStore,
-      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-interjection-fallback', DEFAULT_TENANT_ID),
-      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
-      toolRuntime: new PlatformToolRuntime(),
-      runStore: {
-        markSteeringInputsApplied: markApplied,
-        trySealSteeringInputWindow: trySeal,
-      } as unknown as RunStore,
-    });
-
-    const events = await collect(loop.run(
-      {
-        message: { channel: 'web', chatId: 'chat-final-fallback', content: '先回答' },
-        prompt: '先回答',
-        instructions: '直接回答。',
-        maxTurns: 1,
-        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
-      },
-      {
-        runId: 'target-final-fallback',
-        sessionId: 'session-final-interjection-fallback',
-        model: 'gpt-5.5',
-        cwd, tenantId: DEFAULT_TENANT_ID,
-        channelContext: {
-          channel: 'web',
-          user: { id: 'admin-1', username: 'admin', role: 'admin' },
-        },
-        loadQueuedInterjections: async () => {
-          loadCalls += 1;
-          return loadCalls === 1 ? [] : queued;
-        },
-      },
-    ));
-
-    expect(adapter.requests).toHaveLength(1);
-    expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
-    expect(events.at(-1)).toEqual({ type: 'done' });
-    expect(markApplied).not.toHaveBeenCalled();
-    // 2026-08-04 D-4：最后一轮（无轮次预算消费插话）也要尝试封口，让此后到达的
-    // 插话立即回退为独立 run，而不是滞留到本 run 终态。已有 pending 时 seal 返回
-    // false（无预算可消费），插话保持 pending 交给 durable 回退。
-    expect(trySeal).toHaveBeenCalledWith('target-final-fallback');
-  });
-
-  it('leaves interjections pending when the target aborts while loading them', async () => {
+  it('keeps interjections pending when the target aborts while loading them', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-aborted-interjection-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);

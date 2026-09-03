@@ -28,6 +28,8 @@ import {
   killBackgroundShell,
   reconcileBackgroundShells,
   startBackgroundShell,
+  terminateBackgroundShellsFailClosed,
+  type BackgroundShellOutput,
 } from './backgroundShell.js';
 
 const PYTHON_RUNTIME_CONTRACT_VERSION = 2;
@@ -528,8 +530,31 @@ async function executeBackgroundShellTool(input: {
       if (typeof args.task_id !== 'string') return { status: 'error', error: 'KillBash 需要 task_id。' };
       return backgroundShellResponse(await killBackgroundShell(input.workspaceRoot, args.task_id));
     }
+    if (input.toolName === '__BackgroundShellFailClosed') {
+      if (!Array.isArray(args.task_ids) || args.task_ids.some((taskId) => typeof taskId !== 'string')) {
+        return { status: 'error', error: '__BackgroundShellFailClosed 需要字符串 task_ids。' };
+      }
+      try {
+        const remaining = await terminateBackgroundShellsFailClosed(
+          input.workspaceRoot,
+          args.task_ids as string[],
+        );
+        return {
+          status: 'success',
+          content: JSON.stringify(remaining),
+          metadata: { backgroundShell: remaining },
+        };
+      } catch (error) {
+        const remaining = await reconcileBackgroundShells(input.workspaceRoot);
+        return {
+          status: 'error',
+          error: `后台保护持久化失败且仍有进程未终止: ${error instanceof Error ? error.message : String(error)}`,
+          metadata: { backgroundShell: remaining },
+        };
+      }
+    }
     if (input.toolName === '__BackgroundShellReconcile') {
-      const result = await reconcileBackgroundShells(input.workspaceRoot);
+      const result = await reconcileBackgroundShells(input.workspaceRoot, { strict: args.fail_closed === true });
       return {
         status: 'success',
         content: JSON.stringify(result),
@@ -542,7 +567,7 @@ async function executeBackgroundShellTool(input: {
   }
 }
 
-function backgroundShellResponse(output: Awaited<ReturnType<typeof getBackgroundShellOutput>>): ToolInvocationResponse {
+function backgroundShellResponse(output: BackgroundShellOutput): ToolInvocationResponse {
   return {
     status: 'success',
     content: JSON.stringify(output),
@@ -551,6 +576,8 @@ function backgroundShellResponse(output: Awaited<ReturnType<typeof getBackground
         taskId: output.taskId,
         status: output.status,
         ...(output.protectedUntil ? { protectedUntil: output.protectedUntil } : {}),
+        ...(typeof output.requestOwned === 'boolean' ? { requestOwned: output.requestOwned } : {}),
+        activeTaskIds: output.activeTaskIds,
       },
     },
   };

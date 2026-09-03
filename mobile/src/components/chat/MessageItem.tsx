@@ -78,6 +78,7 @@ import type { FileTypeCategory } from '@agent/shared';
 import { fileCacheService } from '../../services/fileCacheService';
 import Markdown from 'react-native-markdown-display';
 import { useVoicePlayer } from '../../hooks/useVoicePlayer';
+import { cjkMarkdownIt } from '../../lib/markdownIt';
 import { useColors, spacing, typography, radius, useChatTypography } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { MessageErrorBoundary } from '../ErrorBoundary';
@@ -425,7 +426,7 @@ export const MessageItemView = React.memo(function MessageItemView({
     const anim = Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true });
     anim.start();
     return () => anim.stop();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   let content: React.ReactNode;
 
@@ -448,7 +449,7 @@ export const MessageItemView = React.memo(function MessageItemView({
         content = <ToolUseBlock message={item} gate={presentationGate} onRecovery={onRetryMessage ? () => onRetryMessage(item) : undefined} />;
         break;
       case 'tool_result':
-        content = <ToolResultBlock message={item} />;
+        content = <ToolResultBlock message={item} gate={presentationGate} />;
         break;
       case 'permission_request':
         content = <PermissionBlock message={item} onResponse={onPermissionResponse} />;
@@ -888,7 +889,9 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
     return (
       <View style={styles.assistantBubble}>
         {finalOutputDivider}
-        <Markdown style={mdStyles} rules={rules}>{streamContent}</Markdown>
+        <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
+          {streamContent}
+        </Markdown>
         <View style={styles.cursor} />
         {lightboxUri && (
           <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
@@ -906,7 +909,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
             {finalOutputDivider}
             {segments.map((seg, i) =>
               seg.type === 'text' ? (
-                <Markdown key={i} style={mdStyles} rules={rules}>{seg.content}</Markdown>
+                <Markdown key={i} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>{seg.content}</Markdown>
               ) : (
                 <InlineFileCard key={i} segment={seg} onPreviewMd={onPreviewMd} colors={colors} styles={styles} />
               ),
@@ -933,7 +936,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
       <GestureDetector gesture={longPressGesture}>
         <View style={styles.assistantBubble}>
           {finalOutputDivider}
-          <Markdown style={mdStyles} rules={rules}>{message.content}</Markdown>
+          <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>{message.content}</Markdown>
           {lightboxUri && (
             <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
           )}
@@ -1158,44 +1161,58 @@ function ToolUseBlock({ message, gate, onRecovery }: { message: MessageItem & { 
 }
 
 // --- Tool Result Block ---
-function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_result' } }) {
+function ToolResultBlock({ message, gate }: { message: MessageItem & { type: 'tool_result' }; gate?: RawPresentationGate }) {
   const colors = useColors();
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
   const [expanded, setExpanded] = useState(false);
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const renderItem = useMemo(
+    () => selectRenderModel({ messages: [message] }).items[0],
+    [message],
+  );
+  const canonical = useMemo(
+    () => selectToolPresentation(renderItem, gate),
+    [renderItem, gate],
+  );
 
-  // 延迟解析：仅在展开时才 parse（避免折叠状态下浪费 CPU 解析大 base64）
+  // raw payload 只有在 Shared 三重 gate 明确授权后才解析和挂到 RN 树上。
   const parsed = useMemo(
-    () => expanded ? parseToolResult(message.result) : null,
-    [expanded, message.result],
+    () => expanded && canonical.showRaw ? parseToolResult(message.result) : null,
+    [canonical.showRaw, expanded, message.result],
   );
   const hasImages = parsed !== null && parsed.images.length > 0;
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
+      <Pressable
+        onPress={canonical.showRaw ? () => setExpanded(!expanded) : undefined}
+        disabled={!canonical.showRaw}
+        style={styles.toolRow}
+        accessibilityRole="button"
+        accessibilityLabel={canonical.showRaw ? '展开或折叠调试详情' : canonical.title}
+        accessibilityState={{ disabled: !canonical.showRaw, expanded: canonical.showRaw ? expanded : undefined }}
+      >
         <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
-        <Text style={styles.toolLabel} numberOfLines={1}>Result: {message.toolName}</Text>
-        <ChevronRight
-          size={16}
-          color={colors.mutedForeground}
-          strokeWidth={2}
-          style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
-        />
+        <Text style={styles.toolLabel} numberOfLines={1}>{canonical.title}</Text>
+        {canonical.showRaw ? (
+          <ChevronRight
+            size={16}
+            color={colors.mutedForeground}
+            strokeWidth={2}
+            style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
+          />
+        ) : null}
       </Pressable>
-      {expanded && hasImages && (
+      <CanonicalPresentationBody presentation={canonical} />
+      {expanded && canonical.showRaw && hasImages && parsed ? (
         <>
           <View style={styles.imageGrid}>
             {parsed.images.map((img, i) => {
               const uri = `data:${img.mimeType};base64,${img.data}`;
               return (
                 <Pressable key={i} onPress={() => setLightboxUri(uri)}>
-                  <Image
-                    source={{ uri }}
-                    style={styles.thumbnailImage}
-                    resizeMode="contain"
-                  />
+                  <Image source={{ uri }} style={styles.thumbnailImage} resizeMode="contain" />
                 </Pressable>
               );
             })}
@@ -1205,18 +1222,14 @@ function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_res
               <Text style={styles.codePreviewText}>{parsed.text}</Text>
             </ScrollView>
           ) : null}
-          {lightboxUri && (
-            <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
-          )}
+          {lightboxUri ? <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} /> : null}
         </>
-      )}
-      {expanded && !hasImages && (
+      ) : null}
+      {expanded && canonical.showRaw && parsed && !hasImages ? (
         <ScrollView style={styles.codePreviewScrollable} nestedScrollEnabled>
-          <Text style={styles.codePreviewText}>
-            {message.result}
-          </Text>
+          <Text style={styles.codePreviewText}>{parsed.text}</Text>
         </ScrollView>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -1235,7 +1248,7 @@ export function PermissionBlock({ message, onResponse, disabled = false }: {
   return (
     <View style={styles.permissionBlock}>
       <Text style={styles.permissionTitle}>{message.toolName}</Text>
-      <Markdown style={mdStyles}>{message.toolInput}</Markdown>
+      <Markdown markdownit={cjkMarkdownIt} style={mdStyles}>{message.toolInput}</Markdown>
       {message.status === 'pending' && (
         <View style={styles.permissionButtons}>
           <TouchableOpacity
@@ -1549,7 +1562,7 @@ function FileDownloadCard({ message, onPreviewMd }: {
       // short, principal-bound grant. Mobile never executes artifact HTML in a WebView.
       if (artifactId) {
         let grant = await fetchMobileArtifactGrant(artifactId);
-        if (selectMobileArtifactViewer(grant) === 'download-only') {
+        if (selectMobileArtifactViewer(grant) === 'download-only' || grant.descriptor.requiresWarning) {
           const confirmed = await new Promise<boolean>((resolve) => Alert.alert(
             '确认下载此文件？',
             mobileArtifactWarning(grant),

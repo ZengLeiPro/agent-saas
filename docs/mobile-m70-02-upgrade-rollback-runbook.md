@@ -4,9 +4,9 @@
 
 ## 1. 权威输入与启动条件
 
-生产演练只允许通过 `Mobile M70-02 Upgrade and Rollback Rehearsal` 的 `workflow_call` / `workflow_dispatch` 启动，且 `configured=true`。PR 只运行 schema、mock、negative、N-1/N compatibility tests。
+仓库内原 `Mobile M70-02 Upgrade and Rollback Rehearsal` workflow 已在 PR #417 删除，当前**没有生产演练入口**。在发布负责人提供受保护的外部发布系统，或重新建立仅绑定 protected `main` / 签名 RC tag、固定 validator、protected environment 与短期凭据的仓库入口前，生产 Gate 必须保持 blocked。不得恢复允许任意目标 SHA 进入 secret job 的旧 workflow。PR 只运行 schema、mock、negative、N-1/N compatibility tests。
 
-执行前由发布负责人逐项提供，不得由 workflow 猜测或现场构造：
+受保护的生产入口建立后，由发布负责人逐项提供以下输入；不得由执行器猜测或现场构造：
 
 1. 当前 commit 与 previous commit（两个不同的 40 位 SHA）。
 2. M60-04 的 iOS Store、Android Store、Android Enterprise **真实** artifact evidence；每个含 digest、appId、version、buildNumber/versionCode、signer digest、source SHA。

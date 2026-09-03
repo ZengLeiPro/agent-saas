@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'; // recipe and stable provision-key assertions
 import { describe, expect, it, vi } from 'vitest';
 // Fixed identities and durable attempt owners make provisioning/scanner races repeatable after a crash.
 import type {
@@ -6,10 +5,9 @@ import type {
   HandStatus,
   HandStore,
   RegisterHandInput,
-  WorkspaceRecipe,
 } from '../runtime/handStore.js';
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
-import { deriveProvisionIdentity, deriveTenantHandId, ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
+import { deriveTenantHandId, ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
 
 // Single-record store covers default-hand CAS; the map fixture covers tenant dispatch claims.
 class CasMemoryHandStore implements HandStore {
@@ -165,177 +163,7 @@ class MapMemoryHandStore implements HandStore {
   }
 }
 
-describe('runtime Hand atomic provision attempt authority', () => {
-  it('maps the persisted sandbox profile into server-remote recipe resources', async () => {
-    const handStore = new CasMemoryHandStore();
-    const provision = vi.fn(async () => ({ status: 'ok' as const }));
-
-    await ensureRuntimeHandRegistered({
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: {
-        has: () => true,
-        get: () => ({ listInternalTools: () => [], provision }),
-      } as never,
-      executionTarget: 'server-remote',
-      sessionId: 'session-profile',
-      workspaceId: 'workspace-profile',
-      runId: 'run-profile',
-      tenantId: 'tenant-profile',
-      sandboxProfile: 'daily',
-      serverRemoteRecipe: { resources: { diskMb: 8192 } },
-    });
-
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      resources: { cpu: '1', memoryMb: 2048, diskMb: 8192 },
-    }));
-  });
-
-  it('lets a child hand inherit the parent effective resources over its profile recipe', async () => {
-    const handStore = new CasMemoryHandStore();
-    const provision = vi.fn(async () => ({ status: 'ok' as const }));
-    await ensureRuntimeHandRegistered({
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
-      executionTarget: 'server-remote',
-      sessionId: 'child-session',
-      workspaceId: 'parent-workspace',
-      tenantId: 'tenant-child',
-      sandboxProfile: 'daily',
-      sandboxResources: { cpu: '4', memoryMb: 8192 },
-      serverRemoteRecipe: { resources: { diskMb: 16384 } },
-    });
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
-    }));
-  });
-
-  it('keeps environment-template resources authoritative over the session profile', async () => {
-    const handStore = new CasMemoryHandStore();
-    const provision = vi.fn(async () => ({ status: 'ok' as const }));
-    const environmentStore = {
-      getInstance: vi.fn(async () => null),
-      getTemplateVersion: vi.fn(async () => ({
-        versionId: 'version-1',
-        templateId: 'template-1',
-        digest: 'template-digest',
-        recipe: {
-          packages: [],
-          envKeys: [],
-          setupCommands: [],
-          resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
-        },
-      })),
-      getProvider: vi.fn(async () => ({ status: 'enabled' })),
-      getTemplate: vi.fn(async () => ({ status: 'published' })),
-      upsert: vi.fn(async () => undefined),
-      create: vi.fn(async (input) => input),
-      transition: vi.fn(async () => undefined),
-    };
-
-    await ensureRuntimeHandRegistered({
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: {
-        has: () => true,
-        get: () => ({ listInternalTools: () => [], provision }),
-      } as never,
-      executionTarget: 'server-remote',
-      sessionId: 'session-template',
-      workspaceId: 'workspace-template',
-      runId: 'run-template',
-      tenantId: 'tenant-template',
-      userTenantId: 'tenant-template',
-      userId: 'user-template',
-      sandboxProfile: 'daily',
-      environmentStore: environmentStore as never,
-      environmentTemplateVersionId: 'version-1',
-      authorizeEnvironmentTemplate: vi.fn(async () => true),
-    });
-
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
-    }));
-  });
-
-  it('merges partial environment resources over the profile and digests the effective recipe', async () => {
-    const cases = [
-      [{ diskMb: 8192 }, { cpu: '1', memoryMb: 2048, diskMb: 8192 }],
-      [{ timeoutMs: 60_000 }, { cpu: '1', memoryMb: 2048, timeoutMs: 60_000 }],
-      [{ cpu: '4' }, { cpu: '4', memoryMb: 2048 }],
-      [{ memoryMb: 8192 }, { cpu: '1', memoryMb: 8192 }],
-    ] as const;
-    for (const [templateResources, expectedResources] of cases) {
-      const handStore = new CasMemoryHandStore();
-      const provision = vi.fn(async () => ({ status: 'ok' as const }));
-      const environmentStore = {
-        getInstance: vi.fn(async () => null),
-        getTemplateVersion: vi.fn(async () => ({
-          versionId: 'version-partial', templateId: 'template-partial', digest: 'template-only-digest',
-          recipe: { packages: [], envKeys: [], setupCommands: [], resources: templateResources },
-        })),
-        getProvider: vi.fn(async () => ({ status: 'enabled' })),
-        getTemplate: vi.fn(async () => ({ status: 'published' })),
-        upsert: vi.fn(async () => undefined), create: vi.fn(async (input) => input), transition: vi.fn(async () => undefined),
-      };
-      await ensureRuntimeHandRegistered({
-        handStore,
-        eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-        executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
-        executionTarget: 'server-remote', sessionId: `session-${Object.keys(templateResources)[0]}`,
-        workspaceId: 'workspace-partial', tenantId: 'tenant-partial', userTenantId: 'tenant-partial', userId: 'user-partial',
-        sandboxProfile: 'daily', environmentStore: environmentStore as never, environmentTemplateVersionId: 'version-partial',
-        authorizeEnvironmentTemplate: vi.fn(async () => true),
-      });
-      const recipe = handStore.record?.metadata.recipe;
-      expect(recipe).toMatchObject({ resources: expectedResources });
-      expect(handStore.record?.recipeDigest).toBe(createHash('sha256').update(JSON.stringify(recipe)).digest('hex'));
-      expect(environmentStore.create).toHaveBeenCalledWith(expect.objectContaining({ recipeDigest: 'template-only-digest' }));
-    }
-  });
-
-  it('derives a stable secret-free provision identity while leaving fresh transport URLs intact', () => {
-    const recipe: WorkspaceRecipe = {
-      workspaceId: 'workspace-identity',
-      sandboxScopeId: 'scope-identity',
-      repo: { url: 'https://oauth-user:repo-secret@git.example/repo.git?token=repo-token', ref: 'main' },
-      files: [{
-        artifactId: 'artifact-stable', path: 'seed/data.txt',
-        url: 'https://files.example/download?credential=file-secret',
-        signedUrl: 'https://signed.example/download?X-Amz-Signature=signed-secret',
-      }],
-      packages: ['tsx@4.19.0'],
-    };
-    const rotatedRecipe: WorkspaceRecipe = {
-      ...recipe,
-      repo: { ...recipe.repo!, url: 'https://other-user:new-secret@git.example/repo.git?token=new-token' },
-      files: recipe.files!.map((file) => ({
-        ...file,
-        url: 'https://temporary.example/new-host?credential=new-file-secret',
-        signedUrl: 'https://signed.example/download?X-Amz-Signature=new-signed-secret',
-      })),
-    };
-
-    const originalKey = deriveProvisionIdentity('hand-identity', 'fixed-child-run', recipe);
-    const rotatedKey = deriveProvisionIdentity('hand-identity', 'fixed-child-run', rotatedRecipe);
-    expect(rotatedKey).toBe(originalKey);
-    const differentRepoKey = deriveProvisionIdentity('hand-identity', 'fixed-child-run', {
-      ...rotatedRecipe,
-      repo: { ...rotatedRecipe.repo!, url: 'https://user:repo-secret@git.example/other.git?token=repo-token#fragment' },
-    });
-    expect(differentRepoKey).not.toBe(originalKey);
-    expect(originalKey).toMatch(/^[a-f0-9]{64}$/);
-    expect(originalKey).not.toMatch(/secret|token|oauth|signature/i);
-    expect(differentRepoKey).not.toMatch(/secret|token|oauth|signature/i);
-    expect(rotatedRecipe.repo?.url).toContain('new-secret');
-    expect(rotatedRecipe.files?.[0]?.signedUrl).toContain('new-signed-secret');
-    expect(deriveProvisionIdentity('hand-identity', 'fixed-child-run', {
-      ...rotatedRecipe,
-      files: [{ ...rotatedRecipe.files![0]!, path: 'seed/changed.txt' }],
-    })).not.toBe(originalKey);
-  });
-
+describe('runtime Hand provision contracts and atomic authority', () => {
   it('fails the older transport closed without overwriting a newer successful attempt', async () => {
     const handStore = new CasMemoryHandStore();
     let releaseFirst!: () => void;

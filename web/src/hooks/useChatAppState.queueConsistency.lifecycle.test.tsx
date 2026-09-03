@@ -649,6 +649,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
       runId: "run-live",
       clientMsgId: "client-live",
       deliveryMode: "queue",
+      targetRunId: "run-target",
       content: "live queued",
       timestamp: 1,
     };
@@ -749,6 +750,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
       runId: "run-projected",
       clientMsgId: "client-projected",
       deliveryMode: "queue",
+      targetRunId: "run-target",
       content: "已经发送",
       timestamp: 1,
     }));
@@ -775,6 +777,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
         runId: "run-projected",
         clientMsgId: "client-projected",
         deliveryMode: "queue",
+        targetRunId: "run-target",
         content: "已经发送",
         acceptedAt: "2026-08-17T00:00:00.000Z",
       }]);

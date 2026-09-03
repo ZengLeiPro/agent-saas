@@ -634,6 +634,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
     sandboxScopeId: ws.sandboxScopeId,
     mountSubPath: ws.mountSubPath,
     ...(ws.sandboxResources ? { sandboxResources: ws.sandboxResources } : {}),
+    ...(ws.workload ? { workload: ws.workload } : {}),
     executionTarget: ws.executionTarget,
   };
   return {
@@ -648,7 +649,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
   };
 }
 
-export interface WireWorkspaceRef extends Omit<WorkspaceRef, 'root'> {
+export interface WireWorkspaceRef extends Omit<WorkspaceRef, 'root' | 'topLevelSessionId' | 'sandboxPolicy'> {
   /** id 仍然是 optional 与 WorkspaceRef 一致（向后兼容当前 LocalWorkspaceProvider 输出）。 */
   id?: string;
 }

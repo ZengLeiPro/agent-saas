@@ -16,7 +16,17 @@ const persisted: RunRecord = {
   runId: 'run-boundary', sessionId: 'session-boundary', status: 'running',
   requestedAt: '2026-08-30T00:00:00.000Z', updatedAt: '2026-08-30T00:00:01.000Z',
   idempotencyKey: 'client-boundary',
-  metadata: { clientMsgId: 'client-boundary' },
+  metadata: {
+    clientMsgId: 'client-boundary',
+    chatSubmission: {
+      version: 1,
+      text: 'boundary message',
+      clientMsgId: 'client-boundary',
+      target: { sessionId: 'session-boundary' },
+      deliveryMode: 'queue',
+      attachments: [],
+    },
+  },
   liveness: {
     state: 'busy', lastHeartbeatAt: '2026-08-30T00:00:01.000Z',
     leaseExpiresAt: '2026-08-30T00:01:01.000Z', ownerId: 'worker-boundary',

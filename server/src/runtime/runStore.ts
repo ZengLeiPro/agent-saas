@@ -13,12 +13,13 @@ import { PgRunStoreQueries } from './runStoreQueries.js';
 import { contractPgRunStoreTenantSchema, disablePgRunStoreLegacyWriterCapability, initializePgRunStore, recordPgRunStoreDrainEvidence, registerPgRunStoreLegacyWriterCapability, registerPgRunStoreTenantNativeWriterCapability, type PgRunStoreContractGate, type PgRunStoreDrainEvidence, type PgRunStoreLegacyWriterCapability } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
 import { lockRawTenantKey, readSameTenantSubmissionRun, upsertSteeringStopAuthority } from './runStoreTenantRolling.js';
+import { acquireSandboxCleanupClaimGuard } from './sandboxRunAdmissionFence.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
 const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 export class PgRunStore implements RunStore {
   readonly pool: PgPool; readonly runsTable: string;
@@ -733,18 +734,13 @@ export class PgRunStore implements RunStore {
     return result.cancelled;
   }
   async cancelSteeringBeforeDispatchBySessionWithEvent(
-    sessionId: string,
-    reason: string,
-    targetRunId: string | undefined,
-    event: PlatformEventInput,
-    tenantId: string,
-  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
+    sessionId: string, reason: string, targetRunId: string | undefined,
+    event: PlatformEventInput, tenantId: string,
+    cleanupGuard?: SandboxCleanupClaimGuard): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
       reason,
-      targetRunId,
-      event,
-      tenantId,
+      targetRunId, event, tenantId, cleanupGuard,
     );
     return {
       cancelled: result.cancelled,
@@ -754,12 +750,9 @@ export class PgRunStore implements RunStore {
     };
   }
   private async cancelSteeringBeforeDispatchInternal(
-    sessionId: string,
-    reason: string,
-    targetRunId: string | undefined,
-    event: PlatformEventInput | undefined,
-    tenantId: string,
-  ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
+    sessionId: string, reason: string, targetRunId: string | undefined,
+    event: PlatformEventInput | undefined, tenantId: string,
+    cleanupGuard?: SandboxCleanupClaimGuard): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
     let targetCancelled = false;
@@ -771,6 +764,9 @@ export class PgRunStore implements RunStore {
         tenantId,
         `${this.runsTable}:message:${sessionId}`,
       ]);
+      if (cleanupGuard && !await acquireSandboxCleanupClaimGuard(client, this.runsTable, cleanupGuard)) {
+        await client.query('COMMIT'); return { cancelled: [], targetCancelled: false, eventCreated: false };
+      }
       const now = new Date().toISOString();
       // 固定锁序：advisory(tenant/session/raw key) → target → source(run_id) → input(sequence)。
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后
@@ -982,11 +978,13 @@ export class PgRunStore implements RunStore {
   async listUserMessagesBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE run.tenant_id = $1
-        AND run.session_id = $2
+      FROM ${this.messageSubmissionsTable} submission
+      JOIN ${this.runsTable} run
+        ON run.tenant_id = submission.tenant_id
+       AND run.run_id = submission.run_id
+      WHERE submission.tenant_id = $1
+        AND submission.session_id = $2
         AND run.channel = 'web'
-        AND (run.metadata ? 'clientMsgId' OR run.idempotency_key IS NOT NULL)
         AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
       ORDER BY run.enqueue_seq ASC
     `, [tenantId, sessionId]);

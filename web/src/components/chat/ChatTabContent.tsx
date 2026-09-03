@@ -49,7 +49,6 @@ interface ChatTabContentProps {
   onDismissUploadError?: () => void;
   onInputChange: (value: string) => void;
   onSend: () => void;
-  onInterject?: () => void;
   onStop?: () => void;
   stopping?: boolean;
   onFileSelect: (event: React.ChangeEvent<HTMLInputElement>) => void;
@@ -201,7 +200,6 @@ export function ChatTabContent({
   onDismissUploadError,
   onInputChange,
   onSend,
-  onInterject,
   onStop,
   stopping,
   onFileSelect,
@@ -443,7 +441,6 @@ export function ChatTabContent({
               hasUploadedFiles={uploadedFiles.length > 0}
               onInputChange={onInputChange}
               onSend={onSend}
-              onInterject={onInterject}
               onStop={onStop}
               stopping={stopping}
               onFileSelect={onFileSelect}

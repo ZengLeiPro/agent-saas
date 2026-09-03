@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import type { PgPool, PgRunStoreWriterCapability } from './runStoreTypes.js';
+import { sandboxRunAdmissionFenceSql } from './sandboxRunAdmissionFence.js';
 
 export interface PgRunStoreSchemaTarget {
   pool: PgPool;
@@ -461,9 +462,11 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`UPDATE ${store.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
       // wakeMessage 是活跃 Run 的 durable 恢复载荷；Run 进入终态后已无恢复用途，启动时清理历史遗留正文。
       await client.query(`UPDATE ${store.runsTable} SET metadata = metadata - 'wakeMessage' WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata ? 'wakeMessage'`);
+      await client.query(sandboxRunAdmissionFenceSql(store.runsTable).join(';\n'));
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_tenant_idx ON ${store.runsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_user_idx ON ${store.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_sandbox_scope_idx ON ${store.runsTable} (sandbox_scope_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_sandbox_terminal_scope_idx ON ${store.runsTable} (tenant_id, workspace_id, sandbox_scope_id, updated_at DESC) WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata->>'sandboxWorkloadTopLevel' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_status_idx ON ${store.runsTable} (status, updated_at)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_liveness_reap_idx ON ${store.runsTable} (liveness_state, lease_expires_at, liveness_detected_at) WHERE liveness_version IS NOT NULL`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_idx`);

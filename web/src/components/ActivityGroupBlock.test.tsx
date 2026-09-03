@@ -127,7 +127,7 @@ describe('ActivityGroupBlock 排版型活动行', () => {
       debugMode
     />);
 
-    expect(screen.getByText('执行中')).toBeTruthy();
+    expect(screen.getByText('处理中')).toBeTruthy();
     expect(screen.queryByText(/异常/)).toBeNull();
   });
 
@@ -139,6 +139,14 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     />);
     expect(screen.getByText('思考中')).toBeTruthy();
     expect(screen.queryByText(/分析具体实现/)).toBeNull();
+
+    rerender(<ActivityGroupBlock
+      items={[{ id: 'thinking-done', type: 'thinking', content: '本轮已结束', streaming: false }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('处理中')).toBeTruthy();
+    expect(screen.queryByText('思考中')).toBeNull();
 
     rerender(<ActivityGroupBlock
       items={[{
@@ -155,6 +163,14 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     />);
     expect(screen.getByText('执行中')).toBeTruthy();
     expect(screen.queryByText(/读取客户数据/)).toBeNull();
+
+    rerender(<ActivityGroupBlock
+      items={[{ id: 'running', type: 'runtime_status', status: 'running' }]}
+      isActive
+      debugMode={false}
+    />);
+    expect(screen.getByText('处理中')).toBeTruthy();
+    expect(screen.queryByText('思考中')).toBeNull();
 
     rerender(<ActivityGroupBlock
       items={[{ id: 'queued', type: 'runtime_status', status: 'queued', content: '前方还有 3 个任务' }]}

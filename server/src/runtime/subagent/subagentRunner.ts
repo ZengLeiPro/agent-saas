@@ -54,6 +54,7 @@ import {
   visibleWorkspaceCwd,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
+import { serverRemoteHandRegistrationOptions } from '../serverRemoteHandRegistration.js';
 import { createRuntimeSessionRecord, type MemoryPolicyVersion, type RuntimeSessionRecord } from '../sessionCatalog.js';
 import { applyMainSessionToolFilter } from '../toolProfiles.js';
 import { SessionContextService, SessionToolProvider } from '../sessionContext.js';
@@ -346,6 +347,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       kind: 'subagent',
       memoryPolicyVersion: parentSession?.memoryPolicyVersion ?? 'v1',
       memoryAutomationEligible: false,
+      sandboxWorkloadDescriptor: parentSession?.sandboxWorkloadDescriptor ?? { kind: 'interactive' },
     });
     if (boundProfile && config.agentRuntimeProfileResolver) {
       childRecord = config.agentRuntimeProfileResolver.bindSessionRecord(childRecord, boundProfile);
@@ -386,6 +388,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
         cwd: parentWorkspace.root,
+        ...(parentWorkspace.sandboxScopeId ? { sandboxScopeId: parentWorkspace.sandboxScopeId } : {}),
+        ...(parentWorkspace.workload ? { workload: parentWorkspace.workload } : {}),
         // 刻意不写 wakeMessage：子 run 是父死子亡语义，绝不允许 scheduler 恢复重放
       },
     });
@@ -445,9 +449,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       // 决策 7：hand recipe 会重算 sandboxScopeId，必须把顶层组键一并透传，
       // 否则子 Agent 的 hand 会落到 workspace 级 scope 而与父会话分到两个 pod。
       topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
       sandboxProfile: childRecord.sandboxProfile,
+      sandboxWorkloadDescriptor: childRecord.sandboxWorkloadDescriptor,
       sandboxResources: parentWorkspace.sandboxResources,
       runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
@@ -572,6 +576,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       sandboxScopeId: parentWorkspace.sandboxScopeId,
       mountSubPath: parentWorkspace.mountSubPath,
       sandboxResources: parentWorkspace.sandboxResources,
+      workload: parentWorkspace.workload,
       tenantId,
       executionTarget,
       env: parentContext.env,

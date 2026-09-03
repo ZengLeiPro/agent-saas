@@ -4,8 +4,22 @@ import type {
   EgressWebSocket,
   EgressWebSocketConnector,
 } from '../egressDispatcher.js';
+import {
+  CodexWebSocketAccountUnavailableError,
+  CodexWebSocketCredentialStaleError,
+  CodexWebSocketQuotaExhaustedError,
+  CodexWebSocketReanchorError,
+  CodexWebSocketUnavailableError,
+} from './codexResponsesWebSocketErrors.js';
 import { ResponsesTransportStreamError } from './responsesTransport.js';
 import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
+
+export {
+  CodexWebSocketAccountUnavailableError,
+  CodexWebSocketCredentialStaleError,
+  CodexWebSocketQuotaExhaustedError,
+  CodexWebSocketUnavailableError,
+} from './codexResponsesWebSocketErrors.js';
 
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 30_000;
 const DEFAULT_IDLE_EVENT_TIMEOUT_MS = 5 * 60_000;
@@ -21,12 +35,12 @@ export interface CodexWebSocketExecuteInput {
   accessToken: string;
   accountId: string;
   accountBindingHash: string;
+  credentialRef: string;
+  credentialGeneration: number;
   originator: string;
   serializedBody: string;
   tenantId: string;
-  /** 平台会话标识：只用于本地连接池隔离，防止不同对话共享 WebSocket anchor。 */
   sessionId: string;
-  /** 发给上游 session-id 的稳定内容指纹，用于 Prompt Cache 路由亲和。 */
   cacheAffinityId: string;
   clientRequestId: string;
   signal?: AbortSignal;
@@ -40,19 +54,19 @@ export interface CodexWebSocketExecuteResult {
 
 interface RequestSnapshot {
   fingerprint: string;
-  /** 上一轮 request input + server output items；下一轮必须以它为严格前缀。 */
   baselineItemHashes: string[];
   responseId: string;
 }
 
 interface PoolEntry {
   key: string;
+  credentialRef: string;
+  credentialGeneration: number;
   socket: EgressWebSocket;
   connectedAt: number;
   lastUsedAt: number;
   busy: boolean;
   closed: boolean;
-  /** 并发旁路过 HTTP/SSE 后，当前 anchor 不再能证明覆盖完整线性历史。 */
   tainted: boolean;
   anchor?: RequestSnapshot;
 }
@@ -71,40 +85,9 @@ interface ActiveRequestResult extends CodexWebSocketExecuteResult {
   entry: PoolEntry;
 }
 
-export class CodexWebSocketUnavailableError extends Error {
-  constructor(message: string, readonly reason: string) {
-    super(message);
-    this.name = 'CodexWebSocketUnavailableError';
-  }
-}
-
-export class CodexWebSocketQuotaExhaustedError extends CodexWebSocketUnavailableError {
-  readonly status = 429;
-  readonly code: string;
-
-  constructor(message: string, code?: string) {
-    super(message, 'quota_exhausted');
-    this.name = 'CodexWebSocketQuotaExhaustedError';
-    this.code = code ?? 'quota_exhausted';
-  }
-}
-
-class CodexWebSocketReanchorError extends Error {
-  constructor(readonly code: string) {
-    super(`Codex WebSocket requires full-history re-anchor: ${code}`);
-    this.name = 'CodexWebSocketReanchorError';
-  }
-}
-
-/**
- * Codex Responses WebSocket 的进程内、会话级临时状态层。
- *
- * 这里从不成为会话事实源：调用方每轮仍传完整 logical body。只有同一 socket
- * 上的请求属性完全一致、input 严格追加时，才把 wire request 压成增量；任一
- * 状态不确定都丢弃 anchor，并以调用方提供的完整 body 重新锚定。
- */
 export class CodexResponsesWebSocketPool {
   private readonly entries = new Map<string, PoolEntry>();
+  private readonly credentialGenerations = new Map<string, number>();
   private readonly connectCooldowns = new Map<string, {
     until: number;
     reason: string;
@@ -116,7 +99,6 @@ export class CodexResponsesWebSocketPool {
     private readonly options: {
       firstEventTimeoutMs?: number;
       idleEventTimeoutMs?: number;
-      /** 首次握手偶发失败时原连接重试次数；总尝试次数默认 2。 */
       connectAttempts?: number;
       now?: () => number;
       logger?: { warn(message: string): void };
@@ -127,6 +109,13 @@ export class CodexResponsesWebSocketPool {
     const logicalBody = parseLogicalBody(input.serializedBody);
     this.sweep();
     const key = poolKey(input);
+    const generationAdvanced = this.observeCredentialGeneration(input);
+    if (generationAdvanced) {
+      for (const entry of this.entries.values()) {
+        if (entry.credentialRef === input.credentialRef
+          && entry.credentialGeneration < input.credentialGeneration) this.discard(entry, 'credential_rotated');
+      }
+    }
     const cooldown = this.connectCooldowns.get(key);
     if (cooldown && cooldown.until > this.now()) {
       throw new CodexWebSocketUnavailableError(
@@ -183,6 +172,13 @@ export class CodexResponsesWebSocketPool {
     this.connectCooldowns.clear();
   }
 
+  closeCredentialRefs(refs: readonly string[]): void {
+    const targets = new Set(refs);
+    for (const entry of this.entries.values()) {
+      if (targets.has(entry.credentialRef)) this.discard(entry, 'credential_invalidated');
+    }
+  }
+
   private async connect(key: string, input: CodexWebSocketExecuteInput): Promise<PoolEntry> {
     const endpoint = new URL(input.endpoint);
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -227,9 +223,17 @@ export class CodexResponsesWebSocketPool {
         'connect_failed',
       );
     }
+    try {
+      this.assertCredentialGeneration(input);
+    } catch (error) {
+      try { socket.close(1000, 'credential_generation_stale'); } catch { /* already closed */ }
+      throw error;
+    }
     const now = this.now();
     const entry: PoolEntry = {
       key,
+      credentialRef: input.credentialRef,
+      credentialGeneration: input.credentialGeneration,
       socket,
       connectedAt: now,
       lastUsedAt: now,
@@ -252,6 +256,12 @@ export class CodexResponsesWebSocketPool {
     input: CodexWebSocketExecuteInput,
     plan: RequestPlan,
   ): Promise<ActiveRequestResult> {
+    try {
+      this.assertCredentialGeneration(input);
+    } catch (error) {
+      this.discard(entry, 'credential_generation_stale');
+      throw error;
+    }
     if (entry.busy || entry.closed || entry.socket.readyState !== 1) {
       throw new CodexWebSocketUnavailableError(
         'Codex WebSocket 不处于可发送状态',
@@ -386,6 +396,14 @@ export class CodexResponsesWebSocketPool {
       };
 
       const onMessage: NonNullable<EgressWebSocket['onmessage']> = (raw) => {
+        const observedGeneration = this.credentialGenerations.get(entry.credentialRef);
+        if (observedGeneration !== undefined && entry.credentialGeneration < observedGeneration) {
+          failStream(new CodexWebSocketCredentialStaleError(
+            entry.credentialRef, entry.credentialGeneration, observedGeneration,
+          ));
+          return;
+        }
+        if (entry.closed) return;
         resetIdleTimer();
         frameCount += 1;
         const text = websocketMessageText(raw.data);
@@ -415,12 +433,20 @@ export class CodexResponsesWebSocketPool {
         const code = errorCodeFromEvent(event);
         const message = errorMessageFromEvent(event);
         const status = eventStatus(event);
-        if (!exposed && isCodexQuotaError({ status, code, message })) {
+        if (!exposed && (status === undefined || status < 500)
+          && isCodexQuotaError({ status, code, message })) {
           rejectBeforeExpose(new CodexWebSocketQuotaExhaustedError(
             message || 'Codex 订阅额度不足',
             quotaErrorCode({ code, message }),
           ));
           this.discard(entry, 'quota_exhausted');
+          return;
+        }
+        if (!exposed && isCodexAccountUnavailableEvent(status, code, message)) {
+          rejectBeforeExpose(new CodexWebSocketAccountUnavailableError(
+            code ?? 'account_unavailable', message || 'Codex 授权账号不可用',
+          ));
+          this.discard(entry, 'account_unavailable');
           return;
         }
         if (!exposed && status === 401) {
@@ -456,6 +482,16 @@ export class CodexResponsesWebSocketPool {
 
       const failSocketInterruption = (close?: { code: number; reason: string }) => {
         if (terminal) return;
+        const observedGeneration = this.credentialGenerations.get(entry.credentialRef);
+        if (!exposed && observedGeneration !== undefined
+          && entry.credentialGeneration < observedGeneration) {
+          terminal = true;
+          entry.anchor = undefined;
+          rejectBeforeExpose(new CodexWebSocketCredentialStaleError(
+            entry.credentialRef, entry.credentialGeneration, observedGeneration,
+          ));
+          return;
+        }
         const socketError = pendingSocketError;
         const closeReason = close?.reason ? compactError(close.reason) : undefined;
         const detail = socketError?.empty === false ? socketError.detail : undefined;
@@ -484,9 +520,6 @@ export class CodexResponsesWebSocketPool {
         const detail = compactError(candidate.error ?? candidate.message);
         pendingSocketError = { detail, empty: detail === 'unknown_error' };
         if (socketErrorSettleTimer) return;
-        // Undici 8.9 在底层连接异常时同步先发 error、再发 close（其 #onSocketClose）。
-        // 额外容纳实现把 close 排到下一任务的情况；若只发 error，0ms timer 仍会关闭连接
-        // 并由 cleanup 清理全部 request listener/timer。
         socketErrorSettleTimer = setTimeout(() => failSocketInterruption(), 25);
         socketErrorSettleTimer.unref?.();
       };
@@ -534,10 +567,32 @@ export class CodexResponsesWebSocketPool {
     try { entry.socket.close(1000, reason.slice(0, 120)); } catch { /* already closed */ }
   }
 
+  private observeCredentialGeneration(input: CodexWebSocketExecuteInput): boolean {
+    const observedGeneration = this.credentialGenerations.get(input.credentialRef);
+    if (observedGeneration !== undefined && input.credentialGeneration < observedGeneration) {
+      throw new CodexWebSocketCredentialStaleError(
+        input.credentialRef, input.credentialGeneration, observedGeneration,
+      );
+    }
+    if (observedGeneration !== undefined && input.credentialGeneration === observedGeneration) {
+      return false;
+    }
+    this.credentialGenerations.set(input.credentialRef, input.credentialGeneration);
+    return observedGeneration !== undefined;
+  }
+
+  private assertCredentialGeneration(input: CodexWebSocketExecuteInput): void {
+    const observedGeneration = this.credentialGenerations.get(input.credentialRef);
+    if (observedGeneration !== undefined && input.credentialGeneration < observedGeneration) {
+      throw new CodexWebSocketCredentialStaleError(
+        input.credentialRef, input.credentialGeneration, observedGeneration,
+      );
+    }
+  }
+
   private sweep(): void {
     const now = this.now();
     for (const [key, cooldown] of this.connectCooldowns) {
-      // 过期后仍保留短期失败计数，下一次失败才能升级退避；成功建连会立即清零。
       if (cooldown.until <= now - 60 * 60_000) this.connectCooldowns.delete(key);
     }
     for (const entry of this.entries.values()) {
@@ -650,6 +705,8 @@ function poolKey(input: CodexWebSocketExecuteInput): string {
     input.cacheAffinityId,
     input.endpoint,
     input.accountBindingHash,
+    input.credentialRef,
+    input.credentialGeneration,
     input.originator,
   ]));
 }
@@ -660,8 +717,6 @@ function codexHeaders(input: CodexWebSocketExecuteInput): Record<string, string>
     'chatgpt-account-id': input.accountId,
     originator: input.originator,
     'user-agent': `${input.originator}/0.0.0 (${process.platform}; ${process.arch}) kaiyan-agent`,
-    // Codex 私有 endpoint 的 WebSocket v2 握手值；HTTP/SSE 仍沿用 responses=experimental。
-    // 该值与 openai/codex 当前 build_websocket_headers 保持一致。
     'openai-beta': 'responses_websockets=2026-02-06',
     'session-id': input.cacheAffinityId,
     'x-client-request-id': input.clientRequestId,
@@ -713,7 +768,6 @@ function responseOutputFromEvent(event: Record<string, unknown>): unknown[] | un
   return Array.isArray(output) ? output : undefined;
 }
 
-/** 映射为 ResponsesApiAdapter 下一轮 full-history 会构造的 input item 形态。 */
 function normalizeResponseOutputItem(item: unknown): unknown {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
   const value = item as Record<string, unknown>;
@@ -788,6 +842,16 @@ function errorMessageFromEvent(event: Record<string, unknown>): string | undefin
 function eventStatus(event: Record<string, unknown>): number | undefined {
   if (typeof event.status === 'number') return event.status;
   return typeof event.status_code === 'number' ? event.status_code : undefined;
+}
+
+function isCodexAccountUnavailableEvent(
+  status: number | undefined,
+  code: string | undefined,
+  message: string | undefined,
+): boolean {
+  if (status !== 403) return false;
+  return /account.{0,30}(?:disabled|deactivated|suspended)|subscription.{0,30}(?:inactive|unavailable)/i
+    .test(`${code ?? ''} ${message ?? ''}`);
 }
 
 /**

@@ -3,6 +3,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { PgRunStore } from '../runtime/runStore.js';
 
 describe('PgRunStore steering inbox', () => {
+  it('lists chat queue records only through the accepted message ledger', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const pool = { query: vi.fn(async (sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
+      return { rows: [] };
+    }) };
+    const store = new PgRunStore({ pool: pool as any });
+
+    await store.listUserMessagesBySession('session-queue');
+
+    const { sql, params } = queries[0]!;
+    expect(sql).toContain('FROM runtime_message_submissions submission');
+    expect(sql).toContain('JOIN runtime_runs run ON run.run_id = submission.run_id');
+    expect(sql).toContain('WHERE submission.session_id = $1');
+    expect(sql).not.toContain('run.idempotency_key IS NOT NULL');
+    expect(params).toEqual(['session-queue']);
+  });
+
   it('atomically links a new source run to the open run in the same session', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     const now = new Date().toISOString();

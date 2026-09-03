@@ -53,13 +53,27 @@ describe('M50-03 attachment upload state machine', () => {
 });
 
 describe('M50-03 attachment validation and leak guard', () => {
-  it('rejects count, size, dangerous/double names and MIME mismatch before upload', () => {
+  it('rejects only request limits and structurally unsafe filenames before upload', () => {
     expect(validateAttachmentSelection(Array.from({ length: 21 }, (_, i) => ({ name: `a${i}.txt`, size: 1, mimeType: 'text/plain' })))).toMatchObject({ ok: false, issue: { code: 'count_exceeded' } });
     expect(validateAttachmentSelection([{ name: 'big.pdf', size: 11, mimeType: 'application/pdf' }], { maxBytes: 10 })).toMatchObject({ ok: false, issue: { code: 'size_exceeded' } });
     expect(validateAttachmentSelection([{ name: '../a.txt', size: 1, mimeType: 'text/plain' }])).toMatchObject({ ok: false, issue: { code: 'dangerous_filename' } });
-    expect(validateAttachmentSelection([{ name: 'invoice.pdf.exe', size: 1, mimeType: 'application/pdf' }])).toMatchObject({ ok: false, issue: { code: 'double_extension' } });
-    expect(validateAttachmentSelection([{ name: 'photo.png', size: 1, mimeType: 'text/plain' }])).toMatchObject({ ok: false, issue: { code: 'mime_extension_mismatch' } });
-    expect(validateAttachmentSelection([{ name: 'x.svg', size: 1, mimeType: 'image/svg+xml' }])).toMatchObject({ ok: false, issue: { code: 'extension_blocked' } });
+    expect(validateAttachmentSelection([{ name: `safe\u202eexe.txt`, size: 1, mimeType: 'text/plain' }])).toMatchObject({ ok: false, issue: { code: 'dangerous_filename' } });
+  });
+
+  it.each([
+    ['文档 V2.5.pdf', 'application/pdf'],
+    ['Demo-V2.7 (1).html', 'text/html'],
+    ['Demo.html', 'text/html'],
+    ['Demo.html.zip', 'application/zip'],
+    ['invoice.pdf.exe', 'application/x-msdownload'],
+    ['install.sh', 'text/x-shellscript'],
+    ['README', 'application/octet-stream'],
+  ])('allows ordinary file %s regardless of extension', (name, mimeType) => {
+    expect(validateAttachmentSelection([{ name, size: 1, mimeType }])).toEqual({ ok: true });
+  });
+
+  it('leaves MIME and content mismatch decisions to server-side classification', () => {
+    expect(validateAttachmentSelection([{ name: 'photo.png', size: 1, mimeType: 'text/plain' }])).toEqual({ ok: true });
   });
 
   it('guards every durable/log/analytics/WS/queue projection from local paths', () => {

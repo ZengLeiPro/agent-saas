@@ -259,26 +259,6 @@ async function shareFileDownload(shareToken: string, filePath: string, fileName:
   document.body.removeChild(a);
 }
 
-/** Artifact 下载 URL：强制服务端代理并以 attachment 响应，避免 OSS 直读 URL 被浏览器当作预览打开。 */
-async function resolveArtifactDownloadUrl(artifactId: string): Promise<string> {
-  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url?download=true`);
-  if (!res.ok) throw new Error(`下载地址获取失败（HTTP ${res.status}）`);
-  const body = await res.json() as { url?: string };
-  if (!body.url) throw new Error('下载地址获取失败：响应缺少内容地址');
-  return body.url;
-}
-
-/** Artifact 交付卡片下载：服务端 attachment 响应与前端 download 语义双重保障。 */
-async function artifactDownload(artifactId: string, fileName: string) {
-  const url = await resolveArtifactDownloadUrl(artifactId);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
-
 /** 文件下载卡片，fileSize 为 0 时通过 HEAD 请求懒加载真实大小 */
 function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, artifactId, mimeType, shareToken }: {
   fileName: string;
@@ -396,7 +376,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
                 e.stopPropagation();
                 if (artifactId) {
                   setDownloadError(null);
-                  void artifactDownload(artifactId, fileName).catch((err: unknown) =>
+                  void import('@/components/artifacts/ArtifactPreviewDialog').then(module => module.downloadArtifact(artifactId, fileName)).catch((err: unknown) =>
                     setDownloadError(err instanceof Error ? err.message : '下载失败，请稍后重试'));
                 } else if (shareToken) void shareFileDownload(shareToken, filePath, fileName);
                 else if (filePreview?.downloadFile) filePreview.downloadFile(filePath, fileName);

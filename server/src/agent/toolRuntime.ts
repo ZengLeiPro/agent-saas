@@ -21,7 +21,7 @@ import type {
   ExecutionTransport,
   ExecutionTransportRegistry,
 } from '../runtime/executionTransport.js';
-import { selectRuntimeHandRoute, type HandRecord, type HandStore } from '../runtime/handStore.js';
+import { selectRuntimeHandRoute, type HandStore } from '../runtime/handStore.js';
 import type { RuntimeIsolationRequirement } from '../runtime/runtimeIsolationEvidence.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
@@ -67,6 +67,8 @@ import { resolveShellConcurrency, shellToolSchema, type ShellToolInput } from '.
 import { parseProvablyReadOnlyRgCommand, resolveShellCallPolicy } from './shellReadOnlyPolicy.js';
 import { withWorkspaceFileMutationQueue } from './workspaceFileMutationQueue.js';
 import { readWorkspaceFile } from './workspaceRead.js';
+import { resolveWorkspacePrincipal } from './workspacePrincipal.js';
+import { isTenantRemoteHand, selectCurrentTenantRemoteHand } from './tenantRemoteHandSelection.js';
 const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
@@ -127,7 +129,7 @@ export interface WorkspaceRef {
    * 缺省时 sandbox 归属退回 workspace 级共享（旧行为，安全 fallback）。
    */
   topLevelSessionId?: string;
-  sandboxScopeId?: string; mountSubPath?: string; workload?: SandboxWorkloadWireDescriptor;
+  sandboxScopeId?: string; mountSubPath?: string; sharedReadOnlySubPath?: string; workload?: SandboxWorkloadWireDescriptor;
   /** Standalone connector ACS resource target; normal Agent calls inherit their profile. */ sandboxResources?: { cpu: string; memoryMb: number };
   executionTarget: ExecutionTargetKind;
   /**
@@ -314,7 +316,8 @@ export interface WorkspaceProvider {
     /** 顶层会话组键（per-session Sandbox）。缺省时实现方回落 sessionId。 */
     topLevelSessionId?: string;
     workspaceId?: string;
-    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources']; workload?: WorkspaceRef['workload'];
+    sandboxScopeId?: string; mountSubPath?: string; sharedReadOnlySubPath?: string;
+    sandboxResources?: WorkspaceRef['sandboxResources']; workload?: WorkspaceRef['workload'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef;
@@ -519,7 +522,8 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     sessionId?: string;
     topLevelSessionId?: string;
     workspaceId?: string;
-    sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources']; workload?: WorkspaceRef['workload'];
+    sandboxScopeId?: string; mountSubPath?: string; sharedReadOnlySubPath?: string;
+    sandboxResources?: WorkspaceRef['sandboxResources']; workload?: WorkspaceRef['workload'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef {
@@ -529,8 +533,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     // （wake / resume 路径）。两者都缺时返回 undefined → 下游 buildTenantScopedEnv
     // 按"匿名/平台兼容路径"走，保持向后兼容；ServerLocal Shell gate 也会因
     // identity 缺失自然 fail-closed（toolRuntime.ts:620）。
-    const identity = context.user ?? context.sessionOwner;
-    const tenantId = context.user?.tenantId ?? context.sessionOwner?.tenantId;
+    const { identity, tenantId } = resolveWorkspacePrincipal(context);
     return {
       id: args.workspaceId ?? args.sessionId,
       root: resolve(args.cwd),
@@ -542,24 +545,12 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
       // 子 Agent 路径由调用方显式传入父的 topLevelSessionId，故不会误取子会话 ID。
       topLevelSessionId: args.topLevelSessionId ?? args.sessionId,
       sandboxScopeId: args.sandboxScopeId, mountSubPath: args.mountSubPath,
+      sharedReadOnlySubPath: args.sharedReadOnlySubPath,
       sandboxResources: args.sandboxResources, ...(args.workload ? { workload: args.workload } : {}),
       executionTarget: args.executionTarget ?? this.defaultExecutionTarget,
       ...(args.sandboxPolicy ? { sandboxPolicy: args.sandboxPolicy } : {}),
     };
   }
-}
-
-function isTenantRemoteHand(hand: import('../runtime/handStore.js').HandRecord): boolean {
-  return hand.type === 'server-remote'
-    && hand.status !== 'destroyed'
-    && typeof hand.metadata?.tenantRemoteHandId === 'string'
-    && (hand.metadata.tenantRemoteHandId as string).length > 0;
-}
-
-function selectCurrentTenantRemoteHand(hands: ReadonlyArray<HandRecord>): HandRecord | undefined {
-  return hands.find((hand) => hand.status === 'ready')
-    ?? hands.find((hand) => hand.status === 'provisioning')
-    ?? hands[0];
 }
 
 function workspaceReadyStatusResponse(input: {

@@ -16,6 +16,9 @@ import {
   type AgentDwsContextPolicy,
 } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
+import type { OrgAgentStore } from '../data/orgAgents/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
@@ -72,6 +75,50 @@ const inboxQuerySchema = z.object({
 const delegationResourceSchema = z.object({
   args: z.array(z.string().min(1).max(500)).min(1).max(100),
 }).strict();
+const GROUP_AGENT_TOOL_MAX = new Set([
+  'Agent', 'BackgroundTask',
+  'ContextSearch', 'ContextGet', 'WebSearch', 'WebFetch',
+  'Read', 'Glob', 'Grep', 'ArtifactCreate',
+]);
+const groupWorkspaceQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) });
+const groupWorkspaceUpdateSchema = z.object({
+  conversationId: z.string().trim().min(1).max(1024),
+  expectedRevision: z.number().int().positive(),
+  enabled: z.boolean(),
+  policy: z.object({
+    enabled: z.boolean(), membership: z.enum(['members', 'members_and_guests']),
+    guest: z.enum(['deny', 'shared_read_only']), taskVisibility: z.enum(['conversation', 'requester_only']),
+    completion: z.enum(['reply_to_work_conversation', 'silent']), liveDeny: z.boolean(),
+  }).strict(),
+  effectiveConfig: z.object({
+    identity: z.object({ displayName: z.string().trim().min(1).max(80).optional() }).strict(),
+    knowledge: z.object({ contextEnabled: z.boolean(), sourceIds: z.array(z.string().min(1).max(200)).max(100) }).strict(),
+    capabilities: z.object({ skillIds: z.array(z.string().min(1).max(200)).max(100), toolNames: z.array(z.string().min(1).max(200)).max(100) }).strict(),
+    access: z.object({ triggerRoles: z.array(z.string().min(1).max(100)).max(50), approvalRoles: z.array(z.string().min(1).max(100)).max(50) }).strict(),
+    speech: z.object({ proactive: z.boolean(), requireMention: z.boolean() }).strict(),
+  }).strict(),
+}).strict();
+const deliveryReconcileSchema = z.object({
+  outcome: z.enum(['confirmed_sent', 'confirmed_not_sent', 'indeterminate']),
+  reason: z.string().trim().min(1).max(1000),
+  evidence: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+}).strict();
+const memoryPromoteSchema = z.object({
+  reason: z.string().trim().min(1).max(1000), policyRevision: z.number().int().positive(),
+}).strict();
+const memoryCreateSchema = z.object({
+  bindingId: z.string().trim().min(1), workConversationId: z.string().trim().min(1).optional(),
+  workOrderId: z.string().trim().min(1).optional(),
+  memoryScope: z.enum(['conversation', 'task_checkpoint']),
+  content: z.record(z.string(), z.unknown()), provenance: z.record(z.string(), z.unknown()),
+  policyRevision: z.number().int().positive(),
+}).strict();
+const memoryStatusSchema = z.object({
+  expectedVersion: z.number().int().positive(), status: z.enum(['revoked', 'deleted']),
+}).strict();
+const workOrderActionSchema = z.object({
+  expectedVersion: z.number().int().positive(), action: z.enum(['cancel', 'retry']),
+}).strict();
 
 class AgentDwsMutationFailure extends Error {
   constructor(
@@ -88,6 +135,9 @@ class AgentDwsMutationFailure extends Error {
 export interface AgentDwsAccountsRouterOptions {
   accountStore?: AgentDwsAccountStore;
   messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
+  orgGroupAgentStore?: OrgGroupAgentStore;
+  orgAgentStore?: Pick<OrgAgentStore, 'get'>;
+  backgroundTasks?: BackgroundTaskRuntime;
   authFlowService?: AgentDwsAuthFlowServiceLike;
   eventGateway?: DwsPersonalEventGateway;
   auditStore?: GovernanceAuditStore;
@@ -132,6 +182,180 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     } catch {
       res.status(503).json({ error: 'Agent 钉钉消息诊断读取失败' });
     }
+  });
+
+  router.get('/agent-dws-accounts/:accountId/group-workspace', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore || !options.orgAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
+    const parsed = groupWorkspaceQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    try {
+      const [bindings, deliveries] = await Promise.all([
+        options.orgGroupAgentStore.listBindings(tenantId, account.accountId),
+        options.orgGroupAgentStore.listDeliveries(tenantId, account.accountId, parsed.data.limit),
+      ]);
+      const workspaces = await Promise.all(bindings.filter(binding => binding.channelKind === 'group').map(async binding => {
+        const workOrders = await options.orgGroupAgentStore!.listWorkOrders(tenantId, binding.bindingId, parsed.data.limit);
+        return { bindingId: binding.bindingId,
+          workOrders: await Promise.all(workOrders.map(async workOrder => ({ ...workOrder,
+            attempts: await options.orgGroupAgentStore!.listWorkAttempts(tenantId, workOrder.workOrderId) }))),
+          memories: await options.orgGroupAgentStore!.listMemories({ tenantId, agentId: binding.agentId,
+            bindingId: binding.bindingId, limit: parsed.data.limit }) };
+      }));
+      return res.json({ bindings: bindings.map(binding => {
+        const agent = options.orgAgentStore!.get(binding.agentId);
+        return { ...binding, effectiveConfigComputation: {
+          publishedAgent: { skillIds: agent?.allowedSkills ?? [], sourceIds: agent?.allowedKnowledge ?? [],
+            executionMode: agent?.runtime?.executionMode ?? 'unavailable', enabled: agent?.enabled === true },
+          channelCeiling: { toolNames: [...GROUP_AGENT_TOOL_MAX].sort() },
+          groupNarrowing: binding.effectiveConfig,
+          liveOverrides: { bindingEnabled: binding.enabled && binding.activationState === 'active',
+            liveDeny: binding.policy.liveDeny, accountStatus: account.status },
+        } };
+      }), workspaces, deliveries: deliveries
+        .filter(item => item.destination.kind === 'group')
+        .map(toPublicDeliveryRecord) });
+    } catch {
+      return res.status(503).json({ error: '组织群工作台读取失败' });
+    }
+  });
+
+  router.patch('/agent-dws-accounts/:accountId/group-workspace', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore || !options.orgAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
+    const parsed = groupWorkspaceUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    const agent = options.orgAgentStore.get(account.agentId);
+    if (!agent || agent.tenantId !== tenantId || !agent.enabled) return res.status(409).json({ error: '组织智能体当前不可用' });
+    if (parsed.data.enabled && agent.runtime?.executionMode !== 'dispatcher')
+      return res.status(409).json({ error: '启用群聊前，组织智能体必须发布为 dispatcher 模式' });
+    const invalidSkill = parsed.data.effectiveConfig.capabilities.skillIds.some(id => !agent.allowedSkills.includes(id));
+    const invalidSource = parsed.data.effectiveConfig.knowledge.sourceIds.some(id => !(agent.allowedKnowledge ?? []).includes(id));
+    const invalidTool = parsed.data.effectiveConfig.capabilities.toolNames.some(name => !GROUP_AGENT_TOOL_MAX.has(name));
+    if (invalidSkill || invalidSource || invalidTool) return res.status(400).json({ error: '群配置只能收窄组织智能体已发布的能力' });
+    await runMutation(req, res, options, {
+      action: 'org_agent.channel_binding.update', tenantId, targetId: account.accountId,
+      purpose: 'update group Agent effective configuration',
+    }, async () => {
+      try {
+        const binding = await options.orgGroupAgentStore!.updateBinding({ tenantId, accountId: account.accountId, ...parsed.data });
+        return { status: 200, body: { binding } };
+      } catch (error) {
+        if (error instanceof Error && error.message === 'ORG_AGENT_BINDING_VERSION_CONFLICT') {
+          throw new AgentDwsAccountInvariantError('AGENT_DWS_ACCOUNT_REVISION_CONFLICT');
+        }
+        throw error;
+      }
+    });
+  });
+
+  router.post('/agent-dws-accounts/:accountId/group-workspace/deliveries/:deliveryId/reconcile', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
+    const parsed = deliveryReconcileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    return await runMutation(req, res, options, {
+      action: 'org_agent.delivery.reconcile', tenantId, targetId: req.params.deliveryId,
+      purpose: parsed.data.reason,
+    }, async () => ({ status: 200, body: { delivery: await options.orgGroupAgentStore!.reconcileDelivery({
+      tenantId, deliveryId: req.params.deliveryId, actorId: req.user!.username,
+      reason: parsed.data.reason, evidence: parsed.data.evidence, outcome: parsed.data.outcome,
+    }) } }));
+  });
+
+  router.post('/agent-dws-accounts/:accountId/group-workspace/work-orders/:workOrderId/action', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore || !options.backgroundTasks) {
+      return res.status(503).json({ error: '组织群任务服务暂不可用' });
+    }
+    const parsed = workOrderActionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const [account, workOrder] = await Promise.all([
+      options.accountStore.getForTenant(tenantId, req.params.accountId),
+      options.orgGroupAgentStore.getWorkOrder(tenantId, req.params.workOrderId),
+    ]);
+    if (!account || !workOrder) return res.status(404).json({ error: '账号或任务不存在' });
+    const binding = await options.orgGroupAgentStore.getBindingById(tenantId, workOrder.bindingId);
+    if (!binding || binding.accountId !== account.accountId) return res.status(404).json({ error: '任务不属于当前账号' });
+    return await runMutation(req, res, options, {
+      action: `org_agent.work_order.${parsed.data.action}`, tenantId, targetId: workOrder.workOrderId,
+      purpose: `${parsed.data.action} group work order`,
+    }, async () => {
+      const task = parsed.data.action === 'cancel'
+        ? await options.backgroundTasks!.cancelWorkOrder(tenantId, workOrder.workOrderId, parsed.data.expectedVersion)
+        : await options.backgroundTasks!.retryWorkOrder(tenantId, workOrder.workOrderId, parsed.data.expectedVersion);
+      return { status: 200, body: { task,
+        workOrder: await options.orgGroupAgentStore!.getWorkOrder(tenantId, workOrder.workOrderId) } };
+    });
+  });
+
+  router.post('/agent-dws-accounts/:accountId/group-workspace/memories/:memoryId/promote', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
+    const parsed = memoryPromoteSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    return await runMutation(req, res, options, {
+      action: 'org_agent.memory.promote', tenantId, targetId: req.params.memoryId, purpose: parsed.data.reason,
+    }, async () => ({ status: 200, body: { memory: await options.orgGroupAgentStore!.promoteMemory({
+      tenantId, sourceMemoryId: req.params.memoryId, promotedBy: req.user!.username,
+      reason: parsed.data.reason, policyRevision: parsed.data.policyRevision,
+    }) } }));
+  });
+
+  router.post('/agent-dws-accounts/:accountId/group-workspace/memories', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
+    const parsed = memoryCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    const binding = await options.orgGroupAgentStore.getBindingById(tenantId, parsed.data.bindingId);
+    if (!binding || binding.accountId !== account.accountId || binding.agentId !== account.agentId) {
+      return res.status(404).json({ error: '群绑定不存在' });
+    }
+    return await runMutation(req, res, options, {
+      action: 'org_agent.memory.create', tenantId, targetId: binding.bindingId, purpose: 'create governed group memory',
+    }, async () => ({ status: 201, body: { memory: await options.orgGroupAgentStore!.createMemory({
+      tenantId, agentId: binding.agentId, bindingId: binding.bindingId,
+      ...(parsed.data.workConversationId ? { workConversationId: parsed.data.workConversationId } : {}),
+      ...(parsed.data.workOrderId ? { workOrderId: parsed.data.workOrderId } : {}),
+      memoryScope: parsed.data.memoryScope, content: parsed.data.content,
+      provenance: { ...parsed.data.provenance, createdBy: req.user!.username },
+      policyRevision: parsed.data.policyRevision,
+    }) } }));
+  });
+
+  router.patch('/agent-dws-accounts/:accountId/group-workspace/memories/:memoryId', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
+    const parsed = memoryStatusSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req); if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    return await runMutation(req, res, options, {
+      action: `org_agent.memory.${parsed.data.status}`, tenantId, targetId: req.params.memoryId,
+      purpose: `memory ${parsed.data.status}`,
+    }, async () => ({ status: 200, body: { memory: await options.orgGroupAgentStore!.changeMemoryStatus({
+      tenantId, memoryId: req.params.memoryId, expectedVersion: parsed.data.expectedVersion,
+      status: parsed.data.status,
+    }) } }));
   });
 
   router.post('/agent-dws-accounts/:accountId/delegation-resource', async (req, res) => {
@@ -515,6 +739,19 @@ function toPublicInboxRecord(record: AgentDwsInboxRecord): Record<string, unknow
     lastError: record.lastError ?? null,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    completedAt: record.completedAt ?? null,
+  };
+}
+
+function toPublicDeliveryRecord(record: Awaited<ReturnType<OrgGroupAgentStore['listDeliveries']>>[number]): Record<string, unknown> {
+  return {
+    deliveryId: record.deliveryId, inboxId: record.inboxId ?? null,
+    conversationId: record.conversationId, workConversationId: record.workConversationId ?? null,
+    source: record.source, deliveryKind: record.deliveryKind, disposition: record.disposition,
+    content: record.content, sourceWorkOrderId: record.sourceWorkOrderId ?? null,
+    sourceAttemptId: record.sourceAttemptId ?? null,
+    deliveryState: record.deliveryState, attempt: record.attempt, lastError: record.lastError ?? null,
+    lastAttemptAt: record.lastAttemptAt ?? null, createdAt: record.createdAt, updatedAt: record.updatedAt,
     completedAt: record.completedAt ?? null,
   };
 }

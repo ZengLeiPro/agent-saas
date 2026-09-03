@@ -70,6 +70,9 @@ export function createDwsBackgroundCompletionEnqueuer(
       schemaVersion: 2,
       source: 'background_task_completion',
       backgroundTaskId: input.taskId,
+      ...(input.workOrderId ? { workOrderId: input.workOrderId } : {}),
+      ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+      ...(input.attemptFence !== undefined ? { attemptFence: input.attemptFence } : {}),
       accountIdentity: {
         profileId: input.profileId,
         corpId: input.corpId,

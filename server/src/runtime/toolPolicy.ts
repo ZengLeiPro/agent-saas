@@ -14,7 +14,24 @@ const NEVER_AUTO_APPROVE_TOOLS = new Set<string>([
 ]);
 
 export class DefaultToolPolicy implements ToolPolicy {
+  constructor(private readonly liveOrgAgentChannelPolicy?: (input: {
+    tenantId: string; bindingId: string; toolName: string;
+  }) => Promise<{ allowed: boolean; reason?: string }>) {}
+
   async decide(descriptor: ToolDescriptor, input: unknown, _context: RunContext): Promise<ToolPolicyDecision> {
+    const channelPolicy = _context.channelContext.orgAgentChannel;
+    if (channelPolicy && !channelPolicy.allowedToolNames.includes(descriptor.name)
+      && !channelPolicy.allowedToolNames.includes(descriptor.id)) {
+      return { type: 'deny', reason: 'tool is outside the ChannelBinding effective capability' };
+    }
+    if (channelPolicy) {
+      const tenantId = _context.channelContext.sessionOwner?.tenantId;
+      if (!tenantId || !this.liveOrgAgentChannelPolicy) {
+        return { type: 'deny', reason: 'live ChannelBinding policy is unavailable' };
+      }
+      const live = await this.liveOrgAgentChannelPolicy({ tenantId, bindingId: channelPolicy.bindingId, toolName: descriptor.name });
+      if (!live.allowed) return { type: 'deny', reason: live.reason ?? 'live ChannelBinding policy denied the tool' };
+    }
     // 授权模式（autoApprove）对所有已认证用户生效（2026-07-02 起）：
     // 它免除的是「人工确认」，不是「安全边界」——Shell 的宿主隔离兜底
     // 仍在 WorkspaceToolProvider.invoke（非平台用户必须隔离 hand/container），

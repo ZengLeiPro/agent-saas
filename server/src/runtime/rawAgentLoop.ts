@@ -42,6 +42,7 @@ import { DefaultToolPolicy } from './toolPolicy.js';
 import { refreshRunApprovalPolicy } from './approvalPolicyResolution.js';
 import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import { standardizeToolError } from './agentPlanDefense.js';
+import { toolExecutionError } from './toolExecutionError.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { buildModelUserContent } from './imageAttachments.js';
 import {
@@ -644,7 +645,8 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
-      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources, workload: context.workload,
+      mountSubPath: context.mountSubPath, sharedReadOnlySubPath: context.sharedReadOnlySubPath,
+      sandboxResources: context.sandboxResources, workload: context.workload,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
@@ -1780,7 +1782,8 @@ export class RawAgentLoop implements AgentLoop {
         topLevelSessionId: context.topLevelSessionId,
         workspaceId: context.workspaceId,
         sandboxScopeId: context.sandboxScopeId,
-        mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources, workload: context.workload,
+        mountSubPath: context.mountSubPath, sharedReadOnlySubPath: context.sharedReadOnlySubPath,
+        sandboxResources: context.sandboxResources, workload: context.workload,
         executionTarget: context.executionTarget,
         sandboxPolicy: context.sandboxPolicy,
       });
@@ -2127,7 +2130,7 @@ export class RawAgentLoop implements AgentLoop {
     if (!parsed.ok) return true;
     const policyContext = await refreshRunApprovalPolicy(this.runStore, context);
     const decision = await this.toolPolicy.decide(descriptor, parsed.input, policyContext);
-    return decision.type !== 'requires_approval';
+    return decision.type === 'allow';
   }
 
   private async *appendToolResult(args: {
@@ -2214,7 +2217,8 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: resumeContext.topLevelSessionId,
       workspaceId: resumeContext.workspaceId,
       sandboxScopeId: resumeContext.sandboxScopeId,
-      mountSubPath: resumeContext.mountSubPath, sandboxResources: resumeContext.sandboxResources, workload: resumeContext.workload,
+      mountSubPath: resumeContext.mountSubPath, sharedReadOnlySubPath: resumeContext.sharedReadOnlySubPath,
+      sandboxResources: resumeContext.sandboxResources, workload: resumeContext.workload,
       executionTarget: approval.executionTarget ?? pendingState.approvalRequest?.executionTarget ?? resumeContext.executionTarget,
       sandboxPolicy: resumeContext.sandboxPolicy,
     });
@@ -2401,7 +2405,8 @@ export class RawAgentLoop implements AgentLoop {
       topLevelSessionId: context.topLevelSessionId,
       workspaceId: context.workspaceId,
       sandboxScopeId: context.sandboxScopeId,
-      mountSubPath: context.mountSubPath, sandboxResources: context.sandboxResources, workload: context.workload,
+      mountSubPath: context.mountSubPath, sharedReadOnlySubPath: context.sharedReadOnlySubPath,
+      sandboxResources: context.sandboxResources, workload: context.workload,
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
@@ -2526,60 +2531,35 @@ export class RawAgentLoop implements AgentLoop {
     if (!descriptor) {
       // D4 + G1：工具名不在当前 turn 的 tools[] 白名单内（descriptorsByName 来自当前 turn descriptors）。
       // 错误措辞标准化避免 deepseek 字面执行"try different approach"陷入循环。
-      return {
-        call,
-        input: rawInput,
-        result: { content: standardizeToolError(unavailableToolMessage(call.name)) },
-        isError: true,
-      };
+      return toolExecutionError({ call, parsedInput: rawInput, message: unavailableToolMessage(call.name) });
     }
     if (this.mcpLoadingMode !== 'eager' && descriptor.mcp) {
       const expectedNamespace = buildMcpNamespaceName(descriptor.mcp.serverName);
       if (call.namespace !== expectedNamespace) {
-        return {
-          call,
-          descriptor,
-          input: rawInput,
-          result: {
-            content: standardizeToolError(
-              `MCP namespace mismatch: ${call.name}（期望 ${expectedNamespace}，实际 ${call.namespace ?? '未提供'}）`,
-            ),
-          },
-          isError: true,
-        };
+        return toolExecutionError({ call, descriptor, parsedInput: rawInput,
+          message: `MCP namespace mismatch: ${call.name}（期望 ${expectedNamespace}，实际 ${call.namespace ?? '未提供'}）` });
       }
     }
 
     if (call.name === 'WebFetch' && this.webFetchSynthesisReason) {
-      return {
-        call,
-        descriptor,
-        input: rawInput,
-        result: {
-          content: standardizeToolError(
-            `${this.webFetchSynthesisReason}；本次调用未出网，请基于已有材料收束回答`,
-          ),
-        },
-        isError: true,
-      };
+      return toolExecutionError({ call, descriptor, parsedInput: rawInput,
+        message: `${this.webFetchSynthesisReason}；本次调用未出网，请基于已有材料收束回答` });
     }
 
     // 审批、风险分档、展示与执行必须使用同一份 prepare + schema 后的参数。
     const parsed = tryParseToolInput(descriptor, rawInput);
     if (!parsed.ok) {
-      return {
-        call,
-        descriptor,
-        input: rawInput,
-        result: { content: standardizeToolError(parsed.error) },
-        isError: true,
-      };
+      return toolExecutionError({ call, descriptor, parsedInput: rawInput, message: parsed.error });
     }
     const input = parsed.input;
 
     if (!prepared) {
       const policyContext = await refreshRunApprovalPolicy(this.runStore, context);
       const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
+      if (decision.type === 'deny') {
+        return toolExecutionError({ call, descriptor, parsedInput: input,
+          message: `tool denied by policy: ${decision.reason}` });
+      }
       if (decision.type === 'requires_approval') {
         const approval = await this.approvalStore.create({
           sessionId: context.sessionId,
@@ -2613,13 +2593,7 @@ export class RawAgentLoop implements AgentLoop {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           await this.approvalStore.resolvePending(approval.id, 'rejected', message);
-          return {
-            call,
-            descriptor,
-            input,
-            result: { content: standardizeToolError(`tool error: ${message}`) },
-            isError: true,
-          };
+          return toolExecutionError({ call, descriptor, parsedInput: input, message: `tool error: ${message}` });
         }
 
         return this.resolveApprovalDecision({

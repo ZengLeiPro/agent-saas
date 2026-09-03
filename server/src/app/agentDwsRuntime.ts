@@ -5,6 +5,7 @@ import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentD
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
 import { DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -93,6 +94,7 @@ export async function createAgentDwsRuntime(options: {
   assignmentStore?: PgAssignmentStore;
   contextStore?: ContextStore;
   messageStore?: AgentDwsMessageStore;
+  orgGroupAgentStore?: OrgGroupAgentStore;
   pgEventStore?: PgEventStore;
   pgRunStore?: PgRunStore;
   tablePrefix: string;
@@ -147,10 +149,16 @@ export async function createAgentDwsRuntime(options: {
     ? new AgentDwsMessageRouter({
         agentCwd: options.agentCwd,
         messageStore: options.messageStore,
+        ...(options.orgGroupAgentStore ? { orgGroupAgentStore: options.orgGroupAgentStore } : {}),
         accountStore: options.accountStore,
         dispatch: options.dispatch,
         resolveDefaultModel: options.resolveDefaultModel,
         resolveRequester: (account, senderOpenDingtalkId, senderName) => requesterIdentityResolver.resolve(
+          account,
+          senderOpenDingtalkId,
+          senderName,
+        ),
+        resolveRequesterOutcome: (account, senderOpenDingtalkId, senderName) => requesterIdentityResolver.resolveOutcome(
           account,
           senderOpenDingtalkId,
           senderName,

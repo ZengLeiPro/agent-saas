@@ -180,10 +180,14 @@ export class PgContextRecallService implements ContextRecallService {
           OR LOWER(NORMALIZE(c.external_key, NFKC))=ANY($6::text[]))
         AND ($7::timestamptz IS NULL OR COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) >= $7)
         AND ($8::timestamptz IS NULL OR COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) < $8)
+        AND ($11::text[] IS NULL OR r.source_id=ANY($11::text[]))
+        AND ($12::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(r.metadata_json->>'conversationId',r.metadata_json->>'conversation_id','')=$12)
       ORDER BY route_rank,COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) DESC,r.record_id
       LIMIT $9
     `, [request.subject.tenantId, collectionIds, request.query, escapedPattern, kinds, sources, from, to,
-      scanLimit + 1, request.subject.userId]);
+      scanLimit + 1, request.subject.userId, request.subject.channelScope?.allowedSourceIds ?? null,
+      request.subject.channelScope?.conversationId ?? null]);
     throwIfAborted(request.signal);
 
     const fetchedRows = result.rows as Row[];
@@ -210,6 +214,9 @@ export class PgContextRecallService implements ContextRecallService {
     throwIfAborted(request.signal);
     const id = decodeRecallId(request.id, this.idSigningKey);
     if (!id || id.t !== request.subject.tenantId) return { hit: null, degraded: false };
+    if (request.subject.channelScope && !request.subject.channelScope.allowedSourceIds.includes(id.s)) {
+      return { hit: null, degraded: false };
+    }
     const assignmentVersions = scopeVersions(request.scope.collections);
     if (!assignmentVersions.has(id.c)) return { hit: null, degraded: false };
 
@@ -298,7 +305,10 @@ export class PgContextRecallService implements ContextRecallService {
             AND (auth_partition.refused=TRUE OR auth_partition.status='refused')
         )
         ${chatPolicySql('v', 's', 'c', 'a')}
-    `, [id.t, id.s, id.c, id.r, id.v, request.subject.userId]);
+        AND ($7::text IS NULL OR s.kind<>'dws'
+          OR COALESCE(v.metadata_json->>'conversationId',v.metadata_json->>'conversation_id','')=$7)
+    `, [id.t, id.s, id.c, id.r, id.v, request.subject.userId,
+      request.subject.channelScope?.conversationId ?? null]);
     throwIfAborted(request.signal);
     if (!result.rows[0]) return { hit: null, degraded: false };
     const row = result.rows[0] as Row;

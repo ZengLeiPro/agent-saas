@@ -102,6 +102,9 @@ export async function deliverDwsBackgroundCompletion(input: {
   await config.enqueueDwsBackgroundCompletion({
     tenantId: task.tenantId,
     taskId: task.runId,
+    ...(metadata.workOrderId ? { workOrderId: metadata.workOrderId } : {}),
+    ...(metadata.attemptId ? { attemptId: metadata.attemptId } : {}),
+    ...(metadata.attemptNo ? { attemptFence: metadata.attemptNo } : {}),
     ...route,
     content: buildTaskNotification(task, metadata),
   });

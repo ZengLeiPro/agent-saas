@@ -5,6 +5,14 @@ export interface ContextRecallSubject {
   workspaceId?: string;
   sessionId?: string;
   orgAgentId?: string;
+  channelScope?: {
+    bindingId: string;
+    conversationSpaceId: string;
+    workConversationId: string;
+    conversationId: string;
+    policyRevision: number;
+    allowedSourceIds: readonly string[];
+  };
 }
 
 export interface ContextRecallCollectionScope {

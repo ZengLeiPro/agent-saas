@@ -150,7 +150,9 @@ function setup(input: {
   const accountStore = {
     getForTenant: vi.fn().mockResolvedValue(account),
   } as unknown as AgentDwsAccountStore;
-  const sender = { send: vi.fn().mockResolvedValue(undefined) } satisfies DwsPersonalMessageSenderLike;
+  const sender: DwsPersonalMessageSenderLike = {
+    send: vi.fn().mockResolvedValue({ status: 'accepted', acceptedAt: item.createdAt }),
+  };
   const auditRequesterRejection = vi.fn().mockResolvedValue(undefined);
   const auditToolPolicyRejection = vi.fn().mockResolvedValue(undefined);
   const authorizeRequester = vi.fn().mockResolvedValue(input.requesterAllowed === false
@@ -325,6 +327,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
         corpId: 'corp-a',
         dingtalkUserId: 'agent-self',
       },
+      routing: {},
     });
     await router.stop();
   });

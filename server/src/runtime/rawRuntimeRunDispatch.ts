@@ -101,6 +101,7 @@ import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
 import { enterSessionContext } from '../utils/requestContext.js';
 import { RawAgentLoop } from './rawAgentLoop.js';
+import { DefaultToolPolicy } from './toolPolicy.js';
 import { resolveEffectiveMcpLoadingMode } from './mcpToolLoading.js';
 import { modelSupportsImage } from './imageAttachments.js';
 import { resolveRuntimeInboundAttachments } from './runtimeAttachmentResolution.js';
@@ -187,7 +188,9 @@ import {
 } from './interactionProjection.js';
 import { loadPrompt, renderPrompt, type PromptVars } from './promptRenderer.js';
 import { buildRawRuntimeSandboxPolicy } from './rawRuntimeSandboxPolicy.js';
-import { deriveStableWorkspaceId } from './workspaceIdentity.js';
+import { deriveRuntimeWorkspaceId, requestedSessionPrincipal, runtimePrincipalMatches } from './runtimeSessionIdentity.js';
+import { resolveSessionOwnerTenantId, resolveWakeSessionOwner } from './runtimeSessionOwner.js';
+export { resolveSessionOwnerTenantId, resolveWakeSessionOwner } from './runtimeSessionOwner.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
 import { AgentToolProvider } from './subagent/agentToolProvider.js';
@@ -272,14 +275,6 @@ export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: str
   return rel.split(sep).join('/');
 }
 
-function deriveRuntimeWorkspaceId(params: {
-  existingSession?: RuntimeSessionRecord | null;
-  fallbackSessionId: string;
-  identity?: { id?: string; tenantId?: string };
-}): string {
-  return params.existingSession?.workspaceId
-    ?? deriveStableWorkspaceId(params.identity, params.fallbackSessionId);
-}
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
 ): TenantRemoteHandAuthTokenResolver {
@@ -649,69 +644,6 @@ async function authorizeBillingRunStart(
   if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
 }
 
-function resolveSessionOwnerRole(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-): 'admin' | 'user' {
-  return session.userRole
-    ?? config.resolveUserRole?.({ userId: session.userId, username: session.username })
-    ?? 'user';
-}
-
-/** Rebuild the original account identity for every scheduler wake/resume path. */
-export function resolveWakeSessionOwner(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-  fallbackUserId?: string, fallbackTenantId?: string,
-): NonNullable<ChannelContext['sessionOwner']> {
-  const userId = session.userId || fallbackUserId || '';
-  const realName = config.resolveUserRealName?.({
-    userId: userId || undefined,
-    username: session.username || undefined,
-  });
-  const dwsServiceIdentity = Boolean(session.orgAgentId && userId.startsWith('adws-')
-    && session.username === `agent-dws:${session.orgAgentId}`);
-  return {
-    id: userId,
-    username: session.username || 'unknown',
-    role: resolveSessionOwnerRole(config, session),
-    tenantId: dwsServiceIdentity ? fallbackTenantId : resolveSessionOwnerTenantId(config, session),
-    ...(realName ? { realName } : {}),
-  };
-}
-/**
- * 解析 sessionOwner.tenantId（多组织隔离主防御的 fail-safe baseline）。
- *
- * 设计原则（疑点 3 加固，2026-06-22）：
- *   - resolveUserTenantId 未配置 → 返回 undefined。下游 `isPlatformAdmin` 检查
- *     会因 tenantId !== DEFAULT_TENANT_ID 而 false → Shell gate 把非平台
- *     用户路径拦在 server-local 之外。
- *   - resolveUserTenantId 返回 undefined → 不静默回填默认组织。fail-closed 比
- *     "用户已删 silently fallback to kaiyan = 跨组织读取所有人的工作区" 更安全。
- *   - resolveUserTenantId 抛错 → fail-safe 返回 undefined（同上），并记 warn
- *     日志保留诊断信息。不向上抛 throw，避免一次 UserStore 故障让所有 wake
- *     入口阻塞。
- *
- * 任何对 wake 路径的 tenant 身份补齐改动都应保留这个 fail-safe → undefined
- * 语义，避免与下游 `isPlatformAdmin` 假设解耦。
- */
-export function resolveSessionOwnerTenantId(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-): string | undefined {
-  if (!config.resolveUserTenantId) return undefined;
-  try {
-    return config.resolveUserTenantId({ userId: session.userId, username: session.username });
-  } catch (err) {
-    logger.warn('resolveUserTenantId 抛错（fail-safe 降级为 undefined）', {
-      sessionId: session.sessionId,
-      userId: session.userId,
-      username: session.username,
-      err: err instanceof Error ? err.message : String(err),
-    });
-    return undefined;
-  }
-}
 // 2026-08-29（TASK-256）：批准策略解析移入 approvalPolicyResolution.ts（ratchet 收缩），
 // 此处 re-export 维持既有 import 兼容。
 export { resolveEffectiveApprovalPolicy } from './approvalPolicyResolution.js';
@@ -951,6 +883,15 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
     if (existingSession?.deletedAt) return yield deletedSessionResumeError(resumeSessionId!);
     const identitySource = context.sessionOwner || context.user;
+    const requestedPrincipal = requestedSessionPrincipal({
+      agentPrincipal: context.orgAgentChannel?.agentPrincipal,
+      userId: identitySource?.id,
+    });
+    if (!runtimePrincipalMatches(existingSession?.principal, requestedPrincipal)) {
+      yield { type: 'error', error: 'Runtime session principal mismatch' };
+      return;
+    }
+    const sessionPrincipal = existingSession?.principal ?? requestedPrincipal;
     const replayResolution = await resolveMemoryConsolidationReplaySource(
       sessionCatalog,
       options.memoryConsolidationSourceSessionId,
@@ -1134,6 +1075,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         id: identitySource?.id,
         tenantId: effectiveTenantId,
       },
+      ...(orgAgentId ? { orgAgentId } : {}),
     });
     // Collection authorization is pinned exactly once for a new org-Agent session.
     // Existing sessions retain their original pin; legacy sessions without one keep
@@ -1164,6 +1106,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           memoryAutomationEligible: false,
         } : {}),
         ...(orgAgentId ? { orgAgentId } : {}),
+        ...(sessionPrincipal ? { principal: sessionPrincipal } : {}),
         ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),
       sessionId,
@@ -1182,6 +1125,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceId,
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
       ...(orgAgentId ? { orgAgentId } : {}),
+      ...(sessionPrincipal ? { principal: sessionPrincipal } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       memoryPolicyVersion, sandboxWorkloadDescriptor,
       ...(isTaskboardExecution ? {
@@ -1396,6 +1340,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       transcriptProjection: projection,
       toolRuntime: effectiveToolRuntime,
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
+      toolPolicy: new DefaultToolPolicy(config.orgAgentChannelPolicyEvaluator),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
@@ -2019,6 +1964,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         dispatcherCompletion: request.dispatcherCompletion,
       }),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
+      toolPolicy: new DefaultToolPolicy(config.orgAgentChannelPolicyEvaluator),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
@@ -2501,6 +2447,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         dispatcherCompletion: request.dispatcherCompletion,
       }),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
+      toolPolicy: new DefaultToolPolicy(config.orgAgentChannelPolicyEvaluator),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,

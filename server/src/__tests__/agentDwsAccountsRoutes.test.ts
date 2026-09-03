@@ -84,6 +84,9 @@ async function listen(options: {
   audit?: InMemoryGovernanceAuditStore;
   onContextPolicyUpdated?: (account: AgentDwsAccountRecord) => void | Promise<void>;
   onEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => void | Promise<void>;
+  orgGroupAgentStore?: Parameters<typeof createAgentDwsAccountsRouter>[0]['orgGroupAgentStore'];
+  orgAgentStore?: Parameters<typeof createAgentDwsAccountsRouter>[0]['orgAgentStore'];
+  backgroundTasks?: Parameters<typeof createAgentDwsAccountsRouter>[0]['backgroundTasks'];
 }): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -96,6 +99,9 @@ async function listen(options: {
     messageStore: options.messageStore,
     authFlowService: options.authFlowService,
     auditStore: options.audit ?? new InMemoryGovernanceAuditStore(),
+    orgGroupAgentStore: options.orgGroupAgentStore,
+    orgAgentStore: options.orgAgentStore,
+    backgroundTasks: options.backgroundTasks,
     ...(options.onContextPolicyUpdated ? { onContextPolicyUpdated: options.onContextPolicyUpdated } : {}),
     ...(options.onEnabledChanged ? { onEnabledChanged: options.onEnabledChanged } : {}),
   }));
@@ -376,6 +382,50 @@ describe('Agent DWS accounts routes', () => {
     });
     expect(response.status).toBe(503);
     expect(store.create).not.toHaveBeenCalled();
+  });
+
+  it('群工作台返回任务尝试但不暴露投递 provider receipt，并通过审计取消任务', async () => {
+    const store = new FakeAccountStore();
+    store.records.push(makeAccount({ status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a' }));
+    const binding = { bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'adws-1', agentId: 'oa-sales',
+      conversationId: 'cid-a', channelKind: 'group', activationState: 'active', enabled: true, revision: 2,
+      policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation', completion: 'reply_to_work_conversation', liveDeny: false },
+      effectiveConfig: { identity: {}, knowledge: { contextEnabled: false, sourceIds: [] }, capabilities: { skillIds: [], toolNames: [] }, access: { triggerRoles: [], approvalRoles: [] }, speech: { proactive: false, requireMention: true } } };
+    const work = { workOrderId: 'work-a', tenantId: 'tenant-a', agentId: 'oa-sales', bindingId: 'binding-a',
+      workConversationId: 'wc-a', idempotencyKey: 'key-a', title: '汇总', state: 'running', currentAttemptNo: 1,
+      visibility: 'conversation', createdByActor: {}, policySnapshot: {}, cancelPolicy: {}, version: 3,
+      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' };
+    const orgGroupAgentStore = {
+      listBindings: vi.fn(async () => [binding]), listDeliveries: vi.fn(async () => [{ deliveryId: 'delivery-a',
+        tenantId: 'tenant-a', accountId: 'adws-1', conversationId: 'cid-a', source: 'command',
+        deliveryKind: 'front_reply', disposition: 'replied', deliveryState: 'unknown', destination: { kind: 'group' },
+        content: '结果', providerReceipt: { secret: 'never' }, idempotencyKey: 'key', attempt: 1, leaseFence: 1,
+        createdAt: work.createdAt, updatedAt: work.updatedAt }]),
+      listWorkOrders: vi.fn(async () => [work]), listWorkAttempts: vi.fn(async () => [{ attemptId: 'attempt-a',
+        tenantId: 'tenant-a', workOrderId: 'work-a', attemptNo: 1, runtimeRunId: 'run-a', status: 'running',
+        taskWorkspaceId: 'task-ws', sandboxScopeId: 'scope', mountSubPath: 'task', sharedReadOnlySubPath: 'shared',
+        publishState: 'pending', createdAt: work.createdAt, updatedAt: work.updatedAt }]),
+      listMemories: vi.fn(async () => []), getWorkOrder: vi.fn(async () => work), getBindingById: vi.fn(async () => binding),
+    } as unknown as NonNullable<Parameters<typeof createAgentDwsAccountsRouter>[0]['orgGroupAgentStore']>;
+    const cancelWorkOrder = vi.fn(async () => null);
+    const opened = await listen({ store, orgGroupAgentStore, orgAgentStore: { get: vi.fn(() => ({
+      id: 'oa-sales', tenantId: 'tenant-a', enabled: true, allowedSkills: [], allowedKnowledge: [],
+      runtime: { executionMode: 'dispatcher' },
+    })) } as never, backgroundTasks: { cancelWorkOrder } as never });
+    server = opened.server;
+
+    const view = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace`);
+    expect(view.status).toBe(200);
+    const body = await view.json() as Record<string, unknown>;
+    expect(JSON.stringify(body)).toContain('attempt-a');
+    expect(JSON.stringify(body)).not.toContain('never');
+
+    const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace/work-orders/work-a/action`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'cancel', expectedVersion: 3 }),
+    });
+    expect(response.status).toBe(200);
+    expect(cancelWorkOrder).toHaveBeenCalledWith('tenant-a', 'work-a', 3);
   });
 });
 

@@ -57,7 +57,7 @@ export interface RunContext {
    */
   topLevelSessionId?: string;
   sandboxScopeId?: string; workload?: WorkspaceRef['workload'];
-  mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+  mountSubPath?: string; sharedReadOnlySubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
   /** 当前任务从能力中心已启用连接器解析出的运行态凭据环境变量。 */

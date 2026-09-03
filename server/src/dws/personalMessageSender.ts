@@ -39,7 +39,7 @@ export interface DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
-  ): Promise<void>;
+  ): Promise<Record<string, unknown> | undefined>;
 }
 
 /**
@@ -55,7 +55,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
-  ): Promise<void> {
+  ): Promise<Record<string, unknown> | undefined> {
     // Build and validate before resolving credentials or touching the transport.
     const command = buildDwsPersonalMessageCommand(account, event, text, idempotencyKey);
     const principal = principalFor(account);
@@ -102,6 +102,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     this.options.logger?.info?.(
       `Agent DWS message sent account=${account.accountId} event=${event.eventId}`,
     );
+    return { status: 'accepted', acceptedAt: new Date().toISOString() };
   }
 }
 

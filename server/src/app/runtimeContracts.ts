@@ -32,9 +32,11 @@ import type { AgentOptionsConfig } from '../agent/options.js';
 import type { TitleGeneratorConfig, TitleModelAdapterFactory } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import type { OrgAgentRuntimePolicy } from '../data/orgAgents/runtimePolicy.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
@@ -178,6 +180,8 @@ export interface AppRuntime {
   sessionCatalog?: Pick<SessionCatalog, 'get'>;
   /** Personal Stream durable inbox 与 conversation/session binding。 */
   agentDwsMessageStore?: AgentDwsMessageStore;
+  /** 组织 Agent 群空间、工作对话与独立投递真值。 */
+  orgGroupAgentStore?: OrgGroupAgentStore;
   /** durable inbox → 组织 Agent Session → current-user DWS 回复 worker。 */
   agentDwsMessageRouter?: AgentDwsMessageRouter;
   /** Agent-owned DWS device flow，token 只进入 Agent connector workspace。 */
@@ -249,6 +253,7 @@ export interface AppRuntime {
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。
    */
   orgAgentStore?: OrgAgentStore;
+  backgroundTasks?: BackgroundTaskRuntime;
   /** 发布 dispatcher 模式前校验后台 Agent、Profile 与 Worker 模型连接。 */
   validateOrgAgentDispatcherRuntime?: (
     tenantId: string,

@@ -59,6 +59,8 @@ export interface BackgroundTaskRuntime {
   list(context: ToolCallContext, limit?: number): Promise<RunRecord[]>;
   get(context: ToolCallContext, taskId: string): Promise<RunRecord | null>;
   cancel(context: ToolCallContext, taskId: string): Promise<RunRecord>;
+  cancelWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null>;
+  retryWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord>;
   /**
    * 运行中后台命令的增量输出续读（内部按 hand 协议名 BashOutput 透传，ACS 零改动）。
    * 仅对 taskType=command 且未进终态的任务有效；其余情况抛出带引导的错误。

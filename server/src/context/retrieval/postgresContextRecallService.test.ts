@@ -8,7 +8,7 @@ import {
   AssignmentContextRecallScopeResolver,
   ContextRecallScopeDriftError,
 } from './assignmentScopeResolver.js';
-import type { ContextRecallResolvedScope } from './types.js';
+import type { ContextRecallResolvedScope, ContextRecallSubject } from './types.js';
 
 const scope: ContextRecallResolvedScope = {
   collections: [{ collectionId: 'collection-a', assignmentVersion: 7, resourceType: 'org_knowledge' }],
@@ -70,7 +70,7 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain("{minutes,lookbackDays}");
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', ['collection-a'], 'Quarterly plan', '%Quarterly plan%', ['document'], ['source-a'],
-      '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 201, 'user-a',
+      '2026-08-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 201, 'user-a', null, null,
     ]);
     expect(result).toMatchObject({
       degraded: true,
@@ -92,6 +92,21 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[2]![0]).toContain('r.deleted=FALSE AND r.revoked=FALSE');
     expect(query.mock.calls[2]![0]).toContain('r.owner_principal,r.acl_principals');
     expect(query.mock.calls[2]![0]).toContain('e.revision=v.revision');
+  });
+
+  it('pins group-channel source and conversation filters into SQL instead of filtering only after retrieval', async () => {
+    const query = vi.fn(async (_sql: string, _params?: readonly unknown[]) => ({ rows: [hitRow()] }));
+    const service = new PgContextRecallService({ pool: { query } as never, tablePrefix: 'test' });
+    const channelSubject: ContextRecallSubject = { ...subject, channelScope: {
+      bindingId: 'binding-a', conversationSpaceId: 'space-a',
+      workConversationId: 'work-conversation-a', conversationId: 'group-a', policyRevision: 5,
+      allowedSourceIds: ['source-a'] } };
+
+    await service.search({ subject: channelSubject, scope, query: 'Quarterly plan', limit: 5, filters: {} });
+
+    expect(query.mock.calls[0]![0]).toContain('r.source_id=ANY($11::text[])');
+    expect(query.mock.calls[0]![0]).toContain("r.metadata_json->>'conversationId'");
+    expect(query.mock.calls[0]![1]?.slice(-2)).toEqual([['source-a'], 'group-a']);
   });
 
   it('adds only confirmed evidence-bound derived context to an already authorized source hit', async () => {

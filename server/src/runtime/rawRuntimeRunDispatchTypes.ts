@@ -2,6 +2,7 @@ import type { AgentRunHooks, InteractionResponse, RuntimeDrainHandoffState, Tool
 import type { AgentRuntimeProfileResolver } from './agentProfiles.js';
 import type { AgentStore } from '../data/agents/store.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/types.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { RunPreflightService } from './runPreflight.js';
 import type { PgRunResolutionSnapshotStore } from './runResolutionSnapshotStore.js';
@@ -112,6 +113,10 @@ export interface LegacyDwsCompletionAccountSnapshot {
 }
 
 export interface RawRuntimeRunDispatchConfig {
+  orgGroupAgentStore?: OrgGroupAgentStore;
+  orgAgentChannelPolicyEvaluator?: (input: {
+    tenantId: string; bindingId: string; toolName: string;
+  }) => Promise<{ allowed: boolean; reason?: string }>;
   agentCwd: string;
   uploadManager?: Pick<UploadManager, 'resolveAttachments'>;
   /**
@@ -224,6 +229,9 @@ export interface RawRuntimeRunDispatchConfig {
   enqueueDwsBackgroundCompletion?: (input: {
     tenantId: string;
     taskId: string;
+    workOrderId?: string;
+    attemptId?: string;
+    attemptFence?: number;
     accountId: string;
     profileId: string;
     corpId: string;

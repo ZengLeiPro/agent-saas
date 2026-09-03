@@ -625,6 +625,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
     sessionId: ws.sessionId,
     sandboxScopeId: ws.sandboxScopeId,
     mountSubPath: ws.mountSubPath,
+    sharedReadOnlySubPath: ws.sharedReadOnlySubPath,
     ...(ws.sandboxResources ? { sandboxResources: ws.sandboxResources } : {}),
     ...(ws.workload ? { workload: ws.workload } : {}),
     executionTarget: ws.executionTarget,

@@ -191,6 +191,9 @@ import { createAgentDwsRuntime, type AgentDwsRuntimeBundle } from './agentDwsRun
 import { createConnectorServerRemoteResolver, hasAcsConnector } from './connectorServerRemote.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { PgOrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import { createOrgAgentChannelPolicyEvaluator } from './orgAgentChannelPolicyEvaluator.js';
+import { createRuntimeUserResolvers } from './runtimeUserResolvers.js';
 import { NotionAuthFlowService, NotionDeviceLoginRunner } from '../notion/authFlow.js';
 import { PgFeishuConnectionStore } from '../feishu/store.js';
 import { FeishuAuthKeepaliveService } from '../feishu/keepalive.js';
@@ -591,7 +594,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let dwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
   let dwsAuthFlowService: DwsAuthFlowService | undefined;
-  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined; let agentDwsRuntime: AgentDwsRuntimeBundle | undefined;
+  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined; let orgGroupAgentStore: PgOrgGroupAgentStore | undefined; let agentDwsRuntime: AgentDwsRuntimeBundle | undefined;
   let notionAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let notionAuthFlowService: NotionAuthFlowService | undefined;
   let googleWorkspaceOAuthService: GoogleWorkspaceOAuthService | undefined;
@@ -708,6 +711,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       agentResourceStore,
       agentDwsAccountStore,
       agentDwsMessageStore,
+      orgGroupAgentStore,
       skillGovernanceStore,
       resolveLegacySkillResourceId,
       governanceChangeJobStore,
@@ -1618,6 +1622,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
+    ...(orgGroupAgentStore ? { orgGroupAgentStore,
+      orgAgentChannelPolicyEvaluator: createOrgAgentChannelPolicyEvaluator(orgGroupAgentStore) } : {}),
     environmentStore,
     taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
@@ -1628,26 +1634,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       );
       return bindings.some(binding => binding.resourceId === templateId);
     },
-    resolveUserRole: ({ userId, username }: { userId?: string; username?: string }) => {
-      const user = userId
-        ? userStore?.findById(userId)
-        : username
-          ? userStore?.findByUsername(username)
-          : undefined;
-      return user?.role as 'admin' | 'user' | undefined;
-    },
+    ...createRuntimeUserResolvers(userStore),
     // 账户级授权偏好 resolver（TASK-256 抽出为 userPreferenceResolvers 工厂）：
     // 「全部授权」默认开启；「低风险常开」仅在全部授权关闭时生效，dangerous 仍人工批准。
     ...createApprovalPreferenceResolvers(userStore),
-    // scheduler wake 不经过 Web channel，需要从账户资料恢复系统提示语使用的全名。
-    resolveUserRealName: ({ userId, username }: { userId?: string; username?: string }) => {
-      const user = userId
-        ? userStore?.findById(userId)
-        : username
-          ? userStore?.findByUsername(username)
-          : undefined;
-      return user?.realName;
-    },
     // B1: 把 UserStore.tenantId 暴露给 dispatch，让 tenant remote hand
     // tenantIds allow-list 可在 attach 时按用户身份自动决策。
     resolveUserTenantId: ({ userId, username }: { userId?: string; username?: string }) => {
@@ -2753,7 +2743,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   if (agentDwsAccountStore && userStore && orgAgentStore && runPreflightService && governanceAuditStore) agentDwsRuntime = await createAgentDwsRuntime({
-    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
+    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, orgGroupAgentStore, pgEventStore, pgRunStore,
     userStore, orgAgentStore, runPreflightService, governanceAuditStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
@@ -2903,6 +2893,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dwsAuthFlowService,
     agentDwsAccountStore,
     agentDwsMessageStore,
+    orgGroupAgentStore,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
     dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
     agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
@@ -2943,6 +2934,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     updateModelsConfig,
     orgAgentStore,
+    backgroundTasks: rawRuntimeConfig.backgroundTasks,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore,
     messageFeedbackStore,

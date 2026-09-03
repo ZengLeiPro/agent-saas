@@ -276,7 +276,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
       actions={onSwitchModel && items.some((item) => item.type === 'subagent' && item.recoveryAction === 'switch_model') ? <button type="button" onClick={onSwitchModel} className="rounded-md px-2 py-1 text-xs font-medium text-foreground/75 transition-colors hover:bg-muted hover:text-foreground">切换模型</button> : undefined}
       className={className}
     >
-      <div className="flex flex-col gap-3 [&>*]:my-0">
+      <div className="flex flex-col gap-2 [&>*]:my-0">
         {items.map(item => (
           <ActivityItem key={item.id} item={item} debugMode={debugMode} rawPresentationMode={rawPresentationMode} />
         ))}

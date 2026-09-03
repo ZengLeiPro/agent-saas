@@ -548,18 +548,18 @@ describePg('session automation terminal projector state machine (real PostgreSQL
 
   it('accepts a durable prepared execution with no provider or reservation facts as pre-model', async () => {
     expect(await projectStateOnlyCredits({ executionState: 'prepared' })).toMatchObject({
-      status: 'active', phase: 'idle', activeRunId: undefined,
+      status: 'active', phase: 'waiting', activeRunId: undefined, missingScheduleCount: 1,
     });
   });
 
   it('accepts a completed attempt only with charged settlement and matching provider usage', async () => {
     expect(await projectStateOnlyCredits({ attemptState: 'completed', reservationState: 'settled', charged: true }))
-      .toMatchObject({ status: 'active', phase: 'idle', activeRunId: undefined });
+      .toMatchObject({ status: 'active', phase: 'waiting', activeRunId: undefined, missingScheduleCount: 1 });
   });
 
   it('does not lock a cancelled provider attempt whose credits reservation was released', async () => {
     expect(await projectStateOnlyCredits({ attemptState: 'cancelled', reservationState: 'released' }))
-      .toMatchObject({ status: 'active', phase: 'idle', activeRunId: undefined });
+      .toMatchObject({ status: 'active', phase: 'waiting', activeRunId: undefined, missingScheduleCount: 1 });
   });
 
   it.each(['prepared', 'dispatched', 'result_unknown', 'reconcile'] as const)(
@@ -588,7 +588,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
 
       await expect(projector.recover(events)).resolves.toBe(1);
       expect(await store.get(tenantId, adaptive.sessionId, adaptive.automationId)).toMatchObject({
-        phase: 'idle', activeRunId: undefined,
+        phase: 'waiting', activeRunId: undefined, missingScheduleCount: 1,
       });
       const execution = await pool.query(
         `SELECT state,terminal_status FROM ${store.tables.executions} WHERE run_id=$1`,

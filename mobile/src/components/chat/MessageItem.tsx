@@ -78,6 +78,7 @@ import type { FileTypeCategory } from '@agent/shared';
 import { fileCacheService } from '../../services/fileCacheService';
 import Markdown from 'react-native-markdown-display';
 import { useVoicePlayer } from '../../hooks/useVoicePlayer';
+import { cjkMarkdownIt } from '../../lib/markdownIt';
 import { useColors, spacing, typography, radius, useChatTypography } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { MessageErrorBoundary } from '../ErrorBoundary';
@@ -888,7 +889,9 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
     return (
       <View style={styles.assistantBubble}>
         {finalOutputDivider}
-        <Markdown style={mdStyles} rules={rules}>{streamContent}</Markdown>
+        <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
+          {streamContent}
+        </Markdown>
         <View style={styles.cursor} />
         {lightboxUri && (
           <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
@@ -906,7 +909,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
             {finalOutputDivider}
             {segments.map((seg, i) =>
               seg.type === 'text' ? (
-                <Markdown key={i} style={mdStyles} rules={rules}>{seg.content}</Markdown>
+                <Markdown key={i} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>{seg.content}</Markdown>
               ) : (
                 <InlineFileCard key={i} segment={seg} onPreviewMd={onPreviewMd} colors={colors} styles={styles} />
               ),
@@ -933,7 +936,7 @@ function TextMessage({ message, onPreviewMd, onTtsPlay }: {
       <GestureDetector gesture={longPressGesture}>
         <View style={styles.assistantBubble}>
           {finalOutputDivider}
-          <Markdown style={mdStyles} rules={rules}>{message.content}</Markdown>
+          <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>{message.content}</Markdown>
           {lightboxUri && (
             <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
           )}
@@ -1235,7 +1238,7 @@ export function PermissionBlock({ message, onResponse, disabled = false }: {
   return (
     <View style={styles.permissionBlock}>
       <Text style={styles.permissionTitle}>{message.toolName}</Text>
-      <Markdown style={mdStyles}>{message.toolInput}</Markdown>
+      <Markdown markdownit={cjkMarkdownIt} style={mdStyles}>{message.toolInput}</Markdown>
       {message.status === 'pending' && (
         <View style={styles.permissionButtons}>
           <TouchableOpacity

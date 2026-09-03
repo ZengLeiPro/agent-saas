@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
+import { loadMarkdownRuntime } from '@/lib/markdownRuntime';
 import { extractTextFromChildren, getTableCellStyle } from '@/lib/tableCellWidth';
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import { MessageCitationCard } from './MessageCitationCard';
@@ -30,11 +31,6 @@ import {
 
 import { ImageLightbox } from './ImageLightbox';
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
-// react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
-const markdownPromise = import("react-markdown");
-const remarkGfmPromise = import("remark-gfm");
-const remarkMathPromise = import("remark-math");
-const rehypeKatexPromise = import("rehype-katex");
 import "katex/dist/katex.min.css";
 
 /** 判断是否为外部 URL 或 data URI */
@@ -136,12 +132,7 @@ function AuthVideo({ src, owner }: { src: string; owner?: string }) {
 }
 
 const LazyMarkdown = lazy(async () => {
-  const [{ default: Markdown }, { default: remarkGfm }, { default: remarkMath }, { default: rehypeKatex }] = await Promise.all([
-    markdownPromise,
-    remarkGfmPromise,
-    remarkMathPromise,
-    rehypeKatexPromise,
-  ]);
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
   function MarkdownWithPreview({ content }: { content: string }) {
     const filePreview = useFilePreview();
 
@@ -218,7 +209,7 @@ const LazyMarkdown = lazy(async () => {
     }), [filePreview]);
 
     return (
-      <Markdown remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[rehypeKatex]} components={mdComponents}>
+      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
         {content}
       </Markdown>
     );

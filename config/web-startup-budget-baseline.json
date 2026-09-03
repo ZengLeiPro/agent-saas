@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 350424,
-    "startupCssGzipBytes": 34610,
-    "startupJsBrotliBytes": 278378,
-    "startupCssBrotliBytes": 27411,
-    "largestJsGzipBytes": 350424,
-    "largestCssGzipBytes": 34610,
-    "largestJsBrotliBytes": 278378,
-    "largestCssBrotliBytes": 27411,
-    "largestJs": "assets/index-DsvQ-PDd.js",
-    "largestCss": "assets/index-np34A9jF.css"
+    "startupJsGzipBytes": 350901,
+    "startupCssGzipBytes": 34591,
+    "startupJsBrotliBytes": 279469,
+    "startupCssBrotliBytes": 27432,
+    "largestJsGzipBytes": 350901,
+    "largestCssGzipBytes": 34591,
+    "largestJsBrotliBytes": 279469,
+    "largestCssBrotliBytes": 27432,
+    "largestJs": "assets/index-S2lmrpmw.js",
+    "largestCss": "assets/index-BGU9dJNb.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "TASK-331 移动端 V1 共用 RenderModel、错误呈现、生命周期与治理适配进入 Web 启动图，增加约 38KB gzip JS；仍低于 600KB 绝对上限",
-  "updatedAt": "2026-09-01"
+  "reason": "PR #396 能力就绪状态与逐项引导进入平台管理配置状态页，叠加 main 的移动端 V1 启动图后增加约 0.3KB Brotli JS；仍低于 600KB 绝对上限",
+  "updatedAt": "2026-09-02"
 }

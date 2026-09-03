@@ -428,6 +428,16 @@ export interface TaskBoardExecutionIntegrationAgent {
 
 export type TaskBoardExecutionContextBoard = Omit<TaskBoard, "prompt" | "stagePrompts">;
 
+/** execution.context 上下文预算生效时的收口说明；字段缺省表示整页原样返回。 */
+export interface TaskBoardExecutionContextTruncation {
+  /** payload 超出单条预算、已摘要化的 change 数。 */
+  summarizedChangePayloads?: number;
+  /** 因总字符预算未返回的 change 数；已体现在 hasMore/nextCursor。 */
+  droppedChanges?: number;
+  comments?: { returned: number; total: number };
+  executions?: { returned: number; total: number };
+}
+
 export interface TaskBoardExecutionContextResponse {
   board: TaskBoardExecutionContextBoard;
   task: TaskBoardTask;
@@ -437,6 +447,7 @@ export interface TaskBoardExecutionContextResponse {
   /** Live Agent-first integration projection. */
   integrationAgent?: TaskBoardExecutionIntegrationAgent;
   changes?: TaskBoardChange[];
+  truncation?: TaskBoardExecutionContextTruncation;
   asOfSeq: string;
   nextCursor?: string;
   hasMore: boolean;

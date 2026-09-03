@@ -61,6 +61,7 @@ function harness(input?: {
   liveDeny?: boolean;
 }) {
   const store = {
+    reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
     claimNextDelivery: vi.fn().mockResolvedValue(input?.pending === false ? null : delivery),
     getBinding: vi.fn().mockResolvedValue({
       bindingId: 'binding-1',

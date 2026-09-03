@@ -73,6 +73,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/runtime/imageBlobStore.ts',
   'server/src/runtime/pgEventStore.ts',
   'server/src/runtime/pgSessionLock.ts',
+  'server/src/runtime/responses/codexCredentialRuntimeState.ts',
   'server/src/runtime/runResolutionSnapshotStore.ts',
   'server/src/runtime/runStore.ts',
   'server/src/runtime/runStoreSchema.ts',
@@ -85,7 +86,8 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/webPush/store.ts',
   'server/src/workspace/materialization/store.ts',
 ]);
-// Roots are activated by changed path or by a changed provider in the same source domain.
+// Roots are activated by changed path or by a changed provider in the same source domain;
+// the source-derived inventory contract keeps this authority list complete.
 const STARTUP_SCHEMA_ENTRY_PATTERN =
   /\b(?:async\s+)?(?:function\s+(?:init|initialize)[A-Za-z0-9_$]*\s*\(|(?:init|initialize[A-Za-z0-9_$]*)\s*\(\s*\)\s*:\s*Promise\s*<)/u;
 // Future init/initialize modules are recognized when their own file changes.

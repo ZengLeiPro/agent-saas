@@ -9,11 +9,9 @@ import {
   createRawRuntimeRunDispatch,
   wakeRuntimeSession,
 } from '../runtime/rawRuntimeRunDispatch.js';
-import {
-  CodexCredentialManager,
-  PgCodexCredentialLock,
-} from '../runtime/responses/codexCredentialManager.js';
+import { CodexCredentialManager, PgCodexCredentialLock } from '../runtime/responses/codexCredentialManager.js';
 import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
+import { createCodexCredentialRuntimeStateStore } from '../runtime/responses/codexCredentialRuntimeState.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import {
   DuckDBRuntimeAuditQuery,
@@ -1517,10 +1515,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
   const resolvedModels = await resolveModelsConfig(config.models, secretVault);
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
-  // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
-  // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron。
-  // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
+  // 模型解析器会对齐磁盘配置，让 runtime-worker 感知 ws-only 进程写入。
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd,
@@ -1532,7 +1528,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
     // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
     onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
+    // STT 凭据更新失败只告警，不中断其他共享配置刷新。
     onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
+    onCodexSubscriptionUpdated: (refs) => { if (refs) codexWebSocketPool.closeCredentialRefs(refs); else codexWebSocketPool.close(); },
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
     resolveRuntimeModels: (next) => resolveModelsConfig(next, secretVault).then((value) => {
       if (!value) throw new Error('models 未配置');
@@ -1603,6 +1601,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const codexCredentialManager = new CodexCredentialManager({
     vault: secretVault, getConfig: () => config.codexSubscription,
     ...(pgEventStore ? { lock: new PgCodexCredentialLock(pgEventStore.pool) } : {}),
+    runtimeStateStore: await createCodexCredentialRuntimeStateStore(pgEventStore?.pool, config.runtimeEventStore),
     fetchImpl: egressFetch,
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);
@@ -2916,7 +2915,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     secretVault,
     codexCredentialManager,
     codexDeviceAuthService,
-    codexWebSocketShutdown: () => codexWebSocketPool.close(),
+    codexWebSocketShutdown: () => codexWebSocketPool.close(), codexWebSocketCredentialShutdown: refs => codexWebSocketPool.closeCredentialRefs(refs),
     userStore,
     authEpochAuthority,
     dwsConnectionStore,

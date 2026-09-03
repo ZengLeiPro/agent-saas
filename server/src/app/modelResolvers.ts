@@ -51,6 +51,7 @@ export function createModelResolvers(params: {
   onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
   /** STT 变化后重新解析凭据并替换执行进程的 AudioTranscribe 配置。 */
   onSttUpdated?: (next: AppConfig['stt']) => void;
+  onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
   resolveRuntimeModels?: (next: NonNullable<AppConfig['models']>) => Promise<NonNullable<AppConfig['models']>>;
 }): ModelResolvers {
@@ -76,6 +77,9 @@ export function createModelResolvers(params: {
     onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
     ...(params.onWebToolsUpdated ? { onWebToolsUpdated: params.onWebToolsUpdated } : {}),
     ...(params.onSttUpdated ? { onSttUpdated: params.onSttUpdated } : {}),
+    ...(params.onCodexSubscriptionUpdated
+      ? { onCodexSubscriptionUpdated: params.onCodexSubscriptionUpdated }
+      : {}),
     onModelsUpdated: (next) => {
       void updateModelsConfig(next).catch((error) => logger?.warn(
         `[SharedConfig] 模型 SecretRef 解析失败，继续使用上一份运行时模型快照：${error instanceof Error ? error.message : String(error)}`,

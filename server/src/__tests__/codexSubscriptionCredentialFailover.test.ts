@@ -6,6 +6,11 @@ import {
   hashAccountBinding,
   type CodexSubscriptionRuntimeConfig,
 } from '../runtime/responses/codexCredentialManager.js';
+import { InMemoryCodexCredentialRuntimeStateStore } from '../runtime/responses/codexCredentialRuntimeState.js';
+import {
+  CodexResponsesWebSocketPool,
+  CodexWebSocketAccountUnavailableError,
+} from '../runtime/responses/codexResponsesWebSocketPool.js';
 import { CodexSubscriptionResponsesTransport } from '../runtime/responses/codexSubscriptionResponsesTransport.js';
 
 function jwt(accountId: string): string {
@@ -61,7 +66,7 @@ async function createFixture() {
     expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   });
   config.credentialRefs = [primary.credentialRef, secondary.credentialRef];
-  return { config, manager, primary, secondary };
+  return { config, manager, primary, secondary, vault };
 }
 
 async function createSingleCredentialFixture() {
@@ -292,6 +297,40 @@ describe('Codex subscription credential failover', () => {
     });
   });
 
+  it('WebSocket 明确账号停用时标记当前账号并切换到下一个', async () => {
+    const { config, manager } = await createFixture();
+    config.websocketEnabled = true;
+    const websocketPool = {
+      execute: vi.fn()
+        .mockRejectedValueOnce(new CodexWebSocketAccountUnavailableError(
+          'account_disabled', 'Codex account disabled',
+        ))
+        .mockResolvedValueOnce({
+          response: terminalStream('resp-secondary'),
+          wireMode: 'websocket_full',
+          wireRequestBodyBytes: 100,
+        }),
+    } as unknown as CodexResponsesWebSocketPool;
+    const fetchMock = vi.fn();
+    const transport = new CodexSubscriptionResponsesTransport(
+      manager, fetchMock as unknown as typeof fetch, websocketPool,
+    );
+
+    const result = await transport.execute({
+      serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
+      context,
+      clientRequestId: 'websocket-account-disabled-request',
+    });
+
+    expect(result.response.status).toBe(200);
+    expect(websocketPool.execute).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await manager.getStatuses())[0]).toMatchObject({
+      availability: 'auth_unavailable',
+      lastFailureCode: 'account_disabled',
+    });
+  });
+
   it.each([500, 502, 503, 504])('OAuth HTTP %i 即使错误体命中凭据文本也不会切换账号', async (status) => {
     const { manager } = await createFixture();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
@@ -382,6 +421,88 @@ describe('Codex subscription credential failover', () => {
 
     expect(reauthorized.bundle.generation).toBe(primary.bundle.generation + 1);
     expect((await manager.getStatuses())[0]).toMatchObject({ availability: 'available' });
+  });
+
+  it('凭据损坏无法解析 generation 时使用共享 fence 持久隔离账号', async () => {
+    const { manager, primary, vault } = await createFixture();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+    const reauthorized = await manager.persistLogin({
+      accessToken: jwt('acct-primary'),
+      refreshToken: 'refresh-primary-new',
+      idToken: jwt('acct-primary'),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }, primary.credentialRef);
+    await vault.rotateSecret(primary.credentialRef, '{}', {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:codex_subscription_oauth:rotate'],
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce(terminalStream('resp-secondary'));
+    const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
+
+    const result = await transport.execute({
+      serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
+      context,
+      clientRequestId: 'corrupt-credential-request',
+    });
+
+    expect(result.response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(manager.getRuntimeState(primary.credentialRef)).resolves.toMatchObject({
+      availability: 'auth_unavailable',
+      credentialGeneration: reauthorized.bundle.generation,
+      lastFailureCode: 'credential_invalid',
+    });
+  });
+
+  it('旧凭据读取失败晚于重授权完成时不会封禁新 generation', async () => {
+    const vault = new InMemorySecretVault();
+    const runtimeStateStore = new InMemoryCodexCredentialRuntimeStateStore();
+    const config: CodexSubscriptionRuntimeConfig = {
+      enabled: true,
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
+      originator: 'kaiyan-agent',
+    };
+    const manager = new CodexCredentialManager({ vault, runtimeStateStore, getConfig: () => config });
+    const primary = await manager.persistLogin({
+      accessToken: jwt('acct-primary'), refreshToken: 'refresh-primary',
+      idToken: jwt('acct-primary'), expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    });
+    const secondary = await manager.persistLogin({
+      accessToken: jwt('acct-secondary'), refreshToken: 'refresh-secondary',
+      idToken: jwt('acct-secondary'), expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    });
+    config.credentialRefs = [primary.credentialRef, secondary.credentialRef];
+    await runtimeStateStore.clear(primary.credentialRef);
+
+    const originalGetSecret = vault.getSecret.bind(vault);
+    let releaseStaleRead!: () => void;
+    const staleRead = new Promise<void>((resolve) => { releaseStaleRead = resolve; });
+    const getSecret = vi.spyOn(vault, 'getSecret')
+      .mockImplementationOnce(async () => {
+        await staleRead;
+        return '{}';
+      })
+      .mockImplementation(originalGetSecret);
+    const fetchMock = vi.fn().mockResolvedValueOnce(terminalStream('resp-secondary'));
+    const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
+    const pending = transport.execute({
+      serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
+      context,
+      clientRequestId: 'stale-read-after-reauthorization-request',
+    });
+    await vi.waitFor(() => expect(getSecret).toHaveBeenCalledTimes(1));
+
+    const generation2 = { ...primary.bundle, refreshToken: 'refresh-primary-new', generation: 2 };
+    await vault.rotateSecret(primary.credentialRef, JSON.stringify(generation2), {
+      actor: 'system', userId: '__system__', scopes: ['secret:codex_subscription_oauth:rotate'],
+    });
+    await runtimeStateStore.clear(primary.credentialRef, generation2.generation);
+    releaseStaleRead();
+
+    expect((await pending).response.status).toBe(200);
+    await expect(manager.getRuntimeGeneration(primary.credentialRef)).resolves.toBe(2);
+    await expect(manager.getRuntimeState(primary.credentialRef)).resolves.toBeUndefined();
   });
 
   it('非额度错误不会切换到低优先级 Codex 授权账号', async () => {

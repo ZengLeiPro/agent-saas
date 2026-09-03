@@ -15,6 +15,7 @@ export interface CodexCredentialRuntimeState {
 
 export interface CodexCredentialRuntimeStateStore {
   get(credentialRef: string): Promise<CodexCredentialRuntimeState | undefined>;
+  getGeneration(credentialRef: string): Promise<number | undefined>;
   markQuotaCooldown(
     credentialRef: string,
     cooldownUntil: string,
@@ -48,6 +49,10 @@ export class InMemoryCodexCredentialRuntimeStateStore implements CodexCredential
       return undefined;
     }
     return state.availability === 'available' ? undefined : { ...state };
+  }
+
+  async getGeneration(credentialRef: string): Promise<number | undefined> {
+    return this.states.get(credentialRef)?.credentialGeneration;
   }
 
   async markQuotaCooldown(
@@ -180,6 +185,15 @@ export class PgCodexCredentialRuntimeStateStore implements CodexCredentialRuntim
       ...(row.cooldown_until ? { cooldownUntil: new Date(row.cooldown_until).toISOString() } : {}),
       ...(row.last_failure_code ? { lastFailureCode: row.last_failure_code } : {}),
     };
+  }
+
+  async getGeneration(credentialRef: string): Promise<number | undefined> {
+    const result = await this.pool.query<{ credential_generation: string | number }>(
+      `SELECT credential_generation FROM ${this.table} WHERE credential_ref = $1`,
+      [credentialRef],
+    );
+    const value = result.rows[0]?.credential_generation;
+    return value === undefined ? undefined : Number(value);
   }
 
   async markQuotaCooldown(

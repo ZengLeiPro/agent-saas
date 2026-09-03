@@ -11,16 +11,17 @@ import {
 } from './codexCredentialManager.js';
 import {
   CodexResponsesWebSocketPool,
+  CodexWebSocketAccountUnavailableError,
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
 } from './codexResponsesWebSocketPool.js';
 import {
   CodexAccountAuthUnavailableError,
   credentialFailureCode,
-  credentialFailureGeneration,
   executeCodexCredentialFailover,
   isCodexAccountUnavailableResponse,
   isPermanentCredentialError,
+  resolveCredentialFailureGeneration,
 } from './codexCredentialFailover.js';
 import type {
   ResponsesTransport,
@@ -93,7 +94,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
         await this.markAuthUnavailable(
           credentialRef,
           credentialFailureCode(error),
-          credentialFailureGeneration(error),
+          await resolveCredentialFailureGeneration(this.credentials, credentialRef, error),
         );
       }
     }
@@ -143,10 +144,12 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       refreshed = await this.credentials.getCredentials(true, token.generation, token.credentialRef);
     } catch (error) {
       if (isPermanentCredentialError(error)) {
+        const credentialRef = token.credentialRef
+          ?? `account:${hashAccountBinding(token.accountId)}`;
         throw new CodexAccountAuthUnavailableError(
           credentialFailureCode(error),
           String(error),
-          credentialFailureGeneration(error),
+          await resolveCredentialFailureGeneration(this.credentials, credentialRef, error),
         );
       }
       throw error;
@@ -256,6 +259,11 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
         };
       } catch (error) {
         if (error instanceof CodexWebSocketQuotaExhaustedError) throw error;
+        if (error instanceof CodexWebSocketAccountUnavailableError) {
+          throw new CodexAccountAuthUnavailableError(
+            error.code, error.message, credentialGeneration,
+          );
+        }
         if (!(error instanceof CodexWebSocketUnavailableError)) throw error;
         this.credentials.recordWireRequest({
           mode: 'http_sse_full',

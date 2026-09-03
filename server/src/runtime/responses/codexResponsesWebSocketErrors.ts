@@ -34,6 +34,15 @@ export class CodexWebSocketCredentialStaleError extends Error {
   }
 }
 
+export class CodexWebSocketAccountUnavailableError extends Error {
+  readonly status = 403;
+
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'CodexWebSocketAccountUnavailableError';
+  }
+}
+
 export class CodexWebSocketReanchorError extends Error {
   constructor(readonly code: string) {
     super(`Codex WebSocket requires full-history re-anchor: ${code}`);

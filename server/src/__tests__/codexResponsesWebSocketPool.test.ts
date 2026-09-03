@@ -6,6 +6,7 @@ import type {
 } from '../runtime/egressDispatcher.js';
 import {
   CodexResponsesWebSocketPool,
+  CodexWebSocketAccountUnavailableError,
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
 } from '../runtime/responses/codexResponsesWebSocketPool.js';
@@ -352,35 +353,6 @@ describe('CodexResponsesWebSocketPool', () => {
     pool.close();
   });
 
-  it('迟到的旧 generation 不关闭或取代已建立的新 generation 连接', async () => {
-    const currentSocket = new FakeWebSocket();
-    const connector = connectorFor(currentSocket);
-    connector.mockRejectedValue(new Error('旧 generation 不应建立连接'));
-    const pool = new CodexResponsesWebSocketPool(connector);
-    const input = [{ type: 'message', role: 'user', content: 'same request' }];
-
-    const currentPending = pool.execute({
-      ...request(body(input)),
-      accessToken: 'generation-2-token',
-      credentialGeneration: 2,
-    });
-    await waitForSend(currentSocket);
-    currentSocket.emit({ type: 'response.created', response: { id: 'resp-generation-2' } });
-    const currentResult = await currentPending;
-
-    await expect(pool.execute({
-      ...request(body(input)),
-      accessToken: 'stale-generation-1-token',
-      credentialGeneration: 1,
-    })).rejects.toMatchObject({ reason: 'credential_generation_stale' });
-    expect(connector).toHaveBeenCalledTimes(1);
-    expect(currentSocket.readyState).toBe(1);
-
-    complete(currentSocket, 'resp-generation-2');
-    await currentResult.response.text();
-    pool.close();
-  });
-
   it('模型请求属性变化时不猜测接力，直接在现有 socket 发完整历史重新锚定', async () => {
     const socket = new FakeWebSocket();
     const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
@@ -653,6 +625,44 @@ describe('CodexResponsesWebSocketPool', () => {
     await expect(pending).rejects.toBeInstanceOf(CodexWebSocketQuotaExhaustedError);
     await expect(pending).rejects.toMatchObject({ reason: 'quota_exhausted', code: 'insufficient_quota' });
     expect(socket.readyState).toBe(3);
+    pool.close();
+  });
+
+  it('WebSocket 首帧明确账号停用时标记为可切换账号', async () => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([
+      { type: 'message', role: 'user', content: 'first' },
+    ])));
+    await waitForSend(socket);
+    socket.emit({
+      type: 'error',
+      status_code: 403,
+      error: { code: 'account_disabled', message: 'account disabled' },
+    });
+
+    await expect(pending).rejects.toBeInstanceOf(CodexWebSocketAccountUnavailableError);
+    await expect(pending).rejects.toMatchObject({ code: 'account_disabled' });
+    expect(socket.readyState).toBe(3);
+    pool.close();
+  });
+
+  it.each([500, 502, 503, 504])('WebSocket HTTP %i 即使 body 命中额度文本也不切换账号', async (status) => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([
+      { type: 'message', role: 'user', content: 'first' },
+    ])));
+    await waitForSend(socket);
+    socket.emit({
+      type: 'response.failed',
+      status_code: status,
+      error: { code: 'insufficient_quota', message: 'temporary provider failure' },
+    });
+
+    const result = await pending;
+    expect(result.response.status).toBe(200);
+    expect(await result.response.text()).toContain('insufficient_quota');
     pool.close();
   });
 

@@ -58,6 +58,8 @@ describePg('PgCodexCredentialRuntimeStateStore generation contract', () => {
 
     await store.clear('credential-auth', 3);
     await store.clear('credential-quota', 3);
+    await expect(store.getGeneration('credential-auth')).resolves.toBe(3);
+    await expect(store.getGeneration('credential-quota')).resolves.toBe(3);
     await expect(store.get('credential-auth')).resolves.toBeUndefined();
     await expect(store.get('credential-quota')).resolves.toBeUndefined();
   });

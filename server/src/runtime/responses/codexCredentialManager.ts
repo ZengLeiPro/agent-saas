@@ -74,6 +74,13 @@ class CodexCredentialRefreshError extends Error {
   }
 }
 
+class CodexCredentialReadError extends Error {
+  constructor(readonly credentialGeneration: number, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'CodexCredentialReadError';
+  }
+}
+
 export interface CodexCredentialStatus {
   /** 管理 API 用于排序、重授权和删除的 opaque SecretVault ref。 */
   id?: string;
@@ -272,6 +279,7 @@ export class CodexCredentialManager {
       systemVaultCaller('write'),
       { accountBindingHash: hashAccountBinding(accountId) },
     );
+    await this.runtimeStateStore.clear(ref.id, bundle.generation);
     return { credentialRef: ref.id, bundle };
   }
 
@@ -314,6 +322,10 @@ export class CodexCredentialManager {
 
   async getRuntimeState(credentialRef: string): Promise<CodexCredentialRuntimeState | undefined> {
     return this.runtimeStateStore.get(credentialRef);
+  }
+
+  async getRuntimeGeneration(credentialRef: string): Promise<number | undefined> {
+    return this.runtimeStateStore.getGeneration(credentialRef);
   }
 
   async markQuotaCooldown(
@@ -440,9 +452,19 @@ export class CodexCredentialManager {
   }
 
   private async readBundle(credentialRef: string): Promise<CodexTokenBundle> {
-    this.options.vault.invalidate?.(credentialRef);
-    const raw = await this.options.vault.getSecret(credentialRef, systemVaultCaller('read'));
-    return parseTokenBundle(raw);
+    const observedGeneration = await this.runtimeStateStore.getGeneration(credentialRef);
+    try {
+      this.options.vault.invalidate?.(credentialRef);
+      const raw = await this.options.vault.getSecret(credentialRef, systemVaultCaller('read'));
+      const bundle = parseTokenBundle(raw);
+      if (observedGeneration === undefined || bundle.generation > observedGeneration) {
+        await this.runtimeStateStore.clear(credentialRef, bundle.generation);
+      }
+      return bundle;
+    } catch (error) {
+      if (error instanceof CodexCredentialReadError) throw error;
+      throw new CodexCredentialReadError(observedGeneration ?? 0, error);
+    }
   }
 }
 

@@ -54,7 +54,7 @@ export async function executeCodexCredentialFailover(input: {
         input.credentials,
         credentialRef,
         credentialFailureCode(error),
-        credentialFailureGeneration(error),
+        await resolveCredentialFailureGeneration(input.credentials, credentialRef, error),
       );
       authUnavailableCount += 1;
       continue;
@@ -185,6 +185,18 @@ export function credentialFailureGeneration(error: unknown): number {
   if (!error || typeof error !== 'object' || !('credentialGeneration' in error)) return 0;
   const value = Number((error as { credentialGeneration?: unknown }).credentialGeneration);
   return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+export async function resolveCredentialFailureGeneration(
+  manager: CodexCredentialManager,
+  credentialRef: string,
+  error: unknown,
+): Promise<number> {
+  if (error && typeof error === 'object' && 'credentialGeneration' in error) {
+    const explicitGeneration = Number((error as { credentialGeneration?: unknown }).credentialGeneration);
+    if (Number.isSafeInteger(explicitGeneration) && explicitGeneration >= 0) return explicitGeneration;
+  }
+  return (await manager.getRuntimeGeneration(credentialRef)) ?? 0;
 }
 
 export function credentialFailureCode(error: unknown): string {

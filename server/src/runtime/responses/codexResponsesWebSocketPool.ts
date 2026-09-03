@@ -5,6 +5,7 @@ import type {
   EgressWebSocketConnector,
 } from '../egressDispatcher.js';
 import {
+  CodexWebSocketAccountUnavailableError,
   CodexWebSocketCredentialStaleError,
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketReanchorError,
@@ -14,6 +15,7 @@ import { ResponsesTransportStreamError } from './responsesTransport.js';
 import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
 
 export {
+  CodexWebSocketAccountUnavailableError,
   CodexWebSocketCredentialStaleError,
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
@@ -107,14 +109,8 @@ export class CodexResponsesWebSocketPool {
     const logicalBody = parseLogicalBody(input.serializedBody);
     this.sweep();
     const key = poolKey(input);
-    const observedGeneration = this.credentialGenerations.get(input.credentialRef);
-    if (observedGeneration !== undefined && input.credentialGeneration < observedGeneration) {
-      throw new CodexWebSocketCredentialStaleError(
-        input.credentialRef, input.credentialGeneration, observedGeneration,
-      );
-    }
-    if (observedGeneration === undefined || input.credentialGeneration > observedGeneration) {
-      this.credentialGenerations.set(input.credentialRef, input.credentialGeneration);
+    const generationAdvanced = this.observeCredentialGeneration(input);
+    if (generationAdvanced) {
       for (const entry of this.entries.values()) {
         if (entry.credentialRef === input.credentialRef
           && entry.credentialGeneration < input.credentialGeneration) this.discard(entry, 'credential_rotated');
@@ -174,7 +170,6 @@ export class CodexResponsesWebSocketPool {
     for (const entry of this.entries.values()) this.discard(entry, 'pool_shutdown');
     this.entries.clear();
     this.connectCooldowns.clear();
-    this.credentialGenerations.clear();
   }
 
   closeCredentialRefs(refs: readonly string[]): void {
@@ -228,6 +223,12 @@ export class CodexResponsesWebSocketPool {
         'connect_failed',
       );
     }
+    try {
+      this.assertCredentialGeneration(input);
+    } catch (error) {
+      try { socket.close(1000, 'credential_generation_stale'); } catch { /* already closed */ }
+      throw error;
+    }
     const now = this.now();
     const entry: PoolEntry = {
       key,
@@ -255,6 +256,12 @@ export class CodexResponsesWebSocketPool {
     input: CodexWebSocketExecuteInput,
     plan: RequestPlan,
   ): Promise<ActiveRequestResult> {
+    try {
+      this.assertCredentialGeneration(input);
+    } catch (error) {
+      this.discard(entry, 'credential_generation_stale');
+      throw error;
+    }
     if (entry.busy || entry.closed || entry.socket.readyState !== 1) {
       throw new CodexWebSocketUnavailableError(
         'Codex WebSocket 不处于可发送状态',
@@ -389,6 +396,14 @@ export class CodexResponsesWebSocketPool {
       };
 
       const onMessage: NonNullable<EgressWebSocket['onmessage']> = (raw) => {
+        const observedGeneration = this.credentialGenerations.get(entry.credentialRef);
+        if (observedGeneration !== undefined && entry.credentialGeneration < observedGeneration) {
+          failStream(new CodexWebSocketCredentialStaleError(
+            entry.credentialRef, entry.credentialGeneration, observedGeneration,
+          ));
+          return;
+        }
+        if (entry.closed) return;
         resetIdleTimer();
         frameCount += 1;
         const text = websocketMessageText(raw.data);
@@ -418,12 +433,20 @@ export class CodexResponsesWebSocketPool {
         const code = errorCodeFromEvent(event);
         const message = errorMessageFromEvent(event);
         const status = eventStatus(event);
-        if (!exposed && isCodexQuotaError({ status, code, message })) {
+        if (!exposed && (status === undefined || status < 500)
+          && isCodexQuotaError({ status, code, message })) {
           rejectBeforeExpose(new CodexWebSocketQuotaExhaustedError(
             message || 'Codex 订阅额度不足',
             quotaErrorCode({ code, message }),
           ));
           this.discard(entry, 'quota_exhausted');
+          return;
+        }
+        if (!exposed && isCodexAccountUnavailableEvent(status, code, message)) {
+          rejectBeforeExpose(new CodexWebSocketAccountUnavailableError(
+            code ?? 'account_unavailable', message || 'Codex 授权账号不可用',
+          ));
+          this.discard(entry, 'account_unavailable');
           return;
         }
         if (!exposed && status === 401) {
@@ -459,6 +482,16 @@ export class CodexResponsesWebSocketPool {
 
       const failSocketInterruption = (close?: { code: number; reason: string }) => {
         if (terminal) return;
+        const observedGeneration = this.credentialGenerations.get(entry.credentialRef);
+        if (!exposed && observedGeneration !== undefined
+          && entry.credentialGeneration < observedGeneration) {
+          terminal = true;
+          entry.anchor = undefined;
+          rejectBeforeExpose(new CodexWebSocketCredentialStaleError(
+            entry.credentialRef, entry.credentialGeneration, observedGeneration,
+          ));
+          return;
+        }
         const socketError = pendingSocketError;
         const closeReason = close?.reason ? compactError(close.reason) : undefined;
         const detail = socketError?.empty === false ? socketError.detail : undefined;
@@ -532,6 +565,29 @@ export class CodexResponsesWebSocketPool {
     entry.anchor = undefined;
     if (this.entries.get(entry.key) === entry) this.entries.delete(entry.key);
     try { entry.socket.close(1000, reason.slice(0, 120)); } catch { /* already closed */ }
+  }
+
+  private observeCredentialGeneration(input: CodexWebSocketExecuteInput): boolean {
+    const observedGeneration = this.credentialGenerations.get(input.credentialRef);
+    if (observedGeneration !== undefined && input.credentialGeneration < observedGeneration) {
+      throw new CodexWebSocketCredentialStaleError(
+        input.credentialRef, input.credentialGeneration, observedGeneration,
+      );
+    }
+    if (observedGeneration !== undefined && input.credentialGeneration === observedGeneration) {
+      return false;
+    }
+    this.credentialGenerations.set(input.credentialRef, input.credentialGeneration);
+    return observedGeneration !== undefined;
+  }
+
+  private assertCredentialGeneration(input: CodexWebSocketExecuteInput): void {
+    const observedGeneration = this.credentialGenerations.get(input.credentialRef);
+    if (observedGeneration !== undefined && input.credentialGeneration < observedGeneration) {
+      throw new CodexWebSocketCredentialStaleError(
+        input.credentialRef, input.credentialGeneration, observedGeneration,
+      );
+    }
   }
 
   private sweep(): void {
@@ -786,6 +842,16 @@ function errorMessageFromEvent(event: Record<string, unknown>): string | undefin
 function eventStatus(event: Record<string, unknown>): number | undefined {
   if (typeof event.status === 'number') return event.status;
   return typeof event.status_code === 'number' ? event.status_code : undefined;
+}
+
+function isCodexAccountUnavailableEvent(
+  status: number | undefined,
+  code: string | undefined,
+  message: string | undefined,
+): boolean {
+  if (status !== 403) return false;
+  return /account.{0,30}(?:disabled|deactivated|suspended)|subscription.{0,30}(?:inactive|unavailable)/i
+    .test(`${code ?? ''} ${message ?? ''}`);
 }
 
 /**

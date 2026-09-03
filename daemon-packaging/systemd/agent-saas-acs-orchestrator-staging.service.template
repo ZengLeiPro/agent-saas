@@ -25,6 +25,7 @@ Environment=ACS_ORCH_PIDFILE=/run/agent-saas-staging/acs-orchestrator.pid
 Environment=HOME=/var/lib/agent-saas-staging/acs
 Environment=KUBECONFIG=/etc/agent-saas-staging/kubeconfig
 EnvironmentFile=/etc/agent-saas-staging/acs-orchestrator.env
+ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs --manifest=runtime-dependencies.json --component=acsOrchestrator --production=true
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=on-failure
 RestartSec=5

@@ -9,7 +9,12 @@ const coverageReporters =
 export default defineConfig({
   resolve: {
     alias: {
-      '@agent/shared/lib/chatSubmission': fileURLToPath(new URL('../shared/src/lib/chatSubmission.ts', import.meta.url)),
+      '@agent/shared/lib/chatSubmission': fileURLToPath(
+        new URL('../shared/src/lib/chatSubmission.ts', import.meta.url),
+      ),
+      '@agent/shared/schemas/releaseManifest': fileURLToPath(
+        new URL('../shared/src/schemas/releaseManifest.ts', import.meta.url),
+      ),
       '@agent/shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url)),
     },
   },

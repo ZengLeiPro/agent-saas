@@ -10,9 +10,18 @@ import {
   MANIFEST_KIND,
   adminEntryFile,
   adminRunnerManifest,
+  adminRuntimeGuardSource,
   esbuildArgs,
 } from '../../server/scripts/build-admin-runner.mjs';
 import { assertAdminRunnerShipped } from './build-release.mjs';
+import {
+  loadRuntimeDependencyContract,
+  runtimeDependencyContractDigest,
+} from './runtime-dependency.mjs';
+
+const DEPENDENCY_CONTRACT_DIGEST = runtimeDependencyContractDigest(
+  await loadRuntimeDependencyContract(),
+);
 
 test('admin runner entries reference real one-off operations scripts', async () => {
   const serverRoot = join(process.cwd(), 'server');
@@ -32,6 +41,7 @@ test('admin runner bundles keep runtime packages external like dist/index.js', (
   assert.ok(args.includes('--format=esm'));
   assert.ok(args.includes('--target=node22'));
   assert.ok(args.includes('--packages=external'));
+  assert.ok(args.includes("--banner:js=import '../runtime-dependency-admin-guard.mjs';"));
   assert.ok(args.includes('--sourcemap'));
   assert.ok(args.some((item) => item.startsWith('--outfile=')));
 });
@@ -45,8 +55,23 @@ test('admin runner manifest stays deterministic and self-describing', () => {
     digest: `sha256:${'a'.repeat(64)}`,
     size: 1,
   }));
-  const first = adminRunnerManifest(MANIFEST_KIND, commands);
-  const second = adminRunnerManifest(MANIFEST_KIND, commands);
+  const runtimeDependencyGuard = {
+    entry: '../runtime-dependency-admin-guard.mjs',
+    digest: `sha256:${'b'.repeat(64)}`,
+    size: 2,
+  };
+  const first = adminRunnerManifest(
+    MANIFEST_KIND,
+    commands,
+    DEPENDENCY_CONTRACT_DIGEST,
+    runtimeDependencyGuard,
+  );
+  const second = adminRunnerManifest(
+    MANIFEST_KIND,
+    commands,
+    DEPENDENCY_CONTRACT_DIGEST,
+    runtimeDependencyGuard,
+  );
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   assert.equal(first.schemaVersion, 1);
   assert.equal(first.kind, MANIFEST_KIND);
@@ -63,8 +88,15 @@ function realDigest(body) {
 async function stageAdminRunner(root, { mutate } = {}) {
   const serverRoot = join(root, 'server');
   await mkdir(join(serverRoot, 'dist', 'admin'), { recursive: true });
+  const guardPath = join(serverRoot, 'dist', 'runtime-dependency-admin-guard.mjs');
+  const guardBody = adminRuntimeGuardSource();
+  await writeFile(guardPath, guardBody);
+  const runtimeDependencyGuard = {
+    entry: '../runtime-dependency-admin-guard.mjs',
+    ...realDigest(guardBody),
+  };
   const commands = ADMIN_RUNNER_ENTRIES.map((entry) => {
-    const body = `/* ${entry.command} */`;
+    const body = `import '../runtime-dependency-admin-guard.mjs';\n/* ${entry.command} */`;
     return {
       command: entry.command,
       entry: adminEntryFile(entry.command),
@@ -78,11 +110,23 @@ async function stageAdminRunner(root, { mutate } = {}) {
     const sourcePath = join(serverRoot, command.source);
     await mkdir(dirname(sourcePath), { recursive: true });
     await writeFile(sourcePath, '// source\n');
-    await writeFile(join(serverRoot, 'dist', 'admin', command.entry), `/* ${command.command} */`);
+    await writeFile(
+      join(serverRoot, 'dist', 'admin', command.entry),
+      `import '../runtime-dependency-admin-guard.mjs';\n/* ${command.command} */`,
+    );
   }
   await writeFile(
     join(serverRoot, 'dist', 'admin', 'manifest.json'),
-    `${JSON.stringify(adminRunnerManifest(MANIFEST_KIND, staged), null, 2)}\n`,
+    `${JSON.stringify(
+      adminRunnerManifest(
+        MANIFEST_KIND,
+        staged,
+        DEPENDENCY_CONTRACT_DIGEST,
+        runtimeDependencyGuard,
+      ),
+      null,
+      2,
+    )}\n`,
   );
   return serverRoot;
 }
@@ -100,9 +144,46 @@ test('release accepts a complete admin runner manifest', async () => {
   const root = await mkdtemp(join(tmpdir(), 'admin-runner-ok-'));
   try {
     await stageAdminRunner(root);
-    const verified = await assertAdminRunnerShipped(root);
+    const verified = await assertAdminRunnerShipped(
+      root,
+      ADMIN_RUNNER_ENTRIES,
+      MANIFEST_KIND,
+      DEPENDENCY_CONTRACT_DIGEST,
+    );
     assert.equal(verified.kind, MANIFEST_KIND);
     assert.equal(verified.commands.length, ADMIN_RUNNER_ENTRIES.length);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('release rejects an Admin Runner dependency identity conflict', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'admin-runner-identity-conflict-'));
+  try {
+    await stageAdminRunner(root);
+    await assert.rejects(
+      assertAdminRunnerShipped(
+        root,
+        ADMIN_RUNNER_ENTRIES,
+        MANIFEST_KIND,
+        `sha256:${'0'.repeat(64)}`,
+      ),
+      /identity conflicts/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('release rejects a runtime dependency guard whose content drifted', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'admin-runner-guard-tamper-'));
+  try {
+    const serverRoot = await stageAdminRunner(root);
+    await writeFile(
+      join(serverRoot, 'dist', 'runtime-dependency-admin-guard.mjs'),
+      '// bypassed\n',
+    );
+    await assert.rejects(assertAdminRunnerShipped(root), /guard content drifted/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

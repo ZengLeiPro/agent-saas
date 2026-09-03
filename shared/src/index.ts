@@ -321,27 +321,17 @@ export type {
   WorkflowTraceGateRequestedEventV1,
   WorkflowTraceV1,
 } from './schemas/workflowTrace';
-export {
-  RELEASE_COMPONENTS,
-  releaseComponentSchema,
-  releaseIdSchema,
-  fullShaSchema,
-  sha256DigestSchema,
-  releaseComponentMatrixSchema,
-  releaseComponentsPlanSchema,
-  releaseArtifactsSchema,
-  releaseManifestContentSchema,
-  releaseManifestSchema,
-  canonicalJson,
-  canonicalizeJson,
-} from './schemas/releaseManifest';
 export type {
   ReleaseComponent,
   ReleaseComponentMatrix,
   ReleaseComponentsPlan,
   ReleaseArtifacts,
+  ReleaseArtifactsV2,
   ReleaseManifestContent,
+  ReleaseManifestContentV1,
+  ReleaseManifestContentV2,
   ReleaseManifest,
+  ReleaseManifestV2,
   CanonicalJsonValue,
 } from './schemas/releaseManifest';
 export type { ResolvedScenarioSlug } from './security/projectWorkflowPublic';

@@ -631,7 +631,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         `SELECT t.id, t.sort_order
            FROM ${this.tasksTable} t
            JOIN ${this.boardsTable} b ON b.id=t.board_id
-          WHERE t.board_id=$1 AND t.id<>$2 AND t.status=$3 AND t.archived_at IS NULL
+          WHERE t.board_id=$1 AND t.id<>$2 AND t.status=$3 AND t.archived_at IS NULL AND t.deleted_at IS NULL AND t.creation_state='complete'
             AND b.tenant_id=$4 AND (b.owner_user_id=$5 OR b.visibility='organization')
           ORDER BY t.sort_order, t.created_at, t.id
           FOR UPDATE OF t`,

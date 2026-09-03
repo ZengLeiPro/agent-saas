@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "rc-20260829-25",
+  "releaseSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+  "tag": "rc-20260829-25",
+  "createdAt": "2026-08-29T21:59:05.000Z",
+  "createdBy": "ZengLeiPro",
+  "releasePullRequest": {
+    "number": 329,
+    "headSha": "ec962d9f6f67d012b7dcd62b9258fff80430aadc",
+    "mergeCommitOid": "14a733cf22133b1ba536980cde272e726ca4edf4",
+    "state": "MERGED"
+  },
+  "integrationCandidates": [],
+  "sourcePullRequests": [329],
+  "productionBaseline": {
+    "web": {
+      "sourceSha": "92391de08457ba4a201e6f37fa371232f1d07081",
+      "artifactDigest": "sha256:b5f4ddf0d09c634420431a35a630fbfe8703e332f60ec7cd4ad1eeac869b593f"
+    },
+    "api": {
+      "sourceSha": "92391de08457ba4a201e6f37fa371232f1d07081",
+      "artifactDigest": "sha256:f28b5ab617b6017fb5a02b0f3b1af203f79d01acc97ad1b9f2505116e81aa5c8"
+    },
+    "runtimeWorker": {
+      "sourceSha": "92391de08457ba4a201e6f37fa371232f1d07081",
+      "artifactDigest": "sha256:f28b5ab617b6017fb5a02b0f3b1af203f79d01acc97ad1b9f2505116e81aa5c8"
+    },
+    "acs": {
+      "sourceSha": "8a0b85952745633c666f7ebc7cae9b1f35fc8ebb",
+      "orchestratorArtifactDigest": "sha256:ff41082b4b2b5e852bc53725e6cd5b287593b5bc7f9c334b2a81f7f7a0695d6f",
+      "sandboxImageDigest": "sha256:1fa18828c454b6d234194f7e1d2df7726484950f3492f38b1d35dafdb83ca743"
+    }
+  },
+  "components": {
+    "web": {
+      "sourceSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+      "artifactDigest": "sha256:841022dc720cb069adff9106e769849febb4248b5303ebaae6d789b0be757791",
+      "action": "deploy"
+    },
+    "api": {
+      "sourceSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+      "artifactDigest": "sha256:5b41b0cac26b1cc6bd3c1710978c35560413798261dd1d305109b7f57f58c532",
+      "action": "deploy"
+    },
+    "runtimeWorker": {
+      "sourceSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+      "artifactDigest": "sha256:5b41b0cac26b1cc6bd3c1710978c35560413798261dd1d305109b7f57f58c532",
+      "action": "deploy"
+    },
+    "acs": {
+      "sourceSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+      "orchestratorArtifactDigest": "sha256:a35dca2b381253149de671afc3cc71333b2e1eda7e6d284532abf2ba1d225144",
+      "sandboxImageDigest": "sha256:c6808558ad6856479c7601ae2c5854984fbd034429fd7bb418fee09b2d83e6bf",
+      "action": "deploy"
+    }
+  },
+  "artifacts": {
+    "serverBundle": {
+      "uri": "oss://agent-saas-release-records/rc-20260829-25/server-bundle.tgz",
+      "digest": "sha256:5b41b0cac26b1cc6bd3c1710978c35560413798261dd1d305109b7f57f58c532",
+      "size": 98896623
+    },
+    "webAssets": {
+      "uri": "oss://agent-saas-release-records/rc-20260829-25/web-assets.tgz",
+      "digest": "sha256:841022dc720cb069adff9106e769849febb4248b5303ebaae6d789b0be757791",
+      "size": 3152380
+    },
+    "acsOrchestrator": {
+      "uri": "oss://agent-saas-release-records/rc-20260829-25/acs-orchestrator.tgz",
+      "digest": "sha256:a35dca2b381253149de671afc3cc71333b2e1eda7e6d284532abf2ba1d225144",
+      "size": 99836855,
+      "required": true
+    },
+    "acsImage": {
+      "required": true,
+      "repository": "agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com/agent-saas/acs-sandbox",
+      "digest": "sha256:c6808558ad6856479c7601ae2c5854984fbd034429fd7bb418fee09b2d83e6bf"
+    }
+  },
+  "checks": {
+    "appCi": {
+      "status": "success",
+      "headSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+      "runId": 33276962653
+    },
+    "acsImpact": {
+      "status": "not_required",
+      "headSha": "14a733cf22133b1ba536980cde272e726ca4edf4"
+    },
+    "mergeReceipt": {
+      "status": "success",
+      "subjectDigest": "sha256:de137c0f26785be04334d0fa4e2a80cc7a43365ec641f7d40d9caa3b9cef1c26"
+    }
+  },
+  "promotionPolicy": {
+    "expiresAt": "2026-08-30T21:59:05.000Z",
+    "minimumPromotableSha": "14a733cf22133b1ba536980cde272e726ca4edf4",
+    "requiresHumanApproval": true
+  },
+  "migrationPlan": {
+    "phase": "none",
+    "planDigest": "sha256:b2eba8733cd07b583404ac10ccd2ae250e7e57b165a3dc38b84c17c16ad8f6e5",
+    "confirmation": "not_required",
+    "contract": "separate_release"
+  },
+  "rollbackTargets": {
+    "web": {
+      "sourceSha": "92391de08457ba4a201e6f37fa371232f1d07081",
+      "artifactDigest": "sha256:b5f4ddf0d09c634420431a35a630fbfe8703e332f60ec7cd4ad1eeac869b593f"
+    },
+    "api": {
+      "sourceSha": "92391de08457ba4a201e6f37fa371232f1d07081",
+      "artifactDigest": "sha256:f28b5ab617b6017fb5a02b0f3b1af203f79d01acc97ad1b9f2505116e81aa5c8"
+    },
+    "runtimeWorker": {
+      "sourceSha": "92391de08457ba4a201e6f37fa371232f1d07081",
+      "artifactDigest": "sha256:f28b5ab617b6017fb5a02b0f3b1af203f79d01acc97ad1b9f2505116e81aa5c8"
+    },
+    "acs": {
+      "sourceSha": "8a0b85952745633c666f7ebc7cae9b1f35fc8ebb",
+      "orchestratorArtifactDigest": "sha256:ff41082b4b2b5e852bc53725e6cd5b287593b5bc7f9c334b2a81f7f7a0695d6f",
+      "sandboxImageDigest": "sha256:1fa18828c454b6d234194f7e1d2df7726484950f3492f38b1d35dafdb83ca743"
+    }
+  },
+  "digest": "sha256:5db5236409857569b4e9539d52e41621288f437eded807f24a368607b2480571"
+}

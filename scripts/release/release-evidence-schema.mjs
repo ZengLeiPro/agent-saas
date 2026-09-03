@@ -1,11 +1,17 @@
 import { z } from 'zod';
-import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
+import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 
 const releaseComponentSchema = z.enum(['web', 'api', 'runtimeWorker', 'acs']);
 const fullShaSchema = z
   .string()
   .regex(/^[a-f0-9]{40}$/u, 'Expected a lowercase complete 40-character SHA');
 const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u, 'Expected a sha256 digest');
+const ociRepositorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .regex(OCI_REPOSITORY_PATTERN, 'Expected a valid OCI repository');
 
 const artifactUriSchema = z
   .string()
@@ -58,19 +64,38 @@ const fileArtifactSchema = z
     size: z.number().int().positive(),
   })
   .strict();
-const baselineArtifactsSchema = z
+const runtimeDependencyArtifactSchema = fileArtifactSchema
+  .extend({
+    sourceSha: fullShaSchema,
+    identityDigest: sha256DigestSchema,
+    dependencyDigest: sha256DigestSchema,
+    contractDigest: sha256DigestSchema,
+  })
+  .strict();
+const baselineArtifactShape = {
+  serverBundle: fileArtifactSchema,
+  webAssets: fileArtifactSchema,
+  acsOrchestrator: fileArtifactSchema,
+  acsImage: z
+    .object({
+      repository: ociRepositorySchema,
+      digest: sha256DigestSchema,
+    })
+    .strict(),
+};
+const baselineArtifactsV1Schema = z.object(baselineArtifactShape).strict();
+const baselineArtifactsV2Schema = z
   .object({
-    serverBundle: fileArtifactSchema,
-    webAssets: fileArtifactSchema,
-    acsOrchestrator: fileArtifactSchema,
-    acsImage: z
+    ...baselineArtifactShape,
+    runtimeDependencies: z
       .object({
-        repository: z.string().trim().min(1).max(512),
-        digest: sha256DigestSchema,
+        server: runtimeDependencyArtifactSchema.optional(),
+        acs: runtimeDependencyArtifactSchema.optional(),
       })
       .strict(),
   })
   .strict();
+const baselineArtifactsSchema = z.union([baselineArtifactsV1Schema, baselineArtifactsV2Schema]);
 
 const integrationCandidateSchema = z
   .object({
@@ -110,7 +135,7 @@ const acsImpactSchema = z
 
 export const releaseEvidenceSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.union([z.literal(1), z.literal(2)]),
     ok: z.literal(true),
     releaseSha: fullShaSchema,
     evidenceDigest: sha256DigestSchema,
@@ -141,6 +166,14 @@ export const releaseEvidenceSchema = z
   })
   .strict()
   .superRefine((evidence, ctx) => {
+    const hasRuntimeIdentities = 'runtimeDependencies' in evidence.baselineArtifacts;
+    if ((evidence.schemaVersion === 2) !== hasRuntimeIdentities) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['baselineArtifacts', 'runtimeDependencies'],
+        message: 'Evidence v1 excludes and v2 owns component runtime identities',
+      });
+    }
     if (!evidence.checks.mergeReceipt && !evidence.checks.integrationReceipt) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -267,6 +300,39 @@ export const releaseEvidenceSchema = z
           path: ['baselineArtifacts', artifact, 'digest'],
           message: 'Baseline artifact digest must equal the production component identity',
         });
+      }
+    }
+    if (hasRuntimeIdentities) {
+      const runtimeBindings = [
+        {
+          component: 'server',
+          runtime: evidence.baselineArtifacts.runtimeDependencies.server,
+          componentSha: evidence.productionBaseline.api.sourceSha,
+          kept:
+            !evidence.affectedComponents.includes('api') &&
+            !evidence.affectedComponents.includes('runtimeWorker'),
+        },
+        {
+          component: 'acs',
+          runtime: evidence.baselineArtifacts.runtimeDependencies.acs,
+          componentSha: evidence.productionBaseline.acs.sourceSha,
+          kept: !evidence.affectedComponents.includes('acs'),
+        },
+      ];
+      for (const { component, runtime, componentSha, kept } of runtimeBindings) {
+        if (kept && !runtime) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['baselineArtifacts', 'runtimeDependencies', component],
+            message: 'A kept component requires its baseline Runtime Dependency Identity',
+          });
+        } else if (runtime && runtime.sourceSha !== componentSha) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['baselineArtifacts', 'runtimeDependencies', component, 'sourceSha'],
+            message: 'Baseline runtime identity source SHA must equal its component identity',
+          });
+        }
       }
     }
     if (

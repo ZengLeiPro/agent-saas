@@ -33,6 +33,7 @@ Environment=AGENT_SAAS_RUNTIME_PERF_ENABLED=true
 Environment=AGENT_SAAS_RUNTIME_PERF_INTERVAL_MS=30000
 ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining
 ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready
+ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs --manifest=runtime-dependencies.json --component=runtimeWorker --production=true
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=on-failure
 RestartSec=30

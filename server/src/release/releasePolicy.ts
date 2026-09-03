@@ -6,7 +6,7 @@ export interface PromotionPolicyInput {
   expectedManifestDigest: string;
   isMainAncestor: boolean;
   minimumPromotableShaSatisfied: boolean;
-  productionBaselineMatches: boolean;
+  productionStateIsResumable: boolean;
   expiresAt: string;
 }
 
@@ -34,8 +34,10 @@ export function getPromotionEligibility(
   if (!input.isMainAncestor) blockingReasons.push('Release SHA is not reachable from main.');
   if (!input.minimumPromotableShaSatisfied)
     blockingReasons.push('Release SHA is below the minimum promotable SHA.');
-  if (!input.productionBaselineMatches)
-    blockingReasons.push('Current production component matrix drifted from the frozen baseline.');
+  if (!input.productionStateIsResumable)
+    blockingReasons.push(
+      'Current production component matrix is outside the resumable Manifest prefix.',
+    );
   const expiresAt = Date.parse(input.expiresAt);
   if (!Number.isFinite(expiresAt) || expiresAt <= (timing.now ?? (() => new Date()))().getTime()) {
     blockingReasons.push('Release promotion approval has expired.');

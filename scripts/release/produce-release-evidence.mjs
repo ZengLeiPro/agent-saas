@@ -2,11 +2,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
+import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+const ociRepository = z.string().regex(OCI_REPOSITORY_PATTERN);
 const component = z.enum(['web', 'api', 'runtimeWorker', 'acs']);
 
 const mergeSnapshotSchema = z
@@ -102,12 +103,26 @@ const artifactSchema = z
     size: z.number().int().positive(),
   })
   .strict();
+const runtimeArtifactSchema = artifactSchema
+  .extend({
+    sourceSha: sha,
+    identityDigest: digest,
+    dependencyDigest: digest,
+    contractDigest: digest,
+  })
+  .strict();
 const baselineArtifactsSchema = z
   .object({
     serverBundle: artifactSchema,
     webAssets: artifactSchema,
+    runtimeDependencies: z
+      .object({
+        server: runtimeArtifactSchema.optional(),
+        acs: runtimeArtifactSchema.optional(),
+      })
+      .strict(),
     acsOrchestrator: artifactSchema,
-    acsImage: z.object({ repository: z.string().min(1), digest }).strict(),
+    acsImage: z.object({ repository: ociRepository, digest }).strict(),
   })
   .strict();
 
@@ -172,7 +187,7 @@ export async function produceReleaseEvidence(options) {
   const baselineArtifacts = await readJson(
     options['baseline-artifacts'],
     baselineArtifactsSchema,
-    'Baseline artifacts',
+    'Baseline artifacts and runtime identities',
   );
   const classification = await readJson(
     options.classification,
@@ -196,8 +211,29 @@ export async function produceReleaseEvidence(options) {
     merge.finalPullRequest.number,
     ...merge.sources.map((source) => source.number),
   ].sort((a, b) => a - b);
-  assertUnique(sourcePullRequests, 'Release pull requests');
+  assertUnique(sourcePullRequests, 'Release evidence pull requests');
   assertUnique(classification.components, 'Affected components');
+  const appChanged =
+    classification.components.includes('api') ||
+    classification.components.includes('runtimeWorker');
+  const acsChanged = classification.components.includes('acs');
+  const baselineServerRuntime = baselineArtifacts.runtimeDependencies.server;
+  const baselineAcsRuntime = baselineArtifacts.runtimeDependencies.acs;
+  if (!appChanged && !baselineServerRuntime) {
+    throw new Error('A kept Server requires its baseline Runtime Dependency Identity');
+  }
+  if (
+    baselineServerRuntime &&
+    baselineServerRuntime.sourceSha !== production.components.api.gitSha
+  ) {
+    throw new Error('Baseline Server runtime dependency is not bound to Production API');
+  }
+  if (!acsChanged && !baselineAcsRuntime) {
+    throw new Error('A kept ACS requires its baseline Runtime Dependency Identity');
+  }
+  if (baselineAcsRuntime && baselineAcsRuntime.sourceSha !== production.components.acs.gitSha) {
+    throw new Error('Baseline ACS runtime dependency is not bound to Production ACS');
+  }
 
   const productionBaseline = {
     web: {
@@ -225,7 +261,7 @@ export async function produceReleaseEvidence(options) {
     sources: [...merge.sources].sort((left, right) => left.number - right.number),
   };
   const body = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     releaseSha,
     productionBaselineStatus: 'known',

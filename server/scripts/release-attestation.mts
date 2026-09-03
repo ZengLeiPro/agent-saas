@@ -1,4 +1,4 @@
-import { canonicalJson } from '@agent/shared';
+import { canonicalJson } from '@agent/shared/schemas/releaseManifest';
 import { ReleaseAttestationStore } from '../src/release/releaseAttestationStore.js';
 import type { ReleaseState } from '../src/release/releaseAttestation.js';
 

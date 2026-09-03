@@ -6,7 +6,7 @@ import {
   releaseManifestSchema,
   type ReleaseManifest,
   type ReleaseManifestContent,
-} from '@agent/shared';
+} from '@agent/shared/schemas/releaseManifest';
 
 export interface StoredReleaseManifest {
   manifest: ReleaseManifest;
@@ -15,7 +15,7 @@ export interface StoredReleaseManifest {
 
 export function calculateManifestDigest(manifest: ReleaseManifestContent): string {
   return `sha256:${createHash('sha256')
-    .update('agent-saas-release-manifest-v1\0')
+    .update(`agent-saas-release-manifest-v${manifest.schemaVersion}\0`)
     .update(canonicalJson(manifest))
     .digest('hex')}`;
 }
@@ -25,7 +25,7 @@ export function validateManifest(manifest: unknown): ReleaseManifest {
   const { digest, ...unsignedManifest } = parsed;
   const calculated = calculateManifestDigest(unsignedManifest);
   if (digest !== calculated) {
-    throw new Error('Release Manifest digest does not match canonical content');
+    throw new Error('Release Manifest digest does not match its versioned canonical content');
   }
   return parsed;
 }

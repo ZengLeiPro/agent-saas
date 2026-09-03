@@ -6,6 +6,10 @@ const PATH_COMPONENTS = Object.freeze([
   // 根 Dockerfile 是多 target 构建入口：Server、Hand、ACS Sandbox，并通过
   // web-build stage 产出嵌入式 Web dist。变更时保守要求全部组件重新绑定制品。
   ['Dockerfile', COMPONENTS],
+  ['config/runtime-dependency-contract.json', COMPONENTS],
+  ['daemon-packaging/Dockerfile', ['api', 'runtimeWorker', 'acs']],
+  ['scripts/release/runtime-dependency.mjs', ['api', 'runtimeWorker', 'acs']],
+  ['scripts/release/artifact-lib.mjs', ['api', 'runtimeWorker', 'acs']],
   ['package.json', COMPONENTS],
   ['pnpm-lock.yaml', COMPONENTS],
   ['pnpm-workspace.yaml', COMPONENTS],

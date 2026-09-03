@@ -34,7 +34,7 @@ test('accepts a fresh verified release and a fail-closed pre-mutation retry', ()
   });
 });
 
-test('allows reviewed recovery from needs_human but rejects ambiguous mutation histories', () => {
+test('allows reviewed post-mutation recovery but rejects ambiguous mutation histories', () => {
   assert.deepEqual(
     assertPromotionRetryable([
       entry('verified', 'verified:1'),
@@ -64,5 +64,57 @@ test('allows reviewed recovery from needs_human but rejects ambiguous mutation h
   assert.throws(
     () => assertPromotionRetryable([entry('verified'), entry('needs_human')]),
     /prior approval/u,
+  );
+  assert.throws(
+    () =>
+      assertPromotionRetryable([
+        entry('verified'),
+        entry('approved'),
+        entry('promoting'),
+        entry('failed_before_change'),
+      ]),
+    /ambiguous post-mutation/u,
+  );
+});
+
+test('keeps repeated pre-write recovery failures in retry_after_change mode', () => {
+  const failedRecoveryAttempt = [
+    entry('verified', 'verified:1'),
+    entry('approved', 'approved:1'),
+    entry('promoting', 'promoting:1'),
+    entry('needs_human', 'needs-human:1'),
+    entry('approved', 'approved:2'),
+    entry('failed_before_change', 'failed-before-change:2'),
+  ];
+  assert.deepEqual(assertPromotionRetryable(failedRecoveryAttempt), {
+    mode: 'retry_after_change',
+    latestState: 'failed_before_change',
+    verifiedOperationKey: 'verified:1',
+    promotingOperationKey: 'promoting:1',
+    previousApprovalCount: 2,
+  });
+
+  const reapproved = [...failedRecoveryAttempt, entry('approved', 'approved:3')];
+  assert.deepEqual(assertPromotionRetryable(reapproved), {
+    mode: 'retry_after_change',
+    latestState: 'approved',
+    verifiedOperationKey: 'verified:1',
+    promotingOperationKey: 'promoting:1',
+    previousApprovalCount: 3,
+  });
+
+  assert.deepEqual(
+    assertPromotionRetryable([
+      ...reapproved,
+      entry('promoting', 'promoting:2'),
+      entry('needs_human', 'needs-human:2'),
+    ]),
+    {
+      mode: 'retry_after_change',
+      latestState: 'needs_human',
+      verifiedOperationKey: 'verified:1',
+      promotingOperationKey: 'promoting:2',
+      previousApprovalCount: 3,
+    },
   );
 });

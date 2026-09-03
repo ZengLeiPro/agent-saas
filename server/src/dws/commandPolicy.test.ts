@@ -206,12 +206,11 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
     }
   });
 
-  it('Dockerfile 实际版本、分版本 manifest 与缩进 skill metadata 必须同步', () => {
+  it('Dockerfile 版本 ARG、分版本 manifest 与缩进 skill metadata 必须同步', () => {
     const dockerfile = readFileSync(new URL('../../../Dockerfile', import.meta.url), 'utf8');
-    const dockerVersions = [...dockerfile.matchAll(/dingtalk-workspace-cli@(\d+\.\d+\.\d+)/g)].map(
-      (match) => match[1]!,
-    );
-    expect(dockerVersions).toEqual([DWS_ACTIVE_CLI_VERSION]);
+    const dockerVersion = dockerfile.match(/^ARG DWS_CLI_VERSION=(\d+\.\d+\.\d+)$/m)?.[1];
+    expect(dockerVersion).toBe(DWS_ACTIVE_CLI_VERSION);
+    expect(dockerfile).toMatch(/dingtalk-workspace-cli@\$\{DWS_CLI_VERSION\}/);
     expect(DWS_COMMAND_POLICY_CLI_VERSIONS).toContain(DWS_ACTIVE_CLI_VERSION);
 
     const skill = readFileSync(

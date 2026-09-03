@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeSync } from 'node:fs';
 
 const [healthPath, rollbackEnvPath, candidateEnvPath] = process.argv.slice(2);
 if (!healthPath || !rollbackEnvPath || !candidateEnvPath) {
@@ -63,7 +63,7 @@ if (snat.unexpectedCount !== 0) reasons.push('unexpected SNAT entries are presen
 if (typeof snat.sharedCidrConfigDigest !== 'string' || !snat.sharedCidrConfigDigest) reasons.push('shared CIDR digest is unavailable');
 
 if (reasons.length) {
-  console.error(JSON.stringify({ compatible: false, reasons }));
+  writeSync(2, `${JSON.stringify({ compatible: false, reasons })}\n`);
   process.exit(1);
 }
 console.log(JSON.stringify({

@@ -1,7 +1,33 @@
 #!/usr/bin/env node
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import { canonicalJson, digestBuffer, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+
+function validateIndex(index) {
+  requiredObject(index, 'Baseline artifact index');
+  if (![1, 2].includes(index.schemaVersion)) {
+    throw new Error('Baseline artifact index version is invalid');
+  }
+  if (index.schemaVersion === 1 && 'runtimeDependencies' in index) {
+    throw new Error('Baseline artifact index v1 cannot contain Runtime Dependency Identity fields');
+  }
+  requiredString(index.sourceSha, 'Baseline source SHA', SHA_PATTERN);
+  requiredObject(index.artifacts, 'Baseline artifact index artifacts');
+  if (index.schemaVersion === 2 && !('runtimeDependencies' in index)) {
+    throw new Error('Baseline artifact index v2 must own the Runtime Dependency Identity field');
+  }
+  const aggregateDigest = requiredString(
+    index.aggregateDigest,
+    'Baseline artifact index aggregate digest',
+    DIGEST_PATTERN,
+  );
+  const body = structuredClone(index);
+  delete body.aggregateDigest;
+  delete body.indexUri;
+  if (digestBuffer(Buffer.from(canonicalJson(body))) !== aggregateDigest) {
+    throw new Error('Baseline artifact index aggregate digest mismatch');
+  }
+}
 
 function requiredObject(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -51,6 +77,73 @@ function selectFile(indexes, artifactName, expectedSourceSha, expectedDigest) {
   return candidates[0];
 }
 
+function runtimeCandidate(index, artifactName, expectedSourceSha, expectedArtifactDigest) {
+  if (!fileCandidate(index, artifactName, expectedSourceSha, expectedArtifactDigest))
+    return undefined;
+  if (!index.runtimeDependencies) return undefined;
+  const runtime = requiredObject(index.runtimeDependencies, 'Baseline runtime dependency');
+  if (runtime.sourceSha !== expectedSourceSha)
+    throw new Error('Baseline runtime dependency source SHA does not match its component');
+  const indexUri = requiredString(
+    index.indexUri,
+    'Baseline artifact index URI',
+    /^oss:\/\/[^/]+\/.+\/artifact-index\.json$/u,
+  );
+  const path = safeArtifactPath(runtime.path, 'Baseline runtime dependency path');
+  if (!Number.isSafeInteger(runtime.size) || runtime.size < 1)
+    throw new Error('Baseline runtime dependency size is invalid');
+  return {
+    uri: `${indexUri.slice(0, -'artifact-index.json'.length)}${path}`,
+    digest: requiredString(runtime.digest, 'Baseline runtime dependency digest', DIGEST_PATTERN),
+    size: runtime.size,
+    sourceSha: requiredString(
+      runtime.sourceSha,
+      'Baseline runtime dependency source SHA',
+      SHA_PATTERN,
+    ),
+    identityDigest: requiredString(
+      runtime.identityDigest,
+      'Baseline runtime dependency identity digest',
+      DIGEST_PATTERN,
+    ),
+    dependencyDigest: requiredString(
+      runtime.dependencyDigest,
+      'Baseline runtime dependency dependency digest',
+      DIGEST_PATTERN,
+    ),
+    contractDigest: requiredString(
+      runtime.contractDigest,
+      'Baseline runtime dependency contract digest',
+      DIGEST_PATTERN,
+    ),
+  };
+}
+
+function selectRuntime(indexes, artifactName, expectedSourceSha, expectedArtifactDigest) {
+  const candidates = indexes
+    .map((index) =>
+      runtimeCandidate(index, artifactName, expectedSourceSha, expectedArtifactDigest),
+    )
+    .filter(Boolean)
+    .sort((left, right) => left.uri.localeCompare(right.uri));
+  if (!candidates.length) return undefined;
+  const expected = candidates[0];
+  if (
+    candidates.some(
+      (candidate) =>
+        candidate.digest !== expected.digest ||
+        candidate.size !== expected.size ||
+        candidate.sourceSha !== expected.sourceSha ||
+        candidate.identityDigest !== expected.identityDigest ||
+        candidate.dependencyDigest !== expected.dependencyDigest ||
+        candidate.contractDigest !== expected.contractDigest,
+    )
+  ) {
+    throw new Error(`Conflicting Runtime Dependency Identities match ${artifactName}`);
+  }
+  return expected;
+}
+
 function selectImage(indexes, expectedSourceSha, expectedDigest) {
   const candidates = indexes
     .filter(
@@ -86,11 +179,7 @@ export function resolveBaselineArtifacts({ production, indexes }) {
   if (!Array.isArray(indexes) || !indexes.length) {
     throw new Error('No immutable baseline artifact indexes were provided');
   }
-  for (const index of indexes) {
-    requiredObject(index, 'Baseline artifact index');
-    if (index.schemaVersion !== 1) throw new Error('Baseline artifact index version is invalid');
-    requiredString(index.sourceSha, 'Baseline source SHA', SHA_PATTERN);
-  }
+  for (const index of indexes) validateIndex(index);
   const components = requiredObject(state.components, 'Production components');
   const web = requiredObject(components.web, 'Production Web');
   const api = requiredObject(components.api, 'Production API');
@@ -99,9 +188,20 @@ export function resolveBaselineArtifacts({ production, indexes }) {
   if (api.gitSha !== worker.gitSha || api.artifactDigest !== worker.artifactDigest) {
     throw new Error('Production API and Runtime Worker do not share one Server baseline');
   }
+  const serverRuntime = selectRuntime(indexes, 'serverBundle', api.gitSha, api.artifactDigest);
+  const acsRuntime = selectRuntime(
+    indexes,
+    'acsOrchestrator',
+    acs.gitSha,
+    acs.orchestratorArtifactDigest,
+  );
   return {
     serverBundle: selectFile(indexes, 'serverBundle', api.gitSha, api.artifactDigest),
     webAssets: selectFile(indexes, 'webAssets', web.gitSha, web.artifactDigest),
+    runtimeDependencies: {
+      ...(serverRuntime ? { server: serverRuntime } : {}),
+      ...(acsRuntime ? { acs: acsRuntime } : {}),
+    },
     acsOrchestrator: selectFile(
       indexes,
       'acsOrchestrator',

@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "releaseId": "rc-20260826-01",
+  "releaseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tag": "rc-20260826-01",
+  "createdAt": "2026-08-26T08:00:00.000Z",
+  "createdBy": "github-actions",
+  "releasePullRequest": {
+    "number": 194,
+    "headSha": "cccccccccccccccccccccccccccccccccccccccc",
+    "mergeCommitOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "MERGED"
+  },
+  "integrationCandidates": [],
+  "sourcePullRequests": [194],
+  "productionBaseline": {
+    "web": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "api": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "runtimeWorker": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "acs": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "orchestratorArtifactDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "sandboxImageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  },
+  "components": {
+    "web": {
+      "action": "deploy",
+      "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "api": {
+      "action": "deploy",
+      "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "runtimeWorker": {
+      "action": "deploy",
+      "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "acs": {
+      "action": "keep",
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "orchestratorArtifactDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "sandboxImageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  },
+  "artifacts": {
+    "serverBundle": {
+      "uri": "oss://agent-saas-release-records/releases/example/server.tgz",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "size": 123456
+    },
+    "webAssets": {
+      "uri": "oss://agent-saas-release-records/releases/example/web.tgz",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "size": 234567
+    },
+    "acsOrchestrator": {
+      "required": false,
+      "uri": "oss://agent-saas-release-records/releases/example/acs-orchestrator.tgz",
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "size": 345678
+    },
+    "acsImage": {
+      "required": false,
+      "repository": "agent-saas/acs-sandbox",
+      "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "runtimeDependencies": {
+      "server": {
+        "uri": "oss://agent-saas-release-records/releases/example/runtime-dependencies.json",
+        "digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "size": 4567,
+        "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "identityDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "dependencyDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contractDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "acs": {
+        "uri": "oss://agent-saas-release-records/baselines/acs/runtime-dependencies.json",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "size": 4568,
+        "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identityDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "dependencyDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "contractDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    }
+  },
+  "checks": {
+    "appCi": {
+      "status": "success",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runId": 123456789
+    },
+    "acsImpact": {
+      "status": "not_required",
+      "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "mergeReceipt": {
+      "status": "success",
+      "subjectDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "promotionPolicy": {
+    "expiresAt": "2026-09-02T08:00:00.000Z",
+    "minimumPromotableSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "requiresHumanApproval": true
+  },
+  "migrationPlan": {
+    "phase": "none",
+    "planDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "confirmation": "not_required",
+    "contract": "separate_release"
+  },
+  "rollbackTargets": {
+    "web": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "api": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "runtimeWorker": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "acs": {
+      "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "orchestratorArtifactDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "sandboxImageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  },
+  "digest": "sha256:3c744cdb070837e36da9f55ee02cf15afdec2c2cbd198c5940b3e5fdcef36cdb"
+}

@@ -9,6 +9,10 @@ import {
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
+import {
+  createRuntimeDependencyIdentity,
+  loadRuntimeDependencyContract,
+} from './runtime-dependency.mjs';
 
 const SHA = RELEASE_EVIDENCE_SHA;
 
@@ -16,15 +20,42 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'release-evidence-'));
   await writeFile(join(root, 'server.tgz'), 'server');
   await writeFile(join(root, 'web.tgz'), 'web');
-  await writeFile(join(root, 'sbom.json'), '{}');
+  const runtimeIdentity = createRuntimeDependencyIdentity(
+    await loadRuntimeDependencyContract(),
+    SHA,
+  );
+  await writeFile(
+    join(root, 'sbom.json'),
+    `${canonicalJson({
+      schemaVersion: 2,
+      sourceSha: SHA,
+      lockfile: { digest: `sha256:${'f'.repeat(64)}`, size: 1 },
+      runtimeDependencies: {
+        sourceSha: SHA,
+        identityDigest: runtimeIdentity.identityDigest,
+        contractDigest: runtimeIdentity.contractDigest,
+        dependencyDigest: runtimeIdentity.dependencyDigest,
+      },
+      packages: [],
+    })}\n`,
+  );
+  await writeFile(join(root, 'runtime-dependencies.json'), `${canonicalJson(runtimeIdentity)}\n`);
   const body = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceSha: SHA,
     artifacts: {
       serverBundle: { path: 'server.tgz', ...(await digestFile(join(root, 'server.tgz'))) },
       webAssets: { path: 'web.tgz', ...(await digestFile(join(root, 'web.tgz'))) },
     },
     sbom: { path: 'sbom.json', ...(await digestFile(join(root, 'sbom.json'))) },
+    runtimeDependencies: {
+      path: 'runtime-dependencies.json',
+      ...(await digestFile(join(root, 'runtime-dependencies.json'))),
+      sourceSha: SHA,
+      identityDigest: runtimeIdentity.identityDigest,
+      contractDigest: runtimeIdentity.contractDigest,
+      dependencyDigest: runtimeIdentity.dependencyDigest,
+    },
     acsImage: null,
   };
   const index = { ...body, aggregateDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
@@ -33,7 +64,7 @@ async function fixture() {
   return root;
 }
 
-test('binds built artifact URIs to the internally selected release', async () => {
+test('binds strict built artifact index/SBOM URIs to the internally selected release', async () => {
   const root = await fixture();
   const value = await assembleReleaseEvidence({
     authoritative: join(root, 'authoritative.json'),
@@ -51,6 +82,15 @@ test('binds built artifact URIs to the internally selected release', async () =>
     'oss://agent-saas-releases/rc-20260826-22/server.tgz',
   );
   assert.equal(value.migrationPlan.contract, 'separate_release');
+  assert.equal(
+    value.builtArtifacts.runtimeDependencies.uri,
+    'oss://agent-saas-releases/rc-20260826-22/runtime-dependencies.json',
+  );
+  assert.equal(value.builtArtifacts.runtimeDependencies.sourceSha, SHA);
+  assert.equal(
+    value.builtArtifacts.runtimeDependencies.identityDigest,
+    createRuntimeDependencyIdentity(await loadRuntimeDependencyContract(), SHA).identityDigest,
+  );
 });
 
 test('fails closed on an unknown production baseline', async () => {

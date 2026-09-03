@@ -69,6 +69,10 @@ describe('Runtime Worker 生产部署契约', () => {
       'utf-8',
     );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
+    const compatibilityRollback = await readFile(
+      join(repoRoot, 'scripts/release/rollback-compatibility-app.sh'),
+      'utf-8',
+    );
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
     const runtimeSource = await readFile(join(repoRoot, 'server/src/app/runtime.ts'), 'utf-8');
     const readinessSource = await readFile(
@@ -245,11 +249,18 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain(
       'rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"',
     );
-    expect(workflow).toContain(
-      'rollback drain endpoint unavailable; marker snapshot reports activeUploads=',
+    expect(compatibilityRollback).toContain(
+      'TARGET_DRAIN_SNAPSHOT="$(cat "$RUN_DIR/$SERVICE-$OTHER.draining"',
     );
-    expect(workflow).toContain(
-      'rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"',
+    expect(compatibilityRollback).toContain('state.activeRuns.blocking');
+    expect(compatibilityRollback).toContain('safe &&= state.runtimeQuiesced === true');
+    expect(compatibilityRollback).toContain(
+      'rollback refused: target $OTHER verified drain state is $TARGET_DRAIN_SAFETY',
+    );
+    expect(compatibilityRollback).toContain('rm -f "$RUN_DIR/$SERVICE-$API_ACTIVE.pid"');
+    expect(compatibilityRollback).toContain('target_server_identity_ready');
+    expect(compatibilityRollback).toContain(
+      'readiness identity does not match rollback release SHA',
     );
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',

@@ -22,6 +22,25 @@ export interface RuntimePendingInteraction {
   toolInput?: Record<string, unknown>;
 }
 
+export function resolvedInteractionIdsFromEvents(events: readonly PlatformEvent[]): Set<string> {
+  return new Set(events.flatMap((event) => {
+    if (event.type === 'interaction_resolved') return [event.interactionId];
+    if (event.type === 'approval_resolved') return [event.approvalId];
+    return [];
+  }));
+}
+
+export function reconcileInMemoryPendingInteractions<T extends { interactionId: string }>(
+  pending: T[],
+  events: readonly PlatformEvent[],
+): Set<string> {
+  const resolved = resolvedInteractionIdsFromEvents(events);
+  for (let index = pending.length - 1; index >= 0; index -= 1) {
+    if (resolved.has(pending[index].interactionId)) pending.splice(index, 1);
+  }
+  return new Set(pending.map((entry) => entry.interactionId));
+}
+
 export function buildPendingInteractionsFromEvents(
   events: PlatformEvent[],
   sessionId: string,
@@ -41,12 +60,14 @@ export function buildPendingInteractionsFromEvents(
   for (const request of requested.values()) {
     if (resolved.has(request.interactionId)) continue;
     const timestampOrder = Date.parse(request.timestamp);
-    const order = Number.isSafeInteger(timestampOrder) ? timestampOrder : 0;
+    const fallbackOrder = Number.isSafeInteger(timestampOrder) ? timestampOrder : 0;
+    const version = Number.isSafeInteger(request.version) ? request.version : fallbackOrder;
+    const order = Number.isSafeInteger(request.order) ? request.order : version;
     pending.push({
       interactionId: request.interactionId,
       type: request.interactionType,
       sessionId,
-      version: order,
+      version,
       order,
       ...(request.runId ? { runId: request.runId } : {}),
       ...(request.toolCallId ? { toolCallId: request.toolCallId } : {}),

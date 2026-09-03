@@ -3,10 +3,10 @@ import pg from 'pg';
 
 import type { EventAppendContext, EventListOptions, EventListPage, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 import {
-  projectToolResultSourceForModel,
   TOOL_RESULT_PROJECTION_PREFIX_CHARS,
   TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
 } from './replayEventBounds.js';
+import { loadPgCheckpointReplay, projectBoundedReplayRow, type BoundedReplayRow } from './pgReplayEventWindow.js';
 import { encodePgEventNotifyPayload, lockPgEventGlobalSequence, parsePgCursor } from './pgEventStoreProtocol.js';
 import { allocatePgEventSequences } from './pgEventCursorAllocator.js';
 import { applyPgEventStoreSchema } from './pgEventStoreSchema.js';
@@ -233,6 +233,12 @@ export class PgEventStore implements EventStore {
     tenantId = requireTenantId(tenantId);
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const includeTypes = [...new Set(options.includeTypes ?? [])];
+    if (options.replayMode === 'checkpoint') {
+      return loadPgCheckpointReplay({
+        pool: this.pool, eventsTable: this.eventsTable, tenantId, sessionId, excludeTypes,
+        onStats: options.replayStats,
+      });
+    }
     if (options.projection === 'usage') {
       const result = await this.pool.query<{ event_json: PlatformEvent }>(
         `SELECT event_json - 'content' - 'modelContent' AS event_json
@@ -247,13 +253,7 @@ export class PgEventStore implements EventStore {
       return result.rows.map((row) => normalizeEventJson(row.event_json));
     }
     if (options.replayMode === 'bounded') {
-      const result = await this.pool.query<{
-        event_json: PlatformEvent;
-        tool_content_prefix: string | null;
-        tool_content_suffix: string | null;
-        tool_content_chars: string | number | null;
-        tool_content_lines: string | number | null;
-      }>(
+      const result = await this.pool.query<BoundedReplayRow>(
         `SELECT CASE
                   WHEN event_type = 'tool_result'
                     AND jsonb_typeof(event_json -> 'content') = 'string'
@@ -301,27 +301,7 @@ export class PgEventStore implements EventStore {
           tenantId,
         ],
       );
-      return result.rows.map((row) => {
-        if (
-          typeof row.tool_content_prefix !== 'string'
-          || typeof row.tool_content_suffix !== 'string'
-          || row.tool_content_chars == null
-          || row.tool_content_lines == null
-        ) {
-          return normalizeEventJson(row.event_json);
-        }
-        const event = normalizeEventJson(row.event_json);
-        if (event.type !== 'tool_result') return event;
-        return {
-          ...event,
-          content: projectToolResultSourceForModel({
-            prefix: row.tool_content_prefix,
-            suffix: row.tool_content_suffix,
-            totalChars: Number(row.tool_content_chars),
-            totalLines: Number(row.tool_content_lines),
-          }, event.toolCallId),
-        };
-      });
+      return result.rows.map(projectBoundedReplayRow);
     }
     if (includeTypes.length > 0) {
       const result = await this.pool.query<{ event_json: PlatformEvent }>(
@@ -368,6 +348,7 @@ export class PgEventStore implements EventStore {
       type?: PlatformEvent['type'];
       excludeTypes?: PlatformEvent['type'][];
       projection?: 'usage';
+      replayMode?: 'bounded';
     } = {},
   ): Promise<EventListPage> {
     tenantId = requireTenantId(tenantId);
@@ -376,9 +357,20 @@ export class PgEventStore implements EventStore {
     const excludeTypes = [...new Set(options.excludeTypes ?? [])];
     const eventJsonProjection = options.projection === 'usage'
       ? "event_json - 'content' - 'modelContent'"
-      : 'event_json';
-    const result = await this.pool.query<{ event_json: PlatformEvent; session_sequence: string }>(
-      `SELECT ${eventJsonProjection} AS event_json, session_sequence
+      : options.replayMode === 'bounded'
+        ? "CASE WHEN event_type = 'tool_result' AND jsonb_typeof(event_json -> 'content') = 'string' THEN event_json - 'content' - 'modelContent' ELSE event_json END"
+        : 'event_json';
+    const result = await this.pool.query<BoundedReplayRow>(
+      `SELECT ${eventJsonProjection} AS event_json, session_sequence,
+              CASE WHEN $8::boolean AND event_type = 'tool_result' AND jsonb_typeof(event_json -> 'content') = 'string'
+                THEN left(event_json ->> 'content', $9::integer) ELSE NULL END AS tool_content_prefix,
+              CASE WHEN $8::boolean AND event_type = 'tool_result' AND jsonb_typeof(event_json -> 'content') = 'string'
+                THEN right(event_json ->> 'content', $10::integer) ELSE NULL END AS tool_content_suffix,
+              CASE WHEN $8::boolean AND event_type = 'tool_result' AND jsonb_typeof(event_json -> 'content') = 'string'
+                THEN char_length(event_json ->> 'content') ELSE NULL END AS tool_content_chars,
+              CASE WHEN $8::boolean AND event_type = 'tool_result' AND jsonb_typeof(event_json -> 'content') = 'string'
+                THEN 1 + char_length(event_json ->> 'content')
+                  - char_length(replace(event_json ->> 'content', E'\\n', '')) ELSE NULL END AS tool_content_lines
        FROM ${this.eventsTable}
        WHERE session_id = $1
          AND tenant_id = $7
@@ -388,12 +380,25 @@ export class PgEventStore implements EventStore {
          AND event_type <> ALL($6::text[])
        ORDER BY session_sequence ASC
        LIMIT $3`,
-      [sessionId, afterSequence, limit + 1, options.runId ?? null, options.type ?? null, excludeTypes, tenantId],
+      [
+        sessionId,
+        afterSequence,
+        limit + 1,
+        options.runId ?? null,
+        options.type ?? null,
+        excludeTypes,
+        tenantId,
+        options.replayMode === 'bounded',
+        TOOL_RESULT_PROJECTION_PREFIX_CHARS,
+        TOOL_RESULT_PROJECTION_SUFFIX_CHARS,
+      ],
     );
     const rows = result.rows.slice(0, limit);
     const last = rows.at(-1);
     return {
-      events: rows.map((row) => normalizeEventJson(row.event_json)),
+      events: rows.map((row) => options.replayMode === 'bounded'
+        ? projectBoundedReplayRow(row)
+        : normalizeEventJson(row.event_json)),
       ...(last && result.rows.length > limit ? { nextCursor: String(last.session_sequence) } : {}),
       hasMore: result.rows.length > limit,
     };

@@ -709,6 +709,13 @@ export {
   upsertRuntimeStatusMessage,
 } from './lib/wsEventProcessor';
 export type { MessagesController, WsProcessingContext, WsBlockState } from './lib/wsEventProcessor';
+export {
+  isRememberedResolvedInteraction,
+  projectInteractionRequest,
+  projectInteractionResolution,
+  projectPendingInteractionSnapshot,
+  rememberResolvedInteraction,
+} from './lib/wsInteractionProjection';
 
 // Hooks
 export { useConnectionState } from './hooks/useConnectionState';

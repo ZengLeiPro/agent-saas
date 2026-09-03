@@ -13,6 +13,7 @@ import {
   mapSessionDetailToMessages,
   mergeServerMessagesWithLocalTail,
   mergeSessionMessagePage,
+  projectPendingInteractionSnapshot,
   SESSION_STORAGE_KEY,
   registerRefresh,
   unregisterRefresh,
@@ -22,6 +23,7 @@ import {
   mergeLegacyOffsetSessionPage,
   mergeSessionListPage,
   reduceSessionListInteraction,
+  selectActiveInteraction,
   selectSessionListItems,
   tombstoneSessionListItem,
   upsertSessionListItem,
@@ -35,11 +37,19 @@ import {
 import { injectCompactionMessages } from "../lib/compaction";
 import { createMobileMessageCacheForIdentity } from "../platform/mobileMessageCache";
 
+type PendingInteractionMessage = Extract<MessageItem, { type: "permission_request" | "ask_user" }>;
+
+function isPendingInteractionMessage(message: MessageItem): message is PendingInteractionMessage {
+  return (message.type === "permission_request" || message.type === "ask_user")
+    && message.status === "pending";
+}
+
 export interface SessionCallbacks {
   resetMessages: () => void;
   setMessages: (msgs: MessageItem[]) => void;
   /** 返回当前本地消息列表引用（用于 refresh 时保留本地流式尾部，见 mergeServerMessagesWithLocalTail） */
   getMessages?: () => MessageItem[];
+  getResolvedInteractionIds?: () => ReadonlySet<string>;
   triggerScroll: () => void;
   cancelActiveStream: () => void;
   clearComposer: () => void;
@@ -78,6 +88,7 @@ export interface SessionState {
   newSession: (options?: { preserveComposer?: boolean }) => void;
   selectSession: (id: string) => void;
   applySessionInteractionEvent: (event: SessionListInteractionEvent) => void;
+  getActiveInteraction: (sessionId: string) => ApiSessionListItem["activeInteraction"];
   confirmDeleteSession: (id: string) => void;
   cancelDeleteSession: () => void;
   handleDeleteSession: (id?: string) => Promise<void>;
@@ -124,7 +135,7 @@ export function useSession(
   // 每个 hook 固定其身份 namespace，避免旧异步响应跟随全局 active identity 漂移。
   const messageCache = useMemo(
     () => createMobileMessageCacheForIdentity(identity),
-    [identityKey], // eslint-disable-line react-hooks/exhaustive-deps
+    [identityKey],
   );
   const [sessionId, setSessionId] = useState<string | null>(
     options?.initialSessionId ?? null,
@@ -354,81 +365,6 @@ export function useSession(
             mapSessionDetailToMessages(data, sessionOwner),
           );
 
-          // Check pending interactions
-          try {
-            const pendingRes = await authFetch(
-              `/api/chat/interactions/pending?sessionId=${encodeURIComponent(id)}`,
-            );
-            if (!isStale() && pendingRes.ok) {
-              const pendingList = (await pendingRes.json()) as Array<{
-                interactionId: string;
-                type: string;
-                version: number;
-                order: number;
-                questions?: Array<{
-                  question: string;
-                  header: string;
-                  options: Array<{ label: string; description: string }>;
-                  multiSelect: boolean;
-                }>;
-                toolName?: string;
-                planContent?: string;
-              }>;
-
-              const PLAN_LABELS: Record<
-                string,
-                { name: string; fallback: string }
-              > = {
-                EnterPlanMode: {
-                  name: "进入规划模式",
-                  fallback: "Agent 请求进入规划模式。",
-                },
-                ExitPlanMode: {
-                  name: "规划方案审批",
-                  fallback: "Agent 已完成方案规划。",
-                },
-              };
-
-              const existingIds = new Set(
-                msgs
-                  .filter((m) => "interactionId" in m && m.interactionId)
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  .map((m) => (m as any).interactionId as string),
-              );
-              for (const p of pendingList) {
-                if (existingIds.has(p.interactionId)) continue;
-                if (p.type === "ask_user" && p.questions) {
-                  msgs.push({
-                    id: `pending-${p.interactionId}`,
-                    type: "ask_user",
-                    interactionId: p.interactionId,
-                    interactionVersion: p.version,
-                    interactionOrder: p.order,
-                    questions: p.questions,
-                    status: "pending",
-                  });
-                } else if ((p.type === "permission_request" || p.type === "approval") && p.toolName) {
-                  const label = PLAN_LABELS[p.toolName] ?? {
-                    name: p.toolName,
-                    fallback: "",
-                  };
-                  msgs.push({
-                    id: `pending-${p.interactionId}`,
-                    type: "permission_request",
-                    interactionId: p.interactionId,
-                    interactionVersion: p.version,
-                    interactionOrder: p.order,
-                    toolName: label.name,
-                    toolInput: p.planContent || label.fallback,
-                    status: "pending",
-                  });
-                }
-              }
-            }
-          } catch {
-            /* silent */
-          }
-
           if (isStale()) return;
           // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，
           // 合并保留本地尾部，避免消息瞬间消失。
@@ -451,6 +387,34 @@ export function useSession(
           setHasMoreHistory(pageHasMore);
           void fetchTokenUsage(id);
           messageCache.save(id, finalMsgs);
+
+          const pendingAtRequestStart = new Set((cbRef.current.getMessages?.() ?? finalMsgs)
+            .filter(isPendingInteractionMessage)
+            .map((message) => message.interactionId));
+          void authFetch(
+            `/api/chat/interactions/pending?sessionId=${encodeURIComponent(id)}`,
+          ).then(async (pendingResponse) => {
+            if (!pendingResponse.ok) return null;
+            return pendingResponse.json() as Promise<Parameters<typeof projectPendingInteractionSnapshot>[1]>;
+          }).then((pendingList) => {
+            if (!pendingList || isStale() || sessionIdRef.current !== id) return;
+            const currentMessages = cbRef.current.getMessages?.() ?? finalMsgs;
+            const arrivedAfterRequest = new Set(currentMessages
+              .filter((message): message is PendingInteractionMessage => isPendingInteractionMessage(message)
+                && !pendingAtRequestStart.has(message.interactionId))
+              .map((message) => message.interactionId));
+            const projected = projectPendingInteractionSnapshot(
+              currentMessages,
+              pendingList,
+              id,
+              cbRef.current.getResolvedInteractionIds?.(),
+              arrivedAfterRequest,
+            );
+            cbRef.current.setMessages(projected);
+            messageCache.save(id, projected);
+          }).catch(() => {
+            // pending check is best-effort
+          });
         } else if (response.status === 404 || response.status === 403) {
           void messageCache.clear(id);
           void platform.storage.removeItem(`agentChat.model.${id}`);
@@ -604,6 +568,10 @@ export function useSession(
   const applySessionInteractionEvent = useCallback((event: SessionListInteractionEvent) => {
     commitPager(reduceSessionListInteraction(pagerRef.current, event));
   }, [commitPager]);
+  const getActiveInteraction = useCallback(
+    (targetSessionId: string) => selectActiveInteraction(pagerRef.current, targetSessionId),
+    [],
+  );
 
   const renameSession = useCallback(
     async (targetId: string, newTitle: string): Promise<boolean> => {
@@ -728,7 +696,7 @@ export function useSession(
         options.initialSessionId,
       );
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Persist session ID
   useEffect(() => {
@@ -763,7 +731,7 @@ export function useSession(
     return () => {
       cancelled = true;
     };
-  }, [identityKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [identityKey]);
 
   // Register refresh bus
   useEffect(() => {
@@ -814,6 +782,7 @@ export function useSession(
     newSession,
     selectSession,
     applySessionInteractionEvent,
+    getActiveInteraction,
     confirmDeleteSession,
     cancelDeleteSession,
     handleDeleteSession,

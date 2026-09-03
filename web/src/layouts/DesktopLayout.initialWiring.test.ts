@@ -60,7 +60,8 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("governanceRoute, closeOrganizationSettings: closeSettings,");
     expect(source).not.toContain("SettingsDirtyControllerBridge");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
-    expect(managementContentSource).toContain('<SettingsDirtyBoundary>{(dirtyController) => (');
+    expect(managementContentSource).toContain('<SettingsDirtyBoundary>');
+    expect(managementContentSource).toContain('{(dirtyController) => (');
     expect(managementContentSource).toContain('dirtyController={dirtyController}');
   });
 

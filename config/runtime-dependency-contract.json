@@ -30,7 +30,7 @@
   "tools": [
     {
       "name": "git",
-      "version": "2.49.1",
+      "version": "2.52.0",
       "architecture": "x64",
       "components": ["server", "acsOrchestrator"],
       "probe": ["git", "--version"]

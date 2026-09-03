@@ -68,7 +68,7 @@ import {
 } from "../data/transcripts/finalOutput.js";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
 import { RuntimeContextUsageTracker } from "../runtime/contextUsage.js";
-import { buildPendingInteractionsFromEvents } from "../runtime/interactionProjection.js";
+import { buildPendingInteractionsFromEvents, reconcileInMemoryPendingInteractions } from "../runtime/interactionProjection.js";
 import { auditLog } from "../data/login-logs/index.js";
 import { apiLogger } from "../utils/logger.js";
 import type { EventBus } from "../channels/web/eventBus.js";
@@ -2935,7 +2935,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               "approval_resolved",
             ],
           });
-          const existingIds = new Set(pending.map((entry) => entry.interactionId));
+          const existingIds = reconcileInMemoryPendingInteractions(pending, durableInteractionEvents);
           for (const state of buildPendingInteractionsFromEvents(
             durableInteractionEvents,
             sessionId,

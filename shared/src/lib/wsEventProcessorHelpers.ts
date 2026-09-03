@@ -30,6 +30,10 @@ export interface WsProcessingContext {
   runIdRef?: { current: string | null };
   /** 已处理的终态键（runId 优先，兼容旧协议时回退 client_msg_id） */
   handledTerminalKeysRef?: { current: Set<string> };
+  /** Server-authoritative interaction tombstones; stale request/snapshot frames cannot revive them. */
+  resolvedInteractionIdsRef?: { current: Set<string> };
+  onInteractionResolved?: (sessionId: string, interactionId: string) => void;
+  onInteractionsChanged?: (sessionId: string) => void;
   lastEventIdRef: { current: number | null };
   userMsgIndex: number;
   /** Platform storage callback for persisting model selection */

@@ -31,6 +31,8 @@ server_unit=/fixture/server.service
 worker_unit=/fixture/worker.service
 acs_unit=/fixture/acs.service
 run_root=/fixture/run
+api_config_identity_snapshot=/fixture/run/api-config-identity.json
+worker_config_identity_snapshot=/fixture/run/worker-config-identity.json
 deployment_attempt_id=4242-1
 had_server_config=true
 had_server_env=true
@@ -101,6 +103,7 @@ run_case() {
   # A failing first cleanup command cannot suppress later cleanup or rollback.
   grep -Fx 'rm:-f /fixture/artifact-probe' "$log" >/dev/null
   grep -Fx 'rm:-f /fixture/acs-health /fixture/api-ready' "$log" >/dev/null
+  grep -Fx 'rm:-f /fixture/run/runtime-worker.ready /fixture/run/api-config-identity.json /fixture/run/worker-config-identity.json' "$log" >/dev/null
   # A failing first rollback copy and first service recovery cannot suppress the rest;
   # rollback backups remain available for manual recovery.
   grep -Fx 'cp:-a /fixture/rollback/config.json /fixture/config.json' "$log" >/dev/null

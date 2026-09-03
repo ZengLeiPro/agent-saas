@@ -4,6 +4,12 @@ import { relative, resolve, sep } from 'node:path';
 
 export const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 export const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const OCI_REPOSITORY_SOURCE = String.raw`(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[1-9]\d{0,4})?/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*`;
+export const OCI_REPOSITORY_PATTERN = new RegExp(`^${OCI_REPOSITORY_SOURCE}$`, 'u');
+export const OCI_IMAGE_REFERENCE_PATTERN = new RegExp(
+  `^${OCI_REPOSITORY_SOURCE}@sha256:[a-f0-9]{64}$`,
+  'u',
+);
 
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;

@@ -77,6 +77,10 @@ describe('Runtime Worker 生产部署契约', () => {
       join(repoRoot, 'scripts/release/production-deploy-rollback.sh'),
       'utf-8',
     );
+    const compatibilityRollback = await readFile(
+      join(repoRoot, 'scripts/release/rollback-compatibility-app.sh'),
+      'utf-8',
+    );
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
     const runtimeSource = await readFile(join(repoRoot, 'server/src/app/runtime.ts'), 'utf-8');
     const readinessSource = await readFile(
@@ -164,12 +168,14 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(rollbackEnd).toBeGreaterThan(rollbackStart);
     expect(rollbackBlock).toContain('COMPAT_ROLLBACK_PUBLISHED');
     expect(rollbackBlock).toContain('compat-deploy-attempt-current');
-    expect(rollbackBlock).toContain('"$ROLLBACK_STATE_DIR/rollback.sh"');
-    expect(rollbackBlock).not.toContain('systemctl disable --now');
+    expect(rollbackBlock).toContain('restore_pre_drained_legacy_runtime');
+    expect(rollbackBlock).toContain('COMPAT_ROLLBACK_STATE_DIR');
+    expect(rollbackBlock).toContain('rm -f "$DEPLOY_ROOT/compat-deploy-attempt-current"');
     expect(workflow).toContain(
       'source "$RELEASE_DIR/scripts/release/production-deploy-rollback.sh"',
     );
     expect(rollbackHelper).toContain('production_deploy_rollback()');
+    expect(rollbackHelper).toContain('declare -F rollback_idle_and_exit');
 
     const authorityCommit = workflow.indexOf(
       'if ! commit_app_active_colors "$IDLE" "$APP_WORKER_TARGET"; then',
@@ -247,6 +253,19 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(authorityHelper).toContain('wait_api_ready "$API_OLD_COLOR"');
     expect(authorityHelper).toContain(
       'systemctl disable --now "$SERVICE@$API_NEW_COLOR"',
+    );
+    expect(compatibilityRollback).toContain(
+      'TARGET_DRAIN_SNAPSHOT="$(cat "$RUN_DIR/$SERVICE-$OTHER.draining"',
+    );
+    expect(compatibilityRollback).toContain('state.activeRuns.blocking');
+    expect(compatibilityRollback).toContain('safe &&= state.runtimeQuiesced === true');
+    expect(compatibilityRollback).toContain(
+      'rollback refused: target $OTHER verified drain state is $TARGET_DRAIN_SAFETY',
+    );
+    expect(compatibilityRollback).toContain('rm -f "$RUN_DIR/$SERVICE-$API_ACTIVE.pid"');
+    expect(compatibilityRollback).toContain('target_server_identity_ready');
+    expect(compatibilityRollback).toContain(
+      'readiness identity does not match rollback release SHA',
     );
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',

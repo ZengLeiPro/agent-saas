@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { canonicalJson, releaseManifestContentSchema } from '@agent/shared';
+import { canonicalJson, releaseManifestContentSchema } from '@agent/shared/schemas/releaseManifest';
 import {
   calculateManifestDigest,
   ReleaseManifestStore,

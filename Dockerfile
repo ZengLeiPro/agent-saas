@@ -32,11 +32,13 @@
 #   --override-os linux --override-arch amd64 重新同步后再改此文件。
 # ─────────────────────────────────────────────────────────────
 ARG BASE_REGISTRY=docker.io/library
+# Production base images are pinned to exact linux/amd64 manifests. Mirrors must preserve
+# these OCI digests; changing a digest requires updating config/runtime-dependency-contract.json.
 
 # ─────────────────────────────────────────────────────────────
 # Stage: deps — pnpm install（共用底层缓存）
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/node:22-alpine AS deps
+FROM ${BASE_REGISTRY}/node@sha256:b74031e546d7f4faf561d797ac1b76beccac856a042815ca77db4fd047581605 AS deps
 WORKDIR /app
 
 # corepack 从 root package.json 获取 pnpm 版本，并校验 packageManager 的 SHA-512。
@@ -63,12 +65,12 @@ RUN pnpm install --frozen-lockfile \
 # ─────────────────────────────────────────────────────────────
 # Stage: node-bookworm — 给 Python 3.12 Debian 运行时复制 Node 22
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/node:22-bookworm-slim AS node-bookworm
+FROM ${BASE_REGISTRY}/node@sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27 AS node-bookworm
 
 # ─────────────────────────────────────────────────────────────
 # Stage: acs-base — production Agent hand runtime
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/python:3.12-slim-bookworm AS acs-base
+FROM ${BASE_REGISTRY}/python@sha256:4427763a1ba36f5aa8f656a03e5d00f3b8d61f5dd950c73df6c14f8c7640f8ab AS acs-base
 WORKDIR /app
 
 # 这是用户代码执行环境，不是控制面。保留通用 Agent 生产任务常用工具。
@@ -84,6 +86,12 @@ ARG ALIYUN_CLI_VERSION=3.4.4
 ARG ALIYUN_CLI_SHA256=11dc3c6999e0e2f3cdac6e38775920e14ace7b52567534ff1222db22ae327684
 ARG GWS_CLI_VERSION=0.22.5
 ARG GWS_CLI_TARGET=x86_64-unknown-linux-musl
+ARG ACS_GIT_VERSION=2.39.5
+ARG ACS_PYTHON_VERSION=3.12.14
+ARG NTN_CLI_VERSION=0.21.6
+ARG BIRD_CLI_VERSION=0.8.0
+ARG DWS_CLI_VERSION=1.0.60
+ARG LARK_CLI_VERSION=1.0.90
 
 COPY --from=node-bookworm /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -152,7 +160,9 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo Asia/Shanghai > /etc/timezone \
     && fc-cache -fv \
-    && update-ca-certificates
+    && update-ca-certificates \
+    && test "$(git --version)" = "git version ${ACS_GIT_VERSION}" \
+    && test "$(python3 --version)" = "Python ${ACS_PYTHON_VERSION}"
 
 # GitHub CLI 的 apt 仓库只保留有限版本，固定版本会在下架后让历史镜像无法重建。
 # 改用 GitHub 官方 immutable release，并校验官方发布的 SHA256。
@@ -203,13 +213,13 @@ RUN pnpm install --frozen-lockfile \
     --filter '!mobile' \
     --filter '!web'
 
-# 能力中心官方 CLI — 全部 pin 版本，避免 latest 漂浮。
+# 能力中心官方 CLI — 全部由上方 ARG pin 版本，避免 latest 漂浮。
 # Notion npm 包名/命令均为 ntn。
-RUN npm install -g ntn@0.21.6 \
+RUN npm install -g "ntn@${NTN_CLI_VERSION}" \
     && ntn --version
 
 # X 连接器依赖的 bird CLI；固定版本并在镜像构建期做可执行性 smoke。
-RUN npm install -g @steipete/bird@0.8.0 \
+RUN npm install -g "@steipete/bird@${BIRD_CLI_VERSION}" \
     && command -v bird \
     && bird --version
 
@@ -236,12 +246,12 @@ RUN set -eu; \
 
 # dws CLI（钉钉 DWS skill 与平台连接器依赖）
 # npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper。
-RUN npm install -g dingtalk-workspace-cli@1.0.60 \
+RUN npm install -g "dingtalk-workspace-cli@${DWS_CLI_VERSION}" \
     && dws --version
 
 # 飞书官方 CLI（能力中心飞书连接器 + feishu skill）。
 # @larksuite/cli 的 postinstall 会按当前平台下载官方二进制，bin 名为 lark-cli。
-RUN npm install -g @larksuite/cli@1.0.90 \
+RUN npm install -g "@larksuite/cli@${LARK_CLI_VERSION}" \
     && lark-cli --version \
     && mkdir -p /tmp/lark-smoke/config /tmp/lark-smoke/data \
     && output="$(LARKSUITE_CLI_CONFIG_DIR=/tmp/lark-smoke/config \
@@ -331,7 +341,7 @@ RUN playwright_requirement="$(grep -E '^playwright==[^[:space:]]+$' acs-orchestr
 # ─────────────────────────────────────────────────────────────
 # Stage: web-build — 仅产出 web/dist 给 server target COPY
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/node:22-alpine AS web-build
+FROM ${BASE_REGISTRY}/node@sha256:b74031e546d7f4faf561d797ac1b76beccac856a042815ca77db4fd047581605 AS web-build
 WORKDIR /app
 COPY package.json ./
 RUN corepack enable \
@@ -355,10 +365,10 @@ FROM deps AS server
 WORKDIR /app
 
 # Integration v3 performs server-owned mirror operations. Pin the supported Git
-# package instead of inheriting an unspecified host binary.
+# package instead of inheriting an unspecified host binary; the semantic version stays contract-bound.
 ARG SERVER_GIT_PACKAGE_VERSION=2.49.1-r0
 RUN apk add --no-cache "git=${SERVER_GIT_PACKAGE_VERSION}" \
-    && git --version
+    && test "$(git --version)" = "git version 2.49.1"
 
 # X 凭据保存前由服务端运行 bird whoami 做端到端验证；版本须与 Sandbox 保持一致。
 RUN npm install -g @steipete/bird@0.8.0 \
@@ -412,6 +422,15 @@ WORKDIR /app
 COPY shared ./shared
 COPY server ./server
 COPY acs-orchestrator ./acs-orchestrator
+COPY config/runtime-dependency-contract.json /opt/ky-agent/runtime-identity/contract.json
+COPY scripts/release/runtime-dependency.mjs scripts/release/artifact-lib.mjs /opt/ky-agent/runtime-identity/
+RUN node /opt/ky-agent/runtime-identity/runtime-dependency.mjs \
+      --create=true --contract=/opt/ky-agent/runtime-identity/contract.json \
+      --source-sha=0000000000000000000000000000000000000000 \
+      --output=/tmp/runtime-dependencies.json \
+    && node /opt/ky-agent/runtime-identity/runtime-dependency.mjs \
+      --manifest=/tmp/runtime-dependencies.json --component=acsSandbox --production=true \
+    && rm -f /tmp/runtime-dependencies.json
 
 # sandboxRunner 预编译（2026-08-10，A 方案批次 3）
 #

@@ -254,9 +254,23 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   assert.match(production, /\.owner-token/u);
   assert.match(
     production,
+    /agent-saas-production-before-\$\{PHASE\}-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}\.json/u,
+  );
+  assert.match(
+    production,
+    /acs-promotion-health-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}\.json/u,
+  );
+  assert.match(
+    production,
+    /api-candidate-ready-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}\.json/u,
+  );
+  assert.match(
+    production,
     /cat "\$fence\/\.owner-token"[\s\S]*= "\$owner"[\s\S]*rm -rf "\$fence"/u,
   );
   assert.match(production, /"token":"%s"/u);
+  assert.doesNotMatch(production, /\/tmp\/api-candidate-ready\.json/u);
+  assert.doesNotMatch(production, /\/tmp\/acs-promotion-health\.json/u);
   const workerValidator = production.slice(
     production.indexOf('validate_worker_release_boundary() {'),
     production.indexOf('revoke_systemd_authority() {'),
@@ -524,8 +538,9 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   assert.match(production, /\[ "\$api_candidate_admitted" = true \]/u);
   const appMarkerCommit = production.slice(
     production.indexOf('commit_app_active_colors() {'),
-    production.indexOf('commit_rollback_worker_authority() {'),
+    production.indexOf('rollback_app_release() {'),
   );
+  assert.ok(appMarkerCommit.length > 0);
   const apiAuthorityLink = appMarkerCommit.indexOf('ln -s "$authority_link/api"');
   const workerAuthorityLink = appMarkerCommit.indexOf('ln -s "$authority_link/worker"');
   const finalAuthoritySwap = appMarkerCommit.lastIndexOf(

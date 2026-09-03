@@ -29,6 +29,8 @@ etc_root="${STAGING_ETC_ROOT:-/etc/agent-saas-staging}"
 systemd_root="${STAGING_SYSTEMD_ROOT:-/etc/systemd/system}"
 runtime_root="${STAGING_RUNTIME_ROOT:-/mnt/agent-saas-staging/runtime}"
 run_root="${STAGING_RUN_ROOT:-/run/agent-saas-staging}"
+api_config_identity_snapshot="$run_root/config-identity.json"
+worker_config_identity_snapshot="$run_root/runtime-worker-config-identity.json"
 config_root="$state_root/config"
 server_config="$config_root/config.json"
 legacy_server_config="$etc_root/config.json"
@@ -139,6 +141,8 @@ rollback() {
     "$rollback_root/agent-saas-acs-orchestrator-staging.service" "$acs_unit"
   systemctl daemon-reload || true
   if [ "$runtime_mutated" = true ]; then
+    rm -f "$run_root/runtime-worker.ready" \
+      "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
     if [ "$had_previous_release" = true ]; then
       ln -sfn "$previous" "$current"
       systemctl restart agent-saas-acs-orchestrator-staging.service || true
@@ -215,6 +219,42 @@ install_staging_unit() {
   mv -f "$candidate_path" "$destination_path"
 }
 
+verify_staging_unit_environment() {
+  local api_environment="$1"
+  local worker_environment="$2"
+  local expected_config='AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json'
+  local expected_api_snapshot='AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/config-identity.json'
+  local expected_worker_snapshot='AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/runtime-worker-config-identity.json'
+  if ! printf '%s\n' "$worker_environment" \
+    | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready'; then
+    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$api_environment" \
+    | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready'; then
+    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$api_environment" | grep -Fq "$expected_api_snapshot"; then
+    echo 'Staging API unit does not use its private ConfigIdentity snapshot' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$worker_environment" | grep -Fq "$expected_worker_snapshot"; then
+    echo 'Staging Runtime Worker unit does not use its private ConfigIdentity snapshot' >&2
+    return 1
+  fi
+  for unit_environment in "$api_environment" "$worker_environment"; do
+    if ! printf '%s\n' "$unit_environment" \
+      | grep -Fq "$expected_config"; then
+      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
+      return 1
+    fi
+  done
+}
+
+runtime_dir="$runtime_root/server"
+artifact_dir="$runtime_root/artifacts"
+
 runuser -u agent-saas-staging -- sh -c \
   'umask 027; mkdir -p -- "$1" "$2"' sh "$runtime_dir" "$artifact_dir"
 runtime_owner="$(stat -c '%u:%g' "$runtime_dir")"
@@ -260,24 +300,8 @@ for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-
 done
 
 worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
-printf '%s\n' "$worker_unit_environment" \
-  | grep -Fq "AGENT_SAAS_READYFILE=$run_root/runtime-worker.ready" || {
-    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
-    exit 1
-  }
 api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
-printf '%s\n' "$api_unit_environment" \
-  | grep -Fq "AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=$run_root/runtime-worker.ready" || {
-    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
-    exit 1
-  }
-for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
-  printf '%s\n' "$unit_environment" \
-    | grep -Fq "AGENT_SAAS_CONFIG_PATH=$server_config" || {
-      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
-      exit 1
-    }
-done
+verify_staging_unit_environment "$api_unit_environment" "$worker_unit_environment"
 
 node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const crypto = require('node:crypto');
@@ -521,6 +545,8 @@ const keys = new Set([
   ...Object.keys(desired),
   // identity 未解析到版本时必须删除旧 release 遗留值，禁止凭据版本串线。
   'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST',
+  // 私有快照路径由各 systemd unit 独立声明，禁止共享 env 覆盖。
+  'AGENT_SAAS_CONFIG_IDENTITY_PATH',
 ]);
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !keys.has(line.split('=', 1)[0]));
 for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`);
@@ -584,6 +610,8 @@ if systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service; then
     exit 1
   }
 fi
+rm -f "$run_root/runtime-worker.ready" \
+  "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
 systemctl restart agent-saas-acs-orchestrator-staging.service
 for attempt in $(seq 1 60); do
   curl -fsS http://127.0.0.1:3410/health >"$acs_health_probe" && break
@@ -605,7 +633,7 @@ test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
 rm -f "$artifact_persistence_probe"
 
 node --input-type=module - "$MANIFEST_PATH" "$api_ready_probe" \
-  /run/agent-saas-staging/config-identity.json "$config_identity" \
+  "$api_config_identity_snapshot" "$config_identity" \
   "$config_identity_reader" <<'NODE'
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';

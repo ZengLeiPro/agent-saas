@@ -26,12 +26,12 @@ import {
   type ConfigIdentityUnverifiableReason,
   type ConfigIdentityVersionResolution,
 } from '@agent/shared/schemas/configIdentity';
-import { canonicalJson } from '@agent/shared';
+import { canonicalJson } from '@agent/shared/schemas/releaseManifest';
 import type { SecretVault } from '../security/secretVault.js';
 
 export { CONFIG_IDENTITY_SCHEMA_VERSION, CONFIG_IDENTITY_DIGEST_PATTERN };
 
-/** digest domain separator；语义变化时递增版本并显式迁移。 */
+/** digest domain separator；语义变化时递增版本并显式迁移 schema。 */
 const CONFIG_IDENTITY_DOMAIN = 'agent-saas-config-identity-v1';
 const SECRET_REF_DOMAIN = 'agent-saas-config-secret-ref-v1';
 const CREDENTIAL_VERSION_DOMAIN = 'agent-saas-config-credential-versions-v1';

@@ -8,6 +8,10 @@ import test from 'node:test';
 
 import { createComponentArtifactIndex } from './create-component-artifact-index.mjs';
 import { sealCompatibilityRelease } from './seal-compatibility-release.mjs';
+import {
+  createRuntimeDependencyIdentity,
+  loadRuntimeDependencyContract,
+} from './runtime-dependency.mjs';
 import { buildCompatibilityAppEnvironment } from './write-compatibility-app-env.mjs';
 import { buildCompatibilityAcsIdentity } from './write-compatibility-acs-identity.mjs';
 import {
@@ -28,10 +32,52 @@ test('creates component-scoped immutable artifact indexes', async () => {
     artifactName: 'serverBundle',
     artifactPath,
   });
+  assert.equal(index.schemaVersion, 2);
   assert.equal(index.sourceSha, SHA);
   assert.equal(index.artifacts.serverBundle.path, 'server-bundle.tgz');
   assert.match(index.aggregateDigest, /^sha256:[a-f0-9]{64}$/u);
   assert.equal(index.acsImage, null);
+  assert.equal(index.runtimeDependencies, null);
+});
+
+test('component indexes reject malformed digest-suffixed ACS image references', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'compat-acs-index-'));
+  const artifactPath = join(root, 'acs-orchestrator.tgz');
+  await writeFile(artifactPath, 'acs');
+  await assert.rejects(
+    createComponentArtifactIndex({
+      sourceSha: SHA,
+      artifactName: 'acsOrchestrator',
+      artifactPath,
+      imageReference: `:@${DIGEST}`,
+    }),
+    /ACS image reference must use a valid immutable repository digest/u,
+  );
+});
+
+test('component indexes bind the standalone runtime identity to the same source SHA', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'compat-runtime-index-'));
+  const artifactPath = join(root, 'server-bundle.tgz');
+  const runtimePath = join(root, 'runtime-dependencies.json');
+  await writeFile(artifactPath, 'server');
+  await writeFile(
+    runtimePath,
+    `${JSON.stringify(createRuntimeDependencyIdentity(await loadRuntimeDependencyContract(), SHA))}\n`,
+  );
+  const index = await createComponentArtifactIndex({
+    sourceSha: SHA,
+    artifactName: 'serverBundle',
+    artifactPath,
+    runtimeDependencyPath: runtimePath,
+  });
+  assert.equal(index.schemaVersion, 2);
+  assert.equal(index.runtimeDependencies.sourceSha, SHA);
+  assert.equal(index.runtimeDependencies.path, 'runtime-dependencies.json');
+  assert.equal(
+    index.runtimeDependencies.identityDigest,
+    createRuntimeDependencyIdentity(await loadRuntimeDependencyContract(), SHA).identityDigest,
+  );
+  assert.match(index.runtimeDependencies.dependencyDigest, /^sha256:[a-f0-9]{64}$/u);
 });
 
 test('seals compatibility releases against both archive and installed bytes', async () => {
@@ -139,6 +185,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     readFile('scripts/deploy-acs-orchestrator.sh', 'utf8'),
   ]);
   assert.match(appWorkflow, /baselines\/app-/u);
+  assert.match(appWorkflow, /server-release-stage\/server\/runtime-dependencies\.json/u);
   assert.match(appWorkflow, /baselines\/web-/u);
   assert.match(appWorkflow, /Refresh trusted Production identity/u);
   assert.match(appWorkflow, /runtime worker rollout: required to converge/u);
@@ -146,6 +193,14 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /GITHUB_RUN_ATTEMPT='\$\{GITHUB_RUN_ATTEMPT\}'/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ID/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ATTEMPT/u);
+  assert.match(
+    appWorkflow,
+    /agent-saas-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}-\$\{GITHUB_SHA\}\.tgz/u,
+  );
+  assert.match(
+    appWorkflow,
+    /agent-saas-runtime-identity-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}/u,
+  );
   assert.match(appWorkflow, /config-identity-cli\.js/u);
   assert.match(
     appWorkflow,
@@ -167,18 +222,158 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     /candidate private config identity validation failed[\s\S]{0,120}rollback_idle_and_exit/u,
   );
   assert.match(appWorkflow, /--config-identity-digest/u);
+  assert.match(appWorkflow, /pre-deploy rollback state captured/u);
+  assert.match(appWorkflow, /rollback-compatibility-app\.sh/u);
+  assert.match(appWorkflow, /compatibility-deploy-transaction\.sh/u);
+  assert.match(appWorkflow, /publish_compat_deploy_rollback/u);
+  assert.ok(
+    appWorkflow.indexOf('pre-deploy rollback state captured') <
+      appWorkflow.indexOf('SYSTEMD_UNITS_DIRTY=1'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('SYSTEMD_UNITS_DIRTY=1') < appWorkflow.indexOf('systemd units refreshed'),
+  );
+  assert.match(
+    appWorkflow,
+    /rollback_idle_and_exit\(\) \{[\s\S]*restore_predeploy_systemd_units[\s\S]*restoring the previous runtime source and Web color/u,
+  );
+  assert.match(appWorkflow, /compatibility-deploy-transaction\.sh[\s\S]*restore-symlinks/u);
+  assert.match(appWorkflow, /nginx-agent-saas-nas\.conf 0644 nginx-drop-in-present/u);
+  assert.match(
+    appWorkflow,
+    /snapshot_optional_file "\$API_SITE_CONF" api-site\.conf 0644 api-site-present/u,
+  );
+  assert.ok(
+    appWorkflow.indexOf('SYMLINKS_DIRTY=1') <
+      appWorkflow.indexOf('ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('PREVIOUS_UPDATED=1') <
+      appWorkflow.indexOf('ln -sfn "$PREV_CURRENT" "$PREV_LINK"'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('WORKER_SYMLINK_DIRTY=1') <
+      appWorkflow.indexOf('ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"'),
+  );
+  assert.match(appWorkflow, /restore-symlinks/u);
+  assert.match(
+    appWorkflow,
+    /TRAFFIC_SWITCHED=1\n\s+if ! systemctl reload nginx; then[\s\S]*recover_previous_nginx[\s\S]*TRAFFIC_SWITCHED=0[\s\S]*rollback_idle_and_exit/u,
+  );
+  assert.match(
+    appWorkflow,
+    /post-reload verification FAILED[\s\S]*recover_previous_nginx[\s\S]*TRAFFIC_SWITCHED=0[\s\S]*rollback_idle_and_exit/u,
+  );
+  assert.doesNotMatch(
+    appWorkflow,
+    /systemctl disable --now "\$\{WORKER_SERVICE\}@\$\{WORKER_IDLE\}" \|\| true/u,
+  );
+  assert.doesNotMatch(appWorkflow, /systemctl stop "\$\{SERVICE_NAME\}@\$\{IDLE\}" \|\| true/u);
+  assert.ok(
+    appWorkflow.indexOf('WEB_IDLE_ENABLEMENT_DIRTY=1') <
+      appWorkflow.indexOf('systemctl enable --now "${SERVICE_NAME}@${IDLE}"'),
+  );
+  assert.match(appWorkflow, /failed to restore idle Server disablement during rollback/u);
+  assert.match(appWorkflow, /manual recovery marker already recorded for failure line/u);
+  assert.match(
+    appWorkflow,
+    /restore_predeploy_symlinks[\s\S]*restore exact pre-deploy systemd unit snapshot/u,
+  );
+  assert.match(
+    appWorkflow,
+    /TRAFFIC_SWITCHED" -eq 1[\s\S]*ROLLBACK_STATE_COMMITTED" -eq 0[\s\S]*mark_manual_recovery/u,
+  );
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
+      appWorkflow.indexOf('atomic App rollback committed'),
+  );
+  assert.doesNotMatch(
+    appWorkflow,
+    /install -m 0755 "\$RELEASE_DIR\/scripts\/release\/rollback-compatibility-app\.sh"/u,
+  );
+  assert.doesNotMatch(
+    appWorkflow,
+    /agent-saas-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_SHA\}\.tgz/u,
+  );
+  assert.match(
+    appWorkflow,
+    /readlink -f "\$DEPLOY_ROOT\/rollback\.sh"[\s\S]*"\$COMPAT_ROLLBACK_STATE_DIR\/rollback\.sh"/u,
+  );
+  assert.ok(
+    appWorkflow.indexOf('atomic App rollback committed') <
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),
   );
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
   assert.match(acsWorkflow, /group: production-runtime/u);
   assert.match(promotionWorkflow, /group: production-runtime/u);
+  assert.doesNotMatch(
+    `${appWorkflow}\n${acsWorkflow}\n${promotionWorkflow}`,
+    /group: agent-saas-production-deploy/u,
+  );
   assert.match(acsWorkflow, /baselines\/acs-/u);
+  assert.match(acsWorkflow, /acs-release-stage\/acs-orchestrator\/runtime-dependencies\.json/u);
+  assert.match(acsWorkflow, /manage-acs-systemd-unit\.sh/u);
+  assert.match(acsWorkflow, /agent-saas-acs-orchestrator\.service\.template/u);
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
+  assert.match(acsWorkflow, /environment: production/u);
+  assert.match(appWorkflow, /DEPLOY_LOCK_FILE="\/run\/lock\/agent-saas\/promotion\.lock"/u);
+  assert.doesNotMatch(appWorkflow, /agent-saas-deploy\.lock/u);
+  assert.ok(
+    appWorkflow.indexOf('flock -n 9') < appWorkflow.indexOf('identity_probe="/etc/agent-saas/'),
+  );
   assert.match(acsWorkflow, /acs-release-identity\.json/u);
   assert.match(acsDeploy, /acs-releases\/\$\{ORCHESTRATOR_ARTIFACT_DIGEST#sha256:\}/u);
   assert.match(acsDeploy, /ln -sfn "\$APP_DIR" "\$CURRENT_LINK"/u);
+  assert.match(acsDeploy, /lock=\/run\/lock\/agent-saas\/promotion\.lock/u);
+  assert.match(appWorkflow, /\/run\/lock\/agent-saas\/promotion\.lock/u);
+  assert.match(acsDeploy, /flock -n 9/u);
+  assert.match(
+    acsDeploy,
+    /if \[ "\$\{CURRENT_LINK_UPDATED:-false\}" = "true" \]; then[\s\S]*ln -sfn "\$PREVIOUS_APP_DIR" "\$CURRENT_LINK"/u,
+  );
+  assert.match(
+    acsDeploy,
+    /if \[ "\$\{PRODUCTION_CLEANUP_ARMED:-false\}" != "true" \]; then[\s\S]*return "\$deploy_status"/u,
+  );
+  assert.match(acsDeploy, /ACS_NODE=\/usr\/bin\/node/u);
+  assert.match(acsDeploy, /SYSTEMCTL_BIN=\/usr\/bin\/systemctl/u);
+  assert.match(
+    acsDeploy,
+    /"\$ACS_NODE" "\$RUNTIME_PREFLIGHT_DIR\/acs-orchestrator\/dist\/runtime-dependency\.mjs"[\s\S]*--component=acsOrchestrator --environment-file="\$runtime_environment_file" --production=true/u,
+  );
+  assert.match(
+    acsDeploy,
+    /validate_acs_managed_unit "\$unit_source" "\$ACS_NODE" "\$ACS_SERVICE_NAME"/u,
+  );
+  assert.match(
+    acsDeploy,
+    /install_acs_managed_unit "\$unit_source" "\$ACS_UNIT_PATH" "\$SYSTEMCTL_BIN"/u,
+  );
+  assert.match(acsDeploy, /restore_acs_managed_unit/u);
+  assert.match(acsDeploy, /assert_no_acs_managed_unit_dropins/u);
+  assert.ok(
+    acsDeploy.indexOf('--environment-file="$runtime_environment_file" --production=true') <
+      acsDeploy.indexOf('install_acs_managed_unit'),
+  );
+  assert.ok(
+    acsDeploy.indexOf('install_acs_managed_unit') <
+      acsDeploy.indexOf('PRODUCTION_CLEANUP_ARMED=true'),
+  );
+  assert.ok(
+    acsDeploy.indexOf('install_acs_managed_unit') < acsDeploy.indexOf('cp "$ENV_FILE" "$ENV_BAK"'),
+  );
+  assert.ok(
+    acsDeploy.indexOf('PRODUCTION_CLEANUP_ARMED=true') <
+      acsDeploy.indexOf('runtime_identity_probe="/etc/agent-saas/'),
+  );
+  assert.ok(
+    acsDeploy.indexOf('--environment-file="$runtime_environment_file" --production=true') <
+      acsDeploy.indexOf('candidate="$APP_DIR.candidate-${GITHUB_RUN_ID}"'),
+  );
+  assert.ok(
+    acsDeploy.indexOf('flock -n 9') <
+      acsDeploy.indexOf('PREVIOUS_APP_DIR="$(readlink -f "$CURRENT_LINK")"'),
+  );
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
 });
 

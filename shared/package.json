@@ -13,6 +13,7 @@
     ".": "./src/index.ts",
     "./lib/governanceApi": "./src/lib/governanceApi.ts",
     "./lib/chatSubmission": "./src/lib/chatSubmission.ts",
+    "./schemas/releaseManifest": "./src/schemas/releaseManifest.ts",
     "./types/governance": "./src/types/governance.ts",
     "./schemas/configIdentity": "./src/schemas/configIdentity.ts",
     "./*": "./src/*.ts"

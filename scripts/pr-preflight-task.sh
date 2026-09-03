@@ -22,6 +22,7 @@ case "$task" in
     bash scripts/release/production-deploy-rollback.test.sh
     bash scripts/release/compat-app-authority.test.sh
     bash scripts/release/staging-deploy-cleanup.test.sh
+    pnpm check:runtime-dependencies
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline
     pnpm -F server build

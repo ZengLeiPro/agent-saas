@@ -159,3 +159,45 @@ test('rejects terminal states and unmapped recovery tails mixed into mutation hi
     /prior approval/u,
   );
 });
+
+test('keeps repeated pre-write recovery failures in retry_after_change mode', () => {
+  const failedRecoveryAttempt = [
+    entry('verified', 'verified:1'),
+    entry('approved', 'approved:1'),
+    entry('promoting', 'promoting:1'),
+    entry('needs_human', 'needs-human:1'),
+    entry('approved', 'approved:2'),
+    entry('failed_before_change', 'failed-before-change:2'),
+  ];
+  assert.deepEqual(assertPromotionRetryable(failedRecoveryAttempt), {
+    mode: 'retry_after_change',
+    latestState: 'failed_before_change',
+    verifiedOperationKey: 'verified:1',
+    promotingOperationKey: 'promoting:1',
+    previousApprovalCount: 2,
+  });
+
+  const reapproved = [...failedRecoveryAttempt, entry('approved', 'approved:3')];
+  assert.deepEqual(assertPromotionRetryable(reapproved), {
+    mode: 'retry_after_change',
+    latestState: 'approved',
+    verifiedOperationKey: 'verified:1',
+    promotingOperationKey: 'promoting:1',
+    previousApprovalCount: 3,
+  });
+
+  assert.deepEqual(
+    assertPromotionRetryable([
+      ...reapproved,
+      entry('promoting', 'promoting:2'),
+      entry('needs_human', 'needs-human:2'),
+    ]),
+    {
+      mode: 'retry_after_change',
+      latestState: 'needs_human',
+      verifiedOperationKey: 'verified:1',
+      promotingOperationKey: 'promoting:2',
+      previousApprovalCount: 3,
+    },
+  );
+});

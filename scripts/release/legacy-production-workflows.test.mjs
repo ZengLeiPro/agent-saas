@@ -48,7 +48,7 @@ test('ECS pack declaration produces an archive containing the compatibility auth
   assert.ok(packStart >= 0 && packEnd > packStart);
   const pack = workflow.slice(packStart, packEnd);
   const declaration = pack.match(
-    /install -m 0444 ([\s\S]*?) "\$stage\/scripts\/release\/"/u,
+    /install -m 0444 (scripts\/release\/artifact-lib\.mjs[\s\S]*?) "\$stage\/scripts\/release\/"/u,
   );
   assert.ok(declaration, 'release helper install declaration is missing');
   const sources = declaration[1]
@@ -128,10 +128,21 @@ test('legacy manual App deploy publishes immutable rollback before mutation and 
   assert.match(rollback, /restore_enablement "\$SERVICE@\$API_OLD_COLOR" "\$API_OLD_ENABLEMENT"/u);
   assert.match(rollback, /restore_enablement "\$SERVICE@\$API_NEW_COLOR" "\$API_NEW_ENABLEMENT"/u);
 
-  assert.doesNotMatch(workflow, /restore_pre_drained_legacy_runtime\(\)/u);
-  assert.match(
+  const legacyRollbackStart = workflow.indexOf('restore_pre_drained_legacy_runtime()');
+  const legacyRollbackEnd = workflow.indexOf('rollback_idle_and_exit()', legacyRollbackStart);
+  const legacyRollback = workflow.slice(legacyRollbackStart, legacyRollbackEnd);
+  assert.ok(legacyRollbackStart >= 0 && legacyRollbackEnd > legacyRollbackStart);
+  assert.ok(
+    legacyRollback.indexOf('systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"') <
+      legacyRollback.indexOf('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"'),
+  );
+  assert.match(workflow, /private ConfigIdentity fallback snapshot published before first App mutation/u);
+  assert.match(workflow, /atomic App rollback remains authoritative/u);
+  assert.match(workflow, /main rollback transaction and private identity fallback both own this candidate attempt/u);
+  assert.match(workflow, /"\$COMPAT_ROLLBACK_STATE_DIR\/rollback\.sh"/u);
+  assert.doesNotMatch(
     workflow,
-    /There is intentionally no mutable in-process rollback path[\s\S]*"\$ROLLBACK_STATE_DIR\/rollback\.sh"/u,
+    /install -m 0755 "\$RELEASE_DIR\/scripts\/release\/rollback-compatibility-app\.sh"/u,
   );
 });
 

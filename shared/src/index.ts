@@ -319,27 +319,17 @@ export type {
   WorkflowTraceGateRequestedEventV1,
   WorkflowTraceV1,
 } from './schemas/workflowTrace';
-export {
-  RELEASE_COMPONENTS,
-  releaseComponentSchema,
-  releaseIdSchema,
-  fullShaSchema,
-  sha256DigestSchema,
-  releaseComponentMatrixSchema,
-  releaseComponentsPlanSchema,
-  releaseArtifactsSchema,
-  releaseManifestContentSchema,
-  releaseManifestSchema,
-  canonicalJson,
-  canonicalizeJson,
-} from './schemas/releaseManifest';
 export type {
   ReleaseComponent,
   ReleaseComponentMatrix,
   ReleaseComponentsPlan,
   ReleaseArtifacts,
+  ReleaseArtifactsV2,
   ReleaseManifestContent,
+  ReleaseManifestContentV1,
+  ReleaseManifestContentV2,
   ReleaseManifest,
+  ReleaseManifestV2,
   CanonicalJsonValue,
 } from './schemas/releaseManifest';
 // Release-bound Config Identity（TASK-318）：根入口仅导出类型，运行时 schema 按需直引，避免污染 Web 首屏。

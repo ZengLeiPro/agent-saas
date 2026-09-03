@@ -59,6 +59,7 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'failed_before_change',
   'rejected',
   'partial_failed',
+  'rolled_back',
   'needs_human',
   'superseded',
 ]);
@@ -66,50 +67,47 @@ const FAILURE_STATES = new Set<ReleaseState>([
   'failed_before_change',
   'rejected',
   'partial_failed',
+  'rolled_back',
   'needs_human',
   'superseded',
 ]);
-const RECOVERABLE_TAIL_STATES = new Set<ReleaseState>([
+const RETRYABLE_PRE_MUTATION_STATES = new Set<ReleaseState>([
   'approved',
   'failed_before_change',
   'needs_human',
-  'promoting',
-  'partial_failed',
-  'rolled_back',
-]);
-const RECOVERABLE_TAIL_TRANSITIONS = new Map<ReleaseState, ReadonlySet<ReleaseState>>([
-  ['approved', new Set(['promoting', 'failed_before_change', 'needs_human'])],
-  ['failed_before_change', new Set(['approved', 'failed_before_change', 'needs_human'])],
-  ['promoting', new Set(['failed_before_change', 'partial_failed', 'needs_human', 'rolled_back'])],
-  ['partial_failed', new Set(['rolled_back'])],
-  ['needs_human', new Set(['approved', 'needs_human', 'rolled_back'])],
-  ['rolled_back', new Set(['approved'])],
 ]);
 
-function isUnambiguousRecoverableTail(entries: readonly ReleaseAttestation[]): boolean {
-  if (entries.some((entry) => !RECOVERABLE_TAIL_STATES.has(entry.state))) return false;
-  const firstPromotingIndex = entries.findIndex((entry) => entry.state === 'promoting');
-  if (firstPromotingIndex < 1 || entries[firstPromotingIndex - 1]?.state !== 'approved')
-    return false;
-
-  let lastPromotingIndex = -1;
-  let lastRolledBackIndex = -1;
-  for (let index = firstPromotingIndex; index < entries.length; index += 1) {
-    const state = entries[index]?.state;
-    const previous = entries[index - 1]?.state;
-    if (!state || !previous) return false;
+function hasReviewedMutationRecoveryTail(tail: readonly ReleaseAttestation[]): boolean {
+  let mutationSeen = false;
+  let reviewedCurrentMutation = false;
+  for (let index = 0; index < tail.length; index += 1) {
+    const state = tail[index]?.state;
+    const previousState = tail[index - 1]?.state;
+    if (!mutationSeen) {
+      if (state === 'promoting') {
+        if (previousState !== 'approved') return false;
+        mutationSeen = true;
+        reviewedCurrentMutation = false;
+      } else if (!state || !RETRYABLE_PRE_MUTATION_STATES.has(state)) return false;
+      continue;
+    }
     if (state === 'promoting') {
-      if (previous !== 'approved') return false;
-      lastPromotingIndex = index;
-    }
-    if (index > firstPromotingIndex && !RECOVERABLE_TAIL_TRANSITIONS.get(previous)?.has(state))
-      return false;
-    if (state === 'rolled_back') {
-      if (lastPromotingIndex <= lastRolledBackIndex) return false;
-      lastRolledBackIndex = index;
-    }
+      if (previousState !== 'approved' || !reviewedCurrentMutation) return false;
+      reviewedCurrentMutation = false;
+    } else if (state === 'needs_human') {
+      if (previousState !== 'promoting' && previousState !== 'needs_human') return false;
+      reviewedCurrentMutation = true;
+    } else if (state === 'approved') {
+      if (
+        !reviewedCurrentMutation ||
+        (previousState !== 'needs_human' && previousState !== 'failed_before_change')
+      )
+        return false;
+    } else if (state === 'failed_before_change') {
+      if (!reviewedCurrentMutation || previousState !== 'approved') return false;
+    } else return false;
   }
-  return true;
+  return mutationSeen && reviewedCurrentMutation;
 }
 
 function assertDigest(digest: string): void {
@@ -221,64 +219,25 @@ export class ReleaseAttestationLog {
       }
     }
     const retryTail = verifiedIndex >= 0 ? this.entries.slice(verifiedIndex + 1) : [];
-    const hasProductionMutation = retryTail.some(
-      (entry) => entry.state === 'promoting' || entry.state === 'rolled_back',
-    );
     const retryAfterFailureBeforeChange =
       current === 'failed_before_change' &&
       input.state === 'approved' &&
       retryTail.some((entry) => entry.state === 'approved') &&
-      (hasProductionMutation
-        ? isUnambiguousRecoverableTail(retryTail)
-        : retryTail.every((entry) =>
-            ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
-          ));
-    let lastPromotingIndex = -1;
-    let lastRolledBackIndex = -1;
-    for (let index = retryTail.length - 1; index >= 0; index -= 1) {
-      if (lastPromotingIndex < 0 && retryTail[index]?.state === 'promoting') {
-        lastPromotingIndex = index;
-      }
-      if (lastRolledBackIndex < 0 && retryTail[index]?.state === 'rolled_back') {
-        lastRolledBackIndex = index;
-      }
-      if (lastPromotingIndex >= 0 && lastRolledBackIndex >= 0) break;
-    }
-    const retryAfterHumanReview =
-      current === 'needs_human' &&
+      retryTail.every((entry) => RETRYABLE_PRE_MUTATION_STATES.has(entry.state));
+    const retryAfterReviewedMutation =
+      (current === 'needs_human' || current === 'failed_before_change') &&
       input.state === 'approved' &&
-      hasProductionMutation &&
-      isUnambiguousRecoverableTail(retryTail);
-    const authoritativeRollback =
-      input.state === 'rolled_back' &&
-      (current === 'promoting' || current === 'partial_failed' || current === 'needs_human') &&
-      lastPromotingIndex > lastRolledBackIndex &&
-      isUnambiguousRecoverableTail(retryTail);
-    const retryAfterRolledBack =
-      current === 'rolled_back' &&
-      input.state === 'approved' &&
-      hasProductionMutation &&
-      isUnambiguousRecoverableTail(retryTail);
+      hasReviewedMutationRecoveryTail(retryTail);
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
-    const recoverablePostMutationFailure =
-      !hasProductionMutation ||
-      RECOVERABLE_TAIL_TRANSITIONS.get(current)?.has(input.state) === true ||
-      input.state === 'rejected' ||
-      input.state === 'superseded';
-    const failure =
+    const failureTransition =
       FAILURE_STATES.has(input.state) &&
-      current !== 'completed' &&
-      current !== 'revoked' &&
-      current !== 'rolled_back' &&
-      recoverablePostMutationFailure;
+      !['completed', 'revoked', 'rejected', 'superseded'].includes(current);
     if (
       !sequential &&
       !retryAfterFailureBeforeChange &&
-      !retryAfterHumanReview &&
-      !authoritativeRollback &&
-      !retryAfterRolledBack &&
+      !retryAfterReviewedMutation &&
       !revocation &&
-      !failure
+      !failureTransition
     )
       throw new Error(`Illegal or late RC attestation transition: ${current} -> ${input.state}`);
 

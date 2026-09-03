@@ -38,8 +38,9 @@ test('compatibility deploy publishes a self-contained rollback before App mutati
   assert.ok(sourceAuthority < publishRollback);
   assert.ok(publishRollback < overwriteApiUnit);
   assert.ok(publishRollback < switchIdle);
-  assert.match(rollbackBlock, /AGENT_SAAS_COMPAT_ROLLBACK_STATE="\$ROLLBACK_STATE_DIR"/u);
-  assert.match(rollbackBlock, /"\$ROLLBACK_STATE_DIR\/rollback\.sh"/u);
+  assert.match(rollbackBlock, /restore_pre_drained_legacy_runtime/u);
+  assert.match(rollbackBlock, /compat-deploy-attempt-current/u);
+  assert.match(rollbackBlock, /COMPAT_ROLLBACK_STATE_DIR/u);
 
   for (const marker of [
     'API_UNIT_EXISTED',
@@ -57,6 +58,8 @@ test('compatibility deploy publishes a self-contained rollback before App mutati
   }
   assert.match(compatibilityAuthority, /source "\$STATE\/compat-app-authority\.sh"/u);
   assert.match(rollbackHelper, /declare -F rollback_idle_and_exit/u);
+  assert.match(rollbackHelper, /production_deploy_rollback/u);
+  assert.match(workflow, /source "\$RELEASE_DIR\/scripts\/release\/production-deploy-rollback\.sh"/u);
 });
 
 test('API and Worker compatibility markers commit through one App generation', () => {

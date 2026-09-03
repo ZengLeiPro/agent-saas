@@ -9,7 +9,7 @@
 # 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
 #   只改 idle 色 symlink（active 色 symlink 永不动）→ start idle 实例 →
 #   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
-#   reload 切流 → 更新 active-color → 生成蓝绿 rollback.sh →
+#   reload 切流 → 更新 active-color → 固化版本化 rollback.sh 与旧部署状态 →
 #   SIGUSR2 精确 drain 旧色（活跃流清空后自退，Restart=on-failure 不复活）。
 #   切流前任何失败只回收 idle 色并还原 current/previous/idle 色 symlink，
 #   老色全程在服务，用户零影响。
@@ -650,12 +650,19 @@ jobs:
           rm -rf "$stage/server/dist" "$stage/server/descriptions"
           cp -R server/dist "$stage/server/dist"
           cp -R server/src/agent/descriptions "$stage/server/descriptions"
+          node scripts/release/runtime-dependency.mjs \
+            --create=true --contract=config/runtime-dependency-contract.json \
+            --source-sha="$GITHUB_SHA" --output="$stage/server/runtime-dependencies.json"
+          install -m 0444 scripts/release/runtime-dependency.mjs \
+            scripts/release/artifact-lib.mjs "$stage/server/dist/"
           cp -R daemon-packaging "$stage/daemon-packaging"
           install -m 0444 scripts/release/artifact-lib.mjs \
             scripts/release/compat-app-authority.sh \
             scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs \
+            scripts/release/rollback-compatibility-app.sh \
+            scripts/release/compatibility-deploy-transaction.sh \
             scripts/release/seal-compatibility-release.mjs \
             scripts/release/verify-installed-release.mjs \
             scripts/release/write-compatibility-app-env.mjs \
@@ -663,6 +670,7 @@ jobs:
           tar --no-xattrs -czf server-bundle.tgz -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name serverBundle --file server-bundle.tgz \
+            --runtime-dependencies "$stage/server/runtime-dependencies.json" \
             --output "$RUNNER_TEMP/server-artifact-index.json"
           server_digest="$(jq -r .artifacts.serverBundle.digest "$RUNNER_TEMP/server-artifact-index.json")"
           server_size="$(jq -r .artifacts.serverBundle.size "$RUNNER_TEMP/server-artifact-index.json")"
@@ -700,6 +708,9 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh \
             server-bundle.tgz "$destination/server-bundle.tgz"
           bash scripts/release/upload-oss-object-immutable.sh \
+            "$RUNNER_TEMP/server-release-stage/server/runtime-dependencies.json" \
+            "$destination/runtime-dependencies.json"
+          bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/server-artifact-index.json" "$destination/artifact-index.json"
 
       - name: Determine runtime worker rollout
@@ -714,7 +725,7 @@ jobs:
           scp -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             server-bundle.tgz \
-            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz"
+            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz"
 
       - name: Start zero-downtime probe
         run: |
@@ -834,7 +845,7 @@ jobs:
           timeout "${REMOTE_DEPLOY_TIMEOUT_SECONDS}s" ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "REMOTE_DEPLOY_TIMEOUT_SECONDS='$REMOTE_DEPLOY_TIMEOUT_SECONDS' REMOTE_DEPLOY_START_EPOCH='$REMOTE_DEPLOY_START_EPOCH' DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' GITHUB_RUN_ID='${GITHUB_RUN_ID}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' bash -s" <<'REMOTE'
+            "REMOTE_DEPLOY_TIMEOUT_SECONDS='$REMOTE_DEPLOY_TIMEOUT_SECONDS' REMOTE_DEPLOY_START_EPOCH='$REMOTE_DEPLOY_START_EPOCH' DEPLOY_ROOT='$DEPLOY_ROOT' SERVICE_NAME='$SERVICE_NAME' RELEASE_TGZ='/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' RELEASE_ID='${SERVER_ARTIFACT_DIGEST#sha256:}' RELEASE_SHA='${GITHUB_SHA}' COMPAT_RELEASE_ID='${COMPAT_RELEASE_ID}' SERVER_ARTIFACT_DIGEST='${SERVER_ARTIFACT_DIGEST}' WORKER_DEPLOY_REQUIRED='${RUNTIME_WORKER_DEPLOY_REQUIRED}' GITHUB_RUN_ID='${GITHUB_RUN_ID}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' bash -s" <<'REMOTE'
           # -E: 函数内失败也触发 ERR trap，保证任何失败都有 on_error 日志
           set -Eeuo pipefail
 
@@ -853,6 +864,19 @@ jobs:
           case "$REMOTE_DEPLOY_TIMEOUT_SECONDS" in ''|*[!0-9]*) echo "invalid REMOTE_DEPLOY_TIMEOUT_SECONDS=$REMOTE_DEPLOY_TIMEOUT_SECONDS"; exit 1 ;; esac
           case "$REMOTE_DEPLOY_START_EPOCH" in ''|*[!0-9]*) echo "invalid REMOTE_DEPLOY_START_EPOCH=$REMOTE_DEPLOY_START_EPOCH"; exit 1 ;; esac
           case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
+          DEPLOY_LOCK_FILE="/run/lock/agent-saas/promotion.lock"
+          if ! command -v flock >/dev/null 2>&1; then
+            echo "flock is required for production deploy serialization" >&2
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
+          mkdir -p "$(dirname "$DEPLOY_LOCK_FILE")"
+          exec 9>"$DEPLOY_LOCK_FILE"
+          if ! flock -n 9; then
+            echo "another production deploy holds $DEPLOY_LOCK_FILE" >&2
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
           actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
           test "$actual_archive_digest" = "$SERVER_ARTIFACT_DIGEST"
           RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
@@ -880,7 +904,6 @@ jobs:
           WORKER_SERVICE="agent-saas-runtime-worker"
           UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
           API_SITE_CONF="/etc/nginx/conf.d/agent-api-kaiyan.conf"
-          DEPLOY_LOCK_FILE="/run/lock/agent-saas-deploy.lock"
           MAINTENANCE_SERVICE="agent-saas-deploy-maintenance.service"
           MAINTENANCE_TIMER="agent-saas-deploy-maintenance.timer"
 
@@ -899,25 +922,150 @@ jobs:
           }
           INSTALL_CLEANUP_ARMED=0
           RELEASE_CREATED_BY_DEPLOY=0
-          TRAFFIC_SWITCHED=0
           WEB_ACTIVE_DRAIN_STARTED=0
           ROLLBACK_ARMED=0
           ROLLBACK_RUNNING=0
           ROLLBACK_DONE=0
           COMPAT_ROLLBACK_PUBLISHED=0
+          COMPAT_ROLLBACK_STATE_DIR=''
           NGINX_CONFIG_WRITTEN=0
+          ROLLBACK_STATE_COMMITTED=0
+          ROLLBACK_STATE_DIR=''
+          ROLLBACK_STATE_PRESERVE=0
+          SYSTEMD_UNITS_DIRTY=0
+          UNIT_RESTORE_FAILED=0
+          FAILURE_RECOVERY_ACTIVE=0
+          FAILURE_RECOVERY_COMPLETED=0
+          FAILURE_STATUS=1
+          FAILURE_LINE=unknown
+          TRAFFIC_SWITCHED=0
+          SYMLINKS_DIRTY=0
+          WORKER_SYMLINK_DIRTY=0
+          WEB_IDLE_ENABLEMENT_DIRTY=0
+          WEB_IDLE_WAS_ENABLED=0
+          PREV_CURRENT=''
+          PREV_PREVIOUS=''
+          PREV_IDLE_TARGET=''
+          PREVIOUS_UPDATED=0
+          restore_predeploy_symlinks() {
+            [ "$SYMLINKS_DIRTY" -eq 1 ] || [ "$WORKER_SYMLINK_DIRTY" -eq 1 ] || return 0
+            if ! DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              SYMLINKS_DIRTY="$SYMLINKS_DIRTY" \
+              WORKER_SYMLINK_DIRTY="$WORKER_SYMLINK_DIRTY" \
+              PREV_LINK="$APP_LINK" \
+              PREV_CURRENT="$PREV_CURRENT" \
+              PREVIOUS_UPDATED="$PREVIOUS_UPDATED" \
+              PREVIOUS_LINK="$PREV_LINK" \
+              PREV_PREVIOUS="$PREV_PREVIOUS" \
+              COLOR_IDLE_LINK="$COLOR_DIR/$IDLE" \
+              PREV_IDLE_TARGET="$PREV_IDLE_TARGET" \
+              WORKER_IDLE_LINK="$WORKER_DIR/${WORKER_IDLE:-none}" \
+              PREV_WORKER_IDLE_TARGET="${PREV_WORKER_IDLE_TARGET:-}" \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" \
+                restore-symlinks; then
+              ROLLBACK_STATE_PRESERVE=1
+              return 70
+            fi
+            SYMLINKS_DIRTY=0
+            WORKER_SYMLINK_DIRTY=0
+            log "symlinks restored: current=${PREV_CURRENT:-<none>} color/$IDLE=${PREV_IDLE_TARGET:-<none>} worker/${WORKER_IDLE:-none}=${PREV_WORKER_IDLE_TARGET:-<none>}"
+          }
+          restore_predeploy_systemd_units() {
+            [ "$SYSTEMD_UNITS_DIRTY" -eq 1 ] || return 0
+            if ! DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              SERVER_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}@.service" \
+              WORKER_UNIT_PATH="/etc/systemd/system/${WORKER_SERVICE}@.service" \
+              NGINX_DROP_IN_PATH="/etc/systemd/system/nginx.service.d/agent-saas-nas.conf" \
+              SYSTEMCTL_BIN=systemctl \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" restore-units; then
+              UNIT_RESTORE_FAILED=1
+              ROLLBACK_STATE_PRESERVE=1
+              return 1
+            fi
+            return 0
+          }
+          mark_manual_recovery() {
+            DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              RELEASE_ID="$RELEASE_ID" \
+              FAILED_STATUS="$FAILURE_STATUS" \
+              FAILED_LINE="$FAILURE_LINE" \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" \
+                mark-manual-recovery
+          }
+          recover_previous_nginx() {
+            FAILURE_STATUS=1
+            FAILURE_LINE="$1"
+            DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              RELEASE_ID="$RELEASE_ID" \
+              FAILED_STATUS="$FAILURE_STATUS" \
+              FAILED_LINE="$FAILURE_LINE" \
+              UPSTREAM_CONF="$UPSTREAM_CONF" \
+              UPSTREAM_BAK="$UPSTREAM_BAK" \
+              API_SITE_CONF="$API_SITE_CONF" \
+              API_SITE_BAK="$API_SITE_BAK" \
+              NGINX_BIN=nginx \
+              SYSTEMCTL_BIN=systemctl \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" \
+                recover-nginx-switch
+          }
           on_error() {
             local line="$1" status="${2:-1}"
             trap - ERR
-            set +e
-            log "ERROR status=$status line=$line release=$RELEASE_ID"
-            if [ "$COMPAT_ROLLBACK_PUBLISHED" -eq 1 ]; then
-              AGENT_SAAS_DEPLOY_LOCK_HELD=1 "$DEPLOY_ROOT/rollback.sh" \
-                || log "ERROR: immutable compatibility rollback requires manual recovery"
-            elif [ "$ROLLBACK_ARMED" -eq 1 ] && command -v production_deploy_rollback >/dev/null 2>&1; then
-              production_deploy_rollback "status=$status line=$line" \
-                || log "ERROR: unified rollback requires manual recovery"
-            else
+            FAILURE_STATUS="$status"
+            FAILURE_LINE="$1"
+            log "ERROR status=$status line=$1 release=$RELEASE_ID"
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] && [ "$FAILURE_RECOVERY_ACTIVE" -eq 0 ] \
+              && declare -F rollback_idle_and_exit >/dev/null; then
+              rollback_idle_and_exit "$status"
+            fi
+            exit "$status"
+          }
+          on_exit() {
+            local status=$? final_status
+            trap - ERR EXIT
+            [ "$status" -ne 0 ] || return 0
+            final_status="$status"
+            if [ "$FAILURE_LINE" = unknown ]; then
+              FAILURE_STATUS="$status"
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] && [ "$SYSTEMD_UNITS_DIRTY" -eq 1 ] \
+              && [ "$UNIT_RESTORE_FAILED" -eq 0 ]; then
+              if ! restore_predeploy_systemd_units; then
+                final_status=70
+                log "ERROR: previous systemd units could not be restored; rollback state preserved"
+              else
+                SYSTEMD_UNITS_DIRTY=0
+              fi
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] \
+              && { [ "$SYMLINKS_DIRTY" -eq 1 ] || [ "$WORKER_SYMLINK_DIRTY" -eq 1 ]; }; then
+              if ! restore_predeploy_symlinks; then
+                ROLLBACK_STATE_PRESERVE=1
+                final_status=70
+                log "ERROR: pre-switch symlinks could not be restored; rollback state preserved"
+              fi
+            fi
+            if [ "$FAILURE_RECOVERY_ACTIVE" -eq 1 ] && [ "$FAILURE_RECOVERY_COMPLETED" -eq 0 ]; then
+              ROLLBACK_STATE_PRESERVE=1
+              final_status=70
+              log "ERROR: pre-switch recovery did not complete; rollback state preserved"
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 1 ] && [ "$ROLLBACK_STATE_COMMITTED" -eq 0 ] \
+              && [ -n "$ROLLBACK_STATE_DIR" ]; then
+              ROLLBACK_STATE_PRESERVE=1
+              final_status=70
+              if [ -f "$ROLLBACK_STATE_DIR/manual-recovery-required" ] \
+                && [ ! -L "$ROLLBACK_STATE_DIR/manual-recovery-required" ]; then
+                log "manual recovery marker already recorded for failure line $FAILURE_LINE"
+              elif ! mark_manual_recovery; then
+                log "ERROR: failed to write manual recovery marker; rollback snapshot remains preserved"
+              fi
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] && [ "$ROLLBACK_STATE_PRESERVE" -eq 0 ]; then
               if [ "$INSTALL_CLEANUP_ARMED" -eq 1 ]; then
                 case "$RELEASE_DIR" in
                   "$RELEASES_DIR"/*)
@@ -931,26 +1079,24 @@ jobs:
               fi
               rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
             fi
-            exit "$status"
+            if [ "$ROLLBACK_STATE_COMMITTED" -eq 0 ] && [ -n "$ROLLBACK_STATE_DIR" ] \
+              && [ "$ROLLBACK_STATE_PRESERVE" -eq 0 ]; then
+              case "$ROLLBACK_STATE_DIR" in
+                "$DEPLOY_ROOT/rollback-states/"*)
+                  rm -rf -- "$ROLLBACK_STATE_DIR" || log "WARN: failed rollback state cleanup failed"
+                  ;;
+                *) log "WARN: refuse rollback state cleanup outside managed root: $ROLLBACK_STATE_DIR" ;;
+              esac
+            fi
+            exit "$final_status"
           }
-          trap 'on_error "$LINENO" "$?"' ERR
+          trap 'on_error $LINENO' ERR
+          trap on_exit EXIT
 
           log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
 
-          # GitHub concurrency 管整条 workflow；ECS flock 是第二道锁，覆盖手工 SSH
-          # 或其他入口。fd 9 随远端脚本退出自动释放，不依赖清理回调。
-          if ! command -v flock >/dev/null 2>&1; then
-            log "ERROR: flock is required for production deploy serialization"
-            rm -f -- "$RELEASE_TGZ"
-            exit 1
-          fi
-          mkdir -p "$(dirname "$DEPLOY_LOCK_FILE")"
-          exec 9>"$DEPLOY_LOCK_FILE"
-          if ! flock -n 9; then
-            log "ERROR: another production deploy holds $DEPLOY_LOCK_FILE"
-            rm -f -- "$RELEASE_TGZ"
-            exit 1
-          fi
+          # GitHub concurrency 管整条 workflow；共享 ECS flock 覆盖 Promotion、ACS 与手工 SSH。
+          # fd 9 自远端脚本开头持有至退出，基线探测和所有生产写入都在锁内。
           log "deploy lock acquired: $DEPLOY_LOCK_FILE"
 
           # 任何 active/readiness 前先收敛上一次硬中断。attempt link 只会在完整、
@@ -1111,7 +1257,76 @@ jobs:
           node "$RELEASE_DIR/scripts/release/seal-compatibility-release.mjs" \
             --root "$RELEASE_DIR" --component server \
             --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" >/dev/null
-          INSTALL_CLEANUP_ARMED=0
+
+          # 在覆盖 unit 或发布身份前持久保存旧部署拓扑。rollback-state 指针仅在本次
+          # 发布完全收敛后原子切换，因此失败发布不会污染上一份可用回滚状态。
+          ROLLBACK_STATE_DIR="$DEPLOY_ROOT/rollback-states/$RELEASE_ID"
+          ROLLBACK_STATE_LINK="$DEPLOY_ROOT/rollback-state"
+          install -d -m 0700 "$DEPLOY_ROOT/rollback-states"
+          EXISTING_ROLLBACK_STATE=$(readlink -f "$ROLLBACK_STATE_LINK" 2>/dev/null || true)
+          if [ "$EXISTING_ROLLBACK_STATE" = "$ROLLBACK_STATE_DIR" ]; then
+            log "ERROR: current rollback state unexpectedly targets candidate release: $ROLLBACK_STATE_DIR"
+            exit 1
+          fi
+          rm -rf -- "$ROLLBACK_STATE_DIR"
+          install -d -m 0700 "$ROLLBACK_STATE_DIR"
+          snapshot_required_file() {
+            local source="$1" name="$2" mode="$3"
+            if [ ! -f "$source" ] || [ -L "$source" ]; then
+              log "ERROR: required rollback source is missing or unsafe: $source"
+              return 1
+            fi
+            install -m "$mode" "$source" "$ROLLBACK_STATE_DIR/$name"
+          }
+          snapshot_optional_file() {
+            local source="$1" name="$2" mode="$3" marker="$4"
+            if [ -L "$source" ]; then
+              log "ERROR: optional rollback source must not be a symlink: $source"
+              return 1
+            fi
+            if [ -f "$source" ]; then
+              install -m "$mode" "$source" "$ROLLBACK_STATE_DIR/$name"
+              printf 'true\n' > "$ROLLBACK_STATE_DIR/$marker"
+            else
+              printf 'false\n' > "$ROLLBACK_STATE_DIR/$marker"
+            fi
+            chmod 0600 "$ROLLBACK_STATE_DIR/$marker"
+          }
+          OLD_API_TARGET=$(readlink -f "$COLOR_DIR/$ACTIVE")
+          case "$OLD_API_TARGET" in
+            "$RELEASES_DIR"/*) [ -d "$OLD_API_TARGET" ] ;;
+            *) log "ERROR: old API target escapes release root: $OLD_API_TARGET"; exit 1 ;;
+          esac
+          printf '%s\n' "$ACTIVE" > "$ROLLBACK_STATE_DIR/api-active-color"
+          printf '%s\n' "$OLD_API_TARGET" > "$ROLLBACK_STATE_DIR/api-release-target"
+          snapshot_required_file "/etc/systemd/system/${SERVICE_NAME}@.service" server@.service 0644
+          snapshot_required_file "$RUNTIME_IDENTITY_FILE" runtime-identity.json 0444
+          snapshot_optional_file "/etc/agent-saas/server-${ACTIVE}.release.env" \
+            api.release.env 0600 api-env-present
+          snapshot_optional_file "/etc/systemd/system/${WORKER_SERVICE}@.service" \
+            runtime-worker@.service 0644 worker-unit-present
+          snapshot_optional_file "/etc/systemd/system/nginx.service.d/agent-saas-nas.conf" \
+            nginx-agent-saas-nas.conf 0644 nginx-drop-in-present
+          snapshot_optional_file "$API_SITE_CONF" api-site.conf 0644 api-site-present
+          OLD_WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE" 2>/dev/null || true)
+          case "$OLD_WORKER_ACTIVE" in
+            blue|green)
+              OLD_WORKER_TARGET=$(readlink -f "$WORKER_DIR/$OLD_WORKER_ACTIVE")
+              case "$OLD_WORKER_TARGET" in
+                "$RELEASES_DIR"/*) [ -d "$OLD_WORKER_TARGET" ] ;;
+                *) log "ERROR: old Worker target escapes release root: $OLD_WORKER_TARGET"; exit 1 ;;
+              esac
+              printf 'true\n' > "$ROLLBACK_STATE_DIR/worker-was-active"
+              printf '%s\n' "$OLD_WORKER_ACTIVE" > "$ROLLBACK_STATE_DIR/worker-active-color"
+              printf '%s\n' "$OLD_WORKER_TARGET" > "$ROLLBACK_STATE_DIR/worker-release-target"
+              snapshot_optional_file "/etc/agent-saas/runtime-worker-${OLD_WORKER_ACTIVE}.release.env" \
+                worker.release.env 0600 worker-env-present
+              ;;
+            '') printf 'false\n' > "$ROLLBACK_STATE_DIR/worker-was-active" ;;
+            *) log "ERROR: invalid old Runtime Worker color: $OLD_WORKER_ACTIVE"; exit 1 ;;
+          esac
+          chmod 0600 "$ROLLBACK_STATE_DIR"/*
+          log "pre-deploy rollback state captured: $ROLLBACK_STATE_DIR"
 
           # 在覆盖任何 App control-plane 文件前捕获并发布完整回滚状态；pure Web 的 Worker 状态保持只读。
           API_UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}@.service"
@@ -1123,12 +1338,18 @@ jobs:
             export AGENT_SAAS_WORKER_RELEASE_ENV="/tmp/agent-saas-unused-worker-env-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             export AGENT_SAAS_WORKER_PRIVATE_SNAPSHOT="/tmp/agent-saas-unused-worker-snapshot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           fi
+          MAIN_ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR"
           publish_compat_deploy_rollback
+          COMPAT_ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR"
+          ROLLBACK_STATE_DIR="$MAIN_ROLLBACK_STATE_DIR"
           unset AGENT_SAAS_WORKER_RELEASE_ENV AGENT_SAAS_WORKER_PRIVATE_SNAPSHOT
-          log "immutable rollback state, self-contained helper/script and attempt owner published before first App mutation: $ROLLBACK_STATE_DIR"
+          log "private ConfigIdentity fallback snapshot published before first App mutation: $COMPAT_ROLLBACK_STATE_DIR"
+          log "atomic App rollback remains authoritative: $COMPAT_ROLLBACK_STATE_DIR"
 
           # 每次发布都以仓库模板刷新 unit；systemd 仅 reload 定义，不重启当前 active
           # 进程。蓝绿 Web 固定 ws-only，runtime worker 由独立蓝绿 unit 承担。
+          # 在第一处覆盖前标记事务为 dirty，任一后续失败都必须先恢复旧 unit。
+          SYSTEMD_UNITS_DIRTY=1
           install -m 0644 "$RELEASE_DIR/daemon-packaging/systemd/agent-saas-server@.service.template" \
             "/etc/systemd/system/${SERVICE_NAME}@.service"
           install -m 0644 "$RELEASE_DIR/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" \
@@ -1207,30 +1428,363 @@ jobs:
           ROLLBACK_ARMED=1
 
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
+          SYMLINKS_DIRTY=1
           ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"
           log "switch current: ${PREV_CURRENT:-<none>} -> $RELEASE_DIR"
           ln -sfn "$RELEASE_DIR" "$APP_LINK"
           if [ -n "$PREV_CURRENT" ] && [ "$PREV_CURRENT" != "$RELEASE_DIR" ]; then
-            ln -sfn "$PREV_CURRENT" "$PREV_LINK"
             PREVIOUS_UPDATED=1
+            ln -sfn "$PREV_CURRENT" "$PREV_LINK"
           fi
 
-          # Every App mutation is now behind the pre-published immutable state.
-          # There is intentionally no mutable in-process rollback path: both ordinary
-          # errors and the next entry after SIGKILL execute the same state-owned script.
-          rollback_idle_and_exit() {
-            ROLLBACK_ARMED=0
-            trap - ERR
-            set -e
-            if [ "$COMPAT_ROLLBACK_PUBLISHED" -ne 1 ]; then
-              log "ERROR: rollback requested without a published compatibility attempt"
+          preserve_candidate_authority_and_exit() {
+            local candidate_pid candidate_ready_pid candidate_main_pid candidate_ack
+            candidate_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" 2>/dev/null || true)
+            candidate_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" 2>/dev/null || true)
+            candidate_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value 2>/dev/null || true)
+            if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}" \
+              || [ -z "$candidate_pid" ] || [ "$candidate_pid" != "$candidate_ready_pid" ] \
+              || [ "$candidate_pid" != "$candidate_main_pid" ] || ! kill -0 "$candidate_pid" 2>/dev/null; then
+              log "ERROR: candidate identity invalid while preserving authority"
               exit 1
             fi
-            test "$(readlink -f "$DEPLOY_ROOT/compat-deploy-attempt-current")" = "$ROLLBACK_STATE_DIR"
-            AGENT_SAAS_DEPLOY_LOCK_HELD=1 \
-              AGENT_SAAS_COMPAT_ROLLBACK_STATE="$ROLLBACK_STATE_DIR" \
-              "$ROLLBACK_STATE_DIR/rollback.sh"
+            candidate_ack="/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
+            rm -f "$candidate_ack"
+            for _ in $(seq 1 30); do
+              kill -HUP "$candidate_pid" 2>/dev/null || break
+              sleep 1
+              [ "$(cat "$candidate_ack" 2>/dev/null || true)" != "$candidate_pid" ] || {
+                log "candidate authority preserved after marker rollback failure: color=$WORKER_IDLE"
+                exit 1
+              }
+            done
+            log "ERROR: candidate authority could not be preserved after marker rollback failure"
             exit 1
+          }
+
+          restore_bootstrap_all_authority() {
+            local bootstrap_target bootstrap_all_pid bootstrap_all_ready_pid bootstrap_all_main_pid
+            local bootstrap_all_ack bootstrap_all_ack_pid
+            bootstrap_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+            if [ ! -f "$bootstrap_target/.release/runtime-worker-authority-refresh-v1" ]; then
+              log "bootstrap all cannot reclaim runtime retention authority; preserving candidate"
+              preserve_candidate_authority_and_exit
+            fi
+            bootstrap_all_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.pid" 2>/dev/null || true)
+            bootstrap_all_ready_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+            bootstrap_all_main_pid=$(systemctl show "${SERVICE_NAME}@${ACTIVE}" -p MainPID --value 2>/dev/null || true)
+            if ! systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}" \
+              || [ -z "$bootstrap_all_pid" ] || [ "$bootstrap_all_pid" != "$bootstrap_all_ready_pid" ] \
+              || [ "$bootstrap_all_pid" != "$bootstrap_all_main_pid" ] || ! kill -0 "$bootstrap_all_pid" 2>/dev/null; then
+              log "ERROR: bootstrap all identity invalid during authority rollback: color=$ACTIVE"
+              preserve_candidate_authority_and_exit
+            fi
+            bootstrap_all_ack="/run/${SERVICE_NAME}-${ACTIVE}.ready.authority"
+            rm -f "$bootstrap_all_ack"
+            if ! kill -HUP "$bootstrap_all_pid" 2>/dev/null; then
+              log "ERROR: bootstrap all authority reclaim signal failed: color=$ACTIVE"
+              preserve_candidate_authority_and_exit
+            fi
+            WORKER_ACTIVE_RESTORED=0
+            for _ in $(seq 1 30); do
+              bootstrap_all_ack_pid=$(cat "$bootstrap_all_ack" 2>/dev/null || true)
+              bootstrap_all_ready_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+              if [ "$bootstrap_all_ack_pid" = "$bootstrap_all_pid" ] \
+                && [ "$bootstrap_all_ready_pid" = "$bootstrap_all_pid" ]; then
+                WORKER_ACTIVE_RESTORED=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+              log "ERROR: bootstrap all authority reclaim timed out; preserving candidate"
+              preserve_candidate_authority_and_exit
+            fi
+            log "bootstrap all runtime retention authority reclaimed before candidate stop: color=$ACTIVE"
+          }
+
+          restore_previous_runtime_service_configuration() {
+            local previous_target previous_template previous_unit
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              previous_target=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+              previous_template="$previous_target/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template"
+              previous_unit="${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              if [ -z "$previous_target" ] || [ ! -f "$previous_template" ]; then
+                log "ERROR: previous runtime worker template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$previous_template" "/etc/systemd/system/${WORKER_SERVICE}@.service"
+            else
+              previous_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+              previous_template="$previous_target/daemon-packaging/systemd/agent-saas-server@.service.template"
+              previous_unit="${SERVICE_NAME}@${ACTIVE}"
+              if [ -z "$previous_target" ] || [ ! -f "$previous_template" ]; then
+                log "ERROR: previous bootstrap all template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$previous_template" "/etc/systemd/system/${SERVICE_NAME}@.service"
+            fi
+            systemctl daemon-reload
+            if ! systemctl enable "$previous_unit"; then
+              log "ERROR: failed to re-enable previous runtime unit during rollback: $previous_unit"
+              exit 1
+            fi
+            WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=0
+            log "previous runtime service template and enablement restored before rollback: unit=$previous_unit"
+          }
+
+          restore_pre_drained_legacy_runtime() {
+            local restored_pid restored_ready_pid restored_main_pid legacy_worker_target legacy_bootstrap_target
+            if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
+              log "stop runtime worker candidate before legacy rollback: ${WORKER_SERVICE}@${WORKER_IDLE}"
+              if ! systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+                log "ERROR: failed to stop candidate before restoring legacy runtime source"
+                exit 1
+              fi
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
+              WORKER_CANDIDATE_STARTED=0
+              WORKER_CANDIDATE_PROCESS_STARTED=0
+              WORKER_PROCESS_READY=0
+            fi
+            if [ "$WORKER_PREACTIVATED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              if ! write_worker_active_color "$WORKER_ACTIVE"; then
+                log "ERROR: failed to restore legacy runtime worker marker: color=$WORKER_ACTIVE"
+                exit 1
+              fi
+              WORKER_PREACTIVATED=0
+            elif [ "$WORKER_PREACTIVATED" -eq 1 ]; then
+              rm -f "$WORKER_ACTIVE_COLOR_FILE"
+              WORKER_PREACTIVATED=0
+            fi
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              legacy_worker_target=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+              if [ -z "$legacy_worker_target" ] \
+                || [ ! -f "$legacy_worker_target/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" ]; then
+                log "ERROR: legacy runtime worker service template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$legacy_worker_target/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" \
+                "/etc/systemd/system/${WORKER_SERVICE}@.service"
+              systemctl daemon-reload
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
+              systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              WORKER_ACTIVE_RESTORED=0
+              for _ in $(seq 1 180); do
+                restored_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" 2>/dev/null || true)
+                restored_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" 2>/dev/null || true)
+                restored_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                  && [ -n "$restored_pid" ] && [ "$restored_pid" = "$restored_ready_pid" ] \
+                  && [ "$restored_pid" = "$restored_main_pid" ] && kill -0 "$restored_pid" 2>/dev/null; then
+                  WORKER_ACTIVE_RESTORED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                log "ERROR: legacy runtime worker failed readiness during rollback"
+                exit 1
+              fi
+              log "legacy runtime worker and its service template restored only after candidate stop: color=$WORKER_ACTIVE"
+            elif [ "$WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED" -eq 1 ]; then
+              legacy_bootstrap_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+              if [ -z "$legacy_bootstrap_target" ] \
+                || [ ! -f "$legacy_bootstrap_target/daemon-packaging/systemd/agent-saas-server@.service.template" ]; then
+                log "ERROR: legacy bootstrap all service template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$legacy_bootstrap_target/daemon-packaging/systemd/agent-saas-server@.service.template" \
+                "/etc/systemd/system/${SERVICE_NAME}@.service"
+              systemctl daemon-reload
+              rm -f "/run/${SERVICE_NAME}-${ACTIVE}.pid" "/run/${SERVICE_NAME}-${ACTIVE}.ready" \
+                "/run/${SERVICE_NAME}-${ACTIVE}.draining"
+              systemctl reset-failed "${SERVICE_NAME}@${ACTIVE}" 2>/dev/null || true
+              systemctl enable "${SERVICE_NAME}@${ACTIVE}"
+              systemctl restart "${SERVICE_NAME}@${ACTIVE}"
+              WORKER_ACTIVE_RESTORED=0
+              for _ in $(seq 1 180); do
+                restored_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.pid" 2>/dev/null || true)
+                restored_ready_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+                restored_main_pid=$(systemctl show "${SERVICE_NAME}@${ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}" \
+                  && [ -n "$restored_pid" ] && [ "$restored_pid" = "$restored_ready_pid" ] \
+                  && [ "$restored_pid" = "$restored_main_pid" ] && kill -0 "$restored_pid" 2>/dev/null; then
+                  WORKER_ACTIVE_RESTORED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                log "ERROR: legacy bootstrap all failed readiness during rollback"
+                exit 1
+              fi
+              log "legacy bootstrap all and its service template restored only after candidate stop: color=$ACTIVE"
+            else
+              log "ERROR: legacy pre-drain rollback has no runtime source to restore"
+              exit 1
+            fi
+            WORKER_ACTIVE_DRAIN_STARTED=0
+            WORKER_ACTIVE_DRAIN_COMPLETED=0
+            WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED=0
+            WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=0
+            WORKER_LEGACY_PRE_DRAINED=0
+          }
+
+          # 切流前失败：legacy 先停候选再恢复旧来源；新版旧 worker 仍按 authority reclaim。
+          # 首次 bootstrap 在候选停止前由仍在服务的 all 进程 reclaim；不支持 reclaim 时保留候选。
+          rollback_idle_and_exit() {
+            local deploy_status="${1:-1}"
+            FAILURE_RECOVERY_ACTIVE=1
+            ROLLBACK_STATE_PRESERVE=1
+            if ! restore_predeploy_systemd_units; then
+              log "ERROR: failed to restore previous systemd units before process topology"
+              exit 70
+            fi
+            log "deploy FAILED before traffic switch; restoring the previous runtime source and Web color"
+            if [ "$WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY" -eq 1 ] \
+              && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
+              restore_previous_runtime_service_configuration
+            fi
+            if [ "$WORKER_LEGACY_PRE_DRAINED" -eq 1 ]; then
+              restore_pre_drained_legacy_runtime
+            fi
+            if [ "$WORKER_ACTIVE_DRAIN_STARTED" -eq 1 ] && [ "$WORKER_ACTIVE_DRAIN_COMPLETED" -ne 1 ]; then
+              log "ERROR: previous runtime worker has not completed drain; preserving candidate and refusing restart"
+              preserve_candidate_authority_and_exit
+            fi
+            if [ "$WORKER_ACTIVE_DRAIN_COMPLETED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              log "restart drained runtime worker after pre-Web failure: ${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
+              systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              WORKER_ACTIVE_RESTORED=0
+              for _ in $(seq 1 180); do
+                restored_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" 2>/dev/null || true)
+                restored_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" 2>/dev/null || true)
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                  && [ -n "$restored_pid" ] && [ "$restored_pid" = "$restored_ready_pid" ] \
+                  && kill -0 "$restored_pid" 2>/dev/null; then
+                  WORKER_ACTIVE_RESTORED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                log "ERROR: previous runtime worker failed readiness during rollback; preserving candidate release for recovery"
+                exit 1
+              fi
+            elif [ "$WORKER_CANDIDATE_PROCESS_STARTED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              WORKER_ACTIVE_TARGET=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+              if [ -f "$WORKER_ACTIVE_TARGET/.release/runtime-worker-authority-refresh-v1" ]; then
+                old_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" 2>/dev/null || true)
+                old_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                  || [ -z "$old_pid" ] || [ "$old_pid" != "$old_main_pid" ] || ! kill -0 "$old_pid" 2>/dev/null; then
+                  log "ERROR: previous runtime worker identity invalid during authority rollback: color=$WORKER_ACTIVE"
+                  exit 1
+                fi
+                old_ack="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready.authority"
+                rm -f "$old_ack"
+                if ! kill -HUP "$old_pid" 2>/dev/null; then
+                  log "ERROR: previous runtime worker authority reclaim signal failed: color=$WORKER_ACTIVE"
+                  exit 1
+                fi
+                WORKER_ACTIVE_RESTORED=0
+                for _ in $(seq 1 30); do
+                  old_ack_pid=$(cat "$old_ack" 2>/dev/null || true)
+                  old_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" 2>/dev/null || true)
+                  if [ "$old_ack_pid" = "$old_pid" ] && [ "$old_ready_pid" = "$old_pid" ]; then
+                    WORKER_ACTIVE_RESTORED=1
+                    break
+                  fi
+                  sleep 1
+                done
+                if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                  log "ERROR: previous runtime worker authority reclaim timed out; preserving candidate for recovery"
+                  exit 1
+                fi
+                log "previous runtime worker reclaimed authority without restart: color=$WORKER_ACTIVE"
+              else
+                log "legacy runtime worker kept running without restart; awaiting its native status write: color=$WORKER_ACTIVE"
+              fi
+            fi
+            if [ "$WORKER_CANDIDATE_PROCESS_STARTED" -eq 1 ] && [ "$WORKER_PROCESS_READY" -eq 1 ] \
+              && [ -z "${WORKER_ACTIVE:-}" ]; then
+              restore_bootstrap_all_authority
+            fi
+            if [ "$WORKER_PREACTIVATED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              if ! write_worker_active_color "$WORKER_ACTIVE"; then
+                log "ERROR: failed to restore previous runtime worker marker: color=$WORKER_ACTIVE"
+                preserve_candidate_authority_and_exit
+              fi
+              log "previous runtime worker marker restored before candidate stop: color=$WORKER_ACTIVE"
+            elif [ "$WORKER_PREACTIVATED" -eq 1 ]; then
+              if ! commit_app_active_colors "$ACTIVE" absent; then
+                log "ERROR: failed to restore bootstrap App authority"
+                preserve_candidate_authority_and_exit
+              fi
+              log "bootstrap App authority restored before candidate stop"
+            fi
+            if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
+              log "runtime worker candidate diagnostics: ${WORKER_SERVICE}@${WORKER_IDLE}"
+              systemctl status "${WORKER_SERVICE}@${WORKER_IDLE}" --no-pager -l || true
+              journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 120 --no-pager || true
+              log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
+              if ! systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+                log "ERROR: failed to stop runtime worker candidate during rollback"
+                exit 70
+              fi
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
+            fi
+            log "Web idle diagnostics: ${SERVICE_NAME}@${IDLE}"
+            journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
+            log "stop idle unit ${SERVICE_NAME}@${IDLE}"
+            if ! systemctl stop "${SERVICE_NAME}@${IDLE}"; then
+              log "ERROR: failed to stop idle Server unit during rollback"
+              exit 70
+            fi
+            if [ "$WEB_IDLE_ENABLEMENT_DIRTY" -eq 1 ]; then
+              if [ "$WEB_IDLE_WAS_ENABLED" -eq 1 ]; then
+                systemctl enable "${SERVICE_NAME}@${IDLE}"
+              elif ! systemctl disable "${SERVICE_NAME}@${IDLE}"; then
+                log "ERROR: failed to restore idle Server disablement during rollback"
+                exit 70
+              fi
+              WEB_IDLE_ENABLEMENT_DIRTY=0
+            fi
+            if ! restore_predeploy_symlinks; then
+              log "ERROR: failed to restore pre-deploy symlinks"
+              exit 70
+            fi
+            # legacy 恢复可能需要旧 release template 才能重启进程；进程复活后再次
+            # 恢复持久快照，确保磁盘上的最终 unit 与部署前精确一致。
+            if ! restore_predeploy_systemd_units; then
+              log "ERROR: failed to restore exact pre-deploy systemd unit snapshot"
+              exit 70
+            fi
+            SYSTEMD_UNITS_DIRTY=0
+            case "$RELEASE_DIR" in
+              "$RELEASES_DIR"/*)
+                log "remove failed release: $RELEASE_DIR"
+                rm -rf -- "$RELEASE_DIR" || log "WARN: failed release cleanup failed"
+                ;;
+            esac
+            rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
+            FAILURE_RECOVERY_COMPLETED=1
+            ROLLBACK_STATE_PRESERVE=0
+            if [ "$COMPAT_ROLLBACK_PUBLISHED" -eq 1 ]; then
+              test "$(readlink -f "$DEPLOY_ROOT/compat-deploy-attempt-current")" = "$COMPAT_ROLLBACK_STATE_DIR"
+              rm -f "$DEPLOY_ROOT/compat-deploy-attempt-current"
+              COMPAT_ROLLBACK_PUBLISHED=0
+            fi
+            exit "$deploy_status"
           }
 
           ensure_pre_switch_budget() {
@@ -1418,6 +1972,7 @@ jobs:
 
             PREV_WORKER_IDLE_TARGET=$(readlink "$WORKER_DIR/$WORKER_IDLE" 2>/dev/null || true)
             log "switch worker/$WORKER_IDLE: ${PREV_WORKER_IDLE_TARGET:-<none>} -> $RELEASE_DIR"
+            WORKER_SYMLINK_DIRTY=1
             ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"
             WORKER_CANDIDATE_STARTED=1
             log "runtime worker candidate prepared: color=$WORKER_IDLE (process readiness precedes Web readiness)"
@@ -1755,6 +2310,12 @@ jobs:
           # 避免整机重启时两色同时启动并争用启动期 PG 锁。
           rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"
           log "start idle unit: ${SERVICE_NAME}@${IDLE} (port $IDLE_PORT)"
+          if systemctl is-enabled --quiet "${SERVICE_NAME}@${IDLE}"; then
+            WEB_IDLE_WAS_ENABLED=1
+          else
+            WEB_IDLE_WAS_ENABLED=0
+          fi
+          WEB_IDLE_ENABLEMENT_DIRTY=1
           systemctl enable --now "${SERVICE_NAME}@${IDLE}"
 
           ready_ok() {
@@ -1901,9 +2462,10 @@ jobs:
           fi
           test "$ROLLBACK_WORKER_OLD_COLOR" = "${WORKER_ACTIVE:-absent}"
           test "$ROLLBACK_WORKER_NEW_COLOR" = "$APP_WORKER_TARGET"
-          test -x "$ROLLBACK_STATE_DIR/rollback.sh"
-          test "$(readlink -f "$DEPLOY_ROOT/compat-deploy-attempt-current")" = "$ROLLBACK_STATE_DIR"
-          log "pre-published immutable rollback remains owner of this candidate attempt"
+          test -x "$COMPAT_ROLLBACK_STATE_DIR/rollback.sh"
+          test "$(readlink -f "$DEPLOY_ROOT/compat-deploy-attempt-current")" = "$COMPAT_ROLLBACK_STATE_DIR"
+          test -d "$ROLLBACK_STATE_DIR"
+          log "main rollback transaction and private identity fallback both own this candidate attempt"
 
           install -d -m 0770 -o nginx -g nginx /mnt/agent-saas/runtime/nginx-client-body
           # 写前置位：任一 managed nginx 文件发生部分写入，ERR trap 都必须恢复二者。
@@ -1921,24 +2483,37 @@ jobs:
           EOF
           if ! nginx -t; then
             log "nginx -t FAILED; restoring previous upstream conf (running nginx config unchanged)"
-            production_deploy_restore_file "$UPSTREAM_CONF" "$UPSTREAM_BAK" "$UPSTREAM_HAD_ORIGINAL"
-            production_deploy_restore_file "$API_SITE_CONF" "$API_SITE_BAK" "$API_SITE_HAD_ORIGINAL"
+            if [ -f "$UPSTREAM_BAK" ]; then
+              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
+            else
+              rm -f "$UPSTREAM_CONF"
+            fi
+            if [ -f "$API_SITE_BAK" ]; then
+              cp "$API_SITE_BAK" "$API_SITE_CONF"
+            else
+              rm -f "$API_SITE_CONF"
+            fi
             nginx -t || log "WARN: nginx -t still failing after restore; manual attention needed"
             rollback_idle_and_exit
           fi
-          # ── 10. 最小跨系统提交窗：先原子提交 API+Worker authority，紧接 nginx reload ──
-          # nginx -t 已验证磁盘上的候选配置。跨 authority/nginx 无法原子提交，
-          # 因此这里两条发布操作之间不允许夹入 readiness、drain 或 bookkeeping。
+          # ── 10. 最小跨系统提交窗：API/Worker authority 单次提交后立即 reload ──
+          # 两个活动色由同一 generation 原子发布；中间不夹 readiness、drain 或 bookkeeping。
           if ! commit_app_active_colors "$IDLE" "$APP_WORKER_TARGET"; then
-            log "ERROR: App authority commit interrupted or failed; invoking the pre-published convergent rollback"
+            log "ERROR: App authority commit interrupted or failed; rolling back"
             rollback_idle_and_exit
           fi
+          WORKER_PREACTIVATED=1
           TRAFFIC_SWITCHED=1
           if ! systemctl reload nginx; then
-            log "ERROR: nginx reload failed immediately after App authority commit; rolling back both systems"
+            log "ERROR: nginx reload failed after App authority commit; restoring previous configuration"
+            if ! recover_previous_nginx "$LINENO"; then
+              log "ERROR: nginx state is uncertain; preserving candidate and rollback snapshots for manual recovery"
+              exit 1
+            fi
+            TRAFFIC_SWITCHED=0
             rollback_idle_and_exit
           fi
-          log "App authority committed then nginx reloaded; verifying https://127.0.0.1 (Host: api.agent.kaiyan.net)"
+          log "App authority committed and nginx physically switched to $IDLE; verifying via https://127.0.0.1 (Host: api.agent.kaiyan.net)"
           SWITCH_VERIFIED=0
           for _ in $(seq 1 10); do
             if curl -kfsS -m 5 -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz >/dev/null 2>&1; then
@@ -1948,11 +2523,15 @@ jobs:
             sleep 1
           done
           if [ "$SWITCH_VERIFIED" -ne 1 ]; then
-            log "post-commit verification FAILED; invoking the pre-published rollback"
+            log "post-reload verification FAILED; flipping nginx back to $ACTIVE and rolling back"
+            if ! recover_previous_nginx "$LINENO"; then
+              log "ERROR: failed to flip nginx back; preserving candidate and rollback snapshots for manual recovery"
+              exit 1
+            fi
+            TRAFFIC_SWITCHED=0
             rollback_idle_and_exit
           fi
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
-            WORKER_PREACTIVATED=1
             if ! refresh_worker_candidate_authority; then
               log "ERROR: runtime worker failed authority refresh after atomic App commit"
               rollback_idle_and_exit
@@ -1969,7 +2548,7 @@ jobs:
 
           # ── 10.6 从已收敛的物理运行态原子重建 Production identity ──
           # 这一步必须发生在旧 API drain 之前；不能让兼容入口只换字节、不换身份。
-          IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-${GITHUB_RUN_ID}"
+          IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rm -rf "$IDENTITY_SYNC_DIR"
           mkdir -p "$IDENTITY_SYNC_DIR"
           IDENTITY_SYNCED=0
@@ -1989,18 +2568,46 @@ jobs:
             sleep 2
           done
           if [ "$IDENTITY_SYNCED" -ne 1 ]; then
-            log "ERROR: trusted Production identity could not be rebuilt; invoking the pre-published convergent rollback"
+            log "ERROR: trusted Production identity could not be rebuilt; restoring atomic API/Worker authority before draining old API"
+            cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
+            if ! commit_app_active_colors "$ACTIVE" "${WORKER_ACTIVE:-absent}"; then
+              log "ERROR: failed to restore previous App authority; preserving new traffic for manual recovery"
+              exit 1
+            fi
+            WORKER_PREACTIVATED=0
+            if ! recover_previous_nginx "$LINENO"; then
+              commit_app_active_colors "$IDLE" "$APP_WORKER_TARGET" || true
+              log "ERROR: failed to restore old nginx upstream; preserving idle service"
+              exit 1
+            fi
+            systemctl enable "${SERVICE_NAME}@${ACTIVE}"
+            systemctl disable "${SERVICE_NAME}@${IDLE}"
+            TRAFFIC_SWITCHED=0
             rollback_idle_and_exit
           fi
           rm -rf "$IDENTITY_SYNC_DIR"
           log "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
 
-          # Authority, nginx and identity are converged. Disarm only by removing the
-          # exact owned attempt link; rollback.sh/state-current remain manual rollback.
-          test "$(readlink -f "$DEPLOY_ROOT/compat-deploy-attempt-current")" = "$ROLLBACK_STATE_DIR"
+          # App authority、nginx、ConfigIdentity 与 Runtime Dependency Identity 已收敛。
+          # 仅移除本次精确 attempt owner；主线 rollback state/script 继续作为人工回滚入口。
+          test "$COMPAT_ROLLBACK_PUBLISHED" -eq 1
+          test "$(readlink -f "$DEPLOY_ROOT/compat-deploy-attempt-current")" = "$COMPAT_ROLLBACK_STATE_DIR"
           rm -f "$DEPLOY_ROOT/compat-deploy-attempt-current"
           COMPAT_ROLLBACK_PUBLISHED=0
           ROLLBACK_ARMED=0
+
+          # ── 11. 固化部署前已发布的原子 App rollback ──
+          # rollback.sh / rollback-state-current 由 publish_compat_deploy_rollback 在首次
+          # 持久变更前一起发布；这里绝不能再用顺序 API/Worker marker 的旧脚本覆盖。
+          test -L "$DEPLOY_ROOT/rollback.sh"
+          test "$(readlink -f "$DEPLOY_ROOT/rollback.sh")" = \
+            "$COMPAT_ROLLBACK_STATE_DIR/rollback.sh"
+          test "$(readlink -f "$DEPLOY_ROOT/rollback-state-current")" = \
+            "$COMPAT_ROLLBACK_STATE_DIR"
+          ROLLBACK_STATE_COMMITTED=1
+          INSTALL_CLEANUP_ARMED=0
+          WEB_IDLE_ENABLEMENT_DIRTY=0
+          log "atomic App rollback committed: $COMPAT_ROLLBACK_STATE_DIR"
 
           # ── 12. drain 旧色：SIGUSR2 精确送 node 主进程（拒新流量→停 cron→活跃流清空→自行 exit 0）──
           # 绝不能用 systemctl kill：默认 cgroup 广播，SIGUSR2 会终止无 handler 的 SDK 子进程。

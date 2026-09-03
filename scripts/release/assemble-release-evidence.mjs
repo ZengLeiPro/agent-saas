@@ -27,11 +27,14 @@ export async function assembleReleaseEvidence(options) {
     JSON.parse(await readFile(resolve(options.authoritative), 'utf8')),
     { expectedSha: options.sha },
   );
+  if (authoritative.schemaVersion !== 2)
+    throw new Error('New Release candidates require Release Evidence v2 runtime identities');
   const index = await verifyArtifactIndex(options.index, options.sha);
   const createdAt = options['created-at'];
   const expiresAt = options['expires-at'];
   if (!createdAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(createdAt))
     throw new Error('Release timestamps are invalid');
+  // 最终候选必须保留 authoritative evidence 的脱敏 ConfigIdentity。
   const built = (name) => {
     const item = index.artifacts[name];
     if (!item) return undefined;
@@ -54,9 +57,25 @@ export async function assembleReleaseEvidence(options) {
     sourcePullRequests: authoritative.sourcePullRequests,
     checks: authoritative.checks,
     productionBaseline: authoritative.productionBaseline,
+    ...(authoritative.configIdentity !== undefined
+      ? { configIdentity: authoritative.configIdentity }
+      : {}),
     affectedComponents: authoritative.affectedComponents,
     builtArtifacts: {
       serverBundle: built('serverBundle'),
+      runtimeDependencies: {
+        uri: artifactUri(
+          options['artifact-base-uri'],
+          options['release-id'],
+          index.runtimeDependencies.path,
+        ),
+        digest: index.runtimeDependencies.digest,
+        size: index.runtimeDependencies.size,
+        sourceSha: index.sourceSha,
+        identityDigest: index.runtimeDependencies.identityDigest,
+        dependencyDigest: index.runtimeDependencies.dependencyDigest,
+        contractDigest: index.runtimeDependencies.contractDigest,
+      },
       webAssets: built('webAssets'),
       ...(built('acsOrchestrator') ? { acsOrchestrator: built('acsOrchestrator') } : {}),
       ...(index.acsImage
@@ -75,9 +94,10 @@ export async function assembleReleaseEvidence(options) {
     !output.releaseId ||
     !output.createdBy ||
     !output.builtArtifacts.serverBundle ||
-    !output.builtArtifacts.webAssets
+    !output.builtArtifacts.webAssets ||
+    !output.builtArtifacts.runtimeDependencies
   )
-    throw new Error('Release evidence is incomplete');
+    throw new Error('Release Evidence v2 is incomplete or lacks a runtime identity');
   await writeFile(resolve(options.output), `${JSON.stringify(output, null, 2)}\n`, { flag: 'wx' });
   return output;
 }

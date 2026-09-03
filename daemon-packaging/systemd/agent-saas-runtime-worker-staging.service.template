@@ -16,11 +16,15 @@ Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
 Environment=AGENT_SAAS_STAGING_RELEASE_ROOT=/opt/agent-saas-staging
 Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
+# Worker 使用独立私有快照，禁止与 API 覆盖同一路径。
 Environment=AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/runtime-worker.pid
 Environment=AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready
 Environment=KB_PREVIEW_AUTO_GENERATE=false
 EnvironmentFile=/etc/agent-saas-staging/server.env
+Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/runtime-worker-config-identity.json
+ExecStartPre=/usr/bin/rm -f /run/agent-saas-staging/runtime-worker.ready /run/agent-saas-staging/runtime-worker-config-identity.json
+ExecStartPre=/usr/bin/node /opt/agent-saas-staging/current/server/dist/runtime-dependency.mjs --manifest=/opt/agent-saas-staging/current/server/runtime-dependencies.json --component=runtimeWorker --production=true
 ExecStart=/usr/bin/node --enable-source-maps /opt/agent-saas-staging/current/server/dist/index.js
 ExecStop=/bin/kill -USR2 $MAINPID
 Restart=on-failure

@@ -118,6 +118,7 @@ export async function ensureRuntimeHandRegistered(params: {
    */
   topLevelSessionId?: string;
   endpoint?: string;
+  serverRemoteAuthTokenRef?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   sandboxProfile?: SandboxProfile;
   sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
@@ -262,6 +263,9 @@ export async function ensureRuntimeHandRegistered(params: {
   const defaultProvisionGeneration = randomUUID();
   const initialProvisionMetadata = {
     registeredBy: 'rawRuntimeRunDispatch',
+    ...(params.executionTarget === 'server-remote'
+      ? { serverRemoteAuthTokenRef: params.serverRemoteAuthTokenRef ?? null }
+      : {}),
     provisionFailure: null,
     provisionRecoveryToken: null,
     provisionRecoveryClaimedAtMs: null,

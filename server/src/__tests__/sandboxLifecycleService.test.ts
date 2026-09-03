@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -280,7 +282,10 @@ describe('SandboxLifecycleService durable lifecycle protocol, routing and recove
 
   it('pins the serverRemote endpoint across session deletion and worker restart', async () => {
     let phase: 'none' | 'prepared' | 'pending' | 'claimed' | 'delivered' | 'cancelled' = 'none';
-    let pending = { ...cleanup(), targetHandId: 'server-remote' };
+    let pending: ReturnType<typeof cleanup> & {
+      serverRemoteEndpoint?: string;
+      serverRemoteAuthTokenRef?: string;
+    } = { ...cleanup(), targetHandId: 'server-remote' };
     const store = {
       enqueueCleanup: vi.fn(async (candidate: typeof pending) => {
         pending = { ...candidate, runId: 'server-remote-cleanup' };
@@ -304,42 +309,74 @@ describe('SandboxLifecycleService durable lifecycle protocol, routing and recove
       }),
       listTerminalCandidates: vi.fn(async () => []),
     };
-    const serverRemote = { baseUrl: 'http://legacy-remote.test', authToken: 'legacy-token' };
+    const legacyAuthTokenRef = 'secret://server-remote/legacy';
+    const serverRemote = {
+      baseUrl: 'http://legacy-remote.test', authToken: 'legacy-token', authTokenRef: legacyAuthTokenRef,
+    };
+    const resolveServerRemoteAuthToken = vi.fn(async (ref: string) => {
+      if (ref === legacyAuthTokenRef) return 'legacy-token';
+      throw new Error(`unexpected ref: ${ref}`);
+    });
     const creator = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
       sessionCatalog: { get: async () => session() },
       handStore: {
-        get: async () => ({ providerId: 'server-remote', metadata: { recipe: { sandboxScopeId: 'scope-1' } } }) as never,
+        get: async () => ({
+          providerId: 'server-remote', endpoint: serverRemote.baseUrl,
+          metadata: {
+            recipe: { sandboxScopeId: 'scope-1' },
+            serverRemoteAuthTokenRef: legacyAuthTokenRef,
+          },
+        }) as never,
         listBySession: async () => [],
       },
       tenantRemoteHands: () => [],
       tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
       serverRemote,
+      resolveServerRemoteAuthToken,
     });
     await expect(creator.prepareSessionDeletionIntent('session-1')).resolves.toBe('queued');
     expect(pending.targetHandId).toMatch(/^server-remote:[0-9a-f]{16}$/u);
 
     phase = 'pending';
-    const movedFetch = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const movedFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer legacy-token');
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
     const movedEndpoint = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
       sessionCatalog: { get: async () => null },
+      handStore: {
+        get: async () => ({
+          providerId: 'server-remote', endpoint: serverRemote.baseUrl,
+          metadata: { serverRemoteAuthTokenRef: legacyAuthTokenRef },
+        }) as never,
+        listBySession: async () => [],
+      },
       tenantRemoteHands: () => [],
       tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
-      serverRemote: { baseUrl: 'http://replacement-remote.test', authToken: 'replacement-token' },
+      serverRemote: {
+        baseUrl: 'http://replacement-remote.test', authToken: 'replacement-token',
+        authTokenRef: 'secret://server-remote/replacement',
+      },
+      resolveServerRemoteAuthToken,
       fetchImpl: movedFetch,
     });
     await (movedEndpoint as unknown as { scan(): Promise<void> }).scan();
-    expect(phase).toBe('pending');
-    expect(movedFetch).not.toHaveBeenCalled();
+    expect(phase).toBe('delivered');
+    expect((movedFetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
+      'http://legacy-remote.test/sandboxes/deletion-generation',
+      'http://legacy-remote.test/sandboxes/scope',
+    ]);
 
+    phase = 'pending';
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
     const restarted = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
       sessionCatalog: { get: async () => null },
       tenantRemoteHands: () => [],
       tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
-      serverRemote, fetchImpl,
+      serverRemote, resolveServerRemoteAuthToken, fetchImpl,
     });
     await (restarted as unknown as { scan(): Promise<void> }).scan();
     expect(phase).toBe('delivered');
@@ -352,6 +389,116 @@ describe('SandboxLifecycleService durable lifecycle protocol, routing and recove
     expect(phase).toBe('cancelled');
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0])
       .toBe('http://legacy-remote.test/sandboxes/deletion-generation');
+    expect(resolveServerRemoteAuthToken).toHaveBeenCalledWith(legacyAuthTokenRef);
+  });
+
+  it('uses the current credential after same-target serverRemote rotation', async () => {
+    const endpoint = 'http://legacy-remote.test';
+    const targetHandId = `server-remote:${createHash('sha256').update(endpoint).digest('hex').slice(0, 16)}`;
+    let phase: 'pending' | 'claimed' | 'delivered' = 'pending';
+    const pending = {
+      ...cleanup(), runId: 'rotated-credential-cleanup', targetHandId,
+      serverRemoteEndpoint: endpoint, serverRemoteAuthTokenRef: 'secret://server-remote/old',
+    };
+    const store = {
+      listPreparedCleanupCandidates: vi.fn(async () => []),
+      listLegacyCleanupCandidates: vi.fn(async () => []),
+      listCleanupCandidates: vi.fn(async () => phase === 'pending' ? [pending] : []),
+      claimCleanup: vi.fn(async (_runId: string, claimId: string) => {
+        if (phase !== 'pending') return undefined;
+        phase = 'claimed';
+        return { ...pending, claimId };
+      }),
+      isCleanupClaimCurrent: vi.fn(async () => phase === 'claimed'),
+      releaseCleanupClaim: vi.fn(async () => { if (phase === 'claimed') phase = 'pending'; }),
+      markCleanupDelivered: vi.fn(async () => { phase = 'delivered'; }),
+      listTerminalCandidates: vi.fn(async () => []),
+    };
+    const resolveServerRemoteAuthToken = vi.fn(async () => 'old-token');
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer current-token');
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => null },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote: {
+        baseUrl: `${endpoint}/`, authToken: 'current-token',
+        authTokenRef: 'secret://server-remote/current',
+      },
+      resolveServerRemoteAuthToken,
+      fetchImpl,
+    });
+
+    await (service as unknown as { scan(): Promise<void> }).scan();
+
+    expect(phase).toBe('delivered');
+    expect(resolveServerRemoteAuthToken).not.toHaveBeenCalled();
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
+      `${endpoint}/sandboxes/deletion-generation`,
+      `${endpoint}/sandboxes/scope`,
+    ]);
+  });
+
+  it('uses the persisted serverRemote hand endpoint when config drifted before the first deletion', async () => {
+    let pending: ReturnType<typeof cleanup> | undefined;
+    const oldEndpoint = 'http://legacy-remote.test';
+    const oldAuthTokenRef = 'secret://server-remote/old';
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data', runStore: {} as never,
+      store: {
+        enqueueCleanup: vi.fn(async (candidate: ReturnType<typeof cleanup>) => {
+          pending = { ...candidate, runId: 'cleanup-after-drift' };
+          return pending;
+        }),
+      } as never,
+      sessionCatalog: { get: async () => session() },
+      handStore: {
+        get: async () => ({
+          providerId: 'server-remote', endpoint: oldEndpoint,
+          metadata: {
+            recipe: { sandboxScopeId: 'scope-1' }, serverRemoteAuthTokenRef: oldAuthTokenRef,
+          },
+        }) as never,
+        listBySession: async () => [],
+      },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote: { baseUrl: 'http://replacement-remote.test', authToken: 'replacement-token' },
+      resolveServerRemoteAuthToken: async ref => ref === oldAuthTokenRef
+        ? 'old-token'
+        : Promise.reject(new Error(`unexpected ref: ${ref}`)),
+    });
+
+    await expect(service.prepareSessionDeletionIntent('session-1')).resolves.toBe('queued');
+    const endpointHash = createHash('sha256').update(oldEndpoint).digest('hex').slice(0, 16);
+    expect(pending?.targetHandId).toBe(`server-remote:${endpointHash}`);
+    expect(pending).toMatchObject({
+      serverRemoteEndpoint: oldEndpoint, serverRemoteAuthTokenRef: oldAuthTokenRef,
+    });
+  });
+
+  it('fails closed when a drifted serverRemote hand has no persisted credential reference', async () => {
+    const enqueueCleanup = vi.fn();
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data', runStore: {} as never, store: { enqueueCleanup } as never,
+      sessionCatalog: { get: async () => session() },
+      handStore: {
+        get: async () => ({
+          providerId: 'server-remote', endpoint: 'http://legacy-remote.test',
+          metadata: { recipe: { sandboxScopeId: 'scope-1' } },
+        }) as never,
+        listBySession: async () => [],
+      },
+      tenantRemoteHands: () => [],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [] }),
+      serverRemote: { baseUrl: 'http://replacement-remote.test', authToken: 'replacement-token' },
+    });
+
+    await expect(service.prepareSessionDeletionIntent('session-1')).resolves.toBe('blocked');
+    expect(enqueueCleanup).not.toHaveBeenCalled();
   });
 
   it('distinguishes verified not_required from unresolved blocked and retries after target recovery', async () => {

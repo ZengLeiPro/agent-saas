@@ -54,6 +54,7 @@ import {
   visibleWorkspaceCwd,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
+import { serverRemoteHandRegistrationOptions } from '../serverRemoteHandRegistration.js';
 import { createRuntimeSessionRecord, type MemoryPolicyVersion, type RuntimeSessionRecord } from '../sessionCatalog.js';
 import { applyMainSessionToolFilter } from '../toolProfiles.js';
 import { SessionContextService, SessionToolProvider } from '../sessionContext.js';
@@ -387,8 +388,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       // 决策 7：hand recipe 会重算 sandboxScopeId，必须把顶层组键一并透传，
       // 否则子 Agent 的 hand 会落到 workspace 级 scope 而与父会话分到两个 pod。
       topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
       sandboxProfile: childRecord.sandboxProfile,
       sandboxWorkloadDescriptor: childRecord.sandboxWorkloadDescriptor,
       sandboxResources: parentWorkspace.sandboxResources,

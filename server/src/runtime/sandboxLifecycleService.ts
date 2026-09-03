@@ -118,7 +118,8 @@ export class SandboxLifecycleService {
     handStore?: Pick<HandStore, 'get' | 'listBySession'>;
     tenantRemoteHands: () => TenantRemoteHandDispatchConfig[] | undefined;
     tenantRemoteHandResolver: TenantRemoteHandAuthTokenResolver;
-    serverRemote?: { baseUrl: string; authToken: string };
+    serverRemote?: { baseUrl: string; authToken: string; authTokenRef?: string };
+    resolveServerRemoteAuthToken?: (authTokenRef: string) => Promise<string>;
     logger?: SandboxLifecycleLogger;
     fetchImpl?: typeof fetch;
     scanIntervalMs?: number;
@@ -176,9 +177,14 @@ export class SandboxLifecycleService {
       if (!record) return 'blocked';
       const resolved = await this.resolveSessionTarget(sessionId);
       if (!resolved) return 'blocked';
-      const { identity, tenantId, userId, username, targetHandId } = resolved;
+      const {
+        identity, tenantId, userId, username, targetHandId,
+        serverRemoteEndpoint, serverRemoteAuthTokenRef,
+      } = resolved;
       const enqueued = await this.options.store.enqueueCleanup({
         ...identity, targetHandId, deletionGeneration: newDeletionGeneration(),
+        ...(serverRemoteEndpoint ? { serverRemoteEndpoint } : {}),
+        ...(serverRemoteAuthTokenRef ? { serverRemoteAuthTokenRef } : {}),
         ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}), ...(username ? { username } : {}),
       }, { prepared: true }); // prepared 不可投递，先避免 tombstone 前产生外部删除。
       if (!enqueued) return 'blocked';
@@ -247,6 +253,10 @@ export class SandboxLifecycleService {
         await this.options.store.enqueueCleanup({
           ...legacyIdentity, legacyRunId,
           targetHandId: resolved.targetHandId, deletionGeneration: newDeletionGeneration(),
+          ...(resolved.serverRemoteEndpoint ? { serverRemoteEndpoint: resolved.serverRemoteEndpoint } : {}),
+          ...(resolved.serverRemoteAuthTokenRef
+            ? { serverRemoteAuthTokenRef: resolved.serverRemoteAuthTokenRef }
+            : {}),
         });
       } catch (error) {
         this.warnCandidate('sandbox_cleanup_legacy_failed', legacy.runId, error);
@@ -434,10 +444,18 @@ export class SandboxLifecycleService {
     username?: string;
     targetHandId: string;
     client: AcsSandboxLifecycleClient;
+    serverRemoteEndpoint?: string;
+    serverRemoteAuthTokenRef?: string;
   } | undefined> {
     const record = await this.options.sessionCatalog.get(sessionId);
     if (!record || record.kind === 'subagent') return undefined;
     const hand = await this.options.handStore?.get(`${sessionId}:server-remote`);
+    const registeredServerRemoteEndpoint = hand?.providerId === 'server-remote'
+      ? stringValue(hand.endpoint)
+      : undefined;
+    const registeredServerRemoteAuthTokenRef = hand?.providerId === 'server-remote'
+      ? stringValue(hand.metadata?.serverRemoteAuthTokenRef)
+      : undefined;
     const pinnedTargetHandId = stringValue(hand?.metadata?.tenantRemoteHandId);
     const registeredHands = pinnedTargetHandId
       ? []
@@ -448,13 +466,19 @@ export class SandboxLifecycleService {
       ?? registeredIds?.find((id) => id === 'agent-saas-acs')
       ?? registeredIds?.find((id) => id && /acs/i.test(id))
       ?? (this.options.serverRemote && hand?.providerId === 'server-remote'
-        ? serverRemoteTargetHandId(this.options.serverRemote.baseUrl)
+        ? serverRemoteTargetHandId(registeredServerRemoteEndpoint ?? this.options.serverRemote.baseUrl)
         : undefined);
     const target = await this.resolveClient(
       sessionId,
       record.tenantId,
       record,
-      registeredTargetHandId ? { targetHandId: registeredTargetHandId } : undefined,
+      registeredTargetHandId ? {
+        targetHandId: registeredTargetHandId,
+        ...(registeredServerRemoteEndpoint ? { serverRemoteEndpoint: registeredServerRemoteEndpoint } : {}),
+        ...(registeredServerRemoteAuthTokenRef
+          ? { serverRemoteAuthTokenRef: registeredServerRemoteAuthTokenRef }
+          : {}),
+      } : undefined,
     );
     if (!target) return undefined;
     const workspaceId = record.workspaceId ?? sessionId;
@@ -470,6 +494,10 @@ export class SandboxLifecycleService {
       ...(record.username ? { username: record.username } : {}),
       targetHandId: target.targetHandId,
       client: target.client,
+      ...(registeredServerRemoteEndpoint ? { serverRemoteEndpoint: registeredServerRemoteEndpoint } : {}),
+      ...(registeredServerRemoteAuthTokenRef
+        ? { serverRemoteAuthTokenRef: registeredServerRemoteAuthTokenRef }
+        : {}),
     };
   }
 
@@ -477,7 +505,13 @@ export class SandboxLifecycleService {
     sessionId: string,
     tenantId?: string,
     knownRecord?: Awaited<ReturnType<SessionCatalog['get']>>,
-    routing?: { userId?: string; username?: string; targetHandId?: string },
+    routing?: {
+      userId?: string;
+      username?: string;
+      targetHandId?: string;
+      serverRemoteEndpoint?: string;
+      serverRemoteAuthTokenRef?: string;
+    },
   ): Promise<{ client: AcsSandboxLifecycleClient; targetHandId: string } | undefined> {
     if (routing?.targetHandId === 'server-remote') return undefined;
     const record = knownRecord ?? await this.options.sessionCatalog.get(sessionId);
@@ -504,13 +538,29 @@ export class SandboxLifecycleService {
       };
     }
     if (!this.options.serverRemote || !routing?.targetHandId) return undefined;
-    const configuredServerRemoteTarget = serverRemoteTargetHandId(this.options.serverRemote.baseUrl);
-    if (routing.targetHandId !== configuredServerRemoteTarget) return undefined;
+    const registeredHand = routing.serverRemoteEndpoint
+      ? undefined
+      : await this.options.handStore?.get(`${sessionId}:server-remote`).catch(() => undefined);
+    const registeredEndpoint = routing.serverRemoteEndpoint
+      ?? (registeredHand?.providerId === 'server-remote' ? stringValue(registeredHand.endpoint) : undefined);
+    const registeredAuthTokenRef = routing.serverRemoteAuthTokenRef
+      ?? (registeredHand?.providerId === 'server-remote'
+        ? stringValue(registeredHand.metadata?.serverRemoteAuthTokenRef)
+        : undefined);
+    const currentTargetHandId = serverRemoteTargetHandId(this.options.serverRemote.baseUrl);
+    const targetIsCurrent = routing.targetHandId === currentTargetHandId;
+    const endpoint = targetIsCurrent ? this.options.serverRemote.baseUrl : registeredEndpoint;
+    if (!endpoint || serverRemoteTargetHandId(endpoint) !== routing.targetHandId) return undefined;
+    let authToken = this.options.serverRemote.authToken;
+    if (!targetIsCurrent) {
+      if (!registeredAuthTokenRef || !this.options.resolveServerRemoteAuthToken) return undefined;
+      authToken = await this.options.resolveServerRemoteAuthToken(registeredAuthTokenRef);
+    }
     return {
-      targetHandId: configuredServerRemoteTarget,
+      targetHandId: routing.targetHandId,
       client: new AcsSandboxLifecycleClient({
-        baseUrl: this.options.serverRemote.baseUrl,
-        authToken: this.options.serverRemote.authToken,
+        baseUrl: endpoint,
+        authToken,
         fetchImpl: this.options.fetchImpl,
       }),
     };

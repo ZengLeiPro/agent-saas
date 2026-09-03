@@ -50,6 +50,7 @@ const classificationCases = [
   { path: 'server/src/runtime/handStore.ts', publish: 'true', contractCheck: 'false' },
   // Web/application admission code and helpers ship in the ACS image; deletion routes remain contract-only.
   { path: 'server/src/app/runtime.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'server/src/app/serverRemoteConfig.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channel.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channelConfig.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channelHelpers.ts', publish: 'true', contractCheck: 'true' },
@@ -65,11 +66,14 @@ const classificationCases = [
   { path: 'server/src/agent/types.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/appConfig.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/appServerRemoteConfig.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/runtimeHandProvisionRace.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/serverRemoteConfig.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/sandboxRunAdmissionFence.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/sandboxScopeActivity.pg.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/app/config.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runtimeHandRegistration.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/serverRemoteHandRegistration.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runtimeWakeSessionRestore.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/rawRuntimeRunDispatch.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/sessionCatalog.ts', publish: 'false', contractCheck: 'true' },
@@ -81,6 +85,8 @@ const classificationCases = [
   { path: 'server/src/routes/sessionPermanentDeletion.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runStatusCas.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runStoreQueries.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runTerminalLifecycle.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runStoreLivenessQueries.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/routes/sessions.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/runStore.ts', publish: 'false', contractCheck: 'true' },
   { path: 'server/src/runtime/types.ts', publish: 'false', contractCheck: 'true' },
@@ -135,14 +141,21 @@ describe('ACS deployment and classifier contract', () => {
 
   it('在 required、contract 与 publish gate 中执行完整 Server、Staging 与 Production lifecycle 契约', () => {
     const serverContracts = [
-      'acsDeployWorkflowContract', 'executionDispatchValidation', 'runtimeTombstoneAdmission',
+      'acsDeployWorkflowContract', 'dwsAuthFlow', 'dwsKeepalive', 'dwsPersonalEventGateway',
+      'dwsPersonalMessageSender', 'executionDispatchValidation', 'feishuConnector', 'runtimeTombstoneAdmission',
       'runtimeWakeSessionRestore', 'sandboxLifecycleService', 'sandboxRunAdmissionFence',
-      'sandboxWarmup', 'sessionCatalog', 'webChannelPersistentInteractionRecovery',
+      'sandboxWorkloadDescriptor', 'sandboxWarmup', 'sessionCatalog', 'taskboardExecution',
+      'webChannelPersistentInteractionRecovery',
     ];
     expect(workflow.match(/- name: Test server ACS lifecycle and admission contracts/gu)).toHaveLength(3);
     for (const contract of serverContracts) {
       expect(workflow.match(new RegExp(`src/__tests__/${contract}\\.test\\.ts`, 'gu'))).toHaveLength(3);
     }
+    for (const contract of [
+      'src/context/sync/dwsContextRuntime.test.ts',
+      'src/dws/businessToolProvider.test.ts',
+      'src/dws/requesterIdentityResolver.test.ts',
+    ]) expect(workflow.split(contract)).toHaveLength(4);
     expect(workflow.match(/- name: Test ACS staging and production lifecycle gates/gu)).toHaveLength(3);
     expect(workflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(3);
     expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(3);

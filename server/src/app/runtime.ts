@@ -98,6 +98,7 @@ import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
+import { resolveServerRemoteDispatchConfig } from './serverRemoteConfig.js';
 import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
 import { resolveImageUnderstandingModelConfigs } from './imageUnderstandingModelConfigs.js';
@@ -1474,28 +1475,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('SandboxWarmup'),
   });
   // serverRemote 凭证在装配层解析为 plaintext；两种凭证形式互斥。
-  const resolvedServerRemote = await (async () => {
-    const sr = config.serverRemote;
-    if (!sr) return undefined; let authToken: string | undefined;
-    if (sr.authTokenRef) {
-      try {
-        authToken = await secretVault.getSecret(sr.authTokenRef, {
-          actor: 'system',
-          userId: '__system__',
-          scopes: ['secret:server_remote:read'],
-        });
-      } catch (err) {
-        throw new Error(
-          `serverRemote.authTokenRef "${sr.authTokenRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    } else if (sr.authToken) authToken = sr.authToken;
-    if (!authToken) {
-      throw new Error('serverRemote 凭证解析失败：authToken/authTokenRef 都为空（schema 应已拦截）');
-    }
-    return { baseUrl: sr.baseUrl, authToken,
-      ...(sr.invokeTimeoutMs !== undefined ? { invokeTimeoutMs: sr.invokeTimeoutMs } : {}) };
-  })();
+  const resolvedServerRemote = await resolveServerRemoteDispatchConfig(config.serverRemote, secretVault);
   if (pgRunStore) {
     sandboxLifecycleService = new SandboxLifecycleService({
       agentCwd,
@@ -1503,6 +1483,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       runStore: pgRunStore, sessionCatalog, handStore: pgHandStore,
       tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver,
       ...(resolvedServerRemote ? { serverRemote: resolvedServerRemote } : {}),
+      resolveServerRemoteAuthToken: authTokenRef => secretVault.getSecret(authTokenRef, {
+        actor: 'system', userId: '__system__', scopes: ['secret:server_remote:read'],
+      }),
       logger: serverLogger.child('SandboxLifecycle'),
     });
   }

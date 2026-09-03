@@ -200,6 +200,7 @@ const logger = createLogger('RawRuntime');
 
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
+import { serverRemoteHandRegistrationOptions } from './serverRemoteHandRegistration.js';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
@@ -1292,8 +1293,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceId: sessionRecord.workspaceId ?? sessionId,
       workspaceMountSubPath,
       topLevelSessionId: sessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
       sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
@@ -1897,8 +1897,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       topLevelSessionId: request.sessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
       sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
@@ -2380,8 +2379,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       workspaceId: sessionRecord.workspaceId ?? request.sessionId,
       workspaceMountSubPath,
       topLevelSessionId: request.sessionId,
-      endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
-      serverRemoteRecipe: config.serverRemote?.recipe,
+      ...serverRemoteHandRegistrationOptions(config.serverRemote, executionTarget),
       sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,

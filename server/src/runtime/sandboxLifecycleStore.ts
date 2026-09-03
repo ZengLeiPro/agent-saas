@@ -12,6 +12,8 @@ export interface CleanupCandidate extends SandboxLifecycleIdentity {
   userId?: string;
   username?: string;
   targetHandId: string;
+  serverRemoteEndpoint?: string;
+  serverRemoteAuthTokenRef?: string;
   deletionGeneration: string;
   previousDeletionGeneration?: string;
   claimId?: string;
@@ -115,6 +117,8 @@ export class PgSandboxLifecycleStore {
       state: options.prepared ? 'prepared' : 'pending', workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
       sandboxScopeId: candidate.sandboxScopeId, tenantId: candidate.tenantId,
       userId: candidate.userId, username: candidate.username, targetHandId: candidate.targetHandId,
+      serverRemoteEndpoint: candidate.serverRemoteEndpoint,
+      serverRemoteAuthTokenRef: candidate.serverRemoteAuthTokenRef,
       queuedAt: new Date().toISOString(),
     });
     const carrierRunId = `sandbox-cleanup-${randomUUID()}`;
@@ -550,10 +554,14 @@ function cleanupCandidateFromRow(row: Record<string, unknown>, cleanup: Record<s
   const claimId = stringValue(cleanup.claimId);
   const previousDeletionGeneration = stringValue(cleanup.previousDeletionGeneration);
   const claimGeneration = typeof cleanup.claimGeneration === 'number' ? cleanup.claimGeneration : undefined;
+  const serverRemoteEndpoint = stringValue(cleanup.serverRemoteEndpoint);
+  const serverRemoteAuthTokenRef = stringValue(cleanup.serverRemoteAuthTokenRef);
   return {
     runId: String(row.run_id), workspaceId: stringValue(cleanup.workspaceId)!,
     sessionId: stringValue(cleanup.sessionId)!, sandboxScopeId: stringValue(cleanup.sandboxScopeId)!,
     targetHandId: stringValue(cleanup.targetHandId)!, deletionGeneration: stringValue(cleanup.deletionGeneration)!,
+    ...(serverRemoteEndpoint ? { serverRemoteEndpoint } : {}),
+    ...(serverRemoteAuthTokenRef ? { serverRemoteAuthTokenRef } : {}),
     ...(previousDeletionGeneration ? { previousDeletionGeneration } : {}),
     ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}),
     ...(username ? { username } : {}), ...(claimId ? { claimId } : {}),

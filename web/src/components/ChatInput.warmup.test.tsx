@@ -27,12 +27,14 @@ function ControlledInput({
   sessionId,
   onSend = vi.fn(),
   placeholder,
+  initialInput = "",
 }: {
   sessionId: string;
   onSend?: () => void;
   placeholder?: string;
+  initialInput?: string;
 }) {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput);
   return (
     <ChatInput
       input={input}
@@ -102,6 +104,16 @@ describe("ChatInput Sandbox 预热", () => {
     );
   });
 
+  it("已有草稿继续输入不会冒充空白到有效文本的首字变化", () => {
+    render(<ControlledInput sessionId="warmup-existing-draft" initialInput="已有草稿" />);
+    const textarea = screen.getByPlaceholderText("输入消息...");
+
+    fireEvent.change(textarea, { target: { value: "已有草稿继续" } });
+
+    expect(authFetchMock).not.toHaveBeenCalled();
+    expect((textarea as HTMLTextAreaElement).value).toBe("已有草稿继续");
+  });
+
   it("中文 IME composition 结束后只触发一次且不破坏输入", async () => {
     render(<ControlledInput sessionId="warmup-ime" />);
     const textarea = screen.getByPlaceholderText("输入消息...");
@@ -115,6 +127,25 @@ describe("ChatInput Sandbox 预热", () => {
 
     await waitFor(() => expect(authFetchMock).toHaveBeenCalledOnce());
     expect((textarea as HTMLTextAreaElement).value).toBe("中文");
+  });
+
+  it("IME 结束回调晚于会话切换时不会覆盖新 session 的预热状态", async () => {
+    const view = render(<ControlledInput sessionId="warmup-ime-old" />);
+    const oldTextarea = screen.getByPlaceholderText("输入消息...");
+
+    fireEvent.compositionStart(oldTextarea);
+    fireEvent.change(oldTextarea, { target: { value: "旧" } });
+    fireEvent.compositionEnd(oldTextarea, { data: "旧" });
+    view.rerender(<ControlledInput sessionId="warmup-ime-new" />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.change(screen.getByPlaceholderText("输入消息..."), { target: { value: "新" } });
+
+    expect(authFetchMock).toHaveBeenCalledOnce();
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/sessions/warmup-ime-new/warmup",
+      { method: "POST" },
+    );
   });
 
   it("粘贴有效文本可以触发", async () => {

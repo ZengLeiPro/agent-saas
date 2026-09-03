@@ -64,6 +64,28 @@ class CasMemoryHandStore implements HandStore {
 }
 
 describe('runtime Hand provision contracts and generation CAS', () => {
+  it('persists the serverRemote credential reference without persisting its plaintext token', async () => {
+    const handStore = new CasMemoryHandStore();
+    const common = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => false, get: () => undefined } as never,
+      executionTarget: 'server-remote' as const,
+      sessionId: 'session-credential', workspaceId: 'workspace-credential', tenantId: 'tenant-credential',
+    };
+
+    await ensureRuntimeHandRegistered({
+      ...common, serverRemoteAuthTokenRef: 'secret://server-remote/original',
+    });
+    expect(handStore.record?.metadata).toMatchObject({
+      serverRemoteAuthTokenRef: 'secret://server-remote/original',
+    });
+    expect(JSON.stringify(handStore.record?.metadata)).not.toContain('plaintext-token');
+
+    await ensureRuntimeHandRegistered(common);
+    expect(handStore.record?.metadata.serverRemoteAuthTokenRef).toBeNull();
+  });
+
   it('maps the persisted sandbox profile into server-remote recipe resources', async () => {
     const handStore = new CasMemoryHandStore();
     const provision = vi.fn(async () => ({ status: 'ok' as const }));

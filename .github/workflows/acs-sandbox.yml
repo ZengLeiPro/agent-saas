@@ -109,14 +109,26 @@ jobs:
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
           src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
           src/__tests__/runtimeTombstoneAdmission.test.ts
           src/__tests__/runtimeWakeSessionRestore.test.ts
           src/__tests__/sandboxLifecycleService.test.ts
           src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
           src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
           src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
           src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
 
       - name: Test ACS staging and production lifecycle gates
         if: steps.impact.outputs.required == 'true'
@@ -244,14 +256,26 @@ jobs:
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
           src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
           src/__tests__/runtimeTombstoneAdmission.test.ts
           src/__tests__/runtimeWakeSessionRestore.test.ts
           src/__tests__/sandboxLifecycleService.test.ts
           src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
           src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
           src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
           src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
 
       - name: Test ACS staging and production lifecycle gates
         run: >-
@@ -312,14 +336,26 @@ jobs:
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
           src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
           src/__tests__/runtimeTombstoneAdmission.test.ts
           src/__tests__/runtimeWakeSessionRestore.test.ts
           src/__tests__/sandboxLifecycleService.test.ts
           src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
           src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
           src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
           src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
 
       - name: Test ACS staging and production lifecycle gates
         run: >-

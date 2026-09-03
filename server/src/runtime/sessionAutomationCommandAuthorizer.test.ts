@@ -11,7 +11,15 @@ describe('GovernedSessionAutomationCommandAuthorizer',()=>{
   const authorize=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>session)},preflight:{preflight:vi.fn(async()=>({accessDecision:{verdict:'deny',reasonCode:'ASSIGNMENT_DENIED'},readiness:{ready:false,blockers:[{code:'QUOTA_EXHAUSTED'}]}}))} as never});
   await expect(authorize.authorize(identity)).rejects.toMatchObject({code:'GOVERNANCE_DENIED'});
  });
- it('fails closed when governance or workspace trust cannot be established',async()=>{
+ it('returns the authoritative tenant credit cap and fails closed when billing policy is unavailable',async()=>{
+  const allowed={accessDecision:{verdict:'allow'},readiness:{ready:true,blockers:[]}};
+  const billing={getAutomationCreditCap:vi.fn(async()=>12.5)};
+  const authorize=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>session)},preflight:{preflight:vi.fn(async()=>allowed)} as never,billing});
+  await expect(authorize.authorize(identity)).resolves.toEqual({maxCredits:12.5});
+  billing.getAutomationCreditCap.mockRejectedValueOnce(new Error('down'));
+  await expect(authorize.authorize(identity)).rejects.toMatchObject({code:'GOVERNANCE_UNAVAILABLE'});
+ });
+  it('fails closed when governance or workspace trust cannot be established',async()=>{
   const unavailable=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>session)},preflight:{preflight:vi.fn(async()=>{throw new Error('down');})} as never});
   await expect(unavailable.authorize(identity)).rejects.toMatchObject({code:'GOVERNANCE_UNAVAILABLE'});
   const untrusted=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>({...session,cwd:'/tmp/other'}))},preflight:{preflight:vi.fn()} as never});

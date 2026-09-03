@@ -127,6 +127,15 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
     expect(digests[0]).not.toBe(digests[1]);
   });
 
+  it('accepts a budget-only edit, preserves unspecified dimensions, and clamps tenant credits', async () => {
+    const current = { ...snapshot, spec: { kind: 'goal', mode: 'goal', condition: 'ship', budget: { maxTurns: 20, maxTokens: 250000, maxCredits: 4 } } };
+    const store = { tx: vi.fn(async (fn: (c: object) => unknown) => fn({})), findCommand: vi.fn(async () => undefined),
+      getLockedForOwner: vi.fn(async () => current), replace: vi.fn(async (_c: object, _current: object, spec: object) => ({ ...current, spec })),
+      recordCommand: vi.fn(async () => 'cursor-1'), publish: vi.fn() };
+    const service = new SessionAutomationCommandService(store as never, staticSource({ controlEnabled: true, executionEnabled: true, goalEnabled: true, evaluatorEnforced: true }), { authorize: vi.fn(async () => ({ maxCredits: 5 })) });
+    await expect(service.edit(identity, snapshot.automationId, { clientMessageId: 'budget-edit', payload: { budget: { maxTurns: 30, maxCredits: 9 } }, expectedControlVersion: 1, expectedIncarnationId: snapshot.incarnationId })).resolves.toMatchObject({ snapshot: { spec: { budget: { maxTurns: 30, maxTokens: 250000, maxCredits: 5 } } } });
+  });
+
   it('rejects edit immediately after clear enters drain', async () => {
     const draining = { ...snapshot, status: 'cancelling', phase: 'draining', controlVersion: 2 };
     const store = {
@@ -167,6 +176,23 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
     expect(store.create).not.toHaveBeenCalled();
     expect(store.replace).not.toHaveBeenCalled();
     expect(store.control).not.toHaveBeenCalled();
+  });
+
+  it('applies the tenant credit cap as a default and clamps explicit overrides', async () => {
+    const createdSpecs: Array<{budget:{maxCredits?:number}}> = [];
+    const store = {
+      tx: vi.fn(async (fn: (c: object) => unknown) => fn({})), findCommand: vi.fn(async () => undefined),
+      getLiveForOwner: vi.fn(async () => undefined),
+      create: vi.fn(async (_c: object, _id: object, spec: {budget:{maxCredits?:number}}) => {
+        createdSpecs.push(spec); return { ...snapshot, spec };
+      }), recordCommand: vi.fn(async () => 'cursor-1'), publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, staticSource({
+      controlEnabled: true, executionEnabled: true, adaptiveLoopEnabled: true,
+    }), { authorize: vi.fn(async () => ({ maxCredits: 5 })) });
+    await service.command(identity, { clientMessageId: 'cap-default', command: '/loop -- work' });
+    await service.command(identity, { clientMessageId: 'cap-clamp', command: '/loop --max-credits 10 -- work' });
+    expect(createdSpecs.map(spec => spec.budget.maxCredits)).toEqual([5, 5]);
   });
 
   it('rechecks after the locked row wait and permits a fresh true after true-to-false-to-true', async () => {

@@ -195,6 +195,7 @@ describe('attachment upload hardening', () => {
     expect(manager.getActiveUploadCount()).toBe(0);
   });
 
+  it('rolls back only the exact failed automation attachment reference', async () => {const root=await createRoot();const manager=new UploadManager({agentCwd:root});const userCwd=join(root,USER.tenantId,USER.sub);const assetPath='assets/20260904/evidence.txt';await mkdir(join(userCwd,'assets','20260904'),{recursive:true});await writeFile(join(userCwd,assetPath),'evidence');const [attachment]=await manager.registerAssetReferences(userCwd,[assetPath]);await manager.markReferenced(userCwd,[attachment!],{sessionId:'session-a',clientMessageId:'message-a'});await expect(manager.resolveAttachments(userCwd,[attachment!.attachmentId!],{sessionId:'session-a'})).resolves.toHaveLength(1);await manager.releaseReference(userCwd,[attachment!],{sessionId:'session-a',clientMessageId:'message-a'});await expect(manager.resolveAttachments(userCwd,[attachment!.attachmentId!],{sessionId:'session-a'})).rejects.toThrow('does not belong');await expect(manager.resolveAttachments(userCwd,[attachment!.attachmentId!])).resolves.toHaveLength(1);});
   it('moves completed files atomically out of .partial and keeps repeated names distinct', async () => {
     const root = await createRoot();
     const manager = new UploadManager({ agentCwd: root });

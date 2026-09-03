@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js';
+import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js'; import { createSessionAutomationAttachmentBinding } from './sessionAutomationAttachmentBinding.js';
 import type { Express, Request, Response } from 'express';
-import type { AppRuntime } from './runtime.js';
-import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
+import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
@@ -175,6 +174,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sessionCatalog: runtime.sessionCatalog,
       createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd),
       compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
+      ...createSessionAutomationAttachmentBinding(runtime),
       broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload),
     }));
   }

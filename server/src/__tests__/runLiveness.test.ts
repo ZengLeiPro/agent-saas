@@ -47,7 +47,9 @@ class AuthoritativeMemoryRunStore implements RunStore {
     return record;
   }
 
-  async markStatus(runId: string, status: RunStatus, reason?: string): Promise<RunRecord | null> {
+  async markStatus(
+    runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;
     if (['completed', 'failed', 'cancelled', 'orphaned'].includes(record.status) && record.status !== status) return record;
@@ -60,6 +62,7 @@ class AuthoritativeMemoryRunStore implements RunStore {
       ...record,
       status,
       statusReason: reason,
+      metadata: { ...record.metadata, ...metadataPatch },
       workerId: ['waiting_user', 'waiting_approval', 'completed', 'failed', 'cancelled', 'orphaned'].includes(status) ? undefined : record.workerId,
       leaseExpiresAt: ['waiting_user', 'waiting_approval', 'completed', 'failed', 'cancelled', 'orphaned'].includes(status) ? undefined : record.leaseExpiresAt,
       liveness: {

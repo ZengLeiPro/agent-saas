@@ -17,10 +17,11 @@ describe('automation evaluator reducers, hashes, and evidence gates', () => {
       ref: 'event:test', kind: 'event' as const, tenantId: 'tenant', sessionId: 'session', rootAutomationId: 'automation',
       source: { eventId: 'test', runId: 'run' }, version: { globalSequence: 1, sha256: 'a'.repeat(64) },
       freshness: { capturedAt: '2026-08-31T00:00:00.000Z', freshThroughGlobalSequence: 1 },
+      content: { toolName: 'Shell', resultExcerpt: 'tests passed', command: 'pnpm test', exitCode: 0 },
     }] };
     const evidence = {
       summary: 'done', evidenceManifest: { ...body, canonicalHash: goalEvidenceManifestHash(body) },
-      hardGates: { runTerminal: true, noPendingInteraction: true, noActiveResources: true, budgetValid: true },
+      hardGates: { runTerminal: true, noPendingInteraction: true, noActiveResources: true, budgetValid: true, noNewUserInput: true },
     };
     expect(passesGoalHardGates(evidence)).toBe(true);
     expect(passesGoalHardGates({ ...evidence, evidenceManifest: { ...evidence.evidenceManifest, canonicalHash: 'tampered' } })).toBe(false);
@@ -57,7 +58,7 @@ describe('automation evaluator reducers, hashes, and evidence gates', () => {
     expect(reason).toBe('max_credits');
     const evidence = {
       summary: 'done', evidenceManifest: undefined as never,
-      hardGates: { runTerminal: true, noPendingInteraction: true, noActiveResources: true, budgetValid: reason === undefined },
+      hardGates: { runTerminal: true, noPendingInteraction: true, noActiveResources: true, budgetValid: reason === undefined, noNewUserInput: true },
     };
     expect(passesGoalHardGates(evidence)).toBe(false);
   });
@@ -141,13 +142,14 @@ describe('SessionAutomationEvaluator execution and evidence gating', () => {
       ref: 'event:test', kind: 'test' as const, tenantId: 'tenant', sessionId: 'session', rootAutomationId: 'automation',
       source: { eventId: 'test', runId: 'run' }, version: { globalSequence: 1, sha256: 'a'.repeat(64) },
       freshness: { capturedAt: '2026-08-31T00:00:00.000Z', freshThroughGlobalSequence: 1 },
+      content: { toolName: 'Shell', resultExcerpt: 'tests passed', command: 'pnpm test', exitCode: 0 },
     }] };
     await expect(evaluator.evaluate({
       tenantId: 'tenant', sessionId: 'session', ownerUserId: 'owner', automationId: 'automation',
       executionId: 'execution', incarnationId: 'incarnation', generation: 1, specVersion: 1,
       condition: 'done', evidence: {
         summary: 'done', evidenceManifest: { ...body, canonicalHash: goalEvidenceManifestHash(body) },
-        hardGates: { runTerminal: true, noPendingInteraction: true, noActiveResources: true, budgetValid: true },
+        hardGates: { runTerminal: true, noPendingInteraction: true, noActiveResources: true, budgetValid: true, noNewUserInput: true },
       },
     })).rejects.toThrow('execution_disabled');
     expect(runtimeGuard.releaseModel).toHaveBeenCalledTimes(1);

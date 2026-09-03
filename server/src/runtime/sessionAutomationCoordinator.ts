@@ -3,7 +3,7 @@ import type { SessionCatalog } from './sessionCatalog.js';
 import type { ClaimedDispatch, PgSessionAutomationStore, SessionAutomationLifecycleAdapters } from './sessionAutomationStore.js';
 
 export interface AutomationRunDispatcher {
-  stage(input: { tenantId: string; sessionId: string; runId: string; prompt: string; metadata: Record<string, unknown> }): Promise<void>;
+  stage(input: { tenantId: string; sessionId: string; runId: string; prompt: string; metadata: Record<string, unknown>; attachments?: Array<{attachmentId:string;originalName:string;size:number;mimeType:string;isImage:boolean}> }): Promise<void>;
   activate(runId: string): Promise<void>;
 }
 
@@ -16,7 +16,7 @@ export class SessionAutomationProcessCrash extends Error {
 export class RuntimeSchedulerAutomationDispatcher implements AutomationRunDispatcher {
   constructor(private readonly scheduler: RuntimeScheduler, private readonly sessions: SessionCatalog) {}
 
-  async stage(input: { tenantId: string; sessionId: string; runId: string; prompt: string; metadata: Record<string, unknown> }): Promise<void> {
+  async stage(input: { tenantId: string; sessionId: string; runId: string; prompt: string; metadata: Record<string, unknown>; attachments?: Array<{attachmentId:string;originalName:string;size:number;mimeType:string;isImage:boolean}> }): Promise<void> {
     const session = await this.sessions.get(input.sessionId);
     if (!session || session.tenantId !== input.tenantId) throw new Error('automation session identity unavailable');
     await this.scheduler.enqueueCreateOnly({
@@ -43,6 +43,7 @@ export class RuntimeSchedulerAutomationDispatcher implements AutomationRunDispat
         wakeMessage: {
           channel: 'web', chatId: input.sessionId, content: input.prompt,
           senderId: session.userId, senderName: session.username,
+          ...(input.attachments?.length?{attachments:input.attachments}:{}),
           metadata: { hiddenContinuation: true, sessionAutomation: true },
         },
         automationFence: input.metadata,
@@ -165,7 +166,8 @@ export class SessionAutomationCoordinator {
         rootSessionId: item.sessionId,
         rootRunId: item.targetRunId,
       };
-      const stageInput = { tenantId: item.tenantId, sessionId: item.sessionId, runId: item.targetRunId, prompt, metadata: fence };
+      const stageInput = { tenantId: item.tenantId, sessionId: item.sessionId, runId: item.targetRunId, prompt, metadata: fence,
+        ...(snapshot.spec.attachments?.length?{attachments:snapshot.spec.attachments}:{}) };
       if (!this.options.executionEnabled()) return;
       await this.store.prepareDispatch(item,{stage:stageInput});
       if (!this.options.executionEnabled()) return;

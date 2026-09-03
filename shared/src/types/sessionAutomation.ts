@@ -13,6 +13,13 @@ export interface SessionAutomationBudget {
   maxCredits?: number;
   expiresAt?: string;
 }
+export interface SessionAutomationAttachment {
+  attachmentId: string;
+  originalName: string;
+  size: number;
+  mimeType: string;
+  isImage: boolean;
+}
 export interface SessionAutomationSpec {
   kind: SessionAutomationKind;
   mode: SessionAutomationMode;
@@ -20,6 +27,7 @@ export interface SessionAutomationSpec {
   condition?: string;
   intervalMs?: number;
   budget: SessionAutomationBudget;
+  attachments?: SessionAutomationAttachment[];
 }
 export interface SessionAutomationSnapshot {
   automationId: string;
@@ -38,6 +46,7 @@ export interface SessionAutomationSnapshot {
   nextWakeupAt?: string;
   activeRunId?: string;
   runCount: number;
+  missingScheduleCount?: number;
   noProgressCount: number;
   lastProgressFingerprint?: string;
   lastError?: string;

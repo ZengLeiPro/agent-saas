@@ -1549,7 +1549,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runResolutionSnapshotStore,
     billingService,
     modelResolver,
-  }); if(sessionAutomationCommandService&&runPreflightService){sessionAutomationCommandService.setAuthorizer(new GovernedSessionAutomationCommandAuthorizer({preflight:runPreflightService,sessionCatalog,agentCwd}));}
+  }); if(sessionAutomationCommandService&&runPreflightService){sessionAutomationCommandService.setAuthorizer(new GovernedSessionAutomationCommandAuthorizer({preflight:runPreflightService,sessionCatalog,agentCwd,billing:billingService}));}
   // 用户活动聚合（2026-07-14 记忆轮询批次）：PG 后端可用；file backend 下
   // available=false，UserActivityList 工具不挂载、memory_poll 预检 fail-closed。
   const userActivityService = new UserActivityService({

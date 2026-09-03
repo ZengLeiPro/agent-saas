@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { resolveAutomationBudgetReason } from './sessionAutomationBudgetProgress.js';
 export { reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type pg from 'pg';
@@ -8,45 +8,13 @@ import type { ModelAdapter, ModelUsage, RunContext } from './types.js';
 import { SessionAutomationRuntimeGuard, type AutomationAttemptHandle } from './sessionAutomationRuntimeGuard.js';
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import { estimateContextTokens } from './contextBreakdown.js';
+import { lockPgEventGlobalSequence } from './pgEventStoreProtocol.js';
+import { canonicalGoalEvidenceJson, goalEvidenceFreshThrough, goalEvidenceManifestHash, goalEvidenceSha256,
+  isValidGoalEvidenceManifest, passesGoalHardGates,
+  type GoalDecision, type GoalEvidence, type GoalEvidenceKind, type GoalEvidenceManifest,
+  type GoalEvidenceManifestEntry } from './sessionAutomationEvidence.js';
+export { goalEvidenceManifestHash, isValidGoalEvidenceManifest, passesGoalHardGates } from './sessionAutomationEvidence.js';
 
-export type GoalEvidenceKind = 'event' | 'tool_result' | 'test' | 'build';
-export interface GoalEvidenceManifestEntry {
-  ref: string;
-  kind: GoalEvidenceKind;
-  tenantId: string;
-  sessionId: string;
-  rootAutomationId: string;
-  source: { eventId: string; runId: string; toolCallId?: string };
-  version: { globalSequence: number; sha256: string };
-  freshness: { capturedAt: string; freshThroughGlobalSequence: number };
-}
-export interface GoalEvidenceManifest {
-  version: 1;
-  fence: {
-    tenantId: string;
-    sessionId: string;
-    rootAutomationId: string;
-    executionId: string;
-    incarnationId: string;
-    generation: number;
-    specVersion: number;
-    runId: string;
-  };
-  entries: GoalEvidenceManifestEntry[];
-  canonicalHash: string;
-}
-/** Evidence consumed by the monotonically versioned automation projection. */
-export interface GoalEvidence {
-  summary: string;
-  evidenceManifest: GoalEvidenceManifest;
-  hardGates: {
-    runTerminal: boolean;
-    noPendingInteraction: boolean;
-    noActiveResources: boolean;
-    budgetValid: boolean;
-  };
-}
-export type GoalDecision = 'met' | 'continue' | 'blocked' | 'unverifiable';
 export interface GoalEvaluatorPort {
   evaluate(input: {
     tenantId: string;
@@ -64,41 +32,6 @@ export interface GoalEvaluatorPort {
     onAttemptPrepared?: (providerAttemptId: string) => Promise<void>;
   }): Promise<{ decision: GoalDecision; reason: string; confidence: number; usage?: ModelUsage }>;
   settleBillingRun?(tenantId:string,runId:string):Promise<void>;
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(',')}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-}
-function sha256(value: unknown): string { return createHash('sha256').update(canonicalJson(value)).digest('hex'); }
-export function goalEvidenceManifestHash(manifest: Omit<GoalEvidenceManifest, 'canonicalHash'>): string { return sha256(manifest); }
-export function isValidGoalEvidenceManifest(manifest: unknown, expectedHash?: string): manifest is GoalEvidenceManifest {
-  if (!manifest || typeof manifest !== 'object') return false;
-  const value = manifest as GoalEvidenceManifest;
-  if (value.version !== 1 || !value.fence || typeof value.fence !== 'object'
-    || typeof value.fence.tenantId !== 'string' || typeof value.fence.sessionId !== 'string'
-    || typeof value.fence.rootAutomationId !== 'string' || typeof value.fence.executionId !== 'string'
-    || typeof value.fence.incarnationId !== 'string' || !Number.isSafeInteger(value.fence.generation)
-    || !Number.isSafeInteger(value.fence.specVersion) || typeof value.fence.runId !== 'string'
-    || !Array.isArray(value.entries) || value.entries.length === 0 || typeof value.canonicalHash !== 'string') return false;
-  if (value.entries.some(entry => !entry || typeof entry.ref !== 'string' || !['event','tool_result','test','build'].includes(entry.kind)
-    || typeof entry.tenantId !== 'string' || typeof entry.sessionId !== 'string' || typeof entry.rootAutomationId !== 'string'
-    || !entry.source || typeof entry.source.eventId !== 'string' || typeof entry.source.runId !== 'string'
-    || !entry.version || !Number.isSafeInteger(entry.version.globalSequence) || typeof entry.version.sha256 !== 'string'
-    || !entry.freshness || typeof entry.freshness.capturedAt !== 'string' || !Number.isSafeInteger(entry.freshness.freshThroughGlobalSequence))) return false;
-  const { canonicalHash, ...body } = value;
-  return canonicalHash === goalEvidenceManifestHash(body) && (!expectedHash || canonicalHash === expectedHash);
-}
-export function passesGoalHardGates(evidence: GoalEvidence): boolean {
-  return evidence.hardGates.runTerminal
-    && evidence.hardGates.noPendingInteraction
-    && evidence.hardGates.noActiveResources
-    && evidence.hardGates.budgetValid
-    && isValidGoalEvidenceManifest(evidence.evidenceManifest);
 }
 
 function parsePersistedGoalDecision(payload: unknown): { decision: GoalDecision; reason: string; confidence: number } | undefined {
@@ -285,6 +218,7 @@ export class SessionAutomationEvaluator {
     automationId: string;
     executionId: string;
     runId: string;
+    userInputAfterSequence: number;
   }): Promise<GoalEvidence['hardGates']> {
     const execution = await client.query(
       `SELECT state FROM ${this.store.tables.executions}
@@ -325,6 +259,13 @@ export class SessionAutomationEvaluator {
        ) AS active`,
       [input.tenantId, input.sessionId, input.automationId],
     );
+    const newUserInput = await client.query(
+      `SELECT EXISTS(SELECT 1 FROM ${this.eventsTable}
+        WHERE tenant_id=$1 AND session_id=$2 AND global_sequence>$3
+          AND (event_type='user_message_submitted'
+            OR (event_type='user_message' AND COALESCE((event_json->>'systemGenerated')::boolean,false)=false))) AS present`,
+      [input.tenantId, input.sessionId, input.userInputAfterSequence],
+    );
     const automation = await client.query(
       `SELECT limit_hit_reason FROM ${this.store.tables.automations}
         WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
@@ -346,6 +287,7 @@ export class SessionAutomationEvaluator {
       noActiveResources: Number(active.rows[0]?.count ?? 0) === 0
         && durableResources.rows[0]?.active !== true,
       budgetValid: !automation.rows[0]?.limit_hit_reason && (budgetReason === undefined || budgetReason.startsWith('max_')),
+      noNewUserInput: newUserInput.rows[0]?.present !== true,
     };
   }
 
@@ -438,8 +380,16 @@ export class SessionAutomationEvaluator {
         rootAutomationId: input.automationId,
         source: { eventId: String(row.event_id), runId: input.runId,
           ...(typeof event.toolCallId === 'string' ? { toolCallId: event.toolCallId } : {}) },
-        version: { globalSequence: sequence, sha256: sha256(event) },
+        version: { globalSequence: sequence, sha256: goalEvidenceSha256(event) },
         freshness: { capturedAt, freshThroughGlobalSequence: freshThrough },
+        content: {
+          toolName:String(event.toolName),
+          resultExcerpt:String(event.content ?? '').slice(0,6_000),
+          ...(toolInputs.get(String(event.toolCallId))?.command
+            ? {command:toolInputs.get(String(event.toolCallId))!.command!.slice(0,2_000)} : {}),
+          ...(Number.isSafeInteger((event.metadata as Record<string,unknown>|undefined)?.exitCode)
+            ? {exitCode:Number((event.metadata as Record<string,unknown>).exitCode)} : {}),
+        },
       });
     }
     const body = {
@@ -475,7 +425,7 @@ export class SessionAutomationEvaluator {
         [input.tenantId, input.sessionId, input.runId, entry.source.eventId],
       );
       if (!row.rowCount) return { valid: false, reason: 'evidence_ref_not_found' };
-      if (Number(row.rows[0].global_sequence) !== entry.version.globalSequence || sha256(row.rows[0].event_json) !== entry.version.sha256) {
+      if (Number(row.rows[0].global_sequence) !== entry.version.globalSequence || goalEvidenceSha256(row.rows[0].event_json) !== entry.version.sha256) {
         return { valid: false, reason: 'evidence_source_changed' };
       }
       if (entry.kind === 'test' || entry.kind === 'build') {
@@ -500,7 +450,7 @@ export class SessionAutomationEvaluator {
     evidence_manifest?: GoalEvidenceManifest; evidence?: GoalEvidence;
   }, evidence: GoalEvidence): Promise<{ valid: boolean; reason?: string }> {
     if (!job.evidence_manifest_hash || !job.evidence_manifest
-      || canonicalJson(job.evidence_manifest) !== canonicalJson(evidence.evidenceManifest)) {
+      || canonicalGoalEvidenceJson(job.evidence_manifest) !== canonicalGoalEvidenceJson(evidence.evidenceManifest)) {
       return { valid: false, reason: 'evidence_manifest_tampered' };
     }
     const candidate = await client.query(
@@ -512,7 +462,7 @@ export class SessionAutomationEvaluator {
     );
     const frozen = candidate.rows[0];
     if (!frozen || String(frozen.evidence_manifest_hash ?? '') !== job.evidence_manifest_hash
-      || canonicalJson(frozen.evidence_manifest) !== canonicalJson(job.evidence_manifest)
+      || canonicalGoalEvidenceJson(frozen.evidence_manifest) !== canonicalGoalEvidenceJson(job.evidence_manifest)
       || frozen.summary !== evidence.summary) {
       return { valid: false, reason: 'evidence_candidate_mismatch' };
     }
@@ -587,12 +537,15 @@ export class SessionAutomationEvaluator {
     authority: { leaseToken: string } | { providerAttemptId: string },
   ): Promise<boolean> {
     const current = await this.store.getLocked(client, job.tenant_id, job.session_id, job.automation_id);
+    // Linearize the final gate read and terminal CAS against all runtime event appends.
+    await lockPgEventGlobalSequence(client,this.eventsTable);
     const latestGates = await this.resolveHardGates(client, {
       tenantId: job.tenant_id,
       sessionId: job.session_id,
       automationId: job.automation_id,
       executionId: job.execution_id,
       runId: job.run_id,
+      userInputAfterSequence: goalEvidenceFreshThrough(job.evidence_manifest),
     });
     const fenced = current
       && current.incarnationId === job.incarnation_id
@@ -810,7 +763,7 @@ export class SessionAutomationEvaluator {
           || current.generation !== Number(job.generation) || current.specVersion !== Number(job.spec_version)) return 0;
         const gates = await this.resolveHardGates(client, {
           tenantId: job.tenant_id, sessionId: job.session_id, automationId: job.automation_id,
-          executionId: job.execution_id, runId: job.run_id,
+          executionId: job.execution_id, runId: job.run_id, userInputAfterSequence: goalEvidenceFreshThrough(job.evidence_manifest),
         });
         const evidence: GoalEvidence = { ...job.evidence, hardGates: gates };
         const manifestValidation = await this.validateEvaluationEvidence(client, job, evidence);
@@ -874,6 +827,7 @@ export class SessionAutomationEvaluator {
         automationId: job.automation_id,
         executionId: job.execution_id,
         runId: job.run_id,
+        userInputAfterSequence: goalEvidenceFreshThrough(job.evidence_manifest),
       });
       const evidence: GoalEvidence = { ...job.evidence, hardGates: gates };
       const manifestValidation = await this.validateEvaluationEvidence(this.store.pool, job, evidence);

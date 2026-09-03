@@ -321,6 +321,45 @@ export class SessionAutomationTerminalProjector {
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
               [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId, slot],
             );
+          } else if (row.mode === 'adaptive') {
+            const scheduled = await client.query(
+              `SELECT 1 FROM ${this.store.tables.wakeups}
+                WHERE tenant_id=$1 AND automation_id=$2 AND incarnation_id=$3
+                  AND generation=$4 AND spec_version=$5 AND state IN ('pending','claimed') LIMIT 1`,
+              [event.tenantId,row.automation_id,row.current_incarnation,row.current_generation,row.spec_version],
+            );
+            if (Number(scheduled.rowCount) > 0) {
+              await client.query(
+                `UPDATE ${this.store.tables.automations}
+                    SET phase='waiting',active_run_id=NULL,missing_schedule_count=0,
+                        no_progress_count=$3,last_progress_fingerprint=$4,
+                        projection_version=projection_version+1,updated_at=now()
+                  WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
+                [event.tenantId,row.automation_id,noProgress.count,fingerprint,event.runId],
+              );
+            } else if (String(row.wakeup_trigger_key).startsWith('adaptive-fallback:')) {
+              const locked = await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
+              if (locked) await this.store.beginTerminalDrainLocked(
+                client,locked,'completed','missing_reschedule_after_fallback',
+              );
+            } else {
+              const epoch = Number(row.current_continuation_epoch) + 1;
+              await this.store.scheduleTx(client, {
+                tenantId:event.tenantId,sessionId:event.sessionId,automationId:row.automation_id,
+                incarnationId:row.current_incarnation,generation:Number(row.current_generation),
+                specVersion:Number(row.spec_version),continuationEpoch:epoch,
+                triggerKey:`adaptive-fallback:${row.automation_id}:g${row.current_generation}:e${epoch}:from:${event.runId}`,
+                dueAt:new Date(Date.now()+20*60_000),payload:{sourceRunId:event.runId,fallback:true},
+              });
+              await client.query(
+                `UPDATE ${this.store.tables.automations}
+                    SET phase='waiting',active_run_id=NULL,continuation_epoch=$3,missing_schedule_count=1,
+                        no_progress_count=$4,last_progress_fingerprint=$5,
+                        projection_version=projection_version+1,updated_at=now()
+                  WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$6`,
+                [event.tenantId,row.automation_id,epoch,noProgress.count,fingerprint,event.runId],
+              );
+            }
           } else {
             await client.query(
               `UPDATE ${this.store.tables.automations}

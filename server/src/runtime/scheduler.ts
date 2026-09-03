@@ -486,14 +486,15 @@ export class RuntimeScheduler {
       this.deferredUntilByRun.clear();
     }
     for (const record of result.orphaned) {
-      await this.options.eventStore.append({
-        type: 'run_state_changed',
-        runId: record.runId,
-        sessionId: record.sessionId,
-        status: 'orphaned',
-        previousStatus: 'running',
-        reason: record.statusReason ?? record.liveness?.reasonCode ?? 'lease_expired',
-      }, { tenantId: requireTenantId(record.tenantId) });
+      const reason = record.statusReason ?? record.liveness?.reasonCode ?? 'lease_expired';
+      await finalizeTerminalRun({
+        runStore: this.options.runStore, eventStore: this.options.eventStore,
+        runId: record.runId, status: 'orphaned', reason,
+        expectedStatuses: ['orphaned'], stateOnlyRepair: true,
+        events: [{ type: 'run_state_changed', runId: record.runId, sessionId: record.sessionId,
+          status: 'orphaned', previousStatus: 'running', reason }],
+        ctx: { tenantId: requireTenantId(record.tenantId) }, logger: this.options.logger,
+      });
     }
     if (result.stale.length > 0 || result.orphaned.length > 0) {
       this.options.logger?.warn(

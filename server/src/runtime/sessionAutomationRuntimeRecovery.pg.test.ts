@@ -13,7 +13,6 @@ import { SessionAutomationEvaluator, type GoalEvaluatorPort } from './sessionAut
 import { deriveChildAutomationFence } from './subagent/subagentRunner.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
 import type { RunContext } from './types.js';
-
 const { Pool } = pg;
 const url = process.env.TEST_DATABASE_URL;
 const describePg = url ? describe : describe.skip;
@@ -409,7 +408,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(projected.rows).toHaveLength(1);
     expect(projected.rows[0].evidence).toMatchObject({
       summary: 'candidate complete',
-      evidenceManifest: { entries: [{ ref: `event:${evidence.event.id}`, kind: 'test' }] },
+      evidenceManifest: { entries: [{ ref: `event:${evidence.event.id}`, kind: 'test', content: { toolName: 'Shell', resultExcerpt: 'command completed successfully', command: 'pnpm test', exitCode: 0 } }] },
       hardGates: { runTerminal: true },
     });
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'evaluating' });
@@ -420,6 +419,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ status: 'completing', phase: 'draining' });
   });
 
+  it('blocks completion when user input arrives after evidence freeze but before terminal projection', async () => {const setup=await activeExecution();const evidence=await appendSuccessfulShellEvidence(setup);const evaluate=vi.fn(async()=>({decision:'met' as const,reason:'done',confidence:0.99}));const evaluator=new SessionAutomationEvaluator(store,{evaluate} as unknown as GoalEvaluatorPort,()=>true);await expect(evaluator.nominate({tenantId,sessionId:setup.sessionId,automationId:setup.automationId,executionId:setup.dispatch.outboxId,runId:setup.dispatch.targetRunId,incarnationId:setup.incarnationId,generation:1,specVersion:1,summary:'done',evidenceRefs:[`event:${evidence.event.id}`]})).resolves.toEqual({queued:true});const userInput=await events.append({type:'user_message',runId:setup.dispatch.targetRunId,sessionId:setup.sessionId,content:'requirements changed'},{tenantId});const sequence=await pool.query(`SELECT global_sequence FROM ${prefix}_events WHERE tenant_id=$1 AND event_id=$2`,[tenantId,userInput.id]);const projector=new SessionAutomationTerminalProjector(store,`goal-user-input-${randomUUID()}`);await projector.project({globalSequence:Number(sequence.rows[0].global_sequence)+1,tenantId,sessionId:setup.sessionId,runId:setup.dispatch.targetRunId,status:'completed'});await expect(evaluator.evaluatePending()).resolves.toBe(0);expect(evaluate).not.toHaveBeenCalled();expect((await pool.query(`SELECT state,decision FROM ${store.tables.evaluations} WHERE execution_id=$1`,[setup.dispatch.outboxId])).rows[0]).toMatchObject({state:'blocked',decision:expect.objectContaining({reason:'hard_gate'})});});
   it('rejects fake and cross-session evidence refs before candidate persistence', async () => {
     const setup = await activeExecution();
     const other = await activeExecution();

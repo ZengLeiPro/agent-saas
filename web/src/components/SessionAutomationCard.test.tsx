@@ -53,6 +53,15 @@ describe('SessionAutomationCard controls', () => {
     fireEvent.click(screen.getByRole('button', { name: /编辑/ }));
     fireEvent.change(screen.getByLabelText('编辑 Goal 条件'), { target: { value: 'typecheck is clean' } });
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
-    expect(onControl).toHaveBeenCalledWith({ action: 'edit', payload: { condition: 'typecheck is clean' } });
+    expect(onControl).toHaveBeenCalledWith({ action: 'edit', payload: { condition: 'typecheck is clean', budget: { maxTurns: 20, maxTokens: 250000 } } });
+  });
+
+  it('edits budget dimensions from the first-class card controls', () => {
+    const onControl = vi.fn();
+    render(<SessionAutomationCard snapshot={snapshot()} onControl={onControl} />);
+    fireEvent.click(screen.getByRole('button', { name: /编辑/ }));
+    fireEvent.change(screen.getByLabelText('最大 Credits'), { target: { value: '12.5' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    expect(onControl).toHaveBeenCalledWith(expect.objectContaining({ action: 'edit', payload: expect.objectContaining({ budget: expect.objectContaining({ maxCredits: 12.5 }) }) }));
   });
 });

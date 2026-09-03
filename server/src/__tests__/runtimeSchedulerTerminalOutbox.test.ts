@@ -27,6 +27,22 @@ describe('RuntimeScheduler terminal outbox', () => {
     expect(readTerminalEventOutbox(terminal)).toMatchObject({ terminalStatus: 'failed' });
   });
 
+  it('repairs a reaper orphan into the durable outbox before publishing its terminal event', async () => {
+    const runStore = new MemoryRunStore(); const eventStore = new MemoryEventStore();
+    const orphaned = await runStore.upsertPending({ runId: 'run-reaper-orphan', sessionId: 'session-reaper-orphan' });
+    runStore.records.set(orphaned.runId, { ...orphaned, status: 'orphaned', statusReason: 'lease_expired' });
+    Object.assign(runStore, {
+      reapExpiredLiveness: vi.fn(async () => ({ stale: [], orphaned: [(await runStore.get(orphaned.runId))!] })),
+    });
+    eventStore.append = vi.fn(async () => { throw new Error('event store unavailable'); });
+    const scheduler = new RuntimeScheduler({ runStore, eventStore, autoWake: false });
+    await scheduler.tick(); await scheduler.stop();
+    expect(readTerminalEventOutbox(await runStore.get(orphaned.runId))).toMatchObject({
+      terminalStatus: 'orphaned', state: 'failed',
+      events: [expect.objectContaining({ type: 'run_state_changed', status: 'orphaned' })],
+    });
+  });
+
   it('retains a durable terminal outbox when scheduler wake failure event append fails', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

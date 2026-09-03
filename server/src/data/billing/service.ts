@@ -339,6 +339,21 @@ export class BillingService {
     return await this.options.store.chargeFixedDebit(input);
   }
 
+  async getAutomationCreditCap(tenantId: string): Promise<number | undefined> {
+    await this.drainRuntimeProjection();
+    const [account, policy] = await Promise.all([
+      this.options.store.getAccount(tenantId),
+      this.options.store.getTenantPolicy(tenantId),
+    ]);
+    if (!policy.billingEnabled || policy.billingMode === 'internal' || policy.hardCapMode === 'none') return undefined;
+    const runCap = policy.maxRunCreditsMicro;
+    if (runCap === undefined || runCap <= 0) return undefined;
+    const available = account.balanceCreditsMicro
+      + (policy.allowNegativeBalance ? policy.negativeLimitCreditsMicro : 0);
+    if (available <= 0) return undefined;
+    return Math.min(runCap, available) / CREDIT_MICRO;
+  }
+
   async assertTenantCanStartRun(tenantId: string): Promise<{ ok: true } | { ok: false; code: 'BILLING_ORG_BALANCE_EXHAUSTED' | 'BILLING_RUN_LIMIT_NOT_CONFIGURED'; reason: string }> {
     const [account, policy] = await Promise.all([
       this.options.store.getAccount(tenantId),

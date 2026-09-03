@@ -9,7 +9,6 @@ import { finalizeWakeTerminalRun } from './wakeTerminalCoordinator.js';
 import { resolveAutomationBudgetReason } from './sessionAutomationBudgetProgress.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
-
 const { Pool } = pg;
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const describePg = databaseUrl ? describe : describe.skip;
@@ -572,6 +571,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
     },
   );
 
+  it('schedules one adaptive fallback and completes after a second missing schedule', async () => {const adaptive = await createAutomation({kind: 'loop', mode: 'adaptive',spec: { kind: 'loop', mode: 'adaptive', prompt: 'continue', budget: {} },});const first = await dispatch({ ...adaptive, triggerKey: `adaptive-initial-${randomUUID()}`, continuationEpoch: 1 });const projector = new SessionAutomationTerminalProjector(store, `adaptive-fallback-${randomUUID()}`);await projector.project({ globalSequence: 1, tenantId, sessionId: adaptive.sessionId,runId: first.targetRunId, status: 'completed' });expect(await store.get(tenantId, adaptive.sessionId, adaptive.automationId)).toMatchObject({status: 'active', phase: 'waiting', activeRunId: undefined, missingScheduleCount: 1,});const fallbackWake = await pool.query(`UPDATE ${store.tables.wakeups} SET due_at=now()WHERE tenant_id=$1 AND automation_id=$2 AND trigger_key LIKE 'adaptive-fallback:%'RETURNING trigger_key`, [tenantId, adaptive.automationId],);expect(fallbackWake.rows).toHaveLength(1);await store.claimDue();const fallback = (await store.claimDispatch()).find(item => item.automationId === adaptive.automationId)!;expect(fallback.triggerKey).toMatch(/^adaptive-fallback:/);await runs.createPending({ runId: fallback.targetRunId, sessionId: adaptive.sessionId, tenantId, userId: 'user-a' });await store.markDispatched(fallback);await projector.project({ globalSequence: 2, tenantId, sessionId: adaptive.sessionId,runId: fallback.targetRunId, status: 'completed' });expect(await store.get(tenantId, adaptive.sessionId, adaptive.automationId)).toMatchObject({status: 'completed', phase: 'terminal', activeRunId: undefined, missingScheduleCount: 1,lastError: 'missing_reschedule_after_fallback',});});
   it.each(['completed', 'orphaned'] as const)(
     'projects a state-only %s runtime terminal event',
     async (status) => {

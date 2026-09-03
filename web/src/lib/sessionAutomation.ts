@@ -4,6 +4,7 @@ export type SessionAutomationStatus =
   | 'failed' | 'expired' | 'cancelling' | 'reconcile_required' | string;
 
 export interface SessionAutomationBudget {
+  maxRuns?: number;
   turns?: number;
   maxTurns?: number;
   tokens?: number;
@@ -16,6 +17,7 @@ export interface SessionAutomationBudget {
   usedTokens?: number;
   usedCredits?: number;
   elapsedMs?: number;
+  expiresAt?: string;
 }
 
 export interface SessionAutomationSnapshot {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolveUserCwd } from '../workspace/resolver.js';
+import type { BillingService } from '../data/billing/service.js';
 import type { RunPreflightService } from './runPreflight.js';
 import type { SessionCatalog } from './sessionCatalog.js';
 import type { AutomationIdentity } from './sessionAutomationStore.js';
@@ -12,9 +13,10 @@ export class GovernedSessionAutomationCommandAuthorizer implements SessionAutoma
     preflight:Pick<RunPreflightService,'preflight'>;
     sessionCatalog:Pick<SessionCatalog,'get'>;
     agentCwd:string;
+    billing?:Pick<BillingService,'getAutomationCreditCap'>;
   }){}
 
-  async authorize(id:AutomationIdentity):Promise<void>{
+  async authorize(id:AutomationIdentity):Promise<{maxCredits?:number}>{
     const session=await this.options.sessionCatalog.get(id.sessionId).catch(()=>undefined);
     if(!session||session.tenantId!==id.tenantId||session.userId!==id.ownerUserId){
       throw new SessionAutomationConflictError('NOT_FOUND','session 不存在');
@@ -33,5 +35,9 @@ export class GovernedSessionAutomationCommandAuthorizer implements SessionAutoma
       const reason=result.readiness.blockers.map(item=>item.code).join(',')||result.accessDecision.reasonCode;
       throw new SessionAutomationConflictError('GOVERNANCE_DENIED',`automation governance denied: ${reason}`);
     }
+    let maxCredits:number|undefined;
+    try { maxCredits=await this.options.billing?.getAutomationCreditCap(id.tenantId); }
+    catch { throw new SessionAutomationConflictError('GOVERNANCE_UNAVAILABLE','automation billing policy unavailable'); }
+    return maxCredits===undefined?{}:{maxCredits};
   }
 }

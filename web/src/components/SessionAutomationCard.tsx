@@ -41,6 +41,12 @@ function eventLabel(event: AutomationTimelineEvent): string {
 export function SessionAutomationCard({ snapshot, timeline = [], pending, error, onControl }: SessionAutomationCardProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(snapshot.condition ?? snapshot.prompt ?? '');
+  const makeBudgetDraft = () => ({
+    maxRuns: String(snapshot.budget?.maxRuns ?? snapshot.maxRuns ?? ''),
+    maxTurns: String(snapshot.budget?.maxTurns ?? ''), maxTokens: String(snapshot.budget?.maxTokens ?? ''),
+    maxCredits: String(snapshot.budget?.maxCredits ?? ''), expiresAt: snapshot.budget?.expiresAt ?? snapshot.expiresAt ?? '',
+  });
+  const [budgetDraft, setBudgetDraft] = useState(makeBudgetDraft);
   const paused = snapshot.status === 'paused';
   const terminal = ['completed', 'cancelled', 'failed', 'expired'].includes(snapshot.status);
   const budget = snapshot.budget;
@@ -76,15 +82,17 @@ export function SessionAutomationCard({ snapshot, timeline = [], pending, error,
             </div>
             {!editing && summary && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" title={summary}>{summary}</p>}
             {editing && (
-              <div className="mt-2 flex gap-2">
-                <input
-                  aria-label={snapshot.kind === 'goal' ? '编辑 Goal 条件' : '编辑 Loop 提示词'}
-                  className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring"
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                />
-                <button type="button" className="rounded-md bg-primary px-2 text-xs text-primary-foreground disabled:opacity-50" disabled={!draft.trim() || pending} onClick={() => { invoke({ action: 'edit', payload: snapshot.kind === 'goal' ? { condition: draft.trim() } : { prompt: draft.trim() } }); setEditing(false); }}>保存</button>
-                <button type="button" className="rounded-md px-2 text-xs hover:bg-muted" onClick={() => setEditing(false)}>取消</button>
+              <div className="mt-2 space-y-2">
+                <input aria-label={snapshot.kind === 'goal' ? '编辑 Goal 条件' : '编辑 Loop 提示词'} className="w-full rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-ring" value={draft} onChange={(event) => setDraft(event.target.value)} />
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  {snapshot.kind === 'loop' && <input aria-label="最大运行次数" type="number" min="1" className="rounded-md border bg-background px-2 py-1 text-xs" placeholder="Runs" value={budgetDraft.maxRuns} onChange={event=>setBudgetDraft({...budgetDraft,maxRuns:event.target.value})} />}
+                  {snapshot.kind === 'goal' && <input aria-label="最大轮次" type="number" min="1" className="rounded-md border bg-background px-2 py-1 text-xs" placeholder="Turns" value={budgetDraft.maxTurns} onChange={event=>setBudgetDraft({...budgetDraft,maxTurns:event.target.value})} />}
+                  <input aria-label="最大 Tokens" type="number" min="1" className="rounded-md border bg-background px-2 py-1 text-xs" placeholder="Tokens" value={budgetDraft.maxTokens} onChange={event=>setBudgetDraft({...budgetDraft,maxTokens:event.target.value})} />
+                  <input aria-label="最大 Credits" type="number" min="0" step="any" className="rounded-md border bg-background px-2 py-1 text-xs" placeholder="Credits" value={budgetDraft.maxCredits} onChange={event=>setBudgetDraft({...budgetDraft,maxCredits:event.target.value})} />
+                  <input aria-label="到期时间" type="datetime-local" className="rounded-md border bg-background px-2 py-1 text-xs" value={budgetDraft.expiresAt ? budgetDraft.expiresAt.slice(0,16) : ''} onChange={event=>setBudgetDraft({...budgetDraft,expiresAt:event.target.value})} />
+                </div>
+                <div className="flex gap-2"><button type="button" className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50" disabled={!draft.trim() || pending} onClick={() => { const budget=Object.fromEntries(Object.entries(budgetDraft).filter(([,value])=>value!=='').map(([key,value])=>[key,key==='expiresAt'?new Date(value).toISOString():Number(value)])); invoke({ action: 'edit', payload: { ...(snapshot.kind === 'goal' ? { condition: draft.trim() } : { prompt: draft.trim() }), budget } }); setEditing(false); }}>保存</button>
+                <button type="button" className="rounded-md px-2 text-xs hover:bg-muted" onClick={() => setEditing(false)}>取消</button></div>
               </div>
             )}
           </div>
@@ -95,7 +103,7 @@ export function SessionAutomationCard({ snapshot, timeline = [], pending, error,
               <button type="button" disabled={pending} onClick={() => invoke({ action: 'pause' })} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"><CirclePause className="size-3.5" />暂停</button>
             ))}
             {snapshot.kind === 'loop' && !terminal && <button type="button" disabled={pending} onClick={() => invoke({ action: 'run_now' })} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"><Play className="size-3.5" />立即运行</button>}
-            {!terminal && <button type="button" disabled={pending} onClick={() => { setDraft(snapshot.condition ?? snapshot.prompt ?? ''); setEditing(true); }} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"><Pencil className="size-3.5" />编辑</button>}
+            {!terminal && <button type="button" disabled={pending} onClick={() => { setDraft(snapshot.condition ?? snapshot.prompt ?? ''); setBudgetDraft(makeBudgetDraft()); setEditing(true); }} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"><Pencil className="size-3.5" />编辑</button>}
             {!terminal && <button type="button" disabled={pending} onClick={() => invoke({ action: 'clear' })} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"><Trash2 className="size-3.5" />停止</button>}
           </div>
         </div>

@@ -8,6 +8,7 @@ import {
   commandDigest,
 } from '../runtime/sessionAutomationStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
+import type { SessionAutomationAttachment } from '@agent/shared';
 
 export interface SessionAutomationsRouterOptions {
   store: PgSessionAutomationStore;
@@ -16,6 +17,8 @@ export interface SessionAutomationsRouterOptions {
   createSession?: (req: Request, sessionId: string) => Promise<AutomationIdentity>;
   compensateSession?: (req: Request, sessionId: string) => Promise<boolean>;
   broadcastToUser?: (userId: string, payload: Record<string, unknown>) => void;
+  resolveAttachments?: (sessionId: string, clientMessageId: string, attachmentIds: string[]) => Promise<SessionAutomationAttachment[]>;
+  releaseAttachments?: (sessionId: string, clientMessageId: string, attachments: SessionAutomationAttachment[]) => Promise<void>;
 }
 
 async function authorizeSession(
@@ -59,6 +62,7 @@ function parseCommandBody(body: Record<string, unknown>): {
   command: string;
   expectedControlVersion?: number;
   expectedIncarnationId?: string;
+  attachmentIds?: string[];
 } {
   const clientMessageId = typeof body.clientMessageId === 'string'
     ? body.clientMessageId
@@ -70,9 +74,12 @@ function parseCommandBody(body: Record<string, unknown>): {
     : typeof body.rawCommand === 'string'
       ? body.rawCommand
       : undefined;
-  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
-    throw new SessionAutomationConflictError('ATTACHMENTS_UNSUPPORTED', 'automation commands do not support attachments');
-  }
+  const attachmentIds=Array.isArray(body.attachments)?body.attachments.map(item=>
+    item&&typeof item==='object'&&typeof (item as Record<string,unknown>).attachmentId==='string'
+      ? String((item as Record<string,unknown>).attachmentId) : '').filter(Boolean):[];
+  if(Array.isArray(body.attachments)&&(attachmentIds.length!==body.attachments.length||attachmentIds.length>20))
+    throw new SessionAutomationConflictError('INVALID_COMMAND','attachments 必须包含 1..20 个有效 attachmentId');
+  if(attachmentIds.length>0&&!body.attachments)throw new SessionAutomationConflictError('INVALID_COMMAND','attachments 无效');
   if (!clientMessageId || !command) {
     throw new SessionAutomationConflictError('INVALID_COMMAND', 'clientMessageId/command required');
   }
@@ -85,6 +92,7 @@ function parseCommandBody(body: Record<string, unknown>): {
     ...(typeof body.expectedIncarnationId === 'string'
       ? { expectedIncarnationId: body.expectedIncarnationId }
       : {}),
+    ...(attachmentIds.length?{attachmentIds}:{}),
   };
 }
 
@@ -99,8 +107,15 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
       const requestedSessionId = typeof body.sessionId === 'string' && body.sessionId.trim()
         ? body.sessionId.trim()
         : null;
-      const canonicalRequest={command:commandInput.command.trim(),sessionId:requestedSessionId,expectedControlVersion:commandInput.expectedControlVersion??null,expectedIncarnationId:commandInput.expectedIncarnationId??null,attachments:[]};
+      const canonicalRequest={command:commandInput.command.trim(),sessionId:requestedSessionId,expectedControlVersion:commandInput.expectedControlVersion??null,expectedIncarnationId:commandInput.expectedIncarnationId??null,attachments:commandInput.attachmentIds??[]};
       const requestDigest=commandDigest(canonicalRequest);
+      if(req.user?.sub&&req.user.tenantId){
+        const receipt=await options.store.getCommandReceipt(req.user.tenantId,req.user.sub,commandInput.clientMessageId);
+        if(receipt){
+          if(receipt.commandDigest!==requestDigest)throw new SessionAutomationConflictError('CONFLICT','clientMessageId 已用于不同命令');
+          if(receipt.state==='committed'&&receipt.response){const replay=receipt.response as {snapshot?:unknown};res.json({status:'idempotent_replay',replayed:true,sessionId:receipt.sessionId,automation:replay.snapshot??null,cursor:receipt.cursor??null});return;}
+        }
+      }
       let id: AutomationIdentity;
       let creationSaga:{tenantId:string;ownerUserId:string;clientMessageId:string;commandDigest:string;sessionId:string}|undefined;
       if (requestedSessionId) {
@@ -128,9 +143,18 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
           throw error;
         }
       }
-      let result;
-      try{result=await options.service.command(id, {...commandInput,requestDigest,canonicalRequest});}
+      let result;let attachments:SessionAutomationAttachment[]|undefined;
+      try{
+        if(commandInput.attachmentIds?.length){
+          if(!options.resolveAttachments)throw new SessionAutomationConflictError('FEATURE_DISABLED','automation attachments unavailable');
+          try{attachments=await options.resolveAttachments(id.sessionId,commandInput.clientMessageId,commandInput.attachmentIds);}
+          catch{throw new SessionAutomationConflictError('NOT_FOUND','attachment 不存在');}
+          if(attachments.length!==commandInput.attachmentIds.length)throw new SessionAutomationConflictError('NOT_FOUND','attachment 不存在');
+        }
+        result=await options.service.command(id, {...commandInput,...(attachments?{attachments}:{}),requestDigest,canonicalRequest});
+      }
       catch(error){
+        if(attachments?.length)await options.releaseAttachments?.(id.sessionId,commandInput.clientMessageId,attachments).catch(()=>undefined);
         if(creationSaga){await options.store.compensateCommand({...creationSaga,error});await options.compensateSession?.(req,creationSaga.sessionId).catch(()=>false);}
         throw error;
       }

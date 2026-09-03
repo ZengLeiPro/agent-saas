@@ -12,6 +12,15 @@ export class SessionAutomationParseError extends Error {
 const DURATION = /^(\d+)(s|m|h|d)$/;
 const UNIT: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 export const DEFAULT_GOAL_BUDGET: Readonly<SessionAutomationBudget> = { maxTurns: 20, maxTokens: 250_000 };
+export const DEFAULT_LOOP_BUDGET: Readonly<SessionAutomationBudget> = { maxRuns: 50 };
+const DEFAULT_GOAL_DURATION_MS = 8 * 60 * 60 * 1_000;
+const DEFAULT_LOOP_DURATION_MS = 7 * 24 * 60 * 60 * 1_000;
+function defaultBudget(kind: 'loop' | 'goal'): SessionAutomationBudget {
+  return {
+    ...(kind === 'goal' ? DEFAULT_GOAL_BUDGET : DEFAULT_LOOP_BUDGET),
+    expiresAt: new Date(Date.now() + (kind === 'goal' ? DEFAULT_GOAL_DURATION_MS : DEFAULT_LOOP_DURATION_MS)).toISOString(),
+  };
+}
 
 export function parseAutomationDuration(value: string, minimumMs = 60_000): number {
   const match = DURATION.exec(value);
@@ -45,7 +54,15 @@ function parseBudget(tokens: string[]): { budget: SessionAutomationBudget; promp
       const raw = tokens[++i];
       const match = /^(\d+)(k|m)?$/i.exec(raw ?? '');
       if (!match) throw new SessionAutomationParseError('--max-tokens 无效');
-      budget.maxTokens = Number(match[1]) * (match[2]?.toLowerCase() === 'k' ? 1_000 : match[2]?.toLowerCase() === 'm' ? 1_000_000 : 1);
+      const value = Number(match[1]) * (match[2]?.toLowerCase() === 'k' ? 1_000 : match[2]?.toLowerCase() === 'm' ? 1_000_000 : 1);
+      if (!Number.isSafeInteger(value) || value <= 0) throw new SessionAutomationParseError('--max-tokens 必须为正安全整数');
+      budget.maxTokens = value;
+      continue;
+    }
+    if (token === '--max-credits') {
+      const value = Number(tokens[++i]);
+      if (!Number.isFinite(value) || value <= 0) throw new SessionAutomationParseError('--max-credits 必须为正数');
+      budget.maxCredits = value;
       continue;
     }
     if (token === '--for') {
@@ -77,7 +94,7 @@ export function parseSessionAutomationCommand(input: string): ParsedSessionAutom
     const prompt = parsed.prompt || '检查当前会话目标的进展，处理可安全解决的问题，并报告状态。';
     return { family, action: replace ? 'replace' : 'create', spec: {
       kind: 'loop', mode: parsed.duration ? 'fixed' : 'adaptive', prompt,
-      ...(parsed.duration ? { intervalMs: parsed.duration } : {}), budget: parsed.budget,
+      ...(parsed.duration ? { intervalMs: parsed.duration } : {}), budget: { ...defaultBudget('loop'), ...parsed.budget },
     } };
   }
   if (tokens.length === 0) return { family, action: 'status' };
@@ -94,6 +111,5 @@ export function parseSessionAutomationCommand(input: string): ParsedSessionAutom
   }
   const parsed = parseBudget(args);
   if (!parsed.prompt || parsed.prompt.length > 16_000) throw new SessionAutomationParseError('Goal condition 必须为 1..16000 字符');
-  const budget = Object.keys(parsed.budget).length === 0 ? { ...DEFAULT_GOAL_BUDGET } : parsed.budget;
-  return { family, action, spec: { kind: 'goal', mode: 'goal', condition: parsed.prompt, budget } };
+  return { family, action, spec: { kind: 'goal', mode: 'goal', condition: parsed.prompt, budget: { ...defaultBudget('goal'), ...parsed.budget } } };
 }

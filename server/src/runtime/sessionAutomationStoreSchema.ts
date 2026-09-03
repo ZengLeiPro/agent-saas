@@ -41,13 +41,14 @@ export function buildSessionAutomationSchema(tablePrefix = 'runtime', runsTable 
  phase TEXT NOT NULL DEFAULT 'idle' CHECK(phase IN ('idle','waiting','dispatching','running','evaluating','draining','terminal')),
  generation BIGINT NOT NULL DEFAULT 1, spec_version BIGINT NOT NULL DEFAULT 1, control_version BIGINT NOT NULL DEFAULT 1,
  projection_version BIGINT NOT NULL DEFAULT 1, continuation_epoch BIGINT NOT NULL DEFAULT 0,
- run_count INTEGER NOT NULL DEFAULT 0, no_progress_count INTEGER NOT NULL DEFAULT 0, last_progress_fingerprint TEXT,
+ run_count INTEGER NOT NULL DEFAULT 0, missing_schedule_count INTEGER NOT NULL DEFAULT 0 CHECK(missing_schedule_count >= 0), no_progress_count INTEGER NOT NULL DEFAULT 0, last_progress_fingerprint TEXT,
  active_run_id TEXT, next_wakeup_at TIMESTAMPTZ, desired_terminal_status TEXT CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired','blocked')), last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(tenant_id,session_id,automation_id), UNIQUE(tenant_id,session_id,incarnation_id)
 )`,
 `ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS desired_terminal_status TEXT CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired','blocked'))`,
 `ALTER TABLE ${t.automations} DROP CONSTRAINT IF EXISTS ${t.automations}_desired_terminal_status_check`,
 `ALTER TABLE ${t.automations} ADD CONSTRAINT ${t.automations}_desired_terminal_status_check CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired','blocked'))`,
+`ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS missing_schedule_count INTEGER NOT NULL DEFAULT 0 CHECK(missing_schedule_count >= 0)`,
 `ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS limit_hit_reason TEXT`,
 `ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS limit_hit_at TIMESTAMPTZ`,
 `DO $$ BEGIN

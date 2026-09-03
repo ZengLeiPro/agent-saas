@@ -60,7 +60,7 @@ export class SessionAutomationTools {
       if (!input.delayMs || input.delayMs < 60_000 || input.delayMs > 86_400_000) return { accepted: false, reason: 'delay_out_of_range' };
       const epoch = Date.now();
       await c.query(`UPDATE ${this.store.tables.wakeups} SET state='superseded' WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`, [current.tenantId, current.automationId]);
-      await c.query(`UPDATE ${this.store.tables.automations} SET continuation_epoch=$3 WHERE tenant_id=$1 AND automation_id=$2`, [current.tenantId, current.automationId, epoch]);
+      await c.query(`UPDATE ${this.store.tables.automations} SET continuation_epoch=$3,missing_schedule_count=0 WHERE tenant_id=$1 AND automation_id=$2`, [current.tenantId, current.automationId, epoch]);
       await this.store.scheduleTx(c, {
         tenantId: current.tenantId, sessionId: current.sessionId, automationId: current.automationId,
         incarnationId: current.incarnationId, generation: current.generation, specVersion: current.specVersion,

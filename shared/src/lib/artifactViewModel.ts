@@ -1,7 +1,7 @@
-export const ARTIFACT_VIEW_POLICY_VERSION = 1 as const;
+export const ARTIFACT_VIEW_POLICY_VERSION = 2 as const;
 export const ARTIFACT_TEXT_MAX_BYTES = 2 * 1024 * 1024;
 
-export type ArtifactViewKind = 'image' | 'pdf' | 'text' | 'audio' | 'video' | 'download-only';
+export type ArtifactViewKind = 'image' | 'pdf' | 'markdown' | 'html' | 'text' | 'source' | 'audio' | 'video' | 'download-only';
 
 export interface ArtifactViewModel {
   artifactId: string;
@@ -65,15 +65,41 @@ export type ArtifactViewerEvent =
 const SAFE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const SAFE_AUDIO_MIMES = new Set(['audio/mpeg', 'audio/wav', 'audio/ogg']);
 const SAFE_VIDEO_MIMES = new Set(['video/mp4', 'video/webm']);
-const ACTIVE_MIMES = new Set([
-  'text/html', 'application/xhtml+xml', 'image/svg+xml', 'application/xml', 'text/xml',
+const HTML_MIMES = new Set(['text/html', 'application/xhtml+xml']);
+const MARKDOWN_MIMES = new Set(['text/markdown', 'text/x-markdown']);
+const ACTIVE_SOURCE_MIMES = new Set([
+  'image/svg+xml', 'application/xml', 'text/xml',
   'application/javascript', 'text/javascript', 'application/x-javascript',
 ]);
-const EXECUTABLE_EXTENSIONS = new Set([
-  'exe', 'dll', 'com', 'bat', 'cmd', 'ps1', 'sh', 'bash', 'zsh', 'fish', 'app', 'apk', 'ipa',
-  'jar', 'msi', 'scr', 'vbs', 'js', 'mjs', 'cjs', 'html', 'htm', 'xhtml', 'svg', 'xml',
+const STRUCTURED_TEXT_MIMES = new Set([
+  'application/json', 'application/ld+json', 'application/yaml', 'application/x-yaml',
+  'application/x-ndjson', 'application/toml', 'application/sql', 'application/graphql',
+]);
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd']);
+const HTML_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
+const ACTIVE_SOURCE_EXTENSIONS = new Set([
+  'bat', 'cmd', 'ps1', 'sh', 'bash', 'zsh', 'fish', 'command', 'vbs', 'js', 'mjs', 'cjs',
+  'py', 'pyw', 'rb', 'php', 'pl', 'lua', 'scpt', 'applescript', 'reg', 'desktop', 'url', 'webloc',
+  'svg', 'xml',
+]);
+const NATIVE_EXECUTABLE_EXTENSIONS = new Set([
+  'exe', 'dll', 'com', 'app', 'apk', 'ipa', 'jar', 'msi', 'scr', 'dmg', 'pkg', 'deb', 'rpm', 'run',
 ]);
 const MACRO_EXTENSIONS = new Set(['docm', 'dotm', 'xlsm', 'xltm', 'xlam', 'pptm', 'potm', 'ppam', 'sldm']);
+const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'dot', 'xls', 'xlsx', 'xlt', 'ppt', 'pptx', 'pot']);
+const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz', 'tbz2', 'txz']);
+const RISKY_EXTENSIONS = new Set([
+  ...ACTIVE_SOURCE_EXTENSIONS,
+  ...NATIVE_EXECUTABLE_EXTENSIONS,
+  ...HTML_EXTENSIONS,
+  ...MACRO_EXTENSIONS,
+  ...ARCHIVE_EXTENSIONS,
+]);
+const BINARY_EXTENSION_MIMES: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  pdf: 'application/pdf', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg',
+  mp4: 'video/mp4', webm: 'video/webm',
+};
 
 export interface ArtifactPolicyInput {
   artifactId: string;
@@ -96,37 +122,45 @@ export function evaluateArtifactPolicy(input: ArtifactPolicyInput): ArtifactPoli
   const size = Number.isSafeInteger(input.size) && (input.size ?? -1) >= 0 ? input.size! : 0;
   const digest = typeof input.digest === 'string' && /^[a-f0-9]{64}$/i.test(input.digest) ? input.digest.toLowerCase() : '';
   const declaredMime = normalizeMime(input.declaredMime);
-  const magic = input.bytes ? detectArtifactMagic(input.bytes) : { mime: '', active: false, executable: false, pdfActive: false };
+  const magic = input.bytes ? detectArtifactMagic(input.bytes) : { mime: '', active: false, binaryExecutable: false, script: false, pdfActive: false };
   const extensions = name.toLowerCase().split('.').slice(1);
   const finalExtension = extensions.at(-1) ?? '';
-  const doubleExtension = extensions.length > 1 && extensions.slice(0, -1).some(ext => EXECUTABLE_EXTENSIONS.has(ext) || MACRO_EXTENSIONS.has(ext));
-  const active = ACTIVE_MIMES.has(declaredMime)
-    || magic.active
-    || magic.executable
-    || magic.pdfActive
-    || EXECUTABLE_EXTENSIONS.has(finalExtension)
-    || MACRO_EXTENSIONS.has(finalExtension)
-    || doubleExtension;
+  const doubleExtension = extensions.length > 1 && extensions.slice(0, -1).some(ext => RISKY_EXTENSIONS.has(ext));
+  const nativeExecutable = NATIVE_EXECUTABLE_EXTENSIONS.has(finalExtension) || magic.binaryExecutable;
+  const macroDocument = MACRO_EXTENSIONS.has(finalExtension);
+  const archive = ARCHIVE_EXTENSIONS.has(finalExtension);
+  const officeWithoutConverter = OFFICE_EXTENSIONS.has(finalExtension);
+  const markdown = MARKDOWN_EXTENSIONS.has(finalExtension) || MARKDOWN_MIMES.has(declaredMime);
+  const html = HTML_EXTENSIONS.has(finalExtension) || HTML_MIMES.has(declaredMime);
+  const activeSource = ACTIVE_SOURCE_EXTENSIONS.has(finalExtension) || ACTIVE_SOURCE_MIMES.has(declaredMime) || magic.script;
+  const textBytes = input.bytes ? isUtf8Text(input.bytes) : false;
+  const active = nativeExecutable || macroDocument || magic.pdfActive || html || activeSource;
 
   let viewKind: ArtifactViewKind = 'download-only';
   let safeMime = 'application/octet-stream';
   let reason = 'unknown-or-malformed';
 
-  if (!active && declaredMime && magic.mime && mimeMatches(declaredMime, magic.mime)) {
-    if (SAFE_IMAGE_MIMES.has(declaredMime)) {
-      viewKind = 'image'; safeMime = declaredMime; reason = '';
-    } else if (declaredMime === 'application/pdf') {
-      viewKind = 'pdf'; safeMime = declaredMime; reason = '';
-    } else if (declaredMime === 'text/plain' && size <= ARTIFACT_TEXT_MAX_BYTES && input.bytes && isUtf8Text(input.bytes)) {
-      viewKind = 'text'; safeMime = 'text/plain; charset=utf-8'; reason = '';
-    } else if (SAFE_AUDIO_MIMES.has(declaredMime)) {
-      viewKind = 'audio'; safeMime = declaredMime; reason = '';
-    } else if (SAFE_VIDEO_MIMES.has(declaredMime)) {
-      viewKind = 'video'; safeMime = declaredMime; reason = '';
+  const blockedByNameOrBytes = nativeExecutable || macroDocument || archive || doubleExtension || officeWithoutConverter || magic.pdfActive;
+  if (!blockedByNameOrBytes && textBytes && textPolicyMatches(declaredMime, magic.mime) && textExtensionMatches(finalExtension)) {
+    if (markdown) viewKind = 'markdown';
+    else if (html) viewKind = 'html';
+    else if (activeSource || isSourceText(finalExtension, declaredMime)) viewKind = 'source';
+    else viewKind = 'text';
+    safeMime = viewKind === 'html' ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8';
+    reason = '';
+  } else if (!blockedByNameOrBytes && magic.mime && binaryPolicyMatches(declaredMime, magic.mime, finalExtension)) {
+    if (SAFE_IMAGE_MIMES.has(magic.mime)) {
+      viewKind = 'image'; safeMime = magic.mime; reason = '';
+    } else if (magic.mime === 'application/pdf') {
+      viewKind = 'pdf'; safeMime = magic.mime; reason = '';
+    } else if (SAFE_AUDIO_MIMES.has(magic.mime)) {
+      viewKind = 'audio'; safeMime = magic.mime; reason = '';
+    } else if (SAFE_VIDEO_MIMES.has(magic.mime)) {
+      viewKind = 'video'; safeMime = magic.mime; reason = '';
     }
   }
 
-  const requiresWarning = active || viewKind === 'download-only';
+  const requiresWarning = active || (viewKind === 'download-only' && !officeWithoutConverter);
   return {
     artifactId: input.artifactId,
     name,
@@ -139,7 +173,7 @@ export function evaluateArtifactPolicy(input: ArtifactPolicyInput): ArtifactPoli
     expiresAt: input.expiresAt,
     correlationId: input.correlationId,
     disposition: viewKind === 'download-only' ? 'attachment' : 'inline',
-    ...(reason ? { reason: active ? 'active-content' : reason } : {}),
+    ...(reason ? { reason: active ? 'active-content' : officeWithoutConverter ? 'conversion-required' : reason } : {}),
   };
 }
 
@@ -148,7 +182,7 @@ export function parseArtifactReadGrant(value: unknown): ArtifactReadGrant | null
   const raw = value as { descriptor?: unknown; readUrl?: unknown };
   if (typeof raw.readUrl !== 'string' || !raw.readUrl || !raw.descriptor || typeof raw.descriptor !== 'object') return null;
   const descriptor = raw.descriptor as Record<string, unknown>;
-  const kinds: ArtifactViewKind[] = ['image', 'pdf', 'text', 'audio', 'video', 'download-only'];
+  const kinds: ArtifactViewKind[] = ['image', 'pdf', 'markdown', 'html', 'text', 'source', 'audio', 'video', 'download-only'];
   if (
     typeof descriptor.artifactId !== 'string' || !descriptor.artifactId
     || typeof descriptor.name !== 'string' || !descriptor.name
@@ -212,38 +246,74 @@ function sanitizeArtifactName(value: string | undefined, artifactId: string): st
   return leaf?.slice(0, 255) || `${artifactId}.bin`;
 }
 
-function mimeMatches(declared: string, detected: string): boolean {
-  if (declared === detected) return true;
-  if (declared === 'image/jpeg' && detected === 'image/jpeg') return true;
-  if (declared === 'audio/mpeg' && detected === 'audio/mpeg') return true;
-  return false;
+function isTextMime(mime: string): boolean {
+  return mime.startsWith('text/')
+    || MARKDOWN_MIMES.has(mime)
+    || HTML_MIMES.has(mime)
+    || ACTIVE_SOURCE_MIMES.has(mime)
+    || STRUCTURED_TEXT_MIMES.has(mime)
+    || mime.endsWith('+json')
+    || mime.endsWith('+xml');
 }
 
-function detectArtifactMagic(bytes: Uint8Array): { mime: string; active: boolean; executable: boolean; pdfActive: boolean } {
+function textPolicyMatches(declared: string, detected: string): boolean {
+  if (!declared || declared === 'application/octet-stream') return true;
+  return isTextMime(declared) && isTextMime(detected);
+}
+
+function textExtensionMatches(extension: string): boolean {
+  return !BINARY_EXTENSION_MIMES[extension]
+    && !NATIVE_EXECUTABLE_EXTENSIONS.has(extension)
+    && !MACRO_EXTENSIONS.has(extension)
+    && !OFFICE_EXTENSIONS.has(extension)
+    && !ARCHIVE_EXTENSIONS.has(extension);
+}
+
+function binaryPolicyMatches(declared: string, detected: string, extension: string): boolean {
+  const expectedByExtension = BINARY_EXTENSION_MIMES[extension];
+  if (expectedByExtension && expectedByExtension !== detected) return false;
+  return !declared || declared === 'application/octet-stream' || declared === detected;
+}
+
+const SOURCE_TEXT_EXTENSIONS = new Set([
+  'json', 'jsonl', 'jsonc', 'yaml', 'yml', 'toml', 'ini', 'conf', 'csv', 'tsv', 'sql',
+  'ts', 'tsx', 'mts', 'cts', 'jsx', 'css', 'scss', 'less', 'py', 'go', 'rs', 'java',
+  'c', 'h', 'cpp', 'hpp', 'cc', 'rb', 'php', 'swift', 'kt', 'patch', 'diff',
+]);
+
+function isSourceText(extension: string, declaredMime: string): boolean {
+  return SOURCE_TEXT_EXTENSIONS.has(extension)
+    || STRUCTURED_TEXT_MIMES.has(declaredMime)
+    || declaredMime.endsWith('+json')
+    || declaredMime.endsWith('+xml');
+}
+
+function detectArtifactMagic(bytes: Uint8Array): { mime: string; active: boolean; binaryExecutable: boolean; script: boolean; pdfActive: boolean } {
   const head = bytes.subarray(0, Math.min(bytes.length, 4096));
   const ascii = new TextDecoder('latin1').decode(head);
   const trimmed = ascii.replace(/^\uFEFF?\s*/, '').toLowerCase();
-  const executable = starts(bytes, [0x4d, 0x5a]) || starts(bytes, [0x7f, 0x45, 0x4c, 0x46])
-    || starts(bytes, [0xcf, 0xfa, 0xed, 0xfe]) || starts(bytes, [0xfe, 0xed, 0xfa, 0xcf]) || trimmed.startsWith('#!');
+  const binaryExecutable = starts(bytes, [0x4d, 0x5a]) || starts(bytes, [0x7f, 0x45, 0x4c, 0x46])
+    || starts(bytes, [0xcf, 0xfa, 0xed, 0xfe]) || starts(bytes, [0xfe, 0xed, 0xfa, 0xcf]);
+  const script = trimmed.startsWith('#!');
   const active = /^<(?:!doctype\s+html|html|script|svg|\?xml)\b/.test(trimmed)
     || /<svg\b|<script\b|<!entity\b/.test(trimmed);
-  if (executable) return { mime: '', active, executable: true, pdfActive: false };
-  if (active) return { mime: trimmed.includes('<svg') ? 'image/svg+xml' : trimmed.includes('html') ? 'text/html' : 'application/xml', active: true, executable: false, pdfActive: false };
-  if (starts(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return { mime: 'image/png', active: false, executable: false, pdfActive: false };
-  if (starts(bytes, [0xff, 0xd8, 0xff])) return { mime: 'image/jpeg', active: false, executable: false, pdfActive: false };
-  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return { mime: 'image/gif', active: false, executable: false, pdfActive: false };
-  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return { mime: 'image/webp', active: false, executable: false, pdfActive: false };
+  if (binaryExecutable) return { mime: '', active, binaryExecutable: true, script: false, pdfActive: false };
+  if (active) return { mime: trimmed.includes('<svg') ? 'image/svg+xml' : trimmed.includes('html') || trimmed.startsWith('<script') ? 'text/html' : 'application/xml', active: true, binaryExecutable: false, script, pdfActive: false };
+  if (starts(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return { mime: 'image/png', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (starts(bytes, [0xff, 0xd8, 0xff])) return { mime: 'image/jpeg', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return { mime: 'image/gif', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return { mime: 'image/webp', active: false, binaryExecutable: false, script: false, pdfActive: false };
   if (ascii.startsWith('%PDF-')) {
     const body = new TextDecoder('latin1').decode(bytes);
-    return { mime: 'application/pdf', active: false, executable: false, pdfActive: /\/(?:JavaScript|JS|Launch|URI|SubmitForm|ImportData)\b/i.test(body) };
+    return { mime: 'application/pdf', active: false, binaryExecutable: false, script: false, pdfActive: /\/(?:JavaScript|JS|Launch|SubmitForm|ImportData)\b/i.test(body) };
   }
-  if (ascii.startsWith('ID3') || (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0)) return { mime: 'audio/mpeg', active: false, executable: false, pdfActive: false };
-  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return { mime: 'audio/wav', active: false, executable: false, pdfActive: false };
-  if (ascii.startsWith('OggS')) return { mime: 'audio/ogg', active: false, executable: false, pdfActive: false };
-  if (ascii.slice(4, 8) === 'ftyp') return { mime: 'video/mp4', active: false, executable: false, pdfActive: false };
-  if (starts(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return { mime: 'video/webm', active: false, executable: false, pdfActive: false };
-  if (isUtf8Text(bytes)) return { mime: 'text/plain', active: false, executable: false, pdfActive: false };
-  return { mime: '', active: false, executable: false, pdfActive: false };
+  if (ascii.startsWith('ID3') || (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0)) return { mime: 'audio/mpeg', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return { mime: 'audio/wav', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (ascii.startsWith('OggS')) return { mime: 'audio/ogg', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (ascii.slice(4, 8) === 'ftyp') return { mime: 'video/mp4', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (starts(bytes, [0x1a, 0x45, 0xdf, 0xa3])) return { mime: 'video/webm', active: false, binaryExecutable: false, script: false, pdfActive: false };
+  if (isUtf8Text(bytes)) return { mime: 'text/plain', active: false, binaryExecutable: false, script, pdfActive: false };
+  return { mime: '', active: false, binaryExecutable: false, script: false, pdfActive: false };
 }
 
 function starts(bytes: Uint8Array, signature: number[]): boolean {

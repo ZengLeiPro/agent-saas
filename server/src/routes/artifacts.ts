@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { evaluateArtifactPolicy } from '@agent/shared';
+import { ARTIFACT_VIEW_POLICY_VERSION, evaluateArtifactPolicy } from '@agent/shared';
 
 import type { ArtifactKind, ArtifactRecord } from '../runtime/artifactStore.js';
 import type { ArtifactShareRecord } from '../runtime/artifactShareStore.js';
@@ -37,6 +37,7 @@ const readUrlQuerySchema = z.object({
   expiresInSeconds: z.coerce.number().int().positive().max(5 * 60).optional(),
   proxy: z.enum(['true', 'false']).optional(),
   download: z.enum(['true', 'false']).optional(),
+  viewPolicyVersion: z.coerce.number().int().min(1).max(ARTIFACT_VIEW_POLICY_VERSION).optional(),
 });
 
 const upsertShareSchema = z.object({
@@ -180,6 +181,7 @@ export function createArtifactsRouter(options: ArtifactsRouterOptions): Router {
           expiresInSeconds: parsed.data.expiresInSeconds ?? options.defaultReadUrlTtlSeconds,
           forceProxy: parsed.data.proxy === 'true',
           forceDownload: parsed.data.download === 'true',
+          viewPolicyVersion: parsed.data.viewPolicyVersion,
         },
       );
       res.setHeader('Cache-Control', 'no-store');
@@ -279,7 +281,7 @@ function sendSignedArtifactContent(
   res.setHeader('Content-Type', descriptor.safeMime || 'application/octet-stream');
   res.setHeader('Content-Disposition', buildContentDisposition(disposition, descriptor.name));
 
-  const rangeAllowed = descriptor.viewKind === 'audio' || descriptor.viewKind === 'video' || descriptor.viewKind === 'pdf';
+  const rangeAllowed = ['audio', 'video', 'pdf', 'markdown', 'text', 'source'].includes(descriptor.viewKind);
   if (rangeAllowed) res.setHeader('Accept-Ranges', 'bytes');
   if (!req.headers.range && req.headers['if-none-match'] === etag) {
     res.status(304).end();
@@ -348,7 +350,7 @@ function setPublicContentHeaders(
     correlationId: 'public-share',
   }) : undefined;
   const mimeType = policy?.safeMime || 'application/octet-stream';
-  const dangerous = !policy || policy.disposition === 'attachment';
+  const dangerous = !policy || policy.activeContent || policy.disposition === 'attachment';
   const rawFileName = typeof record.metadata.fileName === 'string' ? record.metadata.fileName : `${record.artifactId}.bin`;
   const fileName = rawFileName.split(/[\\/]/).pop() || `${record.artifactId}.bin`;
   res.setHeader('Cache-Control', 'no-store');

@@ -8,7 +8,7 @@
  *   - /compact 与纯附件消息跳过门禁模型调用
  *   - config.guardrail 缺省（getter 缺省/空链）→ 门禁旁路，行为与改造前一致
  *   - personalAgentEnabled=false 普通用户被拒；admin 与 org agent 会话不受影响
- *   - M20-06 V1 target 首绑、mismatch/cross-tenant 与 N-1 迁移 fail-closed
+ *   - M20-06 V1 target 首绑、mismatch/cross-tenant fail-closed；N-1 会话按证据迁移
  *   - orgAgentId 无效 → org_agent_unavailable
  */
 
@@ -23,7 +23,7 @@ import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
 import { normalizeChatSubmission, toCanonicalChatSubmissionWireMessage, type AgentTarget } from '@agent/shared';
 import { interactionStore } from '../channels/web/interactionStore.js';
 import { findTranscriptOrMetaPathBySessionId } from '../data/transcripts/index.js';
-import { readSessionMeta } from '../data/transcripts/meta.js';
+import { readSessionMeta, writeSessionMeta } from '../data/transcripts/meta.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { GuardrailEventInsert, GuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import type { TenantStore } from '../data/tenants/store.js';
@@ -624,7 +624,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(modelCalls()).toHaveLength(0);
   });
 
-  it('N-1 仅凭 meta.orgAgentId 迁移 org target；无证明的历史 session 阻止发送', async () => {
+  it('N-1 按证据迁移 target：orgAgentId→org、无证据→personal、不可信绑定仍阻止', async () => {
     const rig = await makeRig();
     const agent = await seedOrgAgent(rig, {
       guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
@@ -646,7 +646,9 @@ describe('WebChannel 专职 Agent 门禁', () => {
       agentTargetBindingVersion: 1,
     });
 
-    const unproven = createRuntimeSessionRecord({
+    // N-1 个人会话（无 agentTarget、无 orgAgentId、tenant 可证明）：兜底为 personal 并落盘。
+    // 生产 9192 个历史会话是这个形态，把它们判成 unproven 等于全平台历史会话只读。
+    const legacyPersonal = createRuntimeSessionRecord({
       sessionId: randomUUID(),
       userId: WAIN_USER.sub,
       username: WAIN_USER.username,
@@ -655,9 +657,33 @@ describe('WebChannel 专职 Agent 门禁', () => {
       channel: 'web',
       cwd: (rig.sessionCatalog as any).options.agentCwd,
     });
-    await rig.sessionCatalog.ensure(unproven);
+    await rig.sessionCatalog.ensure(legacyPersonal);
     rig.ws.sent.length = 0;
-    await rig.send(WAIN_USER, { sessionId: unproven.sessionId, message: '继续' });
+    await rig.send(WAIN_USER, { sessionId: legacyPersonal.sessionId, message: '继续' });
+    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')).toBeUndefined();
+    expect(await readSessionMeta(legacyPersonal.transcriptPath)).toMatchObject({
+      agentTarget: { kind: 'personal', tenantId: 'wain' },
+      agentTargetBindingVersion: 1,
+    });
+
+    // 已写入但不可信的 agentTarget（跨租户）绝不被 legacy 兜底降级成 personal。
+    const crossTenant = createRuntimeSessionRecord({
+      sessionId: randomUUID(),
+      userId: WAIN_USER.sub,
+      username: WAIN_USER.username,
+      userRole: WAIN_USER.role,
+      tenantId: WAIN_USER.tenantId,
+      channel: 'web',
+      cwd: (rig.sessionCatalog as any).options.agentCwd,
+    });
+    await rig.sessionCatalog.ensure(crossTenant);
+    const crossTenantMeta = await readSessionMeta(crossTenant.transcriptPath);
+    await writeSessionMeta(crossTenant.transcriptPath, {
+      ...crossTenantMeta!,
+      agentTarget: { kind: 'personal', tenantId: 'other-tenant' },
+    });
+    rig.ws.sent.length = 0;
+    await rig.send(WAIN_USER, { sessionId: crossTenant.sessionId, message: '继续' });
     expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data).toMatchObject({
       reason_code: 'invalid_submission',
     });

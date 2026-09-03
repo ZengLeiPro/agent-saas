@@ -12,7 +12,7 @@ export interface SecretRef {
   revokedAt?: string;
   /**
    * Opaque version（TASK-318 config identity）：put=1，rotate/revoke 递增。
-   * 只用于配置身份/轮换观测，不承载任何访问控制语义；旧数据缺省视为 1。
+   * 只用于配置身份/轮换观测，不承载任何访问控制语义；仅本地旧加密文件数据缺省视为 1。
    */
   version?: number;
 }
@@ -253,13 +253,21 @@ function assertCallerHasOperationScope(caller: VaultCaller, operation: VaultOper
 }
 
 function opaqueVersion(secret: Pick<StoredSecret, 'id' | 'version'>): number {
-  // v1 迁移：TASK-318 之前写入的 vault 数据没有 version，显式视为 1；
+  // 本地 v1 迁移：TASK-318 之前写入的加密文件数据没有 version，显式视为 1；
   // 非法值不能悄悄回退，否则 rotation identity 会失真。
   if (secret.version === undefined) return 1;
   if (!Number.isSafeInteger(secret.version) || secret.version <= 0) {
     throw new Error(`secret has invalid opaque version: ${secret.id}`);
   }
   return secret.version;
+}
+
+function remoteOpaqueVersion(raw: Record<string, unknown>): number {
+  const version = raw.version;
+  if (typeof version !== 'number' || !Number.isSafeInteger(version) || version <= 0) {
+    throw new Error('HttpSecretVault response ref version must be a positive safe integer');
+  }
+  return version;
 }
 
 function toRef(secret: StoredSecret): SecretRef {
@@ -293,13 +301,13 @@ function sanitizeRemoteRef(value: unknown): SecretRef {
     metadata: (raw.metadata as Record<string, unknown> | undefined) ?? {},
     createdAt: raw.createdAt as string,
     updatedAt: (raw.updatedAt as string | undefined) ?? (raw.createdAt as string),
-    version: opaqueVersion(raw as unknown as SecretRef),
+    version: remoteOpaqueVersion(raw),
   };
   if (raw.revokedAt !== undefined) ref.revokedAt = raw.revokedAt as string;
   return ref;
 }
 
-/** opaque version 递增：旧数据没有 version 时从 1 起步（rotate/revoke 后为 2）。 */
+/** opaque version 递增：本地旧数据没有 version 时从 1 起步（rotate/revoke 后为 2）。 */
 function nextVersion(secret: StoredSecret): number {
   return opaqueVersion(secret) + 1;
 }
@@ -574,7 +582,7 @@ export class HttpSecretVault implements SecretVault {
     return result.value;
   }
 
-  /** metadata-only 远端读取；TTL 到期后重检，远端响应仍按不可信输入校验。 */
+  /** metadata-only 远端读取；version 前进会失效 plaintext cache，倒退则 fail closed。 */
   async inspectRef(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null> {
     const id = refId(ref);
     const known = typeof ref === 'string' ? this.refs.get(ref) : ref;
@@ -595,10 +603,20 @@ export class HttpSecretVault implements SecretVault {
 
   async rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef> {
     const id = refId(ref);
+    const known = typeof ref === 'string' ? this.refs.get(id) : ref;
     this.assertRemoteOperation(ref, caller, 'rotate');
-    const updated = sanitizeRemoteRef(await this.post<unknown>(`/secrets/${encodeURIComponent(id)}/rotate`, { value, caller }));
+    const updated = sanitizeRemoteRef(await this.post<unknown>(`/secrets/${encodeURIComponent(id)}/rotate`, {
+      value,
+      caller,
+      ...(known?.version !== undefined ? { expectedVersion: known.version } : {}),
+    }));
     if (updated.id !== id) throw new Error('HttpSecretVault rotate response ref id mismatch');
     assertAllowed(updated, caller, 'rotate');
+    if (known?.version !== undefined && (updated.version ?? 0) <= known.version) {
+      // 远端可能已经改变 secret；即使响应违反版本契约，也必须清除本地 plaintext/metadata cache。
+      this.invalidate(id);
+      throw new Error('HttpSecretVault rotate response ref version must advance');
+    }
     this.invalidate(id);
     this.rememberRef(updated);
     return updated;
@@ -622,6 +640,13 @@ export class HttpSecretVault implements SecretVault {
   }
 
   private rememberRef(ref: SecretRef): void {
+    const previous = this.refs.get(ref.id);
+    if (previous?.version !== undefined && ref.version !== undefined) {
+      if (ref.version < previous.version) {
+        throw new Error('HttpSecretVault response ref version regressed below observed version');
+      }
+      if (ref.version > previous.version) this.invalidateCache(ref.id);
+    }
     this.refs.set(ref.id, ref);
     if (this.metadataCacheTtlMs > 0) {
       this.refMetadataExpiresAt.set(ref.id, this.nowMs() + this.metadataCacheTtlMs);

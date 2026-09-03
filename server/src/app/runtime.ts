@@ -179,7 +179,7 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
-import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js';
+import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js'; import { createVoiceTranscriptionConfigRefresher } from './voiceConfigRefresh.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
@@ -1803,7 +1803,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     target: rawRuntimeConfig,
     webChannelTarget: voiceTranscriptionOptions,
     secretVault,
-  });
+  }); const refreshVoiceTranscriptionConfig = createVoiceTranscriptionConfigRefresher({ config, secretVault, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true), prepareSttUpdate: prepareSttRuntimeUpdate });
   if (!await sharedConfigRefresher.refreshIfChanged(true)) {
     throw new Error('共享配置启动对齐失败');
   }
@@ -2958,7 +2958,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshEgressProxyCredential,
     groupStore, authMiddleware,
     titleGeneratorConfigs, titleModelAdapterFactory, defaultTitleModel: titleGeneratorDefaultModel,
-    refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
+    refreshSharedConfig: sharedConfigRefresher.refreshIfChanged, refreshVoiceTranscriptionConfig,
     updateModelsConfig,
     ...(configIdentityAssembly.modelResolverHooks.validateConfigReload ? { validateSharedConfigCandidate: configIdentityAssembly.modelResolverHooks.validateConfigReload } : {}),
     invalidateSharedConfigIdentity: configIdentityAssembly.invalidate, notifySharedConfigChanged: configIdentityAssembly.modelResolverHooks.onConfigReloaded, acknowledgeSharedConfigApplied: sharedConfigRefresher.acknowledgeConfigApplied, acknowledgeRecoveryConfigApplied: sharedConfigRefresher.acknowledgeRecoveryConfigApplied, prepareSharedConfigIdentityPublication: configIdentityAssembly.prepareRecoveryPublication,

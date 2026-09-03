@@ -20,8 +20,8 @@ function unitMainPid(unit) {
 /**
  * TASK-318：从 active 色 API release env 读取部署期绑定的 expected config
  * identity。仅当 env 声明的 releaseId 与本次 Manifest 一致时才采用，防止把
- * 旧 release 的配置身份写进新的 trusted identity；env 不存在相关变量时
- * 返回 undefined（兼容旧发布，不阻断写入）。
+ * 旧 release 的配置身份写进新的 trusted identity；env 完全不存在 identity 变量时
+ * 返回 undefined（兼容旧发布），但 digest 已存在时 schema version 必须显式绑定。
  */
 export function readExpectedConfigIdentityFromReleaseEnv(
   color,
@@ -67,7 +67,10 @@ function parseExpectedConfigIdentity(values) {
   }
   if (!/^sha256:[a-f0-9]{64}$/u.test(digest))
     throw new Error('Release env carries a malformed config identity digest');
-  const schemaVersion = Number(values.AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION ?? '1');
+  const rawSchemaVersion = values.AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION;
+  if (!rawSchemaVersion)
+    throw new Error('Release env is missing config identity schema version');
+  const schemaVersion = Number(rawSchemaVersion);
   if (!Number.isSafeInteger(schemaVersion) || schemaVersion <= 0)
     throw new Error('Release env carries a malformed config identity schema version');
   const credentialVersionDigest = values.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST;

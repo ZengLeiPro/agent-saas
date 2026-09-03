@@ -17,6 +17,7 @@ import {
 import {
   AdminConfigMutationService,
   ConfigConflictError,
+  ConfigMutationCommittedError,
   ConfigRuntimeRecoveryError,
   configFingerprint,
 } from '../config/adminConfigMutationService.js';
@@ -77,6 +78,26 @@ describe('AdminConfigMutationService', () => {
     expect(audit).toContain('"result":"applied"');
     expect(audit).toContain('agent.maxTurns');
     expect(await readdir(join(test.root, 'data/config-governance/backups'))).toHaveLength(1);
+  });
+
+  it('reports publication failure as committed without rolling back durable/runtime state', async () => {
+    const publicationError = new Error('forced publication failure');
+    const test = await fixture({ onCommitted: vi.fn().mockRejectedValue(publicationError) });
+    const applyRuntime = vi.fn();
+
+    const error = await test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 30, {})),
+      applyRuntime,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConfigMutationCommittedError);
+    expect(error).toMatchObject({ cause: publicationError, code: 'CONFIG_MUTATION_COMMITTED' });
+    expect(applyRuntime).toHaveBeenCalledOnce();
+    expect(JSON.parse(await readFile(test.configPath, 'utf8')).agent.maxTurns).toBe(30);
+    const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
+    expect(audit).toContain('"result":"applied"');
   });
 
   it('serializes concurrent service instances with the shared OS guard', async () => {

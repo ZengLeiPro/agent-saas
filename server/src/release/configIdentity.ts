@@ -7,7 +7,7 @@
  *   digest 冒充（那些绑定的是代码与制品，不是配置）。
  * - digest 输入排除：JSONC 注释（天然，因为作用于 parse 后对象）、对象键顺序
  *   （canonical JSON 递归排序）、绝对路径、时间/随机值、secret 明文、可能携带
- *   凭据的 URL query / DB 连接串口令、以及仅用于 bootstrap 的瞬态字段。
+ *   凭据的 URL query 明文 / DB 连接串口令、以及仅用于 bootstrap 的瞬态字段。
  * - 受管 inline/ref 双形态凭据进入投影为 `{form:'ref', ref}`（ref 为 ref id 的
  *   不可逆 domain-separated 摘要）或 `{form:'inline'}`；opaque version/rotation
  *   通过 `credentialVersionDigest` 单独成摘要（见下），使 secret 轮换在明文
@@ -244,6 +244,13 @@ const URL_REDACT_FIELDS: ReadonlyArray<PathPattern> = [
   ['egress', 'packageMirrors', 'npmRegistry'],
 ];
 
+/** 集合语义数组：投影后按 canonical value 排序去重；其余数组保持原序。 */
+const SET_LIKE_ARRAY_FIELDS: ReadonlyArray<PathPattern> = [
+  ['server', 'corsOrigins'],
+  ['egress', 'server', 'matchDomains'],
+  ['egress', 'server', 'bypassDomains'],
+];
+
 /** 机器相关路径：不进入身份（同语义配置在不同主机应得到相同 identity）。 */
 const ABSOLUTE_PATH_FIELDS: ReadonlyArray<PathPattern> = [
   ['agent', 'cwd'],
@@ -286,6 +293,7 @@ function redactUrl(
 ):
   | {
       __url__: string;
+      __query__?: { __opaqueDigest__: string };
     }
   | { __opaqueDigest__: string } {
   try {
@@ -294,9 +302,21 @@ function redactUrl(
       url.username = 'credential';
       url.password = '';
     }
+    // Query 可能携带 token，不能明文进入投影；但它也可能是模型版本、路由等
+    // endpoint 行为的一部分，不能像 fragment 一样直接丢弃。以解码后、仅按 key
+    // 稳定排序且不去重的序列生成 path-bound opaque digest：不同 key 的参数重排等价，
+    // 同 key 的值顺序可能影响 first/last-value 语义，必须保留，同时不泄漏内容。
+    const queryEntries = [...url.searchParams.entries()].sort(
+      ([leftKey], [rightKey]) => (leftKey === rightKey ? 0 : leftKey < rightKey ? -1 : 1),
+    );
     url.search = '';
     url.hash = '';
-    return { __url__: url.toString() };
+    return {
+      __url__: url.toString(),
+      ...(queryEntries.length > 0
+        ? { __query__: opaqueProjectionIdentity(queryEntries, [...path, 'query']) }
+        : {}),
+    };
   } catch {
     // 部分 endpoint（如 OSS）允许不带 scheme；不可安全拆解时只保留摘要。
     return opaqueProjectionIdentity(value, path);
@@ -310,7 +330,14 @@ const DB_ENUM_BEHAVIOR_OPTIONS: Readonly<Record<string, ReadonlySet<string>>> = 
   ssl: new Set(['0', '1', 'false', 'true']),
   sslaccept: new Set(['accept_invalid_certs', 'strict']),
   sslmode: new Set(['allow', 'disable', 'prefer', 'require', 'verify-ca', 'verify-full']),
-  target_session_attrs: new Set(['any', 'prefer-standby', 'primary', 'read-only', 'read-write', 'standby']),
+  target_session_attrs: new Set([
+    'any',
+    'prefer-standby',
+    'primary',
+    'read-only',
+    'read-write',
+    'standby',
+  ]),
 };
 
 const DB_SCALAR_BEHAVIOR_OPTIONS = new Set([
@@ -325,7 +352,9 @@ const DB_SCALAR_BEHAVIOR_OPTIONS = new Set([
   'tcp_user_timeout',
 ]);
 
-function redactSignedUrl(value: string): { __signedUrlOrigin__: string } | typeof REDACTED_SECRET_MARKER {
+function redactSignedUrl(
+  value: string,
+): { __signedUrlOrigin__: string } | typeof REDACTED_SECRET_MARKER {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return REDACTED_SECRET_MARKER;
@@ -337,7 +366,9 @@ function redactSignedUrl(value: string): { __signedUrlOrigin__: string } | typeo
 
 function collectDbBehaviorOptions(url: URL): Record<string, string> {
   const options: Record<string, string> = {};
-  for (const [rawKey, rawValue] of [...url.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [rawKey, rawValue] of [...url.searchParams.entries()].sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
     const key = rawKey.toLowerCase();
     const value = rawValue.toLowerCase();
     const enums = DB_ENUM_BEHAVIOR_OPTIONS[key];
@@ -492,6 +523,13 @@ function projectValue(
       const projected = projectValue(item, [...path, '*'], context);
       out.push(projected);
     }
+    if (pathsMatchAny(path, SET_LIKE_ARRAY_FIELDS)) {
+      const unique = new Map<string, unknown>();
+      for (const item of out) unique.set(canonicalJson(item), item);
+      return [...unique.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([, item]) => item);
+    }
     return out;
   }
   if (isPlainObject(value)) {
@@ -574,7 +612,9 @@ export async function resolveSecretRefVersions(
       });
       const version =
         !ref?.revokedAt &&
-        typeof ref?.version === 'number' && Number.isSafeInteger(ref.version) && ref.version > 0
+        typeof ref?.version === 'number' &&
+        Number.isSafeInteger(ref.version) &&
+        ref.version > 0
           ? ref.version
           : null;
       versionByRefId.set(entry.refId, version);
@@ -670,9 +710,12 @@ export function readExpectedConfigIdentity(
     throw new Error(`${EXPECTED_CONFIG_IDENTITY_DIGEST_ENV} must be a sha256 digest`);
   }
   const rawSchemaVersion = optionalTrimmed(env, EXPECTED_CONFIG_IDENTITY_SCHEMA_VERSION_ENV);
-  const schemaVersion = rawSchemaVersion
-    ? Number(rawSchemaVersion)
-    : CONFIG_IDENTITY_SCHEMA_VERSION;
+  if (!rawSchemaVersion) {
+    throw new Error(
+      `${EXPECTED_CONFIG_IDENTITY_SCHEMA_VERSION_ENV} is required when ${EXPECTED_CONFIG_IDENTITY_DIGEST_ENV} is set`,
+    );
+  }
+  const schemaVersion = Number(rawSchemaVersion);
   if (!Number.isSafeInteger(schemaVersion) || schemaVersion <= 0) {
     throw new Error(`${EXPECTED_CONFIG_IDENTITY_SCHEMA_VERSION_ENV} must be a positive integer`);
   }

@@ -268,6 +268,7 @@ describe('registerRoutes', () => {
       groupStore: {},
       userStore: undefined,
       refreshSharedConfig: vi.fn(async () => true),
+      refreshVoiceTranscriptionConfig: vi.fn(async () => true),
     };
 
     registerRoutes(app as any, runtime);
@@ -294,6 +295,11 @@ describe('registerRoutes', () => {
     expect(mocked.createFileRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
+    });
+    expect(mocked.createVoiceRouter).toHaveBeenCalledWith({
+      agentCwd: '/agent',
+      transcriptionService: runtime.voiceTranscriptionService,
+      refreshSharedConfig: runtime.refreshVoiceTranscriptionConfig,
     });
     // Legacy grants are checked against live principal and auth-epoch state.
     expect(mocked.createPreviewRoutes).toHaveBeenCalledWith({
@@ -396,6 +402,7 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.uploadRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.fileRouter);
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.voiceRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.previewTokenRouter);
     expect(app.use).toHaveBeenCalledWith('/preview', mocked.previewServeRouter);
     expect(app.use).toHaveBeenCalledWith('/api/search', mocked.searchRouter);

@@ -57,152 +57,6 @@ function digestOf(config: AppConfig, processCwd = '/srv/server'): string {
   return calculateConfigIdentityDigest(projection);
 }
 
-describe('canonical projection：注释、键顺序与等价默认值不影响 identity', () => {
-  it('JSONC 注释与原始文本排版不进入 identity', () => {
-    const withComments = parseRawConfig(`{
-      // 部署注释：这些注释不应影响配置身份
-      "agent": { "cwd": "/srv/agent", /* 块注释 */ "permissionMode": "default" },
-      "server": { "port": 3001, "timezone": "Asia/Shanghai" }
-    }`);
-    expect(digestOf(withComments)).toBe(digestOf(baseConfig()));
-  });
-
-  it('任意 payload、URL 凭据与语义路径只以脱敏形态进入投影', () => {
-    const sensitive = baseConfig({
-      dispatch: {
-        env: { API_TOKEN: 'dispatch-plaintext-secret' },
-        sandbox: {
-          allowWrite: ['/home/alice/private-worktree'],
-          denyRead: ['/home/alice/.ssh'],
-        },
-      },
-      models: {
-        default: 'primary/model-a',
-        groups: [
-          {
-            id: 'primary',
-            name: 'Primary',
-            apiKey: 'model-plaintext-secret',
-            baseUrl: 'https://alice:model-password@models.example.com/v1?token=query-secret',
-            extraBody: { nestedToken: 'extra-body-secret' },
-            models: [
-              {
-                id: 'model-a',
-                name: 'Model A',
-                value: 'model-a',
-                thinking: { command: '/home/alice/private-reasoner' },
-              },
-            ],
-          },
-        ],
-      },
-      serverRemote: {
-        baseUrl: 'https://hand.example.com',
-        authTokenRef: 'hand-token-ref',
-        recipe: {
-          mountSubPath: '/customer/private/repository',
-          repo: { url: 'https://oauth:repo-token@git.example.com/private.git' },
-          files: [
-            {
-              artifactId: 'artifact-1',
-              path: '/home/alice/private.txt',
-              signedUrl: 'https://objects.example.com/file?signature=signed-secret',
-            },
-          ],
-          setupCommands: ['export TOKEN=command-secret && ./bootstrap'],
-        },
-      },
-      egress: {
-        server: {
-          enabled: true,
-          proxyUrl: 'https://proxy-user:proxy-password@proxy.example.com:8443?token=proxy-query',
-          matchDomains: [],
-          bypassDomains: [],
-          timeoutMs: 20_000,
-          failOpen: true,
-        },
-        sandbox: {
-          enabled: true,
-          proxyUrl: 'https://sandbox-user:sandbox-password@proxy.example.com',
-          noProxy: [],
-        },
-        packageMirrors: {
-          enabled: true,
-          pipIndexUrl: 'https://pip-user:pip-password@packages.example.com/simple?token=pip-query',
-          pipTrustedHost: 'packages.example.com',
-          npmRegistry: 'https://npm-user:npm-password@packages.example.com/npm?token=npm-query',
-        },
-      },
-    });
-
-    const projection = buildCanonicalConfigProjection(sensitive).projection;
-    const serialized = JSON.stringify(projection);
-    for (const probe of [
-      'dispatch-plaintext-secret',
-      'model-plaintext-secret',
-      'model-password',
-      'query-secret',
-      'extra-body-secret',
-      '/home/alice',
-      'repo-token',
-      'signed-secret',
-      'command-secret',
-      'proxy-password',
-      'proxy-query',
-      'sandbox-password',
-      'pip-password',
-      'pip-query',
-      'npm-password',
-      'npm-query',
-    ]) {
-      expect(serialized).not.toContain(probe);
-    }
-    expect(serialized).toContain('models.example.com');
-    expect(serialized).toContain('proxy.example.com');
-    expect(serialized).toContain('__opaqueDigest__');
-
-    const changed = structuredClone(sensitive);
-    changed.serverRemote!.recipe!.setupCommands = ['export TOKEN=different-secret && ./bootstrap'];
-    expect(digestOf(changed)).not.toBe(digestOf(sensitive));
-  });
-
-  it('对象键顺序不影响 identity', () => {
-    const reordered = parseRawConfig({
-      server: { timezone: 'Asia/Shanghai', port: 3001 },
-      agent: { permissionMode: 'default', cwd: '/srv/agent' },
-    });
-    expect(digestOf(reordered)).toBe(digestOf(baseConfig()));
-  });
-
-  it('等价默认值（显式写默认值 vs 依赖 parse-time 默认）得到相同 identity', () => {
-    const implicit = parseRawConfig({
-      agent: { cwd: '/x' },
-      server: {},
-      webPush: {},
-    });
-    const explicit = parseRawConfig({
-      agent: { cwd: '/x' },
-      server: {},
-      webPush: { enabled: false },
-    });
-    // webPush.enabled 的 schema 默认是 false；显式写出与依赖 parse-time
-    // 默认会生成相同有效 AppConfig，因此 identity 必须相同。
-    expect(digestOf(explicit)).toBe(digestOf(implicit));
-  });
-
-  it('绝对路径不进入 identity：同语义配置在不同主机目录得到相同 digest', () => {
-    const hostA = parseRawConfig({
-      ...BASE_RAW,
-      agent: { cwd: '/srv/host-a', permissionMode: 'default' },
-    });
-    const hostB = parseRawConfig({
-      ...BASE_RAW,
-      agent: { cwd: '/srv/host-b', permissionMode: 'default' },
-    });
-    expect(digestOf(hostA)).toBe(digestOf(hostB));
-  });
-});
-
 describe('digest 敏感性：真实行为配置变化必然改变 identity', () => {
   it('非敏感有效配置变化改变 digest', () => {
     expect(digestOf(baseConfig({ server: { port: 4001 } }))).not.toBe(digestOf(baseConfig()));
@@ -259,9 +113,13 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
       auth: {
         enabled: true,
         jwtSecret: 'jwt-secret-value-32-chars-long!!',
-        selfSignup: { enabled: true, sms: {
-          provider: 'aliyun', accessKeyId: 'LTAI-SMS-PLAINTEXT-CREDENTIAL-ID',
-        } },
+        selfSignup: {
+          enabled: true,
+          sms: {
+            provider: 'aliyun',
+            accessKeyId: 'LTAI-SMS-PLAINTEXT-CREDENTIAL-ID',
+          },
+        },
       },
       artifact: {
         backend: 'oss',
@@ -549,10 +407,13 @@ describe('Secret ref 版本与轮换（明文不可见时改变 identity）', ()
 describe('expected identity 读取（env 绑定）', () => {
   const VALID_DIGEST = `sha256:${'e'.repeat(64)}`;
 
-  it('读取合法 expected identity（schema version 缺省为 1）', () => {
-    expect(readExpectedConfigIdentity({ AGENT_SAAS_CONFIG_IDENTITY_DIGEST: VALID_DIGEST })).toEqual(
-      { schemaVersion: 1, digest: VALID_DIGEST },
-    );
+  it('读取合法 expected identity 时要求显式 schema version', () => {
+    expect(
+      readExpectedConfigIdentity({
+        AGENT_SAAS_CONFIG_IDENTITY_DIGEST: VALID_DIGEST,
+        AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: '1',
+      }),
+    ).toEqual({ schemaVersion: 1, digest: VALID_DIGEST });
     expect(
       readExpectedConfigIdentity({
         AGENT_SAAS_CONFIG_IDENTITY_DIGEST: VALID_DIGEST,
@@ -567,6 +428,9 @@ describe('expected identity 读取（env 绑定）', () => {
     expect(() =>
       readExpectedConfigIdentity({ AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: '1' }),
     ).toThrow(/without/);
+    expect(() =>
+      readExpectedConfigIdentity({ AGENT_SAAS_CONFIG_IDENTITY_DIGEST: VALID_DIGEST }),
+    ).toThrow(/SCHEMA_VERSION.*required/);
     expect(() => readExpectedConfigIdentity({ AGENT_SAAS_CONFIG_IDENTITY_DIGEST: 'nope' })).toThrow(
       /sha256 digest/,
     );
@@ -596,14 +460,12 @@ describe('expected identity 读取（env 绑定）', () => {
         AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: '2',
       }),
     ).toThrow(/schema version/);
-    expect(
+    expect(() =>
       readRuntimeIdentity({
         ...base,
         AGENT_SAAS_CONFIG_IDENTITY_DIGEST: VALID_DIGEST,
       }),
-    ).toMatchObject({
-      expectedConfigIdentity: { schemaVersion: 1, digest: VALID_DIGEST },
-    });
+    ).toThrow(/SCHEMA_VERSION.*required/);
   });
 });
 

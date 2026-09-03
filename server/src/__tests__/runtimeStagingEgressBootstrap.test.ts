@@ -9,7 +9,7 @@ afterEach(async () => {
 });
 
 describe('runtime Staging egress bootstrap', () => {
-  it('routes validated HTTP Vault reads through fail-closed egress before credentials resolve', async () => {
+  it('routes versioned HTTP Vault reads through fail-closed egress before credentials resolve', async () => {
     const directFetch = vi.fn(async () => {
       throw new Error('direct fetch must not be used');
     }) as unknown as typeof fetch;
@@ -21,6 +21,7 @@ describe('runtime Staging egress bootstrap', () => {
             id: 'ref-1',
             ownerId: '__system__',
             kind: 'client_daemon',
+            version: 1,
             metadata: {},
             createdAt: '2026-08-01T00:00:00.000Z',
             updatedAt: '2026-08-01T00:00:00.000Z',

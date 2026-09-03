@@ -23,6 +23,7 @@ function remoteRef(id: string, ownerId = 'alice') {
     id,
     ownerId,
     kind: 'mcp',
+    version: 1,
     metadata: {},
     createdAt: '2026-08-01T00:00:00.000Z',
     updatedAt: '2026-08-01T00:00:00.000Z',
@@ -89,7 +90,7 @@ describe('HttpSecretVault cache (A3)', () => {
         return { value: `v${resolveCount}`, ref: remoteRef(body.ref) };
       }
       if (path === '/secrets/ref-a/rotate') {
-        return { id: 'ref-a', ownerId: 'alice', kind: 'mcp', metadata: {}, createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' };
+        return { id: 'ref-a', ownerId: 'alice', kind: 'mcp', version: 2, metadata: {}, createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' };
       }
       throw new Error(`unexpected path ${path}`);
     });

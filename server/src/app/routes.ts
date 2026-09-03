@@ -273,10 +273,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);
-  app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService }));
+  /* 每次强制刷新 STT SecretRef。 */ app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService, refreshSharedConfig: runtime.refreshVoiceTranscriptionConfig }));
   app.use('/api', createTtsRouter({ tts: config.tts }));
   app.use('/api/search', createSearchRouter({ agentCwd, userStore: runtime.userStore }));
-  // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）
+  // 场景库：所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段。
   app.use(
     '/api/scenarios',
     createScenariosRouter({

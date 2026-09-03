@@ -117,6 +117,16 @@ export class ConfigConflictError extends Error {
   }
 }
 
+/** durable/runtime 已提交，但后续 observation/publication 或维护步骤失败。 */
+export class ConfigMutationCommittedError extends Error {
+  readonly code = 'CONFIG_MUTATION_COMMITTED';
+
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'ConfigMutationCommittedError';
+  }
+}
+
 /**
  * 磁盘配置已回滚（或正在恢复），但运行时回滚/受信恢复发布未能完成。
  * 调用方必须停止撤销候选 Secret 等清理，避免仍在运行的候选配置失去凭据。
@@ -438,9 +448,14 @@ export class AdminConfigMutationService {
         );
       }
       // 身份/观察面发布失败时响应 fail closed，但 durable/runtime commit 保持，供后续强制刷新收敛。
-      await input.onCommitted?.(candidateText);
-      await this.options.onCommitted?.(candidateText);
-      await this.pruneBackups();
+      // 用稳定错误类型把该状态暴露给 Secret 等候选副作用的清理方。
+      try {
+        await input.onCommitted?.(candidateText);
+        await this.options.onCommitted?.(candidateText);
+        await this.pruneBackups();
+      } catch (error) {
+        throw new ConfigMutationCommittedError(error);
+      }
       return {
         config,
         previousConfig,

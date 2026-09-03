@@ -255,9 +255,11 @@ export interface AppRuntime {
   titleModelAdapterFactory?: TitleModelAdapterFactory;
   /** 从磁盘加载并应用共享配置；force 绕过节流并重新确认内容指纹。 */
   refreshSharedConfig: (force?: boolean) => boolean | Promise<boolean>;
+  /** Voice 安全入口每次重读共享配置，并强制重新解析当前 STT SecretRef。 */
+  refreshVoiceTranscriptionConfig: () => Promise<boolean>;
   /** 解析模型 SecretRef 并原子替换当前进程的运行时模型连接快照。 */
   updateModelsConfig?: (models: NonNullable<AppConfig['models']>) => Promise<void>;
-  /** 管理端写盘前复用 Production 配置安全门禁与 SecretVault 校验。 */
+  /** 管理端写盘前复用 Production 配置安全门禁与 SecretVault ref 校验。 */
   validateSharedConfigCandidate?: (next: AppConfig) => Promise<void>;
   /** 纯同步撤销 ConfigIdentity observation、取消在途计算并发布 not_collected。 */
   invalidateSharedConfigIdentity: () => void;

@@ -69,6 +69,14 @@ describe('Runtime Worker 生产部署契约', () => {
       'utf-8',
     );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
+    const authorityHelper = await readFile(
+      join(repoRoot, 'scripts/release/compat-app-authority.sh'),
+      'utf-8',
+    );
+    const rollbackHelper = await readFile(
+      join(repoRoot, 'scripts/release/production-deploy-rollback.sh'),
+      'utf-8',
+    );
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
     const runtimeSource = await readFile(join(repoRoot, 'server/src/app/runtime.ts'), 'utf-8');
     const readinessSource = await readFile(
@@ -142,40 +150,51 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain('systemctl disable "${SERVICE_NAME}@${ACTIVE}"');
     expect(workflow).toContain('systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
     expect(workflow).toContain('runtime worker drain restart guard armed');
-    expect(workflow).toContain('mv -f "$candidate" "$file" || { rm -f "$candidate"; return 1; }');
-    expect(workflow).toContain('write_color_marker "$ACTIVE_COLOR_FILE" "$IDLE"');
+    expect(workflow).toContain('source "$RELEASE_DIR/scripts/release/compat-app-authority.sh"');
+    expect(workflow).toContain('commit_app_active_colors()');
+    expect(authorityHelper).toContain('commit_compat_app_active_colors()');
+    expect(workflow).toContain('commit_app_active_colors "$IDLE" "$APP_WORKER_TARGET"');
     expect(workflow).toContain('ready.authority');
     expect(workflow).toContain('"/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"');
     expect(workflow).toContain('nginx.service.d/agent-saas-nas.conf');
     const rollbackStart = workflow.indexOf('rollback_idle_and_exit()');
-    const rollbackEnd = workflow.indexOf('# ── 5.5 Runtime Worker 候选', rollbackStart);
+    const rollbackEnd = workflow.indexOf('recover_interrupted_runtime_worker_drain()', rollbackStart);
     const rollbackBlock = workflow.slice(rollbackStart, rollbackEnd);
     expect(rollbackStart).toBeGreaterThan(-1);
     expect(rollbackEnd).toBeGreaterThan(rollbackStart);
-    expect(rollbackBlock).toContain('systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"');
-    expect(rollbackBlock).toContain('restart drained runtime worker after pre-Web failure');
-    expect(rollbackBlock).toContain('previous runtime worker reclaimed authority without restart');
-    expect(rollbackBlock).toContain('kill -HUP "$old_pid"');
-    expect(rollbackBlock).toContain('write_worker_active_color "$WORKER_ACTIVE"');
-    expect(rollbackBlock).toContain('previous runtime worker marker restored before candidate stop');
-    expect(rollbackBlock).toContain('WORKER_CANDIDATE_PROCESS_STARTED');
-    expect(rollbackBlock).toContain('WORKER_ACTIVE_DRAIN_COMPLETED');
-    expect(rollbackBlock).toContain('preserving candidate and refusing restart');
-    expect(rollbackBlock).toContain('systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
-    expect(rollbackBlock).toContain('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
-    expect(rollbackBlock.indexOf('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"'))
-      .toBeLessThan(rollbackBlock.indexOf('write_worker_active_color "$WORKER_ACTIVE"'));
-    expect(
-      rollbackBlock.indexOf('previous runtime worker marker restored before candidate stop'),
-    ).toBeLessThan(rollbackBlock.indexOf('stop runtime worker candidate:'));
-    const authorityPromotion = workflow.indexOf('runtime worker authority promoted before old drain');
-    const oldWorkerDrain = workflow.indexOf('kill -USR2 "$OLD_WORKER_PID"', authorityPromotion);
-    const authorityRefresh = workflow.indexOf('runtime worker authority refreshed after old drain', oldWorkerDrain);
-    const handoffCompleted = workflow.indexOf('runtime worker handoff completed before Web readiness', oldWorkerDrain);
-    expect(authorityPromotion).toBeGreaterThan(-1);
-    expect(oldWorkerDrain).toBeGreaterThan(authorityPromotion);
+    expect(rollbackBlock).toContain('COMPAT_ROLLBACK_PUBLISHED');
+    expect(rollbackBlock).toContain('compat-deploy-attempt-current');
+    expect(rollbackBlock).toContain('"$ROLLBACK_STATE_DIR/rollback.sh"');
+    expect(rollbackBlock).not.toContain('systemctl disable --now');
+    expect(workflow).toContain(
+      'source "$RELEASE_DIR/scripts/release/production-deploy-rollback.sh"',
+    );
+    expect(rollbackHelper).toContain('production_deploy_rollback()');
+
+    const authorityCommit = workflow.indexOf(
+      'if ! commit_app_active_colors "$IDLE" "$APP_WORKER_TARGET"; then',
+    );
+    const nginxReload = workflow.indexOf('if ! systemctl reload nginx; then', authorityCommit);
+    const handoffCall = workflow.indexOf(
+      'if ! refresh_worker_candidate_authority; then',
+      nginxReload,
+    );
+    expect(authorityCommit).toBeGreaterThan(-1);
+    expect(nginxReload).toBeGreaterThan(authorityCommit);
+    expect(handoffCall).toBeGreaterThan(nginxReload);
+
+    const refreshStart = workflow.indexOf('refresh_worker_candidate_authority()');
+    const refreshEnd = workflow.indexOf(
+      'runtime worker handoff staged until final App authority commit',
+      refreshStart,
+    );
+    const refreshBlock = workflow.slice(refreshStart, refreshEnd);
+    const oldWorkerDrain = refreshBlock.indexOf('kill -USR2 "$OLD_WORKER_PID"');
+    const authorityRefresh = refreshBlock.indexOf('kill -USR1 "$worker_pid"', oldWorkerDrain);
+    expect(refreshStart).toBeGreaterThan(-1);
+    expect(refreshEnd).toBeGreaterThan(refreshStart);
+    expect(oldWorkerDrain).toBeGreaterThan(-1);
     expect(authorityRefresh).toBeGreaterThan(oldWorkerDrain);
-    expect(handoffCompleted).toBeGreaterThan(authorityRefresh);
     expect(workflow).toContain('worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value');
     expect(workflow).toContain('kill -USR1 "$worker_pid"');
     expect(workflow).toContain('WORKER_DRAIN_TIMEOUT=960');
@@ -197,11 +216,9 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain(
       'rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"',
     );
-    expect(workflow).toContain(
-      'rollback drain endpoint unavailable; marker snapshot reports activeUploads=',
-    );
-    expect(workflow).toContain(
-      'rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"',
+    expect(authorityHelper).toContain('wait_api_ready "$API_OLD_COLOR"');
+    expect(authorityHelper).toContain(
+      'systemctl disable --now "$SERVICE@$API_NEW_COLOR"',
     );
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',

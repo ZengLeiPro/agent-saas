@@ -9,7 +9,7 @@ import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { parseAppConfig } from '../app/config.js';
 import { createModelsAdminRouter } from '../routes/modelsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { InMemorySecretVault } from '../security/secretVault.js';
+import { GLOBAL_OWNER_ID, InMemorySecretVault } from '../security/secretVault.js';
 import { resolveModelsConfig } from '../app/runtimeGovernanceCredentials.js';
 
 const servers: Array<{ close: () => void }> = [];
@@ -90,6 +90,31 @@ async function readJson(response: Response) {
 
 function revision(text: string): string {
   return createHash('sha256').update(text).digest('hex');
+}
+
+async function installModelApiKeyRef(
+  rawConfig: ReturnType<typeof baseRawConfig>,
+  secretVault: InMemorySecretVault,
+  apiKey: string,
+): Promise<string> {
+  const secret = await secretVault.putSecret(
+    GLOBAL_OWNER_ID,
+    'models',
+    apiKey,
+    { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
+  );
+  const group = rawConfig.models.groups[0] as { apiKey?: string; apiKeyRef?: string };
+  delete group.apiKey;
+  group.apiKeyRef = secret.id;
+  return secret.id;
+}
+
+function readModelSecret(secretVault: InMemorySecretVault, ref: string): Promise<string> {
+  return secretVault.getSecret(ref, {
+    actor: 'system',
+    userId: '__system__',
+    scopes: ['secret:models:read'],
+  });
 }
 
 // PUT 必须先验证完整候选，再允许 config.json 与运行态一起前进。
@@ -202,6 +227,175 @@ describe('models admin router', () => {
       expect(resolved?.groups[0]?.apiKey).toBe('sk-rotated');
       expect(resolved?.groups[0]?.apiKeyRef).toBe(written.models.groups[0].apiKeyRef);
     }, { secretVault });
+  });
+
+  it('does not revoke a replaced ref while another committed model group still references it', async () => {
+    const secretVault = new InMemorySecretVault();
+    const rawConfig = baseRawConfig();
+    const sharedRef = await installModelApiKeyRef(rawConfig, secretVault, 'sk-shared-before-update');
+    rawConfig.models.groups.push({
+      id: 'backup',
+      name: 'Backup',
+      apiKeyRef: sharedRef,
+      baseUrl: 'https://backup.example.invalid/v1',
+      models: [{ id: 'gpt', name: 'Backup GPT', value: 'gpt-5' }],
+    } as never);
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
+
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const source = structuredClone(rawConfig);
+      source.models.groups[0]!.apiKey = 'sk-main-after-update';
+      delete (source.models.groups[0] as { apiKeyRef?: string }).apiKeyRef;
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: source.models }),
+      });
+
+      expect(response.status).toBe(200);
+      const written = JSON.parse(readFileSync(configPath, 'utf8'));
+      expect(written.models.groups[1].apiKeyRef).toBe(sharedRef);
+      expect(written.models.groups[0].apiKeyRef).not.toBe(sharedRef);
+      expect(revokeSecret).not.toHaveBeenCalledWith(sharedRef, expect.any(Object));
+      await expect(readModelSecret(secretVault, sharedRef)).resolves.toBe('sk-shared-before-update');
+    }, { secretVault });
+  });
+
+  it('waits for earlier model Secret writes before rolling them back when a later write fails', async () => {
+    const secretVault = new InMemorySecretVault();
+    const originalPutSecret = secretVault.putSecret.bind(secretVault);
+    vi.spyOn(secretVault, 'putSecret')
+      .mockImplementationOnce(async (...args) => {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return originalPutSecret(...args);
+      })
+      .mockRejectedValueOnce(new Error('models SecretVault forced failure'));
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
+
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const source = baseRawConfig();
+      source.models.groups[0]!.apiKey = 'sk-first-created';
+      source.models.groups.push({
+        id: 'backup',
+        name: 'Backup',
+        apiKey: 'sk-second-fails',
+        baseUrl: 'https://backup.example.invalid/v1',
+        models: [{ id: 'gpt', name: 'Backup GPT', value: 'gpt-5' }],
+      });
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: source.models }),
+      });
+
+      expect(response.ok).toBe(false);
+      expect(JSON.parse(readFileSync(configPath, 'utf8')).models.groups).toHaveLength(1);
+      expect(revokeSecret).toHaveBeenCalledOnce();
+      const createdRef = revokeSecret.mock.calls[0]?.[0];
+      expect(createdRef).toEqual(expect.any(String));
+      await expect(readModelSecret(secretVault, createdRef as string)).rejects.toThrow('secret revoked');
+    }, { secretVault });
+  });
+
+  it('keeps the new model Secret and revokes the replaced Secret when committed publication fails', async () => {
+    const secretVault = new InMemorySecretVault();
+    const rawConfig = baseRawConfig();
+    const oldRef = await installModelApiKeyRef(rawConfig, secretVault, 'sk-before-committed-failure');
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
+    const publicationError = new Error('forced model publication failure');
+    const onConfigReloaded = vi.fn().mockRejectedValue(publicationError);
+
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const source = baseRawConfig();
+      source.models.groups[0]!.apiKey = 'sk-committed-publication-failed';
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: source.models }),
+      });
+
+      expect(response.status).toBe(500);
+      expect((await readJson(response)).error).toBe(publicationError.message);
+      const written = JSON.parse(readFileSync(configPath, 'utf8'));
+      const createdRef = written.models.groups[0].apiKeyRef;
+      expect(createdRef).toEqual(expect.any(String));
+      expect(runtimeConfig.models?.groups[0]?.apiKeyRef).toBe(createdRef);
+      expect(revokeSecret).toHaveBeenCalledOnce();
+      expect(revokeSecret).toHaveBeenCalledWith(oldRef, expect.any(Object));
+      const resolved = await resolveModelsConfig(runtimeConfig.models, secretVault);
+      expect(resolved?.groups[0]?.apiKey).toBe('sk-committed-publication-failed');
+      await expect(readModelSecret(secretVault, oldRef)).rejects.toThrow(`secret revoked: ${oldRef}`);
+    }, { secretVault, onConfigReloaded });
+  });
+
+  it('reports post-commit unreferenced Secret prune failure without revoking the committed Secret', async () => {
+    const secretVault = new InMemorySecretVault();
+    const rawConfig = baseRawConfig();
+    const oldRef = await installModelApiKeyRef(rawConfig, secretVault, 'sk-before-prune-failure');
+    const originalRevokeSecret = secretVault.revokeSecret.bind(secretVault);
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret').mockImplementation(async (ref, caller) => {
+      if (ref === oldRef) throw new Error('forced old Secret prune failure');
+      return originalRevokeSecret(ref, caller);
+    });
+
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const source = baseRawConfig();
+      source.models.groups[0]!.apiKey = 'sk-committed-after-prune-failure';
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: source.models }),
+      });
+
+      expect(response.status).toBe(500);
+      expect((await readJson(response)).error).toBe('配置已提交，但旧模型凭据撤销失败');
+      const written = JSON.parse(readFileSync(configPath, 'utf8'));
+      const createdRef = written.models.groups[0].apiKeyRef;
+      expect(runtimeConfig.models?.groups[0]?.apiKeyRef).toBe(createdRef);
+      await expect(readModelSecret(secretVault, createdRef)).resolves.toBe('sk-committed-after-prune-failure');
+      await expect(readModelSecret(secretVault, oldRef)).resolves.toBe('sk-before-prune-failure');
+      expect(revokeSecret).toHaveBeenCalledWith(oldRef, expect.any(Object));
+      expect(revokeSecret).not.toHaveBeenCalledWith(createdRef, expect.any(Object));
+    }, { secretVault });
+  });
+
+  it('keeps both model Secrets when applyRuntime rollback fails', async () => {
+    const secretVault = new InMemorySecretVault();
+    const rawConfig = baseRawConfig();
+    const oldRef = await installModelApiKeyRef(rawConfig, secretVault, 'sk-before-runtime-restore-failed');
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
+    const commitPreparedConfig = vi.fn();
+    let prepareCalls = 0;
+    const rollbackError = new Error('forced runtime rollback failure');
+    const prepareConfigUpdate = vi.fn(() => {
+      prepareCalls += 1;
+      if (prepareCalls === 2) throw rollbackError;
+      return commitPreparedConfig;
+    });
+    const onMemoryIndexUpdated = vi.fn().mockRejectedValueOnce(
+      new Error('forced runtime apply failure'),
+    );
+
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const source = baseRawConfig();
+      source.models.groups[0]!.apiKey = 'sk-runtime-restore-failed';
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: source.models }),
+      });
+
+      expect(response.ok).toBe(false);
+      expect(prepareConfigUpdate).toHaveBeenCalledTimes(2);
+      expect(commitPreparedConfig).toHaveBeenCalledOnce();
+      expect(JSON.parse(readFileSync(configPath, 'utf8')).models.groups[0].apiKeyRef).toBe(oldRef);
+      const runtimeRef = runtimeConfig.models?.groups[0]?.apiKeyRef;
+      expect(runtimeRef).toEqual(expect.any(String));
+      expect(revokeSecret).not.toHaveBeenCalled();
+      const resolved = await resolveModelsConfig(runtimeConfig.models, secretVault);
+      expect(resolved?.groups[0]?.apiKey).toBe('sk-runtime-restore-failed');
+      await expect(readModelSecret(secretVault, oldRef)).resolves.toBe('sk-before-runtime-restore-failed');
+    }, { secretVault, prepareConfigUpdate, onMemoryIndexUpdated });
   });
 
   it('updates models and memory index embedding settings in one config write', async () => {
@@ -417,6 +611,8 @@ describe('models admin router', () => {
     const rawConfig = baseRawConfig();
     const before = JSON.stringify(rawConfig, null, 2);
     const validateConfigReload = vi.fn().mockRejectedValue(new Error('inline model secret is forbidden'));
+    const secretVault = new InMemorySecretVault();
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
     const commit = vi.fn(); const prepareConfigUpdate = vi.fn(() => commit); const onConfigReloaded = vi.fn();
     await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
       const models = structuredClone(rawConfig.models); models.groups[0]!.apiKey = 'new-inline-secret';
@@ -427,7 +623,11 @@ describe('models admin router', () => {
       expect(readFileSync(configPath, 'utf-8')).toBe(before);
       expect(runtimeConfig.models?.groups[0]?.apiKey).toBe('sk-main');
       expect(prepareConfigUpdate).not.toHaveBeenCalled(); expect(commit).not.toHaveBeenCalled(); expect(onConfigReloaded).not.toHaveBeenCalled();
-    }, { validateConfigReload, prepareConfigUpdate, onConfigReloaded });
+      expect(revokeSecret).toHaveBeenCalledOnce();
+      const createdRef = revokeSecret.mock.calls[0]?.[0];
+      expect(createdRef).toEqual(expect.any(String));
+      await expect(readModelSecret(secretVault, createdRef as string)).rejects.toThrow('secret revoked');
+    }, { validateConfigReload, prepareConfigUpdate, onConfigReloaded, secretVault });
   });
 
   it('persists title model order and title prompt in one commit', async () => {

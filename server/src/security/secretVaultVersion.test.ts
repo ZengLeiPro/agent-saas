@@ -135,7 +135,7 @@ describe('EncryptedFileSecretVault opaque version migration（TASK-318）', () =
     expect(JSON.stringify(inspected)).not.toContain('legacy-plaintext-must-never-leak');
   });
 
-describe('HttpSecretVault hostile remote ref validation（TASK-318）', () => {
+describe('HttpSecretVault hostile ref 与 rotation version validation（TASK-318）', () => {
   it('get/put/rotate 缓存和返回前丢弃 ref 明文与额外字段', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(input)).pathname;
@@ -163,6 +163,49 @@ describe('HttpSecretVault hostile remote ref validation（TASK-318）', () => {
     expect(await vault.rotateSecret('rotate-ref-id', 'rotate-plaintext', HTTP_CALLER)).toEqual(cleanRemoteRef('rotate-ref-id'));
     expect(await vault.inspectRef!('rotate-ref-id', HTTP_CALLER)).toEqual(cleanRemoteRef('rotate-ref-id'));
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('rotate 已知 ref 时要求远端 version 严格递增并发送 expectedVersion', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/secrets/resolve') {
+        return new Response(JSON.stringify({ value: 'old-plaintext', ref: remoteRef('rotate-ref-id') }));
+      }
+      if (path === '/secrets/rotate-ref-id/rotate') {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ expectedVersion: 2 });
+        return new Response(JSON.stringify(remoteRef('rotate-ref-id')));
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+    await vault.getSecret('rotate-ref-id', HTTP_CALLER);
+    await expect(vault.rotateSecret('rotate-ref-id', 'rotated', HTTP_CALLER)).rejects.toThrow(
+      /version must advance/,
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { operation: 'put', id: 'put-ref-id' },
+    { operation: 'rotate', id: 'rotate-ref-id' },
+  ])('$operation 远端响应缺少 version 时 fail closed', async ({ operation, id }) => {
+    const response: Partial<ReturnType<typeof remoteRef>> = remoteRef(id);
+    delete response.version;
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify(response))) as typeof fetch,
+    });
+
+    const request = operation === 'put'
+      ? vault.putSecret('alice', 'mcp', 'plaintext', HTTP_CALLER)
+      : vault.rotateSecret(id, 'rotated', HTTP_CALLER);
+    await expect(request).rejects.toThrow(/version must be a positive safe integer/);
   });
 
   it.each([
@@ -229,7 +272,54 @@ describe('HttpSecretVault hostile remote ref validation（TASK-318）', () => {
 });
 
 describe('HttpSecretVault metadata-only version inspection（TASK-318）', () => {
-  it('metadata TTL 到期或 invalidate 后重检远端 version，且不解析 secret 明文', async () => {
+  it('inspect 远端响应缺少 version 时 fail closed', async () => {
+    const response: Partial<ReturnType<typeof remoteRef>> = remoteRef('remote-ref-id');
+    delete response.version;
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify(response))) as typeof fetch,
+    });
+
+    await expect(vault.inspectRef!('remote-ref-id', HTTP_CALLER)).rejects.toThrow(
+      /version must be a positive safe integer/,
+    );
+  });
+
+  it.each([
+    { name: 'zero', version: 0 },
+    { name: 'negative', version: -1 },
+    { name: 'fractional', version: 1.5 },
+    { name: 'string', version: '2' },
+  ])('inspect 远端响应 version=$name 时 fail closed', async ({ version }) => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        ...remoteRef('remote-ref-id'),
+        version,
+      }))) as typeof fetch,
+    });
+
+    await expect(vault.inspectRef!('remote-ref-id', CALLER)).rejects.toThrow(
+      /version must be a positive safe integer/,
+    );
+  });
+
+  it('inspect 保留合法正整数 opaque version', async () => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        ...remoteRef('remote-ref-id'),
+        version: 9,
+      }))) as typeof fetch,
+    });
+
+    await expect(vault.inspectRef!('remote-ref-id', HTTP_CALLER)).resolves.toMatchObject({ version: 9 });
+  });
+
+  it('metadata TTL 到期或 invalidate 后重检并更新远端 version，且不解析 secret 明文', async () => {
     let now = 10_000;
     let remoteVersion = 4;
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -271,6 +361,71 @@ describe('HttpSecretVault metadata-only version inspection（TASK-318）', () =>
     vault.invalidate('remote-ref-id');
     expect((await vault.inspectRef!('remote-ref-id', CALLER))?.version).toBe(6);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('inspect 发现外部 version 前进时失效 plaintext cache，下一次读取获取新 Secret', async () => {
+    let resolveCount = 0;
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/secrets/resolve') {
+        resolveCount += 1;
+        return new Response(JSON.stringify({
+          value: resolveCount === 1 ? 'old-plaintext' : 'new-plaintext',
+          ref: { ...remoteRef('remote-ref-id'), version: resolveCount === 1 ? 4 : 5 },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (path === '/secrets/inspect') {
+        return new Response(JSON.stringify({ ...remoteRef('remote-ref-id'), version: 5 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+      cacheTtlMs: 60_000,
+      metadataCacheTtlMs: 0,
+    });
+
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).resolves.toBe('old-plaintext');
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).resolves.toBe('old-plaintext');
+    await expect(vault.inspectRef!('remote-ref-id', HTTP_CALLER)).resolves.toMatchObject({ version: 5 });
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).resolves.toBe('new-plaintext');
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('已观察新 version 后拒绝迟到的旧 resolve 响应与旧明文', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/secrets/inspect') {
+        return new Response(JSON.stringify({ ...remoteRef('remote-ref-id'), version: 5 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (path === '/secrets/resolve') {
+        return new Response(JSON.stringify({
+          value: 'stale-plaintext',
+          ref: { ...remoteRef('remote-ref-id'), version: 4 },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+      metadataCacheTtlMs: 0,
+    });
+
+    await expect(vault.inspectRef!('remote-ref-id', HTTP_CALLER)).resolves.toMatchObject({ version: 5 });
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).rejects.toThrow(
+      /version regressed below observed version/,
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('远端 revoked metadata 被保留且不携带明文', async () => {

@@ -560,7 +560,7 @@ test('API deploy cannot silently drop an existing trusted expected configIdentit
   );
 });
 
-test('expected identity env parser handles mismatch, missing digest, and malformed digest', () => {
+test('expected identity env parser handles mismatch and fails closed on incomplete or malformed identity', () => {
   const parse = (lines) =>
     readExpectedConfigIdentityFromReleaseEnv('blue', 'rc-1', {
       readFile: () => `${lines.join('\n')}\n`,
@@ -575,6 +575,32 @@ test('expected identity env parser handles mismatch, missing digest, and malform
     /metadata without its digest/,
   );
   assert.throws(
+    () =>
+      parse([
+        'AGENT_SAAS_RELEASE_ID=rc-1',
+        `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
+      ]),
+    /missing config identity schema version/,
+  );
+  assert.throws(
+    () =>
+      parse([
+        'AGENT_SAAS_RELEASE_ID=rc-1',
+        `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
+        'AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=0',
+      ]),
+    /malformed config identity schema version/,
+  );
+  assert.throws(
+    () =>
+      parse([
+        'AGENT_SAAS_RELEASE_ID=rc-1',
+        `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
+        'AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=1.5',
+      ]),
+    /malformed config identity schema version/,
+  );
+  assert.throws(
     () => parse(['AGENT_SAAS_RELEASE_ID=rc-1', 'AGENT_SAAS_CONFIG_IDENTITY_DIGEST=nope']),
     /malformed config identity digest/,
   );
@@ -583,6 +609,7 @@ test('expected identity env parser handles mismatch, missing digest, and malform
       parse([
         'AGENT_SAAS_RELEASE_ID=rc-1',
         `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
+        'AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=1',
         'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST=nope',
       ]),
     /malformed config credential version digest/,

@@ -77,7 +77,7 @@ describe('EncryptedFileSecretVault', () => {
 describe('HttpSecretVault', async () => {
   const { HttpSecretVault } = await import('../security/secretVault.js');
 
-  it('rejects unsafe remote configuration and sends bearer auth to external vault', async () => {
+  it('rejects unsafe remote configuration and accepts a versioned external ref with bearer auth', async () => {
     expect(() => new HttpSecretVault({ baseUrl: 'http://example.com', authToken: 'secret-token' })).toThrow(/https/);
     expect(() => new HttpSecretVault({ baseUrl: 'https://vault.example.com', authToken: '' })).toThrow(/authToken/);
 
@@ -87,6 +87,7 @@ describe('HttpSecretVault', async () => {
         id: 'ref-1',
         ownerId: 'user-1',
         kind: 'mcp',
+        version: 1,
         metadata: {},
         createdAt: '2026-08-01T00:00:00.000Z',
         updatedAt: '2026-08-01T00:00:00.000Z',

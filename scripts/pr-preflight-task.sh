@@ -8,16 +8,18 @@ require_test_database() {
   export MEMORY_CONSOLIDATION_TEST_PG_URL="${MEMORY_CONSOLIDATION_TEST_PG_URL:-$TEST_DATABASE_URL}"
 }
 
-# checks 同时覆盖发布身份与 rollback 契约，避免矩阵化 CI 遗漏 release 门禁。
+# checks 同时覆盖发布身份、兼容 authority 与 rollback 契约，避免矩阵化 CI 遗漏 release 门禁。
 case "$task" in
   checks)
     pnpm check:ratchets
     node --test \
       scripts/release/config-identity-release.test.mjs \
+      scripts/release/legacy-production-workflows.test.mjs \
       scripts/release/promotion-workflow.test.mjs \
       scripts/release/staging-workflow.test.mjs
     bash -n scripts/release/production-deploy-rollback.sh
     bash scripts/release/production-deploy-rollback.test.sh
+    bash scripts/release/compat-app-authority.test.sh
     bash scripts/release/staging-deploy-cleanup.test.sh
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline

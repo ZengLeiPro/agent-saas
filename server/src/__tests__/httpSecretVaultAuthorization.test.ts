@@ -25,6 +25,7 @@ function ref(ownerId: string, id = 'ref-1'): SecretRef {
     id,
     ownerId,
     kind: 'mcp',
+    version: 1,
     metadata: {},
     createdAt: '2026-08-08T00:00:00.000Z',
     updatedAt: '2026-08-08T00:00:00.000Z',
@@ -32,6 +33,7 @@ function ref(ownerId: string, id = 'ref-1'): SecretRef {
 }
 
 describe('HttpSecretVault authorization boundary', () => {
+  // Remote refs carry an opaque positive version used by ConfigIdentity.
   it('已知 ref 在发出远端请求前执行 owner/kind ACL', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response(ref('alice')));

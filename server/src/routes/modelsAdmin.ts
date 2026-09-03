@@ -17,6 +17,8 @@ import type {
 import {
   AdminConfigMutationService,
   ConfigConflictError,
+  ConfigMutationCommittedError,
+  RuntimeRestoreFailedError,
   configFingerprint,
 } from '../config/adminConfigMutationService.js';
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
@@ -191,28 +193,33 @@ async function persistSubmittedModelCredentials(input: {
   previousRefs: Map<string, string | undefined>;
   allowInlineWithoutVault?: boolean;
 }): Promise<ModelsConfig> {
-  return {
-    ...input.models,
-    groups: await Promise.all(input.models.groups.map(async (group) => {
-      if (!input.submittedGroups.has(group.id) || !group.apiKey) return group;
-      if (!input.secretVault) {
-        if (input.allowInlineWithoutVault) return group;
-        throw new Error('SecretVault 未配置，不能保存模型 API Key');
+  const groups: ModelsConfig['groups'] = [];
+  for (const group of input.models.groups) {
+    if (!input.submittedGroups.has(group.id) || !group.apiKey) {
+      groups.push(group);
+      continue;
+    }
+    if (!input.secretVault) {
+      if (input.allowInlineWithoutVault) {
+        groups.push(group);
+        continue;
       }
-      const ref = await input.secretVault.putSecret(
-        GLOBAL_OWNER_ID,
-        'models',
-        group.apiKey,
-        { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
-        { groupId: group.id, purpose: 'model-api' },
-      );
-      input.createdRefs.push({ ref: ref.id, kind: 'models' });
-      const previousRef = input.previousRefs.get(group.id);
-      if (previousRef && previousRef !== ref.id) input.replacedRefs.push({ ref: previousRef, kind: 'models' });
-      const { apiKey: _apiKey, ...safe } = group;
-      return { ...safe, apiKeyRef: ref.id };
-    })),
-  };
+      throw new Error('SecretVault 未配置，不能保存模型 API Key');
+    }
+    const ref = await input.secretVault.putSecret(
+      GLOBAL_OWNER_ID,
+      'models',
+      group.apiKey,
+      { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
+      { groupId: group.id, purpose: 'model-api' },
+    );
+    input.createdRefs.push({ ref: ref.id, kind: 'models' });
+    const previousRef = input.previousRefs.get(group.id);
+    if (previousRef && previousRef !== ref.id) input.replacedRefs.push({ ref: previousRef, kind: 'models' });
+    const { apiKey: _apiKey, ...safe } = group;
+    groups.push({ ...safe, apiKeyRef: ref.id });
+  }
+  return { ...input.models, groups };
 }
 
 type CreatedSecretRef = { ref: string; kind: 'models' | 'memory_index' };
@@ -246,13 +253,27 @@ async function persistSubmittedMemoryCredential(input: {
   return { ...input.memoryIndex, embedding: { ...embedding, apiKeyRef: ref.id } };
 }
 
-async function revokeModelRefs(vault: SecretVault | undefined, refs: CreatedSecretRef[]): Promise<void> {
-  if (!vault) return;
-  await Promise.all(refs.map((item) => vault.revokeSecret(item.ref, {
+function unreferencedReplacedRefs(config: AppConfig, refs: CreatedSecretRef[]): CreatedSecretRef[] {
+  const referenced = new Set([
+    ...(config.models?.groups.flatMap((group) => group.apiKeyRef ? [`models\0${group.apiKeyRef}`] : []) ?? []),
+    ...(config.memory?.index?.embedding.apiKeyRef ? [`memory_index\0${config.memory.index.embedding.apiKeyRef}`] : []),
+  ]);
+  return [...new Map(
+    refs
+      .filter((item) => !referenced.has(`${item.kind}\0${item.ref}`))
+      .map((item) => [`${item.kind}\0${item.ref}`, item]),
+  ).values()];
+}
+
+/** 去重撤销并返回失败；调用方按提交前/后阶段决定回滚或报告维护失败。 */
+async function revokeModelRefs(vault: SecretVault | undefined, refs: CreatedSecretRef[]): Promise<unknown[]> {
+  if (!vault) return [];
+  const outcomes = await Promise.allSettled(refs.map((item) => vault.revokeSecret(item.ref, {
     actor: 'system',
     userId: 'models_config_admin',
     scopes: [`secret:${item.kind}:revoke`],
-  }).catch(() => undefined)));
+  })));
+  return outcomes.flatMap((outcome) => outcome.status === 'rejected' ? [outcome.reason] : []);
 }
 
 function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUpdate {
@@ -444,7 +465,15 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         },
         ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
-      await revokeModelRefs(options.secretVault, replacedRefs);
+      const pruneErrors = await revokeModelRefs(
+        options.secretVault,
+        unreferencedReplacedRefs(result.config, replacedRefs),
+      );
+      if (pruneErrors.length > 0) {
+        throw new ConfigMutationCommittedError(
+          new AggregateError(pruneErrors, '配置已提交，但旧模型凭据撤销失败'),
+        );
+      }
       // ETag is the raw-text CAS revision; rawConfigFingerprint remains a separate governance identity.
       res.setHeader('ETag', `"${result.revision}"`);
       res.json({
@@ -456,18 +485,33 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         publicModelList: getPublicModelList(result.config.models!),
       });
     } catch (error) {
-      await revokeModelRefs(options.secretVault, createdRefs);
+      if (error instanceof ConfigMutationCommittedError) {
+        // durable/runtime 已提交；只撤销最终配置中已无任何引用的旧 refs。
+        await revokeModelRefs(
+          options.secretVault,
+          unreferencedReplacedRefs(options.config, replacedRefs),
+        );
+      } else if (!(error instanceof RuntimeRestoreFailedError)) {
+        // 提交前失败或完整回滚：候选 refs 无人引用，旧 refs 仍需保留。
+        await revokeModelRefs(options.secretVault, createdRefs);
+      }
       if (error instanceof RuntimeConfigValidationError) {
         sendConfigMutationError(res, error);
         return;
       }
-      if (error instanceof Error && !(error instanceof ConfigConflictError)) {
-        // Validation failures remain client errors; mutation/readback failures use the shared handler.
+      if (
+        error instanceof Error
+        && !(error instanceof ConfigConflictError)
+        && !(error instanceof ConfigMutationCommittedError)
+        && !(error instanceof RuntimeRestoreFailedError)
+      ) {
+        // 仅提交前候选校验属于 client error；已提交/恢复失败必须走服务端错误。
         if (/models|memory|标题|提示语|配置|门禁模型/u.test(error.message)) {
           res.status(400).json({ error: error.message });
           return;
         }
       }
+      // 配置已提交但维护失败也必须保留 5xx，提示调用方重新读取服务端状态。
       sendRevisionMutationError(res, error);
     }
   });

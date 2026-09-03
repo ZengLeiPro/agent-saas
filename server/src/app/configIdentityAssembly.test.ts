@@ -4,6 +4,7 @@ import { InMemorySecretVault } from '../security/secretVault.js';
 import {
   buildCanonicalConfigProjection,
   calculateConfigIdentityDigest,
+  CONFIG_IDENTITY_SCHEMA_VERSION,
 } from '../release/configIdentity.js';
 import { parseAppConfig } from './config.js';
 import { initializeRuntimeConfigIdentityAssembly } from './configIdentityAssembly.js';
@@ -30,6 +31,7 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
     );
     vi.stubEnv('AGENT_SAAS_ENVIRONMENT', 'production');
     vi.stubEnv('AGENT_SAAS_CONFIG_IDENTITY_DIGEST', expectedDigest);
+    vi.stubEnv('AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION', String(CONFIG_IDENTITY_SCHEMA_VERSION));
     vi.stubEnv('AGENT_SAAS_CONFIG_IDENTITY_PATH', '');
 
     const assembly = await initializeRuntimeConfigIdentityAssembly({

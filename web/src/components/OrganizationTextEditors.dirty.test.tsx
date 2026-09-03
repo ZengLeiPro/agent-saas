@@ -116,15 +116,15 @@ describe("组织文本编辑器未保存导航保护", () => {
     const { onSwitchLeaf } = renderEditor(Editor, activeSection);
     const input = await startEditing(draft);
 
-    fireEvent.click(screen.getByRole("button", { name: "成员与权限" }));
+    fireEvent.click(screen.getByRole("button", { name: "成员" }));
     expect(await screen.findByText("有未保存的更改")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(onSwitchLeaf).not.toHaveBeenCalled();
     expect(input.value).toBe(draft);
 
-    fireEvent.click(screen.getByRole("button", { name: "成员与权限" }));
+    fireEvent.click(screen.getByRole("button", { name: "成员" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃更改" }));
-    await waitFor(() => expect(onSwitchLeaf).toHaveBeenCalledWith("members"));
+    await waitFor(() => expect(onSwitchLeaf).toHaveBeenCalledWith("org-members"));
     expect(update).not.toHaveBeenCalled();
     expect(screen.getByText(activeSection === "company" ? "公司信息基线" : "自定义规则基线")).toBeTruthy();
   });
@@ -145,7 +145,7 @@ describe("组织文本编辑器未保存导航保护", () => {
     const { onSwitchLeaf } = renderEditor(TenantInstructionsSection, "instructions");
     const input = await startEditing("不能丢失的规则草稿");
 
-    fireEvent.click(screen.getByRole("button", { name: "成员与权限" }));
+    fireEvent.click(screen.getByRole("button", { name: "成员" }));
     fireEvent.click(await screen.findByRole("button", { name: "保存并继续" }));
 
     expect(await screen.findByText("保存失败: 规则保存失败")).toBeTruthy();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import analysisContentSource from "@/components/AnalysisWorkspaceContent.tsx?raw";
+import managementContentSource from "@/components/ManagementShell/ManagementWorkspaceContent.tsx?raw";
 import taskBoardSource from "@/components/TaskBoard/index.tsx?raw";
 import taskDetailSource from "@/components/TaskBoard/TaskDetail.tsx?raw";
 import source from "./DesktopLayout.tsx?raw";
@@ -16,12 +16,12 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("visible={hasSuccessfulFinalOutput(messages)}");
   });
 
-  it("分析路由复用标准浮动布局，不再进入旧 GovernanceConsole 壳", () => {
+  it("分析与设置路由复用唯一管理工作区，不再进入旧治理壳", () => {
     expect(source).toContain("analysisMode={analysisMode}");
-    expect(analysisContentSource).toContain('data-testid="unified-analysis-content"');
-    expect(analysisContentSource).toContain("governanceContentEmbedded");
-    expect(source).toContain('if (!analysisMode && activeTab === "platform-admin"');
-    expect(source).not.toContain('<GovernanceConsole area="organization"');
+    expect(source.match(/<ManagementWorkspaceContent\b/g)).toHaveLength(1);
+    expect(managementContentSource).toContain('data-testid="unified-management-content"');
+    expect(managementContentSource).toContain("governanceContentEmbedded");
+    expect(source).not.toContain('<GovernanceConsole');
   });
 
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
@@ -51,24 +51,18 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(taskDetailSource).toContain('? "flex h-full min-h-0 w-full flex-col"');
   });
 
-  it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
+  it("个人设置与统一管理工作区共享 dirty boundary", () => {
     expect(source).toContain("SettingsDirtyBoundary");
     expect(lazySettingsSource).toContain("export const SettingsDirtyBoundary = lazy(() =>");
     expect(lazySettingsSource).toContain("@/components/PersonalSettings/dirtyRegistry");
-    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (");
+    expect(source).toContain("settingsTarget === 'personal'");
     expect(source).toContain("dirtyController={dirtyController}");
-    expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
-    expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
-    expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
     expect(source).toContain("governanceRoute, closeOrganizationSettings: closeSettings,");
-    expect(source).toContain("governanceContentOnly={governanceRoute?.area === \"organization\"}");
     expect(source).not.toContain("SettingsDirtyControllerBridge");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
-    expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
-    expect(source).not.toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
-    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="platform"');
-    expect(analysisContentSource).toContain('<OrganizationScopeBanner route={route} dirtyController={dirtyController} />');
-    expect(analysisContentSource).toContain('dirtyController={dirtyController}');
+    expect(managementContentSource).toContain('<SettingsDirtyBoundary>');
+    expect(managementContentSource).toContain('{(dirtyController) => (');
+    expect(managementContentSource).toContain('dirtyController={dirtyController}');
   });
 
   it("进入统一设置后隐藏底层业务页，避免旧组织分析与新组织管理重复可访问", () => {

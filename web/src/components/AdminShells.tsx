@@ -458,6 +458,7 @@ export function TenantAdminShell({
         renderCompanyInfo={renderCompanyInfo}
         renderAutomation={renderAutomation}
         dirtyController={dirtyController}
+        embedded={governanceContentEmbedded}
       />
     );
   })();
@@ -466,7 +467,7 @@ export function TenantAdminShell({
     return (
       <div className={cn(
         "min-h-full bg-muted/20",
-        governanceContentEmbedded && "h-full min-h-0 overflow-hidden bg-card",
+        governanceContentEmbedded && "bg-transparent",
       )}>
         {governanceContent}
       </div>
@@ -643,7 +644,9 @@ export function PlatformAdminShell({
       case "platform.resource-center.skills":
         return renderSkills();
       case "platform.resource-center.connectors":
-        return renderMcp();
+        return new URLSearchParams(governanceRoute.search?.replace(/^\?/, '')).get("view") === "mappings"
+          ? <ConnectorDictionaryManagerPanel />
+          : renderMcp();
       case "platform.resource-center.tools":
         return renderToolControls();
       case "platform.runtime.sessions":
@@ -670,7 +673,9 @@ export function PlatformAdminShell({
       case "platform.governance.memory-policy":
         return renderMemoryPolling();
       case "platform.governance.system-settings":
-        return <SystemSettingsPanel />;
+        return new URLSearchParams(governanceRoute.search?.replace(/^\?/, '')).get("view") === "agents"
+          ? <AgentRuntimeProfilesManagerPanel />
+          : <SystemSettingsPanel />;
       case "platform.governance.config-status":
         return <ConfigStatusPanel />;
       default:
@@ -682,7 +687,7 @@ export function PlatformAdminShell({
     return (
       <div className={cn(
         "min-h-full bg-muted/20 p-3 sm:p-4",
-        governanceContentEmbedded && "h-full min-h-0 overflow-auto bg-card p-4 md:p-6",
+        governanceContentEmbedded && "bg-transparent p-0",
       )}>
         {governanceContent}
       </div>

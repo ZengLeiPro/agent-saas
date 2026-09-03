@@ -143,6 +143,7 @@ async function guardedAuthFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
   localUnlockValidation = false,
+  returnUnauthorized = false,
 ): Promise<Response> {
   if (!sensitiveTransportAllowed && !localUnlockValidation) {
     throw new Error('LOCAL_APP_LOCK_BLOCKED');
@@ -167,7 +168,7 @@ async function guardedAuthFetch(
   const response = await fetch(url, { ...init, headers });
   await assertRequestIdentity(platform, requestGeneration, token, authBinding);
   if (response.status === 401) {
-    onUnauthorized?.();
+    if (!returnUnauthorized) onUnauthorized?.();
   } else if (response.status === 403) {
     try {
       const body = await response.clone().json() as { code?: string };
@@ -203,7 +204,12 @@ export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise
   return guardedAuthFetch(input, init);
 }
 
-/** Dedicated credential revalidation path; it cannot refresh tokens while the local gate is closed. */
+/** 资源凭证 401 只返回调用方，不得失效当前登录会话。 */
+export function authFetchResource(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return guardedAuthFetch(input, init, false, true);
+}
+
+/** 专用凭证复核通道；本地门禁关闭时不得刷新 token。 */
 export function authFetchForLocalUnlockValidation(
   input: RequestInfo | URL,
   init?: RequestInit,

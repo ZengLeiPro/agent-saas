@@ -6,6 +6,7 @@ import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from "@/components/DesktopSess
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { ANALYSIS_NAVIGATION } from "@/lib/analysisNavigation";
+import { managementPageForRoute } from '@/lib/managementNavigation';
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ export function UnifiedAnalysisSidebar({
   const groups = ANALYSIS_NAVIGATION.filter((group) => (
     group.scope === "platform" ? access.platformEntryAllowed : access.tenantEntryAllowed
   ));
+  const activePageId = managementPageForRoute(route)?.id;
 
   return (
     <aside
@@ -85,7 +87,7 @@ export function UnifiedAnalysisSidebar({
               <div className="flex flex-col gap-1">
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  const active = route.routeId === item.routeId;
+                  const active = activePageId === item.pageId;
                   return (
                     <button key={item.routeId} type="button" className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors", active ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED)} aria-current={active ? "page" : undefined} onClick={() => onNavigate?.(item.routeId)}>
                       <Icon className="size-4 shrink-0" />

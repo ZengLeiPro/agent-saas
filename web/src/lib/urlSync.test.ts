@@ -30,13 +30,12 @@ describe("platform admin url sync", () => {
     });
   });
 
-  it("Registry platform settings 刷新时保留统一设置工作区", () => {
+  it("旧平台设置路径 canonical 到统一治理路由", () => {
     for (const section of ["signup", "memory-polling", "system-prompts", "agent-profiles"] as const) {
-      expect(parseUrl(`/platform-admin/settings/${section}`)).toMatchObject({
-        tab: "platform-admin",
-        adminSettings: { target: "platform", section },
-        canonicalPath: null,
-      });
+      const result = parseUrl(`/platform-admin/settings/${section}`);
+      expect(result).toMatchObject({ tab: "platform-admin", adminSettings: null });
+      expect(result.governanceRoute?.area).toBe('platform');
+      expect(result.canonicalPath).toMatch(/^\/platform-console\//);
     }
     expect(buildAdminSettingsUrl("platform", "memory-polling"))
       .toBe("/platform-admin/settings/memory-polling");

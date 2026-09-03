@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { Download, Loader2, PanelRight, Share2, TriangleAlert } from "lucide-react";
 import {
   artifactViewerError,
+  authFetchResource,
   createArtifactViewerState,
   reduceArtifactViewer,
   type ArtifactReadGrant,
@@ -52,7 +53,7 @@ function useSafeArtifactGrant(artifactId: string, active: boolean) {
       dispatch({ type: "failed", status, reason });
     });
     return () => { cancelled = true; };
-  }, [artifactId, state.status]);
+  }, [artifactId, ownerKey, state.status]);
 
   useEffect(() => {
     if (state.status !== "ready" || !state.grant) return;
@@ -61,10 +62,11 @@ function useSafeArtifactGrant(artifactId: string, active: boolean) {
     return () => window.clearTimeout(timer);
   }, [state.grant, state.status]);
 
+  // 资源 token 失败只在当前预览面内刷新一次。
   const onAuthorizationFailure = useCallback((status: number, reason?: string) => {
-    if (status === 401 && state.refreshCount === 0) dispatch({ type: "expired" });
+    if (status === 401) dispatch({ type: "expired" });
     else dispatch({ type: "failed", status, reason });
-  }, [state.refreshCount]);
+  }, []);
   const onPositionChange = useCallback((position: ArtifactViewPosition) => dispatch({ type: "position", position }), []);
   return { state, onAuthorizationFailure, onPositionChange };
 }
@@ -84,8 +86,45 @@ function ArtifactPreviewContent({ grant, loading, error, position, onAuthorizati
   return <ArtifactContentViewer grant={grant} position={position} onPositionChange={onPositionChange} onAuthorizationFailure={onAuthorizationFailure} className="h-full" />;
 }
 
+async function saveArtifactDownload(artifactId: string, fileName: string, initialGrant?: ArtifactReadGrant): Promise<void> {
+  let grant = initialGrant ?? await getArtifactReadGrant(artifactId, true);
+  let response = await authFetchResource(grant.readUrl, {
+    cache: "no-store",
+    referrerPolicy: "no-referrer",
+    headers: { "X-Artifact-Correlation-Id": grant.descriptor.correlationId },
+  });
+  if (response.status === 401) {
+    grant = await getArtifactReadGrant(artifactId, true);
+    response = await authFetchResource(grant.readUrl, {
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      headers: { "X-Artifact-Correlation-Id": grant.descriptor.correlationId },
+    });
+  }
+  if (!response.ok) {
+    throw new Error(response.status === 401 ? "文件链接已失效，请重试。" : `下载失败（HTTP ${response.status}）`);
+  }
+
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = fileName;
+  anchor.referrerPolicy = "no-referrer";
+  anchor.rel = "noreferrer";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+function artifactDownloadError(error: unknown): string {
+  if (error instanceof ArtifactReadError) return `下载地址获取失败（HTTP ${error.status}）`;
+  return error instanceof Error ? error.message : "下载失败，请稍后重试";
+}
+
 function useArtifactDownload(grant: ArtifactReadGrant | null) {
   const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const download = useCallback(async () => {
     if (!grant || downloading) return;
     const { descriptor } = grant;
@@ -94,36 +133,29 @@ function useArtifactDownload(grant: ArtifactReadGrant | null) {
       if (!accepted) return;
     }
     setDownloading(true);
+    setError(null);
     try {
-      const downloadGrant = await getArtifactReadGrant(descriptor.artifactId, true);
-      const anchor = document.createElement("a");
-      anchor.href = downloadGrant.readUrl;
-      anchor.download = descriptor.name;
-      anchor.referrerPolicy = "no-referrer";
-      anchor.rel = "noreferrer";
-      anchor.click();
+      await saveArtifactDownload(descriptor.artifactId, descriptor.name);
+    } catch (downloadError) {
+      setError(artifactDownloadError(downloadError));
     } finally { setDownloading(false); }
   }, [downloading, grant]);
-  return { download, downloading };
+  return { download, downloading, error };
 }
 
 export async function downloadArtifact(artifactId: string, fileName: string): Promise<void> {
-  const grant = await getArtifactReadGrant(artifactId, true).catch((error: unknown) => {
-    if (error instanceof ArtifactReadError) throw new Error(`下载地址获取失败（HTTP ${error.status}）`);
-    throw error;
-  });
-  if (grant.descriptor.requiresWarning && !window.confirm("此文件下载到本机后可能执行代码。确认仍要下载吗？")) return;
-  const anchor = document.createElement("a");
-  anchor.href = grant.readUrl;
-  anchor.download = fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  try {
+    const grant = await getArtifactReadGrant(artifactId, true);
+    if (grant.descriptor.requiresWarning && !window.confirm("此文件下载到本机后可能执行代码。确认仍要下载吗？")) return;
+    await saveArtifactDownload(artifactId, fileName, grant);
+  } catch (error) {
+    throw new Error(artifactDownloadError(error));
+  }
 }
 
 function ArtifactPreviewActions({ grant, onShare }: { grant: ArtifactReadGrant | null; onShare: () => void }) {
-  const { download, downloading } = useArtifactDownload(grant);
-  return <><Button variant="outline" size="sm" disabled={!grant || downloading} onClick={() => void download()} aria-label={grant?.descriptor.requiresWarning ? "确认风险并下载 Artifact" : "下载 Artifact"}><Download className="size-4" /><span className="hidden sm:inline">下载</span></Button><Button variant="outline" size="sm" onClick={onShare}><Share2 className="size-4" /><span className="hidden sm:inline">分享</span></Button></>;
+  const { download, downloading, error } = useArtifactDownload(grant);
+  return <>{error ? <span role="alert" className="max-w-40 truncate text-xs text-destructive" title={error}>{error}</span> : null}<Button variant="outline" size="sm" disabled={!grant || downloading} onClick={() => void download()} aria-label={grant?.descriptor.requiresWarning ? "确认风险并下载 Artifact" : "下载 Artifact"}><Download className="size-4" /><span className="hidden sm:inline">下载</span></Button><Button variant="outline" size="sm" onClick={onShare}><Share2 className="size-4" /><span className="hidden sm:inline">分享</span></Button></>;
 }
 
 export function ArtifactPreviewDialog({ open, artifactId, fileName, fileSize, mimeType, onOpenChange, onDock }: ArtifactPreviewDialogProps) {

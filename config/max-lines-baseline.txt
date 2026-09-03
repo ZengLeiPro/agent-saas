@@ -29,7 +29,7 @@ server/src/app/config.ts	1426	production
 server/src/app/routes.ts	1140	production
 server/src/app/runtime.ts	3025	production
 server/src/app/runtimeGovernanceConnectors.ts	1234	production
-server/src/channels/web/channel.ts	4348	production
+server/src/channels/web/channel.ts	4341	production
 server/src/cron/service.ts	1082	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2001	production
@@ -43,8 +43,7 @@ server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1289	production
 server/src/runtime/types.ts	1126	production
 server/src/taskboard/store.ts	1011	production
-shared/src/lib/wsEventProcessor.test.ts	1117	test
-shared/src/lib/wsEventProcessor.ts	1007	production
+shared/src/lib/wsEventProcessor.test.ts	1101	test
 shared/src/schemas/workflowScenario.ts	1025	production
 web/src/components/BillingManager/index.tsx	2256	production
 web/src/components/DesktopSessionSidebar.tsx	2379	production
@@ -52,4 +51,4 @@ web/src/components/MessageItem.tsx	1091	production
 web/src/components/MessageList.tsx	1016	production
 web/src/components/ModelManager/index.tsx	1366	production
 web/src/components/TenantManager/index.tsx	1222	production
-web/src/hooks/useChatAppState.ts	3103	production
+web/src/hooks/useChatAppState.ts	3073	production

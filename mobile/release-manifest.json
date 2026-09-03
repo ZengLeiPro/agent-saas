@@ -1,17 +1,20 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "identity": {
     "displayName": "Agent SaaS",
-    "slug": "ky-agent",
+    "slug": "agent-saas",
     "scheme": "agent-saas",
     "iosBundleIdentifier": "com.agentsaas.mobile",
+    "iosAscAppId": "6808382989",
+    "iosAppleTeamId": "T4D4M5B485",
+    "iosAppGroupIdentifier": "group.com.agentsaas.mobile.share",
     "androidPackage": "com.agentsaas.mobile",
-    "easProjectId": "c5c346ce-795f-4dae-9570-b7e937028923",
+    "easProjectId": "2995ef56-aea4-4a59-ae4e-9ec3f203651a",
     "easOwner": "zengleipro"
   },
   "version": {
-    "marketingVersion": "1.9.5",
-    "iosBuildNumber": 85,
+    "marketingVersion": "1.0.0",
+    "iosBuildNumber": 1,
     "androidVersionCode": null,
     "latestPublished": {
       "marketingVersion": null,
@@ -20,23 +23,24 @@
     }
   },
   "target": {
-    "profile": null,
+    "profile": "production",
     "distribution": null,
     "gitSha": null
   },
   "verification": {
-    "identity": "pending-external-verification",
-    "versions": "pending-external-verification",
+    "identity": "verified",
+    "versions": "verified",
     "distribution": "pending-external-verification"
   },
   "oauthCallback": {
+    "enabled": {
+      "development": true,
+      "preview": true,
+      "production": false
+    },
     "profiles": {
-      "development": [
-        "agent-saas://oauth/callback"
-      ],
-      "preview": [
-        "agent-saas://oauth/callback"
-      ],
+      "development": ["agent-saas://oauth/callback"],
+      "preview": ["agent-saas://oauth/callback"],
       "production": []
     }
   }

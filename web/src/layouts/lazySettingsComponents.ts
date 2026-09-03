@@ -8,9 +8,6 @@ export const GovernanceConsole = lazy(() =>
 export const CronManager = lazy(() =>
   import('@/components/CronManager').then((module) => ({ default: module.CronManager })),
 );
-export const UserManager = lazy(() =>
-  import('@/components/UserManager').then((module) => ({ default: module.UserManager })),
-);
 export const TenantManager = lazy(() =>
   import('@/components/TenantManager').then((module) => ({ default: module.TenantManager })),
 );

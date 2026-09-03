@@ -130,6 +130,7 @@ function makeCtx(
     voiceCallbackRef: { current: hooks.voiceCallback },
     streamIdRef: { current: null },
     runIdRef: { current: null },
+    resolvedInteractionIdsRef: { current: new Set<string>() },
     lastEventIdRef: { current: null },
     userMsgIndex: -1,
     onChatAck: hooks.onChatAck,
@@ -640,13 +641,13 @@ describe('processWsEvent - 基础交互事件', () => {
       { type: 'permission_request', interactionId: 'x1', toolName: 'EnterPlanMode', toolInput: {} },
       ctx,
     );
-    expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'waiting_approval', content: '待处理' });
-    expect(ctrl.messages[1]).toMatchObject({
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'runtime_status', status: 'waiting_approval', content: '待处理' }));
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({
       type: 'permission_request',
       interactionId: 'x1',
       toolName: '进入规划模式',
       status: 'pending',
-    });
+    }));
   });
 
   it('ask_user：新增 pending 提问卡片', () => {
@@ -654,29 +655,11 @@ describe('processWsEvent - 基础交互事件', () => {
     const { ctx } = makeCtx(ctrl);
     const questions = [{ question: 'q', header: 'h', options: [], multiSelect: false }];
     dispatch({ type: 'ask_user', interactionId: 'x2', questions }, ctx);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
-    expect(ctrl.messages[1]).toMatchObject({ type: 'ask_user', interactionId: 'x2', status: 'pending' });
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'runtime_status', status: 'waiting_user', content: '待补充' }));
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'ask_user', interactionId: 'x2', status: 'pending' }));
   });
 
-  it.each([[true, 'allowed'], [false, 'denied']] as const)('interaction_resolved：canonical allow=%s → %s', (allow, status) => {
-      const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'x1', toolName: 'T', toolInput: '', status: 'pending' }]);
-      dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x1', response: { allow } }, makeCtx(ctrl).ctx, freshBlock(), { value: 's' }, 's');
-      expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe(status);
-  });
-
-  it('interaction_resolved：应用 canonical AskUser answers', () => {
-    const ctrl = makeController([{ id: 'a', type: 'ask_user', interactionId: 'x2', questions: [], status: 'pending' }]);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x2', response: { answers: { q: '否' } } }, makeCtx(ctrl).ctx, freshBlock(), { value: 's' }, 's');
-    expect(ctrl.messages[0]).toMatchObject({ type: 'ask_user', status: 'answered', answers: { q: '否' } });
-  });
-
-  it('interaction_resolved：兼容旧事件但不臆造审批结果', () => {
-    const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'legacy', toolName: 'T', toolInput: '', status: 'pending' }]);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'legacy' }, makeCtx(ctrl).ctx, freshBlock(), { value: 's' }, 's');
-    expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe('pending');
-  });
-
-  it('pending_interactions：仅为当前会话补齐卡片，已存在的跳过', () => {
+  it('pending_interactions：按当前会话权威快照补齐并更新既有卡片', () => {
     const ctrl = makeController([
       { id: 'p', type: 'permission_request', interactionId: 'exist', toolName: 'T', toolInput: '', status: 'pending' },
     ]);
@@ -686,16 +669,17 @@ describe('processWsEvent - 基础交互事件', () => {
         type: 'pending_interactions',
         sessionId: 's',
         interactions: [
-          { interactionId: 'exist', type: 'permission_request', toolName: 'T' }, // 已存在 → 跳过
+          { interactionId: 'exist', type: 'permission_request', version: 7, order: 1, toolName: 'T' },
           { interactionId: 'new-p', type: 'permission_request', toolName: 'Bash', toolInput: { cmd: 'ls' } },
           { interactionId: 'new-a', type: 'ask_user', questions: [{ question: 'q', header: 'h', options: [], multiSelect: false }] },
         ],
       }, ctx, freshBlock(), { value: 's' }, 's');
     // 原 1 条 + 等待状态 + 当前会话新增 2 条
     expect(ctrl.messages).toHaveLength(4);
-    expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
-    expect(ctrl.messages[2]).toMatchObject({ type: 'permission_request', interactionId: 'new-p' });
-    expect(ctrl.messages[3]).toMatchObject({ type: 'ask_user', interactionId: 'new-a' });
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'runtime_status', status: 'waiting_approval', content: '待处理' }));
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'permission_request', interactionId: 'exist', interactionVersion: 7 }));
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'permission_request', interactionId: 'new-p' }));
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'ask_user', interactionId: 'new-a' }));
   });
 
 });

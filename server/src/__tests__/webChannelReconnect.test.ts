@@ -285,13 +285,13 @@ describe('WebChannel active stream reconnect', () => {
 
     expect(ws.sent).toEqual([
       {
+        data: expect.objectContaining({ type: 'active_stream' }),
+      },
+      {
         data: {
-          type: 'active_stream',
+          type: 'pending_interactions',
           sessionId: 'session-4',
-          active: true,
-          streamId: 'stream-4',
-          runId: 'run-4',
-          status: 'running',
+          interactions: [],
         },
       },
     ]);

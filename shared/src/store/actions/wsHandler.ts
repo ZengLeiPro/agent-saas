@@ -70,6 +70,7 @@ export function setSyncRecoveryCallbacks(callbacks: SyncRecoveryCallbacks): void
 
 /** 安装统一 WS 消息处理器，返回 unsubscribe 函数 */
 const handledTerminalKeysRef = { current: new Set<string>() };
+const resolvedInteractionIdsRef = { current: new Set<string>() };
 
 export function setupWsHandler(): () => void {
   const baseline = getChatStore().getState();
@@ -254,6 +255,7 @@ export function setupWsHandler(): () => void {
       streamIdRef: { current: state.streamId },
       runIdRef: { current: state.runId },
       handledTerminalKeysRef,
+      resolvedInteractionIdsRef,
       lastEventIdRef: { current: state.lastEventId },
       userMsgIndex: state.userMsgIndex,
       sessionOwnerRef: { current: state.sessionOwner },

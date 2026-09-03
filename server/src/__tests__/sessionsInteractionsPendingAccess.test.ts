@@ -276,4 +276,25 @@ describe('GET /chat/interactions/pending owner-self access guard', () => {
       await stopServer(server);
     }
   });
+
+  it('durable resolved 终态压制同进程残留 pending', async () => {
+    const sessionId = randomUUID(); await writeOwnedSession(sessionId);
+    const interactionId = registerPending(sessionId, OWNER.id);
+    const resolvedStore: EventStore = {
+      async append() { throw new Error('not used'); },
+      async list() {
+        return [{
+          id: `interaction_resolved:${sessionId}:${interactionId}`, timestamp: '2026-09-03T04:01:00.000Z',
+          type: 'interaction_resolved', sessionId, runId: 'run-1', interactionId, interactionType: 'ask_user',
+          response: { answers: { '继续？': '是' } },
+        } satisfies Extract<PlatformEvent, { type: 'interaction_resolved' }>];
+      },
+    };
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, () => resolvedStore);
+    try {
+      expect(await fetchPending(baseUrl, sessionId)).toEqual({ status: 200, body: [] });
+    } finally {
+      await stopServer(server);
+    }
+  });
 });

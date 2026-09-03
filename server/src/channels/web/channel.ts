@@ -89,6 +89,7 @@ import { projectRunLiveness, type RunLiveness } from '../../runtime/runLiveness.
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
 import { normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
+import { buildInteractionRequestedCommand } from './interactionRequestedCommand.js';
 import {
   approvalResumeSemaphore,
   appendPersistedInteractionResolved,
@@ -2081,8 +2082,8 @@ export class WebChannel implements BaseChannel {
     return this.runtimeRecovery.replayDurableRuntimeEvents(client, sessionId, store, options);
   }
 
-  private pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
-    return this.runtimeRecovery.pushPendingInteractions(client, sessionId, tenantId);
+  private pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string, ownerUserId?: string): Promise<void> {
+    return this.runtimeRecovery.pushPendingInteractions(client, sessionId, tenantId, ownerUserId);
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
@@ -3585,55 +3586,47 @@ export class WebChannel implements BaseChannel {
           planContent = (await readLatestPlanContent(effectiveUserCwd)) ?? undefined;
         }
 
+        activeInteractionIds.add(event.interactionId);
+        const interactionPromise = interactionStore.create(event.interactionId, event.type, {
+          sessionId: resolvedSessionId,
+          runId: event.runId,
+          toolCallId: event.toolCallId,
+          invocationId: event.invocationId,
+          userId: user?.sub,
+          boundWebSocket: ws,
+          orgAgentId,
+          questions: event.questions,
+          toolId: event.toolId,
+          toolName: event.toolName,
+          displayName: event.displayName,
+          toolInput: event.toolInput,
+          planContent,
+          onExpired: (expired) => {
+            if (!resolvedSessionId) return;
+            const reason = '等待用户响应超时，交互已过期';
+            const response = { message: reason };
+            void appendActiveInteractionResolved({
+              sessionId: resolvedSessionId, interactionId: event.interactionId,
+              pendingInteraction: expired, response,
+              tenantId: this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined,
+              userId: user?.sub, runtimeEventStoreFor: this.config.runtimeEventStoreFor,
+            }).catch((error) => chatLogger.warn(`expired interaction persistence failed interaction=${event.interactionId}: ${error instanceof Error ? error.message : String(error)}`));
+            send({ type: 'interaction_resolved', sessionId: resolvedSessionId, interactionId: event.interactionId, status: 'expired', response, reason, retryable: false });
+          },
+        });
+        void interactionPromise.catch(() => undefined);
+        const storedInteraction = interactionStore.get(event.interactionId)!;
+
         if (resolvedSessionId) {
-          await this.appendDurableWebCommand(resolvedSessionId, {
-            type: 'interaction_requested',
+          await this.appendDurableWebCommand(resolvedSessionId, buildInteractionRequestedCommand({
             sessionId: resolvedSessionId,
-            ...(event.runId ? { runId: event.runId } : {}),
-            ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
-            ...(event.invocationId ? { invocationId: event.invocationId } : {}),
-            interactionId: event.interactionId,
-            interactionType: event.type,
+            source: event,
+            revision: { version: storedInteraction.version, order: storedInteraction.order },
             userId: user?.sub,
-            toolId: event.toolId,
-            toolName: event.toolName,
-            displayName: event.displayName,
-            questions: event.questions,
-            toolInput: event.toolInput,
-          }, this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined).catch((err: unknown) => {
+          }), this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined).catch((err: unknown) => {
             chatLogger.warn(`failed to persist interaction_requested: ${err instanceof Error ? err.message : String(err)}`);
           });
         }
-
-        activeInteractionIds.add(event.interactionId);
-        const interactionPromise = interactionStore.create(event.interactionId, event.type, {
-            sessionId: resolvedSessionId,
-            runId: event.runId,
-            toolCallId: event.toolCallId,
-            invocationId: event.invocationId,
-            userId: user?.sub,
-            boundWebSocket: ws,
-            orgAgentId,
-            questions: event.questions,
-            toolId: event.toolId,
-            toolName: event.toolName,
-            displayName: event.displayName,
-            toolInput: event.toolInput,
-            planContent,
-            onExpired: (expired) => {
-              if (!resolvedSessionId) return;
-              const reason = '等待用户响应超时，交互已过期';
-              const response = { message: reason };
-              void appendActiveInteractionResolved({
-                sessionId: resolvedSessionId, interactionId: event.interactionId,
-                pendingInteraction: expired, response,
-                tenantId: this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined,
-                userId: user?.sub, runtimeEventStoreFor: this.config.runtimeEventStoreFor,
-              }).catch((error) => chatLogger.warn(`expired interaction persistence failed interaction=${event.interactionId}: ${error instanceof Error ? error.message : String(error)}`));
-              send({ type: 'interaction_resolved', sessionId: resolvedSessionId, interactionId: event.interactionId, status: 'expired', response, reason, retryable: false });
-            },
-          });
-        const storedInteraction = interactionStore.get(event.interactionId)!;
         // The fixed-zone request carries its canonical revision/order from first delivery.
         if (!connectionAbortController.signal.aborted) {
           send({

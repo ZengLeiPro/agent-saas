@@ -325,8 +325,8 @@ describe("ManagementSettingsAccessGate", () => {
     expect(screen.getByTestId("ordinary-dialog").parentElement).toBe(document.body);
   });
 
-  it("仅桌面统一设置的两个 Gate 启用访问后持久挂载", () => {
-    expect(desktopLayoutSource.match(/\bpersistAfterVisit\b/g)).toHaveLength(2);
+  it("桌面与移动布局不再预挂两套隐藏管理 Gate", () => {
+    expect(desktopLayoutSource).not.toContain("persistAfterVisit");
     expect(mobileLayoutSource).not.toContain("persistAfterVisit");
   });
 });

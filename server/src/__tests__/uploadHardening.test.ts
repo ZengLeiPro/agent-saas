@@ -645,22 +645,25 @@ describe('attachment upload hardening', () => {
     expect(usage).toMatchObject({ totalFiles: 0, totalBytes: 0, stagedFiles: 0, referencedFiles: 0, legacyFiles: 0 });
   });
 
-  it('rejects MIME spoof, double extensions and executable SVG/HTML content with structured codes', async () => {
+  it('accepts broad attachment types and downgrades unsafe preview classifications', async () => {
     const root = await createRoot();
     const manager = new UploadManager({ agentCwd: root });
     const baseUrl = await startUploadServer(root, manager);
     const cases = [
-      { name: 'photo.png', type: 'image/png', body: 'not-a-png', code: 'UPLOAD_MIME_MISMATCH' },
-      { name: 'invoice.pdf.exe', type: 'application/pdf', body: '%PDF-1.4', code: 'UPLOAD_DOUBLE_EXTENSION' },
-      { name: 'diagram.svg', type: 'image/svg+xml', body: '<svg><script>alert(1)</script></svg>', code: 'UPLOAD_EXTENSION_BLOCKED' },
-      { name: 'notes.txt', type: 'text/plain', body: '<html><script>alert(1)</script></html>', code: 'UPLOAD_EXECUTABLE_CONTENT' },
+      { name: '文档 V2.5.pdf', type: 'application/pdf', body: '%PDF-1.4\nvalid', mimeType: 'application/pdf' },
+      { name: 'Demo-V2.7 (1).html', type: 'text/html', body: '<!doctype html><h1>Demo</h1>', mimeType: 'text/html' },
+      { name: 'install.exe', type: 'application/x-msdownload', body: Buffer.from([0x4d, 0x5a, 0, 0]), mimeType: 'application/octet-stream' },
+      { name: 'photo.png', type: 'image/png', body: 'not-a-png', mimeType: 'application/octet-stream' },
     ];
     for (const fixture of cases) {
       const form = new FormData();
       form.append('files', new Blob([fixture.body], { type: fixture.type }), fixture.name);
       const response = await fetch(`${baseUrl}/api/upload`, { method: 'POST', body: form });
-      expect(response.status).toBe(422);
-      expect(await response.json()).toMatchObject({ success: false, code: fixture.code });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        success: true,
+        files: [{ originalName: fixture.name, mimeType: fixture.mimeType, isImage: false }],
+      });
     }
   });
 

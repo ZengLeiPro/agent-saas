@@ -1,3 +1,4 @@
+import type { SandboxWorkloadDescriptor } from '@agent/shared';
 import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { RunRecord } from '../runtime/runStore.js';
 import {
@@ -54,6 +55,7 @@ export function canonicalizeDispatchPayload(
     throw new InvalidTaskboardDispatchPayloadError(`执行派发 payload 关联字段不一致：${dispatch.runId}`);
   }
   const canonicalUserRole = userRole as 'admin' | 'user';
+  const workload = requireTaskboardWorkload(dispatch, session.sandboxWorkloadDescriptor, run.metadata);
   const executionTarget = run.executionTarget as 'server-local' | 'server-container' | 'server-remote' | 'client';
   const workspaceUser = {
     id: dispatch.ownerUserId,
@@ -91,6 +93,7 @@ export function canonicalizeDispatchPayload(
     sessionSource: 'taskboard_execution',
     memoryAutomationEligible: false,
     memoryPolicyVersion: 'v2',
+    sandboxWorkloadDescriptor: workload,
   });
   canonicalSession.createdAt = session.createdAt;
   canonicalSession.updatedAt = session.updatedAt;
@@ -112,6 +115,8 @@ export function canonicalizeDispatchPayload(
         taskboardExecutionId: dispatch.executionId,
         taskboardTaskId: dispatch.taskId,
         outputTransactionMode: 'terminal_buffered',
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: workload,
         [SCHEDULER_STATE_METADATA_KEY]: SCHEDULER_STATE_STAGED,
         cwd: expectedCwd,
         transcriptPath: expectedTranscriptPath,
@@ -174,6 +179,9 @@ export function assertDispatchedRun(
     || metadata?.taskboardExecutionId !== dispatch.executionId
     || metadata?.taskboardTaskId !== dispatch.taskId
     || metadata?.outputTransactionMode !== 'terminal_buffered'
+    || metadata?.sandboxWorkloadTopLevel !== true
+    || expectedMetadata.sandboxWorkloadTopLevel !== true
+    || !sameWorkload(metadata?.sandboxWorkloadDescriptor, expectedMetadata.sandboxWorkloadDescriptor)
     || expectedMetadata.outputTransactionMode !== 'terminal_buffered'
     || expectedMetadata[SCHEDULER_STATE_METADATA_KEY] !== SCHEDULER_STATE_STAGED
     || (schedulerState !== SCHEDULER_STATE_STAGED
@@ -201,6 +209,48 @@ function isTerminalRun(run: RunRecord): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireTaskboardWorkload(
+  dispatch: TaskboardExecutionDispatch,
+  sessionDescriptor: unknown,
+  metadata: unknown,
+): Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }> {
+  if (!isTaskboardTaskKind(dispatch.taskKind) || !isTaskboardExecutionPurpose(dispatch.purpose)) {
+    throw new InvalidTaskboardDispatchPayloadError('执行派发数据库 workload 不合法');
+  }
+  const expected = {
+    kind: 'taskboard' as const,
+    taskKind: dispatch.taskKind,
+    purpose: dispatch.purpose,
+  };
+  const runMetadata = isRecord(metadata) ? metadata : {};
+  const runDescriptor = runMetadata.sandboxWorkloadDescriptor;
+  const topLevel = runMetadata.sandboxWorkloadTopLevel;
+  const legacyV1 = sessionDescriptor === undefined && runDescriptor === undefined && topLevel === undefined;
+  if (legacyV1) return expected;
+  if (
+    topLevel !== true
+    || !sameWorkload(sessionDescriptor, expected)
+    || !sameWorkload(runDescriptor, expected)
+  ) {
+    throw new InvalidTaskboardDispatchPayloadError('执行派发 payload workload 关联字段不一致');
+  }
+  return expected;
+}
+
+function isTaskboardTaskKind(value: unknown): value is TaskboardExecutionDispatch['taskKind'] {
+  return value === 'delivery' || value === 'advisory' || value === 'integration' || value === 'remediation';
+}
+
+function isTaskboardExecutionPurpose(value: unknown): value is TaskboardExecutionDispatch['purpose'] {
+  return value === 'work' || value === 'review' || value === 'merge';
+}
+
+function sameWorkload(left: unknown, right: unknown): boolean {
+  const a = isRecord(left) ? left : {};
+  const b = isRecord(right) ? right : {};
+  return a.kind === b.kind && a.taskKind === b.taskKind && a.purpose === b.purpose;
 }
 
 function isNonEmptyString(value: unknown): value is string {

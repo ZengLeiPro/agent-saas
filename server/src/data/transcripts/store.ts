@@ -121,6 +121,19 @@ async function listMetaFilesRecursive(dir: string): Promise<string[]> {
  * 通过 sessionId 查找 transcript 路径（全局扫描）。
  * 仅扫描新 Agent SaaS layout；旧 cwd-derived transcript root 不再作为在线会话读路径。
  */
+/**
+ * 一次性列出所有已存在的 transcript sessionId。
+ *
+ * findTranscriptPathBySessionId 每次调用都会重新递归整棵 transcripts 树，
+ * 因此对成百上千个 sessionId 逐个判定存在性会退化成 O(N×M)：启动 prune 曾对
+ * 2,220 个 id 各扫一遍 17k 文件、50 路并发，阻塞 RuntimeScheduler 启动约 113 秒。
+ * 批量存在性判定一律改用本函数先建索引。
+ */
+export async function listExistingTranscriptSessionIds(): Promise<Set<string>> {
+  const files = await listTranscriptFilesRecursive(AGENT_LEGACY_TRANSCRIPTS_ROOT);
+  return new Set(files.map((file) => path.basename(file, '.jsonl')));
+}
+
 export async function findTranscriptPathBySessionId(
   sessionId: string
 ): Promise<string | null> {

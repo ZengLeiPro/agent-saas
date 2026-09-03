@@ -3,65 +3,9 @@ name: ACS CI / Deploy
 on:
   pull_request:
     branches: [main]
+  # main push 始终进入 changes job，由 acs-classify.sh 作为唯一影响分类真源。
   push:
     branches: [main]
-    paths:
-      - 'Dockerfile'
-      - '.dockerignore'
-      - '.npmrc'
-      - 'patches/**'
-      - 'acs-orchestrator/**'
-      - 'server/src/agent/**'
-      - 'shared/src/**'
-      - 'server/src/runtime/controlPlaneFetch.ts'
-      - 'server/src/runtime/egressPolicy.ts'
-      - 'server/src/runtime/handEnvAllowlist.ts'
-      - 'server/src/runtime/imageAttachments.ts'
-      - 'server/src/runtime/imageBlobStore.ts'
-      - 'server/src/runtime/invocationCorrelation.ts'
-      - 'server/src/runtime/runtimeIsolationEvidence.ts'
-      - 'server/src/runtime/workspaceIdentity.ts'
-      - 'server/src/security/trustedFile.ts'
-      - 'server/src/utils/logger.ts'
-      - 'server/src/utils/requestContext.ts'
-      - 'server/src/runtime/handProtocol.ts'
-      - 'server/src/runtime/httpTransport.ts'
-      - 'server/src/runtime/inProcessTransport.ts'
-      - 'server/src/runtime/clientDaemonTransport.ts'
-      - 'server/src/runtime/networkPolicy.ts'
-      - 'server/src/runtime/rawAgentLoop.ts'
-      - 'server/src/runtime/rawRuntimeRunDispatch.ts'
-      - 'server/src/runtime/handStore.ts'
-      - 'server/src/data/tenants/types.ts'
-      - 'server/package.json'
-      - 'shared/package.json'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.github/acs-bundle-inputs.txt'
-      - '.github/acs-runtime-inputs.txt'
-      - '.github/workflows/acs-sandbox.yml'
-      - '.github/workflows/ci.yml'
-      - '.github/scripts/acs-classify.sh'
-      - '.github/scripts/redeliver_acr_webhook.py'
-      - 'scripts/apply-orchestrator-env.py'
-      - 'scripts/acs-browser-lease-e2e.mjs'
-      - 'scripts/acs-tool-content-json.mjs'
-      - 'scripts/check-acs-shared-rollback-compatibility.mjs'
-      - 'scripts/deploy-acs-orchestrator.sh'
-      - 'scripts/release/artifact-lib.mjs'
-      - 'scripts/release/read-live-production-components.mjs'
-      - 'scripts/release/read-production-state.mjs'
-      - 'scripts/release/read-runtime-identity.mjs'
-      - 'scripts/release/seal-compatibility-release.mjs'
-      - 'scripts/release/upload-oss-object-immutable.sh'
-      - 'scripts/release/verify-installed-release.mjs'
-      - 'scripts/release/write-compatibility-acs-identity.mjs'
-      - 'scripts/release/write-live-production-identity.mjs'
-      - 'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py'
-      - 'scripts/acs-verify-per-session.py'
-      - 'scripts/test_acs_operational_scripts.py'
-      - 'scripts/test_acr_webhook_redelivery.py'
   workflow_dispatch:
     inputs:
       force:
@@ -160,6 +104,39 @@ jobs:
         if: steps.impact.outputs.required == 'true'
         run: pnpm -F acs-orchestrator test
 
+      - name: Test server ACS lifecycle and admission contracts
+        if: steps.impact.outputs.required == 'true'
+        run: >-
+          pnpm -F server exec vitest run
+          src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
+          src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
+          src/__tests__/runtimeTombstoneAdmission.test.ts
+          src/__tests__/runtimeWakeSessionRestore.test.ts
+          src/__tests__/sandboxLifecycleService.test.ts
+          src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
+          src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
+          src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
+          src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
+
+      - name: Test ACS staging and production lifecycle gates
+        if: steps.impact.outputs.required == 'true'
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
+
       - name: Test ACS operational scripts
         if: steps.impact.outputs.required == 'true'
         run: >-
@@ -184,8 +161,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 分类逻辑与 build-deploy 的部署必要性门禁共用 .github/scripts/acs-classify.sh，
-      # 避免两处判定漂移。
+      # 所有 main push 的分类逻辑与 build-deploy 部署必要性门禁共用
+      # .github/scripts/acs-classify.sh，避免触发路径与部署判定漂移。
       - name: Classify changed files
         id: filter
         env:
@@ -275,6 +252,37 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
+      - name: Test server ACS lifecycle and admission contracts
+        run: >-
+          pnpm -F server exec vitest run
+          src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
+          src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
+          src/__tests__/runtimeTombstoneAdmission.test.ts
+          src/__tests__/runtimeWakeSessionRestore.test.ts
+          src/__tests__/sandboxLifecycleService.test.ts
+          src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
+          src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
+          src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
+          src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
+
+      - name: Test ACS staging and production lifecycle gates
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
+
       - name: Test ACS operational scripts
         run: >-
           python3 -m unittest
@@ -324,6 +332,37 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
+      - name: Test server ACS lifecycle and admission contracts
+        run: >-
+          pnpm -F server exec vitest run
+          src/__tests__/acsDeployWorkflowContract.test.ts
+          src/__tests__/dwsAuthFlow.test.ts
+          src/__tests__/dwsKeepalive.test.ts
+          src/__tests__/dwsPersonalEventGateway.test.ts
+          src/__tests__/dwsPersonalMessageSender.test.ts
+          src/__tests__/executionDispatchValidation.test.ts
+          src/__tests__/feishuConnector.test.ts
+          src/__tests__/runtimeHandProvisionRace.test.ts
+          src/__tests__/runtimeTombstoneAdmission.test.ts
+          src/__tests__/runtimeWakeSessionRestore.test.ts
+          src/__tests__/sandboxLifecycleService.test.ts
+          src/__tests__/sandboxRunAdmissionFence.test.ts
+          src/__tests__/sandboxWorkloadDescriptor.test.ts
+          src/__tests__/sandboxWarmup.test.ts
+          src/__tests__/serverRemoteConfig.test.ts
+          src/__tests__/sessionCatalog.test.ts
+          src/__tests__/taskboardExecution.test.ts
+          src/__tests__/webChannelPersistentInteractionRecovery.test.ts
+          src/context/sync/dwsContextRuntime.test.ts
+          src/dws/businessToolProvider.test.ts
+          src/dws/requesterIdentityResolver.test.ts
+
+      - name: Test ACS staging and production lifecycle gates
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
+
       - name: Test ACS operational scripts
         run: >-
           python3 -m unittest
@@ -338,7 +377,7 @@ jobs:
     concurrency:
       group: production-runtime
       cancel-in-progress: false
-    # 生产部署只走手动 dispatch，并与 App/Promotion/confirmation 共享生产写锁。
+    # 生产部署只走手动 dispatch，并与 App/Promotion 共用生产写锁。
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'
 
     env:
@@ -661,7 +700,8 @@ jobs:
           set -euo pipefail
           pnpm -F acs-orchestrator build
           stage="$RUNNER_TEMP/acs-release-stage"
-          mkdir -p "$stage"
+          mkdir -p "$stage/scripts/release" \
+            "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts"
           pnpm --config.allowUnusedPatches=true --filter acs-orchestrator --prod deploy \
             "$stage/acs-orchestrator"
           rm -rf "$stage/acs-orchestrator/dist" "$stage/acs-orchestrator/descriptions"
@@ -670,11 +710,21 @@ jobs:
           mkdir -p "$stage/acs-orchestrator/config"
           install -m 0444 acs-orchestrator/config/production.env \
             "$stage/acs-orchestrator/config/production.env"
-          while read -r mode source; do
-            [ -n "$mode" ] || continue
-            case "$mode" in \#*) continue ;; esac
-            install -D -m "$mode" "$source" "$stage/$source"
-          done < .github/acs-runtime-inputs.txt
+          install -m 0555 scripts/apply-orchestrator-env.py \
+            scripts/acs-browser-lease-e2e.mjs \
+            scripts/acs-tool-content-json.mjs \
+            scripts/check-acs-shared-rollback-compatibility.mjs "$stage/scripts/"
+          install -m 0555 \
+            workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py \
+            "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py"
+          install -m 0444 scripts/release/artifact-lib.mjs \
+            scripts/release/read-live-production-components.mjs \
+            scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs \
+            scripts/release/seal-compatibility-release.mjs \
+            scripts/release/verify-installed-release.mjs \
+            scripts/release/write-compatibility-acs-identity.mjs \
+            scripts/release/write-live-production-identity.mjs "$stage/scripts/release/"
           tar --no-xattrs -czf "$RUNNER_TEMP/acs-orchestrator.tgz" -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name acsOrchestrator \

@@ -59,7 +59,7 @@ describe('DWS device authorization flow', () => {
     expect(parseDwsDeviceAuthorization('没有有效授权码')).toBeNull();
   });
 
-  it('在当前用户 warm sandbox 执行固定 DWS 命令，且不把服务凭证放进 wire body', async () => {
+  it('在交互式当前用户 warm sandbox 执行固定 DWS 命令，且不把服务凭证放进 wire body', async () => {
     let wire: Record<string, any> | undefined;
     const fetchImpl: typeof fetch = vi.fn(async (_input, init) => {
       wire = JSON.parse(String(init?.body));
@@ -104,6 +104,7 @@ describe('DWS device authorization flow', () => {
       id: 'ws_kaiyan__ky000000000001',
       mountSubPath: 'workspaces/kaiyan/ky000000000001',
       userId: 'ky000000000001',
+      workload: { class: 'interactive' },
     });
     expect(JSON.stringify(wire)).not.toContain('server-secret');
   });
@@ -128,7 +129,7 @@ describe('DWS device authorization flow', () => {
     await expect(runner.login(user(), vi.fn())).rejects.toThrow('DWS 未返回钉钉官方授权页面');
   });
 
-  it('logout runner 拒绝空列表、组织级及畸形 selector，不执行 CLI 命令', async () => {
+  it('logout runner 拒绝空列表、组织级及畸形 selector，且不执行 CLI 命令', async () => {
     const resolveServerRemote = vi.fn(async () => ({
       baseUrl: 'http://acs.internal',
       authToken: 'server-secret',
@@ -144,6 +145,30 @@ describe('DWS device authorization flow', () => {
     await expect(runner.logout(user(), ['ding-corp-1::staff-1'])).rejects.toThrow('corpId:dingtalkUserId');
     await expect(runner.logout(user(), ['ding-corp-1: staff-1'])).rejects.toThrow('corpId:dingtalkUserId');
     expect(resolveServerRemote).not.toHaveBeenCalled();
+  });
+
+  it('把交互式 workload 传给 logout transport wire', async () => {
+    let wire: Record<string, any> | undefined;
+    const runner = new DwsDeviceLoginRunner({
+      agentCwd: '/mnt/agent-saas/workspaces',
+      serverRemote: { baseUrl: 'http://acs.internal', authToken: 'server-secret' },
+      fetchImpl: vi.fn(async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        const completed = {
+          type: 'completed',
+          response: { status: 'success', content: '{}' },
+        };
+        return new Response(`data: ${JSON.stringify(completed)}\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }) as typeof fetch,
+    });
+
+    await runner.logout(user(), ['ding-corp-1:staff-1']);
+
+    expect(wire?.input.command).toContain("--profile 'ding-corp-1:staff-1'");
+    expect(wire?.context.workspace).toMatchObject({ workload: { class: 'interactive' } });
   });
 
   it('授权完成后从用户持久化目录同步非敏感 profile，并标记连接成功', async () => {

@@ -63,6 +63,7 @@ describe('HttpTransport.serializeRequest', () => {
     expect(wire.context.workspace.sandboxScopeId).toBe('ws_kaiyan__u-1');
     expect(wire.context.workspace.mountSubPath).toBe('workspaces/kaiyan/u-1');
     expect(wire.context.workspace.executionTarget).toBe('server-remote');
+    expect(wire.context.workspace).not.toHaveProperty('workload');
   });
 
   it('serializes an explicit sandbox resource override and omits it by default', () => {
@@ -73,6 +74,20 @@ describe('HttpTransport.serializeRequest', () => {
       },
     }));
     expect(wire.context.workspace.sandboxResources).toEqual({ cpu: '1', memoryMb: 2048 });
+  });
+
+  it('passes the mapped ACS workload descriptor and never serializes topLevelSessionId', () => {
+    const wire = serializeRequest(buildRequest({
+      context: {
+        workspace: {
+          ...SAMPLE_WORKSPACE,
+          topLevelSessionId: 'top-1',
+          workload: { class: 'taskboard', taskKind: 'delivery', purpose: 'work' },
+        },
+      },
+    }));
+    expect(wire.context.workspace.workload).toEqual({ class: 'taskboard', taskKind: 'delivery', purpose: 'work' });
+    expect(wire.context.workspace).not.toHaveProperty('topLevelSessionId');
   });
 
   it('preserves toolName / input / userId / username / sessionId', () => {

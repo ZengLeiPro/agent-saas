@@ -1,6 +1,7 @@
 import importlib.util
 import ipaddress
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,11 +15,11 @@ VERIFY_SCRIPT = REPO_ROOT / 'scripts' / 'acs-verify-per-session.py'
 TOOL_CONTENT_JSON = REPO_ROOT / 'scripts' / 'acs-tool-content-json.mjs'
 ACS_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'acs-sandbox.yml'
 ACS_CLASSIFIER = REPO_ROOT / '.github' / 'scripts' / 'acs-classify.sh'
-ACS_RUNTIME_INPUTS = REPO_ROOT / '.github' / 'acs-runtime-inputs.txt'
 ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
 ACS_BROWSER_E2E = REPO_ROOT / 'scripts' / 'acs-browser-lease-e2e.mjs'
 ACS_ROLLBACK_COMPATIBILITY = REPO_ROOT / 'scripts' / 'check-acs-shared-rollback-compatibility.mjs'
 ACS_PRODUCTION_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'production.env'
+ACS_STAGING_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'staging.env'
 DOCKERFILE = REPO_ROOT / 'Dockerfile'
 
 
@@ -162,6 +163,7 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
                 ['node', str(ACS_ROLLBACK_COMPATIBILITY), str(health_path),
                  str(rollback_path), str(candidate_path)],
                 text=True, capture_output=True, check=False,
+                env={**os.environ, 'NODE_NO_WARNINGS': '1'},
             )
 
     def test_accepts_only_identical_healthy_shared_config(self):
@@ -178,10 +180,7 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
         ]
         for result in cases:
             self.assertEqual(result.returncode, 1)
-            payload = next(
-                line for line in reversed(result.stderr.splitlines()) if line.startswith('{')
-            )
-            self.assertFalse(json.loads(payload)['compatible'])
+            self.assertFalse(json.loads(result.stderr)['compatible'])
 
 
 class AcsDockerfileWorkspaceInjectionTest(unittest.TestCase):
@@ -218,6 +217,9 @@ class AcsProductionSnatConfigTest(unittest.TestCase):
         address_capacity = sum(ipaddress.ip_network(cidr).num_addresses for cidr in configured)
         self.assertEqual(max_running, 7_000)
         self.assertEqual(int(values['ACS_SANDBOX_TTL_MS']), 30 * 60_000)
+        self.assertEqual(values['ACS_SANDBOX_LIFECYCLE_POLICY_MODE'], 'enforce')
+        staging_env = ACS_STAGING_ENV.read_text(encoding='utf-8')
+        self.assertIn('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce\n', staging_env)
         self.assertEqual(int(values['ACS_SANDBOX_MAX_ALLOCATED_CPU_MILLICORES']), 10_000_000)
         self.assertEqual(int(values['ACS_SANDBOX_MAX_ALLOCATED_MEMORY_MIB']), 20_000 * 1024)
         self.assertLessEqual(max_running, address_capacity)
@@ -277,7 +279,7 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
-    def test_lockfile_only_change_publishes_runtime_dependencies(self):
+    def test_lockfile_only_change_conservatively_triggers_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('pnpm-lock.yaml\n')
             changed.flush()
@@ -290,9 +292,21 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             )
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
+        self.assertIn('contract_check=false', classified.stdout)
         self.assertIn('reason=pnpm-lock.yaml runtime dependency resolution', classified.stdout)
-        self.assertIn("- 'pnpm-lock.yaml'", self.workflow)
         self.assertIn('skipped=none', classified.stdout)
+
+    def test_direct_deploy_requires_enforced_lifecycle_policy_from_health(self):
+        self.assertIn(
+            "lifecycleEnabled: health.lifecycle?.enabled",
+            self.deploy_script,
+        )
+        self.assertIn("lifecycleEnabled: true", self.deploy_script)
+        self.assertIn("lifecyclePolicyMode: health.lifecyclePolicyMode", self.deploy_script)
+        self.assertIn("lifecyclePolicyMode: 'enforce'", self.deploy_script)
+        gate_start = self.deploy_script.index("const actual = { ...(health.runtimeConfig || {})")
+        rollback = self.deploy_script.index("  rollback\n  exit 1\n", gate_start)
+        self.assertGreater(rollback, gate_start)
 
     def test_test_fixtures_are_contract_only_and_never_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
@@ -309,7 +323,14 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
-    def test_mixed_publish_and_contract_changes_run_both_gates(self):
+    def test_all_main_pushes_reach_classifier_without_path_filter(self):
+        push_start = self.workflow.index('  push:')
+        dispatch_start = self.workflow.index('  workflow_dispatch:', push_start)
+        push_trigger = self.workflow[push_start:dispatch_start]
+        self.assertIn('branches: [main]', push_trigger)
+        self.assertNotIn('paths:', push_trigger)
+
+    def test_mixed_changes_run_publish_and_contract_gates(self):
         self.assertIn(
             "if: needs.changes.outputs.contract_check == 'true'",
             self.workflow,
@@ -320,30 +341,27 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             self.workflow,
         )
 
-    def test_every_packaged_runtime_input_triggers_workflow_and_publish(self):
-        runtime_inputs = []
-        for line in ACS_RUNTIME_INPUTS.read_text(encoding='utf-8').splitlines():
-            if line and not line.startswith('#'):
-                mode, path = line.split(maxsplit=1)
-                self.assertIn(mode, {'0444', '0555'})
-                runtime_inputs.append(path)
-
-        self.assertIn('done < .github/acs-runtime-inputs.txt', self.workflow)
-        self.assertIn('install -D -m "$mode" "$source" "$stage/$source"', self.workflow)
-        for path in runtime_inputs:
-            self.assertIn(f"- '{path}'", self.workflow)
-            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
-                changed.write(f'{path}\n')
-                changed.flush()
-                classified = subprocess.run(
-                    ['bash', str(ACS_CLASSIFIER), changed.name],
-                    cwd=REPO_ROOT,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-            self.assertEqual(classified.returncode, 0, classified.stderr)
-            self.assertIn('publish=true', classified.stdout, path)
+    def test_browser_smoke_helper_is_sealed_and_triggers_publish(self):
+        self.assertIn(
+            'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py',
+            self.workflow,
+        )
+        self.assertRegex(
+            self.workflow,
+            r'install -m 0555[\s\\]+workspace-shared/\.ky-agent/skills-pool/browser/scripts/acs_browser\.py',
+        )
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=true', classified.stdout)
 
     def test_immutable_baseline_uploader_requires_an_exact_sha_acs_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
@@ -392,6 +410,16 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             "'x-acs-maintenance-bypass': 'deploy-smoke-v1'",
             ACS_BROWSER_E2E.read_text(encoding='utf-8'),
         )
+
+    def test_deploy_smoke_provision_and_execute_are_explicitly_classified(self):
+        workload = r'\"workload\":{\"class\":\"deploy-smoke\"}'
+        smoke_section = self.deploy_script.split(
+            '# ── 5. Smoke: provision + execute 真实拉新镜像跑通 ──', 1,
+        )[1]
+        provision, execute = smoke_section.split('if [ "$SMOKE_OK" = "true" ]; then', 1)
+        self.assertIn(workload, provision, 'provision smoke 缺少 workload 分类')
+        self.assertIn(workload, execute, 'execute smoke 缺少 workload 分类')
+        self.assertEqual(smoke_section.count(workload), 2)
 
 
 class AcsToolContentJsonTest(unittest.TestCase):

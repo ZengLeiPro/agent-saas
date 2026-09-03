@@ -58,6 +58,7 @@ export class DwsPersonalEventGateway {
     }>;
     onEvent?: (account: AgentDwsAccountRecord, event: DwsPersonalEvent) => Promise<void>;
     isExecutionEnabled?: () => boolean | Promise<boolean>;
+    fetchImpl?: typeof fetch;
     now?: () => number;
     logger?: { info(message: string): void; warn(message: string): void };
   }) {}
@@ -199,6 +200,7 @@ export class DwsPersonalEventGateway {
         baseUrl: remote.baseUrl,
         authToken: remote.authToken,
         invokeTimeoutMs: Math.max(remote.invokeTimeoutMs ?? 0, EVENT_STREAM_TIMEOUT_MS + 10_000),
+        fetchImpl: this.options.fetchImpl,
       });
       const root = resolveDwsPrincipalCwd(this.options.agentCwd, principal);
       const mountSubPath = deriveWorkspaceMountSubPath(this.options.agentCwd, root);
@@ -230,6 +232,7 @@ export class DwsPersonalEventGateway {
             mountSubPath,
             executionTarget: 'server-remote',
             sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+            workload: { class: 'cron' },
           },
         },
       })) {

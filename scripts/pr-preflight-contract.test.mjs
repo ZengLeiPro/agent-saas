@@ -88,11 +88,16 @@ test('CI 并行任务与 Build & Check 汇总门禁完整连接', () => {
   assert.match(workflow, /build:\s+[\s\S]*?if: always\(\)/u);
 });
 
-test('PR 覆盖率范围按依赖方向收窄，未知路径 fail closed', () => {
+test('PR 覆盖率范围按依赖方向收窄，Mobile 与未知路径 fail closed', () => {
   assert.deepEqual(planCoverageWorkspaces(['web/src/App.tsx']), ['web']);
   assert.deepEqual(planCoverageWorkspaces(['server/src/index.ts']), ['server']);
   assert.deepEqual(planCoverageWorkspaces(['shared/src/index.ts']), ['shared', 'server', 'web']);
   assert.deepEqual(planCoverageWorkspaces(['docs/guide.md']), ['none']);
+  assert.deepEqual(planCoverageWorkspaces(['mobile/src/App.tsx']), [
+    'shared',
+    'server',
+    'web',
+  ]);
   assert.deepEqual(planCoverageWorkspaces(['new-workspace/src/index.ts']), [
     'shared',
     'server',

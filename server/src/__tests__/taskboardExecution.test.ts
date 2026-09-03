@@ -49,6 +49,7 @@ describe('TaskboardExecutionCoordinator', () => {
       {
         getExecutionModelContext: vi.fn(async () => ({
           boardOwnerUserId: identity.ownerUserId,
+          taskKind: 'delivery' as const,
           boardId: task.boardId,
           boardName: '研发交付',
         })),
@@ -103,6 +104,7 @@ describe('TaskboardExecutionCoordinator', () => {
       {
         getExecutionModelContext: vi.fn(async () => ({
           boardOwnerUserId: identity.ownerUserId,
+          taskKind: 'delivery' as const,
           boardId: task.boardId,
           boardName: '研发交付',
         })),
@@ -288,7 +290,7 @@ describe('TaskboardExecutionCoordinator', () => {
     };
     const resolveOwnerIdentity = vi.fn(() => identity);
     const rig = makeRig({
-      getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
+      getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId, taskKind: 'delivery' as const })),
     }, { resolveOwnerIdentity });
 
     await expect(rig.coordinator.startExecution(
@@ -397,6 +399,7 @@ describe('TaskboardExecutionCoordinator', () => {
           taskModel: 'group-a/model-task',
           boardModel: 'group-a/model-board',
           boardOwnerUserId: identity.ownerUserId,
+          taskKind: 'delivery' as const,
         })),
       },
       { resolveModel },
@@ -416,6 +419,7 @@ describe('TaskboardExecutionCoordinator', () => {
         getExecutionModelContext: vi.fn(async () => ({
           boardModel: 'group-a/model-board',
           boardOwnerUserId: identity.ownerUserId,
+          taskKind: 'delivery' as const,
         })),
       },
       { resolveModel },
@@ -437,6 +441,7 @@ describe('TaskboardExecutionCoordinator', () => {
       getExecutionModelContext: vi.fn(async () => ({
           boardModel: 'group-a/model-board',
           boardOwnerUserId: identity.ownerUserId,
+          taskKind: 'delivery' as const,
         })),
     });
     await expect(withoutResolver.coordinator.startExecution(
@@ -451,6 +456,7 @@ describe('TaskboardExecutionCoordinator', () => {
         getExecutionModelContext: vi.fn(async () => ({
           boardModel: 'group-a/model-board',
           boardOwnerUserId: identity.ownerUserId,
+          taskKind: 'delivery' as const,
         })),
       },
       { resolveModel },
@@ -714,7 +720,8 @@ describe('TaskboardExecutionCoordinator', () => {
         runId: claimedInput.runId,
         executionId: claimedInput.executionId,
         outboxExecutionId: claimedInput.executionId,
-        taskId: task.id,
+        taskId: task.id, taskKind: task.kind ?? 'delivery',
+        purpose: claimedInput.purpose ?? 'work',
         sessionId: claimedInput.sessionId,
         tenantId: identity.tenantId,
         ownerUserId: identity.ownerUserId,
@@ -736,7 +743,10 @@ describe('TaskboardExecutionCoordinator', () => {
       sandboxScopeId: 'forged-sandbox',
     }));
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
-      metadata: expect.objectContaining({ outputTransactionMode: 'terminal_buffered' }),
+      metadata: expect.objectContaining({
+        outputTransactionMode: 'terminal_buffered',
+        sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'work' },
+      }),
     }));
     expect(rig.scheduler.enqueueCreateOnly).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.not.objectContaining({

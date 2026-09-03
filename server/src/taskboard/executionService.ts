@@ -270,6 +270,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionIdentity: launch.executionIdentity,
       modelRef: launch.model.ref,
       executionTarget: launch.executionTarget,
+      taskKind: launch.modelContext.taskKind,
+      purpose: targetExecution.purpose,
     });
     const runId = context.continuationRunId ?? `taskboard-comment-${commentId}`;
     const run = {
@@ -286,6 +288,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardContinuation: true,
         taskboardTaskId: taskId,
         taskboardCommentId: commentId,
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: session.sandboxWorkloadDescriptor,
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,
@@ -378,6 +382,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
       executionIdentity: launch.executionIdentity,
       modelRef: launch.model.ref,
       executionTarget: launch.executionTarget,
+      taskKind: launch.modelContext.taskKind,
+      purpose,
     });
     const runId = `taskboard-execution-${executionId}`;
     const run = {
@@ -395,6 +401,8 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
         taskboardExecutionId: executionId,
         taskboardTaskId: taskId,
         ...sessionDescriptor.integrationMetadata,
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: session.sandboxWorkloadDescriptor,
         outputTransactionMode: 'terminal_buffered',
         cwd: session.cwd,
         transcriptPath: session.transcriptPath,

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { PgAssignmentStore } from '../../data/assignments/store.js';
 import type { PgMembershipStore } from '../../data/memberships/store.js';
+import { PLATFORM_TENANT_ID } from '../../data/tenants/types.js';
 import type { UserStore } from '../../data/users/store.js';
 import { listAzerothTokenBindings } from '../../integrations/azeroth/tokens.js';
 import type { PgTaskboardStore } from '../../taskboard/store.js';
@@ -102,10 +103,14 @@ export class ContextPlanePhase2Runtime {
     }
     const taskboardResults = taskboardRun.status === 'fulfilled' ? taskboardRun.value : [];
     const directoryResults = directoryRun.status === 'fulfilled' ? directoryRun.value : [];
+    // 平台租户不参与客户侧 governance——assignments/entitlements store 的
+    // assertCustomerTenant 对它 fail-closed，而 taskboard/directory 同步会把它一起带出来。
+    // 此前每轮都对它跑一次必然失败的 ensurePhase2Assignments，只留下一条 warn
+    // （实测 3 天 4295 条噪音），后续 projectDerived 本来也不会执行。直接排除：行为不变，噪音归零。
     const tenantIds = new Set([
       ...taskboardResults.map(result => result.tenantId),
       ...directoryResults.map(result => result.tenantId),
-    ]);
+    ].filter(tenantId => tenantId !== PLATFORM_TENANT_ID));
     let projectedTenants = 0;
     for (const tenantId of tenantIds) {
       try {

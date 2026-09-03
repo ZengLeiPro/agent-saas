@@ -52,11 +52,7 @@ export interface AttachmentValidationIssue {
     | 'count_exceeded'
     | 'size_exceeded'
     | 'empty_file'
-    | 'dangerous_filename'
-    | 'double_extension'
-    | 'extension_blocked'
-    | 'mime_blocked'
-    | 'mime_extension_mismatch';
+    | 'dangerous_filename';
   index?: number;
   message: string;
 }
@@ -65,37 +61,11 @@ export type AttachmentValidationResult =
   | { ok: true }
   | { ok: false; issue: AttachmentValidationIssue };
 
-const SAFE_EXTENSION_MIMES: Readonly<Record<string, readonly string[]>> = {
-  png: ['image/png'],
-  jpg: ['image/jpeg'], jpeg: ['image/jpeg'],
-  gif: ['image/gif'], webp: ['image/webp'],
-  pdf: ['application/pdf'],
-  txt: ['text/plain'], md: ['text/plain', 'text/markdown'], csv: ['text/plain', 'text/csv', 'application/csv'],
-  json: ['application/json', 'text/json', 'text/plain'],
-  doc: ['application/msword', 'application/octet-stream'],
-  docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/octet-stream'],
-  xls: ['application/vnd.ms-excel', 'application/octet-stream'],
-  xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/octet-stream'],
-  ppt: ['application/vnd.ms-powerpoint', 'application/octet-stream'],
-  pptx: ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip', 'application/octet-stream'],
-  zip: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
-  gz: ['application/gzip', 'application/x-gzip', 'application/octet-stream'],
-  mp3: ['audio/mpeg', 'audio/mp3', 'application/octet-stream'],
-  m4a: ['audio/mp4', 'audio/x-m4a', 'application/octet-stream'],
-  wav: ['audio/wav', 'audio/x-wav', 'application/octet-stream'],
-  ogg: ['audio/ogg', 'video/ogg', 'application/ogg', 'application/octet-stream'],
-  mp4: ['video/mp4', 'application/octet-stream'],
-  mov: ['video/quicktime', 'application/octet-stream'],
-};
-
-const BLOCKED_EXTENSIONS = new Set([
-  'svg', 'svgz', 'html', 'htm', 'xhtml', 'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
-  'exe', 'dll', 'com', 'bat', 'cmd', 'ps1', 'sh', 'bash', 'zsh', 'app', 'apk', 'ipa', 'jar',
-]);
-const BLOCKED_MIMES = /(?:text\/html|image\/svg\+xml|javascript|ecmascript|application\/x-msdownload)/i;
 const LOCAL_REFERENCE_KEYS = /^(?:uri|url|path|absolutePath|savedPath|displayPath|relativePath|previewUrl|localPath|file)$/i;
 const LOCAL_REFERENCE_VALUE = /^(?:file|content|blob):|^(?:[a-zA-Z]:[\\/]|\/Users\/|\/home\/|\/var\/mobile\/|\/data\/user\/)/i;
+const BIDI_CONTROL = /[\u202a-\u202e\u2066-\u2069]/;
 
+/** 客户端只挡结构性风险；扩展名、MIME 与内容分类统一由服务端处理。 */
 export function validateAttachmentSelection(
   files: readonly AttachmentSelectionMetadata[],
   limits: { maxFiles?: number; maxBytes?: number } = {},
@@ -108,7 +78,7 @@ export function validateAttachmentSelection(
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
     const name = file.name.normalize('NFC');
-    if (!name || name !== name.trim() || /[\0-\x1f\x7f/\\]/.test(name) || name === '.' || name === '..') {
+    if (!name || name !== name.trim() || /[\0-\x1f\x7f/\\]/.test(name) || BIDI_CONTROL.test(name) || name === '.' || name === '..') {
       return { ok: false, issue: { code: 'dangerous_filename', index, message: `文件名不安全：${file.name}` } };
     }
     if (!Number.isSafeInteger(file.size) || file.size <= 0) {
@@ -116,21 +86,6 @@ export function validateAttachmentSelection(
     }
     if (file.size > maxBytes) {
       return { ok: false, issue: { code: 'size_exceeded', index, message: `文件超过大小限制：${file.name}` } };
-    }
-    const parts = name.toLowerCase().split('.');
-    const extension = parts.length > 1 ? parts.at(-1)! : '';
-    if (parts.length > 2 && !(parts.length === 3 && parts.at(-2) === 'tar' && extension === 'gz')) {
-      return { ok: false, issue: { code: 'double_extension', index, message: `不允许双扩展名：${file.name}` } };
-    }
-    if (!extension || BLOCKED_EXTENSIONS.has(extension) || !SAFE_EXTENSION_MIMES[extension]) {
-      return { ok: false, issue: { code: BLOCKED_EXTENSIONS.has(extension) ? 'extension_blocked' : 'mime_extension_mismatch', index, message: `不支持的文件扩展名：${file.name}` } };
-    }
-    const mime = file.mimeType.trim().toLowerCase();
-    if (!mime || BLOCKED_MIMES.test(mime)) {
-      return { ok: false, issue: { code: 'mime_blocked', index, message: `不支持的文件类型：${file.name}` } };
-    }
-    if (mime !== 'application/octet-stream' && !SAFE_EXTENSION_MIMES[extension].includes(mime)) {
-      return { ok: false, issue: { code: 'mime_extension_mismatch', index, message: `文件类型与扩展名不一致：${file.name}` } };
     }
   }
   return { ok: true };

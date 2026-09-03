@@ -163,7 +163,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       workspaceId: context.workspace.id ?? taskSessionId,
       status: 'idle',
       kind: 'subagent',
-      executionRole: 'worker',
+      executionRole: 'worker', sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
       ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
       ...(parentSession.orgAgentSnapshot ? { orgAgentSnapshot: parentSession.orgAgentSnapshot } : {}),
     });
@@ -213,7 +213,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         workspaceId: context.workspace.id ?? taskSessionId,
         ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
         ...(context.workspace.sandboxScopeId ? { sandboxScopeId: context.workspace.sandboxScopeId } : {}),
-        ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}),
+        ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}), ...(context.workspace.workload ? { workload: context.workspace.workload } : {}),
         ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
         ...(context.runtimeIsolationRequirement ? { runtimeIsolationRequirement: context.runtimeIsolationRequirement } : {}),
         ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
@@ -273,7 +273,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       executionTarget,
       workspaceId: context.workspace.id ?? taskSessionId,
       status: 'idle',
-      kind: 'subagent',
+      kind: 'subagent', sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
     });
     await sessionCatalog.upsert(taskSession);
     try {
@@ -306,7 +306,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           workspaceId: context.workspace.id ?? taskSessionId,
           ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
           ...(context.workspace.sandboxScopeId ? { sandboxScopeId: context.workspace.sandboxScopeId } : {}),
-          ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}),
+          ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}), ...(context.workspace.workload ? { workload: context.workspace.workload } : {}),
           ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
           ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
           parentChannel: context.channelContext.channel,
@@ -456,7 +456,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-container',
           ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
           ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
-          ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}),
+          ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}), ...(metadata.workload ? { workload: metadata.workload } : {}),
           ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
         },
         sessionId: record.sessionId,
@@ -591,17 +591,15 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           ...(storedResult?.errorMessage ? { errorMessage: storedResult.errorMessage } : {}), ...(storedResult?.failureKind ? { failureKind: storedResult.failureKind } : {}), ...(storedResult?.recoveryAction ? { recoveryAction: storedResult.recoveryAction } : {}),
           ...(storedResult?.text ? { resultPreview: storedResult.text.slice(0, 2_000) } : {}),
         });
-        await runStore.markStatus(task.runId, task.status, task.statusReason, {
-          lifecycleFinishedAt: new Date().toISOString(),
-        });
+        await runStore.markStatus(task.runId, task.status, task.statusReason, { lifecycleFinishedAt: new Date().toISOString() });
       }
 
       if (await deliverDwsBackgroundCompletion({
         config: this.config, runStore, task, metadata, claimToken,
       })) continue;
 
-      const wakeRunId = `bg-wake-${task.runId}`;
-      const wake = await runStore.upsertPending({
+      const wakeRunId = `bg-wake-${task.runId}`; const sandboxScopeId = metadata.sandboxScopeId ?? task.sandboxScopeId;
+      const topLevelSessionId = metadata.topLevelSessionId ?? metadata.parentSessionId; const wake = await runStore.upsertPending({
         runId: wakeRunId,
         sessionId: metadata.parentSessionId,
         userId: task.userId,
@@ -611,8 +609,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         idempotencyKey: `background-task-wake:${task.runId}`,
         executionTarget: parentSession.executionTarget,
         workspaceId: parentSession.workspaceId,
+        sandboxScopeId,
         metadata: {
-          backgroundTaskWake: true,
+          backgroundTaskWake: true, topLevelSessionId,
+          ...(sandboxScopeId ? { sandboxScopeId } : {}),
           dispatcherCompletion: metadata.executionMode === 'dispatcher',
           outputTransactionMode: metadata.parentOutputTransactionMode,
           backgroundTaskId: task.runId,
@@ -622,7 +622,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
             content: buildTaskNotification(task, metadata),
             senderId: parentSession.userId,
             senderName: parentSession.username,
-            metadata: { backgroundTaskWake: true, backgroundTaskId: task.runId },
+            metadata: { backgroundTaskWake: true, backgroundTaskId: task.runId, topLevelSessionId },
           },
         },
       });
@@ -849,7 +849,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-remote',
         ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
         ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
-        ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}),
+        ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}), ...(metadata.workload ? { workload: metadata.workload } : {}),
         ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
       },
       sessionId: metadata.parentSessionId, runId: record.runId,

@@ -38,7 +38,7 @@ function resolver(users: unknown[], content: string) {
 }
 
 describe('DwsRequesterIdentityResolver', () => {
-  it('用专家视角 contact 结果的 staffId + openDingTalkId 唯一解析同租户成员', async () => {
+  it('用交互式专家视角 contact 结果的 staffId + openDingTalkId 唯一解析同租户成员', async () => {
     const { resolver: subject, invoke, auditStore } = resolver([
       alice,
       { ...alice, id: 'disabled', username: 'disabled', dingtalkStaffId: 'staff-disabled', disabled: true },
@@ -53,6 +53,7 @@ describe('DwsRequesterIdentityResolver', () => {
     expect(request.input.command).toContain("'--profile' 'corp-a:agent-staff' '--format' 'json'");
     expect(request.context.workspace).toMatchObject({
       userId: 'account-a', tenantId: 'tenant-a', executionTarget: 'server-remote',
+      workload: { class: 'interactive' },
     });
     expect(auditStore.events.map(event => event.result)).toEqual([
       'intent', 'succeeded', 'intent', 'succeeded', 'succeeded',

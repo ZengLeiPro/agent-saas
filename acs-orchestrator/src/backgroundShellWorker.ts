@@ -55,6 +55,10 @@ async function main(): Promise<void> {
       resolve({ code: 1, signal: null });
     });
   });
+  const terminateChild = (signal: NodeJS.Signals) => {
+    if (!child.pid) return;
+    try { process.kill(-child.pid, signal); } catch { /* already exited */ }
+  };
   let stdoutBytes = 0;
   let stderrBytes = 0;
   let stdoutTruncated = false;
@@ -84,19 +88,27 @@ async function main(): Promise<void> {
   child.stdout.on('data', (chunk: Buffer) => writeLimited(stdout, chunk, 'stdout'));
   child.stderr.on('data', (chunk: Buffer) => writeLimited(stderr, chunk, 'stderr'));
 
-  await writeBackgroundShellState(taskDir, {
-    ...initial,
-    status: 'running',
-    workerPid: process.pid,
-    childPid: child.pid,
-    startedAt,
-    updatedAt: startedAt,
-  });
-
-  const terminateChild = (signal: NodeJS.Signals) => {
-    if (!child.pid) return;
-    try { process.kill(-child.pid, signal); } catch { /* already exited */ }
-  };
+  try {
+    await writeBackgroundShellState(taskDir, {
+      ...initial,
+      status: 'running',
+      workerPid: process.pid,
+      childPid: child.pid,
+      startedAt,
+      updatedAt: startedAt,
+    });
+  } catch (error) {
+    terminateChild('SIGTERM');
+    const stopped = await Promise.race([
+      exitPromise.then(() => true),
+      delay(5_000).then(() => false),
+    ]);
+    if (!stopped) {
+      terminateChild('SIGKILL');
+      await Promise.race([exitPromise, delay(1_000)]);
+    }
+    throw error;
+  }
   const scheduleForceKill = () => {
     if (forceKillTimer) return;
     forceKillTimer = setTimeout(() => {
@@ -153,6 +165,10 @@ async function main(): Promise<void> {
     stdoutTruncated,
     stderrTruncated,
   });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function endStream(stream: NodeJS.WritableStream): Promise<void> {

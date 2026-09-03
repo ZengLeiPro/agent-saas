@@ -292,8 +292,35 @@ describe('DwsRemoteJsonExecutor', () => {
       tenantId: 'tenant-a',
       userId: 'account-a',
       executionTarget: 'server-remote',
+      workload: { class: 'cron' },
     });
     expect(JSON.stringify(request)).not.toContain('remote-secret');
+  });
+
+  it('serializes cron workload through the real HTTP transport wire', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(
+      `data: ${JSON.stringify({
+        type: 'completed', response: { status: 'success', content: '{"items":[]}' },
+      })}\n\n`,
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const executor = new DwsRemoteJsonExecutor({
+        agentCwd: '/workspace/agent',
+        accountStore: accountStore(),
+        resolveServerRemote: async () => ({ baseUrl: 'https://hand.test', authToken: 'remote-secret' }),
+      });
+
+      await expect(executor.json(['dws', 'chat', 'message', 'list-all'], { context }))
+        .resolves.toEqual({ items: [] });
+      expect(String(fetchMock.mock.calls[0]![0])).toBe('https://hand.test/execute-stream');
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      const wire = JSON.parse(String(init.body)) as ToolInvocationRequest;
+      expect(wire.context.workspace.workload).toEqual({ class: 'cron' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('fails closed when tenant/account/profile no longer resolves to the active account', async () => {

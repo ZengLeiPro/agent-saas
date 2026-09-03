@@ -4,6 +4,7 @@ import type { ToolDescriptor } from 'server/agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from 'server/agent/toolRuntime.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { pickHandEnv } from 'server/runtime/handEnvAllowlist.js';
+import { parseWorkloadDescriptor, type SandboxWorkloadDescriptor } from './sandboxLifecyclePolicy.js';
 
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
@@ -16,6 +17,7 @@ export interface WireWorkspaceRef {
   mountSubPath?: string;
   sandboxResources?: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'>;
   executionTarget?: string;
+  workload?: SandboxWorkloadDescriptor;
 }
 
 export interface WireToolInvocationRequest {
@@ -60,9 +62,19 @@ export interface WorkspaceRecipe {
    * 它们参与 provision 指纹，改规格会触发 pod 重建。
    */
   resources?: { timeoutMs?: number; cpu?: string; memoryMb?: number };
+  workload?: SandboxWorkloadDescriptor;
 }
 
 export type SandboxResourceSpec = NonNullable<WorkspaceRecipe['resources']>;
+
+export interface WarmupRequest {
+  workspaceId: string;
+  sessionId: string;
+  sandboxScopeId?: string;
+  mountSubPath?: string;
+  resources?: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'>;
+  workload?: SandboxWorkloadDescriptor;
+}
 
 /** /warmup 资源覆盖必须 fail-closed；不能像兼容性的 provision recipe 一样静默忽略非法值。 */
 export function parseWarmupResources(value: unknown):
@@ -95,6 +107,43 @@ export function parseWarmupResources(value: unknown):
     parsed.memoryMb = raw.memoryMb as number;
   }
   return { ok: true, value: parsed };
+}
+
+export function parseWarmupRequest(value: unknown):
+  | { ok: true; value: WarmupRequest }
+  | { ok: false; error: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'body 必须是对象' };
+  }
+  const raw = value as Record<string, unknown>;
+  const workspaceId = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
+  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
+  if (!workspaceId || !sessionId) {
+    return { ok: false, error: 'workspaceId and sessionId are required' };
+  }
+  const sandboxScope = parseSandboxScopeId(
+    typeof raw.sandboxScopeId === 'string' && raw.sandboxScopeId.trim()
+      ? raw.sandboxScopeId.trim()
+      : undefined,
+  );
+  if (sandboxScope.error) return { ok: false, error: sandboxScope.error };
+  const mountSubPath = parseMountSubPath(raw.mountSubPath);
+  if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
+  const resources = parseWarmupResources(raw.resources);
+  if (!resources.ok) return resources;
+  const workload = raw.workload === undefined ? undefined : parseWorkloadDescriptor(raw.workload);
+  if (workload && !workload.ok) return workload;
+  return {
+    ok: true,
+    value: {
+      workspaceId,
+      sessionId,
+      ...(sandboxScope.value ? { sandboxScopeId: sandboxScope.value } : {}),
+      ...(mountSubPath.value ? { mountSubPath: mountSubPath.value } : {}),
+      ...(resources.value ? { resources: resources.value } : {}),
+      ...(workload?.ok ? { workload: workload.value } : {}),
+    },
+  };
 }
 
 export interface ProvisioningLogEntry {
@@ -177,6 +226,8 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
   if (!sandboxResources.ok) {
     return { ok: false, error: `context.workspace.sandboxResources 无效: ${sandboxResources.error}` };
   }
+  const workload = workspace.workload === undefined ? undefined : parseWorkloadDescriptor(workspace.workload);
+  if (workload && !workload.ok) return { ok: false, error: `context.workspace.${workload.error}` };
   // wire env 双重防线：上游 HttpTransport 已过滤，服务端反序列化仍需再走
   // pickHandEnv，剥离危险或非法 key。空对象则不写字段。
   const rawEnv = context?.env;
@@ -212,6 +263,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
           ...(sandboxScope.value ? { sandboxScopeId: sandboxScope.value } : {}),
           ...(mountSubPath.value ? { mountSubPath: mountSubPath.value } : {}),
           ...(sandboxResources.value ? { sandboxResources: sandboxResources.value } : {}),
+          ...(workload?.ok ? { workload: workload.value } : {}),
           ...(typeof workspace.userId === 'string' ? { userId: workspace.userId } : {}),
           ...(typeof workspace.username === 'string' ? { username: workspace.username } : {}),
           ...(typeof workspace.executionTarget === 'string' ? { executionTarget: workspace.executionTarget } : {}),
@@ -239,6 +291,12 @@ export function parseProvisionRecipe(body: unknown): { ok: true; value: Workspac
       : undefined;
   if (!sessionId) return { ok: false, error: 'sessionId 必须为非空字符串（用于会话审计与 runner 上下文）' };
   const recipe: WorkspaceRecipe = { workspaceId, sessionId };
+  const workloadRaw = recipeRaw.workload ?? obj.workload;
+  if (workloadRaw !== undefined) {
+    const workload = parseWorkloadDescriptor(workloadRaw);
+    if (!workload.ok) return workload;
+    recipe.workload = workload.value;
+  }
   const sandboxScopeId = typeof recipeRaw.sandboxScopeId === 'string' && recipeRaw.sandboxScopeId.trim()
     ? recipeRaw.sandboxScopeId.trim()
     : typeof obj.sandboxScopeId === 'string' && obj.sandboxScopeId.trim()

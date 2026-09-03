@@ -39,6 +39,7 @@ function buildService(input: {
   fetchImpl?: typeof fetch;
   throttleMs?: number;
   registeredHand?: { metadata: Record<string, unknown> } | null;
+  withSessionAdmissionLock?: <T>(sessionId: string, operation: () => Promise<T>) => Promise<T>;
 }) {
   const fetchImpl = input.fetchImpl ?? (vi.fn(async () => new Response('', { status: 202 })) as unknown as typeof fetch);
   const service = new SandboxWarmupService({
@@ -48,6 +49,7 @@ function buildService(input: {
     tenantRemoteHands: () => input.hands,
     tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => input.hands }),
     fetchImpl,
+    ...(input.withSessionAdmissionLock ? { withSessionAdmissionLock: input.withSessionAdmissionLock } : {}),
     ...(input.throttleMs !== undefined ? { throttleMs: input.throttleMs } : {}),
   });
   return { service, fetchImpl: fetchImpl as unknown as ReturnType<typeof vi.fn> };
@@ -73,6 +75,19 @@ describe('SandboxWarmupService', () => {
       // 否则会预热到一个稍后根本不会被用到的 pod。
       sandboxScopeId: 'ws-kaiyan-u1__workspaces_kaiyan_u-1__s_sess-1',
       mountSubPath: 'workspaces/kaiyan/u-1',
+      workload: { class: 'interactive' },
+    });
+  });
+
+  it('maps shared taskboard `{kind}` to the stable ACS `{class}` wire descriptor', async () => {
+    const { service, fetchImpl } = buildService({
+      record: record({ sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'review' } }),
+      hands: [acsHand()],
+    });
+    expect(await service.fireForSessionAsync('sess-1')).toBe('fired');
+    const [, init] = fetchImpl.mock.calls[0]!;
+    expect(JSON.parse((init as { body: string }).body).workload).toEqual({
+      class: 'taskboard', taskKind: 'delivery', purpose: 'review',
     });
   });
 
@@ -109,9 +124,37 @@ describe('SandboxWarmupService', () => {
     expect(body).not.toHaveProperty('resources');
   });
 
-  it('record 不存在（全新会话）时跳过，绝不自行推导身份映射', async () => {
+  it('record 不存在（全新会话）时跳过，绝不自行推导身份或 workspace 映射', async () => {
     const { service, fetchImpl } = buildService({ record: null, hands: [acsHand()] });
     expect(await service.fireForSessionAsync('sess-x')).toBe('skipped');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('与软删除共用 Session 锁并在锁内重读 tombstone', async () => {
+    const active = record();
+    const lockCalls: string[] = [];
+    const withSessionAdmissionLock = async <T>(sessionId: string, operation: () => Promise<T>): Promise<T> => {
+      lockCalls.push(sessionId);
+      active.deletedAt = '2026-09-02T00:00:00.000Z';
+      return operation();
+    };
+    const { service, fetchImpl } = buildService({
+      record: active,
+      hands: [acsHand()],
+      withSessionAdmissionLock,
+    });
+
+    expect(await service.fireForSessionAsync('sess-1')).toBe('skipped');
+    expect(lockCalls).toEqual(['sess-1']);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('软删除 record 跳过，绝不为 tombstone 重建 Sandbox', async () => {
+    const { service, fetchImpl } = buildService({
+      record: record({ deletedAt: '2026-09-02T00:00:00.000Z' }),
+      hands: [acsHand()],
+    });
+    expect(await service.fireForSessionAsync('sess-1')).toBe('skipped');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

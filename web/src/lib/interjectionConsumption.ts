@@ -1,6 +1,6 @@
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import type { UploadedFile } from "@/components/types";
-import { isValidAttachmentId } from "@agent/shared";
+import { isValidAttachmentId, type ChatQueueItem } from "@agent/shared";
 
 export interface InterjectionIdentity {
   clientMsgId?: string;
@@ -67,6 +67,42 @@ export class InterjectionConsumptionRegistry {
   }
 }
 
+/** 队列栏只承载尚未进入时间线、且正在等待目标 run 安全边界的真实插话。 */
+export function projectAuthoritativeInterjections(
+  items: readonly ChatQueueItem[],
+  previous: QueuedInterjection[],
+  consumed: InterjectionConsumptionRegistry,
+): QueuedInterjection[] {
+  const authoritativeClientMsgIds = new Set(items.map((item) => item.clientMsgId));
+  const projected: QueuedInterjection[] = items
+    .filter((item) => Boolean(item.targetRunId)
+      && !consumed.has({ clientMsgId: item.clientMsgId, sourceRunId: item.sourceRunId })
+      && ['queued', 'cancel_pending', 'cancelled', 'failed'].includes(item.status))
+    .map((item) => ({
+      clientMsgId: item.clientMsgId,
+      sessionId: item.sessionId,
+      sourceRunId: item.sourceRunId,
+      ...(item.targetRunId ? { targetRunId: item.targetRunId } : {}),
+      deliveryMode: item.deliveryMode,
+      ...(item.queuePosition !== undefined ? { queuePosition: item.queuePosition } : {}),
+      content: item.content ?? '',
+      ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+      status: item.status === 'cancelled' ? 'cancelled' : item.status === 'failed' ? 'failed' : 'queued',
+      ...(item.reason ? { reason: item.reason } : {}),
+      createdAt: Date.parse(item.acceptedAt ?? '') || Date.now(),
+    }));
+  return [
+    ...projected.map((item) => {
+      const local = previous.find((candidate) => candidate.clientMsgId === item.clientMsgId);
+      return local ? { ...local, ...item, ...(local.uploadedFiles ? { uploadedFiles: local.uploadedFiles } : {}) } : item;
+    }),
+    ...previous.filter((item) => (
+      !authoritativeClientMsgIds.has(item.clientMsgId)
+      && (item.status === 'sending' || item.status === 'verifying')
+    )),
+  ];
+}
+
 export function reconcileQueuedInterjections(
   entries: QueuedInterjection[],
   serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>,
@@ -74,7 +110,7 @@ export function reconcileQueuedInterjections(
   sessionId?: string,
 ): QueuedInterjection[] {
   const serverEntries = serverQueued
-    .filter((entry) => !consumed.has(entry))
+    .filter((entry) => Boolean(entry.targetRunId) && !consumed.has(entry))
     .map((entry) => {
       const local = entries.find((candidate) => (
         (entry.clientMsgId && candidate.clientMsgId === entry.clientMsgId)
@@ -113,7 +149,7 @@ export function reconcileQueuedInterjections(
         createdAt: local?.createdAt ?? (Date.parse(entry.acceptedAt) || Date.now()),
       };
     });
-  const serverIds = new Set(serverEntries.map((entry) => entry.clientMsgId));
+  const serverIds = new Set(serverQueued.map((entry) => entry.clientMsgId ?? entry.sourceRunId));
   const keepLocal = entries.filter((entry) => (
     !serverIds.has(entry.clientMsgId)
     && (entry.status === 'sending' || entry.status === 'verifying' || entry.status === 'cancelled' || entry.status === 'failed')

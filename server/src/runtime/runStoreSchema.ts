@@ -1,5 +1,6 @@
 import type { PgPool } from './runStoreTypes.js';
 import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { sandboxRunAdmissionFenceSql } from './sandboxRunAdmissionFence.js';
 
 export async function initializePgRunStoreSchema(input: {
   pool: PgPool;
@@ -162,9 +163,11 @@ export async function initializePgRunStoreSchema(input: {
       await client.query(`UPDATE ${input.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
       // wakeMessage 是活跃 Run 的 durable 恢复载荷；Run 进入终态后已无恢复用途，启动时清理历史遗留正文。
       await client.query(`UPDATE ${input.runsTable} SET metadata = metadata - 'wakeMessage' WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata ? 'wakeMessage'`);
+      await client.query(sandboxRunAdmissionFenceSql(input.runsTable).join(';\n'));
       await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_tenant_idx ON ${input.runsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_user_idx ON ${input.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_sandbox_scope_idx ON ${input.runsTable} (sandbox_scope_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_sandbox_terminal_scope_idx ON ${input.runsTable} (tenant_id, workspace_id, sandbox_scope_id, updated_at DESC) WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata->>'sandboxWorkloadTopLevel' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_status_idx ON ${input.runsTable} (status, updated_at)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_liveness_reap_idx ON ${input.runsTable} (liveness_state, lease_expires_at, liveness_detected_at) WHERE liveness_version IS NOT NULL`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${input.runsTable}_session_idx ON ${input.runsTable} (session_id, updated_at DESC)`);

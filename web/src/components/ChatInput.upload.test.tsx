@@ -38,7 +38,7 @@ beforeEach(() => {
   voiceRecorderState.isSupported = false;
 });
 
-describe("ChatInput 布局", () => {
+describe("ChatInput 布局与发送", () => {
   it("将附着内容渲染在输入框前，并让输入框覆盖交界边框", () => {
     renderInput({ attachedTopSlot: <div data-testid="attached-top-slot">任务清单</div> });
 
@@ -78,17 +78,15 @@ describe("ChatInput 布局", () => {
     expect((screen.getByRole("button", { name: "发送消息" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("运行中默认加入队列，并把立即插话作为独立显式操作", () => {
+  it("运行中只保留一个发送按钮", () => {
     const onSend = vi.fn();
-    const onInterject = vi.fn();
-    renderInput({ input: "下一项任务", loading: true, onSend, onInterject });
+    renderInput({ input: "补充当前任务", loading: true, onSend });
 
-    fireEvent.click(screen.getByRole("button", { name: "加入队列" }));
+    const sendButtons = screen.getAllByRole("button", { name: "发送消息" });
+    expect(sendButtons).toHaveLength(1);
+    fireEvent.click(sendButtons[0]!);
     expect(onSend).toHaveBeenCalledOnce();
-    expect(onInterject).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "立即插话" }));
-    expect(onInterject).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "立即插话" })).toBeNull();
   });
 });
 

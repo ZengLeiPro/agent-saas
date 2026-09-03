@@ -16,7 +16,7 @@ import type {
 import { computeJobNextRunAtMs, computeNextWakeAtMs, findDueJobs } from "./scheduler.js";
 import { cronLogger } from "../utils/logger.js";
 import { createCronSessionGrouper } from "./sessionGrouping.js";
-import { cloneJob, isProcessAlive, pTimeout, ServiceTimeoutError, toFiniteInt, transferCronJobOwner, updatedAtAfterEdit } from "./serviceUtils.js";
+import { cloneJob, isProcessAlive, pTimeout, ServiceTimeoutError, toFiniteInt, scheduleFenceUpdatedAtMs, transferCronJobOwner, updatedAtAfterEdit } from "./serviceUtils.js";
 import { claimCronJob, markCronClaimRunning, recoverCronClaim,
   type ClaimedJob, type CronRunLease, type CronRunRequest, type ExecutionInvocation,
 } from "./executionClaim.js";
@@ -1025,9 +1025,9 @@ export class CronService {
         this.clearRunningState(job);
         job.state.lastStatus = "error";
         job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline; linked Runtime run cancelled`;
-        if (job.schedule.kind === "at" && execution.trigger === "schedule"
-          && job.updatedAtMs === candidate.updatedAtMs && job.state.nextRunAtMs === execution.scheduledAtMs) delete job.state.nextRunAtMs;
-        else if (job.schedule.kind !== "at" && job.enabled && job.updatedAtMs === candidate.updatedAtMs) job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+        if (job.schedule.kind === "at" && execution.trigger === "schedule" && job.updatedAtMs === scheduleFenceUpdatedAtMs(execution, candidate.updatedAtMs)
+          && job.state.nextRunAtMs === execution.scheduledAtMs) delete job.state.nextRunAtMs;
+        else if (job.schedule.kind !== "at" && job.enabled && job.updatedAtMs === scheduleFenceUpdatedAtMs(execution, candidate.updatedAtMs)) job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
         execution.status = "terminal";
         execution.terminalStatus = "error";
         execution.endedAtMs = nowMs;

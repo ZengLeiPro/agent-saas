@@ -163,6 +163,52 @@ describe("Cron Runtime recovery identity", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
 
+  it("preserves the first schedule fence when an edited recurring run is recovered", async () => {
+    const lease = crashableRunLease();
+    let now = 1_000_000;
+    let runtimeStatus: "running" | "completed" = "running";
+    let logged = 0;
+    const { a, storePath } = await makePair({
+      nowMs: () => now,
+      tryAcquireRunLease: lease.tryAcquire,
+      inspectRuntimeRun: async (runId) => ({ runId, sessionId: "recovered-session", status: runtimeStatus }),
+      appendRunLog: async () => { logged += 1; },
+      runtimeRunPollMs: 5,
+    });
+    const job = await a.add({ name: "edited-recurring", schedule: { kind: "every", everyMs: 60_000, anchorMs: now },
+      payload: { kind: "agentTurn", message: "run" } });
+    const scheduledAtMs = job.state.nextRunAtMs!;
+    now = scheduledAtMs;
+    (a as any).started = true;
+    const claimed = await (a as any).claimJob(job.id, { trigger: "schedule", scheduledAtMs });
+    (a as any).started = false;
+    const firstFence = claimed.value.claimedUpdatedAtMs;
+
+    now = 1_061_000;
+    await a.update(job.id, { schedule: { kind: "every", everyMs: 10_000, anchorMs: now } });
+    const editedNext = (await a.get(job.id))!.state.nextRunAtMs;
+    lease.crashOwner();
+
+    const recovered = createService(storePath, {
+      nowMs: () => now,
+      tryAcquireRunLease: lease.tryAcquire,
+      inspectRuntimeRun: async (runId) => ({ runId, sessionId: "recovered-session", status: runtimeStatus }),
+      appendRunLog: async () => { logged += 1; },
+      runtimeRunPollMs: 5,
+    });
+    await recovered.start(); started.push(recovered);
+    await waitFor(async () => (await loadJobs({ storePath }))[0]?.state.executionLedger?.[0]?.recoveryCount === 1);
+    const active = (await loadJobs({ storePath }))[0]!.state.executionLedger![0]!;
+    expect(active.scheduleUpdatedAtMs).toBe(firstFence);
+
+    now = 1_085_000;
+    runtimeStatus = "completed";
+    await waitFor(() => logged === 1);
+    const settled = (await loadJobs({ storePath }))[0]!;
+    expect(settled.state.executionLedger![0]).toMatchObject({ terminalStatus: "ok", recoveryCount: 1 });
+    expect(settled.state.nextRunAtMs).toBe(editedNext);
+  });
+
   it("redispatches a missing Runtime run exactly once with the preallocated identity", async () => {
     const lease = crashableRunLease();
     let executeCalls = 0;

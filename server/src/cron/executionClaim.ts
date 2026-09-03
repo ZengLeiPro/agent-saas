@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import os from "os";
 import type { CronExecutionRecord, CronJob, CronRunTrigger } from "./types.js";
-import { cloneJob } from "./serviceUtils.js";
+import { cloneJob, scheduleFenceUpdatedAtMs } from "./serviceUtils.js";
 
 export interface CronRunLease {
   release(): Promise<void>;
@@ -88,7 +88,7 @@ function claimSnapshot(
     leaseId: execution.leaseId,
     ownerId: execution.ownerId,
     startedAtMs: execution.startedAtMs,
-    claimedUpdatedAtMs,
+    claimedUpdatedAtMs: scheduleFenceUpdatedAtMs(execution, claimedUpdatedAtMs),
     forced: execution.trigger !== "schedule",
     runLease,
     trigger: execution.trigger,
@@ -206,6 +206,7 @@ export async function claimCronJob(options: ClaimCronJobOptions): Promise<{
         runId: cronRunId,
         startedAtMs: claimedAtMs,
         claimedAtMs,
+        scheduleUpdatedAtMs: job.updatedAtMs,
         status: "claimed",
         ownerId: options.ownerId,
         leaseId: "",

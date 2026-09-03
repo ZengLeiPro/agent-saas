@@ -106,6 +106,8 @@ export interface CronExecutionRecord {
   runId: string;
   startedAtMs: number;
   claimedAtMs: number;
+  /** 首次 claim 时的任务编辑版本；recovery 必须沿用，防止旧执行覆盖新 schedule。 */
+  scheduleUpdatedAtMs?: number;
   runningAtMs?: number;
   status: CronExecutionState;
   ownerId: string;

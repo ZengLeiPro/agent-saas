@@ -1,4 +1,4 @@
-import type { CronJob } from './types.js';
+import type { CronExecutionRecord, CronJob } from './types.js';
 
 export class ServiceTimeoutError extends Error {}
 
@@ -33,6 +33,10 @@ export function cloneJob(job: CronJob): CronJob {
 
 export function updatedAtAfterEdit(job: CronJob, candidateMs: number): number {
   return Math.max(candidateMs, job.updatedAtMs + 1);
+}
+
+export function scheduleFenceUpdatedAtMs(execution: CronExecutionRecord, currentUpdatedAtMs: number): number {
+  return execution.scheduleUpdatedAtMs ?? Math.min(currentUpdatedAtMs, execution.claimedAtMs);
 }
 
 export function transferCronJobOwner(

@@ -1,9 +1,8 @@
 import os from 'os';
 import { recoverCronClaim, type ClaimedJob, type CronRunLease } from './executionClaim.js';
-import { isProcessAlive } from './serviceUtils.js';
+import { cloneJob, isProcessAlive, scheduleFenceUpdatedAtMs } from './serviceUtils.js';
 import { cronLogger } from '../utils/logger.js';
 import { computeJobNextRunAtMs } from './scheduler.js';
-import { cloneJob } from './serviceUtils.js';
 import type { CronEvent, CronJob, CronRunLogEntry } from './types.js';
 
 export type CronLinkedRuntimeStatus =
@@ -124,10 +123,12 @@ export async function settleExplicitCancellation(
     current.state.lastError = error; current.state.lastDurationMs = Math.max(0, endedAtMs - record.startedAtMs);
     clearActiveExecution(current);
     if (current.schedule.kind === 'at' && record.trigger === 'schedule'
-      && current.updatedAtMs === job.updatedAtMs && current.state.nextRunAtMs === record.scheduledAtMs) {
+      && current.updatedAtMs === scheduleFenceUpdatedAtMs(record, job.updatedAtMs)
+      && current.state.nextRunAtMs === record.scheduledAtMs) {
       delete current.state.nextRunAtMs;
       if (status === 'ok') current.enabled = false;
-    } else if (current.schedule.kind !== 'at' && current.enabled && current.updatedAtMs === job.updatedAtMs) {
+    } else if (current.schedule.kind !== 'at' && current.enabled
+      && current.updatedAtMs === scheduleFenceUpdatedAtMs(record, job.updatedAtMs)) {
       current.state.nextRunAtMs = computeJobNextRunAtMs(current, endedAtMs);
     }
     return { changed: true, value: cloneJob(current) };

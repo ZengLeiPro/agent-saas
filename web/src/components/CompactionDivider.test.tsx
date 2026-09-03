@@ -12,13 +12,13 @@ const item = {
 };
 
 describe('CompactionDivider', () => {
-  it('普通模式只显示一条分隔线', () => {
+  it('普通模式不渲染压缩结果', () => {
     const { container } = render(<CompactionDivider item={item} debugMode={false} />);
 
     expect(screen.queryByText('已压缩 42 条历史消息')).toBeNull();
     expect(screen.queryByText('查看摘要')).toBeNull();
     expect(screen.queryByText(item.summary)).toBeNull();
-    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(1);
+    expect(container.firstChild).toBeNull();
   });
 
   it('调试模式显示压缩结果，并可以展开查看摘要', () => {

@@ -28,7 +28,7 @@ function digestOf(config: AppConfig, processCwd = '/srv/server'): string {
 }
 
 describe('canonical projection：注释、键顺序与等价默认值不影响 identity', () => {
-  it('JSONC 注释与原始文本排版不进入 identity', () => {
+  it('JSONC 注释与原始排版不进入 identity', () => {
     const withComments = parseRawConfig(`{
       // 部署注释：这些注释不应影响配置身份
       "agent": { "cwd": "/srv/agent", /* 块注释 */ "permissionMode": "default" },
@@ -66,6 +66,7 @@ describe('canonical projection：注释、键顺序与等价默认值不影响 i
           },
         ],
       },
+      runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://runtime@db/runtime' },
       serverRemote: {
         baseUrl: 'https://hand.example.com',
         authTokenRef: 'hand-token-ref',

@@ -42,7 +42,7 @@ function parseRawConfig(raw: string | Record<string, unknown>): AppConfig {
   return parseAppConfig(parsed);
 }
 
-/** 基础配置：只有必填段 + 无受管凭据。 */
+/** 基础配置：只含必填段，不启用需要 PG 的 serverRemote。 */
 const BASE_RAW: Record<string, unknown> = {
   agent: { cwd: '/srv/agent', permissionMode: 'default' },
   server: { port: 3001, timezone: 'Asia/Shanghai' },
@@ -198,6 +198,7 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
   it('signedUrl 的路径型 token 整值只进入 opaque digest', () => {
     const withSignedUrl = (token: string) =>
       baseConfig({
+        runtimeEventStore: { backend: 'pg', connectionString: 'postgresql://runtime@db/runtime' },
         serverRemote: {
           baseUrl: 'https://hand.example.com',
           authTokenRef: 'hand-ref',

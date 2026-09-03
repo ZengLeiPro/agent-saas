@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, vi, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHmac } from 'node:crypto';
 import type { Server } from 'node:http';
 
 import { createArtifactsRouter } from '../routes/artifacts.js';
@@ -73,7 +74,7 @@ describe('artifact routes', () => {
   });
 
   it('creates, lists, signs, and reads an artifact for the session owner', async () => {
-    const { server, baseUrl } = await startServer(service, { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' });
+    const { server, baseUrl, setUser } = await startServer(service, { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'kaiyan' });
     try {
       const create = await fetch(`${baseUrl}/api/sessions/${SESSION_ID}/artifacts`, {
         method: 'POST',
@@ -98,6 +99,8 @@ describe('artifact routes', () => {
       const signed = await readUrl.json() as { url: string; direct: boolean };
       expect(signed.direct).toBe(false);
 
+      // Production leaves req.user unset for this public signed-capability route.
+      setUser(undefined);
       const content = await fetch(signed.url);
       expect(content.status).toBe(200);
       await expect(content.text()).resolves.toBe('hello artifact');
@@ -239,6 +242,15 @@ describe('artifact routes', () => {
       const second = await (await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?expiresInSeconds=60`)).json() as { readUrl: string };
       expect((await fetch(first.readUrl)).status).toBe(401); // superseded nonce cannot be replayed
       expect((await fetch(`${second.readUrl.slice(0, -1)}x`)).status).toBe(401); // tampered signature
+
+      const signedUrl = new URL(second.readUrl);
+      const [encoded] = signedUrl.searchParams.get('token')!.split('.');
+      const malformedPayload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
+      malformedPayload.exp = 'not-a-date';
+      const malformedEncoded = Buffer.from(JSON.stringify(malformedPayload)).toString('base64url');
+      const malformedSignature = createHmac('sha256', 'test-artifact-signing-secret').update(malformedEncoded).digest('base64url');
+      signedUrl.searchParams.set('token', `${malformedEncoded}.${malformedSignature}`);
+      expect((await fetch(signedUrl)).status).toBe(401);
 
       const expiring = await (await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?expiresInSeconds=1&download=true`)).json() as { readUrl: string };
       await new Promise(resolve => setTimeout(resolve, 1_050));

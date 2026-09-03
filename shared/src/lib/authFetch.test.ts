@@ -7,6 +7,7 @@ import { AUTH_SESSION_KEY } from './authLifecycle';
 import {
   authFetch,
   authFetchForLocalUnlockValidation,
+  authFetchResource,
   fenceAuthSideEffects,
   setOnUnauthorized,
   setSensitiveTransportAllowed,
@@ -116,7 +117,7 @@ describe('authFetch', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('https://other.example.com/x');
   });
 
-  it('401 时触发 onUnauthorized 回调', async () => {
+  it('默认把权威会话 401 通知给全局认证生命周期', async () => {
     const onUnauthorized = vi.fn();
     setOnUnauthorized(onUnauthorized);
     vi.stubGlobal(
@@ -127,6 +128,20 @@ describe('authFetch', () => {
     await authFetch('/api/foo');
 
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('资源级 401 仅返回调用方，不触发全局认证生命周期', async () => {
+    const onUnauthorized = vi.fn();
+    setOnUnauthorized(onUnauthorized);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(makeResponse({ status: 401 })),
+    );
+
+    const response = await authFetchResource('/api/artifacts/a/content?token=expired');
+
+    expect(response.status).toBe(401);
+    expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
   it('403 且 body.code=USER_DISABLED 时触发 onUnauthorized', async () => {

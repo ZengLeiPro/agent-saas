@@ -108,9 +108,10 @@ export function useFileUpload(boundary?: { available: boolean; identityKey: stri
         body: formData,
       });
 
-      if (!response.ok) throw new Error(`上传失败: ${response.status}`);
-      const data = await response.json() as { success: boolean; error?: string; files?: UploadedFile[] };
-      if (!data.success || !data.files?.[0]) throw new Error(data.error || '上传失败');
+      const data = await response.json().catch(() => ({})) as { success?: boolean; error?: string; files?: UploadedFile[] };
+      if (!response.ok || !data.success || !data.files?.[0]) {
+        throw new Error(data.error || `上传失败: ${response.status}`);
+      }
 
       const validation = validateMobileUploadedFiles([data.files[0]]);
       if (!validation.ok) throw new Error(validation.issue.message);

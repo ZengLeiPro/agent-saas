@@ -73,12 +73,11 @@ export class ExpoIncomingShareAdapter implements IncomingSharePlatformAdapter {
       },
       body: form,
     });
-    if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { success?: boolean; files?: UploadResponseFile[]; error?: string };
+    if (!response.ok || !body.success) {
       const code = response.status === 0 || response.status >= 500 ? 'OFFLINE' : `UPLOAD_${response.status}`;
-      throw Object.assign(new Error(`上传失败: ${response.status}`), { code });
+      throw Object.assign(new Error(body.error || `上传失败: ${response.status}`), { code });
     }
-    const body = await response.json() as { success?: boolean; files?: UploadResponseFile[]; error?: string };
-    if (!body.success) throw new Error(body.error || '上传失败');
     return checkedUpload(body.files?.[0]);
   }
 

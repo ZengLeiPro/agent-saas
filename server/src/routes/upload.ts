@@ -302,6 +302,20 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
             security: await inspectUploadedFile({ path: file.path, originalName, size: file.size, mimetype: file.mimetype }),
           };
         }));
+        if (isIncomingShare(req)) {
+          for (const { file, originalName, security } of inspected) {
+            const kind = incomingShareKind(file.mimetype || 'application/octet-stream');
+            const detectedKind = security.detectedMimeType === 'application/pdf'
+              ? 'pdf'
+              : security.isImage ? 'image' : 'unsupported';
+            if (security.contentMismatch || kind !== detectedKind) {
+              throw new UploadPolicyError('UPLOAD_MIME_MISMATCH', `文件真实类型与声明不一致：${originalName}`);
+            }
+            if (security.activeContent) {
+              throw new UploadPolicyError('UPLOAD_EXECUTABLE_CONTENT', `文件包含系统分享不支持的主动内容：${originalName}`);
+            }
+          }
+        }
         const finalized = await uploadManager.completeRequest(requestId, inspected.map(({ file, originalName, security }) => ({
           attachmentId: file.filename.slice(0, file.filename.indexOf('_')),
           filename: file.filename,
@@ -310,7 +324,7 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
           size: file.size,
           mimeType: security.mimeType,
           isImage: security.isImage,
-          isVoiceUpload: security.mimeType.startsWith('audio/') || /\.(wav|mp3|m4a|ogg)$/i.test(originalName),
+          isVoiceUpload: security.mimeType.startsWith('audio/'),
         })), sessionId ? { sessionId } : {});
         const uploadedFiles = finalized.map((file) => file.info);
         uploadLogger.info(`Upload complete request=${requestId} files=${uploadedFiles.length} bytes=${uploadedFiles.reduce((sum, file) => sum + file.size, 0)}`);

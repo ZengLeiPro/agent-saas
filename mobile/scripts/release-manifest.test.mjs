@@ -12,6 +12,8 @@ const {
   RELEASE_MANIFEST_PATH,
   REPOSITORY_ROOT,
   assertExpoIdentityMatchesManifest,
+  assertIosSubmitConfiguration,
+  assertProductionBuildEnvironment,
   assertProductionReady,
   compareSemver,
   createArtifactIdentity,
@@ -33,17 +35,19 @@ function cloneManifest() {
 
 function productionReadyManifest() {
   const manifest = cloneManifest();
-  manifest.version.androidVersionCode = 86;
+  manifest.version.iosBuildNumber = 2;
+  manifest.version.androidVersionCode = 2;
   manifest.version.latestPublished = {
-    marketingVersion: '1.9.5',
-    iosBuildNumber: 84,
-    androidVersionCode: 85,
+    marketingVersion: '0.9.0',
+    iosBuildNumber: 1,
+    androidVersionCode: 1,
   };
   manifest.target = {
     profile: 'production',
     distribution: 'enterprise',
     gitSha: FULL_GIT_SHA,
   };
+  manifest.oauthCallback.enabled.production = true;
   manifest.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
   manifest.verification = {
     identity: 'verified',
@@ -89,14 +93,18 @@ function commandEvidence(result) {
   return `status=${result.status}\nstdout=${result.stdout ?? ''}\nstderr=${result.stderr ?? ''}`;
 }
 
-test('M10-03 manifest schema accepts the checked-in pending-external-verification record', () => {
+test('M10-03 manifest schema accepts the checked-in iOS-first release record', () => {
   const manifest = cloneManifest();
   assert.equal(validateManifestSchema(manifest), manifest);
-  assert.equal(manifest.verification.identity, 'pending-external-verification');
-  assert.equal(manifest.verification.versions, 'pending-external-verification');
+  assert.equal(manifest.verification.identity, 'verified');
+  assert.equal(manifest.schemaVersion, 4);
+  assert.equal(manifest.identity.iosAscAppId, '6808382989');
+  assert.equal(manifest.verification.versions, 'verified');
   assert.equal(manifest.version.androidVersionCode, null);
   assert.equal(manifest.target.distribution, null);
   assert.equal(manifest.verification.distribution, 'pending-external-verification');
+  assert.equal(manifest.oauthCallback.enabled.production, false);
+  assert.deepEqual(manifest.oauthCallback.profiles.production, []);
 });
 
 test('M10-03 manifest schema rejects missing and unexpected fields', () => {
@@ -110,6 +118,10 @@ test('M10-03 manifest schema rejects missing and unexpected fields', () => {
     () => validateManifestSchema(unexpected),
     /version schema mismatch.*unexpected remoteVersion/,
   );
+
+  const legacyAscApp = cloneManifest();
+  legacyAscApp.identity.iosAscAppId = '6760248115';
+  assert.throws(() => validateManifestSchema(legacyAscApp), /must not reuse the legacy KY Agent app/);
 });
 
 test('M10-03 integer and SemVer fields fail closed', () => {
@@ -130,6 +142,24 @@ test('M10-03 integer and SemVer fields fail closed', () => {
   assert.equal(compareSemver('2.0.0-beta.1', '2.0.0'), -1);
 });
 
+test('M10-03 OAuth enablement and callback allowlist cannot disagree', () => {
+  const disabledWithCallback = cloneManifest();
+  disabledWithCallback.oauthCallback.profiles.production = [
+    'https://agent.kaiyan.net/oauth/callback',
+  ];
+  assert.throws(
+    () => validateManifestSchema(disabledWithCallback),
+    /must be empty when OAuth is disabled/,
+  );
+
+  const enabledWithoutCallback = cloneManifest();
+  enabledWithoutCallback.oauthCallback.enabled.production = true;
+  assert.throws(
+    () => validateManifestSchema(enabledWithoutCallback),
+    /must not be empty when OAuth is enabled/,
+  );
+});
+
 test('M10-03 monotonic release rules reject regressions and reused build integers', () => {
   const marketingRegression = productionReadyManifest();
   marketingRegression.version.latestPublished.marketingVersion = '1.9.6';
@@ -140,7 +170,7 @@ test('M10-03 monotonic release rules reject regressions and reused build integer
   assert.throws(() => validateManifestSchema(reusedIosBuild), /iosBuildNumber must be greater/);
 
   const reusedAndroidCode = productionReadyManifest();
-  reusedAndroidCode.version.androidVersionCode = 85;
+  reusedAndroidCode.version.androidVersionCode = 1;
   assert.throws(
     () => validateManifestSchema(reusedAndroidCode),
     /androidVersionCode must be greater/,
@@ -149,6 +179,9 @@ test('M10-03 monotonic release rules reject regressions and reused build integer
 
 test('M10-03 production requires verified identity/version facts and all release target fields', () => {
   const manifest = cloneManifest();
+  manifest.target.profile = null;
+  manifest.verification.identity = 'pending-external-verification';
+  manifest.verification.versions = 'pending-external-verification';
   assert.throws(
     () =>
       assertProductionReady(manifest, {
@@ -161,14 +194,30 @@ test('M10-03 production requires verified identity/version facts and all release
       assert.match(error.message, /target\.profile is missing/);
       assert.match(error.message, /target\.distribution is missing/);
       assert.match(error.message, /distribution is pending external verification/);
-      assert.match(error.message, /target\.gitSha is missing/);
       assert.match(error.message, /identity is pending external verification/);
       assert.match(error.message, /versions are pending external verification/);
       assert.match(error.message, /androidVersionCode is missing/);
-      assert.match(error.message, /latestPublished\.androidVersionCode is missing/);
       return true;
     },
   );
+});
+
+test('M10-03 iOS-first production does not invent Android, OAuth, or prior-version facts', () => {
+  const manifest = cloneManifest();
+  assert.doesNotThrow(() =>
+    assertProductionReady(manifest, {
+      profile: 'production',
+      platform: 'ios',
+      distribution: null,
+      sourceGitSha: FULL_GIT_SHA,
+    }),
+  );
+  assert.equal(manifest.version.androidVersionCode, null);
+  assert.deepEqual(manifest.version.latestPublished, {
+    marketingVersion: null,
+    iosBuildNumber: null,
+    androidVersionCode: null,
+  });
 });
 
 test('M10-03 production target profile and exact Git SHA must match', () => {
@@ -255,6 +304,12 @@ test('M10-03 generated Expo identity rejects drift from the manifest', () => {
     () => assertExpoIdentityMatchesManifest(config, manifest, context),
     /Expo identity mismatch.*ios\.bundleIdentifier/s,
   );
+  const sourceDrift = createExpoConfig(staticExpoConfig, { manifest, context });
+  sourceDrift.ios.infoPlist.AgentSaaSReleaseSourceGitSHA = 'f'.repeat(40);
+  assert.throws(
+    () => assertExpoIdentityMatchesManifest(sourceDrift, manifest, context),
+    /Expo identity mismatch.*AgentSaaSReleaseSourceGitSHA/s,
+  );
 });
 
 test('M10-03 repository config consumes the manifest and keeps EAS versioning local', () => {
@@ -265,6 +320,34 @@ test('M10-03 repository config consumes the manifest and keeps EAS versioning lo
   assert.equal(inputs.mobileEasConfig.cli.appVersionSource, 'local');
   assert.equal(inputs.rootEasConfig.cli.appVersionSource, 'local');
   assert.equal(inputs.mobileEasConfig.build.production.autoIncrement, undefined);
+});
+
+test('M10-03 production EAS environment is complete and identity-bound', () => {
+  const { manifest, mobileEasConfig } = loadRepositoryInputs();
+  assert.doesNotThrow(() => assertProductionBuildEnvironment(mobileEasConfig, manifest));
+  assert.doesNotThrow(() => assertIosSubmitConfiguration(mobileEasConfig, manifest));
+
+  const drifted = structuredClone(mobileEasConfig);
+  drifted.build.production.env.MOBILE_IOS_SHARE_APP_GROUP = 'group.com.attacker.share';
+  assert.throws(
+    () => assertProductionBuildEnvironment(drifted, manifest),
+    /App Group does not match/,
+  );
+
+  const credentialed = structuredClone(mobileEasConfig);
+  credentialed.build.production.env.EXPO_PUBLIC_MOBILE_API_ORIGIN =
+    'https://user:password@api.agent.kaiyan.net';
+  assert.throws(
+    () => assertProductionBuildEnvironment(credentialed, manifest),
+    /credential-free HTTPS origin/,
+  );
+
+  const submitDrift = structuredClone(mobileEasConfig);
+  submitDrift.submit.production.ios.ascAppId = '6760248115';
+  assert.throws(
+    () => assertIosSubmitConfiguration(submitDrift, manifest),
+    /ascAppId does not match/,
+  );
 });
 
 test('M10-03 repository-root Expo config fails with a clear mobile-only project-root error', () => {
@@ -291,6 +374,10 @@ test('M10-03 mobile public Expo config matches manifest identity and exposes art
     expoConfig.extra.releaseManifest.identity.androidPackage,
     manifest.identity.androidPackage,
   );
+  assert.equal(
+    expoConfig.ios.infoPlist.AgentSaaSReleaseSourceGitSHA,
+    expoConfig.extra.releaseManifest.sourceGitSha,
+  );
   assert.equal(expoConfig.extra.releaseManifest.version.androidVersionCode, 'not-set');
 });
 
@@ -311,20 +398,26 @@ test('M10-03 production config is fail closed with the checked-in unverified man
   );
 });
 
-test('M10-03 production build script stops before EAS while external facts are unverified', () => {
-  const result = spawnSync('bash', ['scripts/build.sh', 'ios', '--build'], {
+test('M10-03 checked-in production manifest authorizes iOS without Android release facts', () => {
+  const sourceGitSha = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: REPOSITORY_ROOT,
+    encoding: 'utf8',
+  }).stdout.trim();
+  const result = spawnSync(process.execPath, [
+    'scripts/verify-release-manifest.mjs',
+    '--profile', 'production',
+    '--platform', 'ios',
+    '--git-sha', sourceGitSha,
+    '--print-build-values',
+  ], {
     cwd: MOBILE_ROOT,
     env: cleanExpoEnvironment('production'),
     encoding: 'utf8',
     timeout: 30_000,
     maxBuffer: 8 * 1024 * 1024,
   });
-  assert.notEqual(result.status, 0, commandEvidence(result));
-  const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
-  assert.match(output, /Production release is blocked/);
-  assert.match(output, /androidVersionCode is missing/);
-  assert.match(output, /build was not started/);
-  assert.doesNotMatch(output, /Building iOS production IPA/);
+  assert.equal(result.status, 0, commandEvidence(result));
+  assert.equal(result.stdout, '1.0.0|\n');
 });
 
 test('M10-03 build script reads release version through the manifest verifier', () => {

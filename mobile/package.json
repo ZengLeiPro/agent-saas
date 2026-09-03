@@ -10,7 +10,7 @@
     "build:ios": "./scripts/build.sh ios",
     "build:android": "./scripts/build.sh android",
     "build:ios:only": "./scripts/build.sh ios --build",
-    "submit:ios": "./scripts/build.sh ios --submit",
+    "submit:ios": "./scripts/submit-ios.sh",
     "typecheck": "tsc --noEmit",
     "check:expo": "pnpm exec expo install --check",
     "check:router-export": "rm -rf .expo-export-ios .expo-export-android && EXPO_NO_TELEMETRY=1 EXPO_PUBLIC_V1_PROFILE=preview EAS_BUILD_PROFILE=preview expo export --platform ios --output-dir .expo-export-ios && EXPO_NO_TELEMETRY=1 EXPO_PUBLIC_V1_PROFILE=preview EAS_BUILD_PROFILE=preview expo export --platform android --output-dir .expo-export-android && node scripts/verify-router-export.mjs .expo-export-ios .expo-export-android",

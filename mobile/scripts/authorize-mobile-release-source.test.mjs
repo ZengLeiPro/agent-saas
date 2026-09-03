@@ -15,14 +15,17 @@ function git(root, args) {
 
 function manifest(gitSha) {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     identity: {
       displayName: 'Agent SaaS',
-      slug: 'ky-agent',
+      slug: 'agent-saas',
       scheme: 'agent-saas',
       iosBundleIdentifier: 'com.agentsaas.mobile',
+      iosAscAppId: '6808382989',
+      iosAppleTeamId: 'T4D4M5B485',
+      iosAppGroupIdentifier: 'group.com.agentsaas.mobile.share',
       androidPackage: 'com.agentsaas.mobile',
-      easProjectId: 'c5c346ce-795f-4dae-9570-b7e937028923',
+      easProjectId: '2995ef56-aea4-4a59-ae4e-9ec3f203651a',
       easOwner: 'kaiyan-release',
     },
     version: {
@@ -38,6 +41,11 @@ function manifest(gitSha) {
     target: { profile: 'production', distribution: 'both', gitSha },
     verification: { identity: 'verified', versions: 'verified', distribution: 'verified' },
     oauthCallback: {
+      enabled: {
+        development: true,
+        preview: true,
+        production: true,
+      },
       profiles: {
         development: ['agent-saas://oauth/callback'],
         preview: ['agent-saas://oauth/callback'],

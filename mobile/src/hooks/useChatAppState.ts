@@ -1227,7 +1227,6 @@ export function useChatAppStateCore(): ChatAppState {
           interaction: { interactionId: event.interactionId, type: event.type, version: event.version ?? 0, order: event.order ?? event.version ?? 0 },
         });
       } else if (event.type === 'interaction_resolved' && Boolean(event.response || event.status)) {
-        rememberResolvedInteraction(resolvedInteractionIdsRef.current, event.sessionId, event.interactionId);
         settleInteractionResponse(event.sessionId, event.interactionId);
         sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: event.sessionId, interactionId: event.interactionId });
       } else if (event.type === 'session_status' && ['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(event.status)) {
@@ -1236,8 +1235,15 @@ export function useChatAppStateCore(): ChatAppState {
     };
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
       const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      const canonicalResolution = event.type === 'interaction_resolved'
+        && Boolean(event.response || event.status);
       // Test harnesses and teardown may expose an empty stream ref; keep the fence fail closed.
-      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current?.value)) return;
+      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current?.value)) {
+        if (canonicalResolution) {
+          rememberResolvedInteraction(resolvedInteractionIdsRef.current, event.sessionId, event.interactionId);
+        }
+        return;
+      }
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
         session: sessionRef.current,
@@ -1258,6 +1264,9 @@ export function useChatAppStateCore(): ChatAppState {
         wsLatestSessionIdRef.current,
         immediateSessionIdRef.current ?? sessionIdRef.current,
       );
+      if (canonicalResolution) {
+        rememberResolvedInteraction(resolvedInteractionIdsRef.current, event.sessionId, event.interactionId);
+      }
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
@@ -1590,7 +1599,10 @@ export function useChatAppStateCore(): ChatAppState {
           wsLatestSessionIdRef.current?.value,
         )
       ) {
-        if (data.type === 'interaction_resolved') projectSessionListInteraction(data);
+        if (data.type === 'interaction_resolved' && Boolean(data.response || data.status)) {
+          projectSessionListInteraction(data);
+          rememberResolvedInteraction(resolvedInteractionIdsRef.current, data.sessionId, data.interactionId);
+        }
         return;
       }
 
@@ -1602,6 +1614,10 @@ export function useChatAppStateCore(): ChatAppState {
         immediateSessionIdRef.current ?? sessionIdRef.current,
       );
       if (data.type === 'interaction_resolved') projectSessionListInteraction(data);
+
+      if (data.type === 'interaction_resolved' && Boolean(data.response || data.status)) {
+        rememberResolvedInteraction(resolvedInteractionIdsRef.current, data.sessionId, data.interactionId);
+      }
 
       if (data.type === "session" && "sessionId" in data) {
         immediateSessionIdRef.current = data.sessionId;

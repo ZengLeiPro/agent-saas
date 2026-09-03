@@ -2,8 +2,10 @@
 
 const staticExpoConfig = require('./app.json').expo;
 const mobileEasConfig = require('./eas.json');
+const releaseManifest = require('./release-manifest.json');
 const {
   assertEasVersionPolicy,
+  assertProductionBuildEnvironment,
   assertStaticExpoConfigHasNoReleaseFields,
   createExpoConfig,
 } = require('./scripts/release-manifest.cjs');
@@ -16,9 +18,10 @@ function reportAndRethrow(error) {
 }
 
 try {
-  incomingSharePluginOptions(process.env);
+  incomingSharePluginOptions(process.env, releaseManifest.identity);
   assertStaticExpoConfigHasNoReleaseFields(staticExpoConfig);
   assertEasVersionPolicy(mobileEasConfig, 'mobile/eas.json', { requireProfiles: true });
+  assertProductionBuildEnvironment(mobileEasConfig, releaseManifest);
 } catch (error) {
   reportAndRethrow(error);
 }
@@ -28,6 +31,7 @@ module.exports = ({ config }) => {
     return applyIncomingShareConfig(
       createExpoConfig(config, { environment: process.env }),
       process.env,
+      releaseManifest.identity,
     );
   } catch (error) {
     return reportAndRethrow(error);

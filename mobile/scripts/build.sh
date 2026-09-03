@@ -17,8 +17,7 @@ EXIT_CODE=0
 BUILD_ATTEMPTED=false
 PLATFORM_IOS=false
 PLATFORM_ANDROID=false
-DO_SUBMIT=true
-DO_CLEAN=true
+DO_CLEAN=false
 PREPARE_ENTERPRISE_UPDATE=false
 ANDROID_DISTRIBUTION=""
 
@@ -26,8 +25,12 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     ios) PLATFORM_IOS=true ;;
     android) PLATFORM_ANDROID=true ;;
-    --build) DO_SUBMIT=false ;;
-    --submit) DO_SUBMIT=true ;;
+    --build) ;;
+    --submit)
+      echo "[M60-04] Build and submit are separate. Use scripts/submit-ios.sh with an already verified IPA." >&2
+      exit 2
+      ;;
+    --clean) DO_CLEAN=true ;;
     --no-clean) DO_CLEAN=false ;;
     --prepare-enterprise-update) PREPARE_ENTERPRISE_UPDATE=true ;;
     --distribution)
@@ -79,6 +82,14 @@ fi
 
 if ! SOURCE_GIT_SHA="$(git -C "$MOBILE_DIR" rev-parse --verify HEAD 2>/dev/null)"; then
   echo "[M10-03] Unable to read current Git SHA; production build refused." >&2
+  exit 1
+fi
+if [ -n "$(git -C "$MOBILE_DIR" status --porcelain=v1 --untracked-files=all)" ]; then
+  echo "[M60-04] Production build requires a clean working tree." >&2
+  exit 1
+fi
+if ! git -C "$MOBILE_DIR" merge-base --is-ancestor "$SOURCE_GIT_SHA" origin/main; then
+  echo "[M60-04] Production build source must already be contained in origin/main." >&2
   exit 1
 fi
 export MOBILE_RELEASE_PROFILE=production
@@ -171,20 +182,26 @@ ANDROID_ARTIFACT_PATH=""
 
 if $PLATFORM_IOS; then
   BUILD_ATTEMPTED=true
+  if [ -e "$IPA_PATH" ]; then
+    echo "[M10-04] Refusing to overwrite existing iOS build artifact: $IPA_PATH" >&2
+    EXIT_CODE=1
+  fi
   echo "Building iOS production IPA..."
-  if MOBILE_BUILD_PLATFORM=ios MOBILE_ANDROID_DISTRIBUTION= EAS_SKIP_AUTO_FINGERPRINT=1 eas build -p ios -e production --local --output "$IPA_PATH" --non-interactive && [ -f "$IPA_PATH" ]; then
-    IOS_OK=true
-    echo "iOS build complete: $IPA_PATH"
+  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=ios MOBILE_ANDROID_DISTRIBUTION= EAS_SKIP_AUTO_FINGERPRINT=1 pnpm exec eas build -p ios -e production --local --output "$IPA_PATH" --non-interactive && [ -f "$IPA_PATH" ]; then
+    IOS_SOURCE_PATH="$IPA_PATH.source.json"
+    IOS_VERIFICATION_PATH="$IPA_PATH.verification.json"
+    ARTIFACT_IDENTITY="$(node "$MOBILE_DIR/scripts/verify-release-manifest.mjs" --profile production --platform ios --git-sha "$SOURCE_GIT_SHA" --print-artifact-identity)"
+    printf '%s\n' "$ARTIFACT_IDENTITY" | jq -S '{profile:"ios-store",sourceGitSha:.sourceGitSha,appId:.identity.iosBundleIdentifier,iosTeamId:.identity.iosAppleTeamId,iosAppGroup:.identity.iosAppGroupIdentifier,version:.version.marketingVersion,buildNumber:.version.iosBuildNumber,versionCode:null}' > "$IOS_SOURCE_PATH"
+    if bash "$MOBILE_DIR/scripts/verify-mobile-release-artifact.sh" ios-store "$IPA_PATH" "$IOS_SOURCE_PATH" "$IOS_VERIFICATION_PATH"; then
+      IOS_OK=true
+      echo "iOS build and signature verification complete: $IPA_PATH"
+    else
+      EXIT_CODE=1
+      echo "iOS artifact verification failed." >&2
+    fi
   else
     EXIT_CODE=1
     echo "iOS build failed." >&2
-  fi
-
-  if $DO_SUBMIT && $IOS_OK; then
-    if ! eas submit -p ios --path "$IPA_PATH" --non-interactive --no-wait; then
-      EXIT_CODE=1
-      echo "TestFlight submission failed." >&2
-    fi
   fi
 fi
 
@@ -204,7 +221,7 @@ if $PLATFORM_ANDROID; then
   fi
 
   echo "Building Android ${ANDROID_DISTRIBUTION} artifact with ${ANDROID_EAS_PROFILE}..."
-  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION="$ANDROID_DISTRIBUTION" EAS_SKIP_AUTO_FINGERPRINT=1 eas build -p android -e "$ANDROID_EAS_PROFILE" --local --output "$ANDROID_ARTIFACT_PATH" --non-interactive && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
+  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION="$ANDROID_DISTRIBUTION" EAS_SKIP_AUTO_FINGERPRINT=1 pnpm exec eas build -p android -e "$ANDROID_EAS_PROFILE" --local --output "$ANDROID_ARTIFACT_PATH" --non-interactive && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
     ANDROID_OK=true
     echo "Android ${ANDROID_DISTRIBUTION} build complete: $ANDROID_ARTIFACT_PATH"
   else

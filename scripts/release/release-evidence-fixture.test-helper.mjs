@@ -4,8 +4,9 @@ export const RELEASE_EVIDENCE_SHA = 'a'.repeat(40);
 export const RELEASE_EVIDENCE_BASE_SHA = 'b'.repeat(40);
 
 export function createValidReleaseEvidence(overrides = {}) {
+  // Evidence v2 keeps component-scoped identities for partial releases.
   const body = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     releaseSha: RELEASE_EVIDENCE_SHA,
     productionBaselineStatus: 'known',
@@ -54,6 +55,26 @@ export function createValidReleaseEvidence(overrides = {}) {
         uri: 'oss://agent-saas-releases/baseline/web.tgz',
         digest: `sha256:${'2'.repeat(64)}`,
         size: 11,
+      },
+      runtimeDependencies: {
+        server: {
+          uri: 'oss://agent-saas-releases/baseline/server-runtime-dependencies.json',
+          digest: `sha256:${'8'.repeat(64)}`,
+          size: 13,
+          sourceSha: RELEASE_EVIDENCE_BASE_SHA,
+          identityDigest: `sha256:${'e'.repeat(64)}`,
+          dependencyDigest: `sha256:${'9'.repeat(64)}`,
+          contractDigest: `sha256:${'a'.repeat(64)}`,
+        },
+        acs: {
+          uri: 'oss://agent-saas-releases/baseline/acs-runtime-dependencies.json',
+          digest: `sha256:${'b'.repeat(64)}`,
+          size: 14,
+          sourceSha: RELEASE_EVIDENCE_BASE_SHA,
+          identityDigest: `sha256:${'f'.repeat(64)}`,
+          dependencyDigest: `sha256:${'c'.repeat(64)}`,
+          contractDigest: `sha256:${'d'.repeat(64)}`,
+        },
       },
       acsOrchestrator: {
         uri: 'oss://agent-saas-releases/baseline/acs-orchestrator.tgz',

@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { calculateManifestDigest, ReleaseManifestStore } from './releaseManifestStore.js';
+import {
+  calculateManifestDigest,
+  ReleaseManifestStore,
+  validateManifest,
+} from './releaseManifestStore.js';
 
 const SHA = 'a'.repeat(40);
 const BASELINE = 'b'.repeat(40);
@@ -27,7 +31,7 @@ function matrix() {
 function manifestFor(releaseId = 'rc-20260825-01') {
   const productionBaseline = matrix();
   const unsigned = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     releaseId,
     releaseSha: SHA,
     tag: releaseId,
@@ -55,6 +59,26 @@ function manifestFor(releaseId = 'rc-20260825-01') {
         size: 123,
       },
       webAssets: { uri: 'oss://release-records/releases/web.tgz', digest: WEB_DIGEST, size: 456 },
+      runtimeDependencies: {
+        server: {
+          uri: 'oss://release-records/releases/runtime-dependencies.json',
+          digest: `sha256:${'8'.repeat(64)}`,
+          size: 512,
+          sourceSha: SHA,
+          identityDigest: `sha256:${'9'.repeat(64)}`,
+          dependencyDigest: `sha256:${'a'.repeat(64)}`,
+          contractDigest: `sha256:${'b'.repeat(64)}`,
+        },
+        acs: {
+          uri: 'oss://release-records/baseline/acs-runtime-dependencies.json',
+          digest: `sha256:${'c'.repeat(64)}`,
+          size: 513,
+          sourceSha: BASELINE,
+          identityDigest: `sha256:${'d'.repeat(64)}`,
+          dependencyDigest: `sha256:${'e'.repeat(64)}`,
+          contractDigest: `sha256:${'f'.repeat(64)}`,
+        },
+      },
       acsOrchestrator: {
         required: false,
         uri: 'oss://release-records/releases/acs.tgz',
@@ -84,12 +108,35 @@ function manifestFor(releaseId = 'rc-20260825-01') {
   return { ...unsigned, digest: calculateManifestDigest(unsigned) };
 }
 
+function legacyManifestFor() {
+  const current = structuredClone(manifestFor());
+  const { runtimeDependencies: _runtimeDependencies, ...legacyArtifacts } = current.artifacts;
+  const unsigned = {
+    ...current,
+    schemaVersion: 1 as const,
+    artifacts: legacyArtifacts,
+  };
+  const { digest: _digest, ...legacyContent } = unsigned;
+  return { ...legacyContent, digest: calculateManifestDigest(legacyContent) };
+}
+
 describe('ReleaseManifestStore', () => {
   const directories: string[] = [];
   afterEach(async () => {
     await Promise.all(
       directories.splice(0).map((path) => rm(path, { recursive: true, force: true })),
     );
+  });
+
+  it('validates the immutable v1 fixture and the component-scoped v2 fixture', async () => {
+    for (const version of [1, 2]) {
+      const path = join(
+        process.cwd(),
+        `../docs/examples/release-manifest-v${version}.example.json`,
+      );
+      const manifest = JSON.parse(await readFile(path, 'utf8'));
+      expect(validateManifest(manifest)).toEqual(manifest);
+    }
   });
 
   it('creates and reads a digest-verified canonical manifest', async () => {
@@ -99,6 +146,19 @@ describe('ReleaseManifestStore', () => {
     const created = await store.create(manifestFor());
     expect(created.manifestDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
     await expect(store.read('rc-20260825-01')).resolves.toEqual(created);
+  });
+
+  it('reads a strict historical v1 manifest with its original digest domain', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'release-manifest-v1-'));
+    directories.push(root);
+    const legacy = legacyManifestFor();
+    await writeFile(join(root, `${legacy.releaseId}.json`), JSON.stringify(legacy));
+    const store = new ReleaseManifestStore(root);
+    await expect(store.read(legacy.releaseId)).resolves.toEqual({
+      manifest: legacy,
+      manifestDigest: legacy.digest,
+    });
+    expect(legacy.digest).not.toBe(manifestFor().digest);
   });
 
   it('refuses to overwrite an existing manifest', async () => {

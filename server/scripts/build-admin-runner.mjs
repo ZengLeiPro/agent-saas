@@ -15,6 +15,10 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  loadRuntimeDependencyContract,
+  runtimeDependencyContractDigest,
+} from '../../scripts/release/runtime-dependency.mjs';
 
 export const MANIFEST_KIND = 'agent-saas-admin-runner';
 
@@ -74,6 +78,7 @@ export function esbuildArgs(source, outfile) {
     // npm 包保持 external：运行时用该 release 的 prod node_modules 解析，
     // 与 dist/index.js 的外部化策略一致，保证"同一 release、同一依赖"。
     '--packages=external',
+    "--banner:js=import '../runtime-dependency-admin-guard.mjs';",
     `--outfile=${outfile}`,
     '--sourcemap',
   ];
@@ -87,8 +92,29 @@ export async function digestFile(path) {
   };
 }
 
-export function adminRunnerManifest(kind, commands) {
-  return { schemaVersion: 1, kind, commands };
+export function adminRuntimeGuardSource() {
+  return [
+    "import { readFile } from 'node:fs/promises';",
+    "import { verifyRuntimeEnvironment } from './runtime-dependency.mjs';",
+    "const identity = JSON.parse(await readFile(new URL('../runtime-dependencies.json', import.meta.url), 'utf8'));",
+    "verifyRuntimeEnvironment({ identity, component: 'adminRunner' });",
+    '',
+  ].join('\n');
+}
+
+export function adminRunnerManifest(
+  kind,
+  commands,
+  dependencyContractDigest,
+  runtimeDependencyGuard,
+) {
+  return {
+    schemaVersion: 1,
+    kind,
+    dependencyContractDigest,
+    runtimeDependencyGuard,
+    commands,
+  };
 }
 
 function run(command, args, cwd) {
@@ -119,7 +145,23 @@ export async function buildAdminRunner({
       ...details,
     });
   }
-  const manifest = adminRunnerManifest(manifestKind, commands);
+  const guardPath = join(outDir, '..', 'runtime-dependency-admin-guard.mjs');
+  await writeFile(guardPath, adminRuntimeGuardSource(), { flag: 'w' });
+  const runtimeDependencyGuard = {
+    entry: '../runtime-dependency-admin-guard.mjs',
+    ...(await digestFile(guardPath)),
+  };
+  const dependencyContractDigest = runtimeDependencyContractDigest(
+    await loadRuntimeDependencyContract(
+      join(root, '..', 'config', 'runtime-dependency-contract.json'),
+    ),
+  );
+  const manifest = adminRunnerManifest(
+    manifestKind,
+    commands,
+    dependencyContractDigest,
+    runtimeDependencyGuard,
+  );
   await writeFile(join(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, {
     flag: 'wx',
   });

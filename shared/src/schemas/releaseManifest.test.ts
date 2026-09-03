@@ -29,7 +29,7 @@ function matrix(sha = BASELINE_SHA) {
 export function validManifestContent() {
   const productionBaseline = matrix();
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     releaseId: 'rc-20260825-01',
     releaseSha: RELEASE_SHA,
     tag: 'rc-20260825-01',
@@ -61,6 +61,26 @@ export function validManifestContent() {
         size: 123,
       },
       webAssets: { uri: 'oss://release-records/releases/web.tgz', digest: WEB_DIGEST, size: 456 },
+      runtimeDependencies: {
+        server: {
+          uri: 'oss://release-records/releases/runtime-dependencies.json',
+          digest: `sha256:${'8'.repeat(64)}`,
+          size: 512,
+          sourceSha: RELEASE_SHA,
+          identityDigest: `sha256:${'9'.repeat(64)}`,
+          dependencyDigest: `sha256:${'a'.repeat(64)}`,
+          contractDigest: `sha256:${'b'.repeat(64)}`,
+        },
+        acs: {
+          uri: 'oss://release-records/baseline/acs-runtime-dependencies.json',
+          digest: `sha256:${'c'.repeat(64)}`,
+          size: 513,
+          sourceSha: BASELINE_SHA,
+          identityDigest: `sha256:${'d'.repeat(64)}`,
+          dependencyDigest: `sha256:${'e'.repeat(64)}`,
+          contractDigest: `sha256:${'f'.repeat(64)}`,
+        },
+      },
       acsOrchestrator: {
         required: false,
         uri: 'oss://release-records/releases/acs.tgz',
@@ -89,6 +109,13 @@ export function validManifestContent() {
   };
 }
 
+function validLegacyManifestContent(): Record<string, any> {
+  const legacy = structuredClone(validManifestContent()) as Record<string, any>;
+  legacy.schemaVersion = 1;
+  delete legacy.artifacts.runtimeDependencies;
+  return legacy;
+}
+
 describe('releaseManifestSchema', () => {
   it('accepts the complete component, evidence, policy, artifact, and rollback contract', () => {
     expect(
@@ -97,14 +124,35 @@ describe('releaseManifestSchema', () => {
     ).toBe(true);
   });
 
+  it('rejects empty or punctuation-only OCI repositories', () => {
+    for (const repository of ['', ':', '.../', '/agent-saas']) {
+      const invalid = validManifestContent();
+      invalid.artifacts.acsImage.repository = repository;
+      expect(releaseManifestContentSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('strictly accepts immutable legacy v1 without treating v2 fields as optional', () => {
+    const legacy = validLegacyManifestContent();
+    expect(releaseManifestContentSchema.safeParse(legacy).success).toBe(true);
+    legacy.artifacts.runtimeDependencies = validManifestContent().artifacts.runtimeDependencies;
+    expect(releaseManifestContentSchema.safeParse(legacy).success).toBe(false);
+  });
+
   it('rejects incomplete SHAs, unsafe artifact URIs, and unsorted PR evidence', () => {
     expect(
       releaseManifestContentSchema.safeParse({ ...validManifestContent(), releaseSha: 'abc123' })
         .success,
     ).toBe(false);
-    const unsafe = validManifestContent();
-    unsafe.artifacts.webAssets.uri = 'https://user:password@example.test/web.tgz?signature=secret';
-    expect(releaseManifestContentSchema.safeParse(unsafe).success).toBe(false);
+    for (const uri of [
+      'https://user:password@example.test/web.tgz?signature=secret',
+      'file:///etc/agent-saas/runtime-identity.json',
+      'http://release-records.example.test/web.tgz',
+    ]) {
+      const unsafe = validManifestContent();
+      unsafe.artifacts.webAssets.uri = uri;
+      expect(releaseManifestContentSchema.safeParse(unsafe).success).toBe(false);
+    }
     expect(
       releaseManifestContentSchema.safeParse({
         ...validManifestContent(),
@@ -153,13 +201,58 @@ describe('releaseManifestSchema', () => {
     expect(releaseManifestContentSchema.safeParse(keep).success).toBe(false);
   });
 
+  it('rejects split API and Runtime Worker identities in the frozen baseline', () => {
+    const sourceMismatch = validManifestContent();
+    sourceMismatch.productionBaseline.runtimeWorker.sourceSha = RELEASE_SHA;
+    sourceMismatch.rollbackTargets.runtimeWorker.sourceSha = RELEASE_SHA;
+    expect(releaseManifestContentSchema.safeParse(sourceMismatch).success).toBe(false);
+
+    const digestMismatch = validManifestContent();
+    digestMismatch.productionBaseline.runtimeWorker.artifactDigest = MANIFEST_DIGEST;
+    digestMismatch.rollbackTargets.runtimeWorker.artifactDigest = MANIFEST_DIGEST;
+    expect(releaseManifestContentSchema.safeParse(digestMismatch).success).toBe(false);
+  });
+
+  it('rejects conflicting API and Runtime Worker source SHAs for a deploy serverBundle', () => {
+    const manifest = validManifestContent();
+    manifest.components.runtimeWorker.sourceSha = BASELINE_SHA;
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('rejects conflicting API and Runtime Worker source SHAs for a kept serverBundle', () => {
+    const manifest = validManifestContent();
+    const api = manifest.components.api as {
+      action: 'deploy' | 'keep';
+      sourceSha: string;
+      artifactDigest: string;
+    };
+    const runtimeWorker = manifest.components.runtimeWorker as typeof api;
+    Object.assign(api, { action: 'keep', ...manifest.productionBaseline.api });
+    Object.assign(runtimeWorker, {
+      action: 'keep',
+      ...manifest.productionBaseline.runtimeWorker,
+      sourceSha: RELEASE_SHA,
+    });
+    expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
+  });
+
+  it('binds each v2 runtime identity to both selected component sources', () => {
+    const serverTamper = validManifestContent();
+    serverTamper.artifacts.runtimeDependencies.server.sourceSha = BASELINE_SHA;
+    expect(releaseManifestContentSchema.safeParse(serverTamper).success).toBe(false);
+
+    const acsTamper = validManifestContent();
+    acsTamper.artifacts.runtimeDependencies.acs.sourceSha = RELEASE_SHA;
+    expect(releaseManifestContentSchema.safeParse(acsTamper).success).toBe(false);
+  });
+
   it('binds both ACS digests and App digests to immutable artifacts', () => {
     const manifest = validManifestContent();
     manifest.components.acs.orchestratorArtifactDigest = MANIFEST_DIGEST;
     expect(releaseManifestContentSchema.safeParse(manifest).success).toBe(false);
   });
 
-  it('rejects a mixed API and Runtime Worker action matrix for one server bundle', () => {
+  it('rejects a mixed API and Runtime Worker action matrix for one serverBundle', () => {
     const manifest = validManifestContent();
     const runtimeWorker = manifest.components.runtimeWorker as {
       action: 'deploy' | 'keep';

@@ -13,6 +13,15 @@ export const sha256DigestSchema = z
   .string()
   .regex(/^sha256:[a-f0-9]{64}$/, 'Expected a sha256:<lowercase hexadecimal> digest');
 const utcTimestampSchema = z.iso.datetime({ offset: false, precision: 3 });
+const ociRepositorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .regex(
+    /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[1-9]\d{0,4})?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$/u,
+    'Expected a valid OCI repository',
+  );
 
 const artifactUriSchema = z
   .string()
@@ -22,10 +31,16 @@ const artifactUriSchema = z
   .superRefine((value, ctx) => {
     try {
       const uri = new URL(value);
-      if (!uri.protocol || uri.username || uri.password || uri.search || uri.hash) {
+      if (
+        !['https:', 'oss:'].includes(uri.protocol) ||
+        uri.username ||
+        uri.password ||
+        uri.search ||
+        uri.hash
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Artifact URI must not contain credentials, query strings, or fragments',
+          message: 'Artifact URI must be an uncredentialed HTTPS or OSS URI',
         });
       }
     } catch {
@@ -58,14 +73,10 @@ export const releaseComponentMatrixSchema = z
   .strict();
 
 const appComponentPlanSchema = appComponentIdentitySchema
-  .extend({
-    action: z.enum(['deploy', 'keep']),
-  })
+  .extend({ action: z.enum(['deploy', 'keep']) })
   .strict();
 const acsComponentPlanSchema = acsComponentIdentitySchema
-  .extend({
-    action: z.enum(['deploy', 'keep']),
-  })
+  .extend({ action: z.enum(['deploy', 'keep']) })
   .strict();
 
 export const releaseComponentsPlanSchema = z
@@ -84,17 +95,24 @@ const fileArtifactSchema = z
     size: z.number().int().positive(),
   })
   .strict();
-
 const optionalFileArtifactSchema = fileArtifactSchema.extend({ required: z.boolean() }).strict();
+const runtimeDependencyArtifactSchema = fileArtifactSchema
+  .extend({
+    sourceSha: fullShaSchema,
+    identityDigest: sha256DigestSchema,
+    dependencyDigest: sha256DigestSchema,
+    contractDigest: sha256DigestSchema,
+  })
+  .strict();
 const imageArtifactSchema = z
   .object({
     required: z.boolean(),
-    repository: z.string().trim().min(1).max(512),
+    repository: ociRepositorySchema,
     digest: sha256DigestSchema,
   })
   .strict();
 
-export const releaseArtifactsSchema = z
+export const releaseArtifactsV1Schema = z
   .object({
     serverBundle: fileArtifactSchema,
     webAssets: fileArtifactSchema,
@@ -102,6 +120,17 @@ export const releaseArtifactsSchema = z
     acsImage: imageArtifactSchema,
   })
   .strict();
+export const releaseArtifactsV2Schema = releaseArtifactsV1Schema
+  .extend({
+    runtimeDependencies: z
+      .object({
+        server: runtimeDependencyArtifactSchema,
+        acs: runtimeDependencyArtifactSchema,
+      })
+      .strict(),
+  })
+  .strict();
+export const releaseArtifactsSchema = z.union([releaseArtifactsV1Schema, releaseArtifactsV2Schema]);
 
 const integrationCandidateSchema = z
   .object({
@@ -124,7 +153,6 @@ const receiptSchema = z
     subjectDigest: sha256DigestSchema,
   })
   .strict();
-
 const ciCheckSchema = z
   .object({
     status: z.literal('success'),
@@ -140,253 +168,330 @@ const acsImpactCheckSchema = z
   })
   .strict();
 
-export const releaseManifestContentSchema = z
+const manifestCommonShape = {
+  releaseId: releaseIdSchema,
+  releaseSha: fullShaSchema,
+  tag: releaseIdSchema,
+  createdAt: utcTimestampSchema,
+  createdBy: z.string().trim().min(1).max(256),
+  releasePullRequest: releasePullRequestSchema.optional(),
+  integrationCandidates: z.array(integrationCandidateSchema).max(1_000),
+  sourcePullRequests: z.array(z.number().int().positive()).min(1).max(1_000),
+  productionBaseline: releaseComponentMatrixSchema,
+  components: releaseComponentsPlanSchema,
+  checks: z
+    .object({
+      appCi: ciCheckSchema,
+      acsImpact: acsImpactCheckSchema,
+      mergeReceipt: receiptSchema.optional(),
+      integrationReceipt: receiptSchema.optional(),
+    })
+    .strict(),
+  promotionPolicy: z
+    .object({
+      expiresAt: utcTimestampSchema,
+      minimumPromotableSha: fullShaSchema,
+      appAcsCompatibility: z.literal('n_and_n_plus_1').optional(),
+      compatibilityEvidenceDigest: sha256DigestSchema.optional(),
+      requiresHumanApproval: z.literal(true),
+    })
+    .strict(),
+  migrationPlan: z
+    .object({
+      phase: z.enum(['none', 'expand']),
+      planDigest: sha256DigestSchema,
+      confirmation: z.enum(['not_required', 'required_after_observation']),
+      contract: z.literal('separate_release'),
+    })
+    .strict(),
+  rollbackTargets: releaseComponentMatrixSchema,
+};
+
+const releaseManifestContentV1Schema = z
   .object({
     schemaVersion: z.literal(1),
-    releaseId: releaseIdSchema,
-    releaseSha: fullShaSchema,
-    tag: releaseIdSchema,
-    createdAt: utcTimestampSchema,
-    createdBy: z.string().trim().min(1).max(256),
-    releasePullRequest: releasePullRequestSchema.optional(),
-    integrationCandidates: z.array(integrationCandidateSchema).max(1_000),
-    sourcePullRequests: z.array(z.number().int().positive()).min(1).max(1_000),
-    productionBaseline: releaseComponentMatrixSchema,
-    components: releaseComponentsPlanSchema,
-    artifacts: releaseArtifactsSchema,
-    checks: z
-      .object({
-        appCi: ciCheckSchema,
-        acsImpact: acsImpactCheckSchema,
-        mergeReceipt: receiptSchema.optional(),
-        integrationReceipt: receiptSchema.optional(),
-      })
-      .strict(),
-    promotionPolicy: z
-      .object({
-        expiresAt: utcTimestampSchema,
-        minimumPromotableSha: fullShaSchema,
-        appAcsCompatibility: z.literal('n_and_n_plus_1').optional(),
-        compatibilityEvidenceDigest: sha256DigestSchema.optional(),
-        requiresHumanApproval: z.literal(true),
-      })
-      .strict(),
-    migrationPlan: z
-      .object({
-        phase: z.enum(['none', 'expand']),
-        planDigest: sha256DigestSchema,
-        confirmation: z.enum(['not_required', 'required_after_observation']),
-        contract: z.literal('separate_release'),
-      })
-      .strict(),
-    rollbackTargets: releaseComponentMatrixSchema,
+    ...manifestCommonShape,
+    artifacts: releaseArtifactsV1Schema,
   })
-  .strict()
-  .superRefine((manifest, ctx) => {
-    if (!manifest.checks.mergeReceipt && !manifest.checks.integrationReceipt) {
+  .strict();
+const releaseManifestContentV2Schema = z
+  .object({
+    schemaVersion: z.literal(2),
+    ...manifestCommonShape,
+    artifacts: releaseArtifactsV2Schema,
+  })
+  .strict();
+
+const releaseManifestContentVersionSchema = z.discriminatedUnion('schemaVersion', [
+  releaseManifestContentV1Schema,
+  releaseManifestContentV2Schema,
+]);
+type ManifestContentCandidate = z.infer<typeof releaseManifestContentVersionSchema>;
+
+function refineManifest(manifest: ManifestContentCandidate, ctx: z.RefinementCtx): void {
+  if (!manifest.checks.mergeReceipt && !manifest.checks.integrationReceipt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['checks'],
+      message: 'A GitHub merge receipt or legacy Integration receipt is required',
+    });
+  }
+  if (manifest.releasePullRequest) {
+    if (manifest.releasePullRequest.mergeCommitOid !== manifest.releaseSha) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['checks'],
-        message: 'A GitHub merge receipt or legacy Integration receipt is required',
+        path: ['releasePullRequest', 'mergeCommitOid'],
+        message: 'Release pull request mergeCommitOid must equal releaseSha',
       });
     }
-    if (manifest.releasePullRequest) {
-      if (manifest.releasePullRequest.mergeCommitOid !== manifest.releaseSha) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['releasePullRequest', 'mergeCommitOid'],
-          message: 'Release pull request mergeCommitOid must equal releaseSha',
-        });
-      }
-      if (!manifest.sourcePullRequests.includes(manifest.releasePullRequest.number)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['sourcePullRequests'],
-          message: 'sourcePullRequests must include the release pull request',
-        });
-      }
-    } else if (manifest.integrationCandidates.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['releasePullRequest'],
-        message: 'Direct GitHub releases require releasePullRequest evidence',
-      });
-    }
-    if (manifest.tag !== manifest.releaseId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['tag'],
-        message: 'tag must equal releaseId',
-      });
-    }
-    if (
-      new Set(manifest.sourcePullRequests).size !== manifest.sourcePullRequests.length ||
-      manifest.sourcePullRequests.some(
-        (value, index, values) => index > 0 && value <= values[index - 1],
-      )
-    ) {
+    if (!manifest.sourcePullRequests.includes(manifest.releasePullRequest.number)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['sourcePullRequests'],
-        message: 'sourcePullRequests must be unique and ascending',
+        message: 'sourcePullRequests must include the release pull request',
       });
     }
-    if (
-      (manifest.checks.acsImpact.status === 'success') !==
-      (manifest.checks.acsImpact.runId !== undefined)
-    ) {
+  } else if (manifest.integrationCandidates.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['releasePullRequest'],
+      message: 'Direct GitHub releases require releasePullRequest evidence',
+    });
+  }
+  if (manifest.tag !== manifest.releaseId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['tag'],
+      message: 'tag must equal releaseId',
+    });
+  }
+  if (
+    new Set(manifest.sourcePullRequests).size !== manifest.sourcePullRequests.length ||
+    manifest.sourcePullRequests.some(
+      (value, index, values) => index > 0 && value <= values[index - 1],
+    )
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sourcePullRequests'],
+      message: 'sourcePullRequests must be unique and ascending',
+    });
+  }
+  if (
+    (manifest.checks.acsImpact.status === 'success') !==
+    (manifest.checks.acsImpact.runId !== undefined)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['checks', 'acsImpact', 'runId'],
+      message: 'ACS Impact success requires runId; not_required must not claim a run',
+    });
+  }
+  if (Date.parse(manifest.promotionPolicy.expiresAt) <= Date.parse(manifest.createdAt)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['promotionPolicy', 'expiresAt'],
+      message: 'promotion expiry must be later than Manifest creation',
+    });
+  }
+  if (
+    (manifest.migrationPlan.phase === 'none') !==
+    (manifest.migrationPlan.confirmation === 'not_required')
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['migrationPlan', 'confirmation'],
+      message: 'expand migrations require post-observation confirmation; none must not claim it',
+    });
+  }
+  for (const [index, candidate] of manifest.integrationCandidates.entries()) {
+    if (candidate.mergedCommitOid !== manifest.releaseSha) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['checks', 'acsImpact', 'runId'],
-        message: 'ACS Impact success requires runId; not_required must not claim a run',
+        path: ['integrationCandidates', index, 'mergedCommitOid'],
+        message: 'mergedCommitOid must equal releaseSha',
       });
     }
-    if (Date.parse(manifest.promotionPolicy.expiresAt) <= Date.parse(manifest.createdAt)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['promotionPolicy', 'expiresAt'],
-        message: 'promotion expiry must be later than Manifest creation',
-      });
-    }
-    if (
-      (manifest.migrationPlan.phase === 'none') !==
-      (manifest.migrationPlan.confirmation === 'not_required')
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['migrationPlan', 'confirmation'],
-        message: 'expand migrations require post-observation confirmation; none must not claim it',
-      });
-    }
-    for (const [index, candidate] of manifest.integrationCandidates.entries()) {
-      if (candidate.mergedCommitOid !== manifest.releaseSha) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['integrationCandidates', index, 'mergedCommitOid'],
-          message: 'mergedCommitOid must equal releaseSha',
-        });
-      }
-    }
-    if (
-      manifest.checks.appCi.headSha !== manifest.releaseSha ||
-      manifest.checks.acsImpact.headSha !== manifest.releaseSha
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['checks'],
-        message: 'check headSha values must equal releaseSha',
-      });
-    }
+  }
+  if (
+    manifest.checks.appCi.headSha !== manifest.releaseSha ||
+    manifest.checks.acsImpact.headSha !== manifest.releaseSha
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['checks'],
+      message: 'check headSha values must equal releaseSha',
+    });
+  }
 
-    for (const component of RELEASE_COMPONENTS) {
-      const plan = manifest.components[component];
-      const baseline = manifest.productionBaseline[component];
-      const expectedSha = plan.action === 'deploy' ? manifest.releaseSha : baseline.sourceSha;
-      if (plan.sourceSha !== expectedSha) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['components', component, 'sourceSha'],
-          message:
-            plan.action === 'deploy'
-              ? 'deploy sourceSha must equal releaseSha'
-              : 'keep sourceSha must equal the production baseline',
-        });
-      }
-      if (plan.action === 'keep') {
-        for (const [key, value] of Object.entries(baseline)) {
-          if ((plan as Record<string, unknown>)[key] !== value) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ['components', component, key],
-              message: 'keep component identity must equal the production baseline',
-            });
-          }
+  for (const component of RELEASE_COMPONENTS) {
+    const plan = manifest.components[component];
+    const baseline = manifest.productionBaseline[component];
+    const expectedSha = plan.action === 'deploy' ? manifest.releaseSha : baseline.sourceSha;
+    if (plan.sourceSha !== expectedSha) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['components', component, 'sourceSha'],
+        message:
+          plan.action === 'deploy'
+            ? 'deploy sourceSha must equal releaseSha'
+            : 'keep sourceSha must equal the production baseline',
+      });
+    }
+    if (plan.action === 'keep') {
+      for (const [key, value] of Object.entries(baseline)) {
+        if ((plan as Record<string, unknown>)[key] !== value) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['components', component, key],
+            message: 'keep component identity must equal the production baseline',
+          });
         }
       }
     }
+  }
 
-    const { components, artifacts } = manifest;
-    if (components.api.action !== components.runtimeWorker.action) {
+  const { components, artifacts } = manifest;
+  if (components.api.action !== components.runtimeWorker.action) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['components', 'runtimeWorker', 'action'],
+      message: 'API and Runtime Worker must deploy or keep together while sharing serverBundle',
+    });
+  }
+  if (components.api.artifactDigest !== components.runtimeWorker.artifactDigest) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['components', 'runtimeWorker', 'artifactDigest'],
+      message: 'API and Runtime Worker must identify the same serverBundle digest',
+    });
+  }
+  if (components.api.sourceSha !== components.runtimeWorker.sourceSha) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['components', 'runtimeWorker', 'sourceSha'],
+      message: 'API and Runtime Worker must identify the same serverBundle source SHA',
+    });
+  }
+  for (const [field, matrix] of [
+    ['productionBaseline', manifest.productionBaseline],
+    ['rollbackTargets', manifest.rollbackTargets],
+  ] as const) {
+    if (matrix.api.artifactDigest !== matrix.runtimeWorker.artifactDigest) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['components', 'runtimeWorker', 'action'],
-        message: 'API and Runtime Worker must deploy or keep together while sharing serverBundle',
+        path: [field, 'runtimeWorker', 'artifactDigest'],
+        message: 'API and Runtime Worker baseline must identify the same serverBundle digest',
       });
     }
-    if (components.api.artifactDigest !== components.runtimeWorker.artifactDigest) {
+    if (matrix.api.sourceSha !== matrix.runtimeWorker.sourceSha) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['components', 'runtimeWorker', 'artifactDigest'],
-        message: 'API and Runtime Worker must identify the same serverBundle digest',
+        path: [field, 'runtimeWorker', 'sourceSha'],
+        message: 'API and Runtime Worker baseline must identify the same serverBundle source SHA',
       });
     }
-    const digestBindings: Array<[unknown, unknown, (string | number)[]]> = [
+  }
+  const digestBindings: Array<[unknown, unknown, (string | number)[]]> = [
+    [
+      components.web.artifactDigest,
+      artifacts.webAssets.digest,
+      ['components', 'web', 'artifactDigest'],
+    ],
+    [
+      components.api.artifactDigest,
+      artifacts.serverBundle.digest,
+      ['components', 'api', 'artifactDigest'],
+    ],
+    [
+      components.runtimeWorker.artifactDigest,
+      artifacts.serverBundle.digest,
+      ['components', 'runtimeWorker', 'artifactDigest'],
+    ],
+    [
+      components.acs.orchestratorArtifactDigest,
+      artifacts.acsOrchestrator.digest,
+      ['components', 'acs', 'orchestratorArtifactDigest'],
+    ],
+    [
+      components.acs.sandboxImageDigest,
+      artifacts.acsImage.digest,
+      ['components', 'acs', 'sandboxImageDigest'],
+    ],
+  ];
+  for (const [componentDigest, artifactDigest, path] of digestBindings) {
+    if (componentDigest !== artifactDigest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path,
+        message: 'component digest must match its immutable artifact',
+      });
+    }
+  }
+  const acsDeploy = components.acs.action === 'deploy';
+  if (
+    artifacts.acsOrchestrator.required !== acsDeploy ||
+    artifacts.acsImage.required !== acsDeploy
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['artifacts'],
+      message: 'ACS artifact required flags must match the ACS component action',
+    });
+  }
+  if (manifest.schemaVersion === 2) {
+    const runtimeBindings = [
+      [manifest.artifacts.runtimeDependencies.server.sourceSha, components.api.sourceSha, 'server'],
       [
-        components.web.artifactDigest,
-        artifacts.webAssets.digest,
-        ['components', 'web', 'artifactDigest'],
+        manifest.artifacts.runtimeDependencies.server.sourceSha,
+        components.runtimeWorker.sourceSha,
+        'server',
       ],
-      [
-        components.api.artifactDigest,
-        artifacts.serverBundle.digest,
-        ['components', 'api', 'artifactDigest'],
-      ],
-      [
-        components.runtimeWorker.artifactDigest,
-        artifacts.serverBundle.digest,
-        ['components', 'runtimeWorker', 'artifactDigest'],
-      ],
-      [
-        components.acs.orchestratorArtifactDigest,
-        artifacts.acsOrchestrator.digest,
-        ['components', 'acs', 'orchestratorArtifactDigest'],
-      ],
-      [
-        components.acs.sandboxImageDigest,
-        artifacts.acsImage.digest,
-        ['components', 'acs', 'sandboxImageDigest'],
-      ],
-    ];
-    for (const [componentDigest, artifactDigest, path] of digestBindings) {
-      if (componentDigest !== artifactDigest)
+      [manifest.artifacts.runtimeDependencies.acs.sourceSha, components.acs.sourceSha, 'acs'],
+    ] as const;
+    for (const [runtimeSha, componentSha, component] of runtimeBindings) {
+      if (runtimeSha !== componentSha) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path,
-          message: 'component digest must match its immutable artifact',
+          path: ['artifacts', 'runtimeDependencies', component, 'sourceSha'],
+          message:
+            'Component Runtime Dependency Identity source SHA must match its selected artifact',
         });
+      }
     }
-    const acsDeploy = components.acs.action === 'deploy';
-    if (
-      artifacts.acsOrchestrator.required !== acsDeploy ||
-      artifacts.acsImage.required !== acsDeploy
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['artifacts'],
-        message: 'ACS artifact required flags must match the ACS component action',
-      });
-    }
-    if (canonicalJson(manifest.rollbackTargets) !== canonicalJson(manifest.productionBaseline)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['rollbackTargets'],
-        message: 'initial rollback targets must equal the frozen production baseline',
-      });
-    }
-  });
+  }
+  if (canonicalJson(manifest.rollbackTargets) !== canonicalJson(manifest.productionBaseline)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rollbackTargets'],
+      message: 'initial rollback targets must equal the frozen production baseline',
+    });
+  }
+}
 
-export const releaseManifestSchema = releaseManifestContentSchema
-  .extend({
-    digest: sha256DigestSchema,
-  })
+export const releaseManifestContentSchema =
+  releaseManifestContentVersionSchema.superRefine(refineManifest);
+
+const releaseManifestV1Schema = releaseManifestContentV1Schema
+  .extend({ digest: sha256DigestSchema })
   .strict();
+const releaseManifestV2Schema = releaseManifestContentV2Schema
+  .extend({ digest: sha256DigestSchema })
+  .strict();
+export const releaseManifestSchema = z
+  .discriminatedUnion('schemaVersion', [releaseManifestV1Schema, releaseManifestV2Schema])
+  .superRefine(refineManifest);
 
 export type ReleaseComponent = z.infer<typeof releaseComponentSchema>;
 export type ReleaseComponentMatrix = z.infer<typeof releaseComponentMatrixSchema>;
 export type ReleaseComponentsPlan = z.infer<typeof releaseComponentsPlanSchema>;
 export type ReleaseArtifacts = z.infer<typeof releaseArtifactsSchema>;
+export type ReleaseArtifactsV2 = z.infer<typeof releaseArtifactsV2Schema>;
+export type ReleaseManifestContentV1 = z.infer<typeof releaseManifestContentV1Schema>;
+export type ReleaseManifestContentV2 = z.infer<typeof releaseManifestContentV2Schema>;
 export type ReleaseManifestContent = z.infer<typeof releaseManifestContentSchema>;
 export type ReleaseManifest = z.infer<typeof releaseManifestSchema>;
+export type ReleaseManifestV2 = z.infer<typeof releaseManifestV2Schema>;
 
 export type CanonicalJsonValue =
   null | boolean | number | string | CanonicalJsonValue[] | { [key: string]: CanonicalJsonValue };

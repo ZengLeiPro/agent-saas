@@ -71,6 +71,44 @@ const FAILURE_STATES = new Set<ReleaseState>([
   'needs_human',
   'superseded',
 ]);
+const RETRYABLE_PRE_MUTATION_STATES = new Set<ReleaseState>([
+  'approved',
+  'failed_before_change',
+  'needs_human',
+]);
+
+function hasReviewedMutationRecoveryTail(tail: readonly ReleaseAttestation[]): boolean {
+  let mutationSeen = false;
+  let reviewedCurrentMutation = false;
+  for (let index = 0; index < tail.length; index += 1) {
+    const state = tail[index]?.state;
+    const previousState = tail[index - 1]?.state;
+    if (!mutationSeen) {
+      if (state === 'promoting') {
+        if (previousState !== 'approved') return false;
+        mutationSeen = true;
+        reviewedCurrentMutation = false;
+      } else if (!state || !RETRYABLE_PRE_MUTATION_STATES.has(state)) return false;
+      continue;
+    }
+    if (state === 'promoting') {
+      if (previousState !== 'approved' || !reviewedCurrentMutation) return false;
+      reviewedCurrentMutation = false;
+    } else if (state === 'needs_human') {
+      if (previousState !== 'promoting' && previousState !== 'needs_human') return false;
+      reviewedCurrentMutation = true;
+    } else if (state === 'approved') {
+      if (
+        !reviewedCurrentMutation ||
+        (previousState !== 'needs_human' && previousState !== 'failed_before_change')
+      )
+        return false;
+    } else if (state === 'failed_before_change') {
+      if (!reviewedCurrentMutation || previousState !== 'approved') return false;
+    } else return false;
+  }
+  return mutationSeen && reviewedCurrentMutation;
+}
 
 function assertDigest(digest: string): void {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest))
@@ -185,31 +223,21 @@ export class ReleaseAttestationLog {
       current === 'failed_before_change' &&
       input.state === 'approved' &&
       retryTail.some((entry) => entry.state === 'approved') &&
-      retryTail.every((entry) =>
-        ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
-      );
-    let lastPromotingIndex = -1;
-    for (let index = retryTail.length - 1; index >= 0; index -= 1) {
-      if (retryTail[index]?.state === 'promoting') {
-        lastPromotingIndex = index;
-        break;
-      }
-    }
-    const retryAfterHumanReview =
-      current === 'needs_human' &&
+      retryTail.every((entry) => RETRYABLE_PRE_MUTATION_STATES.has(entry.state));
+    const retryAfterReviewedMutation =
+      (current === 'needs_human' || current === 'failed_before_change') &&
       input.state === 'approved' &&
-      lastPromotingIndex > 0 &&
-      retryTail[lastPromotingIndex - 1]?.state === 'approved' &&
-      retryTail.slice(lastPromotingIndex + 1).every((entry) => entry.state === 'needs_human');
+      hasReviewedMutationRecoveryTail(retryTail);
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
-    const failure =
-      FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
+    const failureTransition =
+      FAILURE_STATES.has(input.state) &&
+      !['completed', 'revoked', 'rejected', 'superseded'].includes(current);
     if (
       !sequential &&
       !retryAfterFailureBeforeChange &&
-      !retryAfterHumanReview &&
+      !retryAfterReviewedMutation &&
       !revocation &&
-      !failure
+      !failureTransition
     )
       throw new Error(`Illegal or late RC attestation transition: ${current} -> ${input.state}`);
 

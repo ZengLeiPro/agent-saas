@@ -22,11 +22,10 @@ export function SystemErrorMessage({
   onSwitchModel,
 }: SystemErrorMessageProps) {
   const item = selectRenderModel({ messages: [message] }).items[0];
-  const presentation = selectErrorPresentation(item, rawPresentationMode ? {
-    debugBuild: true,
-    authenticatedAdmin: true,
-    explicitSessionToggle: true,
-  } : undefined);
+  const presentation = selectErrorPresentation(
+    item,
+    rawPresentationMode ? { explicitSessionToggle: true } : undefined,
+  );
   const recovery = presentation.recoveryAction;
   // Typed recovery actions must never fall through to blind retry.
   const recoveryHandler = recovery?.kind === 'view_billing'

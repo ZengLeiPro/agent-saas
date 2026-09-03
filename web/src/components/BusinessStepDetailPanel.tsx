@@ -205,7 +205,7 @@ export function BusinessStepDetailPanel(props: BusinessStepDetailProps) {
       aria-label={`步骤详情：${detail.todo.content}`}
       data-business-step-detail-panel
     >
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
         <div className="min-w-0 flex-1 truncate text-sm font-medium">任务步骤</div>
         <Button
           variant="ghost"

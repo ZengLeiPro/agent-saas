@@ -21,6 +21,7 @@ Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/runtime-worker.pid
 Environment=AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready
 Environment=KB_PREVIEW_AUTO_GENERATE=false
 EnvironmentFile=/etc/agent-saas-staging/server.env
+ExecStartPre=/usr/bin/node /opt/agent-saas-staging/current/server/dist/runtime-dependency.mjs --manifest=/opt/agent-saas-staging/current/server/runtime-dependencies.json --component=runtimeWorker --production=true
 ExecStart=/usr/bin/node --enable-source-maps /opt/agent-saas-staging/current/server/dist/index.js
 ExecStop=/bin/kill -USR2 $MAINPID
 Restart=on-failure

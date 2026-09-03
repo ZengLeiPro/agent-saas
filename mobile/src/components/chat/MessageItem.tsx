@@ -1176,7 +1176,7 @@ function ToolResultBlock({ message, gate }: { message: MessageItem & { type: 'to
     [renderItem, gate],
   );
 
-  // raw payload 只有在 Shared 三重 gate 明确授权后才解析和挂到 RN 树上。
+  // raw payload 只有在会话调试权限明确授权后才解析和挂到 RN 树上。
   const parsed = useMemo(
     () => expanded && canonical.showRaw ? parseToolResult(message.result) : null,
     [canonical.showRaw, expanded, message.result],

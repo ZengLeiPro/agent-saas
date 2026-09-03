@@ -68,6 +68,25 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.currentState()).toBe('completed');
   });
 
+  it('preserves post-mutation recovery across a later pre-write failure', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved', 'approval-1');
+    append(entries, 'promoting', 'promoting-1');
+    append(entries, 'needs_human', 'needs-human-1');
+    append(entries, 'approved', 'recovery-approval-1');
+    append(entries, 'failed_before_change', 'recovery-pre-write-failure');
+    append(entries, 'approved', 'recovery-approval-2');
+    append(entries, 'promoting', 'promoting-2');
+    append(entries, 'needs_human', 'needs-human-2');
+    append(entries, 'approved', 'recovery-approval-3');
+    append(entries, 'promoting', 'promoting-3');
+    append(entries, 'completed');
+    expect(entries.currentState()).toBe('completed');
+  });
+
   it('makes an identical operation idempotent but rejects divergent replay and late receipts', () => {
     const entries = log();
     const first = append(entries, 'built', 'build-1');
@@ -190,7 +209,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: DIGEST,
         isMainAncestor: true,
         minimumPromotableShaSatisfied: true,
-        productionBaselineMatches: true,
+        productionStateIsResumable: true,
         expiresAt: '2026-08-26T12:00:00.000Z',
       },
       { now: () => NOW },
@@ -203,7 +222,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: `sha256:${'b'.repeat(64)}`,
         isMainAncestor: true,
         minimumPromotableShaSatisfied: true,
-        productionBaselineMatches: true,
+        productionStateIsResumable: true,
         expiresAt: '2026-08-26T12:00:00.000Z',
       },
       { now: () => NOW },
@@ -219,7 +238,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: DIGEST,
         isMainAncestor: false,
         minimumPromotableShaSatisfied: false,
-        productionBaselineMatches: false,
+        productionStateIsResumable: false,
         expiresAt: '2000-01-01T00:00:00.000Z',
       },
       { now: () => NOW },
@@ -229,7 +248,7 @@ describe('ReleaseAttestationLog', () => {
       blockingReasons: expect.arrayContaining([
         'Release SHA is not reachable from main.',
         'Release SHA is below the minimum promotable SHA.',
-        'Current production component matrix drifted from the frozen baseline.',
+        'Current production component matrix is outside the resumable Manifest prefix.',
         'Release promotion approval has expired.',
       ]),
     });
@@ -247,7 +266,7 @@ describe('ReleaseAttestationLog', () => {
       expectedManifestDigest: DIGEST,
       isMainAncestor: true,
       minimumPromotableShaSatisfied: true,
-      productionBaselineMatches: true,
+      productionStateIsResumable: true,
       expiresAt: '2026-08-25T12:00:00.001Z',
     };
 
@@ -273,8 +292,22 @@ describe('ReleaseAttestationLog', () => {
     });
   });
 
+  it('does not route rejected or superseded RCs through another failure outcome', () => {
+    for (const terminal of ['rejected', 'superseded'] as const) {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      append(entries, terminal);
+      expect(() => append(entries, 'failed_before_change', `forged-${terminal}`)).toThrow(
+        /Illegal or late/u,
+      );
+    }
+  });
+
   it.each(['failed_before_change', 'partial_failed', 'rolled_back'] as const)(
-    'records truthful terminal promotion outcome %s without allowing later completion',
+    'keeps truthful terminal promotion outcome %s from reaching late completion',
     (outcome) => {
       const entries = log();
       append(entries, 'built');

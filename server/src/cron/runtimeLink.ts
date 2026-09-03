@@ -127,7 +127,7 @@ export async function settleExplicitCancellation(
       && current.updatedAtMs === job.updatedAtMs && current.state.nextRunAtMs === record.scheduledAtMs) {
       delete current.state.nextRunAtMs;
       if (status === 'ok') current.enabled = false;
-    } else if (current.schedule.kind !== 'at' && current.enabled) {
+    } else if (current.schedule.kind !== 'at' && current.enabled && current.updatedAtMs === job.updatedAtMs) {
       current.state.nextRunAtMs = computeJobNextRunAtMs(current, endedAtMs);
     }
     return { changed: true, value: cloneJob(current) };
@@ -232,8 +232,9 @@ export async function cancelCronRun(
   runId: string,
   reason: string,
 ): Promise<{ cancelled: boolean; error?: string }> {
-  const job = jobs.find((candidate) => candidate.id === id);
-  if (!job) return { cancelled: false, error: 'Job not found' };
+  const found = jobs.find((candidate) => candidate.id === id);
+  if (!found) return { cancelled: false, error: 'Job not found' };
+  const job = cloneJob(found);
   const execution = job.state.executionLedger?.find((record) => record.runId === runId);
   if (!execution) return { cancelled: false, error: 'Run not found' };
   if (execution.terminalStatus) return { cancelled: true };

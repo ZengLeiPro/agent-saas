@@ -1027,7 +1027,7 @@ export class CronService {
         job.state.lastError = `Watchdog: exceeded ${deadlineSec}s deadline; linked Runtime run cancelled`;
         if (job.schedule.kind === "at" && execution.trigger === "schedule"
           && job.updatedAtMs === candidate.updatedAtMs && job.state.nextRunAtMs === execution.scheduledAtMs) delete job.state.nextRunAtMs;
-        else if (job.schedule.kind !== "at" && job.enabled) job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
+        else if (job.schedule.kind !== "at" && job.enabled && job.updatedAtMs === candidate.updatedAtMs) job.state.nextRunAtMs = computeJobNextRunAtMs(job, nowMs);
         execution.status = "terminal";
         execution.terminalStatus = "error";
         execution.endedAtMs = nowMs;

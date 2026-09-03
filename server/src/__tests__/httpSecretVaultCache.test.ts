@@ -81,13 +81,13 @@ describe('HttpSecretVault cache (A3)', () => {
     expect(fetchCount).toBe(3);
   });
 
-  it('rotateSecret invalidates the cache for that ref', async () => {
+  it('rotateSecret invalidates the cache for that ref without regressing its version', async () => {
     let now = 1_000_000;
     let resolveCount = 0;
     const fetchImpl = makeFetch((path, body) => {
       if (path === '/secrets/resolve') {
         resolveCount += 1;
-        return { value: `v${resolveCount}`, ref: remoteRef(body.ref) };
+        return { value: `v${resolveCount}`, ref: { ...remoteRef(body.ref), version: resolveCount } };
       }
       if (path === '/secrets/ref-a/rotate') {
         return { id: 'ref-a', ownerId: 'alice', kind: 'mcp', version: 2, metadata: {}, createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' };

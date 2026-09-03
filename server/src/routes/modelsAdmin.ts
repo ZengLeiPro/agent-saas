@@ -485,15 +485,25 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         publicModelList: getPublicModelList(result.config.models!),
       });
     } catch (error) {
+      let cleanupErrors: unknown[] = [];
       if (error instanceof ConfigMutationCommittedError) {
         // durable/runtime 已提交；只撤销最终配置中已无任何引用的旧 refs。
-        await revokeModelRefs(
+        cleanupErrors = await revokeModelRefs(
           options.secretVault,
           unreferencedReplacedRefs(options.config, replacedRefs),
         );
       } else if (!(error instanceof RuntimeRestoreFailedError)) {
         // 提交前失败或完整回滚：候选 refs 无人引用，旧 refs 仍需保留。
-        await revokeModelRefs(options.secretVault, createdRefs);
+        cleanupErrors = await revokeModelRefs(options.secretVault, createdRefs);
+      }
+      if (cleanupErrors.length > 0) {
+        sendRevisionMutationError(res, error instanceof ConfigMutationCommittedError
+          ? error
+          : new AggregateError(
+              [error, ...cleanupErrors],
+              '配置变更失败，且候选模型凭据撤销失败',
+            ));
+        return;
       }
       if (error instanceof RuntimeConfigValidationError) {
         sendConfigMutationError(res, error);
@@ -511,7 +521,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           return;
         }
       }
-      // 配置已提交但维护失败也必须保留 5xx，提示调用方重新读取服务端状态。
+      // 配置已提交但维护失败必须保留 5xx，提示调用方重新读取服务端状态与凭据状态。
       sendRevisionMutationError(res, error);
     }
   });

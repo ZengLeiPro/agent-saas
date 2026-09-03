@@ -607,6 +607,22 @@ describe('models admin router', () => {
     }, { validateConfigReload });
   });
 
+  it('候选校验失败且新 Secret 撤销失败时返回 5xx，不伪装成普通校验错误', async () => {
+    const rawConfig = baseRawConfig();
+    const validateConfigReload = vi.fn().mockRejectedValue(new Error('models candidate rejected'));
+    const secretVault = new InMemorySecretVault();
+    vi.spyOn(secretVault, 'revokeSecret').mockRejectedValue(new Error('vault unavailable'));
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const models = structuredClone(rawConfig.models); models.groups[0]!.apiKey = 'new-inline-secret';
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models }),
+      });
+      expect(response.status).toBe(500);
+      expect((await readJson(response)).error).toBe('配置变更失败，且候选模型凭据撤销失败');
+      expect(JSON.parse(readFileSync(configPath, 'utf-8'))).toEqual(rawConfig);
+    }, { validateConfigReload, secretVault });
+  });
+
   it('Production 安全门禁拒绝候选时不写盘、不提交运行态与 identity 回调', async () => {
     const rawConfig = baseRawConfig();
     const before = JSON.stringify(rawConfig, null, 2);
@@ -630,7 +646,7 @@ describe('models admin router', () => {
     }, { validateConfigReload, prepareConfigUpdate, onConfigReloaded, secretVault });
   });
 
-  it('persists title model order and title prompt in one commit', async () => {
+  it('在一次提交中持久化标题模型顺序与标题提示语', async () => {
     const rawConfig = baseRawConfig();
     rawConfig.models.groups[0]!.models.push({ id: 'mini', name: 'Mini', value: 'gpt-5-mini' });
     const onModelsUpdated = vi.fn();

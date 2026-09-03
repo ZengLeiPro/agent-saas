@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, lazy, Suspense, useCallback, useRef } fro
 import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
+import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getTableCellStyle } from "@/lib/tableCellWidth";
 import { resolveImageSrc } from "@agent/shared";
 import { FilePreviewActions, printFilePreviewElement, useFilePreviewPrint } from "@/components/FilePreviewActions";
@@ -78,19 +79,10 @@ function PreviewVideo({ src, owner, referrer }: { src: string; owner?: string; r
   );
 }
 
-const markdownPromise = import("react-markdown");
-const remarkGfmPromise = import("remark-gfm");
-const remarkMathPromise = import("remark-math");
-const rehypeKatexPromise = import("rehype-katex");
 import "katex/dist/katex.min.css";
 
 const LazyMarkdownRenderer = lazy(async () => {
-  const [{ default: Markdown }, { default: remarkGfm }, { default: remarkMath }, { default: rehypeKatex }] = await Promise.all([
-    markdownPromise,
-    remarkGfmPromise,
-    remarkMathPromise,
-    rehypeKatexPromise,
-  ]);
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
   return {
     default: ({ content, owner, referrer }: { content: string; owner?: string; referrer?: string }) => {
       const mdComponents = useMemo<import("react-markdown").Components>(() => ({
@@ -122,7 +114,7 @@ const LazyMarkdownRenderer = lazy(async () => {
           return <PreviewImage src={src} alt={alt ?? ''} owner={owner} referrer={referrer} />;
         },
       }), [owner, referrer]);
-      return <Markdown remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[rehypeKatex]} components={mdComponents}>{content}</Markdown>;
+      return <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>{content}</Markdown>;
     },
   };
 });

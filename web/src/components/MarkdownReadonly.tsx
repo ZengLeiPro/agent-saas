@@ -1,15 +1,9 @@
 import { lazy, Suspense } from "react";
+import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 
-const markdownPromise = import("react-markdown");
-
 const LazyMarkdown = lazy(async () => {
-  const [{ default: Markdown }, { default: remarkGfm }, { default: remarkMath }, { default: rehypeKatex }] = await Promise.all([
-    markdownPromise,
-    import("remark-gfm"),
-    import("remark-math"),
-    import("rehype-katex"),
-  ]);
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
 
   const mdComponents: import("react-markdown").Components = {
     table: ({ children, ...props }) => (
@@ -27,7 +21,7 @@ const LazyMarkdown = lazy(async () => {
 
   return {
     default: ({ content }: { content: string }) => (
-      <Markdown remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[rehypeKatex]} components={mdComponents}>
+      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
         {content || "_暂无内容_"}
       </Markdown>
     ),

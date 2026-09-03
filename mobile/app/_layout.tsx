@@ -38,7 +38,10 @@ function EnterpriseUpdaterBootstrap({ config }: { config: EnterpriseUpdaterRunti
 
 function AuthGate() {
   const colors = useColors();
-  const { user } = useAuth();
+  const { user, identity } = useAuth();
+  const chatIdentityKey = identity
+    ? `${identity.tenantId}:${identity.userId}:${identity.generation}`
+    : 'anonymous';
   useMobileTelemetry(user ? { tenantId: user.tenantId, userId: user.id } : null);
   const enterpriseUpdaterConfig = readEnterpriseUpdaterRuntimeConfig();
   useActivityReporter();
@@ -53,7 +56,7 @@ function AuthGate() {
         <EnterpriseUpdaterBootstrap config={enterpriseUpdaterConfig} />
       ) : null}
       <V1RouteGate>
-        <ChatAppStateProvider>
+        <ChatAppStateProvider key={chatIdentityKey}>
           <Stack
             screenOptions={
               {

@@ -5,9 +5,6 @@ import { CACHE_KEY_PREFIX, MESSAGE_CACHE_TTL_MS, cacheKeyForIdentity, canonicalS
 const LEGACY_CACHE_PREFIX = 'msgCache:';
 let activeIdentity: BoundaryIdentity | null = null;
 export function setMobileMessageCacheIdentity(identity: BoundaryIdentity | null): void { activeIdentity = identity; }
-function cacheKey(sessionId: string): string | null {
-  try { return cacheKeyForIdentity(activeIdentity, 'messages', sessionId); } catch { return null; }
-}
 const MAX_MESSAGES = 500;
 
 interface CacheEntry {
@@ -15,48 +12,62 @@ interface CacheEntry {
   timestamp: number;
 }
 
-export const mobileMessageCache: IMessageCache = {
-  save(sessionId: string, messages: MessageItem[]): void {
-    const key = cacheKey(sessionId);
-    if (!key) return;
-    const trimmed = messages.slice(-MAX_MESSAGES).map((m) =>
-      'streaming' in m && m.streaming ? { ...m, streaming: false } : m,
-    );
-    const entry: CacheEntry = { messages: trimmed, timestamp: Date.now() };
-    let payload: string;
-    try { payload = canonicalSerialize(entry); } catch { return; }
-    void AsyncStorage.setItem(key, payload)
-      .then(() => evictIfNeeded())
-      .catch(() => { /* silent */ });
-  },
+function createMessageCache(getIdentity: () => BoundaryIdentity | null): IMessageCache {
+  const cacheKey = (sessionId: string): string | null => {
+    try { return cacheKeyForIdentity(getIdentity(), 'messages', sessionId); } catch { return null; }
+  };
 
-  async load(sessionId: string): Promise<MessageItem[] | null> {
-    try {
+  return {
+    save(sessionId: string, messages: MessageItem[]): void {
       const key = cacheKey(sessionId);
-      if (!key) return null;
-      await AsyncStorage.removeItem(LEGACY_CACHE_PREFIX + sessionId);
-      const raw = await AsyncStorage.getItem(key);
-      if (!raw) return null;
-      const entry = parseCacheJson(raw) as CacheEntry;
-      if (Date.now() - entry.timestamp > MESSAGE_CACHE_TTL_MS) {
-        await AsyncStorage.removeItem(key);
+      if (!key) return;
+      const trimmed = messages.slice(-MAX_MESSAGES).map((m) =>
+        'streaming' in m && m.streaming ? { ...m, streaming: false } : m,
+      );
+      const entry: CacheEntry = { messages: trimmed, timestamp: Date.now() };
+      let payload: string;
+      try { payload = canonicalSerialize(entry); } catch { return; }
+      void AsyncStorage.setItem(key, payload)
+        .then(() => evictIfNeeded())
+        .catch(() => { /* silent */ });
+    },
+
+    async load(sessionId: string): Promise<MessageItem[] | null> {
+      try {
+        const key = cacheKey(sessionId);
+        if (!key) return null;
+        await AsyncStorage.removeItem(LEGACY_CACHE_PREFIX + sessionId);
+        const raw = await AsyncStorage.getItem(key);
+        if (!raw) return null;
+        const entry = parseCacheJson(raw) as CacheEntry;
+        if (Date.now() - entry.timestamp > MESSAGE_CACHE_TTL_MS) {
+          await AsyncStorage.removeItem(key);
+          return null;
+        }
+        return entry.messages.map(m =>
+          m.type === 'user' && m.status === 'pending' ? { ...m, status: 'failed' as const } : m
+        );
+      } catch {
         return null;
       }
-      return entry.messages.map(m =>
-        m.type === 'user' && m.status === 'pending' ? { ...m, status: 'failed' as const } : m
-      );
-    } catch {
-      return null;
-    }
-  },
+    },
 
-  async clear(sessionId: string): Promise<void> {
-    try {
-      const key = cacheKey(sessionId);
-      if (key) await AsyncStorage.removeItem(key);
-    } catch { /* silent */ }
-  },
-};
+    async clear(sessionId: string): Promise<void> {
+      try {
+        const key = cacheKey(sessionId);
+        if (key) await AsyncStorage.removeItem(key);
+      } catch { /* silent */ }
+    },
+  };
+}
+
+/** 固定身份的 cache 视图；异步请求必须使用请求发起时捕获的实例。 */
+export function createMobileMessageCacheForIdentity(identity: BoundaryIdentity | null): IMessageCache {
+  return createMessageCache(() => identity);
+}
+
+/** 平台默认 cache 仅供不跨异步身份边界的调用方使用。 */
+export const mobileMessageCache: IMessageCache = createMessageCache(() => activeIdentity);
 
 /** 清除所有消息缓存（登出时调用） */
 export async function clearAllMessageCache(): Promise<void> {

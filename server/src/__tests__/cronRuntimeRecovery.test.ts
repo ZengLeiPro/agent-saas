@@ -166,13 +166,11 @@ describe("Cron Runtime recovery identity", () => {
   it("preserves the first schedule fence when an edited recurring run is recovered", async () => {
     const lease = crashableRunLease();
     let now = 1_000_000;
-    let runtimeStatus: "running" | "completed" = "running";
-    let logged = 0;
+    const logged = deferred<void>();
     const { a, storePath } = await makePair({
       nowMs: () => now,
       tryAcquireRunLease: lease.tryAcquire,
-      inspectRuntimeRun: async (runId) => ({ runId, sessionId: "recovered-session", status: runtimeStatus }),
-      appendRunLog: async () => { logged += 1; },
+      appendRunLog: async () => { logged.resolve(); },
       runtimeRunPollMs: 5,
     });
     const job = await a.add({ name: "edited-recurring", schedule: { kind: "every", everyMs: 60_000, anchorMs: now },
@@ -189,23 +187,23 @@ describe("Cron Runtime recovery identity", () => {
     const editedNext = (await a.get(job.id))!.state.nextRunAtMs;
     lease.crashOwner();
 
+    let inspections = 0;
     const recovered = createService(storePath, {
       nowMs: () => now,
       tryAcquireRunLease: lease.tryAcquire,
-      inspectRuntimeRun: async (runId) => ({ runId, sessionId: "recovered-session", status: runtimeStatus }),
-      appendRunLog: async () => { logged += 1; },
+      inspectRuntimeRun: async (runId) => ({
+        runId, sessionId: claimed.value.sessionId, status: ++inspections === 1 ? "running" : "completed",
+      }),
+      appendRunLog: async () => { logged.resolve(); },
       runtimeRunPollMs: 5,
     });
-    await recovered.start(); started.push(recovered);
-    await waitFor(async () => (await loadJobs({ storePath }))[0]?.state.executionLedger?.[0]?.recoveryCount === 1);
-    const active = (await loadJobs({ storePath }))[0]!.state.executionLedger![0]!;
-    expect(active.scheduleUpdatedAtMs).toBe(firstFence);
-
     now = 1_085_000;
-    runtimeStatus = "completed";
-    await waitFor(() => logged === 1);
+    await recovered.start(); started.push(recovered);
+    await logged.promise;
     const settled = (await loadJobs({ storePath }))[0]!;
-    expect(settled.state.executionLedger![0]).toMatchObject({ terminalStatus: "ok", recoveryCount: 1 });
+    expect(settled.state.executionLedger![0]).toMatchObject({
+      terminalStatus: "ok", recoveryCount: 1, scheduleUpdatedAtMs: firstFence,
+    });
     expect(settled.state.nextRunAtMs).toBe(editedNext);
   });
 

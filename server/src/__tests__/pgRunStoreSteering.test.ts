@@ -11,14 +11,16 @@ describe('PgRunStore steering inbox', () => {
     }) };
     const store = new PgRunStore({ pool: pool as any });
 
-    await store.listUserMessagesBySession('session-queue');
+    await store.listUserMessagesBySession('session-queue', 'tenant-1');
 
     const { sql, params } = queries[0]!;
     expect(sql).toContain('FROM runtime_message_submissions submission');
-    expect(sql).toContain('JOIN runtime_runs run ON run.run_id = submission.run_id');
-    expect(sql).toContain('WHERE submission.session_id = $1');
+    expect(sql).toContain('ON run.tenant_id = submission.tenant_id');
+    expect(sql).toContain('AND run.run_id = submission.run_id');
+    expect(sql).toContain('WHERE submission.tenant_id = $1');
+    expect(sql).toContain('AND submission.session_id = $2');
     expect(sql).not.toContain('run.idempotency_key IS NOT NULL');
-    expect(params).toEqual(['session-queue']);
+    expect(params).toEqual(['tenant-1', 'session-queue']);
   });
 
   it('atomically links a new source run to the open run in the same session', async () => {

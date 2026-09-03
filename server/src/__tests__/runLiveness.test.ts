@@ -84,7 +84,10 @@ class AuthoritativeMemoryRunStore implements RunStore {
     return [...this.records.values()].filter((record) => record.status === 'pending');
   }
 
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
+  async acquireLease(
+    runId: string, workerId: string, leaseMs: number, now = new Date(), _maxConcurrentRuns?: number,
+    _admission?: RunLeaseAdmission, _identity?: RunLeaseIdentity, leaseToken?: string,
+  ): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record || record.status !== 'pending') return null;
     const blocked = [...this.records.values()].some((candidate) => candidate.runId !== runId
@@ -94,6 +97,7 @@ class AuthoritativeMemoryRunStore implements RunStore {
     const expiry = new Date(now.getTime() + leaseMs).toISOString();
     const updated: RunRecord = {
       ...record, status: 'running', workerId, leaseExpiresAt: expiry, updatedAt: iso,
+      metadata: { ...record.metadata, ...(leaseToken ? { runLeaseToken: leaseToken } : {}) },
       liveness: {
         state: 'busy', lastHeartbeatAt: iso, leaseExpiresAt: expiry, ownerId: workerId,
         recoveryActions: ['cancel'], detectedAt: iso, version: (record.liveness?.version ?? 0) + 1,
@@ -103,9 +107,12 @@ class AuthoritativeMemoryRunStore implements RunStore {
     return updated;
   }
 
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker'): Promise<RunRecord | null> {
+  async renewLease(
+    runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker', leaseToken?: string,
+  ): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || record.status !== 'running' || record.workerId !== workerId || !record.liveness || record.liveness.state === 'stale') return null;
+    if (!record || record.status !== 'running' || record.workerId !== workerId || !record.liveness
+      || record.liveness.state === 'stale' || (leaseToken && record.metadata?.runLeaseToken !== leaseToken)) return null;
     const expiry = new Date(now.getTime() + leaseMs).toISOString();
     const updated: RunRecord = {
       ...record, leaseExpiresAt: expiry, updatedAt: now.toISOString(),

@@ -534,7 +534,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
     await expect(guard.recordBackgroundResource(
       prepared.context, prepared.parentRunId,
       { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
-    )).rejects.toMatchObject({ reason: 'background_dispatch_authority_lost' });
+    )).rejects.toMatchObject({ reason: 'active_root_run_mismatch' });
     expect((await pool.query(
       `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
       [prepared.parentRunId],

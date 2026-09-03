@@ -6,7 +6,10 @@ import type { AppConfig, CodexSubscriptionConfig } from '../app/config.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
-import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import {
+  AdminConfigMutationService,
+  RuntimeRestoreFailedError,
+} from '../config/adminConfigMutationService.js';
 import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
@@ -94,6 +97,10 @@ export function createCodexSubscriptionAdminRouter(
   options: CreateCodexSubscriptionAdminRouterOptions,
 ): Router {
   const router = Router();
+  const deviceCompletionTasks = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof publicState>>>
+  >();
   const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
     configPath: getAppConfigPath(options.processCwd),
     processCwd: options.processCwd,
@@ -185,6 +192,11 @@ export function createCodexSubscriptionAdminRouter(
 
   router.get('/device/:sessionId', async (req, res) => {
     try {
+      const existingCompletion = deviceCompletionTasks.get(req.params.sessionId);
+      if (existingCompletion) {
+        res.json({ status: 'completed', ...(await existingCompletion) });
+        return;
+      }
       const result = await options.deviceAuthService.poll(req.params.sessionId);
       if (result.status === 'pending') {
         res.json(result);
@@ -194,34 +206,52 @@ export function createCodexSubscriptionAdminRouter(
         res.status(410).json(result);
         return;
       }
-
-      const current = options.credentialManager.getConfiguration();
-      const currentRefs = credentialRefs(options);
-      const replaceCredentialRef = result.replaceCredentialRef;
-      if (replaceCredentialRef && !currentRefs.includes(replaceCredentialRef)) {
-        throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
+      const completedResult = result;
+      let completion = deviceCompletionTasks.get(req.params.sessionId);
+      if (!completion) {
+        completion = (async () => {
+          const current = options.credentialManager.getConfiguration();
+          const currentRefs = credentialRefs(options);
+          const replaceCredentialRef = completedResult.replaceCredentialRef;
+          if (replaceCredentialRef && !currentRefs.includes(replaceCredentialRef)) {
+            throw new Error('待重授权的 Codex 账号已被移除，请重新发起授权');
+          }
+          const persisted = await options.credentialManager.persistLogin(
+            completedResult.tokens,
+            replaceCredentialRef,
+          );
+          const nextRefs = replaceCredentialRef
+            ? currentRefs.map((ref) => (
+              ref === replaceCredentialRef ? persisted.credentialRef : ref
+            ))
+            : [...currentRefs, persisted.credentialRef];
+          try {
+            await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
+              enabled: true,
+              websocketEnabled: current.websocketEnabled,
+            }));
+          } catch (error) {
+            if (error instanceof RuntimeRestoreFailedError) {
+              options.deviceAuthService.complete(req.params.sessionId);
+            } else if (!replaceCredentialRef || persisted.credentialRef !== replaceCredentialRef) {
+              await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
+              options.deviceAuthService.complete(req.params.sessionId);
+            }
+            throw error;
+          }
+          if (replaceCredentialRef) options.closeWebSockets?.([replaceCredentialRef]);
+          options.deviceAuthService.complete(req.params.sessionId);
+          return publicState(options);
+        })();
+        deviceCompletionTasks.set(req.params.sessionId, completion);
+        const clearCompletion = () => {
+          if (deviceCompletionTasks.get(req.params.sessionId) === completion) {
+            deviceCompletionTasks.delete(req.params.sessionId);
+          }
+        };
+        void completion.then(clearCompletion, clearCompletion);
       }
-      const persisted = await options.credentialManager.persistLogin(
-        result.tokens,
-        replaceCredentialRef,
-      );
-      const nextRefs = replaceCredentialRef
-        ? currentRefs
-        : [...currentRefs, persisted.credentialRef];
-      try {
-        await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
-          enabled: true,
-          websocketEnabled: current.websocketEnabled,
-        }));
-      } catch (error) {
-        if (!replaceCredentialRef) {
-          await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
-        }
-        throw error;
-      }
-      if (replaceCredentialRef) options.closeWebSockets?.([replaceCredentialRef]);
-      options.deviceAuthService.complete(req.params.sessionId);
-      res.json({ status: 'completed', ...(await publicState(options)) });
+      res.json({ status: 'completed', ...(await completion) });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }

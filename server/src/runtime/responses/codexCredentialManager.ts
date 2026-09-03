@@ -249,27 +249,65 @@ export class CodexCredentialManager {
   }> {
     const accountId = extractCodexAccountId(tokens.accessToken, tokens.idToken);
     if (existingRef) {
-      return this.lock.runExclusive(this.lockKey(existingRef), async () => {
-        const previous = await this.readBundle(existingRef);
+      const observedGeneration = await this.runtimeStateStore.getGeneration(existingRef);
+      const persisted = await this.lock.runExclusive(this.lockKey(existingRef), async () => {
+        let previous: CodexTokenBundle | undefined;
+        try {
+          previous = await this.readBundleFromVault(existingRef, observedGeneration ?? 0);
+        } catch (error) {
+          if (!isRecoverableStoredCredentialError(error)) throw error;
+        }
         const bundle: CodexTokenBundle = {
           ...tokens,
           accountId,
-          generation: (previous?.generation ?? 0) + 1,
+          generation: Math.max(previous?.generation ?? 0, observedGeneration ?? 0) + 1,
         };
-        await this.options.vault.rotateSecret(
-          existingRef,
-          JSON.stringify(bundle),
-          systemVaultCaller('rotate'),
-        );
-        await this.runtimeStateStore.clear(existingRef, bundle.generation);
-        if (previous?.refreshToken && previous.refreshToken !== bundle.refreshToken) {
-          await revokeCodexRefreshToken(
-            previous.refreshToken,
-            this.options.fetchImpl ?? fetch,
-          ).catch(() => undefined);
+        try {
+          await this.options.vault.rotateSecret(
+            existingRef,
+            JSON.stringify(bundle),
+            systemVaultCaller('rotate'),
+          );
+          return {
+            credentialRef: existingRef,
+            bundle,
+            previousRefreshToken: previous?.refreshToken,
+            createdNewRef: false,
+          };
+        } catch (error) {
+          if (previous || !isMissingStoredCredentialError(error)) throw error;
+          const replacement = await this.options.vault.putSecret(
+            'global',
+            CODEX_SECRET_KIND,
+            JSON.stringify(bundle),
+            systemVaultCaller('write'),
+            { accountBindingHash: hashAccountBinding(accountId) },
+          );
+          return {
+            credentialRef: replacement.id,
+            bundle,
+            createdNewRef: true,
+          };
         }
-        return { credentialRef: existingRef, bundle };
       });
+      try {
+        await this.runtimeStateStore.clear(persisted.credentialRef, persisted.bundle.generation);
+      } catch (error) {
+        if (persisted.createdNewRef) {
+          await this.discardCreatedCredential(persisted.credentialRef);
+        }
+        throw error;
+      }
+      if (
+        persisted.previousRefreshToken
+        && persisted.previousRefreshToken !== persisted.bundle.refreshToken
+      ) {
+        await revokeCodexRefreshToken(
+          persisted.previousRefreshToken,
+          this.options.fetchImpl ?? fetch,
+        ).catch(() => undefined);
+      }
+      return { credentialRef: persisted.credentialRef, bundle: persisted.bundle };
     }
     const bundle: CodexTokenBundle = { ...tokens, accountId, generation: 1 };
     const ref = await this.options.vault.putSecret(
@@ -279,7 +317,12 @@ export class CodexCredentialManager {
       systemVaultCaller('write'),
       { accountBindingHash: hashAccountBinding(accountId) },
     );
-    await this.runtimeStateStore.clear(ref.id, bundle.generation);
+    try {
+      await this.runtimeStateStore.clear(ref.id, bundle.generation);
+    } catch (error) {
+      await this.discardCreatedCredential(ref.id);
+      throw error;
+    }
     return { credentialRef: ref.id, bundle };
   }
 
@@ -402,18 +445,24 @@ export class CodexCredentialManager {
     forceRefresh: boolean,
     staleGeneration?: number,
   ): Promise<CodexTokenBundle> {
-    return this.lock.runExclusive(this.lockKey(credentialRef), async () => {
-      const latest = await this.readBundle(credentialRef);
+    const observedRuntimeGeneration = await this.runtimeStateStore.getGeneration(credentialRef);
+    const result = await this.lock.runExclusive(this.lockKey(credentialRef), async () => {
+      const latest = await this.readBundleFromVault(
+        credentialRef,
+        observedRuntimeGeneration ?? 0,
+      );
       if (
         forceRefresh
         && staleGeneration !== undefined
         && latest.generation > staleGeneration
         && !isExpiring(latest)
       ) {
-        return latest;
+        return { bundle: latest, refreshed: false };
       }
-      if (latest.generation > observed.generation && !isExpiring(latest)) return latest;
-      if (!forceRefresh && !isExpiring(latest)) return latest;
+      if (latest.generation > observed.generation && !isExpiring(latest)) {
+        return { bundle: latest, refreshed: false };
+      }
+      if (!forceRefresh && !isExpiring(latest)) return { bundle: latest, refreshed: false };
 
       try {
         const refreshed = await refreshCodexTokens(
@@ -437,14 +486,15 @@ export class CodexCredentialManager {
           JSON.stringify(next),
           systemVaultCaller('rotate'),
         );
-        await this.runtimeStateStore.clear(credentialRef, next.generation);
-        this.telemetry.recordRefreshSuccess(next.generation);
-        return next;
+        return { bundle: next, refreshed: true };
       } catch (error) {
         this.telemetry.recordRefreshFailure(error);
         throw new CodexCredentialRefreshError(latest.generation, error);
       }
     });
+    await this.runtimeStateStore.clear(credentialRef, result.bundle.generation);
+    if (result.refreshed) this.telemetry.recordRefreshSuccess(result.bundle.generation);
+    return result.bundle;
   }
 
   private lockKey(credentialRef: string): string {
@@ -453,18 +503,31 @@ export class CodexCredentialManager {
 
   private async readBundle(credentialRef: string): Promise<CodexTokenBundle> {
     const observedGeneration = await this.runtimeStateStore.getGeneration(credentialRef);
+    const bundle = await this.readBundleFromVault(credentialRef, observedGeneration ?? 0);
+    if (observedGeneration === undefined || bundle.generation > observedGeneration) {
+      await this.runtimeStateStore.clear(credentialRef, bundle.generation);
+    }
+    return bundle;
+  }
+
+  private async readBundleFromVault(
+    credentialRef: string,
+    observedGeneration: number,
+  ): Promise<CodexTokenBundle> {
     try {
       this.options.vault.invalidate?.(credentialRef);
       const raw = await this.options.vault.getSecret(credentialRef, systemVaultCaller('read'));
-      const bundle = parseTokenBundle(raw);
-      if (observedGeneration === undefined || bundle.generation > observedGeneration) {
-        await this.runtimeStateStore.clear(credentialRef, bundle.generation);
-      }
-      return bundle;
+      return parseTokenBundle(raw);
     } catch (error) {
       if (error instanceof CodexCredentialReadError) throw error;
-      throw new CodexCredentialReadError(observedGeneration ?? 0, error);
+      throw new CodexCredentialReadError(observedGeneration, error);
     }
+  }
+
+  private async discardCreatedCredential(credentialRef: string): Promise<void> {
+    await this.options.vault
+      .revokeSecret(credentialRef, systemVaultCaller('revoke'))
+      .catch(() => undefined);
   }
 }
 
@@ -598,6 +661,34 @@ function extractAccountIdClaim(payload: Record<string, unknown> | null): string 
 
 export function hashAccountBinding(accountId: string): string {
   return createHash('sha256').update(accountId).digest('hex').slice(0, 32);
+}
+
+function isRecoverableStoredCredentialError(error: unknown): boolean {
+  return errorMessages(error).some((message) => (
+    /^secret not found:/i.test(message)
+    || /^Codex OAuth 凭据(?:格式损坏|字段不完整)$/.test(message)
+    || /^HttpSecretVault \/secrets\/resolve failed: HTTP 404$/i.test(message)
+  ));
+}
+
+function isMissingStoredCredentialError(error: unknown): boolean {
+  return errorMessages(error).some((message) => (
+    /^secret not found:/i.test(message)
+    || /^HttpSecretVault \/secrets\/[^/]+\/rotate failed: HTTP 404$/i.test(message)
+  ));
+}
+
+function errorMessages(error: unknown): string[] {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error) messages.push(current.message);
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  if (messages.length === 0 && error !== undefined && error !== null) messages.push(String(error));
+  return messages;
 }
 
 function parseTokenBundle(raw: string): CodexTokenBundle {

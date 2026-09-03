@@ -20,6 +20,15 @@ export class CodexAccountAuthUnavailableError extends Error {
   }
 }
 
+type LastQuota = {
+  kind: 'response';
+  result: ResponsesTransportExecuteResult;
+} | {
+  kind: 'transport_error';
+  accountId: string;
+  error: CodexWebSocketQuotaExhaustedError;
+};
+
 export async function executeCodexCredentialFailover(input: {
   request: ResponsesTransportExecuteInput;
   credentials: CodexCredentialManager;
@@ -28,100 +37,115 @@ export async function executeCodexCredentialFailover(input: {
     token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>,
   ) => Promise<ResponsesTransportExecuteResult>;
 }): Promise<ResponsesTransportExecuteResult> {
-  let lastQuota: { accountId: string; error: CodexWebSocketQuotaExhaustedError } | undefined;
+  let lastQuota: LastQuota | undefined;
+  let retainLastQuota = false;
   let earliestCooldownUntil: string | undefined;
   let authUnavailableCount = 0;
-  for (const credentialRef of input.credentialRefs) {
-    const runtimeState = await getRuntimeState(input.credentials, credentialRef);
-    if (runtimeState?.availability === 'quota_cooldown') {
-      if (
-        runtimeState.cooldownUntil
-        && (!earliestCooldownUntil || runtimeState.cooldownUntil < earliestCooldownUntil)
-      ) earliestCooldownUntil = runtimeState.cooldownUntil;
-      continue;
-    }
-    if (runtimeState?.availability === 'auth_unavailable') {
-      authUnavailableCount += 1;
-      continue;
-    }
-
-    let token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>;
-    try {
-      token = await getCredentialsForCredential(input.credentials, credentialRef);
-    } catch (error) {
-      if (!isPermanentCredentialError(error)) throw error;
-      await markAuthUnavailable(
-        input.credentials,
-        credentialRef,
-        credentialFailureCode(error),
-        await resolveCredentialFailureGeneration(input.credentials, credentialRef, error),
-      );
-      authUnavailableCount += 1;
-      continue;
-    }
-
-    try {
-      const result = await input.executeWithCredential(token);
-      const quotaCode = await codexQuotaResponseCode(result.response);
-      if (quotaCode) {
-        const cooldownUntil = await markQuotaCooldown(
-          input.credentials,
-          credentialRef,
-          quotaCode,
-          token.generation,
-        );
-        if (!earliestCooldownUntil || cooldownUntil < earliestCooldownUntil) {
-          earliestCooldownUntil = cooldownUntil;
-        }
-        lastQuota = {
-          accountId: token.accountId,
-          error: new CodexWebSocketQuotaExhaustedError('Codex 订阅额度不足', quotaCode),
-        };
-        await result.response.body?.cancel().catch(() => undefined);
+  try {
+    for (const credentialRef of input.credentialRefs) {
+      const runtimeState = await getRuntimeState(input.credentials, credentialRef);
+      if (runtimeState?.availability === 'quota_cooldown') {
+        if (
+          runtimeState.cooldownUntil
+          && (!earliestCooldownUntil || runtimeState.cooldownUntil < earliestCooldownUntil)
+        ) earliestCooldownUntil = runtimeState.cooldownUntil;
         continue;
       }
-      return result;
-    } catch (error) {
-      if (isCodexQuotaTransportError(error)) {
-        const cooldownUntil = await markQuotaCooldown(
-          input.credentials,
-          credentialRef,
-          error.code,
-          token.generation,
-        );
-        if (!earliestCooldownUntil || cooldownUntil < earliestCooldownUntil) {
-          earliestCooldownUntil = cooldownUntil;
-        }
-        lastQuota = { accountId: token.accountId, error };
+      if (runtimeState?.availability === 'auth_unavailable') {
+        authUnavailableCount += 1;
         continue;
       }
-      if (error instanceof CodexAccountAuthUnavailableError) {
+
+      let token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>;
+      try {
+        token = await getCredentialsForCredential(input.credentials, credentialRef);
+      } catch (error) {
+        if (!isPermanentCredentialError(error)) throw error;
         await markAuthUnavailable(
           input.credentials,
           credentialRef,
-          error.code,
-          error.credentialGeneration,
+          credentialFailureCode(error),
+          await resolveCredentialFailureGeneration(input.credentials, credentialRef, error),
         );
         authUnavailableCount += 1;
         continue;
       }
-      throw error;
-    }
-  }
 
-  if (lastQuota) {
-    return quotaErrorResult(
-      input.request,
-      lastQuota.accountId,
-      lastQuota.error,
-      earliestCooldownUntil ?? new Date().toISOString(),
-    );
+      try {
+        const result = await input.executeWithCredential(token);
+        const quotaCode = await codexQuotaResponseCode(result.response);
+        if (quotaCode) {
+          let cooldownUntil: string;
+          try {
+            cooldownUntil = await markQuotaCooldown(
+              input.credentials,
+              credentialRef,
+              quotaCode,
+              token.generation,
+            );
+          } catch (error) {
+            await result.response.body?.cancel().catch(() => undefined);
+            throw error;
+          }
+          if (!earliestCooldownUntil || cooldownUntil < earliestCooldownUntil) {
+            earliestCooldownUntil = cooldownUntil;
+          }
+          await cancelQuotaResponse(lastQuota);
+          lastQuota = { kind: 'response', result };
+          continue;
+        }
+        return result;
+      } catch (error) {
+        if (isCodexQuotaTransportError(error)) {
+          const cooldownUntil = await markQuotaCooldown(
+            input.credentials,
+            credentialRef,
+            error.code,
+            token.generation,
+          );
+          if (!earliestCooldownUntil || cooldownUntil < earliestCooldownUntil) {
+            earliestCooldownUntil = cooldownUntil;
+          }
+          await cancelQuotaResponse(lastQuota);
+          lastQuota = { kind: 'transport_error', accountId: token.accountId, error };
+          continue;
+        }
+        if (error instanceof CodexAccountAuthUnavailableError) {
+          await markAuthUnavailable(
+            input.credentials,
+            credentialRef,
+            error.code,
+            error.credentialGeneration,
+          );
+          authUnavailableCount += 1;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (lastQuota) {
+      const retryAt = earliestCooldownUntil ?? new Date().toISOString();
+      const result = lastQuota.kind === 'response'
+        ? await quotaResponseResult(lastQuota.result, retryAt)
+        : quotaErrorResult(
+          input.request,
+          lastQuota.accountId,
+          lastQuota.error,
+          retryAt,
+          input.credentials.getConfiguration().endpoint,
+        );
+      retainLastQuota = true;
+      return result;
+    }
+    return unavailableAccountsResult(input.request, {
+      earliestCooldownUntil,
+      authUnavailableCount,
+      accountCount: input.credentialRefs.length,
+    });
+  } finally {
+    if (!retainLastQuota) await cancelQuotaResponse(lastQuota);
   }
-  return unavailableAccountsResult(input.request, {
-    earliestCooldownUntil,
-    authUnavailableCount,
-    accountCount: input.credentialRefs.length,
-  });
 }
 
 async function getRuntimeState(manager: CodexCredentialManager, credentialRef: string) {
@@ -274,6 +298,7 @@ function quotaErrorResult(
   accountId: string,
   error: CodexWebSocketQuotaExhaustedError,
   retryAt: string,
+  issuer: string,
 ): ResponsesTransportExecuteResult {
   const body = JSON.stringify({
     error: {
@@ -289,10 +314,51 @@ function quotaErrorResult(
     }),
     continuationBinding: {
       provider: 'openai_codex_subscription',
-      issuer: 'https://chatgpt.com/backend-api/codex/responses',
+      issuer,
       accountBindingHash: hashAccountBinding(accountId),
     },
     wireMode: 'http_sse_full',
     wireRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
   };
+}
+
+async function quotaResponseResult(
+  result: ResponsesTransportExecuteResult,
+  retryAt: string,
+): Promise<ResponsesTransportExecuteResult> {
+  const original = result.response;
+  const text = await original.text();
+  const headers = new Headers(original.headers);
+  const retryAfterSeconds = Math.max(0, Math.ceil((Date.parse(retryAt) - Date.now()) / 1_000));
+  headers.set('retry-after', String(retryAfterSeconds));
+  let body = text;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      const error = record.error;
+      body = JSON.stringify({
+        ...record,
+        ...(error && typeof error === 'object' && !Array.isArray(error)
+          ? { error: { ...(error as Record<string, unknown>), retryAt } }
+          : { retryAt }),
+      });
+      headers.delete('content-length');
+    }
+  } catch {
+    // 非 JSON 错误体保持原文，仅通过 Retry-After 暴露冷却时间。
+  }
+  return {
+    ...result,
+    response: new Response(body, {
+      status: original.status,
+      statusText: original.statusText,
+      headers,
+    }),
+  };
+}
+
+async function cancelQuotaResponse(lastQuota: LastQuota | undefined): Promise<void> {
+  if (lastQuota?.kind !== 'response') return;
+  await lastQuota.result.response.body?.cancel().catch(() => undefined);
 }

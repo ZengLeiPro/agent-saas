@@ -7,6 +7,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
+import {
+  AdminConfigMutationService,
+  RuntimeRestoreFailedError,
+} from '../config/adminConfigMutationService.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { createCodexSubscriptionAdminRouter } from '../routes/codexSubscriptionAdmin.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
@@ -324,5 +328,164 @@ describe('Codex subscription admin router', () => {
     expect(remaining.credentials[0].id).toBe(firstId);
     expect(closeWebSockets).toHaveBeenCalledTimes(3);
     expect(closeWebSockets).toHaveBeenLastCalledWith([secondId]);
+  });
+
+  it('重授权目标 Secret 缺失时用新 ref 原位替换旧配置', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-subscription-admin-replace-'));
+    const processCwd = join(root, 'server');
+    mkdirSync(processCwd, { recursive: true });
+    const configPath = join(root, 'config.json');
+    const missingRef = 'credential-missing';
+    const initial = {
+      ...rawConfig(),
+      codexSubscription: {
+        ...rawConfig().codexSubscription,
+        enabled: true,
+        credentialRef: missingRef,
+        credentialRefs: [missingRef],
+      },
+    };
+    writeFileSync(configPath, JSON.stringify(initial, null, 2), 'utf-8');
+    const config = parseAppConfig(initial);
+    const credentialManager = new CodexCredentialManager({
+      vault: new InMemorySecretVault(),
+      getConfig: () => config.codexSubscription,
+      fetchImpl: vi.fn().mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch,
+    });
+    const persistLogin = credentialManager.persistLogin.bind(credentialManager);
+    const persistLoginSpy = vi.spyOn(credentialManager, 'persistLogin').mockImplementation(async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return persistLogin(...args);
+    });
+    const deviceAuthService = {
+      poll: vi.fn().mockResolvedValue({
+        status: 'completed',
+        replaceCredentialRef: missingRef,
+        tokens: {
+          accessToken: jwt('acct-repaired'),
+          refreshToken: 'refresh-repaired',
+          idToken: jwt('acct-repaired'),
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        },
+      }),
+      complete: vi.fn(),
+    } as unknown as CodexDeviceAuthService;
+    const closeWebSockets = vi.fn();
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).user = {
+        sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+      };
+      next();
+    });
+    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
+      processCwd, config, credentialManager, deviceAuthService, closeWebSockets,
+    }));
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('failed to bind test server');
+
+    const url = `http://127.0.0.1:${address.port}/api/admin/codex-subscription/device/repair-session`;
+    const [firstResponse, secondResponse] = await Promise.all([fetch(url), fetch(url)]);
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    const state = await firstResponse.json() as any;
+    const duplicateState = await secondResponse.json() as any;
+    const replacementRef = state.credentials[0]?.id as string;
+    expect(replacementRef).toBeTruthy();
+    expect(replacementRef).not.toBe(missingRef);
+    expect(duplicateState.credentials[0]?.id).toBe(replacementRef);
+    expect(state.config.credentialCount).toBe(1);
+    expect(JSON.parse(readFileSync(configPath, 'utf-8')).codexSubscription).toMatchObject({
+      credentialRef: replacementRef,
+      credentialRefs: [replacementRef],
+    });
+    expect(persistLoginSpy).toHaveBeenCalledTimes(1);
+    expect(closeWebSockets).toHaveBeenCalledWith(expect.arrayContaining([missingRef, replacementRef]));
+    expect(deviceAuthService.complete).toHaveBeenCalledTimes(1);
+    expect(deviceAuthService.complete).toHaveBeenCalledWith('repair-session');
+  });
+
+  it('配置运行时回滚失败时保留可能已生效的替换凭据并终止会话', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-subscription-admin-restore-failed-'));
+    const processCwd = join(root, 'server');
+    mkdirSync(processCwd, { recursive: true });
+    const missingRef = 'credential-missing';
+    const initial = {
+      ...rawConfig(),
+      codexSubscription: {
+        ...rawConfig().codexSubscription,
+        enabled: true,
+        credentialRef: missingRef,
+        credentialRefs: [missingRef],
+      },
+    };
+    writeFileSync(join(root, 'config.json'), JSON.stringify(initial, null, 2), 'utf-8');
+    const config = parseAppConfig(initial);
+    const vault = new InMemorySecretVault();
+    let replacementRef: string | undefined;
+    const putSecret = vault.putSecret.bind(vault);
+    vi.spyOn(vault, 'putSecret').mockImplementation(async (...args) => {
+      const ref = await putSecret(...args);
+      replacementRef = ref.id;
+      return ref;
+    });
+    const credentialManager = new CodexCredentialManager({
+      vault,
+      getConfig: () => config.codexSubscription,
+      fetchImpl: vi.fn().mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch,
+    });
+    const revoke = vi.spyOn(credentialManager, 'revoke');
+    const deviceAuthService = {
+      poll: vi.fn().mockResolvedValue({
+        status: 'completed',
+        replaceCredentialRef: missingRef,
+        tokens: {
+          accessToken: jwt('acct-repaired'),
+          refreshToken: 'refresh-repaired',
+          idToken: jwt('acct-repaired'),
+          expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        },
+      }),
+      complete: vi.fn(),
+    } as unknown as CodexDeviceAuthService;
+    const configMutationService = {
+      mutate: vi.fn().mockRejectedValue(new RuntimeRestoreFailedError(
+        new Error('apply runtime failed'),
+        new Error('restore runtime failed'),
+      )),
+    } as unknown as AdminConfigMutationService;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).user = {
+        sub: 'admin', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID,
+      };
+      next();
+    });
+    app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
+      processCwd, config, credentialManager, deviceAuthService, configMutationService,
+    }));
+    const server = app.listen(0);
+    servers.push(server);
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('failed to bind test server');
+
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/admin/codex-subscription/device/repair-session`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(replacementRef).toBeTruthy();
+    await expect(vault.getSecret(replacementRef!, {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:codex_subscription_oauth:read'],
+    })).resolves.toContain('refresh-repaired');
+    expect(revoke).not.toHaveBeenCalled();
+    expect(deviceAuthService.complete).toHaveBeenCalledTimes(1);
+    expect(deviceAuthService.complete).toHaveBeenCalledWith('repair-session');
   });
 });

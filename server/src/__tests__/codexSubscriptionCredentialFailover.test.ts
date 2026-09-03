@@ -147,6 +147,44 @@ describe('Codex subscription credential failover', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('最后一个账号的 HTTP quota 响应保留原 status、headers 和诊断内容', async () => {
+    const { manager } = await createSingleCredentialFixture();
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      error: {
+        code: 'insufficient_quota',
+        message: 'provider-specific quota diagnostic',
+        requestId: 'request-in-body',
+      },
+    }), {
+      status: 402,
+      statusText: 'Payment Required',
+      headers: {
+        'content-type': 'application/json',
+        'x-request-id': 'request-in-header',
+      },
+    }));
+    const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
+
+    const result = await transport.execute({
+      serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
+      context,
+      clientRequestId: 'preserve-final-quota-response',
+    });
+
+    expect(result.response.status).toBe(402);
+    expect(result.response.statusText).toBe('Payment Required');
+    expect(result.response.headers.get('x-request-id')).toBe('request-in-header');
+    expect(result.response.headers.get('retry-after')).toMatch(/^\d+$/);
+    await expect(result.response.json()).resolves.toMatchObject({
+      error: {
+        code: 'insufficient_quota',
+        message: 'provider-specific quota diagnostic',
+        requestId: 'request-in-body',
+        retryAt: expect.any(String),
+      },
+    });
+  });
+
   it('所有账号额度不足时返回 quota 错误体和最早恢复时间', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-02T12:00:00.000Z'));
@@ -186,7 +224,12 @@ describe('Codex subscription credential failover', () => {
     config.quotaCooldownMinutes = 10;
     const transport = new CodexSubscriptionResponsesTransport(
       manager,
-      vi.fn().mockResolvedValueOnce(quotaResponse()) as unknown as typeof fetch,
+      vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { code: 'insufficient_quota', message: 'quota exhausted' },
+      }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '3600' },
+      })) as unknown as typeof fetch,
     );
 
     const result = await transport.execute({
@@ -198,6 +241,7 @@ describe('Codex subscription credential failover', () => {
 
     expect(result.response.status).toBe(429);
     expect(payload.error.retryAt).toBe('2026-09-02T12:05:00.000Z');
+    expect(result.response.headers.get('retry-after')).toBe('300');
   });
 
   it('额度账号进入冷却后，后续请求直接跳过并在状态接口展示', async () => {

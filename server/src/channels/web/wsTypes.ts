@@ -257,7 +257,7 @@ export type WsDownstreamEvent =
     | { type: 'pending_interactions'; sessionId?: string; interactions: Array<{ interactionId: string; type: string; version: number; order: number; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string; networkGeneration?: number }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
-    | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
+    | { type: 'interaction_resolved'; sessionId: string; interactionId: string; version?: number; order?: number; status?: 'resolved' | 'rejected' | 'failed' | 'cancelled' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean }
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: MessageAttachmentDisplay[] }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }

@@ -161,6 +161,66 @@ afterEach(() => {
 });
 
 describe("useChatAppState ACK lifecycle", () => {
+  it("hydrates a versionless first render and submits on the same click", async () => {
+    harness.session.sessionId = "session-first-click";
+    harness.session.isNewSession = false;
+    harness.authFetch.mockImplementation(async (url) => url.startsWith("/api/chat/interactions/pending")
+      ? response([{ interactionId: "ask-first-click", version: 7, order: 7 }])
+      : response({}, 404));
+    const { result } = renderHook(() => useChatAppState());
+    await settleInitialResume("session-first-click");
+    act(() => emit({
+      type: "ask_user",
+      interactionId: "ask-first-click",
+      questions: [{ question: "q", header: "h", options: [], multiSelect: false }],
+    }));
+
+    await act(async () => { await result.current.handleAskUserResponse("ask-first-click", { q: "answer" }); });
+
+    expect(interactionPayloads()).toHaveLength(1);
+    expect(interactionPayloads()[0]).toMatchObject({
+      interactionId: "ask-first-click",
+      sessionId: "session-first-click",
+      version: 7,
+      answers: { q: "answer" },
+    });
+  });
+
+  it("does not report a hydration failure when another client resolves the interaction", async () => {
+    harness.session.sessionId = "session-race";
+    harness.session.isNewSession = false;
+    let resolvePending!: (value: Response) => void;
+    harness.authFetch.mockImplementation((url) => url.startsWith("/api/chat/interactions/pending")
+      ? new Promise<Response>((resolve) => { resolvePending = resolve; })
+      : Promise.resolve(response({}, 404)));
+    const { result } = renderHook(() => useChatAppState());
+    await settleInitialResume("session-race");
+    act(() => emit({
+      type: "ask_user",
+      interactionId: "ask-race",
+      questions: [{ question: "q", header: "h", options: [], multiSelect: false }],
+    }));
+
+    let submission!: Promise<void>;
+    act(() => { submission = result.current.handleAskUserResponse("ask-race", { q: "local" }); });
+    act(() => emit({
+      type: "interaction_resolved",
+      sessionId: "session-race",
+      interactionId: "ask-race",
+      status: "resolved",
+      response: { answers: { q: "remote" } },
+    }));
+    await act(async () => {
+      resolvePending(response([{ interactionId: "ask-race", version: 3, order: 3 }]));
+      await submission;
+    });
+
+    expect(interactionPayloads()).toHaveLength(0);
+    expect(result.current.messages.find((message) => "interactionId" in message && message.interactionId === "ask-race"))
+      .toMatchObject({ type: "ask_user", status: "answered", answers: { q: "remote" } });
+    expect(result.current.messages.some((message) => message.type === "system-error")).toBe(false);
+  });
+
   it("reuses the request id after transport drop and accepts either lost ACK replay", async () => {
     harness.session.sessionId = "session-remote";
     harness.session.isNewSession = false;

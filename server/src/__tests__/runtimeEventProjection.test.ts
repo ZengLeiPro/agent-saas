@@ -131,6 +131,8 @@ describe("runtimeEventProjection", () => {
       toolCallId: "call-ask-1",
       interactionId: "interaction-ask-1",
       interactionType: "ask_user",
+      version: 42,
+      order: 42,
       userId: "user-1",
       toolName: "AskUserQuestion",
       questions: [{
@@ -144,11 +146,23 @@ describe("runtimeEventProjection", () => {
     expect(legacyFrames(event)).toEqual([{
       type: "ask_user",
       interactionId: "interaction-ask-1",
+      version: 42,
+      order: 42,
       runId: "run-ask-1",
       toolCallId: "call-ask-1",
       toolName: "AskUserQuestion",
       questions: event.questions,
     }]);
+  });
+
+  it('interaction_resolved 投影为幂等终态', () => {
+    const event: Extract<PlatformEvent, { type: 'interaction_resolved' }> = {
+      id: 'event-ask-resolved-1', timestamp: '2026-08-18T08:01:00.000Z', type: 'interaction_resolved',
+      sessionId: 'session-ask-1', runId: 'run-ask-1', toolCallId: 'call-ask-1',
+      interactionId: 'interaction-ask-1', interactionType: 'ask_user', response: { answers: { '继续吗？': '继续' } },
+    };
+    expect(legacyFrames(event)).toEqual([{ type: 'interaction_resolved', sessionId: 'session-ask-1', interactionId: 'interaction-ask-1',
+      status: 'resolved', response: event.response }]);
   });
 
   it('为 replay frame 提供稳定 canonical identity 与显式 domain', () => {

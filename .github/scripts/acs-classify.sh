@@ -121,7 +121,6 @@ is_contract_check_path() {
   return 1
 }
 
-lock_changed=false
 while IFS= read -r file; do
   [ -n "$file" ] || continue
 
@@ -136,7 +135,9 @@ while IFS= read -r file; do
   fi
 
   if [ "$file" = "pnpm-lock.yaml" ]; then
-    lock_changed=true
+    # lockfile 可独立改变 Orchestrator/server/shared 的解析版本；无法从路径证明无关时保守发布。
+    publish=true
+    reasons+=("pnpm-lock.yaml runtime dependency resolution")
     continue
   fi
 
@@ -154,14 +155,6 @@ while IFS= read -r file; do
 
   skipped+=("$file")
 done < "$changed_files"
-
-if [ "$lock_changed" = true ]; then
-  if [ "$publish" = true ]; then
-    reasons+=("pnpm-lock.yaml paired with ACS publish path")
-  else
-    skipped+=("pnpm-lock.yaml without ACS package/source change")
-  fi
-fi
 
 join_items() {
   if [ "$#" -eq 0 ]; then

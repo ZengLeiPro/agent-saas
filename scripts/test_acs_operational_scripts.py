@@ -277,6 +277,23 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
+    def test_lockfile_only_change_publishes_runtime_dependencies(self):
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('pnpm-lock.yaml\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=true', classified.stdout)
+        self.assertIn('reason=pnpm-lock.yaml runtime dependency resolution', classified.stdout)
+        self.assertIn("- 'pnpm-lock.yaml'", self.workflow)
+        self.assertIn('skipped=none', classified.stdout)
+
     def test_test_fixtures_are_contract_only_and_never_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('acs-orchestrator/src/sandboxManagerTestFixtures.ts\n')

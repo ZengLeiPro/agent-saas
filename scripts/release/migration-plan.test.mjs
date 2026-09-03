@@ -2,11 +2,21 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createMigrationPlan, isMigrationPath } from './migration-plan.mjs';
+import {
+  createMigrationPlan,
+  isMigrationPath,
+  isProductionStartupSchemaRootSource,
+  PRODUCTION_STARTUP_SCHEMA_ROOTS,
+} from './migration-plan.mjs';
 
 const BASELINE = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
 const PATH = 'server/src/data/db/migrations.ts';
+// Production schema initializers from the runtime graph; inventory is contract-tested below.
+const STARTUP_SCHEMA_PATHS = [
+  'server/src/runtime/runStoreSchema.ts',
+  'server/src/data/connectorDictionaryStore.ts',
+];
 
 function gitFixture({ baselines, targets = {}, diffs = {}, nameStatus = `M\t${PATH}` }) {
   return (_command, args) => {
@@ -75,6 +85,81 @@ test('emits a deterministic baseline-bound no-migration plan', () => {
     createMigrationPlan({ changedPaths: [], baseline: 'c'.repeat(40), target: TARGET })
       .migrationPlan.planDigest,
   );
+});
+
+test('keeps the production startup schema root inventory complete', () => {
+  const trackedSources = execFileSync(
+    'git',
+    [
+      'ls-files',
+      'server/src/**/*.ts',
+      ':(exclude)server/src/**/*.test.ts',
+      ':(exclude)server/src/**/*.pg.test.ts',
+      ':(exclude)server/src/**/__tests__/**',
+    ],
+    { encoding: 'utf8' },
+  )
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .filter((path) => isProductionStartupSchemaRootSource(path, readFileSync(path, 'utf8')))
+    .sort();
+  assert.deepEqual([...PRODUCTION_STARTUP_SCHEMA_ROOTS].sort(), trackedSources);
+});
+
+test('classifies destructive SQL in production startup schema roots regardless of filename', () => {
+  for (const startupPath of STARTUP_SCHEMA_PATHS) {
+    for (const statement of [
+      'ALTER TABLE runs DROP COLUMN payload',
+      'ALTER TABLE runs RENAME COLUMN payload TO legacy_payload',
+      'ALTER TABLE runs ALTER COLUMN payload SET NOT NULL',
+      "UPDATE runs SET payload = '{}'",
+    ]) {
+      const baselineSource =
+        "export async function init(client) { await client.query('CREATE TABLE runs(id text)'); }";
+      const targetSource = `export async function init(client) { await client.query(${JSON.stringify(statement)}); }`;
+      const result = plan(targetSource, addedSourceDiff(targetSource), {
+        changedPaths: [startupPath],
+        baselines: { [startupPath]: baselineSource },
+        targets: { [startupPath]: targetSource },
+        diffs: { [startupPath]: addedSourceDiff(targetSource) },
+        nameStatus: `M\t${startupPath}`,
+      });
+      assert.equal(result.ok, false, `${startupPath}: ${statement}`);
+      assert.equal(result.migrationPlan.phase, 'expand', `${startupPath}: ${statement}`);
+      assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
+      assert.match(
+        result.blockingReasons.join('\n'),
+        /contract or non-whitelisted|deletes or replaces baseline/u,
+        `${startupPath}: ${statement}`,
+      );
+    }
+  }
+});
+
+test('classifies a destructive provider imported by a production startup schema root', () => {
+  const root = 'server/src/taskboard/storeSchema.ts';
+  const provider = 'server/src/taskboard/v2Schema.ts';
+  const providerSource =
+    "export const runTaskboardV2Schema = () => db.query('ALTER TABLE tasks DROP COLUMN payload');";
+  const result = plan(providerSource, addedSourceDiff(providerSource), {
+    changedPaths: [provider],
+    baselines: {
+      [root]:
+        "import { runTaskboardV2Schema } from './v2Schema.js'; export async function initializeTaskboardStore() { await runTaskboardV2Schema(); }",
+      [provider]: 'export const runTaskboardV2Schema = () => undefined;',
+    },
+    targets: {
+      [root]:
+        "import { runTaskboardV2Schema } from './v2Schema.js'; export async function initializeTaskboardStore() { await runTaskboardV2Schema(); }",
+      [provider]: providerSource,
+    },
+    diffs: { [provider]: addedSourceDiff(providerSource) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.migrationPlan.phase, 'expand');
+  assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
 });
 
 test('classifies destructive SQL in a module imported by the authoritative runner', () => {

@@ -23,10 +23,84 @@ const UNKNOWN_SQL_PATTERN =
   /\b(?:SELECT|WITH|BEGIN|COMMIT|ROLLBACK|COPY|VACUUM|ANALYZE|REFRESH|LOCK|DISCARD)\b/iu;
 const MIGRATION_PROVIDER_SQL_PATTERN =
   /\b(?:ALTER\s+\S+|ANALYZE(?:\s|$)|BEGIN\b|CALL\s+\S+\s*\(|COMMENT\s+ON\b|COPY\s+\S+|CREATE\s+(?:OR\s+REPLACE\s+)?\S+|DELETE\s+FROM\b|DO(?:\s|$)|DROP\s+\S+|EXECUTE\s+\S+|GRANT\b|INSERT\s+INTO\b|LOCK\s+(?:TABLE\s+)?\S+|MERGE\s+INTO\b|REASSIGN\s+OWNED\b|REFRESH\s+MATERIALIZED\s+VIEW\b|REINDEX\s+\S+|REVOKE\b|SET\s+\S+|TRUNCATE(?:\s+TABLE)?\s+\S+|UPDATE\s+(?:ONLY\s+)?\S+(?:\s+\*)?(?:\s+(?:AS\s+)?\S+)?\s+SET\b|VACUUM(?:\s|$)|SELECT\s+(?!(?:COUNT|SUM|AVG|MIN|MAX)\s*\()(?:[A-Za-z_$][\w$]*\.)?[A-Za-z_$][\w$]*\s*\(|VALUES\s*\([^)]*(?:[A-Za-z_$][\w$]*\.)?[A-Za-z_$][\w$]*\s*\()/iu;
+// Only executable JS/TS modules participate in the migration import graph.
 const SCRIPT_MIGRATION_PATTERN = /\.(?:[cm]?[jt]s)$/iu;
 const RELATIVE_MODULE_SPECIFIER = /^\.{1,2}\//u;
 const GOVERNANCE_MIGRATION_PROVIDER_PATH =
   /^server\/src\/data\/governance-schema\/[^/]*migrations?\.ts$/iu;
+const PRODUCTION_SCHEMA_MODULE_PATH =
+  /^server\/src\/(?!.*(?:__tests__|\.test\.|\.pg\.test\.))[^/].*\.(?:[cm]?[jt]s)$/iu;
+export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
+  'server/src/app/runtimeGovernanceConnectors.ts',
+  'server/src/connectors/googleWorkspace.ts',
+  'server/src/data/agentDwsAccounts/store.ts',
+  'server/src/data/agentDwsMessages/store.ts',
+  'server/src/data/agentProfiles/store.ts',
+  'server/src/data/agentResources/store.ts',
+  'server/src/data/appeals/store.ts',
+  'server/src/data/assignments/store.ts',
+  'server/src/data/billing/pgBillingStore.ts',
+  'server/src/data/changeJobs/store.ts',
+  'server/src/data/connectorCatalog/store.ts',
+  'server/src/data/connectorDictionaryStore.ts',
+  'server/src/data/contentAccess/store.ts',
+  'server/src/data/credentials/store.ts',
+  'server/src/data/directoryGroups/store.ts',
+  'server/src/data/entitlements/store.ts',
+  'server/src/data/environments/store.ts',
+  'server/src/data/feedback/store.ts',
+  'server/src/data/governance-audit/store.ts',
+  'server/src/data/guardrail/pgGuardrailEventStore.ts',
+  'server/src/data/memberships/store.ts',
+  'server/src/data/migrationControl/store.ts',
+  'server/src/data/oauthGrants/store.ts',
+  'server/src/data/resourceReferences/store.ts',
+  'server/src/data/sessionReadStateStore.ts',
+  'server/src/data/sessionShares/store.ts',
+  'server/src/data/skillGovernance/store.ts',
+  'server/src/dws/authStore.ts',
+  'server/src/dws/store.ts',
+  'server/src/feishu/authStore.ts',
+  'server/src/feishu/store.ts',
+  'server/src/memory/consolidation/scannerStatus.ts',
+  'server/src/memory/consolidation/store.ts',
+  'server/src/runtime/alertStateStore.ts',
+  'server/src/runtime/artifactShareStore.ts',
+  'server/src/runtime/artifactStore.ts',
+  'server/src/runtime/auditProjection.ts',
+  'server/src/runtime/clientDaemonRegistry.ts',
+  'server/src/runtime/handStore.ts',
+  'server/src/runtime/imageBlobStore.ts',
+  'server/src/runtime/pgEventStore.ts',
+  'server/src/runtime/pgSessionLock.ts',
+  'server/src/runtime/runResolutionSnapshotStore.ts',
+  'server/src/runtime/runStore.ts',
+  'server/src/runtime/runStoreSchema.ts',
+  'server/src/runtime/runTerminalOutboxStore.ts',
+  'server/src/runtime/sessionProjectionStore.ts',
+  'server/src/runtime/systemMetricsStore.ts',
+  'server/src/runtime/toolInvocationStore.ts',
+  'server/src/taskboard/store.ts',
+  'server/src/taskboard/storeSchema.ts',
+  'server/src/webPush/store.ts',
+  'server/src/workspace/materialization/store.ts',
+]);
+// Roots are activated by changed path or by a changed provider in the same source domain.
+const STARTUP_SCHEMA_ENTRY_PATTERN =
+  /\b(?:async\s+)?(?:function\s+(?:init|initialize)[A-Za-z0-9_$]*\s*\(|(?:init|initialize[A-Za-z0-9_$]*)\s*\(\s*\)\s*:\s*Promise\s*<)/u;
+// Future init/initialize modules are recognized when their own file changes.
+const SCHEMA_DDL_PATTERN =
+  /\b(?:ALTER\s+TABLE|COMMENT\s+ON|CREATE\s+(?:(?:OR\s+REPLACE|UNIQUE)\s+)*(?:EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|VIEW)|DROP\s+(?:EXTENSION|FUNCTION|INDEX|MATERIALIZED\s+VIEW|SCHEMA|SEQUENCE|TABLE|TRIGGER|TYPE|VIEW)|GRANT\b|REVOKE\b|TRUNCATE(?:\s+TABLE)?\b)/iu;
+const STARTUP_DATA_MUTATION_PATTERN =
+  /\b(?:DELETE\s+FROM|INSERT\s+INTO|MERGE\s+INTO|REPLACE\s+INTO|UPDATE\s+(?:ONLY\s+)?\S+(?:\s+\*)?(?:\s+(?:AS\s+)?\S+)?\s+SET)\b/iu;
+
+export function isProductionStartupSchemaRootSource(path, content) {
+  return (
+    PRODUCTION_SCHEMA_MODULE_PATH.test(path) &&
+    STARTUP_SCHEMA_ENTRY_PATTERN.test(content) &&
+    (SCHEMA_DDL_PATTERN.test(content) || STARTUP_DATA_MUTATION_PATTERN.test(content))
+  );
+}
 
 // ADD COLUMN is parsed again as an explicit safe subset; the prefix alone never grants expand.
 const ALLOWED_EXPAND_ALTER_PATTERN =
@@ -3696,13 +3770,15 @@ function isDeclarativeSqlProvider(path, content, requestedBindings) {
     .some((statement) => MIGRATION_PROVIDER_SQL_PATTERN.test(statement));
 }
 
-function buildMigrationDependencyClosure(execFileSync, cwd, sha) {
+function buildMigrationDependencyClosure(execFileSync, cwd, sha, additionalRoots = new Set()) {
   const repositoryPaths = new Set(
     gitRead(execFileSync, cwd, ['ls-tree', '-r', '--name-only', sha, '--'])
       .split(/\r?\n/u)
       .filter(Boolean),
   );
-  const roots = [...repositoryPaths].filter(isMigrationPath).sort();
+  const roots = [...repositoryPaths]
+    .filter((path) => isMigrationPath(path) || additionalRoots.has(path))
+    .sort();
   const closure = new Set(roots);
   const requestedByPath = new Map(roots.map((path) => [path, new Set(['*'])]));
   const callableByPath = new Map(roots.map((path) => [path, new Set()]));
@@ -3828,7 +3904,8 @@ export function createMigrationPlan({
   if (!SHA_PATTERN.test(target ?? '')) blockingReasons.push('Migration target SHA is invalid.');
   if (blockingReasons.length > 0) return { ok: false, migrationPlan: null, blockingReasons };
 
-  let candidatePaths = [...changedPaths];
+  const requestedPaths = [...changedPaths];
+  let candidatePaths = [...requestedPaths];
   let baselineClosure = new Set();
   let targetClosure = new Set();
   const resolveDependencyClosure = candidatePaths.some(
@@ -3848,8 +3925,40 @@ export function createMigrationPlan({
           ]),
         ),
       );
-      baselineClosure = buildMigrationDependencyClosure(execFileSync, cwd, baseline);
-      targetClosure = buildMigrationDependencyClosure(execFileSync, cwd, target);
+      candidatePaths = [...new Set(candidatePaths)];
+      const startupSchemaRoots = (sha) => {
+        const requestedDirectories = new Set(
+          requestedPaths.map((path) => path.slice(0, path.lastIndexOf('/'))),
+        );
+        const roots = new Set(
+          PRODUCTION_STARTUP_SCHEMA_ROOTS.filter(
+            (path) =>
+              requestedPaths.includes(path) ||
+              requestedDirectories.has(path.slice(0, path.lastIndexOf('/'))),
+          ),
+        );
+        for (const path of requestedPaths) {
+          try {
+            const content = gitRead(execFileSync, cwd, ['show', `${sha}:${path}`]);
+            if (isProductionStartupSchemaRootSource(path, content)) roots.add(path);
+          } catch {
+            // Removed paths remain represented by the opposite side's root set.
+          }
+        }
+        return roots;
+      };
+      baselineClosure = buildMigrationDependencyClosure(
+        execFileSync,
+        cwd,
+        baseline,
+        startupSchemaRoots(baseline),
+      );
+      targetClosure = buildMigrationDependencyClosure(
+        execFileSync,
+        cwd,
+        target,
+        startupSchemaRoots(target),
+      );
     } catch (error) {
       const detail = error instanceof Error ? ` ${error.message}` : '';
       blockingReasons.push(

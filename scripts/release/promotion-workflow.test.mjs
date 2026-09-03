@@ -74,7 +74,7 @@ test('durable promoting marker interruptions always converge through needs_human
   ]);
 });
 
-test('promotion accepts only an approved release id and serializes production mutation', async () => {
+test('promotion accepts only an approved release id and shares the production runtime lock', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
@@ -346,6 +346,25 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.doesNotMatch(workflow, /production-observation(?:\.json|\/)/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('production ACS promotion enforces lifecycle policy and fails closed on health mismatch', async () => {
+  const deploy = await readFile(deployPath, 'utf8');
+  assert.match(deploy, /!line\.startsWith\('ACS_SANDBOX_LIFECYCLE_POLICY_MODE='\)/u);
+  assert.match(deploy, /!line\.startsWith\('ACS_SANDBOX_LIFECYCLE_ENABLED='\)/u);
+  assert.equal(deploy.match(/lines\.push\('ACS_SANDBOX_LIFECYCLE_ENABLED=true'\)/gu)?.length, 1);
+  assert.equal(
+    deploy.match(/lines\.push\('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce'\)/gu)?.length,
+    1,
+  );
+  assert.match(deploy, /writeFileSync\(`\$\{envPath\}\.candidate`/u);
+  assert.match(deploy, /renameSync\(`\$\{envPath\}\.candidate`, envPath\)/u);
+  assert.match(deploy, /h\.lifecycle\?\.enabled !== true/u);
+  assert.match(deploy, /h\.lifecyclePolicyMode !== 'enforce'/u);
+  assert.match(
+    deploy,
+    /trap cleanup_acs_failure EXIT[\s\S]*h\.lifecyclePolicyMode !== 'enforce'[\s\S]*then\n    exit 20/u,
+  );
 });
 
 test('workflow preserves exact retry matrices, locked rollback evidence, migrations, and acceptance boundaries', async () => {

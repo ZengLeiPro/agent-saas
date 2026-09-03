@@ -597,35 +597,18 @@ describe('parseAppConfig', () => {
     expect(config.tenantRemoteHands?.hands[0]?.recipe?.files?.[0]).toMatchObject({ artifactId: 'artifact_1', path: 'seed/data.txt' });
   });
 
-  it('accepts serverRemote inline authToken (backward compatible)', () => {
-    const config = parseAppConfig({
+
+
+
+
+  it('rejects serverRemote without PostgreSQL durable runtime storage', () => {
+    expect(() => parseAppConfig({
       ...baseConfig,
       serverRemote: {
         baseUrl: 'http://127.0.0.1:3300',
         authToken: 'server-remote-token-xyz',
-        invokeTimeoutMs: 90_000,
       },
-    });
-    expect(config.serverRemote).toMatchObject({
-      baseUrl: 'http://127.0.0.1:3300',
-      authToken: 'server-remote-token-xyz',
-      invokeTimeoutMs: 90_000,
-    });
-  });
-
-  it('accepts serverRemote with authTokenRef instead of inline authToken', () => {
-    const config = parseAppConfig({
-      ...baseConfig,
-      serverRemote: {
-        baseUrl: 'http://127.0.0.1:3300',
-        authTokenRef: 'server-remote-prod',
-      },
-    });
-    expect(config.serverRemote).toMatchObject({
-      baseUrl: 'http://127.0.0.1:3300',
-      authTokenRef: 'server-remote-prod',
-    });
-    expect(config.serverRemote?.authToken).toBeUndefined();
+    })).toThrow(/serverRemote requires runtimeEventStore\.backend="pg" for durable Sandbox lifecycle cleanup/);
   });
 
   it('rejects serverRemote with neither authToken nor authTokenRef', () => {

@@ -17,6 +17,7 @@ import {
 import {
   projectToolResultContentForModel,
 } from './replayEventBounds.js';
+import { projectToolResultContentForTranscript } from './transcriptToolResultBudget.js';
 
 function jsonl(obj: unknown): string {
   return JSON.stringify(obj) + '\n';
@@ -118,7 +119,8 @@ function userToolResultLine(
       content: [{
         type: 'tool_result',
         tool_use_id: toolUseId,
-        content,
+        // 只写读取侧真正会消费的首尾窗口；工具原文全量留在 durable EventStore。
+        content: projectToolResultContentForTranscript(content, toolUseId),
         is_error: isError,
         // 纯追加字段：老 server 读新文件只取自己认识的 key，新 server 读老文件
         // 取不到即 undefined —— 双向兼容，不需要 JSONL schema 版本号。

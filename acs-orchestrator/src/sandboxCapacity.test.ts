@@ -37,7 +37,7 @@ describe('Sandbox weighted capacity', () => {
     expect(usage).toEqual({ count: 1, cpuMillicores: 3_000, memoryBytes: 6 * 1024 ** 3 });
   });
 
-  it('evicts only a safe Paused Sandbox and never a Running one', async () => {
+  it('只回收安全的 Paused Sandbox，不回收 Running', async () => {
     const evict = vi.fn(async () => true);
     const result = await enforceSandboxCapacity({
       sandboxes: [
@@ -55,6 +55,25 @@ describe('Sandbox weighted capacity', () => {
     expect(result.evicted).toEqual(['as-paused']);
     expect(evict).toHaveBeenCalledTimes(1);
     expect(evict).toHaveBeenCalledWith(expect.objectContaining({ name: 'as-paused' }));
+  });
+
+  it('按最早 lifecycle deadline 回收，而不是按旧 lastActiveAt 顺序', async () => {
+    const evict = vi.fn(async () => true);
+    const result = await enforceSandboxCapacity({
+      sandboxes: [
+        {
+          name: 'as-old-activity', phase: 'Paused', lastActiveAt: '2024-01-01T00:00:00Z',
+          retentionDeadline: '2023-01-02T00:00:00Z', workloadClass: 'interactive',
+        },
+        {
+          name: 'as-urgent-deadline', phase: 'Paused', lastActiveAt: '2024-02-01T00:00:00Z',
+          retentionDeadline: '2023-01-01T00:00:00Z', workloadClass: 'interactive',
+        },
+      ],
+      currentName: 'as-new', desiredUsage: { count: 1, cpuMillicores: 2_000, memoryBytes: 4 * 1024 ** 3 },
+      pendingUsage: zeroUsage(), config: config(), allowEviction: true, canEvict: () => true, evict,
+    });
+    expect(result.evicted).toEqual(['as-urgent-deadline']);
   });
 
   it('fails with a structured snapshot when no safe capacity remains', async () => {

@@ -1,7 +1,8 @@
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { describe, expect, it } from 'vitest';
 
-import { allowsExecutionMaintenanceBypass } from './sandboxHttp.js';
+import { allowsExecutionMaintenanceBypass, sendSandboxError } from './sandboxHttp.js';
+import { SandboxMutationPreconditionError } from './sandboxLifecycleMutations.js';
 
 function request(remoteAddress: string, header?: string): IncomingMessage {
   return {
@@ -19,5 +20,16 @@ describe('ACS execution maintenance bypass', () => {
 
   it('rejects the marker from non-loopback callers', () => {
     expect(allowsExecutionMaintenanceBypass(request('172.16.177.77', 'deploy-smoke-v1'))).toBe(false);
+  });
+
+  it('maps lifecycle mutation precondition conflicts to HTTP 409', () => {
+    let statusCode: number | undefined;
+    const response = {
+      writeHead(code: number) { statusCode = code; return this; },
+      end() { return this; },
+    } as unknown as ServerResponse;
+
+    sendSandboxError(response, new SandboxMutationPreconditionError('resourceVersion conflict'));
+    expect(statusCode).toBe(409);
   });
 });

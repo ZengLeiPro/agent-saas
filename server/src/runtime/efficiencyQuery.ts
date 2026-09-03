@@ -189,6 +189,7 @@ export class RuntimeEfficiencyQuery {
              requested_at, started_at, completed_at, failed_at, cancelled_at
       FROM ${this.runsTable}
       WHERE updated_at >= now() - make_interval(hours => $1::int)
+        AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
         AND ($2::text[] IS NULL OR status = ANY($2::text[]))
         AND ($3::text IS NULL OR tenant_id = $3)
       ORDER BY updated_at DESC
@@ -243,6 +244,7 @@ export class RuntimeEfficiencyQuery {
         FROM ${R}
         WHERE requested_at >= $1::timestamptz
           AND requested_at < $3::timestamptz
+          AND COALESCE(metadata->>'sandboxCleanupCarrier', 'false') <> 'true'
           AND ($2::text IS NULL OR tenant_id = $2)
       )
       SELECT status, COUNT(DISTINCT run_id)::bigint AS count

@@ -343,9 +343,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactShareStore,
         runtime.artifactService,
       ),
-      sessionProjectionStore: runtime.runtimeSessionProjectionStore,
-      sessionReadStateStore: runtime.sessionReadStateStore,
-      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),
+      sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
         : undefined,
@@ -389,8 +388,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         config,
         configMutationService,
         secretVault: runtime.secretVault,
-        // 热更新逻辑与 runtime-worker 侧共用同一实现（modelsHotUpdate.ts），
-        // 避免两个进程对同一份 config 产生不一致的内存状态。
         onModelsUpdated: runtime.updateModelsConfig ?? ((models) => {
           applyModelsHotUpdate({ config, target: runtime, models });
         }),
@@ -408,7 +405,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       configMutationService,
       credentialManager: runtime.codexCredentialManager,
       deviceAuthService: runtime.codexDeviceAuthService,
-      closeWebSockets: runtime.codexWebSocketShutdown,
+      closeWebSockets: (refs) => refs && runtime.codexWebSocketCredentialShutdown
+        ? runtime.codexWebSocketCredentialShutdown(refs)
+        : runtime.codexWebSocketShutdown?.(),
     }),
   );
   app.use(

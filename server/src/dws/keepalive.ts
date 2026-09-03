@@ -79,6 +79,7 @@ export class DwsAuthStatusRunner implements DwsAuthStatusRunnerLike {
           mountSubPath,
           executionTarget: 'server-remote',
           sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+          workload: { class: 'cron' },
         },
       },
     });

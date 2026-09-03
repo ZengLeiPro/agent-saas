@@ -3,8 +3,10 @@ import {
   type TaskBoardAttachment,
   type TaskBoardComment,
   type TaskBoardExecution,
+  type TaskBoardExecutionPurpose,
   type TaskBoardResumeContext,
   type TaskBoardTask,
+  type TaskBoardTaskKind,
 } from '../../../shared/src/types/taskboard.js';
 import {
   TaskboardConflictError,
@@ -24,8 +26,7 @@ export function assertTaskContent(title: string | undefined, description: string
 }
 
 export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
-  if (row.kind !== null && row.kind !== undefined
-    && !['delivery', 'advisory', 'integration', 'remediation'].includes(String(row.kind))) {
+  if (row.kind !== null && row.kind !== undefined && !isTaskboardTaskKind(row.kind)) {
     throw new TaskboardValidationError(
       `Unsupported task kind: ${String(row.kind)}`,
       'TASKBOARD_TASK_KIND_UNSUPPORTED',
@@ -37,9 +38,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     identifier: String(row.identifier),
     ...(row.kind === null || row.kind === undefined
       ? { kind: 'delivery' as const }
-      : row.kind === 'delivery' || row.kind === 'advisory' || row.kind === 'integration' || row.kind === 'remediation'
-        ? { kind: row.kind }
-        : {}),
+      : isTaskboardTaskKind(row.kind) ? { kind: row.kind } : {}),
     title: String(row.title),
     description: String(row.description ?? ''),
     ...(row.branch ? { branch: String(row.branch) } : {}),
@@ -222,11 +221,19 @@ export function rowToExecutionDispatch(row: Record<string, unknown>): TaskboardE
   if (typeof row.lease_id !== 'string' || !row.lease_id) {
     throw new Error(`任务看板执行派发 lease 无效：${String(row.run_id)}`);
   }
+  if (!isTaskboardTaskKind(row.actual_task_kind)) {
+    throw new Error(`任务看板执行派发 task kind 无效：${String(row.actual_task_kind)}`);
+  }
+  if (!isTaskboardExecutionPurpose(row.actual_purpose)) {
+    throw new Error(`任务看板执行派发 purpose 无效：${String(row.actual_purpose)}`);
+  }
   return {
     runId: String(row.run_id),
     executionId: String(row.actual_execution_id),
     outboxExecutionId: String(row.execution_id),
     taskId: String(row.actual_task_id),
+    taskKind: row.actual_task_kind,
+    purpose: row.actual_purpose,
     sessionId: String(row.actual_session_id),
     tenantId: String(row.tenant_id),
     ownerUserId: String(row.owner_user_id),
@@ -234,6 +241,14 @@ export function rowToExecutionDispatch(row: Record<string, unknown>): TaskboardE
     attemptCount: Number(row.attempt_count),
     leaseId: row.lease_id,
   };
+}
+
+function isTaskboardTaskKind(value: unknown): value is TaskBoardTaskKind {
+  return value === 'delivery' || value === 'advisory' || value === 'integration' || value === 'remediation';
+}
+
+function isTaskboardExecutionPurpose(value: unknown): value is TaskBoardExecutionPurpose {
+  return value === 'work' || value === 'review' || value === 'merge';
 }
 
 export function isTerminalExecutionStatus(status: string): boolean {
@@ -418,7 +433,7 @@ export function rowToExecutionModelContext(
     ...(Object.keys(parseStageModels(row.board_stage_models)).length
       ? { boardStageModels: parseStageModels(row.board_stage_models) }
       : {}),
-    ...(row.task_kind === 'integration' || row.task_kind === 'remediation'
+    ...(isTaskboardTaskKind(row.task_kind)
       ? { taskKind: row.task_kind }
       : { taskKind: 'delivery' as const }),
     ...(row.task_status ? { taskStatus: String(row.task_status) as TaskBoardTask['status'] } : {}),

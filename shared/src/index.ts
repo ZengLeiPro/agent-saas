@@ -11,7 +11,7 @@ export type {
   PlatformDeps,
 } from './platform/types';
 
-// Types - re-export everything from types/index
+// Types - re-export the public runtime and product contracts from types/index
 export {
   ACTIVITY_TYPES,
   formatTokenCount,
@@ -84,6 +84,7 @@ export type {
   WsEvent,
   RuntimeFailureKind,
   RuntimeRecoveryAction,
+  SandboxWorkloadDescriptor,
   AuthUser,
   LoginCredentials,
   SmsLoginCredentials,

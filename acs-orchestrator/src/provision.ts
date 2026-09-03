@@ -44,6 +44,7 @@ export class Provisioner {
       sessionId: recipe.sessionId!,
       sandboxScopeId: recipe.sandboxScopeId,
       mountSubPath: recipe.mountSubPath,
+      workload: recipe.workload ?? { class: 'unknown' },
     });
     const recipeHash = createHash('sha256').update(JSON.stringify(provisionFingerprint(recipe))).digest('hex');
 
@@ -104,6 +105,7 @@ export class Provisioner {
         sandboxScopeId: recipe.sandboxScopeId,
         mountSubPath: recipe.mountSubPath,
         ...(resourceOverride ? { resources: resourceOverride } : {}),
+        workload: recipe.workload ?? { class: 'unknown' },
       }, {
         busySandboxNames: this.getBusySandboxNames(),
         activeKey,

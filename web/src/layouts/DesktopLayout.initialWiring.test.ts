@@ -36,7 +36,14 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain('label="调整任务详情宽度"');
     expect(source).toContain("useResizePanel(0.35, 0.25, 0.75, dockedPanelKey)");
     expect(source).toContain('const dockedPanelWidth = `clamp(26rem, ${splitRatio * 100}%, 46rem)`');
-    expect(source.match(/style=\{\{ width: dockedPanelWidth, flexShrink: 0 \}\}/g)).toHaveLength(2);
+    expect(source).toContain("useDesktopLayoutProtection");
+    expect(source).toContain('responsiveMode={responsiveSidebarMode}');
+    expect(source).toContain('responsiveSidebarOverlayOpen && "absolute inset-y-0 left-0 z-50 shadow-2xl"');
+    expect(source).toContain('aria-label="关闭临时侧边栏"');
+    expect(source).toContain('ref={layoutProtection.fontProbeRef}');
+    expect(source).toContain('width: `min(${dockedPanelWidth}, calc(100% - 1rem))`');
+    expect(source.match(/style=\{responsivePanelStyle\}/g)).toHaveLength(2);
+    expect(source.match(/data-responsive-panel-mode=/g)).toHaveLength(2);
     expect(source).not.toContain("dockedPanelInitialRatio");
     expect(taskBoardSource).toContain("portalTarget={detailPanelTarget}");
     expect(taskBoardSource).toContain("onDetailOpenChange?.(detailVisible)");

@@ -5,6 +5,7 @@ import {
 } from './sandboxCapacity.js';
 import type { AcsOrchestratorConfig } from './config.js';
 import { isBackgroundShellProtected, type ManagedSandbox } from './sandboxState.js';
+import { isActiveInvocationLeaseProtected } from './sandboxLifecyclePolicy.js';
 import type { SandboxRef } from './sandboxManagerTypes.js';
 
 export async function reserveSandboxCapacity(input: {
@@ -15,7 +16,7 @@ export async function reserveSandboxCapacity(input: {
   skipCapacityManagement?: boolean;
   listSandboxes: () => Promise<ManagedSandbox[]>;
   isBusy: (name: string, busySandboxNames?: Set<string>) => boolean;
-  evict: (name: string) => Promise<void>;
+  evict: (name: string) => Promise<boolean>;
   warn: (message: string) => void;
 }): Promise<void> {
   if (
@@ -35,11 +36,13 @@ export async function reserveSandboxCapacity(input: {
       config: input.config,
       allowEviction: input.config.lifecycleEnabled && input.skipCapacityManagement !== true,
       canEvict: (sandbox) => !input.isBusy(sandbox.name, input.busySandboxNames)
+        && !isActiveInvocationLeaseProtected(sandbox, Date.now())
         && !isBackgroundShellProtected(sandbox, Date.now()),
       evict: async (sandbox) => {
-        if (input.isBusy(sandbox.name, input.busySandboxNames)) return false;
-        await input.evict(sandbox.name);
-        return true;
+        if (input.isBusy(sandbox.name, input.busySandboxNames)
+          || isActiveInvocationLeaseProtected(sandbox, Date.now())
+          || isBackgroundShellProtected(sandbox, Date.now())) return false;
+        return await input.evict(sandbox.name);
       },
     });
     if (result.evicted.length) input.warn(

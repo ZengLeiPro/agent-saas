@@ -1,6 +1,7 @@
 import type { AcsOrchestratorConfig } from './config.js';
 import { parseDateMs, type ManagedSandbox } from './sandboxState.js';
 import type { SandboxRef } from './sandboxManagerTypes.js';
+import { decideSandboxLifecycle } from './sandboxLifecyclePolicy.js';
 
 export interface SandboxResourceUsage {
   count: number;
@@ -52,9 +53,16 @@ export async function enforceSandboxCapacity(input: {
 
   const evicted: string[] = [];
   if (input.allowEviction) {
+    const nowMs = Date.now();
+    // 与 cleanup/inventory 共用 lifecycle deadline，越紧迫越先回收。
     const candidates = quotaSandboxes
       .filter((sandbox) => sandbox.name !== input.currentName && sandbox.phase === 'Paused' && input.canEvict(sandbox))
-      .sort((left, right) => (parseDateMs(left.lastActiveAt) ?? 0) - (parseDateMs(right.lastActiveAt) ?? 0));
+      .sort((left, right) => {
+        const leftDeadline = parseDateMs(decideSandboxLifecycle({ ...left, nowMs }).deadlineAt) ?? Number.POSITIVE_INFINITY;
+        const rightDeadline = parseDateMs(decideSandboxLifecycle({ ...right, nowMs }).deadlineAt) ?? Number.POSITIVE_INFINITY;
+        return leftDeadline - rightDeadline
+          || (parseDateMs(left.lastActiveAt) ?? 0) - (parseDateMs(right.lastActiveAt) ?? 0);
+      });
     for (const candidate of candidates) {
       if (!await input.evict(candidate)) continue;
       usage = subtractUsage(usage, usageForSandbox(candidate, input.config));

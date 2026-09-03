@@ -64,8 +64,9 @@ export class ArtifactReadError extends Error {
 }
 
 export async function getArtifactReadGrant(artifactId: string, download = false): Promise<ArtifactReadGrant> {
-  const suffix = download ? '?download=true' : '';
-  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url${suffix}`, {
+  const query = new URLSearchParams({ viewPolicyVersion: '2' });
+  if (download) query.set('download', 'true');
+  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url?${query}`, {
     cache: 'no-store',
     headers: { Accept: 'application/json' },
   });

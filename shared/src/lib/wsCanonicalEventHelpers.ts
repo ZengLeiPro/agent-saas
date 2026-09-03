@@ -25,9 +25,21 @@ export function applyCanonicalProjection(
   block.projectionState = next;
   if (next === previous) return true;
   for (const item of selectProjectedMessages(next)) {
-    const index = msg.messagesRef.current.findIndex((candidate) => candidate.id === item.id);
-    if (index >= 0) msg.updateMessageAt(index, () => item);
-    else msg.addMessage(item);
+    const indexById = msg.messagesRef.current.findIndex((candidate) => candidate.id === item.id);
+    const index = indexById >= 0
+      ? indexById
+      : item.type === 'user' && item.clientMsgId
+        ? findUserMsgIndexByClientId(msg.messagesRef.current, item.clientMsgId)
+        : -1;
+    if (index >= 0) {
+      msg.updateMessageAt(index, (current) => (
+        item.type === 'user' && current.type === 'user-voice'
+          ? { ...current, id: item.id, status: 'sent', timestamp: item.timestamp ?? current.timestamp }
+          : item
+      ));
+    } else {
+      msg.addMessage(item);
+    }
   }
   return true;
 }

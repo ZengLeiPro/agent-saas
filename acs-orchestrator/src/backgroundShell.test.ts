@@ -8,11 +8,15 @@ import type { spawn } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  backgroundShellTaskDir,
   getBackgroundShellOutput,
   isBackgroundShellTerminal,
   killBackgroundShell,
+  MAX_BACKGROUND_SHELL_TIMEOUT_MS,
+  readBackgroundShellState,
   reconcileBackgroundShells,
   startBackgroundShell,
+  terminateBackgroundShellsFailClosed,
   type BackgroundShellOutput,
 } from './backgroundShell.js';
 
@@ -28,6 +32,7 @@ describe('background shell runtime', () => {
       env: process.env,
     });
     expect(started.taskId).toBe(taskId);
+    expect(started.requestOwned).toBe(true);
     expect(['starting', 'running', 'completed']).toContain(started.status);
     const completed = await waitForTerminal(root, taskId);
     expect(completed).toMatchObject({ status: 'completed', exitCode: 0 });
@@ -44,7 +49,39 @@ describe('background shell runtime', () => {
       timeoutMs: 5_000,
       env: process.env,
     });
-    expect(idempotent.status).toBe('completed');
+    expect(idempotent).toMatchObject({ status: 'completed', requestOwned: false });
+  });
+
+  it('strict reconciliation treats a partially written task as unknown activity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-strict-'));
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    const taskDir = backgroundShellTaskDir(root, taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, 'state.json'), '{not-json', 'utf8');
+
+    await expect(reconcileBackgroundShells(root, { strict: true })).rejects.toThrow(
+      /task state is unreadable/u,
+    );
+    await expect(reconcileBackgroundShells(root)).resolves.toEqual({ activeTaskIds: [] });
+  });
+
+  it('strict reconciliation settles a stale unreadable task after the maximum worker lifetime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-stale-'));
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    const taskDir = backgroundShellTaskDir(root, taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, 'state.json'), '{not-json', 'utf8');
+    const settledAt = new Date(Date.now() + MAX_BACKGROUND_SHELL_TIMEOUT_MS + 61_000);
+
+    await expect(reconcileBackgroundShells(root, {
+      strict: true,
+      now: () => settledAt,
+    })).resolves.toEqual({ activeTaskIds: [] });
+    await expect(readBackgroundShellState(taskDir)).resolves.toMatchObject({
+      taskId,
+      status: 'lost',
+      completedAt: settledAt.toISOString(),
+    });
   });
 
   it('preserves the injected PATH instead of resetting it through a login shell', async () => {
@@ -100,6 +137,55 @@ describe('background shell runtime', () => {
     expect(cancelled.status).toBe('cancelled');
     expect((await reconcileBackgroundShells(root)).activeTaskIds).toEqual([]);
   });
+
+  it('terminates only requested tasks and leaves unrelated workspace tasks running', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-fail-closed-'));
+    const taskIds = [
+      `shell-bg-test-${randomUUID()}`,
+      `shell-bg-test-${randomUUID()}`,
+    ];
+    for (const taskId of taskIds) {
+      await startBackgroundShell({
+        workspaceRoot: root,
+        taskId,
+        command: 'sleep 20',
+        timeoutMs: 30_000,
+        env: process.env,
+      });
+      await waitForStatus(root, taskId, 'running');
+    }
+
+    await expect(terminateBackgroundShellsFailClosed(root, [taskIds[0]!])).resolves.toMatchObject({
+      activeTaskIds: [taskIds[1]],
+    });
+    expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: taskIds[0]! })).status)
+      .toBe('cancelled');
+    expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: taskIds[1]! })).status)
+      .toBe('running');
+    await killBackgroundShell(root, taskIds[1]!);
+  }, 15_000);
+
+  it('ignores unreadable unrequested tasks while terminating the owned task', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-corrupt-state-'));
+    const runningTaskId = `shell-bg-test-${randomUUID()}`;
+    const corruptTaskId = `shell-bg-test-${randomUUID()}`;
+    await startBackgroundShell({
+      workspaceRoot: root,
+      taskId: runningTaskId,
+      command: 'sleep 20',
+      timeoutMs: 30_000,
+      env: process.env,
+    });
+    await waitForStatus(root, runningTaskId, 'running');
+    const corruptDir = backgroundShellTaskDir(root, corruptTaskId);
+    await mkdir(corruptDir, { recursive: true });
+    await writeFile(join(corruptDir, 'state.json'), '{half-written');
+
+    await expect(terminateBackgroundShellsFailClosed(root, [runningTaskId]))
+      .resolves.toEqual({ activeTaskIds: [] });
+    expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: runningTaskId })).status)
+      .toBe('cancelled');
+  }, 15_000);
 
   it('records timeout as timed_out instead of cancellation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-timeout-'));

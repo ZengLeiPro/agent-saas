@@ -44,6 +44,7 @@ export async function runExecutionOutboxMigrations(
   );
 }
 
+/** Claims the outbox payload together with authoritative execution/task workload fields. */
 export async function claimExecutionDispatch(
   host: TaskboardExecutionOutboxHost,
   runId: string | undefined,
@@ -95,7 +96,8 @@ export async function claimExecutionDispatch(
        FROM candidate c WHERE o.run_id=c.run_id RETURNING o.*
      )
      SELECT c.*, e.id AS actual_execution_id, e.task_id AS actual_task_id,
-            e.session_id AS actual_session_id, b.tenant_id, b.owner_user_id
+            e.session_id AS actual_session_id, t.kind AS actual_task_kind,
+            e.purpose AS actual_purpose, b.tenant_id, b.owner_user_id
      FROM claimed c JOIN ${host.executionsTable} e ON e.run_id=c.run_id
      JOIN ${host.tasksTable} t ON t.id=e.task_id JOIN ${host.boardsTable} b ON b.id=t.board_id`,
     [leaseId, runId ?? null],

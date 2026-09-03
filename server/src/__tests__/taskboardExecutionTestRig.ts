@@ -94,14 +94,23 @@ export function makeRig(
 ) {
   const dispatches = new Map<string, {
     executionId: string;
+    purpose: 'work' | 'review' | 'merge';
     payload: Parameters<TaskboardExecutionStore['claimExecution']>[2]['dispatch'];
   }>();
   const store = {
     listExecutions: vi.fn(async () => []),
     searchExecutions: vi.fn(async () => ({ items: [], page: 1, pageSize: 20, total: 0, hasMore: false })),
-    getExecutionModelContext: vi.fn(async () => ({ boardOwnerUserId: identity.ownerUserId })),
+    getExecutionModelContext: vi.fn(async () => ({
+      boardOwnerUserId: identity.ownerUserId,
+      taskKind: 'delivery' as const,
+      taskStatus: 'todo' as const,
+    })),
     claimExecution: vi.fn(async (_identity, _taskId, input) => {
-      dispatches.set(input.runId, { executionId: input.executionId, payload: input.dispatch });
+      dispatches.set(input.runId, {
+        executionId: input.executionId,
+        purpose: input.purpose ?? 'work',
+        payload: input.dispatch,
+      });
       return {
         task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
         execution: execution({
@@ -128,7 +137,11 @@ export function makeRig(
     })),
     claimExecutionDispatch: vi.fn(async (runId: string | undefined, leaseId: string) => {
       let claimedRunId: string;
-      let dispatch: { executionId: string; payload: Parameters<TaskboardExecutionStore['claimExecution']>[2]['dispatch'] };
+      let dispatch: {
+        executionId: string;
+        purpose: 'work' | 'review' | 'merge';
+        payload: Parameters<TaskboardExecutionStore['claimExecution']>[2]['dispatch'];
+      };
       if (runId) {
         const exact = dispatches.get(runId);
         if (!exact) return null;
@@ -144,6 +157,10 @@ export function makeRig(
         executionId: dispatch.executionId,
         outboxExecutionId: dispatch.executionId,
         taskId: task.id,
+        taskKind: dispatch.payload.session.sandboxWorkloadDescriptor?.kind === 'taskboard'
+          ? dispatch.payload.session.sandboxWorkloadDescriptor.taskKind ?? 'delivery'
+          : 'delivery',
+        purpose: dispatch.purpose,
         sessionId: dispatch.payload.session.sessionId,
         tenantId: identity.tenantId,
         ownerUserId: identity.ownerUserId,

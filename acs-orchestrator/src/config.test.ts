@@ -248,6 +248,13 @@ describe('ACS runtime config', () => {
     });
   });
 
+  it('explicitly rolls out lifecycle enforcement in production and staging config', () => {
+    for (const configName of ['production.env', 'staging.env']) {
+      const env = readFileSync(new URL(`../config/${configName}`, import.meta.url), 'utf-8');
+      expect(env.match(/^ACS_SANDBOX_LIFECYCLE_POLICY_MODE=(.+)$/mu)?.[1]).toBe('enforce');
+    }
+  });
+
   it('loads desired network policy from env without claiming enforcement', () => {
     const originalEnv = { ...process.env };
     process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
@@ -360,6 +367,22 @@ describe('ACS runtime config', () => {
     delete process.env.ACS_SANDBOX_TTL_MS;
     try {
       expect(loadConfigFromEnv().sandboxTtlMs).toBe(30 * 60_000);
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  it('defaults lifecycle policy to shadow and validates an explicit enforce mode', () => {
+    const originalEnv = { ...process.env };
+    process.env.ACS_ORCH_AUTH_TOKEN = 'orchestrator-token';
+    process.env.ACS_SANDBOX_IMAGE = 'registry.example.com/agent-saas/acs-sandbox:test';
+    delete process.env.ACS_SANDBOX_LIFECYCLE_POLICY_MODE;
+    try {
+      expect(loadConfigFromEnv().lifecyclePolicyMode).toBe('shadow');
+      process.env.ACS_SANDBOX_LIFECYCLE_POLICY_MODE = 'enforce';
+      expect(loadConfigFromEnv().lifecyclePolicyMode).toBe('enforce');
+      process.env.ACS_SANDBOX_LIFECYCLE_POLICY_MODE = 'enabled';
+      expect(() => loadConfigFromEnv()).toThrow(/ACS_SANDBOX_LIFECYCLE_POLICY_MODE/u);
     } finally {
       process.env = originalEnv;
     }

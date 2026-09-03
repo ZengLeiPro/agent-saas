@@ -23,6 +23,7 @@ import type { RuntimeAdmissionSnapshot } from '../runtime/memoryPressureGuard.js
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import type { RuntimeSchedulerCapacityController } from '../runtime/runtimeSchedulerConfigStore.js';
 import type { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
+import type { SandboxLifecycleService } from '../runtime/sandboxLifecycleService.js';
 import type { DispatchMetricsStore } from '../engine/metricsStore.js';
 import type { ChannelManager } from '../channels/manager.js';
 import type { DingtalkDeps } from '../channels/dingtalk/factory.js';
@@ -136,6 +137,8 @@ export interface AppRuntime {
   agentCwd: string;
   /** Sandbox 预热服务（2026-07-31 冷启动治理）：会话打开即 fire-and-forget 预热 ACS Sandbox。 */
   sandboxWarmupService: SandboxWarmupService;
+  /** Durable ACS terminal/delete delivery for top-level Sandbox scopes. */
+  sandboxLifecycleService?: SandboxLifecycleService;
   sharedDir: string;
   tenantSkillsRootDir: string;
   uploadsDir: string;
@@ -150,7 +153,7 @@ export interface AppRuntime {
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
   auditProjectionShutdown?: () => Promise<void>;
-  /** Runtime event store 外部连接关闭（仅 runtimeEventStore.backend='pg' 时定义） */
+  /** Runtime event store 外部连接关闭（仅 runtimeEventStore.backend='pg' 时定义）。 */
   runtimeEventStoreShutdown?: () => Promise<void>;
   /** Stops durable tenant deletion scans before PostgreSQL shutdown. */
   tenantDeletionShutdown?: () => Promise<void>;
@@ -161,6 +164,7 @@ export interface AppRuntime {
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
   codexWebSocketShutdown?: () => void;
+  codexWebSocketCredentialShutdown?: (credentialRefs: readonly string[]) => void;
   userStore?: UserStore;
   /** M30-01 durable auth epoch/generation authority. */
   authEpochAuthority?: AuthEpochAuthority;

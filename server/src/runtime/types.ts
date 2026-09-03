@@ -56,7 +56,7 @@ export interface RunContext {
    * 子 Agent / 后台任务继承父值以保证「父 + 全部后代」同 pod（决策 7）。
    */
   topLevelSessionId?: string;
-  sandboxScopeId?: string;
+  sandboxScopeId?: string; workload?: WorkspaceRef['workload'];
   mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;

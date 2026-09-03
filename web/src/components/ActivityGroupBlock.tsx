@@ -23,7 +23,7 @@ function getRuntimeStatusLabel(status: Extract<MessageItem, { type: 'runtime_sta
     case 'queued':
       return '排队中';
     case 'running':
-      return '思考中';
+      return '处理中';
     case 'waiting_approval':
       return '待处理';
     case 'waiting_user':
@@ -55,7 +55,7 @@ function getActiveItemIndex(items: MessageItem[]): number {
   for (let i = items.length - 1; i >= 0; i--) {
     if (isActiveActivity(items[i])) return i;
   }
-  return Math.max(0, items.length - 1);
+  return -1;
 }
 
 function getActivityDurationMs(items: MessageItem[]): number | undefined {
@@ -92,6 +92,13 @@ function getCompletedGroupTitle(items: MessageItem[]): string {
 
 function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
   const index = getActiveItemIndex(items);
+  if (index < 0) {
+    return {
+      text: '处理中',
+      tone: 'active',
+      active: true,
+    };
+  }
   const item = items[index];
   const progress = `${index + 1}/${items.length}`;
 

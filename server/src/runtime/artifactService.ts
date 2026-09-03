@@ -7,7 +7,14 @@ import { readSessionMeta } from '../data/transcripts/meta.js';
 import { hidesMemoryPollFrom } from '../data/sessions/access.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { evaluateArtifactPolicy, type ArtifactReadGrant, type ArtifactViewModel } from '@agent/shared';
+import {
+  ARTIFACT_TEXT_MAX_BYTES,
+  ARTIFACT_VIEW_POLICY_VERSION,
+  evaluateArtifactPolicy,
+  type ArtifactPolicyResult,
+  type ArtifactReadGrant,
+  type ArtifactViewModel,
+} from '@agent/shared';
 import type {
   ArtifactBlobStore,
   ArtifactKind,
@@ -174,9 +181,10 @@ export class ArtifactService {
       }
       const buffer = Buffer.isBuffer(input.data) ? input.data : Buffer.from(input.data);
       this.assertSizeAllowed(buffer.byteLength);
+      const mimeType = input.mimeType ?? inferArtifactMimeType(input.fileName);
       const blob = await this.options.blobStore.put({
         data: buffer,
-        contentType: input.mimeType,
+        contentType: mimeType,
         extension: input.fileName ? extname(input.fileName) : undefined,
       });
       try {
@@ -186,7 +194,7 @@ export class ArtifactService {
           producingHandId: input.producingHandId,
           kind: input.kind ?? inferKind(input.fileName),
           uri: blob.uri,
-          mimeType: input.mimeType ?? blob.contentType,
+          mimeType: mimeType ?? blob.contentType,
           sizeBytes: blob.sizeBytes,
           sha256: blob.sha256,
           metadata: {
@@ -240,7 +248,7 @@ export class ArtifactService {
   async createReadUrlForUser(
     artifactId: string,
     user: RuntimeArtifactUser | undefined,
-    opts: { baseUrl: string; expiresInSeconds?: number; forceProxy?: boolean; forceDownload?: boolean },
+    opts: { baseUrl: string; expiresInSeconds?: number; forceProxy?: boolean; forceDownload?: boolean; viewPolicyVersion?: number },
   ): Promise<ArtifactReadUrl> {
     if (!user) throw new ArtifactServiceError(401, 'Authentication required');
     const record = await this.getForUser(artifactId, user);
@@ -250,7 +258,7 @@ export class ArtifactService {
     const ttlSeconds = Math.min(opts.expiresInSeconds ?? this.defaultReadUrlTtlSeconds, MAX_READ_URL_TTL_SECONDS);
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     const correlationId = randomUUID();
-    const policy = evaluateArtifactPolicy({
+    const canonicalPolicy = evaluateArtifactPolicy({
       artifactId,
       name: typeof record.metadata.fileName === 'string' ? record.metadata.fileName : undefined,
       declaredMime: record.mimeType,
@@ -260,6 +268,7 @@ export class ArtifactService {
       expiresAt,
       correlationId,
     });
+    const policy = adaptArtifactPolicyForClient(canonicalPolicy, opts.viewPolicyVersion);
     const disposition = opts.forceDownload || policy.disposition === 'attachment' ? 'attachment' : 'inline';
     const nonce = randomBytes(18).toString('base64url');
     const nonceKey = this.nonceKey(artifactId, user, disposition);
@@ -534,6 +543,69 @@ function inferKind(fileName?: string): ArtifactKind {
   if (['.patch', '.diff'].includes(ext)) return 'patch';
   if (['.log', '.txt', '.md'].includes(ext)) return 'log';
   return 'file';
+}
+
+function inferArtifactMimeType(fileName?: string): string | undefined {
+  const extension = extname(fileName ?? '').toLowerCase();
+  return ARTIFACT_MIME_BY_EXTENSION[extension];
+}
+
+const ARTIFACT_MIME_BY_EXTENSION: Record<string, string> = {
+  '.md': 'text/markdown',
+  '.markdown': 'text/markdown',
+  '.txt': 'text/plain',
+  '.log': 'text/plain',
+  '.csv': 'text/csv',
+  '.tsv': 'text/tab-separated-values',
+  '.json': 'application/json',
+  '.jsonl': 'application/x-ndjson',
+  '.yaml': 'application/yaml',
+  '.yml': 'application/yaml',
+  '.toml': 'application/toml',
+  '.html': 'text/html',
+  '.htm': 'text/html',
+  '.xhtml': 'application/xhtml+xml',
+  '.svg': 'image/svg+xml',
+  '.xml': 'application/xml',
+  '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
+  '.cjs': 'application/javascript',
+  '.css': 'text/css',
+  '.sql': 'application/sql',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.pdf': 'application/pdf',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.docm': 'application/vnd.ms-word.document.macroEnabled.12',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.pptm': 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+  '.zip': 'application/zip',
+};
+
+function adaptArtifactPolicyForClient(policy: ArtifactPolicyResult, requestedVersion?: number): ArtifactPolicyResult {
+  if (requestedVersion === ARTIFACT_VIEW_POLICY_VERSION) return policy;
+  const canUseLegacyText = policy.size <= ARTIFACT_TEXT_MAX_BYTES
+    && (policy.viewKind === 'markdown' || (policy.viewKind === 'source' && !policy.activeContent));
+  if (canUseLegacyText) {
+    return { ...policy, viewKind: 'text', safeMime: 'text/plain; charset=utf-8', disposition: 'inline' };
+  }
+  if (policy.viewKind === 'markdown' || policy.viewKind === 'html' || policy.viewKind === 'source') {
+    return { ...policy, viewKind: 'download-only', safeMime: 'application/octet-stream', disposition: 'attachment' };
+  }
+  return policy;
 }
 
 // 记忆/心跳轮询会话可见性统一走 data/sessions/access.ts 的 hidesMemoryPollFrom

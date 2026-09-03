@@ -240,6 +240,7 @@ function createExecutionContext(agentCwd: string, user: UserInfo, signal?: Abort
       sandboxScopeId,
       mountSubPath,
       executionTarget: 'server-remote' as const,
+      workload: { class: 'interactive' as const },
     },
   };
 }

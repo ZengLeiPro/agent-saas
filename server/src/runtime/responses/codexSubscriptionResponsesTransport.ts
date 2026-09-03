@@ -59,8 +59,6 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       )
       .map((message) => message.content)
       .join('\n\n');
-    // Skill 工具描述包含按用户计算的可用技能清单；缓存指纹必须覆盖完整工具定义，
-    // 否则“无 Skill”与“已启用 Skill”的新会话会共享过期的清单。
     const toolSignature = input.tools
       .map((tool) => JSON.stringify({
         id: tool.id,
@@ -107,7 +105,6 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   }
 
   async execute(input: ResponsesTransportExecuteInput): Promise<ResponsesTransportExecuteResult> {
-    // 每次请求固定顺序快照；管理端重排只影响后续请求。
     const credentialRefs = this.orderedCredentialRefs();
     if (credentialRefs.length === 0) throw new Error('Codex subscription 尚未完成账号授权');
     return executeCodexCredentialFailover({
@@ -124,7 +121,8 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   ): Promise<ResponsesTransportExecuteResult> {
     const firstPrepared = prepareRequestForBinding(input, this.bindingFor(token.accountId));
     const firstResult = await this.executeWithToken(
-      firstPrepared.input, token.accessToken, token.accountId, token.generation,
+      firstPrepared.input, token.accessToken, token.accountId,
+      token.credentialRef ?? `account:${hashAccountBinding(token.accountId)}`, token.generation,
     );
     if (firstResult.response.status !== 401) {
       if (await isCodexAccountUnavailableResponse(firstResult.response)) {
@@ -148,7 +146,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
         throw new CodexAccountAuthUnavailableError(
           credentialFailureCode(error),
           String(error),
-          token.generation,
+          credentialFailureGeneration(error),
         );
       }
       throw error;
@@ -158,6 +156,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       retryPrepared.input,
       refreshed.accessToken,
       refreshed.accountId,
+      refreshed.credentialRef ?? `account:${hashAccountBinding(refreshed.accountId)}`,
       refreshed.generation,
     );
     if (retried.response.status === 401 || (await isCodexAccountUnavailableResponse(retried.response))) {
@@ -210,7 +209,6 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     }
     return this.credentials.getCredentials(false, undefined, credentialRef);
   }
-
   observeResult(input: Parameters<CodexCredentialManager['recordModelResult']>[0]): void {
     this.credentials.recordModelResult(input);
   }
@@ -223,6 +221,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     input: ResponsesTransportExecuteInput,
     accessToken: string,
     accountId: string,
+    credentialRef: string,
     credentialGeneration: number,
   ): Promise<ResponsesTransportExecuteResult> {
     const config = this.credentials.getConfiguration();
@@ -234,6 +233,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           accessToken,
           accountId,
           accountBindingHash: binding.accountBindingHash,
+          credentialRef,
           credentialGeneration,
           originator: config.originator,
           serializedBody: input.serializedBody,

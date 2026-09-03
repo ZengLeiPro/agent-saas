@@ -243,7 +243,7 @@ export class CodexCredentialManager {
     const accountId = extractCodexAccountId(tokens.accessToken, tokens.idToken);
     if (existingRef) {
       return this.lock.runExclusive(this.lockKey(existingRef), async () => {
-        const previous = await this.readBundle(existingRef).catch(() => undefined);
+        const previous = await this.readBundle(existingRef);
         const bundle: CodexTokenBundle = {
           ...tokens,
           accountId,
@@ -439,6 +439,7 @@ export class CodexCredentialManager {
   }
 
   private async readBundle(credentialRef: string): Promise<CodexTokenBundle> {
+    this.options.vault.invalidate?.(credentialRef);
     const raw = await this.options.vault.getSecret(credentialRef, systemVaultCaller('read'));
     return parseTokenBundle(raw);
   }

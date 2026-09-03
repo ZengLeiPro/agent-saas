@@ -21,13 +21,12 @@ export interface CodexWebSocketExecuteInput {
   accessToken: string;
   accountId: string;
   accountBindingHash: string;
+  credentialRef: string;
   credentialGeneration: number;
   originator: string;
   serializedBody: string;
   tenantId: string;
-  /** 平台会话标识：只用于本地连接池隔离，防止不同对话共享 WebSocket anchor。 */
   sessionId: string;
-  /** 发给上游 session-id 的稳定内容指纹，用于 Prompt Cache 路由亲和。 */
   cacheAffinityId: string;
   clientRequestId: string;
   signal?: AbortSignal;
@@ -41,19 +40,18 @@ export interface CodexWebSocketExecuteResult {
 
 interface RequestSnapshot {
   fingerprint: string;
-  /** 上一轮 request input + server output items；下一轮必须以它为严格前缀。 */
   baselineItemHashes: string[];
   responseId: string;
 }
 
 interface PoolEntry {
   key: string;
+  credentialRef: string;
   socket: EgressWebSocket;
   connectedAt: number;
   lastUsedAt: number;
   busy: boolean;
   closed: boolean;
-  /** 并发旁路过 HTTP/SSE 后，当前 anchor 不再能证明覆盖完整线性历史。 */
   tainted: boolean;
   anchor?: RequestSnapshot;
 }
@@ -97,13 +95,6 @@ class CodexWebSocketReanchorError extends Error {
   }
 }
 
-/**
- * Codex Responses WebSocket 的进程内、会话级临时状态层。
- *
- * 这里从不成为会话事实源：调用方每轮仍传完整 logical body。只有同一 socket
- * 上的请求属性完全一致、input 严格追加时，才把 wire request 压成增量；任一
- * 状态不确定都丢弃 anchor，并以调用方提供的完整 body 重新锚定。
- */
 export class CodexResponsesWebSocketPool {
   private readonly entries = new Map<string, PoolEntry>();
   private readonly connectCooldowns = new Map<string, {
@@ -117,7 +108,6 @@ export class CodexResponsesWebSocketPool {
     private readonly options: {
       firstEventTimeoutMs?: number;
       idleEventTimeoutMs?: number;
-      /** 首次握手偶发失败时原连接重试次数；总尝试次数默认 2。 */
       connectAttempts?: number;
       now?: () => number;
       logger?: { warn(message: string): void };
@@ -184,6 +174,13 @@ export class CodexResponsesWebSocketPool {
     this.connectCooldowns.clear();
   }
 
+  closeCredentialRefs(refs: readonly string[]): void {
+    const targets = new Set(refs);
+    for (const entry of this.entries.values()) {
+      if (targets.has(entry.credentialRef)) this.discard(entry, 'credential_invalidated');
+    }
+  }
+
   private async connect(key: string, input: CodexWebSocketExecuteInput): Promise<PoolEntry> {
     const endpoint = new URL(input.endpoint);
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -231,6 +228,7 @@ export class CodexResponsesWebSocketPool {
     const now = this.now();
     const entry: PoolEntry = {
       key,
+      credentialRef: input.credentialRef,
       socket,
       connectedAt: now,
       lastUsedAt: now,
@@ -651,6 +649,7 @@ function poolKey(input: CodexWebSocketExecuteInput): string {
     input.cacheAffinityId,
     input.endpoint,
     input.accountBindingHash,
+    input.credentialRef,
     input.credentialGeneration,
     input.originator,
   ]));

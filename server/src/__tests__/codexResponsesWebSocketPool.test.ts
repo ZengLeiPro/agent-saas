@@ -100,6 +100,7 @@ function request(serializedBody: string, signal?: AbortSignal) {
     accessToken: 'access-token',
     accountId: 'acct-1',
     accountBindingHash: 'binding-1',
+    credentialRef: 'credential-1',
     credentialGeneration: 1,
     originator: 'codex-tui',
     serializedBody,
@@ -276,15 +277,17 @@ describe('CodexResponsesWebSocketPool', () => {
     pool.close();
   });
 
-  it('账号绑定、credential generation 或 originator 变化时使用新连接', async () => {
+  it('账号绑定、credential identity、generation 或 originator 变化时使用新连接', async () => {
     const originalSocket = new FakeWebSocket();
     const changedAccountSocket = new FakeWebSocket();
     const changedGenerationSocket = new FakeWebSocket();
+    const changedCredentialSocket = new FakeWebSocket();
     const changedOriginatorSocket = new FakeWebSocket();
     const connector = connectorFor(
       originalSocket,
       changedAccountSocket,
       changedGenerationSocket,
+      changedCredentialSocket,
       changedOriginatorSocket,
     );
     const pool = new CodexResponsesWebSocketPool(connector);
@@ -314,6 +317,17 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(changedGenerationSocket, 'resp-generation');
     await changedGenerationResult.response.text();
 
+    const changedCredentialPending = pool.execute({
+      ...request(body(input)),
+      accessToken: 'same-account-other-credential',
+      credentialRef: 'credential-2',
+    });
+    await waitForSend(changedCredentialSocket);
+    changedCredentialSocket.emit({ type: 'response.created', response: { id: 'resp-credential' } });
+    const changedCredentialResult = await changedCredentialPending;
+    complete(changedCredentialSocket, 'resp-credential');
+    await changedCredentialResult.response.text();
+
     const changedOriginatorPending = pool.execute({
       ...request(body(input)),
       originator: 'kaiyan-agent',
@@ -324,12 +338,15 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(changedOriginatorSocket, 'resp-originator');
     await changedOriginatorResult.response.text();
 
-    expect(connector).toHaveBeenCalledTimes(4);
-    expect(connector.mock.calls[3]?.[0]).toEqual(expect.objectContaining({
+    expect(connector).toHaveBeenCalledTimes(5);
+    expect(connector.mock.calls[4]?.[0]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({ originator: 'kaiyan-agent' }),
     }));
     expect(originalSocket.readyState).toBe(1);
     expect(changedAccountSocket.readyState).toBe(1);
+    pool.closeCredentialRefs(['credential-1']);
+    expect(originalSocket.readyState).toBe(3);
+    expect(changedCredentialSocket.readyState).toBe(1);
     pool.close();
   });
 

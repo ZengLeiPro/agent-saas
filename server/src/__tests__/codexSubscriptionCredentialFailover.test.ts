@@ -292,7 +292,7 @@ describe('Codex subscription credential failover', () => {
     });
   });
 
-  it('OAuth 5xx 即使错误体包含 invalid_grant 也不会切换账号', async () => {
+  it('OAuth HTTP 5xx 即使错误体包含 invalid_grant 也不会切换账号', async () => {
     const { manager } = await createFixture();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       error: 'invalid_grant',
@@ -308,6 +308,37 @@ describe('Codex subscription credential failover', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((await manager.getStatuses())[0]).toMatchObject({ availability: 'available' });
+  });
+
+  it('跨重授权刷新永久失败时使用实际 generation 封禁账号', async () => {
+    const { manager, primary } = await createFixture();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: 'invalid_grant',
+    }), { status: 400, headers: { 'content-type': 'application/json' } }));
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => {
+        await manager.persistLogin({
+          accessToken: jwt('acct-primary'), refreshToken: 'refresh-primary-gen2',
+          idToken: jwt('acct-primary'), expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        }, primary.credentialRef);
+        return new Response('', { status: 401 });
+      })
+      .mockResolvedValueOnce(terminalStream('resp-secondary-after-gen2-failure'));
+    const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
+
+    const result = await transport.execute({
+      serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
+      context,
+      clientRequestId: 'generation-fence-request',
+    });
+
+    expect(result.response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((await manager.getStatuses())[0]).toMatchObject({
+      generation: 2,
+      availability: 'auth_unavailable',
+      lastFailureCode: 'invalid_grant',
+    });
   });
 
   it('请求开始后调整优先级，不会改变该请求已固定的候选顺序', async () => {

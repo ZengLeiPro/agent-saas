@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel } from '../channels/web/channel.js';
+import { interactionStore } from '../channels/web/interactionStore.js';
+import { UserEventLog } from '../channels/web/userEventLog.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import {
   FakeWebSocket,
@@ -119,6 +121,96 @@ describe('跨进程/后台 run 的 ask_user 实时投递与恢复（TASK-63）',
     expect(pending!.data.interactions).toContainEqual(expect.objectContaining({
       type: 'ask_user', interactionId: 'ask-live-1',
     }));
+  });
+
+  it('durable 扫描期间新建的本地 interaction 会进入最终替换快照', async () => {
+    const sessionId = randomUUID();
+    let finishScan!: (events: any[]) => void;
+    let markScanStarted!: () => void;
+    const scanStarted = new Promise<void>((resolve) => { markScanStarted = resolve; });
+    const eventStore = {
+      list: () => new Promise<any[]>((resolve) => {
+        finishScan = resolve;
+        markScanStarted();
+      }),
+    } as any;
+    const channel = new WebChannel(
+      {
+        executionConfig: createExecutionConfig(),
+        runtimeEventStoreFor: () => eventStore,
+      },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    const snapshot = (channel as any).pushPendingInteractions(wsClient(ws, USER), sessionId, USER.tenantId);
+    await scanStarted;
+    const interactionId = `ask-during-scan-${randomUUID()}`;
+    const response = interactionStore.create(interactionId, 'ask_user', {
+      sessionId,
+      userId: USER.sub,
+      questions: [],
+    });
+    finishScan([]);
+    await snapshot;
+
+    expect(ws.sent.find((message) => message.data?.type === 'pending_interactions')?.data.interactions)
+      .toContainEqual(expect.objectContaining({ interactionId, type: 'ask_user' }));
+    interactionStore.resolve(interactionId, { answers: {} });
+    await response;
+  });
+
+  it('sync overflow 在 async 返回边界后才终采样 interaction 并同步发送', async () => {
+    const sessionId = randomUUID();
+    let finishScan!: (events: any[]) => void;
+    let markScanStarted!: () => void;
+    const scanStarted = new Promise<void>((resolve) => { markScanStarted = resolve; });
+    const eventStore = {
+      list: () => new Promise<any[]>((resolve) => {
+        finishScan = resolve;
+        markScanStarted();
+      }),
+    } as any;
+    const channel = new WebChannel(
+      {
+        executionConfig: createExecutionConfig(),
+        runtimeEventStoreFor: () => eventStore,
+      },
+      async function* () { yield { type: 'done' as const }; },
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+    const log = new UserEventLog('sync-final-sample');
+    (channel as any).wsServer = {
+      userEventLog: log,
+      hasUserEventEpochMismatch: () => true,
+      destroy: () => {},
+    };
+
+    const sync = (channel as any).runtimeRecovery.handleSync(wsClient(ws, USER), {
+      action: 'sync', lastSeq: 0, epoch: 'stale', sessionId,
+    });
+    await scanStarted;
+    finishScan([]);
+    let pendingResponse!: Promise<unknown>;
+    const interactionId = `ask-after-prepare-${randomUUID()}`;
+    queueMicrotask(() => {
+      pendingResponse = interactionStore.create(interactionId, 'ask_user', {
+        sessionId,
+        userId: USER.sub,
+        questions: [],
+      });
+    });
+    await sync;
+
+    expect(ws.sent.at(-1)?.data).toMatchObject({
+      type: 'sync_overflow',
+      recovery: { session: { pendingInteractions: [expect.objectContaining({ interactionId })] } },
+    });
+    interactionStore.resolve(interactionId, { answers: {} });
+    await pendingResponse;
+    log.stop();
   });
 
   it('已 resume 订阅 buffer 的用户：后续写入的 ask_user 通过订阅推送实时到达', async () => {

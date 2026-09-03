@@ -421,11 +421,12 @@ export class WebRuntimeRecovery {
       ...(msg.networkGeneration !== undefined ? { networkGeneration: msg.networkGeneration } : {}),
     };
     if (wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
+      const finalizeSnapshot = await this.prepareAuthoritativeSyncSessionSnapshot(client, msg.sessionId);
       this.host.wsSend(client.ws, {
         ...buildSyncOverflowFrame(
           currentSeq,
           epoch,
-          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+          finalizeSnapshot?.(),
         ),
         ...correlation,
       });
@@ -434,11 +435,12 @@ export class WebRuntimeRecovery {
 
     const result = eventLog.getEventsAfter(userId, msg.lastSeq);
     if (result.gapDetected) {
+      const finalizeSnapshot = await this.prepareAuthoritativeSyncSessionSnapshot(client, msg.sessionId);
       this.host.wsSend(client.ws, {
         ...buildSyncOverflowFrame(
           currentSeq,
           epoch,
-          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+          finalizeSnapshot?.(),
         ),
         ...correlation,
       });
@@ -453,10 +455,10 @@ export class WebRuntimeRecovery {
     }
   }
 
-  private async buildAuthoritativeSyncSessionSnapshot(
+  private async prepareAuthoritativeSyncSessionSnapshot(
     client: WsClient,
     requestedSessionId?: string,
-  ): Promise<SyncSessionSnapshot | undefined> {
+  ): Promise<(() => SyncSessionSnapshot) | undefined> {
     const sessionId = requestedSessionId ?? this.host.wsSessionAffinity.get(client.ws);
     if (!sessionId) return undefined;
     const snapshot: SyncSessionSnapshot = { sessionId };
@@ -471,38 +473,55 @@ export class WebRuntimeRecovery {
       snapshot.queueSnapshot = buildChatQueueSnapshot(sessionId, runs);
     }
     snapshot.runtime = await this.host.getStreamStatus(sessionId);
-    snapshot.pendingInteractions = await this.getAuthoritativePendingInteractions(
+    const finalizePendingInteractions = await this.prepareAuthoritativePendingInteractions(
       client,
       sessionId,
       client.user?.tenantId,
     );
-    return snapshot;
+    return () => ({
+      ...snapshot,
+      pendingInteractions: finalizePendingInteractions(),
+    });
   }
 
-  private async getAuthoritativePendingInteractions(
+  private async prepareAuthoritativePendingInteractions(
     client: WsClient,
     sessionId: string,
     tenantId?: string,
-  ): Promise<SyncPendingInteractionSnapshot[]> {
-    const pending = interactionStore.getPendingInteractions(sessionId);
-    const ownerIds = new Set(pending.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
-    if (ownerIds.size > 1) return [];
+  ): Promise<() => SyncPendingInteractionSnapshot[]> {
+    const pendingBeforeScan = interactionStore.getPendingInteractions(sessionId, { includeTransient: true });
+    const ownerIds = new Set(pendingBeforeScan.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
+    if (ownerIds.size > 1) return () => [];
     const ownerUserId = this.host.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
     const scopedTenantId = tenantId ?? this.host.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
-    if (this.host.config.runtimeEventStoreFor && !scopedTenantId) return [];
+    if (this.host.config.runtimeEventStoreFor && !scopedTenantId) {
+      return () => [];
+    }
     const resolvedIds = this.host.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.host.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
-    const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
-    const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
+    // The caller invokes this finalizer in the same synchronous stack as wsSend. That closes
+    // every async return boundary without relying on process-local counters across workers.
+    return () => {
+      const pending = interactionStore.getPendingInteractions(sessionId, { includeTransient: true });
+      for (const entry of pending) {
+        const ownerId = interactionStore.get(entry.interactionId)?.userId;
+        if (ownerId) ownerIds.add(ownerId);
+      }
+      if (ownerIds.size > 1) return [];
+      const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
+      const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
 
-    const recovered = scanBufferForPendingInteractions(this.host.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
-    if (recovered.length > 0) unresolved.push(...recovered);
-    return unresolved;
+      const recovered = scanBufferForPendingInteractions(this.host.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
+      if (recovered.length > 0) unresolved.push(...recovered);
+      return unresolved;
+    };
   }
 
   async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
-    const unresolved = await this.getAuthoritativePendingInteractions(client, sessionId, tenantId);
-    // Resume preserves N-1 frame ordering when empty; sync snapshots still carry authoritative [].
-    if (unresolved.length > 0) this.host.wsSend(client.ws, { type: 'pending_interactions', sessionId, interactions: unresolved });
+    const finalizePendingInteractions = await this.prepareAuthoritativePendingInteractions(client, sessionId, tenantId);
+    const unresolved = finalizePendingInteractions();
+    if (unresolved.length > 0) this.host.wsSend(client.ws, {
+      type: 'pending_interactions', sessionId, interactions: unresolved,
+    });
   }
 
 }

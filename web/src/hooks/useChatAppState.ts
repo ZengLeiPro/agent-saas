@@ -91,7 +91,7 @@ import {
   resendQueuedEntry, restoreQueuedEntryForEdit,
 } from "./useChatAppStateQueueConsistency";
 import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
-import { useInteractionResponseController } from './useInteractionResponseController';
+import { useInteractionResponseController, webPendingInteractionsEvent } from './useInteractionResponseController';
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user, identity } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
@@ -1659,7 +1659,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           });
         }
         if (inline?.pendingInteractions) {
-          projectRecoveredInteraction({ type: 'pending_interactions', sessionId: inline.sessionId, interactions: inline.pendingInteractions });
+          projectRecoveredInteraction(webPendingInteractionsEvent(inline));
         }
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);

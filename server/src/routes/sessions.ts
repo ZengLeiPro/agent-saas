@@ -2919,7 +2919,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           }
         }
 
-        const pending = interactionStore.getPendingInteractions(sessionId);
+        // HTTP 对账是当前页面的完整权威快照；连接仍存活时普通 permission_request
+        // 也必须包含，否则刷新会把唯一可回答卡片误删。
+        const pending = interactionStore.getPendingInteractions(sessionId, { includeTransient: true });
         if (transcriptPath) {
           const eventTenantId = (await readSessionMeta(transcriptPath))?.tenantId
             ?? req.user?.tenantId

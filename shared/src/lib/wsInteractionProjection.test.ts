@@ -146,7 +146,7 @@ describe('interaction projection', () => {
     expect(projected.some((message) => message.type === 'runtime_status' && message.status === 'waiting_user')).toBe(false);
   });
 
-  it('does not let an older WS pending snapshot delete a newer live interaction', () => {
+  it('treats a pending snapshot as an authoritative replacement', () => {
     const messages: MessageItem[] = [];
     const context = createContext(messages);
     processWsEvent(
@@ -165,10 +165,8 @@ describe('interaction projection', () => {
       { value: 's' },
       's',
     );
-    expect(messages.filter((message) => message.type === 'ask_user').map((message) => message.interactionId)).toEqual([
-      'new-live',
-      'old-snapshot',
-    ]);
+    expect(messages.filter((message) => message.type === 'ask_user').map((message) => message.interactionId))
+      .toEqual(['old-snapshot']);
   });
 
   it('lets an authoritative empty WS snapshot clear a stale pending interaction', () => {

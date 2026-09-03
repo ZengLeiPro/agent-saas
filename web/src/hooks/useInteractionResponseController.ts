@@ -12,6 +12,7 @@ import {
 import { hydrateInteractionVersion } from './interactionResponseVersion';
 import type { MessagesState } from './useMessages';
 import type { SessionRuntime, SessionRuntimePatch } from './useChatAppStateTypes';
+export { webPendingInteractionsEvent } from '@/lib/interactionProtocolAdapter';
 
 const RESPONSE_ACK_TIMEOUT_MS = 15_000;
 

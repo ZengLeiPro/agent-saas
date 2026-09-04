@@ -145,7 +145,7 @@ describe('audio transcribe admin router', () => {
     });
   });
 
-  it('PUT stores all new secrets in SecretVault, persists refs and hot-updates runtime', async () => {
+  it('PUT stores new secrets, hot-updates runtime, and reclaims replaced refs', async () => {
     await withApp(baseRawConfig(), async ({
       baseUrl,
       configPath,
@@ -155,6 +155,7 @@ describe('audio transcribe admin router', () => {
       onUpdated,
       onConfigReloaded,
     }) => {
+      const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -199,7 +200,95 @@ describe('audio transcribe admin router', () => {
       expect(validate).toHaveBeenCalledWith(runtimeConfig.stt);
       expect(onUpdated).toHaveBeenCalledWith(runtimeConfig.stt);
       expect(onConfigReloaded).toHaveBeenCalledWith(text);
+      expect(revokeSecret).toHaveBeenCalledWith('dashscope-ref', expect.any(Object));
+      expect(revokeSecret).toHaveBeenCalledWith('oss-id-ref', expect.any(Object));
+      expect(revokeSecret).toHaveBeenCalledWith('oss-secret-ref', expect.any(Object));
     });
+  });
+
+  it('revokes the first staged STT ref when a later vault put fails', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, secretVault, validate, onUpdated }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const originalPut = secretVault.putSecret.bind(secretVault);
+      const created: string[] = [];
+      let puts = 0;
+      vi.spyOn(secretVault, 'putSecret').mockImplementation(async (...args) => {
+        puts += 1;
+        if (puts === 2) throw new Error('second STT vault put failed');
+        const ref = await originalPut(...args);
+        created.push(ref.id);
+        return ref;
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: {
+          apiKey: 'new-stt-key',
+          ossAccessKeyId: 'new-oss-id',
+          ossAccessKeySecret: 'new-oss-secret',
+        } }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(validate).not.toHaveBeenCalled();
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(created).toHaveLength(1);
+      await expect(secretVault.getSecret(created[0]!, {
+        actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+      })).rejects.toThrow('secret revoked');
+    });
+  });
+
+  it('revokes staged STT refs when post-ref validation fails without leaking them', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, secretVault, validate, onUpdated }) => {
+      const originalPut = secretVault.putSecret.bind(secretVault);
+      const created: string[] = [];
+      vi.spyOn(secretVault, 'putSecret').mockImplementation(async (...args) => {
+        const ref = await originalPut(...args);
+        created.push(ref.id);
+        return ref;
+      });
+      validate.mockRejectedValue(new Error('candidate ref validation failed'));
+
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { apiKey: 'validation-secret' } }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(created).toHaveLength(1);
+      const responseText = await response.text();
+      expect(responseText).not.toContain(created[0]);
+      expect(responseText).not.toContain('validation-secret');
+      await expect(secretVault.getSecret(created[0]!, {
+        actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+      })).rejects.toThrow('secret revoked');
+    });
+  });
+
+  it('no-op save reconciles refs and response from the mutation result instead of stale runtime config', async () => {
+    const staleRuntimeConfig = parseAppConfig(baseRawConfig());
+    if (staleRuntimeConfig.stt) staleRuntimeConfig.stt.apiKeyRef = undefined;
+    const secretVault = new InMemorySecretVault();
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
+    const onUpdated = vi.fn();
+
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'fun-asr' } }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(revokeSecret).not.toHaveBeenCalled();
+      expect((await readJson(response)).config.apiKeyConfigured).toBe(true);
+    }, { config: staleRuntimeConfig, secretVault, onUpdated });
   });
 
   it('force full baseline preserves an unloaded field and publishes identity from complete runtime config', async () => {
@@ -292,9 +381,10 @@ describe('audio transcribe admin router', () => {
     }, { secretVault, validate, onUpdated, onConfigReloaded, ensureConfigBaselineApplied });
   });
 
-  it('empty strings preserve old refs and explicit null clears the selected secret', async () => {
+  it('empty strings preserve old refs and explicit null reclaims only the cleared secret', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, secretVault }) => {
       const putSecret = vi.spyOn(secretVault, 'putSecret');
+      const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -320,6 +410,8 @@ describe('audio transcribe admin router', () => {
       expect(onDisk.stt.ossAccessKeyIdRef).toBeUndefined();
       expect(onDisk.stt.ossAccessKeySecretRef).toBe('oss-secret-ref');
       expect(putSecret).not.toHaveBeenCalled();
+      expect(revokeSecret).toHaveBeenCalledOnce();
+      expect(revokeSecret).toHaveBeenCalledWith('oss-id-ref', expect.any(Object));
     });
   });
 
@@ -373,9 +465,16 @@ describe('audio transcribe admin router', () => {
     });
   });
 
-  it('callback 失败时回滚执行侧且不提交磁盘或 AppConfig', async () => {
-    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig, onUpdated }) => {
+  it('callback 失败且完整恢复时撤销候选 ref，并回滚执行侧、磁盘与 AppConfig', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig, secretVault, onUpdated }) => {
       const before = readFileSync(configPath, 'utf-8');
+      const originalPut = secretVault.putSecret.bind(secretVault);
+      const created: string[] = [];
+      vi.spyOn(secretVault, 'putSecret').mockImplementation(async (...args) => {
+        const ref = await originalPut(...args);
+        created.push(ref.id);
+        return ref;
+      });
       let executionStt = structuredClone(runtimeConfig.stt);
       onUpdated.mockImplementation(async (next) => {
         executionStt = structuredClone(next);
@@ -385,7 +484,7 @@ describe('audio transcribe admin router', () => {
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { model: 'candidate-that-fails' } }),
+        body: JSON.stringify({ config: { model: 'candidate-that-fails', apiKey: 'candidate-stt-secret' } }),
       });
 
       expect(response.status).toBe(500);
@@ -393,6 +492,36 @@ describe('audio transcribe admin router', () => {
       expect(runtimeConfig.stt?.model).toBe('fun-asr');
       expect(executionStt?.model).toBe('fun-asr');
       expect(onUpdated).toHaveBeenCalledTimes(2);
+      expect(created).toHaveLength(1);
+      await expect(secretVault.getSecret(created[0]!, {
+        actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+      })).rejects.toThrow('secret revoked');
+    });
+  });
+
+  it('RuntimeRestoreFailedError 时保守保留可能仍在运行的 STT 候选 ref', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, secretVault, onUpdated }) => {
+      const originalPut = secretVault.putSecret.bind(secretVault);
+      const created: string[] = [];
+      vi.spyOn(secretVault, 'putSecret').mockImplementation(async (...args) => {
+        const ref = await originalPut(...args);
+        created.push(ref.id);
+        return ref;
+      });
+      onUpdated.mockRejectedValue(new Error('runtime apply and restore both fail'));
+
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'unsafe-runtime', apiKey: 'retain-stt-secret' } }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(onUpdated).toHaveBeenCalledTimes(2);
+      expect(created).toHaveLength(1);
+      await expect(secretVault.getSecret(created[0]!, {
+        actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+      })).resolves.toBe('retain-stt-secret');
+      expect(JSON.stringify(await readJson(response))).not.toContain(created[0]);
     });
   });
 
@@ -450,10 +579,17 @@ describe('audio transcribe admin router', () => {
     });
   });
 
-  it('CAS 冲突不推进 ConfigIdentity，且不覆盖并发胜出版本', async () => {
+  it('CAS 冲突撤销候选 ref，不推进 ConfigIdentity 且不覆盖并发胜出版本', async () => {
     await withApp(baseRawConfig(), async ({
-      baseUrl, configPath, runtimeConfig, validate, onUpdated, onConfigReloaded,
+      baseUrl, configPath, runtimeConfig, secretVault, validate, onUpdated, onConfigReloaded,
     }) => {
+      const originalPut = secretVault.putSecret.bind(secretVault);
+      const created: string[] = [];
+      vi.spyOn(secretVault, 'putSecret').mockImplementation(async (...args) => {
+        const ref = await originalPut(...args);
+        created.push(ref.id);
+        return ref;
+      });
       validate.mockImplementation(async () => {
         writeFileSync(configPath, JSON.stringify({ ...baseRawConfig(), concurrentWinner: true }), 'utf-8');
       });
@@ -461,7 +597,7 @@ describe('audio transcribe admin router', () => {
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { model: 'losing-stt-candidate' } }),
+        body: JSON.stringify({ config: { model: 'losing-stt-candidate', apiKey: 'losing-stt-secret' } }),
       });
 
       expect(response.status).toBe(409);
@@ -469,24 +605,43 @@ describe('audio transcribe admin router', () => {
       expect(runtimeConfig.stt?.model).toBe('fun-asr');
       expect(onUpdated).not.toHaveBeenCalled();
       expect(onConfigReloaded).not.toHaveBeenCalled();
+      expect(created).toHaveLength(1);
+      await expect(secretVault.getSecret(created[0]!, {
+        actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+      })).rejects.toThrow('secret revoked');
     });
   });
 
-  it('ConfigIdentity 发布失败时响应 fail closed，但 durable commit 保持可刷新', async () => {
-    const onConfigReloaded = vi.fn(async () => {
-      throw new Error('配置文件被并发改写且重载失败');
+  it('ConfigIdentity 发布失败时按 committed 契约保留新 ref 并只回收已替换旧 ref', async () => {
+    let committedRef = '';
+    const onConfigReloaded = vi.fn(async (text: string) => {
+      committedRef = parseAppConfig((await import('jsonc-parser')).parse(text)).stt?.apiKeyRef ?? '';
+      throw new Error(`配置发布失败 ${committedRef} durably-committed-secret`);
     });
-    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, secretVault }) => {
+      const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { model: 'durably-committed-stt' } }),
+        body: JSON.stringify({
+          config: { model: 'durably-committed-stt', apiKey: 'durably-committed-secret' },
+        }),
       });
 
       expect(response.status).toBe(500);
-      expect(parseAppConfig((await import('jsonc-parser')).parse(
+      const responseText = await response.text();
+      expect(responseText).not.toContain('durably-committed-secret');
+      expect(responseText).not.toContain(committedRef);
+      const onDisk = parseAppConfig((await import('jsonc-parser')).parse(
         readFileSync(configPath, 'utf-8'),
-      )).stt?.model).toBe('durably-committed-stt');
+      ));
+      expect(onDisk.stt?.model).toBe('durably-committed-stt');
+      expect(onDisk.stt?.apiKeyRef).toBe(committedRef);
+      await expect(secretVault.getSecret(committedRef, {
+        actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+      })).resolves.toBe('durably-committed-secret');
+      expect(revokeSecret).toHaveBeenCalledOnce();
+      expect(revokeSecret).toHaveBeenCalledWith('dashscope-ref', expect.any(Object));
       expect(onConfigReloaded).toHaveBeenCalledOnce();
     }, { onConfigReloaded });
   });

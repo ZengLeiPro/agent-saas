@@ -400,6 +400,7 @@ OLD_ACTIVE=true
 CANDIDATE_ACTIVE=true
 OLD_DISABLE_ATTEMPTS=0
 CANDIDATE_DISABLE_ATTEMPTS=0
+OLD_PRIVATE_CHECKS=0
 candidate_stopped=false
 if commit_rollback_api_authority blue green "$OLD_NGINX_BACKUP" true true \
   old-api.env candidate_stopped; then
@@ -495,6 +496,7 @@ worker_helpers="$tmp/worker-authority-helpers.sh"
 {
   sed -n '/^revoke_systemd_authority() {/,/^}$/p' "$deploy"
   sed -n '/^acquire_config_governance_fence() {/,/^}$/p' "$deploy"
+  sed -n '/^begin_app_deploy_transaction() {/,/^}$/p' "$deploy"
   sed -n '/^validate_worker_release_boundary() {/,/^}$/p' "$deploy"
   sed -n '/^commit_worker_active_color() {/,/^}$/p' "$deploy"
   sed -n '/^commit_rollback_worker_authority() {/,/^}$/p' "$deploy"
@@ -661,7 +663,16 @@ systemctl() {
   esac
 }
 kill() { return 0; }
-node() { return 0; }
+node() {
+  if [[ " $* " == *"agent-saas-runtime-worker-blue.config-identity.json"* ]]; then
+    OLD_PRIVATE_CHECKS=$((OLD_PRIVATE_CHECKS + 1))
+    if [ "${OLD_READINESS_FAILURE:-false}" = true ] \
+      || { [ "${OLD_INITIAL_INVALID:-false}" = true ] && [ "$OLD_PRIVATE_CHECKS" = 1 ]; }; then
+      return 1
+    fi
+  fi
+  return 0
+}
 sleep() { return 0; }
 
 write_worker_state blue 4242
@@ -670,6 +681,7 @@ OLD_ACTIVE=true
 CANDIDATE_ACTIVE=true
 OLD_DISABLE_ATTEMPTS=0
 CANDIDATE_DISABLE_ATTEMPTS=0
+OLD_PRIVATE_CHECKS=0
 printf '%s\n' "$INITIAL_MARKER" >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
 printf 'candidate-link\n' >"$CANDIDATE_LINK_SENTINEL"
 printf 'candidate-env\n' >"$CANDIDATE_ENV_SENTINEL"
@@ -688,7 +700,12 @@ else
   fi
 fi
 
-test "$candidate_stopped" = true
+if [ "$OLD_READINESS_FAILURE" = true ]; then
+  test "$candidate_stopped" = false
+  ! grep -Fx stop-candidate "$ACTION_LOG" >/dev/null
+else
+  test "$candidate_stopped" = true
+fi
 if [ "$EXPECTED_RESULT" = failure ]; then
   test "$transition_status" -ne 0
   test "$worker_restored" = false
@@ -698,7 +715,11 @@ if [ "$EXPECTED_RESULT" = failure ]; then
     test "$OLD_ACTIVE" = false
     test "$CANDIDATE_ACTIVE" = true
     test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = green
-    test "$(grep -Fxc restore-candidate "$ACTION_LOG")" = 1
+    if [ "$OLD_READINESS_FAILURE" = true ]; then
+      ! grep -Fx restore-candidate "$ACTION_LOG" >/dev/null
+    else
+      test "$(grep -Fxc restore-candidate "$ACTION_LOG")" = 1
+    fi
   else
     test "$OLD_ACTIVE" = true
     test "$CANDIDATE_ACTIVE" = false
@@ -715,17 +736,22 @@ else
   test ! -e "$CANDIDATE_ENV_SENTINEL"
   ! grep -Fx stop-old "$ACTION_LOG" >/dev/null
   ! grep -Fx restore-candidate "$ACTION_LOG" >/dev/null
-  test "$(grep -Fxc start-old "$ACTION_LOG")" = 1
-  stop_candidate_line="$(grep -n -Fm1 stop-candidate "$ACTION_LOG" | cut -d: -f1)"
-  start_old_line="$(grep -n -Fm1 start-old "$ACTION_LOG" | cut -d: -f1)"
-  test "$stop_candidate_line" -lt "$start_old_line"
+  if [ "$OLD_INITIAL_INVALID" = true ]; then
+    test "$(grep -Fxc start-old "$ACTION_LOG")" = 1
+    stop_candidate_line="$(grep -n -Fm1 stop-candidate "$ACTION_LOG" | cut -d: -f1)"
+    start_old_line="$(grep -n -Fm1 start-old "$ACTION_LOG" | cut -d: -f1)"
+    test "$start_old_line" -lt "$stop_candidate_line"
+  else
+    ! grep -Fx start-old "$ACTION_LOG" >/dev/null
+  fi
 fi
 HARNESS
 chmod +x "$rollback_stop_harness"
 run_rollback_stop_case() {
   local disable_status="$1" expected_result="$2" initial_marker="${3:-green}"
   local admitted="${4:-true}" old_disable_status="${5:-0}"
-  local rollback_case="$tmp/rollback-disable-$disable_status-$expected_result-$initial_marker-$admitted-$old_disable_status"
+  local old_readiness_failure="${6:-false}" old_initial_invalid="${7:-false}"
+  local rollback_case="$tmp/rollback-disable-$disable_status-$expected_result-$initial_marker-$admitted-$old_disable_status-$old_readiness_failure-$old_initial_invalid"
   mkdir -p "$rollback_case/run" "$rollback_case/etc" "$rollback_case/process"
   CLEANUP_LIFECYCLE="$lifecycle" \
     WORKER_HELPERS="$worker_helpers" \
@@ -738,6 +764,8 @@ run_rollback_stop_case() {
     CANDIDATE_ACTIVE=true \
     DISABLE_STATUS="$disable_status" \
     OLD_DISABLE_STATUS="$old_disable_status" \
+    OLD_READINESS_FAILURE="$old_readiness_failure" \
+    OLD_INITIAL_INVALID="$old_initial_invalid" \
     CANDIDATE_ADMITTED="$admitted" \
     EXPECTED_RESULT="$expected_result" \
     INITIAL_MARKER="$initial_marker" \
@@ -753,7 +781,12 @@ run_rollback_stop_case() {
 run_rollback_stop_case 73 failure
 run_rollback_stop_case 73 failure blue true 73
 run_rollback_stop_case 73 failure blue false
+# Restart succeeds, but 180 strict private readiness checks time out: candidate
+# authority must be restored and the old marker must never publish.
+run_rollback_stop_case 0 failure green true 0 true
+# 已健康的旧 Worker 不应被 restart；旧边界无效时也必须先恢复再停候选。
 run_rollback_stop_case 0 success
+run_rollback_stop_case 0 success green true 0 false true
 
 worker_fence_conflict_harness="$tmp/worker-fence-conflict-harness.sh"
 cat >"$worker_fence_conflict_harness" <<'HARNESS'
@@ -786,7 +819,8 @@ WORKER_HELPERS="$worker_helpers" \
   bash "$worker_fence_conflict_harness"
 
 app_authority_helpers="$tmp/app-authority-helpers.sh"
-sed -n '/^restore_candidate_app_authority() {/,/^}$/p' "$deploy" >"$app_authority_helpers"
+sed -n '/^validate_candidate_api_routing_preparation() {/,/^# ACS deployment/p' "$deploy" \
+  | sed '$d' >"$app_authority_helpers"
 test -s "$app_authority_helpers"
 bash -n "$app_authority_helpers"
 
@@ -797,11 +831,11 @@ set -euo pipefail
 source "$APP_AUTHORITY_HELPERS"
 restore_candidate_api_authority() {
   if [ "$API_RESTORE_STATUS" -ne 0 ]; then return "$API_RESTORE_STATUS"; fi
-  API_UNIT=candidate
+  [ "${10:-false}" = true ] || API_UNIT=candidate
 }
 restore_candidate_worker_authority() {
   if [ "$WORKER_RESTORE_STATUS" -ne 0 ]; then return "$WORKER_RESTORE_STATUS"; fi
-  WORKER_UNIT=candidate
+  [ "${6:-false}" = true ] || WORKER_UNIT=candidate
 }
 restore_old_api_authority() {
   API_UNIT=old
@@ -812,13 +846,24 @@ restore_old_worker_authority() {
   printf 'blue\n' >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
 }
 validate_api_release_boundary() { return 0; }
+validate_api_release_boundary_from_env() { return 0; }
 validate_worker_release_boundary() { return 0; }
+validate_app_release_envs_match() { return 0; }
+read_release_id_from_env() { printf 'old\n'; }
 validate_api_routing_boundary() { return "$ROUTE_STATUS"; }
+validate_candidate_api_routing_preparation() { return "$ROUTE_STATUS"; }
 acquire_config_governance_fence() { return 0; }
 release_config_governance_fence() { return 0; }
+revoke_systemd_authority() { return 0; }
+commit_candidate_app_authority() {
+  API_UNIT=candidate
+  WORKER_UNIT=candidate
+  printf '%s\n' "$2" >"$AGENT_SAAS_API_ACTIVE_COLOR_FILE"
+  if [ "$APP_COMMIT_STATUS" -ne 0 ]; then return "$APP_COMMIT_STATUS"; fi
+  printf '%s\n' "$6" >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
+}
 commit_app_active_colors() {
   printf '%s\n' "$1" >"$AGENT_SAAS_API_ACTIVE_COLOR_FILE"
-  if [ "$APP_COMMIT_STATUS" -ne 0 ]; then return "$APP_COMMIT_STATUS"; fi
   printf '%s\n' "$2" >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
 }
 API_UNIT=old
@@ -863,7 +908,121 @@ for app_case in candidate worker-failure api-failure routing-failure marker-comm
     bash "$app_authority_harness"
 done
 
-# App marker publication uses one atomic authority-link rename. Kill the exact
+# Exercise the real candidate API/Worker/App helpers. A Worker restart failure must
+# remain entirely in prepare: old API, routed nginx, and the App markers stay old.
+app_prepare_helpers="$tmp/app-prepare-real-helpers.sh"
+{
+  sed -n '/^commit_app_active_colors() {/,/^}$/p' "$deploy"
+  sed -n '/^revoke_systemd_authority() {/,/^}$/p' "$deploy"
+  sed -n '/^restore_candidate_api_authority() {/,/^}$/p' "$deploy"
+  sed -n '/^restore_candidate_worker_authority() {/,/^}$/p' "$deploy"
+  sed -n '/^validate_candidate_api_routing_preparation() {/,/^# ACS deployment/p' "$deploy" \
+    | sed '$d'
+} >"$app_prepare_helpers"
+bash -n "$app_prepare_helpers"
+app_prepare_harness="$tmp/app-prepare-real-harness.sh"
+cat >"$app_prepare_harness" <<'HARNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$APP_PREPARE_HELPERS"
+acquire_config_governance_fence() { return 0; }
+release_config_governance_fence() { return 0; }
+validate_api_release_boundary() {
+  [ "$1" = blue ] || [ "$CANDIDATE_API_ACTIVE" = true ]
+}
+validate_worker_release_boundary() {
+  [ "$1" = blue ] || [ "$CANDIDATE_WORKER_ACTIVE" = true ]
+}
+port_for_color() { [ "$1" = blue ] && printf '4001\n' || printf '4002\n'; }
+other_color() { [ "$1" = blue ] && printf 'green\n' || printf 'blue\n'; }
+sleep() { return 0; }
+curl() { return 0; }
+nginx() { printf 'nginx %s\n' "$*" >>"$ACTION_LOG"; return 0; }
+systemctl() {
+  local action="$1" unit="${*: -1}"
+  printf 'systemctl %s\n' "$*" >>"$ACTION_LOG"
+  case "$action" in
+    enable)
+      if [[ "$unit" == agent-saas-server@green ]]; then CANDIDATE_API_ENABLED=true; fi
+      if [[ "$unit" == agent-saas-runtime-worker@green ]]; then CANDIDATE_WORKER_ENABLED=true; fi
+      ;;
+    restart)
+      if [[ "$unit" == agent-saas-server@green ]]; then CANDIDATE_API_ACTIVE=true; return 0; fi
+      if [[ "$unit" == agent-saas-runtime-worker@green ]]; then return 79; fi
+      ;;
+    disable)
+      if [[ "$unit" == agent-saas-server@blue ]]; then OLD_API_ACTIVE=false; OLD_API_ENABLED=false; fi
+      if [[ "$unit" == agent-saas-server@green ]]; then CANDIDATE_API_ACTIVE=false; CANDIDATE_API_ENABLED=false; fi
+      if [[ "$unit" == agent-saas-runtime-worker@green ]]; then CANDIDATE_WORKER_ACTIVE=false; CANDIDATE_WORKER_ENABLED=false; fi
+      ;;
+    is-active)
+      case "$unit" in
+        agent-saas-server@blue) [ "$OLD_API_ACTIVE" = true ] ;;
+        agent-saas-server@green) [ "$CANDIDATE_API_ACTIVE" = true ] ;;
+        agent-saas-runtime-worker@blue) return 0 ;;
+        agent-saas-runtime-worker@green) [ "$CANDIDATE_WORKER_ACTIVE" = true ] ;;
+      esac
+      return
+      ;;
+    is-enabled)
+      case "$unit" in
+        agent-saas-server@blue) [ "$OLD_API_ENABLED" = true ] ;;
+        agent-saas-server@green) [ "$CANDIDATE_API_ENABLED" = true ] ;;
+        agent-saas-runtime-worker@blue) return 0 ;;
+        agent-saas-runtime-worker@green) [ "$CANDIDATE_WORKER_ENABLED" = true ] ;;
+      esac
+      return
+      ;;
+  esac
+  return 0
+}
+release_id=rc-20260904-01
+OLD_API_ACTIVE=true
+OLD_API_ENABLED=true
+CANDIDATE_API_ACTIVE=false
+CANDIDATE_API_ENABLED=false
+CANDIDATE_WORKER_ACTIVE=false
+CANDIDATE_WORKER_ENABLED=false
+mkdir -p "$AGENT_SAAS_API_RUN_ROOT" "$AGENT_SAAS_WORKER_RUN_ROOT"
+printf 'blue\n' >"$AGENT_SAAS_API_ACTIVE_COLOR_FILE"
+printf 'blue\n' >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
+printf '# active=blue release=old\n' >"$AGENT_SAAS_NGINX_UPSTREAM_FILE"
+cat >"$CANDIDATE_NGINX_BACKUP" <<EOF
+# active=green release=$release_id
+upstream agent_saas_backend {
+    server 127.0.0.1:4002;
+    server 127.0.0.1:4001 backup;
+}
+EOF
+: >"$ACTION_LOG"
+status=0
+restore_candidate_app_authority blue green "$CANDIDATE_NGINX_BACKUP" '{}' \
+  "$OLD_NGINX_BACKUP" true true blue green candidate-worker.env \
+  old-worker.env old-api.env || status=$?
+test "$status" -ne 0
+test "$OLD_API_ACTIVE:$OLD_API_ENABLED" = true:true
+test "$(cat "$AGENT_SAAS_API_ACTIVE_COLOR_FILE"):$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = blue:blue
+test "$(cat "$AGENT_SAAS_NGINX_UPSTREAM_FILE")" = '# active=blue release=old'
+! grep -F 'disable --now agent-saas-server@blue' "$ACTION_LOG" >/dev/null
+! grep -F 'reload nginx' "$ACTION_LOG" >/dev/null
+HARNESS
+chmod +x "$app_prepare_harness"
+app_prepare_root="$tmp/app-prepare-worker-failure"
+mkdir -p "$app_prepare_root"
+printf '# active=blue release=old\n' >"$app_prepare_root/old-upstream.conf"
+APP_PREPARE_HELPERS="$app_prepare_helpers" \
+  AGENT_SAAS_API_ACTIVE_COLOR_FILE="$app_prepare_root/api-color" \
+  AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$app_prepare_root/worker-color" \
+  AGENT_SAAS_NGINX_UPSTREAM_FILE="$app_prepare_root/upstream.conf" \
+  AGENT_SAAS_API_RUN_ROOT="$app_prepare_root/api-run" \
+  AGENT_SAAS_WORKER_RUN_ROOT="$app_prepare_root/worker-run" \
+  CANDIDATE_NGINX_BACKUP="$app_prepare_root/candidate-upstream.conf" \
+  OLD_NGINX_BACKUP="$app_prepare_root/old-upstream.conf" \
+  ACTION_LOG="$app_prepare_root/actions.log" \
+  GITHUB_RUN_ID=4242 GITHUB_RUN_ATTEMPT=7 \
+  bash "$app_prepare_harness"
+
+# App marker publication uses one atomic authority-link rename. Kill that exact
 # helper after every rename and prove observers can see only the complete old
 # pair or the complete new pair, never a split API/Worker authority.
 app_marker_helpers="$tmp/app-marker-helpers.sh"
@@ -977,9 +1136,31 @@ if acquire_config_governance_fence "$guard_root" 2>/dev/null; then
   echo 'existing OS guard must block App authority mutation' >&2
   exit 1
 fi
+
+# Execute the exact PHASE=app entry helper under the held guard. Errexit must
+# happen before rollback arming or any mocked production mutation.
+app_guard_action_log="$guard_root/production-actions.log"
+app_guard_marker="$guard_root/rollback-attempted-app"
+set +e
+(
+  set -euo pipefail
+  PHASE=app
+  AGENT_SAAS_RUNTIME_DATA_ROOT="$guard_root"
+  ROLLBACK_ATTEMPTED_MARKER="$app_guard_marker"
+  unexpected_production_mutation() { printf 'unexpected mutation\n' >>"$app_guard_action_log"; }
+  begin_app_deploy_transaction
+  arm_deploy_rollback unexpected_production_mutation
+  unexpected_production_mutation
+) 2>/dev/null
+app_guard_status=$?
+set -e
+test "$app_guard_status" -ne 0
+test ! -e "$app_guard_action_log"
+test ! -e "$app_guard_marker"
+test ! -e "$guard_root/config-governance/config.lock"
+
 flock -u "$held_guard_fd"
 exec {held_guard_fd}>&-
-test ! -e "$guard_root/config-governance/config.lock"
 
 # Once flock is free, a dead owner older than the shared 120-second threshold
 # is crash residue and must not block every future deployment forever.
@@ -1015,4 +1196,4 @@ acquire_config_governance_fence "$owner_root"
 release_config_governance_fence
 test ! -e "$owner_root/config-governance/config.lock"
 
-echo 'deploy rollback lifecycle and App authority boundary fault injection: ok'
+echo 'deploy rollback lifecycle, fence ordering, and atomic App authority fault injection: ok'

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parse as parseJsonc } from 'jsonc-parser';
 
 import type { AppConfig } from '../app/config.js';
@@ -382,6 +382,110 @@ describe('Secret ref 版本与轮换（明文不可见时改变 identity）', ()
     });
     const observation = await computeObservedConfigIdentity(config, vault);
     expect(observation.versionResolution).not.toBe('resolved');
+  });
+
+  it('重复 credential ref 全成功时只 inspect 一次，计数与版本摘要按唯一 ref 计算', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret('global', 'tenant-hand', 'value', SYSTEM_CALLER);
+    const inspectRef = vi.spyOn(vault, 'inspectRef');
+    const duplicate = baseConfig({
+      codexSubscription: { enabled: true, credentialRefs: [ref.id, ref.id] },
+    });
+    const single = baseConfig({
+      codexSubscription: { enabled: true, credentialRefs: [ref.id] },
+    });
+
+    const observation = await computeObservedConfigIdentity(duplicate, vault);
+
+    expect(inspectRef).toHaveBeenCalledTimes(1);
+    expect(observation).toMatchObject({
+      versionResolution: 'resolved',
+      secretRefCount: 1,
+      unresolvedRefPaths: [],
+    });
+    expect(observation.credentialVersionDigest).not.toBeNull();
+    // 版本观测按唯一 ref 计算，但配置投影仍保留数组的真实重复结构。
+    expect(digestOf(duplicate)).not.toBe(digestOf(single));
+    expect(JSON.stringify(observation)).not.toContain(ref.id);
+  });
+
+  it('重复 credential ref 全失败时按唯一 ref 判 unavailable，且重复 path 只报告一次', async () => {
+    const vault = new InMemorySecretVault();
+    const inspectRef = vi.spyOn(vault, 'inspectRef');
+    const config = baseConfig({
+      codexSubscription: {
+        enabled: true,
+        credentialRefs: ['missing-duplicate-ref', 'missing-duplicate-ref'],
+      },
+    });
+
+    const observation = await computeObservedConfigIdentity(config, vault);
+
+    expect(inspectRef).toHaveBeenCalledTimes(1);
+    expect(observation).toMatchObject({
+      credentialVersionDigest: null,
+      versionResolution: 'unavailable',
+      secretRefCount: 1,
+      unresolvedRefPaths: ['codexSubscription.credentialRefs'],
+    });
+    expect(
+      parseConfigIdentitySummary({
+        schemaVersion: 1,
+        status: 'unverifiable',
+        reason: 'expected_not_bound',
+        observed: {
+          schemaVersion: observation.schemaVersion,
+          digest: observation.digest,
+          credentialVersionDigest: observation.credentialVersionDigest,
+          versionResolution: observation.versionResolution,
+          secretRefCount: observation.secretRefCount,
+        },
+      }),
+    ).not.toBeNull();
+    expect(JSON.stringify(observation)).not.toContain('missing-duplicate-ref');
+  });
+
+  it('重复 ref 的 inspect 元数据瞬时变化时仍只采用一次且 wire schema 可解析', async () => {
+    const refId = 'transient-duplicate-ref';
+    const inspectRef = vi.fn(async () => {
+      if (inspectRef.mock.calls.length > 1) return null;
+      return {
+        id: refId,
+        ownerId: 'global',
+        kind: 'tenant-hand',
+        metadata: {},
+        createdAt: '2026-09-04T00:00:00.000Z',
+        updatedAt: '2026-09-04T00:00:00.000Z',
+        version: 7,
+      };
+    });
+    const config = baseConfig({
+      codexSubscription: { enabled: true, credentialRefs: [refId, refId] },
+    });
+
+    const observation = await computeObservedConfigIdentity(config, { inspectRef });
+
+    expect(inspectRef).toHaveBeenCalledTimes(1);
+    expect(observation).toMatchObject({
+      versionResolution: 'resolved',
+      secretRefCount: 1,
+      unresolvedRefPaths: [],
+    });
+    expect(observation.credentialVersionDigest).not.toBeNull();
+    expect(
+      parseConfigIdentitySummary({
+        schemaVersion: 1,
+        status: 'unverifiable',
+        reason: 'expected_not_bound',
+        observed: {
+          schemaVersion: observation.schemaVersion,
+          digest: observation.digest,
+          credentialVersionDigest: observation.credentialVersionDigest,
+          versionResolution: observation.versionResolution,
+          secretRefCount: observation.secretRefCount,
+        },
+      }),
+    ).not.toBeNull();
   });
 
   it('多组件/多字段 ref 语义一致（codex credentialRefs 数组同样进入版本摘要）', async () => {

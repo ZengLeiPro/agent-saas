@@ -23,7 +23,7 @@ import {
   PLATFORM_TOOL_CATALOG_BY_ID,
   PLATFORM_TOOL_SOURCE_MODULE,
 } from '../agent/toolCatalog.js';
-import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import { GLOBAL_OWNER_ID, type SecretVault, type VaultCaller } from '../security/secretVault.js';
 import {
   AdminConfigMutationService,
   ConfigConflictError,
@@ -32,6 +32,13 @@ import {
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { Request } from 'express';
+import { RouteSecretRefMutation } from './secretRefMutation.js';
+
+const SEARCH_SECRET_WRITER: VaultCaller = {
+  actor: 'system',
+  userId: 'tool_controls_admin',
+  scopes: ['secret:web_tools:write', 'secret:web_tools:revoke'],
+};
 
 function configRequestRevisions(req: Request): string[] {
   const ifMatch = mutationRequestContext(req).expectedFingerprint;
@@ -43,10 +50,14 @@ function revisionConflict(configText: string): ConfigConflictError {
   return new ConfigConflictError(configFingerprint(parseJsonc(configText)), configRevision(configText));
 }
 
-function sendRevisionMutationError(res: Response, error: unknown): void {
+function sendRevisionMutationError(res: Response, error: unknown, safeMessage?: string): void {
   if (error instanceof ConfigConflictError && error.currentRevision) {
     res.setHeader('ETag', `"${error.currentRevision}"`);
     res.status(409).json({ error: error.message, code: error.code, revision: error.currentRevision });
+    return;
+  }
+  if (safeMessage !== undefined) {
+    res.status(500).json({ error: safeMessage });
     return;
   }
   sendConfigMutationError(res, error);
@@ -83,6 +94,7 @@ function stripSearchAdminFields(search: RawObject): RawObject {
   delete next.apiKeyConfigured;
   if (next.apiKey === '') delete next.apiKey;
   if (next.apiKeyRef === '') delete next.apiKeyRef;
+  if (isObject(next.global)) next.global = stripSearchAdminFields(next.global);
   return next;
 }
 
@@ -93,6 +105,42 @@ function stripAdminOnlyFields(webTools: RawObject): RawObject {
   return next;
 }
 
+function hydrateCredential(
+  existing: RawObject | undefined,
+  requested: RawObject,
+  defaultProvider: string,
+  label: string,
+): void {
+  const requestedInline = typeof requested.apiKey === 'string' && requested.apiKey.length > 0
+    ? requested.apiKey
+    : undefined;
+  const requestedRef = typeof requested.apiKeyRef === 'string' && requested.apiKeyRef.length > 0
+    ? requested.apiKeyRef
+    : undefined;
+  if (requestedInline || !existing) return;
+
+  const existingInline = typeof existing.apiKey === 'string' && existing.apiKey.length > 0
+    ? existing.apiKey
+    : undefined;
+  const existingRef = typeof existing.apiKeyRef === 'string' && existing.apiKeyRef.length > 0
+    ? existing.apiKeyRef
+    : undefined;
+  const reusesExistingCredential = !requestedRef || requestedRef === existingRef;
+  if (!reusesExistingCredential || (!existingInline && !existingRef)) return;
+
+  const existingProvider = typeof existing.provider === 'string' ? existing.provider : defaultProvider;
+  const requestedProvider = typeof requested.provider === 'string' ? requested.provider : defaultProvider;
+  const existingEndpoint = typeof existing.endpoint === 'string' ? existing.endpoint : '';
+  const requestedEndpoint = typeof requested.endpoint === 'string' ? requested.endpoint : '';
+  if (existingProvider !== requestedProvider || existingEndpoint !== requestedEndpoint) {
+    throw new Error(`${label} provider 或 endpoint 已变更，必须重新提供 API Key`);
+  }
+  if (!requestedRef) {
+    if (existingInline) requested.apiKey = existingInline;
+    else requested.apiKeyRef = existingRef;
+  }
+}
+
 function hydratePreservedSearchCredential(rawConfig: unknown, webTools: unknown): unknown {
   if (webTools === null || webTools === undefined) return undefined;
   if (!isObject(webTools)) return webTools;
@@ -100,20 +148,23 @@ function hydratePreservedSearchCredential(rawConfig: unknown, webTools: unknown)
   const next = stripAdminOnlyFields(webTools);
   if (!isObject(next.search)) return next;
 
-  const search = next.search;
-  const hasInline = typeof search.apiKey === 'string' && search.apiKey.length > 0;
-  const hasRef = typeof search.apiKeyRef === 'string' && search.apiKeyRef.length > 0;
-  if (hasInline || hasRef) return next;
-
   const existing = currentWebTools(rawConfig);
   const existingSearch = isObject(existing?.search) ? existing.search : undefined;
-  if (typeof existingSearch?.apiKey === 'string' && existingSearch.apiKey.length > 0) {
-    return { ...next, search: { ...search, apiKey: existingSearch.apiKey } };
+  const search: RawObject = { ...next.search };
+  hydrateCredential(existingSearch, search, 'volcengine', 'WebSearch 主源');
+
+  const existingGlobal = isObject(existingSearch?.global) ? existingSearch.global : undefined;
+  const globalSpecified = Object.prototype.hasOwnProperty.call(search, 'global');
+  if (search.global === null) {
+    delete search.global;
+  } else if (!globalSpecified) {
+    if (existingGlobal) search.global = { ...existingGlobal };
+  } else if (isObject(search.global)) {
+    const globalSearch: RawObject = { ...search.global };
+    hydrateCredential(existingGlobal, globalSearch, 'tavily', 'WebSearch 境外源');
+    search.global = globalSearch;
   }
-  if (typeof existingSearch?.apiKeyRef === 'string' && existingSearch.apiKeyRef.length > 0) {
-    return { ...next, search: { ...search, apiKeyRef: existingSearch.apiKeyRef } };
-  }
-  return next;
+  return { ...next, search };
 }
 
 function pruneUnknownToolControls(toolControls: ToolControlsConfig): ToolControlsConfig {
@@ -149,46 +200,76 @@ export function sanitizeWebToolsConfig(webTools: WebToolsConfig) {
   if (!webTools) return null;
   const { search, ...rest } = webTools;
   if (!search) return rest;
-  const { apiKey, ...safeSearch } = search;
+  const { apiKey, global: globalSearch, ...safeSearch } = search;
+  const sanitizedGlobal = globalSearch
+    ? (() => {
+        const { apiKey: globalApiKey, ...safeGlobal } = globalSearch;
+        return {
+          ...safeGlobal,
+          hasApiKey: (typeof globalApiKey === 'string' && globalApiKey.length > 0)
+            || (typeof safeGlobal.apiKeyRef === 'string' && safeGlobal.apiKeyRef.length > 0),
+        };
+      })()
+    : undefined;
   return {
     ...rest,
     search: {
       ...safeSearch,
       hasApiKey: (typeof apiKey === 'string' && apiKey.length > 0)
         || (typeof safeSearch.apiKeyRef === 'string' && safeSearch.apiKeyRef.length > 0),
+      ...(sanitizedGlobal ? { global: sanitizedGlobal } : {}),
     },
   };
 }
 
+function webSearchSecretRefs(
+  settings: Pick<AppConfig, 'toolControls' | 'webTools'> | undefined,
+): Array<string | undefined> {
+  return [settings?.webTools?.search?.apiKeyRef, settings?.webTools?.search?.global?.apiKeyRef];
+}
+
+function submittedWebSearchSecrets(body: unknown): Array<string | undefined> {
+  if (!isObject(body) || !isObject(body.webTools) || !isObject(body.webTools.search)) return [];
+  const search = body.webTools.search;
+  return [
+    typeof search.apiKey === 'string' ? search.apiKey : undefined,
+    typeof search.apiKeyRef === 'string' ? search.apiKeyRef : undefined,
+    isObject(search.global) && typeof search.global.apiKey === 'string'
+      ? search.global.apiKey
+      : undefined,
+    isObject(search.global) && typeof search.global.apiKeyRef === 'string'
+      ? search.global.apiKeyRef
+      : undefined,
+  ];
+}
+
 async function persistSearchCredential(
   settings: Pick<AppConfig, 'toolControls' | 'webTools'>,
-  secretVault?: SecretVault,
+  secretMutation: RouteSecretRefMutation,
 ): Promise<Pick<AppConfig, 'toolControls' | 'webTools'>> {
   const search = settings.webTools?.search;
-  if (!secretVault || !search) return settings;
+  if (!search) return settings;
   if (!search.apiKey && !search.global?.apiKey) return settings;
+  if (!secretMutation.available) {
+    throw new Error('SecretVault 未配置，不能保存 WebSearch 密钥');
+  }
 
-  const vaultPut = (plaintext: string, provider: string | undefined, purpose: string) => secretVault.putSecret(
+  const vaultPut = (plaintext: string, provider: string | undefined, purpose: string) => secretMutation.put(
     GLOBAL_OWNER_ID,
     'web_tools',
     plaintext,
-    {
-      actor: 'system',
-      userId: 'tool_controls_admin',
-      scopes: ['secret:web_tools:write'],
-    },
     { provider, purpose },
   );
 
   const { apiKey, global: globalSearch, ...safeSearch } = search;
   const ref = apiKey ? await vaultPut(apiKey, search.provider, 'web-search') : undefined;
 
-  // 境外源凭据与主源同等对待：绝不把明文留在 config.json（2026-08-16 实测漏配）。
+  // 境外源凭据与主源同等进入 Vault：绝不把明文留在 config.json（2026-08-16 实测漏配）。
   let safeGlobal = globalSearch;
   if (globalSearch?.apiKey) {
     const { apiKey: globalKey, ...restGlobal } = globalSearch;
     const globalRef = await vaultPut(globalKey, globalSearch.provider, 'web-search-global');
-    safeGlobal = { ...restGlobal, apiKeyRef: globalRef.id };
+    safeGlobal = { ...restGlobal, apiKeyRef: globalRef };
   }
 
   return {
@@ -197,7 +278,7 @@ async function persistSearchCredential(
       ...settings.webTools,
       search: {
         ...safeSearch,
-        ...(ref ? { apiKeyRef: ref.id } : {}),
+        ...(ref ? { apiKeyRef: ref } : {}),
         ...(safeGlobal ? { global: safeGlobal } : {}),
       },
     },
@@ -412,6 +493,7 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
   router.put('/', async (req, res) => {
     const configPath = getAppConfigPath(options.processCwd);
     let configText: string; let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
+    const secretMutation = new RouteSecretRefMutation(options.secretVault, SEARCH_SECRET_WRITER);
 
     try {
       configText = readFileSync(configPath, 'utf-8');
@@ -421,12 +503,16 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       const latestText = readFileSync(configPath, 'utf-8');
       if (latestText !== configText) throw revisionConflict(latestText);
       const rawConfig = parseJsonc(configText);
+      secretMutation.trackPrevious(webSearchSecretRefs(parseAppConfig(rawConfig)));
       nextSettings = validateToolSettingsUpdate(rawConfig, req.body?.toolControls, req.body?.webTools);
+      nextSettings = await persistSearchCredential(nextSettings, secretMutation);
+      // 与运行时相同，验证 hook 只接收已去明文且可实际解析的 SecretVault ref 配置。
       await options.validateToolSettingsConfig?.(nextSettings);
-      nextSettings = await persistSearchCredential(nextSettings, options.secretVault);
     } catch (error) {
+      const message = secretMutation.redactError(error, submittedWebSearchSecrets(req.body));
+      await secretMutation.failed(error, webSearchSecretRefs(nextSettings!));
       if (error instanceof ConfigConflictError) { sendRevisionMutationError(res, error); return; }
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      res.status(400).json({ error: message });
       return;
     }
 
@@ -438,11 +524,17 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         configText,
         nextSettings,
       );
+      await secretMutation.committed(webSearchSecretRefs(persisted.settings));
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
       res.setHeader('ETag', `"${persisted.revision}"`);
       res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {
-      sendRevisionMutationError(res, error);
+      const message = secretMutation.redactError(error, [
+        ...submittedWebSearchSecrets(req.body),
+        ...webSearchSecretRefs(nextSettings),
+      ]);
+      await secretMutation.failed(error, webSearchSecretRefs(nextSettings));
+      sendRevisionMutationError(res, error, message);
     }
   });
 

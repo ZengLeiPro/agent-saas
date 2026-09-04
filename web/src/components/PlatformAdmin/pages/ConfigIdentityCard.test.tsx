@@ -76,10 +76,14 @@ function setup(snapshotResponse: unknown) {
 
 describe('平台概览「配置身份」区块（TASK-318）', () => {
   beforeEach(() => {
+    overviewSnapshot.mockReset();
+    billingTrend.mockReset();
+    overviewTrends.mockReset();
     window.history.replaceState({}, '', '/platform-console/overview/overview');
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
     window.history.replaceState({}, '', '/');
@@ -272,36 +276,27 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
   });
 
   it('成功后定时刷新失败时也降级，不保留旧 consistent 绿态', async () => {
-    let refreshIntervalCallback: (() => void) | undefined;
-    vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
-      if (timeout === 15_000) refreshIntervalCallback = handler as () => void;
-      return {} as ReturnType<typeof setInterval>;
-    });
+    vi.useFakeTimers();
     setup({ ...baseSnapshot, configIdentity: identity({}) });
+    overviewSnapshot
+      .mockResolvedValueOnce({ ...baseSnapshot, configIdentity: identity({}) })
+      .mockRejectedValueOnce(new Error('poll failed'));
     render(<OverviewPage />);
-    await waitFor(() => {
-      expect(screen.getByTestId('config-identity-status').textContent).toBe('一致');
-    });
-
-    expect(refreshIntervalCallback).toBeTypeOf('function');
-    overviewSnapshot.mockRejectedValueOnce(new Error('poll failed'));
     await act(async () => {
-      refreshIntervalCallback?.();
       await Promise.resolve();
     });
+    expect(screen.getByTestId('config-identity-status').textContent).toBe('一致');
 
-    await waitFor(() => {
-      expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
     });
+
+    expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
     expect(document.body.textContent).toContain('poll failed');
   });
 
   it('较早请求晚到时不能覆盖较新失败后的保守降级', async () => {
-    let refreshIntervalCallback: (() => void) | undefined;
-    vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
-      if (timeout === 15_000) refreshIntervalCallback = handler as () => void;
-      return {} as ReturnType<typeof setInterval>;
-    });
+    vi.useFakeTimers();
     let resolveInitial!: (value: unknown) => void;
     overviewSnapshot
       .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
@@ -316,14 +311,11 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
     });
     render(<OverviewPage />);
 
-    expect(refreshIntervalCallback).toBeTypeOf('function');
     await act(async () => {
-      refreshIntervalCallback?.();
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(30_000);
     });
-    await waitFor(() => {
-      expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
-    });
+    expect(overviewSnapshot).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
 
     await act(async () => {
       resolveInitial({ ...baseSnapshot, configIdentity: identity({}) });
@@ -343,8 +335,8 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
           schemaVersion: 1,
           digest: fullDigest,
           credentialVersionDigest: null,
-          versionResolution: 'unavailable',
-          secretRefCount: 3,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
         },
       }),
     });

@@ -577,32 +577,64 @@ export interface SecretRefVersionResolution {
   /** refId -> version（解析成功）或 null（不可解析）。 */
   versionByRefId: Map<string, number | null>;
   resolution: ConfigIdentityVersionResolution;
-  /** 解析失败的配置路径（不含 ref id，避免任何元数据外泄歧义）。 */
+  /** 解析失败的配置路径（不含 ref id，同一路径只出现一次）。 */
   unresolvedPaths: string[];
+}
+
+interface UniqueManagedSecretRef {
+  refId: string;
+  refDigest: string;
+  /** 同一 ref 可被多个字段引用；重复数组项产生的相同 path 在这里去重。 */
+  paths: string[];
+}
+
+function uniqueManagedSecretRefs(
+  refs: ReadonlyArray<ManagedSecretRefEntry>,
+): UniqueManagedSecretRef[] {
+  const byRefId = new Map<string, { refDigest: string; paths: Set<string> }>();
+  for (const entry of refs) {
+    const existing = byRefId.get(entry.refId);
+    if (existing) {
+      existing.paths.add(entry.path);
+    } else {
+      byRefId.set(entry.refId, { refDigest: entry.refDigest, paths: new Set([entry.path]) });
+    }
+  }
+  return [...byRefId.entries()].map(([refId, entry]) => ({
+    refId,
+    refDigest: entry.refDigest,
+    paths: [...entry.paths],
+  }));
 }
 
 /**
  * 通过 vault 的只读元数据接口解析受管 ref 的 opaque version。
- * 不读取、不哈希 secret 明文；vault 不支持 inspectRef 时返回 unavailable。
+ * 每个唯一 ref id 只 inspect 一次；不读取、不哈希 secret 明文。
+ * vault 不支持 inspectRef 时返回 unavailable。
  */
 export async function resolveSecretRefVersions(
   refs: ReadonlyArray<ManagedSecretRefEntry>,
   vault: Pick<SecretVault, 'inspectRef'> | undefined,
 ): Promise<SecretRefVersionResolution> {
+  const uniqueRefs = uniqueManagedSecretRefs(refs);
   const versionByRefId = new Map<string, number | null>();
-  const unresolvedPaths: string[] = [];
-  if (refs.length === 0) {
-    return { versionByRefId, resolution: 'resolved', unresolvedPaths };
+  const unresolvedPaths = new Set<string>();
+  if (uniqueRefs.length === 0) {
+    return { versionByRefId, resolution: 'resolved', unresolvedPaths: [] };
   }
   if (!vault || typeof vault.inspectRef !== 'function') {
-    for (const entry of refs) {
+    for (const entry of uniqueRefs) {
       versionByRefId.set(entry.refId, null);
-      unresolvedPaths.push(entry.path);
+      for (const path of entry.paths) unresolvedPaths.add(path);
     }
-    return { versionByRefId, resolution: 'unavailable', unresolvedPaths };
+    return {
+      versionByRefId,
+      resolution: 'unavailable',
+      unresolvedPaths: [...unresolvedPaths],
+    };
   }
   let resolvedCount = 0;
-  for (const entry of refs) {
+  for (const entry of uniqueRefs) {
     try {
       const ref = await vault.inspectRef(entry.refId, {
         actor: 'system',
@@ -618,16 +650,23 @@ export async function resolveSecretRefVersions(
           ? ref.version
           : null;
       versionByRefId.set(entry.refId, version);
-      if (version !== null) resolvedCount += 1;
-      else unresolvedPaths.push(entry.path);
+      if (version !== null) {
+        resolvedCount += 1;
+      } else {
+        for (const path of entry.paths) unresolvedPaths.add(path);
+      }
     } catch {
       versionByRefId.set(entry.refId, null);
-      unresolvedPaths.push(entry.path);
+      for (const path of entry.paths) unresolvedPaths.add(path);
     }
   }
   const resolution: ConfigIdentityVersionResolution =
-    resolvedCount === refs.length ? 'resolved' : resolvedCount > 0 ? 'partial' : 'unavailable';
-  return { versionByRefId, resolution, unresolvedPaths };
+    resolvedCount === uniqueRefs.length
+      ? 'resolved'
+      : resolvedCount > 0
+        ? 'partial'
+        : 'unavailable';
+  return { versionByRefId, resolution, unresolvedPaths: [...unresolvedPaths] };
 }
 
 // ── observed identity ────────────────────────────────────────────────────────
@@ -638,7 +677,7 @@ export interface ConfigIdentityObservation {
   credentialVersionDigest: string | null;
   versionResolution: ConfigIdentityVersionResolution;
   secretRefCount: number;
-  /** 解析失败的受管字段路径（脱敏；不含 ref id）。 */
+  /** 解析失败的受管字段路径（脱敏；不含 ref id，同一路径只出现一次）。 */
   unresolvedRefPaths: string[];
   computedAt: string;
 }
@@ -655,8 +694,9 @@ export async function computeObservedConfigIdentity(
 ): Promise<ConfigIdentityObservation> {
   const { projection, managedRefs } = buildCanonicalConfigProjection(config, processCwd);
   const digest = calculateConfigIdentityDigest(projection);
+  const uniqueRefs = uniqueManagedSecretRefs(managedRefs);
   const versions = await resolveSecretRefVersions(managedRefs, vault);
-  const versionEntries = managedRefs.map((entry) => ({
+  const versionEntries = uniqueRefs.map((entry) => ({
     refDigest: entry.refDigest,
     version: versions.versionByRefId.get(entry.refId) ?? null,
   }));
@@ -670,7 +710,7 @@ export async function computeObservedConfigIdentity(
     digest,
     credentialVersionDigest,
     versionResolution: versions.resolution,
-    secretRefCount: managedRefs.length,
+    secretRefCount: uniqueRefs.length,
     unresolvedRefPaths: versions.unresolvedPaths,
     computedAt: now().toISOString(),
   };

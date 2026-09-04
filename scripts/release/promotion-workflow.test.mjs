@@ -875,7 +875,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   );
   assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
   assert.match(deploy, /runtime_data_root\/config-governance\/config\.lock/u);
-  assert.match(deploy, /acquire_config_governance_fence \/mnt\/agent-saas\/server-data/u);
+  assert.match(deploy, /acquire_config_governance_fence \\\n\s+"\$\{AGENT_SAAS_RUNTIME_DATA_ROOT:-\/mnt\/agent-saas\/server-data\}"/u);
   assert.match(deploy, /Candidate App final API ConfigIdentity/u);
   assert.match(deploy, /Candidate App final Worker ConfigIdentity/u);
   assert.match(deploy, /Rollback Worker final ConfigIdentity/u);
@@ -898,17 +898,9 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(deploy, /app_committed=true/u);
   assert.match(
     deploy,
-    /commit_app_active_colors "\$api_active" "\$worker_active" \|\| rollback_status=1/u,
+    /&& commit_app_active_colors "\$api_active" "\$worker_active" "\$api_idle"/u,
   );
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);
-  assert.ok(
-    deploy.indexOf('systemctl restart "agent-saas-runtime-worker@$worker_active"') <
-      deploy.indexOf('commit_app_active_colors "$api_active" "$worker_active"'),
-  );
-  assert.ok(
-    deploy.indexOf('commit_app_active_colors "$api_active" "$worker_active"') <
-      deploy.indexOf('systemctl reload nginx || rollback_status=1'),
-  );
   assert.match(deploy, /nginx-candidate-upstream\.conf/u);
   assert.match(deploy, /had_nginx=false/u);
   assert.match(deploy, /rm -f "\$upstream"/u);

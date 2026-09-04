@@ -230,8 +230,8 @@ export function buildAdminApiPath(path: string, query: Record<string, QueryValue
   return `/api/admin${path}${s ? `?${s}` : ""}`;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await authFetch(path);
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await authFetch(path, { signal });
   const text = await res.text();
   const body = text
     ? safeParseJson<T & { error?: string }>(text, {} as T & { error?: string })
@@ -271,18 +271,18 @@ export const platformAdminApi = {
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));
   },
-  async overviewSnapshot(): Promise<OverviewSnapshot> {
-    const snapshot = await getJson<OverviewSnapshot>(buildAdminApiPath("/overview/snapshot"));
+  async overviewSnapshot(signal?: AbortSignal): Promise<OverviewSnapshot> {
+    const snapshot = await getJson<OverviewSnapshot>(buildAdminApiPath("/overview/snapshot"), signal);
     return {
       ...snapshot,
       configIdentity: parseConfigIdentitySummary(snapshot.configIdentity),
     };
   },
-  overviewTrends(days = 14): Promise<PlatformTrendResponse> {
-    return getJson(buildAdminApiPath("/overview/trends", { days }));
+  overviewTrends(days = 14, signal?: AbortSignal): Promise<PlatformTrendResponse> {
+    return getJson(buildAdminApiPath("/overview/trends", { days }), signal);
   },
-  billingTrend(days = 14): Promise<BillingAuditTrendResponse> {
-    return getJson(buildAdminApiPath("/billing/audit", { days }));
+  billingTrend(days = 14, signal?: AbortSignal): Promise<BillingAuditTrendResponse> {
+    return getJson(buildAdminApiPath("/billing/audit", { days }), signal);
   },
   tenantOverview(tenantId?: string): Promise<TenantOverviewResponse> {
     return getJson(buildAdminApiPath("/tenants/overview", { tenantId }));

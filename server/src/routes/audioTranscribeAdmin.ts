@@ -6,7 +6,7 @@ import { isToolEnabled } from '../agent/toolRuntime.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, SttConfig } from '../app/config.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
-import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import { GLOBAL_OWNER_ID, type SecretVault, type VaultCaller } from '../security/secretVault.js';
 import {
   AdminConfigMutationService,
   ConfigConflictError,
@@ -15,10 +15,16 @@ import {
 import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { ConfigWriteConflictError } from './configWriteLock.js';
+import { RouteSecretRefMutation } from './secretRefMutation.js';
 
 const DEFAULT_BUCKET = 'ky-azeroth-upload';
 const DEFAULT_ENDPOINT = 'https://oss-cn-shenzhen.aliyuncs.com';
 const WRITER_PRINCIPAL = 'audio_transcribe_config_admin';
+const SECRET_WRITER: VaultCaller = {
+  actor: 'system',
+  userId: WRITER_PRINCIPAL,
+  scopes: ['secret:stt:write', 'secret:stt:revoke'],
+};
 
 export interface CreateAudioTranscribeAdminRouterOptions {
   processCwd: string;
@@ -182,10 +188,14 @@ function assertEnabledCredentialsComplete(staged: SttConfig | undefined): void {
   }
 }
 
+function sttSecretRefs(stt: SttConfig | undefined): Array<string | undefined> {
+  return SECRET_FIELDS.map((field) => stt?.[field.refKey]);
+}
+
 async function persistSubmittedSecrets(
   staged: SttConfig | undefined,
   body: unknown,
-  vault?: SecretVault,
+  secretMutation: RouteSecretRefMutation,
 ): Promise<SttConfig | undefined> {
   if (!staged) return staged;
   const requested = requestedConfig(body).config;
@@ -199,20 +209,17 @@ async function persistSubmittedSecrets(
     // 空字符串保留现有 ref；旧 inline 值则在本次管理端保存时顺手迁入 Vault。
     const value = submittedValue ?? next[field.appKey];
     if (typeof value !== 'string' || !value.trim()) continue;
-    if (!vault) throw new Error('SecretVault 未配置，不能保存 AudioTranscribe 密钥');
-    const ref = await vault.putSecret(
+    if (!secretMutation.available) {
+      throw new Error('SecretVault 未配置，不能保存 AudioTranscribe 密钥');
+    }
+    const ref = await secretMutation.put(
       GLOBAL_OWNER_ID,
       'stt',
       value,
-      {
-        actor: 'system',
-        userId: WRITER_PRINCIPAL,
-        scopes: ['secret:stt:write'],
-      },
       { env: field.envKey, purpose: 'audio-transcribe' },
     );
     delete next[field.appKey];
-    next[field.refKey] = ref.id;
+    next[field.refKey] = ref;
   }
 
   return next as SttConfig;
@@ -238,7 +245,8 @@ export function createAudioTranscribeAdminRouter(
     const configPath = getAppConfigPath(options.processCwd);
     let configText: string;
     let rawRecord: RawObject;
-    let staged: SttConfig | undefined;
+    let staged: SttConfig | undefined = undefined;
+    const secretMutation = new RouteSecretRefMutation(options.secretVault, SECRET_WRITER);
 
     try {
       configText = readFileSync(configPath, 'utf-8');
@@ -250,21 +258,24 @@ export function createAudioTranscribeAdminRouter(
       }
       const merged = mergeRequestedStt(parseJsonc(configText), req.body);
       rawRecord = merged.rawRecord;
+      secretMutation.trackPrevious(sttSecretRefs(parseAppConfig(rawRecord).stt));
       // 先整份校验，确保非法价格等错误不会产生 SecretVault 或磁盘副作用。
       staged = parseAppConfig({ ...rawRecord, stt: merged.staged }).stt;
       assertEnabledCredentialsComplete(staged);
-      staged = await persistSubmittedSecrets(staged, req.body, options.secretVault);
+      staged = await persistSubmittedSecrets(staged, req.body, secretMutation);
       // ref 替换 inline 后再次按整份 AppConfig 校验，并执行运行时预检。
       staged = parseAppConfig({ ...rawRecord, stt: staged }).stt;
       await options.validate?.(staged);
     } catch (error) {
+      const message = secretMutation.redactError(error);
+      await secretMutation.failed(error, sttSecretRefs(staged));
       res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
-        .json({ error: safeErrorMessage(error, staged, req.body) });
+        .json({ error: safeErrorMessage(new Error(message), staged, req.body) });
       return;
     }
 
     try {
-      await configMutationService.mutate({
+      const result = await configMutationService.mutate({
         ...mutationRequestContext(req),
         changedPaths: ['stt'],
         validateBaseline: (freshText) => {
@@ -281,12 +292,15 @@ export function createAudioTranscribeAdminRouter(
         },
         ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
-      res.json(adminView(options.config));
+      await secretMutation.committed(sttSecretRefs(result.config.stt));
+      res.json(adminView(result.config));
     } catch (error) {
+      const message = secretMutation.redactError(error, sttSecretRefs(staged));
+      await secretMutation.failed(error, sttSecretRefs(staged));
       res.status(
         error instanceof ConfigWriteConflictError || error instanceof ConfigConflictError ? 409 : 500,
       )
-        .json({ error: safeErrorMessage(error, staged, req.body) });
+        .json({ error: safeErrorMessage(new Error(message), staged, req.body) });
     }
   });
 

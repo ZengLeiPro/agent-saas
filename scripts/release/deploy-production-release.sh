@@ -51,12 +51,10 @@ commit_app_active_colors() {
 }
 
 rollback_app_release() {
-  # 每个恢复动作独立累计状态，避免首个故障阻断旧实例复活。
+  # 这里只恢复旧 generation 的磁盘状态。服务、nginx 与 authority 必须由
+  # cleanup_app_failure 在持有 governance fence 且通过双侧 readiness 后提交。
   local rollback_status=0
   set +e
-
-  systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || rollback_status=1
-  systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || rollback_status=1
 
   if [ "$had_api_env" = true ]; then
     cp -a "$rollback_root/api.release.env" "$api_env" || rollback_status=1
@@ -85,26 +83,6 @@ rollback_app_release() {
   systemctl daemon-reload || rollback_status=1
   rm -f "/run/agent-saas-server-$api_active.draining" || rollback_status=1
   rm -f "/run/agent-saas-runtime-worker-$worker_active.draining" || rollback_status=1
-  systemctl enable "agent-saas-server@$api_active" >/dev/null 2>&1 || rollback_status=1
-  systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || rollback_status=1
-  systemctl restart "agent-saas-server@$api_active" >/dev/null 2>&1 || rollback_status=1
-  systemctl restart "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || rollback_status=1
-
-  # 旧 API/Worker 都恢复后，才以单一 generation 原子恢复 authority；禁止半对 marker。
-  if [ "$rollback_status" -eq 0 ]; then
-    AGENT_SAAS_API_ACTIVE_COLOR_FILE="$ACTIVE_COLOR_PATH" \
-      AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$WORKER_ACTIVE_COLOR_PATH" \
-      commit_app_active_colors "$api_active" "$worker_active" || rollback_status=1
-  fi
-  if [ "$rollback_status" -eq 0 ] \
-    && [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
-    cp -a "$rollback_root/nginx-upstream.conf" "$NGINX_UPSTREAM_PATH" || rollback_status=1
-    if [ "$rollback_status" -eq 0 ] && nginx -t >/dev/null 2>&1; then
-      systemctl reload nginx || rollback_status=1
-    else
-      rollback_status=1
-    fi
-  fi
 
   if [ "$rollback_status" -ne 0 ]; then
     echo 'App rollback completed with one or more recovery failures' >&2
@@ -490,6 +468,15 @@ NODE
   CONFIG_GOVERNANCE_FENCE_OWNER="$owner"
 }
 
+begin_app_deploy_transaction() {
+  # Before this succeeds, App rollback must remain unarmed: a competing config
+  # transaction must make PHASE=app fail without any production mutation.
+  acquire_config_governance_fence \
+    "${AGENT_SAAS_RUNTIME_DATA_ROOT:-/mnt/agent-saas/server-data}" || return 1
+  trap release_config_governance_fence EXIT
+  trap 'exit 130' HUP INT TERM
+}
+
 validate_worker_release_boundary() {
   local color="$1" env_path="$2" expected_release_id="$3" expected_json="$4" label="$5"
   local run_root="${AGENT_SAAS_WORKER_RUN_ROOT:-/run}"
@@ -753,6 +740,8 @@ commit_rollback_api_authority() {
   local upstream="${AGENT_SAAS_NGINX_UPSTREAM_FILE:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
   local disable_status=0 old_release_id
   old_release_id="$(read_release_id_from_env "$active_env")" || return 1
+  validate_api_release_boundary_from_env "$active_color" "$active_env" \
+    'Rollback old API pre-commit ConfigIdentity' || return 1
   systemctl disable --now "agent-saas-server@$candidate_color" >/dev/null 2>&1 \
     || disable_status=$?
   if ! systemctl is-active --quiet "agent-saas-server@$candidate_color"; then
@@ -792,20 +781,25 @@ restore_old_api_authority() {
   local run_root="${AGENT_SAAS_API_RUN_ROOT:-/run}"
   local old_ready=false old_release_id
   old_release_id="$(read_release_id_from_env "$active_env")" || return 1
-  rm -f "$run_root/agent-saas-server-$active_color.pid" \
-    "$run_root/agent-saas-server-$active_color.ready" \
-    "$run_root/agent-saas-server-$active_color.draining" || true
-  systemctl reset-failed "agent-saas-server@$active_color" >/dev/null 2>&1 || true
-  if systemctl enable "agent-saas-server@$active_color" >/dev/null 2>&1 \
-    && systemctl restart "agent-saas-server@$active_color" >/dev/null 2>&1; then
-    for _ in $(seq 1 180); do
-      if validate_api_release_boundary_from_env "$active_color" "$active_env" \
-        'Rollback old API restored ConfigIdentity'; then
-        old_ready=true
-        break
-      fi
-      sleep 1
-    done
+  if validate_api_release_boundary_from_env "$active_color" "$active_env" \
+      'Rollback existing old API ConfigIdentity'; then
+    old_ready=true
+  else
+    rm -f "$run_root/agent-saas-server-$active_color.pid" \
+      "$run_root/agent-saas-server-$active_color.ready" \
+      "$run_root/agent-saas-server-$active_color.draining" || true
+    systemctl reset-failed "agent-saas-server@$active_color" >/dev/null 2>&1 || true
+    if systemctl enable "agent-saas-server@$active_color" >/dev/null 2>&1 \
+      && systemctl restart "agent-saas-server@$active_color" >/dev/null 2>&1; then
+      for _ in $(seq 1 180); do
+        if validate_api_release_boundary_from_env "$active_color" "$active_env" \
+          'Rollback old API restored ConfigIdentity'; then
+          old_ready=true
+          break
+        fi
+        sleep 1
+      done
+    fi
   fi
   [ "$old_ready" = true ] || return 1
   revoke_systemd_authority "agent-saas-server@$candidate_color" || return 1
@@ -833,28 +827,42 @@ restore_candidate_api_authority() {
   local active_color="$1" candidate_color="$2"
   local candidate_nginx_backup="$3" expected_json="$4"
   local old_nginx_backup="$5" had_nginx="$6" nginx_changed="$7" active_env="$8"
-  local commit_marker="${9:-true}"
+  local commit_marker="${9:-true}" prepare_only="${10:-false}"
   local marker="${AGENT_SAAS_API_ACTIVE_COLOR_FILE:-/etc/agent-saas/active-color}"
   local upstream="${AGENT_SAAS_NGINX_UPSTREAM_FILE:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
   local run_root="${AGENT_SAAS_API_RUN_ROOT:-/run}"
   local candidate_ready=false
-  rm -f "$run_root/agent-saas-server-$candidate_color.pid" \
-    "$run_root/agent-saas-server-$candidate_color.ready" \
-    "$run_root/agent-saas-server-$candidate_color.draining" \
-    "$run_root/agent-saas-server-$candidate_color.config-identity.json" || true
-  systemctl reset-failed "agent-saas-server@$candidate_color" >/dev/null 2>&1 || true
-  if systemctl enable "agent-saas-server@$candidate_color" >/dev/null 2>&1 \
-    && systemctl restart "agent-saas-server@$candidate_color" >/dev/null 2>&1; then
-    for _ in $(seq 1 180); do
-      if validate_api_release_boundary "$candidate_color" "$expected_json" \
-        'Rollback candidate API restored ConfigIdentity'; then
-        candidate_ready=true
-        break
-      fi
-      sleep 1
-    done
+  if validate_api_release_boundary "$candidate_color" "$expected_json" \
+      'Rollback existing candidate API ConfigIdentity'; then
+    candidate_ready=true
+  else
+    rm -f "$run_root/agent-saas-server-$candidate_color.pid" \
+      "$run_root/agent-saas-server-$candidate_color.ready" \
+      "$run_root/agent-saas-server-$candidate_color.draining" \
+      "$run_root/agent-saas-server-$candidate_color.config-identity.json" || true
+    systemctl reset-failed "agent-saas-server@$candidate_color" >/dev/null 2>&1 || true
+    if systemctl enable "agent-saas-server@$candidate_color" >/dev/null 2>&1 \
+      && systemctl restart "agent-saas-server@$candidate_color" >/dev/null 2>&1; then
+      for _ in $(seq 1 180); do
+        if validate_api_release_boundary "$candidate_color" "$expected_json" \
+          'Rollback candidate API restored ConfigIdentity'; then
+          candidate_ready=true
+          break
+        fi
+        sleep 1
+      done
+    fi
   fi
-  [ "$candidate_ready" = true ] || return 1
+  if [ "$candidate_ready" != true ] \
+    || ! validate_api_release_boundary "$candidate_color" "$expected_json" \
+      'Rollback candidate API prepared ConfigIdentity'; then
+    return 1
+  fi
+  if [ "$prepare_only" = true ]; then
+    systemctl is-active --quiet "agent-saas-server@$candidate_color" \
+      && systemctl is-enabled --quiet "agent-saas-server@$candidate_color"
+    return
+  fi
   if ! revoke_systemd_authority "agent-saas-server@$active_color"; then
     revoke_systemd_authority "agent-saas-server@$candidate_color" || true
     restore_old_api_authority "$active_color" "$candidate_color" \
@@ -913,34 +921,50 @@ commit_rollback_worker_authority() {
     fi
     fence_owned=true
   fi
+  if validate_worker_release_boundary "$active_color" "$active_env" - - \
+      'Rollback existing Worker private ConfigIdentity'; then
+    old_ready=true
+  else
+    rm -f "$run_root/agent-saas-runtime-worker-$active_color.pid" \
+      "$run_root/agent-saas-runtime-worker-$active_color.ready" \
+      "$run_root/agent-saas-runtime-worker-$active_color.draining" \
+      "$run_root/agent-saas-runtime-worker-$active_color.config-identity.json" || true
+    systemctl reset-failed "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 || true
+    if systemctl enable "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 \
+      && systemctl restart "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1; then
+      for _ in $(seq 1 180); do
+        if validate_worker_release_boundary "$active_color" "$active_env" - - \
+          'Rollback Worker private ConfigIdentity'; then
+          old_ready=true
+          break
+        fi
+        sleep 1
+      done
+    fi
+  fi
+  if [ "$old_ready" != true ] \
+    || ! validate_worker_release_boundary "$active_color" "$active_env" - - \
+      'Rollback Worker prepared ConfigIdentity'; then
+    [ "$fence_owned" != true ] || release_config_governance_fence
+    worker_restored_ref=false
+    return 1
+  fi
   systemctl disable --now "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1 \
     || disable_status=$?
   if ! systemctl is-active --quiet "agent-saas-runtime-worker@$candidate_color"; then
     candidate_stopped_ref=true
   fi
-  if [ "$disable_status" -ne 0 ] || [ "$candidate_stopped_ref" != true ]; then
+  if [ "$disable_status" -ne 0 ] || [ "$candidate_stopped_ref" != true ] \
+    || systemctl is-enabled --quiet "agent-saas-runtime-worker@$candidate_color"; then
     [ "$fence_owned" != true ] || release_config_governance_fence
     worker_restored_ref=false
     return 1
   fi
-  rm -f "$run_root/agent-saas-runtime-worker-$active_color.pid" \
-    "$run_root/agent-saas-runtime-worker-$active_color.ready" \
-    "$run_root/agent-saas-runtime-worker-$active_color.draining" \
-    "$run_root/agent-saas-runtime-worker-$active_color.config-identity.json" || true
-  systemctl reset-failed "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 || true
-  if systemctl enable "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 \
-    && systemctl restart "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1; then
-    for _ in $(seq 1 180); do
-      if validate_worker_release_boundary "$active_color" "$active_env" - - \
-        'Rollback Worker private ConfigIdentity'; then
-        old_ready=true
-        break
-      fi
-      sleep 1
-    done
-  fi
-  if [ "$old_ready" != true ] \
-    || ! validate_worker_release_boundary "$active_color" "$active_env" - - \
+  rm -f "$run_root/agent-saas-runtime-worker-$candidate_color.pid" \
+    "$run_root/agent-saas-runtime-worker-$candidate_color.ready" \
+    "$run_root/agent-saas-runtime-worker-$candidate_color.draining" \
+    "$run_root/agent-saas-runtime-worker-$candidate_color.config-identity.json" || true
+  if ! validate_worker_release_boundary "$active_color" "$active_env" - - \
       'Rollback Worker final ConfigIdentity' \
     || systemctl is-active --quiet "agent-saas-runtime-worker@$candidate_color" \
     || systemctl is-enabled --quiet "agent-saas-runtime-worker@$candidate_color" \
@@ -956,10 +980,10 @@ commit_rollback_worker_authority() {
     || [ "$(tr -d '[:space:]' <"${AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE:-/etc/agent-saas/runtime-worker-active-color}")" = "$active_color" ]
 }
 
-# Worker authority transitions hold one governance fence before stopping either side.
+# Worker authority transitions hold one governance fence before stopping either generation.
 restore_candidate_worker_authority() {
   local active_color="$1" candidate_color="$2" env_path="$3"
-  local commit_marker="${4:-true}" fence_held="${5:-false}"
+  local commit_marker="${4:-true}" fence_held="${5:-false}" prepare_only="${6:-false}"
   local marker="${AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE:-/etc/agent-saas/runtime-worker-active-color}"
   local run_root="${AGENT_SAAS_WORKER_RUN_ROOT:-/run}"
   local candidate_ready=false fence_owned=false
@@ -968,6 +992,39 @@ restore_candidate_worker_authority() {
       "${AGENT_SAAS_RUNTIME_DATA_ROOT:-/mnt/agent-saas/server-data}" || return 1
     fence_owned=true
   fi
+  if validate_worker_release_boundary "$candidate_color" "$env_path" - - \
+      'Rollback existing candidate Worker ConfigIdentity'; then
+    candidate_ready=true
+  else
+    rm -f "$run_root/agent-saas-runtime-worker-$candidate_color.pid" \
+      "$run_root/agent-saas-runtime-worker-$candidate_color.ready" \
+      "$run_root/agent-saas-runtime-worker-$candidate_color.draining" \
+      "$run_root/agent-saas-runtime-worker-$candidate_color.config-identity.json" || true
+    systemctl reset-failed "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1 || true
+    if systemctl enable "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1 \
+      && systemctl restart "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1; then
+      for _ in $(seq 1 180); do
+        if validate_worker_release_boundary "$candidate_color" "$env_path" - - \
+          'Rollback candidate Worker restored authority'; then
+          candidate_ready=true
+          break
+        fi
+        sleep 1
+      done
+    fi
+  fi
+  if [ "$candidate_ready" != true ] \
+    || ! validate_worker_release_boundary "$candidate_color" "$env_path" - - \
+      'Rollback candidate Worker prepared ConfigIdentity'; then
+    [ "$fence_owned" != true ] || release_config_governance_fence
+    return 1
+  fi
+  if [ "$prepare_only" = true ]; then
+    [ "$fence_owned" != true ] || release_config_governance_fence
+    systemctl is-active --quiet "agent-saas-runtime-worker@$candidate_color" \
+      && systemctl is-enabled --quiet "agent-saas-runtime-worker@$candidate_color"
+    return
+  fi
   if ! revoke_systemd_authority "agent-saas-runtime-worker@$active_color"; then
     [ "$fence_owned" != true ] || release_config_governance_fence
     return 1
@@ -975,28 +1032,9 @@ restore_candidate_worker_authority() {
   rm -f "$run_root/agent-saas-runtime-worker-$active_color.pid" \
     "$run_root/agent-saas-runtime-worker-$active_color.ready" \
     "$run_root/agent-saas-runtime-worker-$active_color.draining" \
-    "$run_root/agent-saas-runtime-worker-$active_color.config-identity.json" \
-    "$run_root/agent-saas-runtime-worker-$candidate_color.pid" \
-    "$run_root/agent-saas-runtime-worker-$candidate_color.ready" \
-    "$run_root/agent-saas-runtime-worker-$candidate_color.draining" \
-    "$run_root/agent-saas-runtime-worker-$candidate_color.config-identity.json" || true
-  systemctl reset-failed "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1 || true
-  if systemctl enable "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1 \
-    && systemctl restart "agent-saas-runtime-worker@$candidate_color" >/dev/null 2>&1; then
-    for _ in $(seq 1 180); do
-      if validate_worker_release_boundary "$candidate_color" "$env_path" - - \
-        'Rollback candidate Worker restored authority'; then
-        candidate_ready=true
-        break
-      fi
-      sleep 1
-    done
-  fi
-  if [ "$candidate_ready" != true ] \
-    || ! validate_worker_release_boundary "$candidate_color" "$env_path" - - \
-      'Rollback candidate Worker final ConfigIdentity' \
-    || { [ "$commit_marker" = true ] \
-      && ! commit_worker_active_color "$candidate_color"; }; then
+    "$run_root/agent-saas-runtime-worker-$active_color.config-identity.json" || true
+  if [ "$commit_marker" = true ] \
+    && ! commit_worker_active_color "$candidate_color"; then
     [ "$fence_owned" != true ] || release_config_governance_fence
     return 1
   fi
@@ -1007,7 +1045,7 @@ restore_candidate_worker_authority() {
       || [ "$(tr -d '[:space:]' <"$marker")" = "$candidate_color" ]; }
 }
 
-# Old authority restoration follows the same pre-mutation fence rule.
+# Old authority restoration prepares the old Worker before revoking the candidate.
 restore_old_worker_authority() {
   local active_color="$1" candidate_color="$2" active_env="$3"
   local fence_held="${4:-false}" commit_marker="${5:-true}"
@@ -1019,29 +1057,31 @@ restore_old_worker_authority() {
       "${AGENT_SAAS_RUNTIME_DATA_ROOT:-/mnt/agent-saas/server-data}" || return 1
     fence_owned=true
   fi
-  if ! revoke_systemd_authority "agent-saas-runtime-worker@$candidate_color"; then
-    [ "$fence_owned" != true ] || release_config_governance_fence
-    return 1
-  fi
-  rm -f "$run_root/agent-saas-runtime-worker-$active_color.pid" \
-    "$run_root/agent-saas-runtime-worker-$active_color.ready" \
-    "$run_root/agent-saas-runtime-worker-$active_color.draining" \
-    "$run_root/agent-saas-runtime-worker-$active_color.config-identity.json" || true
-  systemctl reset-failed "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 || true
-  if systemctl enable "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 \
-    && systemctl restart "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1; then
-    for _ in $(seq 1 180); do
-      if validate_worker_release_boundary "$active_color" "$active_env" - - \
-        'Rollback old Worker restored authority'; then
-        old_ready=true
-        break
-      fi
-      sleep 1
-    done
+  if validate_worker_release_boundary "$active_color" "$active_env" - - \
+      'Rollback existing old Worker ConfigIdentity'; then
+    old_ready=true
+  else
+    rm -f "$run_root/agent-saas-runtime-worker-$active_color.pid" \
+      "$run_root/agent-saas-runtime-worker-$active_color.ready" \
+      "$run_root/agent-saas-runtime-worker-$active_color.draining" \
+      "$run_root/agent-saas-runtime-worker-$active_color.config-identity.json" || true
+    systemctl reset-failed "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 || true
+    if systemctl enable "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1 \
+      && systemctl restart "agent-saas-runtime-worker@$active_color" >/dev/null 2>&1; then
+      for _ in $(seq 1 180); do
+        if validate_worker_release_boundary "$active_color" "$active_env" - - \
+          'Rollback old Worker restored authority'; then
+          old_ready=true
+          break
+        fi
+        sleep 1
+      done
+    fi
   fi
   if [ "$old_ready" != true ] \
     || ! validate_worker_release_boundary "$active_color" "$active_env" - - \
-      'Rollback old Worker final ConfigIdentity' \
+      'Rollback old Worker prepared ConfigIdentity' \
+    || ! revoke_systemd_authority "agent-saas-runtime-worker@$candidate_color" \
     || systemctl is-active --quiet "agent-saas-runtime-worker@$candidate_color" \
     || systemctl is-enabled --quiet "agent-saas-runtime-worker@$candidate_color" \
     || { [ "$commit_marker" = true ] \
@@ -1056,48 +1096,159 @@ restore_old_worker_authority() {
       || [ "$(tr -d '[:space:]' <"$marker")" = "$active_color" ]; }
 }
 
-# App compensation keeps the fence across prepare, marker commit, and fallback.
+validate_candidate_api_routing_preparation() {
+  local candidate_color="$1" expected_release_id="$2" candidate_nginx_backup="$3"
+  local expected_path
+  expected_path="$(mktemp)" || return 1
+  cat >"$expected_path" <<EOF
+# active=$candidate_color release=$expected_release_id
+upstream agent_saas_backend {
+    server 127.0.0.1:$(port_for_color "$candidate_color");
+    server 127.0.0.1:$(port_for_color "$(other_color "$candidate_color")") backup;
+}
+EOF
+  if ! cmp -s "$expected_path" "$candidate_nginx_backup"; then
+    rm -f "$expected_path"
+    return 1
+  fi
+  rm -f "$expected_path"
+}
+
+restore_candidate_app_disk() {
+  local api_candidate="$1" worker_candidate="$2" api_env="$3" worker_env="$4"
+  local backup_root="$5" api_target worker_target
+  test -s "$backup_root/api.candidate.target" \
+    && test -s "$backup_root/worker.candidate.target" \
+    && test -s "$backup_root/api.candidate.release.env" \
+    && test -s "$backup_root/worker.candidate.release.env" \
+    && test -s "$backup_root/server@.candidate.service" \
+    && test -s "$backup_root/runtime-worker@.candidate.service" || return 1
+  api_target="$(cat "$backup_root/api.candidate.target")" || return 1
+  worker_target="$(cat "$backup_root/worker.candidate.target")" || return 1
+  test -d "$api_target" && test -d "$worker_target" || return 1
+  ln -sfn "$api_target" "$APP_COLOR_ROOT/$api_candidate" \
+    && ln -sfn "$worker_target" "$APP_WORKER_ROOT/$worker_candidate" \
+    && cp -a "$backup_root/api.candidate.release.env" "$api_env" \
+    && cp -a "$backup_root/worker.candidate.release.env" "$worker_env" \
+    && cp -a "$backup_root/server@.candidate.service" \
+      /etc/systemd/system/agent-saas-server@.service \
+    && cp -a "$backup_root/runtime-worker@.candidate.service" \
+      /etc/systemd/system/agent-saas-runtime-worker@.service \
+    && systemctl daemon-reload \
+    && validate_app_release_envs_match "$api_env" "$worker_env"
+}
+
+commit_candidate_app_authority() {
+  local api_active="$1" api_candidate="$2" candidate_nginx_backup="$3"
+  local expected_json="$4" worker_active="$5" worker_candidate="$6" worker_env="$7"
+  local api_marker="${AGENT_SAAS_API_ACTIVE_COLOR_FILE:-/etc/agent-saas/active-color}"
+  local worker_marker="${AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE:-/etc/agent-saas/runtime-worker-active-color}"
+  local upstream="${AGENT_SAAS_NGINX_UPSTREAM_FILE:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
+  validate_api_release_boundary "$api_candidate" "$expected_json" \
+    'Rollback candidate App commit API ConfigIdentity' \
+    && validate_worker_release_boundary "$worker_candidate" "$worker_env" - - \
+      'Rollback candidate App commit Worker ConfigIdentity' \
+    && validate_candidate_api_routing_preparation \
+      "$api_candidate" "$release_id" "$candidate_nginx_backup" || return 1
+  cp -a "$candidate_nginx_backup" "$upstream" \
+    && nginx -t >/dev/null 2>&1 \
+    && systemctl reload nginx >/dev/null 2>&1 \
+    && validate_api_routing_boundary "$api_candidate" "$release_id" \
+    && revoke_systemd_authority "agent-saas-runtime-worker@$worker_active" \
+    && revoke_systemd_authority "agent-saas-server@$api_active" \
+    && commit_app_active_colors "$api_candidate" "$worker_candidate" "$api_active" \
+    && [ "$(tr -d '[:space:]' <"$api_marker")" = "$api_candidate" ] \
+    && [ "$(tr -d '[:space:]' <"$worker_marker")" = "$worker_candidate" ]
+}
+
+# App compensation keeps one fence across preparation, unified commit, and fallback.
 restore_candidate_app_authority() {
   local api_active="$1" api_candidate="$2" candidate_nginx_backup="$3"
   local expected_json="$4" old_nginx_backup="$5" had_nginx="$6" nginx_changed="$7"
   local worker_active="$8" worker_candidate="$9" worker_env="${10}"
   local old_worker_env="${11}" old_api_env="${12}" fence_held="${13:-false}"
+  local candidate_backup_root="${14:-}"
+  local api_env="${15:-/etc/agent-saas/server-$api_candidate.release.env}"
   local api_marker="${AGENT_SAAS_API_ACTIVE_COLOR_FILE:-/etc/agent-saas/active-color}"
   local worker_marker="${AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE:-/etc/agent-saas/runtime-worker-active-color}"
-  local app_prepared=false fence_owned=false
+  local app_prepared=false app_committed=false old_compensated=false fence_owned=false
   if [ "$fence_held" != true ]; then
     acquire_config_governance_fence \
       "${AGENT_SAAS_RUNTIME_DATA_ROOT:-/mnt/agent-saas/server-data}" || return 1
     fence_owned=true
   fi
-  if restore_candidate_api_authority "$api_active" "$api_candidate" \
+  if { [ -z "$candidate_backup_root" ] \
+      || restore_candidate_app_disk "$api_candidate" "$worker_candidate" \
+        "$api_env" "$worker_env" "$candidate_backup_root"; } \
+    && restore_candidate_api_authority "$api_active" "$api_candidate" \
       "$candidate_nginx_backup" "$expected_json" "$old_nginx_backup" \
-      "$had_nginx" "$nginx_changed" "$old_api_env" false \
+      "$had_nginx" "$nginx_changed" "$old_api_env" false true \
     && restore_candidate_worker_authority "$worker_active" "$worker_candidate" \
-      "$worker_env" false true \
+      "$worker_env" false true true \
     && validate_api_release_boundary "$api_candidate" "$expected_json" \
-      'Rollback candidate App final API ConfigIdentity' \
+      'Rollback candidate App prepared API ConfigIdentity' \
     && validate_worker_release_boundary "$worker_candidate" "$worker_env" - - \
-      'Rollback candidate App final Worker ConfigIdentity' \
-    && validate_api_routing_boundary "$api_candidate" "$release_id" \
-    && commit_app_active_colors "$api_candidate" "$worker_candidate" "$api_active"; then
+      'Rollback candidate App prepared Worker ConfigIdentity' \
+    && validate_candidate_api_routing_preparation \
+      "$api_candidate" "$release_id" "$candidate_nginx_backup"; then
     app_prepared=true
   fi
   if [ "$app_prepared" = true ] \
-    && [ "$(tr -d '[:space:]' <"$api_marker")" = "$api_candidate" ] \
-    && [ "$(tr -d '[:space:]' <"$worker_marker")" = "$worker_candidate" ]; then
+    && commit_candidate_app_authority "$api_active" "$api_candidate" \
+      "$candidate_nginx_backup" "$expected_json" "$worker_active" \
+      "$worker_candidate" "$worker_env"; then
+    app_committed=true
+  fi
+  # The generation-link rename may have committed even if its final readback failed.
+  # Preserve that complete candidate pair rather than compensating it to old.
+  if [ "$app_prepared" = true ] \
+    && [ "$(tr -d '[:space:]' <"$api_marker" 2>/dev/null || true)" = "$api_candidate" ] \
+    && [ "$(tr -d '[:space:]' <"$worker_marker" 2>/dev/null || true)" = "$worker_candidate" ] \
+    && validate_api_release_boundary "$api_candidate" "$expected_json" \
+      'Committed candidate compensation API ConfigIdentity' \
+    && validate_worker_release_boundary "$worker_candidate" "$worker_env" - - \
+      'Committed candidate compensation Worker ConfigIdentity' \
+    && validate_api_routing_boundary "$api_candidate" "$release_id" \
+    && revoke_systemd_authority "agent-saas-runtime-worker@$worker_active" \
+    && revoke_systemd_authority "agent-saas-server@$api_active"; then
+    app_committed=true
+  fi
+  if [ "$app_committed" = true ]; then
     [ "$fence_owned" != true ] || release_config_governance_fence
     return 0
   fi
-  restore_old_api_authority "$api_active" "$api_candidate" \
-    "$old_nginx_backup" "$had_nginx" "$nginx_changed" "$old_api_env" false || true
-  restore_old_worker_authority "$worker_active" "$worker_candidate" \
-    "$old_worker_env" true false || true
+  if [ "$app_prepared" != true ]; then
+    revoke_systemd_authority "agent-saas-runtime-worker@$worker_candidate" || true
+    revoke_systemd_authority "agent-saas-server@$api_candidate" || true
+    [ "$fence_owned" != true ] || release_config_governance_fence
+    return 1
+  fi
+  if { [ -z "$candidate_backup_root" ] \
+      || { cp -a "$candidate_backup_root/server@.service" \
+          /etc/systemd/system/agent-saas-server@.service \
+        && cp -a "$candidate_backup_root/runtime-worker@.service" \
+          /etc/systemd/system/agent-saas-runtime-worker@.service \
+        && systemctl daemon-reload; }; } \
+    && validate_app_release_envs_match "$old_api_env" "$old_worker_env" \
+    && restore_old_worker_authority "$worker_active" "$worker_candidate" \
+      "$old_worker_env" true false \
+    && restore_old_api_authority "$api_active" "$api_candidate" \
+      "$old_nginx_backup" "$had_nginx" "$nginx_changed" "$old_api_env" false \
+    && validate_api_release_boundary_from_env "$api_active" "$old_api_env" \
+      'Compensated old App API ConfigIdentity' \
+    && validate_worker_release_boundary "$worker_active" "$old_worker_env" - - \
+      'Compensated old App Worker ConfigIdentity' \
+    && validate_api_routing_boundary "$api_active" \
+      "$(read_release_id_from_env "$old_api_env")" \
+    && commit_app_active_colors "$api_active" "$worker_active" "$api_candidate"; then
+    old_compensated=true
+  fi
   [ "$fence_owned" != true ] || release_config_governance_fence
+  [ "$old_compensated" = true ] || return 1
   return 1
 }
 
-# ACS deployment follows after App compensation helpers are fully defined.
+# ACS deployment follows after App compensation helpers are fully defined and closed.
 deploy_acs() {
   local digest target previous main_pid identity_backup env_backup had_previous_identity candidate
   local rollback_root unit_path
@@ -1228,6 +1379,7 @@ deploy_app() {
   local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle old_api_pid old_worker_pid
   local api_idle_previous worker_idle_previous api_env worker_env rollback_root server_unit worker_unit
   local had_api_env=false had_worker_env=false had_nginx=false nginx_changed=false app_committed=false
+  begin_app_deploy_transaction
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
   if [ -d "$target" ]; then
@@ -1312,35 +1464,42 @@ deploy_app() {
     local old_api_env="/etc/agent-saas/server-$api_active.release.env"
     local old_worker_env="/etc/agent-saas/runtime-worker-$worker_active.release.env"
     local transaction_rollback_status=0
-    # Apply the versioned rollback transaction first; ConfigIdentity authority checks below
-    # then verify or compensate the resulting API/Worker topology fail-closed.
-    rollback_app_release || transaction_rollback_status=$?
     if [ "$app_committed" = false ]; then
+      # The fence must already be held from deploy_app entry. Keep this fail-closed
+      # guard before even the disk-only rollback preparation for defensive reuse.
       if [ -z "$CONFIG_GOVERNANCE_FENCE" ] \
         && ! acquire_config_governance_fence \
           "${AGENT_SAAS_RUNTIME_DATA_ROOT:-/mnt/agent-saas/server-data}"; then
         echo 'ERROR: App rollback refused to mutate authority while config governance is active' >&2
         return 1
       fi
-      # API 与 Worker 只共同提交同一旧 release；候选恢复也延迟到 App 双侧复检后提交 marker。
+      rollback_app_release || transaction_rollback_status=$?
+      # Prepare both old services and verify their strict private boundaries before
+      # stopping the API candidate or restoring nginx. Marker publication remains a
+      # single App generation commit only after routed readiness also succeeds.
       if ! validate_app_release_envs_match "$old_api_env" "$old_worker_env"; then
         rollback_target=candidate
       fi
       if [ "$rollback_target" = old ]; then
-        rm -f "/run/agent-saas-server-$api_active.pid" \
-          "/run/agent-saas-server-$api_active.ready" \
-          "/run/agent-saas-server-$api_active.draining" || true
-        systemctl reset-failed "agent-saas-server@$api_active" >/dev/null 2>&1 || true
-        if systemctl enable "agent-saas-server@$api_active" >/dev/null 2>&1 \
-          && systemctl restart "agent-saas-server@$api_active" >/dev/null 2>&1; then
-          for _ in $(seq 1 180); do
-            if validate_api_release_boundary_from_env "$api_active" "$old_api_env" \
-              'Rollback old API restored ConfigIdentity'; then
-              api_restored=true
-              break
-            fi
-            sleep 1
-          done
+        if validate_api_release_boundary_from_env "$api_active" "$old_api_env" \
+            'Rollback existing old API ConfigIdentity'; then
+          api_restored=true
+        else
+          rm -f "/run/agent-saas-server-$api_active.pid" \
+            "/run/agent-saas-server-$api_active.ready" \
+            "/run/agent-saas-server-$api_active.draining" || true
+          systemctl reset-failed "agent-saas-server@$api_active" >/dev/null 2>&1 || true
+          if systemctl enable "agent-saas-server@$api_active" >/dev/null 2>&1 \
+            && systemctl restart "agent-saas-server@$api_active" >/dev/null 2>&1; then
+            for _ in $(seq 1 180); do
+              if validate_api_release_boundary_from_env "$api_active" "$old_api_env" \
+                'Rollback old API restored ConfigIdentity'; then
+                api_restored=true
+                break
+              fi
+              sleep 1
+            done
+          fi
         fi
       fi
       api_candidate_nginx_backup="$rollback_root/nginx-candidate-upstream.conf"
@@ -1357,15 +1516,6 @@ upstream agent_saas_backend {
 }
 EOF
       fi
-      if [ "$rollback_target" = old ] \
-        && [ "$api_restored" = true ] \
-        && commit_rollback_api_authority "$api_active" "$api_idle" \
-          "$rollback_root/nginx-upstream.conf" "$had_nginx" "$nginx_changed" \
-          "$old_api_env" api_candidate_stopped false; then
-        api_rollback_committed=true
-      else
-        rollback_target=candidate
-      fi
 
       if [ "$rollback_target" = old ]; then
         if commit_rollback_worker_authority "$worker_active" "$worker_idle" \
@@ -1374,6 +1524,17 @@ EOF
         else
           rollback_target=candidate
         fi
+      fi
+
+      if [ "$rollback_target" = old ] \
+        && [ "$api_restored" = true ] \
+        && [ "$worker_rollback_committed" = true ] \
+        && commit_rollback_api_authority "$api_active" "$api_idle" \
+          "$rollback_root/nginx-upstream.conf" "$had_nginx" "$nginx_changed" \
+          "$old_api_env" api_candidate_stopped false; then
+        api_rollback_committed=true
+      else
+        rollback_target=candidate
       fi
 
       if [ "$rollback_target" = old ] \
@@ -1417,14 +1578,16 @@ EOF
             "$api_active" "$api_idle" "$api_candidate_nginx_backup" \
             "$rollback_config_identity" "$rollback_root/nginx-upstream.conf" \
             "$had_nginx" "$nginx_changed" "$worker_active" "$worker_idle" \
-            "$worker_env" "$old_worker_env" "$old_api_env" true; then
+            "$worker_env" "$old_worker_env" "$old_api_env" true \
+            "$rollback_root" "$api_env"; then
           app_candidate_restored=true
-        elif validate_app_release_envs_match "$old_api_env" "$old_worker_env"; then
-          if restore_old_api_authority "$api_active" "$api_idle" \
-            "$rollback_root/nginx-upstream.conf" "$had_nginx" "$nginx_changed" \
-            "$old_api_env" false \
-            && restore_old_worker_authority "$worker_active" "$worker_idle" \
+        elif rollback_app_release \
+          && validate_app_release_envs_match "$old_api_env" "$old_worker_env"; then
+          if restore_old_worker_authority "$worker_active" "$worker_idle" \
               "$old_worker_env" true false \
+            && restore_old_api_authority "$api_active" "$api_idle" \
+              "$rollback_root/nginx-upstream.conf" "$had_nginx" "$nginx_changed" \
+              "$old_api_env" false \
             && old_release_id="$(read_release_id_from_env "$old_api_env")" \
             && validate_api_release_boundary_from_env "$api_active" "$old_api_env" \
               'Compensated old App final API ConfigIdentity' \
@@ -1438,7 +1601,7 @@ EOF
         if [ "$app_candidate_restored" = true ]; then
           echo 'ERROR: preserving one candidate App authority because rollback commit failed' >&2
         elif [ "$app_old_compensated" = true ]; then
-          echo 'ERROR: restored one old App authority after candidate compensation failed' >&2
+          echo 'ERROR: restored one old App authority after candidate compensation failed safely' >&2
         else
           echo 'ERROR: App rollback could not converge API and Worker to one release' >&2
         fi
@@ -1450,12 +1613,15 @@ EOF
     fi
   }
   arm_deploy_rollback cleanup_app_failure
-  acquire_config_governance_fence /mnt/agent-saas/server-data
   install -m 0644 "$SERVER_UNIT_TEMPLATE" "$server_unit"
   install -m 0644 "$WORKER_UNIT_TEMPLATE" "$worker_unit"
+  cp -a "$server_unit" "$rollback_root/server@.candidate.service"
+  cp -a "$worker_unit" "$rollback_root/runtime-worker@.candidate.service"
   systemctl daemon-reload
   ln -sfn "$target" "$APP_COLOR_ROOT/$api_idle"
   ln -sfn "$target" "$APP_WORKER_ROOT/$worker_idle"
+  printf '%s\n' "$target" >"$rollback_root/api.candidate.target"
+  printf '%s\n' "$target" >"$rollback_root/worker.candidate.target"
   # TASK-318：发布前对主机实际配置计算 expected config identity（同一实现于
   # 运行期 observed identity；含受管 inline secret 的 production fail-closed）。
   # 候选 CLI 不继承 rollback receipt 元数据，stderr 也加前缀后再回放，避免普通诊断
@@ -1474,6 +1640,8 @@ EOF
   DEPLOY_APP_ROLLBACK_CONFIG_IDENTITY="$config_identity"
   upsert_env "$MANIFEST_PATH" "$api_env" api "$config_identity"
   upsert_env "$MANIFEST_PATH" "$worker_env" worker "$config_identity"
+  cp -a "$api_env" "$rollback_root/api.candidate.release.env"
+  cp -a "$worker_env" "$rollback_root/worker.candidate.release.env"
 
   rm -f "/run/agent-saas-server-$api_idle.pid" \
     "/run/agent-saas-server-$api_idle.ready" \

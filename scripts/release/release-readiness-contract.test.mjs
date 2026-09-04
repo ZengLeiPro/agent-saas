@@ -292,7 +292,7 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
 
   const candidateInitialCheck = production.indexOf("'Candidate Worker private ConfigIdentity'");
   const candidateFence = production.lastIndexOf(
-    'acquire_config_governance_fence /mnt/agent-saas/server-data',
+    'begin_app_deploy_transaction',
     candidateInitialCheck,
   );
   const candidateFinalCheck = production.indexOf(
@@ -308,6 +308,24 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   assert.ok(candidateInitialCheck > candidateFence);
   assert.ok(candidateFinalCheck > candidateInitialCheck);
   assert.ok(candidateMarker > candidateFinalCheck);
+
+  const appEntryStart = production.indexOf('deploy_app() {');
+  const appFenceEntry = production.indexOf('begin_app_deploy_transaction', appEntryStart);
+  const appArtifactPreparation = production.indexOf('artifact_digest=', appEntryStart);
+  const appRollbackArm = production.indexOf(
+    'arm_deploy_rollback cleanup_app_failure',
+    appEntryStart,
+  );
+  assert.ok(appFenceEntry > appEntryStart);
+  assert.ok(appArtifactPreparation > appFenceEntry);
+  assert.ok(appRollbackArm > appArtifactPreparation);
+  const diskRollbackStart = production.indexOf('rollback_app_release() {');
+  const diskRollbackEnd = production.indexOf('cleanup_app_failure() {', diskRollbackStart);
+  const diskRollback = production.slice(diskRollbackStart, diskRollbackEnd);
+  assert.doesNotMatch(
+    diskRollback,
+    /systemctl (?:restart|enable|disable)|nginx -t|commit_app_active_colors/u,
+  );
 
   const rollbackHelperStart = production.indexOf('commit_rollback_worker_authority() {');
   const rollbackHelperEnd = production.indexOf('restore_candidate_worker_authority() {');
@@ -336,16 +354,42 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   const rollbackStartOld = rollbackHelper.indexOf(
     'systemctl restart "agent-saas-runtime-worker@$active_color"',
   );
+  const rollbackPreparedCheck = rollbackHelper.indexOf(
+    "'Rollback Worker prepared ConfigIdentity'",
+  );
   const rollbackFence = rollbackHelper.indexOf('acquire_config_governance_fence');
   assert.ok(rollbackFence > -1);
-  assert.ok(rollbackStopCandidate > rollbackFence);
-  assert.ok(rollbackStartOld > rollbackStopCandidate);
-  assert.ok(rollbackFinalCheck > rollbackStartOld);
+  assert.ok(rollbackStartOld > rollbackFence);
+  assert.ok(rollbackPreparedCheck > rollbackStartOld);
+  assert.ok(rollbackStopCandidate > rollbackPreparedCheck);
+  assert.ok(rollbackFinalCheck > rollbackStopCandidate);
   const cleanupStart = production.indexOf('cleanup_app_failure() {');
+  const nestedCleanupStart = production.indexOf('  cleanup_app_failure() {', appEntryStart);
+  const rollbackFenceGate = production.indexOf(
+    'if [ -z "$CONFIG_GOVERNANCE_FENCE" ]',
+    nestedCleanupStart,
+  );
+  const rollbackDiskPreparation = production.indexOf(
+    'rollback_app_release || transaction_rollback_status=$?',
+    nestedCleanupStart,
+  );
+  const oldApiReady = production.indexOf(
+    "'Rollback old API restored ConfigIdentity'",
+    nestedCleanupStart,
+  );
   const rollbackHelperCall = production.indexOf(
     'if commit_rollback_worker_authority "$worker_active" "$worker_idle"',
-    cleanupStart,
+    nestedCleanupStart,
   );
+  const rollbackApiCommitCall = production.indexOf(
+    '&& commit_rollback_api_authority "$api_active" "$api_idle"',
+    rollbackHelperCall,
+  );
+  assert.ok(rollbackFenceGate > nestedCleanupStart);
+  assert.ok(rollbackDiskPreparation > rollbackFenceGate);
+  assert.ok(oldApiReady > rollbackDiskPreparation);
+  assert.ok(rollbackHelperCall > oldApiReady);
+  assert.ok(rollbackApiCommitCall > rollbackHelperCall);
   const rollbackCleanup = production.indexOf(
     '"/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"',
     rollbackHelperCall,
@@ -365,8 +409,8 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
     'systemctl restart "agent-saas-runtime-worker@$candidate_color"',
   );
   assert.ok(workerRecoveryFence > -1);
-  assert.ok(stopOldWorker > workerRecoveryFence);
-  assert.ok(startCandidateWorker > stopOldWorker);
+  assert.ok(startCandidateWorker > workerRecoveryFence);
+  assert.ok(stopOldWorker > startCandidateWorker);
   assert.match(
     workerRecovery,
     /systemctl is-active --quiet "agent-saas-runtime-worker@\$candidate_color"[\s\S]*! systemctl is-active --quiet "agent-saas-runtime-worker@\$active_color"[\s\S]*<"\$marker"/u,
@@ -394,12 +438,14 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   const apiCommitStart = production.indexOf('commit_rollback_api_authority() {');
   const apiCommitEnd = production.indexOf('restore_candidate_api_authority() {');
   const apiCommit = production.slice(apiCommitStart, apiCommitEnd);
+  const apiPrecommitCheck = apiCommit.indexOf("'Rollback old API pre-commit ConfigIdentity'");
   const stopCandidateApi = apiCommit.indexOf(
     'systemctl disable --now "agent-saas-server@$candidate_color"',
   );
   const restoreOldNginx = apiCommit.indexOf('cp -a "$old_nginx_backup" "$upstream"');
   const commitOldApiMarker = apiCommit.indexOf('commit_api_active_color "$active_color"');
-  assert.ok(stopCandidateApi > -1);
+  assert.ok(apiPrecommitCheck > -1);
+  assert.ok(stopCandidateApi > apiPrecommitCheck);
   assert.ok(restoreOldNginx > stopCandidateApi);
   assert.ok(commitOldApiMarker > restoreOldNginx);
   assert.match(
@@ -446,33 +492,83 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   assert.match(production, /DEPLOY_APP_ROLLBACK_API_CANDIDATE_ADMITTED=true/u);
   assert.match(production, /DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=true/u);
   assert.match(production, /validate_app_release_envs_match "\$old_api_env" "\$old_worker_env"/u);
-  const appRecoveryStart = production.indexOf('restore_candidate_app_authority() {');
+  const appRecoveryStart = production.indexOf(
+    'validate_candidate_api_routing_preparation() {',
+  );
   const appRecoveryEnd = production.indexOf('deploy_acs() {', appRecoveryStart);
   const appRecovery = production.slice(appRecoveryStart, appRecoveryEnd);
-  const appRecoveryFence = appRecovery.indexOf('acquire_config_governance_fence');
-  const prepareApi = appRecovery.indexOf('"$nginx_changed" "$old_api_env" false');
-  const prepareWorker = appRecovery.indexOf('"$worker_env" false true');
-  const finalAppApi = appRecovery.indexOf("'Rollback candidate App final API ConfigIdentity'");
+  const restoreAppStart = appRecovery.indexOf('restore_candidate_app_authority() {');
+  const appRecoveryFence = appRecovery.indexOf(
+    'acquire_config_governance_fence',
+    restoreAppStart,
+  );
+  const prepareApi = appRecovery.indexOf(
+    '"$nginx_changed" "$old_api_env" false true',
+    restoreAppStart,
+  );
+  const prepareWorker = appRecovery.indexOf(
+    '"$worker_env" false true true',
+    restoreAppStart,
+  );
+  const finalAppApi = appRecovery.indexOf(
+    "'Rollback candidate App prepared API ConfigIdentity'",
+    restoreAppStart,
+  );
   const finalAppWorker = appRecovery.indexOf(
-    "'Rollback candidate App final Worker ConfigIdentity'",
+    "'Rollback candidate App prepared Worker ConfigIdentity'",
+    restoreAppStart,
   );
-  const commitAppMarkers = appRecovery.indexOf(
-    'commit_app_active_colors "$api_candidate" "$worker_candidate" "$api_active"',
+  const preparedRoute = appRecovery.indexOf(
+    'validate_candidate_api_routing_preparation',
+    finalAppWorker,
   );
-  assert.ok(appRecoveryFence > -1);
+  const unifiedCommitCall = appRecovery.indexOf(
+    'commit_candidate_app_authority "$api_active" "$api_candidate"',
+    preparedRoute,
+  );
+  assert.ok(appRecoveryFence > restoreAppStart);
   assert.ok(prepareApi > appRecoveryFence);
   assert.ok(prepareWorker > prepareApi);
   assert.ok(finalAppApi > prepareWorker);
   assert.ok(finalAppWorker > finalAppApi);
-  assert.ok(commitAppMarkers > finalAppWorker);
-  const finalAppRoute = appRecovery.indexOf(
-    'validate_api_routing_boundary "$api_candidate" "$release_id"',
-    finalAppWorker,
+  assert.ok(preparedRoute > finalAppWorker);
+  assert.ok(unifiedCommitCall > preparedRoute);
+
+  const commitStart = appRecovery.indexOf('commit_candidate_app_authority() {');
+  const commitEnd = appRecovery.indexOf(
+    'restore_candidate_app_authority() {',
+    commitStart,
   );
-  assert.ok(finalAppRoute > finalAppWorker);
-  assert.ok(commitAppMarkers > finalAppRoute);
+  const appCommit = appRecovery.slice(commitStart, commitEnd);
+  const commitApiReady = appCommit.indexOf('Rollback candidate App commit API ConfigIdentity');
+  const commitWorkerReady = appCommit.indexOf(
+    'Rollback candidate App commit Worker ConfigIdentity',
+  );
+  const commitRoutePrepared = appCommit.indexOf(
+    'validate_candidate_api_routing_preparation',
+  );
+  const switchCandidateNginx = appCommit.indexOf(
+    'cp -a "$candidate_nginx_backup" "$upstream"',
+  );
+  const stopOldAppWorker = appCommit.indexOf(
+    'revoke_systemd_authority "agent-saas-runtime-worker@$worker_active"',
+  );
+  const stopOldAppApi = appCommit.indexOf(
+    'revoke_systemd_authority "agent-saas-server@$api_active"',
+  );
+  const commitAppMarkers = appCommit.indexOf(
+    'commit_app_active_colors "$api_candidate" "$worker_candidate" "$api_active"',
+  );
+  assert.ok(commitApiReady > -1);
+  assert.ok(commitWorkerReady > commitApiReady);
+  assert.ok(commitRoutePrepared > commitWorkerReady);
+  assert.ok(switchCandidateNginx > commitRoutePrepared);
+  assert.ok(stopOldAppWorker > switchCandidateNginx);
+  assert.ok(stopOldAppApi > stopOldAppWorker);
+  assert.ok(commitAppMarkers > stopOldAppApi);
   assert.match(appRecovery, /restore_old_api_authority/u);
   assert.match(appRecovery, /restore_old_worker_authority/u);
+  assert.match(appRecovery, /restore_candidate_app_disk/u);
   const deployAppStart = production.indexOf('deploy_app() {');
   const routedReady = production.indexOf(
     "curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready",

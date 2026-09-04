@@ -841,7 +841,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sharedDir,
       tenantSkillsRootDir,
       terminateAndRevokeUserConnectors,
-      disconnectWebUser: (userId) => webChannel?.disconnectUser(userId),
+      disconnectWebUser: (userId, generation) => generation === undefined ? webChannel?.disconnectUser(userId) : webChannel?.getWsServer()?.disconnectUser(userId, undefined, generation),
       removeCronsByOwners: cronRuntime.service
         ? (ownerIds) => cronRuntime.service!.removeByOwners(ownerIds)
         : undefined,

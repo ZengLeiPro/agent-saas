@@ -71,7 +71,7 @@ export default {
         "brand-accent": {
           DEFAULT: "#E8843A",
           soft:    "#FDF2E8",
-          ink:     "#B65E16",
+          ink:     "#A0500E", // 橙色文字：brand-guidelines 指定，比官网 accent-ink 更深以保证小字对比度
         },
         // 辅助青绿色：用于连接、协作、洞察等非主 CTA / 非成功态语义
         teal: {

@@ -170,15 +170,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
   if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
-    app.use('/api', createSessionAutomationsRouter({
-      store: runtime.sessionAutomationStore,
-      service: runtime.sessionAutomationCommandService,
-      sessionCatalog: runtime.sessionCatalog,
-      createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd),
-      compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
-      ...createSessionAutomationAttachmentBinding(runtime),
-      broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload),
-    }));
+    app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore,
+      service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog,
+      createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd), compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
+      ...createSessionAutomationAttachmentBinding(runtime), broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload) }));
   }
   app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download

@@ -75,8 +75,7 @@ const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
 export { MAX_FILE_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BYTES };
-export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous';
-export type ToolApprovalMode = 'never' | 'web';
+export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous'; export type ToolApprovalMode = 'never' | 'web';
 /**
  * Hand 部署位置维度。
  *
@@ -354,7 +353,6 @@ export interface ToolRuntime {
   invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult>;
 }
 
-/** Runtime tool provider. */
 export interface ToolProvider {
   list(context?: ToolCallContext): ToolDescriptor[];
   invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult | undefined>;

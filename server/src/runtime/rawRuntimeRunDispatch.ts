@@ -285,7 +285,6 @@ export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: str
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
   return rel.split(sep).join('/');
 }
-
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
 ): TenantRemoteHandAuthTokenResolver {
@@ -408,7 +407,6 @@ export async function collectRuntimeTooling(
   // createBuiltinTools 内部对 undefined 已经走默认全开；这里不再做 if/else 分支区分。
   const builtin = createBuiltinTools(config.builtinTools);
   providers.push(builtin);
-
   // 2.5 UserActivityList（safe 只读，身份只从 context 解析；记忆轮询 + 普通会话通用）
   if (config.userActivityService && isToolEnabled(config.toolControls, 'UserActivityList')) {
     providers.push(new UserActivityToolProvider(config.userActivityService));
@@ -420,7 +418,6 @@ export async function collectRuntimeTooling(
       tenantStore: config.tenantStore,
     }));
   }
-
   // 4. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.webTools && config.webTools.enabled !== false) {
     const webProvider = new WebToolProvider(config.webTools, config.webFetchImpl ?? fetch);
@@ -450,7 +447,6 @@ export async function collectRuntimeTooling(
       logger: config.logger,
     }));
   }
-
   // 4.6 AudioTranscribe（server 直连，凭据不进入 sandbox）。
   const audioProvider = createAudioTranscribeRuntimeProvider(config);
   if (audioProvider) providers.push(audioProvider);
@@ -458,7 +454,6 @@ export async function collectRuntimeTooling(
   if (config.cronService || config.taskboard) providers.push(new CronToolProvider({
     service: config.cronService ?? (() => undefined), ...(config.sessionCatalog ? { sessionCatalog: config.sessionCatalog } : {}), ...(config.taskboard ? { taskboard: config.taskboard } : {}),
   }));
-
   // 6. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
   if (config.mcpProxy || config.mcpClientManager) {
     const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
@@ -472,7 +467,6 @@ export async function collectRuntimeTooling(
     }
     providers.push(mcpProvider);
   }
-
   // 6.5 durable 后台任务查询/取消。只在 PG background runtime 已装配时暴露；
   // 子 agent runner 会通过无条件剥夺清单再次移除，禁止后台任务嵌套治理。
   if (config.backgroundTasks && isToolEnabled(config.toolControls, 'Agent')) {
@@ -489,18 +483,15 @@ export async function collectRuntimeTooling(
       parentProviders: [...providers], modePolicy: subagentDeps.agentModePolicy ?? 'any',
     }));
   }
-
   return { providers };
 }
 type RuntimeSkillFilter = (skill: SkillEntry) => boolean;
-
 function allowAllRuntimeSkills(): boolean {
   return true;
 }
 function filterRuntimeSkills(skills: SkillEntry[], filter: RuntimeSkillFilter): SkillEntry[] {
   return skills.filter(filter);
 }
-
 /**
  * 构造 Skill resolver。requiredSkillIds 只负责把专职 Agent 固有能力传给底层
  * SkillsDispatchConfig；最终仍会经过 runtime/browser filter 与 Agent 白名单。
@@ -519,7 +510,6 @@ export function buildRuntimeSkillsResolver(
     resolveSkillDir: (skill, ctx) => skills.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill, requiredSkillIds, resolveSkillContextTenantId(ctx.channelContext)),
   };
 }
-
 function prioritizeRuntimeSkills(skills: SkillEntry[], preferredSkillIds: readonly string[]): SkillEntry[] {
   if (preferredSkillIds.length === 0) return skills;
   const priority = new Map(preferredSkillIds.map((id, index) => [id, index]));
@@ -536,7 +526,6 @@ function prioritizeRuntimeSkills(skills: SkillEntry[], preferredSkillIds: readon
 export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSkillFilter {
   return (skill) => filters.every((filter) => filter(skill));
 }
-
 /**
  * 将 Agent-local policy 合并进已经固定版本的 shared org_agent Profile。
  * binding/version 身份保持 shared Profile 的不可变 pin；仅本次运行使用合并后的 config。
@@ -561,7 +550,6 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
     && hand.status !== 'destroyed'
   ));
   if (!hasTenantAcsHand) return allowAllRuntimeSkills;
-
   // 门控判据看 capability 声明而非 status==='ready'：capabilities 是注册时静态写入的
   // 配置事实（tenantRemoteHandCapabilities），不是运行期探测结果。而每轮 dispatch 的
   // ensureRuntimeHandRegistered 都会把 ACS hand upsert 回 'provisioning'，随后毫秒级
@@ -577,7 +565,6 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
     ))
   ));
   if (hasBrowserCapability) return allowAllRuntimeSkills;
-
   return (skill) => skill.id !== 'browser' && skill.name !== 'browser';
 }
 /**
@@ -602,7 +589,6 @@ export function buildImageGenSkillFilter(
   if (tenantEnabled && toolAvailable) return allowAllRuntimeSkills;
   return (skill) => skill.id !== 'image-gen';
 }
-
 export function resolveSkillContextUsername(context: ChannelContext | undefined): string | undefined {
   return context?.sessionOwner?.username ?? context?.user?.username;
 }
@@ -611,7 +597,6 @@ function resolveContextIsPlatformAdmin(context: ChannelContext | undefined): boo
   const identity = context?.user ?? context?.sessionOwner;
   return identity?.role === 'admin' && identity.tenantId === DEFAULT_TENANT_ID;
 }
-
 function resolveDefaultExecutionTargetForContext(
   executionConfig: ExecutionConfig,
   context: ChannelContext,

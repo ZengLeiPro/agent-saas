@@ -18,6 +18,7 @@ import { OrgAgentPickerDialog } from "@/components/OrgAgentPickerDialog";
 import { AgentSwitchConfirmationDialog } from "@/components/AgentSwitchConfirmationDialog";
 import {
   evaluateAgentTargetTransition,
+  resolveLandingAgentTarget,
   resolveNewSessionAgentTarget,
   type AgentTarget,
   type AgentTargetTransitionImpact,
@@ -287,12 +288,18 @@ function App() {
     if (target) launchTarget(target, groupId);
   }, [agentTargetCatalog, launchTarget]);
 
+  // 着陆页的空对话同样必须先绑定 Agent 目标，否则首条消息会被「缺少可证明的 Agent 目标」门禁挡下。
   useEffect(() => {
-    if (orgAgentsLoading || !agentTargetCatalog || personalAgentEnabled || agentTargetCatalog.selectableTargets.length !== 1) return;
     if (activeTab !== "chat" || settingsOpen || adminSettings) return;
-    if (sessionId || pendingAgentTarget || messages.length > 0) return;
-    startAgentTargetSession(agentTargetCatalog.selectableTargets[0]!);
-  }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, personalAgentEnabled, sessionId, settingsOpen, startAgentTargetSession]);
+    const target = resolveLandingAgentTarget({
+      catalog: agentTargetCatalog,
+      catalogLoading: orgAgentsLoading,
+      hasSession: Boolean(sessionId),
+      hasPendingTarget: Boolean(pendingAgentTarget),
+      hasMessages: messages.length > 0,
+    });
+    if (target) startAgentTargetSession(target);
+  }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, sessionId, settingsOpen, startAgentTargetSession]);
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {

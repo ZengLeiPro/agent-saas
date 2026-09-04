@@ -78,6 +78,11 @@ function getFirstTimestamp(items: RenderItem[]): number | undefined {
         if ('timestamp' in sub && sub.timestamp) return sub.timestamp;
       }
     }
+    // 步骤节把内容收编到自己名下，时间戳仍要能被气泡表头取到。
+    if (item.type === 'business_step_section') {
+      const nested = getFirstTimestamp(item.items);
+      if (nested) return nested;
+    }
   }
   return undefined;
 }
@@ -392,7 +397,16 @@ export function MessageList({
       && !((m.type === 'permission_request' || m.type === 'ask_user') && m.status === 'pending')),
     [timelineMessages],
   );
-  const renderItems = useMemo(() => groupMessages(filteredMessages, loading), [filteredMessages, loading]);
+  // 章节化与 Web 对齐（08-03~04 生产纪律）：步骤从开始即出现、过程归属其下、
+  // 完成后折起过程只留一句业务结果。debugMode 仍决定是否保留原始 TodoWrite 工具块。
+  const groupOptions = useMemo(
+    () => ({ debugMode: presentationGate.explicitSessionToggle, sectioning: true }),
+    [presentationGate.explicitSessionToggle],
+  );
+  const renderItems = useMemo(
+    () => groupMessages(filteredMessages, loading, groupOptions),
+    [filteredMessages, loading, groupOptions],
+  );
   const renderKeyFor = useCallback(
     (item: RenderItem) => renderKeyByMessageId.get(item.id) ?? item.id,
     [renderKeyByMessageId],

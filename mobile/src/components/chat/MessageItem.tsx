@@ -13,7 +13,7 @@ import type {
 import { MessageErrorBoundary } from '../ErrorBoundary';
 import { ActivityGroupView } from './blocks/ActivityGroupBlock';
 import { AskUserBlock } from './blocks/AskUserBlock';
-import { BusinessStepCard } from './blocks/BusinessStepBlock';
+import { BusinessStepCard, BusinessStepSectionView } from './blocks/BusinessStepBlock';
 import { FileDownloadCard } from './blocks/FileDownloadCard';
 import { PermissionBlock } from './blocks/PermissionBlock';
 import { SubagentBlock } from './blocks/SubagentBlock';
@@ -108,6 +108,28 @@ export const MessageItemView = React.memo(function MessageItemView({
         break;
       case 'business_step':
         content = <BusinessStepCard event={item} gate={presentationGate} />;
+        break;
+      case 'business_step_section':
+        // 步骤节内联渲染自己的过程项：渲染回调向下递归，避免 blocks 反向依赖本模块。
+        content = (
+          <BusinessStepSectionView
+            section={item}
+            renderItem={(child) => (
+              <MessageItemView
+                key={child.id}
+                item={child}
+                skipAnimation
+                onPermissionResponse={onPermissionResponse}
+                onAskUserResponse={onAskUserResponse}
+                onRetryMessage={onRetryMessage}
+                onForkMessage={onForkMessage}
+                onPreviewMd={onPreviewMd}
+                onTtsPlay={onTtsPlay}
+                presentationGate={presentationGate}
+              />
+            )}
+          />
+        );
         break;
       case 'runtime_status':
       case 'system_event':

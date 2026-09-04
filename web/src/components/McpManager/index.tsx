@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,7 @@ import {
   upsertMcpServer,
   upsertMyMcpServer,
   GLOBAL_TENANT_ID,
+  governanceApiErrorMessage,
 } from "@agent/shared";
 import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpSecretScope, McpSecretStatus, McpServerSummary, McpTemplatesResponse, MyMcpResponse } from "@agent/shared";
 import {
@@ -119,6 +120,7 @@ function McpManagerInner({
   const [adminData, setAdminData] = useState<McpAdminServersResponse | null>(null);
   const [templates, setTemplates] = useState<McpTemplatesResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const refreshGenerationRef = useRef(0);
   const [saving, setSaving] = useState(false);
   const [diagnosing, setDiagnosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -186,7 +188,7 @@ function McpManagerInner({
     } catch (err) {
       const result: McpDiagnosticResponse = {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: governanceApiErrorMessage(err),
         toolCount: 0,
         tools: [],
         connections: [],
@@ -199,12 +201,12 @@ function McpManagerInner({
   }, []);
 
   const refresh = useCallback(async () => {
+    const generation = ++refreshGenerationRef.current;
     setLoading(true);
     try {
-      // admin 态（全局 MCP 管理）只管 Catalog，不拉个人域数据——
-      // 个人账号连接/启用统一走能力中心 → 连接器，避免在平台管理页混入个人绑定。
       if (mode === "personal") {
         const mine = await fetchMyMcp();
+        if (generation !== refreshGenerationRef.current) return;
         setMyData(mine);
         setEnabled(Object.fromEntries(mine.servers.map(s => [s.id, s.enabled])));
         const hasReadyEnabledServer = mine.servers.some(server =>
@@ -219,14 +221,15 @@ function McpManagerInner({
           fetchMcpAdminServers(tenantIdScope),
           fetchMcpTemplates(),
         ]);
+        if (generation !== refreshGenerationRef.current) return;
         setAdminData(adminServers);
         setTemplates(templateData);
       }
-      setError(null);
+      if (generation === refreshGenerationRef.current) setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (generation === refreshGenerationRef.current) setError(governanceApiErrorMessage(err));
     } finally {
-      setLoading(false);
+      if (generation === refreshGenerationRef.current) setLoading(false);
     }
   }, [diagnose, isAdmin, mode, tenantIdScope]);
 
@@ -245,7 +248,7 @@ function McpManagerInner({
       await diagnose(false);
     } catch (err) {
       setEnabled(previous);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -271,7 +274,7 @@ function McpManagerInner({
         ...(tenantIdScope ? { tenantId: tenantIdScope } : {}),
       };
       if (!payload.tenantId) delete payload.tenantId;
-      await upsertMcpServer(payload);
+      await upsertMcpServer(payload, tenantIdScope);
       setForm(scopedEmptyServer);
       const resetConfigText = JSON.stringify(scopedEmptyServer.config, null, 2);
       setConfigText(resetConfigText);
@@ -279,7 +282,7 @@ function McpManagerInner({
       await refresh();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
       return false;
     } finally {
       setSaving(false);
@@ -331,7 +334,7 @@ function McpManagerInner({
       setCustomDialogOpen(false);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -374,7 +377,7 @@ function McpManagerInner({
       setEnabled(nextEnabled);
       if (target?.enabled) await diagnose(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -424,7 +427,7 @@ function McpManagerInner({
       await refresh();
     } catch (err) {
       popup?.close();
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -457,7 +460,7 @@ function McpManagerInner({
       await disconnectMyMcpOAuth(serverId);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -467,14 +470,14 @@ function McpManagerInner({
     if (!confirm(`删除 MCP Server ${id}？`)) return;
     setSaving(true);
     try {
-      await deleteMcpServer(id);
+      await deleteMcpServer(id, tenantIdScope);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }
-  }, [refresh]);
+  }, [refresh, tenantIdScope]);
 
   const removePersonalServer = useCallback(async (id: string) => {
     if (!confirm(`删除个人 MCP Server ${id}？`)) return;
@@ -484,7 +487,7 @@ function McpManagerInner({
       setDetailServerId(null);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(governanceApiErrorMessage(err));
     } finally {
       setSaving(false);
     }

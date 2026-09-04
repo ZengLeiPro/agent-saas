@@ -278,7 +278,7 @@ describe('MCP 路由组织隔离', () => {
       expect(h.store.getServer('wain_only')?.tenantId).toBe('wain'); // 未变
     });
 
-    it('平台 admin 修改 server tenantId (迁移归属) → OK', async () => {
+    it('平台 admin 不能通过普通更新迁移 server 归属', async () => {
       await seedServers();
       h.setCaller(PLATFORM_ADMIN);
       const res = await h.request('/api/mcp/admin/servers/wain_only', {
@@ -286,8 +286,26 @@ describe('MCP 路由组织隔离', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(basicServerBody('wain_only', { tenantId: GLOBAL_TENANT_ID })),
       });
-      expect(res.status).toBe(200);
-      expect(h.store.getServer('wain_only')?.tenantId).toBe(GLOBAL_TENANT_ID);
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe('MCP_SCOPE_CONFLICT');
+      expect(h.store.getServer('wain_only')?.tenantId).toBe('wain');
+    });
+
+    it('平台 admin 在组织 A 入口只能创建和更新组织 A 的 server', async () => {
+      await seedServers();
+      h.setCaller(PLATFORM_ADMIN);
+      const conflict = await h.request('/api/mcp/admin/servers/global_shared?tenantId=kaiyan', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(basicServerBody('global_shared', { tenantId: 'kaiyan' })),
+      });
+      expect(conflict.status).toBe(409);
+      expect((await conflict.json()).code).toBe('MCP_SCOPE_CONFLICT');
+      const created = await h.request('/api/mcp/admin/servers/kaiyan_new?tenantId=kaiyan', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(basicServerBody('kaiyan_new', { tenantId: 'kaiyan' })),
+      });
+      expect(created.status).toBe(200);
+      expect(h.store.getServer('kaiyan_new')?.tenantId).toBe('kaiyan');
     });
   });
 
@@ -295,6 +313,25 @@ describe('MCP 路由组织隔离', () => {
   // 3. DELETE /admin/servers/:id
   // ============================================================
   describe('DELETE /admin/servers/:id', () => {
+    it('平台 admin 在组织 A 入口不能删除全局或组织 B 的 server', async () => {
+      await seedServers();
+      h.setCaller(PLATFORM_ADMIN);
+      for (const id of ['global_shared', 'wain_only']) {
+        const res = await h.request(`/api/mcp/admin/servers/${id}?tenantId=kaiyan`, { method: 'DELETE' });
+        expect(res.status).toBe(409);
+        expect((await res.json()).code).toBe('MCP_SCOPE_CONFLICT');
+        expect(h.store.getServer(id)).toBeDefined();
+      }
+    });
+
+    it('平台 admin 在组织 A 入口可以删除组织 A 的 server', async () => {
+      await seedServers();
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/mcp/admin/servers/kaiyan_only?tenantId=kaiyan', { method: 'DELETE' });
+      expect(res.status).toBe(200);
+      expect(h.store.getServer('kaiyan_only')).toBeUndefined();
+    });
+
     it('组织 admin (wain) 删 kaiyan 的 server → 403', async () => {
       await seedServers();
       h.setCaller(WAIN_ADMIN);

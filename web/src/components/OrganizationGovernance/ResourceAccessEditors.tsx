@@ -4,7 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
-import { governanceAccessApi, governanceResourcesApi } from '@agent/shared/lib/governanceApi';
+import { governanceAccessApi, governanceApiErrorMessage, governanceResourcesApi } from '@agent/shared/lib/governanceApi';
 
 type EntitlementResourceType =
   'model' | 'tool' | 'agent_template' | 'skill' | 'connector' | 'environment_template';
@@ -77,7 +77,7 @@ const assigneeLabels: Record<AssigneeType, string> = {
 };
 
 function errorText(cause: unknown, fallback: string) {
-  return cause instanceof Error && cause.message ? cause.message : fallback;
+  return governanceApiErrorMessage(cause, fallback);
 }
 
 function MutationReceipt({ receipt }: { receipt: Receipt | null }) {

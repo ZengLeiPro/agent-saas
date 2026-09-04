@@ -281,7 +281,6 @@ export function MobileLayout(props: LayoutProps) {
           route={governanceRoute}
           access={managementAccess}
           onReturnPersonal={handleReturnPersonalSettings}
-          openFilePreview={handleOpenFilePreview}
           platformAdminSection={platformAdminSection}
           platformAdminEntityId={platformAdminEntityId}
           setPlatformAdminRoute={setPlatformAdminRoute}

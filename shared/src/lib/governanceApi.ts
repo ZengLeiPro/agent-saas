@@ -18,6 +18,8 @@ import {
 } from '../types/governance';
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
+import { GovernanceApiError } from './governanceErrors';
+export { GovernanceApiError, governanceApiErrorMessage } from './governanceErrors';
 import {
   agentListSchema, assignmentBatchPreviewSchema, assignmentBatchReceiptSchema,
   auditListSchema, changeJobSchema, credentialListSchema, credentialOperationPreviewSchema, directoryGroupListSchema,
@@ -35,17 +37,6 @@ const LIFECYCLE_MUTATION_SUCCESS_CODES = new Set(['TENANT_LIFECYCLE_PROPAGATION_
 
 type QueryValue = string | number | boolean | null | undefined;
 export type GovernanceCommand = Record<string, unknown>;
-
-export class GovernanceApiError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = 'GovernanceApiError';
-  }
-}
 
 function withQuery(path: string, query?: Record<string, QueryValue>): string {
   if (!query) return path;
@@ -72,7 +63,7 @@ function isSuccessCode(code: unknown): boolean {
 function backendError(
   value: unknown,
   acceptedSuccessCodes?: ReadonlySet<string>,
-): { code: string; message: string } | undefined {
+): { code: string; message: string; requestId?: string } | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
   if (record.code === undefined) return undefined;
@@ -81,12 +72,14 @@ function backendError(
   const message = typeof record.message === 'string'
     ? record.message
     : typeof record.error === 'string' ? record.error : code;
-  return { code, message };
+  const requestId = typeof record.requestId === 'string' ? record.requestId
+    : typeof record.correlationId === 'string' ? record.correlationId : undefined;
+  return { code, message, ...(requestId ? { requestId } : {}) };
 }
 
-function unwrapEnvelope(value: unknown, acceptedSuccessCodes?: ReadonlySet<string>): unknown {
+function unwrapEnvelope(value: unknown, acceptedSuccessCodes?: ReadonlySet<string>, status?: number, requestId?: string): unknown {
   const error = backendError(value, acceptedSuccessCodes);
-  if (error) throw new GovernanceApiError(error.code, error.message);
+  if (error) throw new GovernanceApiError(error.code, error.message, status, error.requestId ?? requestId);
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
     const successCode = isSuccessCode(record.code);
@@ -102,6 +95,7 @@ async function request<T = unknown>(
   acceptedSuccessCodes?: ReadonlySet<string>,
 ): Promise<T> {
   const response = await authFetch(path, init);
+  const responseRequestId = response.headers.get('x-request-id') ?? response.headers.get('x-correlation-id') ?? undefined;
   const errorCopy = !response.ok ? response.clone() : undefined;
   let raw: unknown;
   try {
@@ -110,13 +104,13 @@ async function request<T = unknown>(
     if (errorCopy) {
       const errorBody = await errorCopy.json().catch(() => undefined) as unknown;
       const coded = backendError(errorBody);
-      if (coded) throw new GovernanceApiError(coded.code, coded.message, response.status);
+      if (coded) throw new GovernanceApiError(coded.code, coded.message, response.status, coded.requestId ?? responseRequestId);
     }
     const message = cause instanceof Error ? cause.message : String(cause);
-    throw new GovernanceApiError(`HTTP_${response.status}`, message, response.status);
+    throw new GovernanceApiError(`HTTP_${response.status}`, message, response.status, responseRequestId);
   }
 
-  const payload = unwrapEnvelope(raw, response.ok ? acceptedSuccessCodes : undefined);
+  const payload = unwrapEnvelope(raw, response.ok ? acceptedSuccessCodes : undefined, response.status, responseRequestId);
   try {
     if (schema) return parseGovernanceDto(schema, payload);
     assertGovernanceUiSafe(payload);
@@ -453,23 +447,7 @@ const contextReviewDecisionCommandSchema = z.object({
 }).strict();
 
 async function contextPlaneRequest<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
-  try {
-    return await request(path, init, schema);
-  } catch (cause) {
-    if (cause instanceof GovernanceApiError && cause.status === 403) {
-      throw new GovernanceApiError('CONTEXT_PLANE_FORBIDDEN', '当前账号无权查看 Context Center。', 403);
-    }
-    if (cause instanceof GovernanceApiError && cause.status === 404) {
-      throw new GovernanceApiError('CONTEXT_PLANE_UNAVAILABLE', 'Context Center 服务端能力尚未提供。', 404);
-    }
-    if (cause instanceof GovernanceApiError && cause.status === 409) {
-      throw new GovernanceApiError('CONTEXT_REVISION_CONFLICT', '内容版本已变化，请刷新实体详情后重试。', 409);
-    }
-    if (cause instanceof GovernanceApiError && cause.status === 503) {
-      throw new GovernanceApiError('CONTEXT_PLANE_UNAVAILABLE', 'Context Center 服务暂不可用，请稍后重试。', 503);
-    }
-    throw cause;
-  }
+  return request(path, init, schema);
 }
 
 const contextQuery = (tenantId: string | undefined, query?: ContextListQuery) => ({

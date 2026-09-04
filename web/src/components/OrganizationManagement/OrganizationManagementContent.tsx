@@ -44,9 +44,9 @@ interface OrganizationManagementRendererContext {
   renderSkills: (tenantId: string, tenantName?: string) => ReactNode;
   renderMcpCatalog: (tenantId: string, tenantName?: string) => ReactNode;
   renderUsage: (tenantId: string) => ReactNode;
-  renderFiles: () => ReactNode;
+  renderFiles: (tenantId: string, tenantName?: string) => ReactNode;
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
-  renderAutomation?: () => ReactNode;
+  renderAutomation?: (tenantId: string, tenantName?: string) => ReactNode;
 }
 
 type OrganizationManagementRenderer = (context: OrganizationManagementRendererContext) => ReactNode;
@@ -108,7 +108,7 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.agents.memory-knowledge': ({ tenantId }) => (
     <OrganizationMemoryKnowledgePage tenantId={tenantId} />
   ),
-  'organization.agents.files-data': ({ renderFiles }) => renderFiles(),
+  'organization.agents.files-data': ({ tenantId, tenantName, renderFiles }) => renderFiles(tenantId, tenantName),
   'organization.agents.model-tools': ({ tenantId, route }) => {
     const view = new URLSearchParams(route.search?.replace(/^\?/, '')).get('view');
     if (view === 'tools') return <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="tool" title="工具可用范围" description="控制平台工具进入本组织的范围。" />;
@@ -118,8 +118,8 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.agents.environments': ({ tenantId }) => (
     <OrganizationEnvironmentsPage tenantId={tenantId} />
   ),
-  'organization.governance.automation': ({ renderAutomation }) =>
-    renderAutomation?.() ?? <GovernanceCapabilityNotice title="自动化任务" />,
+  'organization.governance.automation': ({ tenantId, tenantName, renderAutomation }) =>
+    renderAutomation?.(tenantId, tenantName) ?? <GovernanceCapabilityNotice title="自动化任务" />,
   'organization.governance.usage': ({ tenantId, tenantName, renderUsage }) => (
     <OrganizationUsageBillingPage
       tenantId={tenantId}
@@ -164,9 +164,9 @@ export interface OrganizationManagementContentProps {
   renderSkills: (tenantId: string, tenantName?: string) => ReactNode;
   renderMcpCatalog: (tenantId: string, tenantName?: string) => ReactNode;
   renderUsage: (tenantId: string) => ReactNode;
-  renderFiles: () => ReactNode;
+  renderFiles: (tenantId: string, tenantName?: string) => ReactNode;
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
-  renderAutomation?: () => ReactNode;
+  renderAutomation?: (tenantId: string, tenantName?: string) => ReactNode;
   dirtyController?: SettingsDirtyController;
   embedded?: boolean;
 }

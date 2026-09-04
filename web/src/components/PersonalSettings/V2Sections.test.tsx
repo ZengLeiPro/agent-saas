@@ -16,6 +16,8 @@ const authState = vi.hoisted(() => ({
   updatePreferences: vi.fn(),
 }));
 const sharedApi = vi.hoisted(() => ({
+  GovernanceApiError: class GovernanceApiError extends Error {},
+  governanceApiErrorMessage: vi.fn(() => "governance error"),
   startGoogleWorkspaceOAuth: vi.fn(),
   saveUserPreferences: vi.fn(),
   isDebugModeAvailable: vi.fn((tenantId: string, features?: { debugModeAllowed: boolean; debugModeEnabled?: boolean }) => (

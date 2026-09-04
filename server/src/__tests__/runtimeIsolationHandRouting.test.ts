@@ -76,12 +76,16 @@ describe('attested runtime hand routing', () => {
     const source = await readFile(new URL('../runtime/rawRuntimeRunDispatch.ts', import.meta.url), 'utf8');
     expect(source.match(/handStore: config\.handStore, runtimeIsolationRequirement,/g)).toHaveLength(3);
     expect(source.match(/runtimeIsolationMetadata: run\.metadata/g)).toHaveLength(3);
+    expect(source.match(/automationFence: automationFenceFromMetadata\(request\.runtimeIsolationMetadata\)!/g)).toHaveLength(2);
     for (const name of ['createRawRuntimeRunDispatch', 'createRawApprovalResumeDispatch', 'createRawInteractionResumeDispatch']) {
       const start = source.indexOf(`function ${name}`);
       const end = source.indexOf('\nexport function ', start + 1);
       const body = source.slice(start, end < 0 ? undefined : end);
       expect(body).toContain('runtimeIsolationRequirement,');
       expect(body).toContain('ensureRuntimeHandRegistered({');
+      if (name !== 'createRawRuntimeRunDispatch') {
+        expect(body).toContain('automationFenceFromMetadata(request.runtimeIsolationMetadata)');
+      }
     }
   });
 });

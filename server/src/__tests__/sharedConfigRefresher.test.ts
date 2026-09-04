@@ -10,6 +10,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedConfigRefresher } from '../app/sharedConfigRefresher.js';
+import { createSessionAutomationFlagSource } from '../app/sessionAutomationFlagSource.js';
 import type { AppConfig } from '../app/config.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 import { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
@@ -240,11 +241,11 @@ describe('createSharedConfigRefresher', () => {
       now: () => clock,
     });
 
-    const before = refresher.getAppliedStamps().config;
     clock += 5_000;
     refresher.refreshIfChanged();
+    const applied = refresher.getAppliedStamps().config;
     refresher.refreshIfChanged();
-    expect(refresher.getAppliedStamps().config).toEqual(before);
+    expect(refresher.getAppliedStamps().config).toEqual(applied);
     expect(config.models!.groups).toHaveLength(1);
   });
 
@@ -508,6 +509,69 @@ describe('createSharedConfigRefresher', () => {
     expect(config.stt?.enabled).toBe(true);
     expect(config.stt?.pricing?.creditsPerCall).toBe(123);
     expect(seen).toEqual(['true:123']);
+  });
+
+  it('flag source 在无 model resolver 路径也会按 read 刷新 false -> true', () => {
+    const writeWithAutomation = (executionEnabled?: boolean) => {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        agent: { cwd: '.' }, server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        ...(executionEnabled === undefined ? {} : { sessionAutomation: {
+          controlEnabled: true, executionEnabled, fixedLoopEnabled: true,
+          adaptiveLoopEnabled: true, goalEnabled: true, evaluatorEnforced: true,
+        } }),
+      }, null, 2), 'utf-8');
+    };
+    writeWithAutomation(false);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: false },
+    } as unknown as AppConfig;
+    const source = createSessionAutomationFlagSource(config);
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      now: () => clock,
+    });
+    source.attachRefresh(refresher.refreshIfChanged);
+
+    expect(source.executionEnabled()).toBe(false);
+    writeWithAutomation(true);
+    clock += 5_000;
+
+    expect(source.executionEnabled()).toBe(true);
+    expect(source.read().fixedLoopEnabled).toBe(true);
+
+    writeWithAutomation();
+    clock += 5_000;
+    expect(source.executionEnabled()).toBe(false);
+    expect(source.read().controlEnabled).toBe(false);
+  });
+
+  it('首次 attach 会比对已加载内容，不把启动窗口内的新文件 stamp 当作基线', () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      agent: { cwd: '.' }, server: { port: 3200 },
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: false },
+    }), 'utf-8');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: true },
+    } as unknown as AppConfig;
+    const source = createSessionAutomationFlagSource(config);
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      now: () => clock,
+    });
+
+    source.attachRefresh(refresher.refreshIfChanged);
+
+    expect(source.executionEnabled()).toBe(false);
+    expect(refresher.getAppliedStamps().config).toBeDefined();
+    clock += 5_000;
   });
 
   it('webTools 未变化时不触发回调', () => {

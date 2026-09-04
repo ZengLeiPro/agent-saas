@@ -105,7 +105,9 @@ async function deliverToolInvocationCancelRecord(input: ToolInvocationCancelDeli
     : typeof metadata.defaultHandId === 'string'
       ? metadata.defaultHandId
       : undefined;
-  const hand = handId ? await input.handStore?.get(handId).catch(() => null) : null;
+  const hand = handId && run?.tenantId
+    ? await input.handStore?.get(handId, run.tenantId).catch(() => null)
+    : null;
   const endpoint = resolveEndpoint(input.record, metadata, hand, input);
   const authToken = await resolveAuthToken(metadata, hand, input);
   const claimedRecord = await store?.claimCancelDelivery(

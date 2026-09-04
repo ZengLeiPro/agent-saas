@@ -232,9 +232,9 @@ describe('WebChannel channel.ts 生命周期', () => {
       const sessionId = randomUUID();
       (rig.channel as any).eventBufferStore.create(sessionId, USER.sub);
       (rig.channel as any).activeStreams.set('st-deg', {
-        controller: new AbortController(), userId: USER.sub, ws: rig.ws, sessionId,
+        controller: new AbortController(), userId: USER.sub, tenantId: TENANT, ws: rig.ws, sessionId,
       });
-      await expect(rig.channel.getStreamStatus(sessionId)).resolves.toEqual({ active: true, streamId: 'st-deg' });
+      await expect(rig.channel.getStreamStatus(TENANT, sessionId)).resolves.toEqual({ active: true, streamId: 'st-deg' });
     });
 
     it('attachToServer 在 start() 之前调用 → 抛错', () => {

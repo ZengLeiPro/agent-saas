@@ -41,7 +41,7 @@ interface RuntimeRecoveryHost {
   eventStoreTenantForClient(client: WsClient, targetTenantId?: string, ownerUserId?: string): string | null;
   wsSend(ws: WebSocket, data: object, eventId?: number, eventCursor?: string): void;
   sendQueueSnapshot(client: WsClient, sessionId: string, recovery?: { requestId?: string; networkGeneration?: number }): Promise<void>;
-  getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }>;
+  getStreamStatus(sessionId: string, tenantId?: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }>;
   getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null>;
 }
 
@@ -109,9 +109,9 @@ export class WebRuntimeRecovery {
     if (bufferActive) {
       try {
         const runStore = this.host.config.enqueueRuntime?.runStore;
-        if (runStore?.getActiveBySession) durableBinding = await resolveResumeDurableBinding(
-          runStore.getActiveBySession.bind(runStore),
-          sid,
+        const tenantId = this.host.eventStoreTenantForClient(client, undefined, bufferEntry?.userId);
+        if (runStore?.getActiveBySession && tenantId) durableBinding = await resolveResumeDurableBinding(
+          runStore.getActiveBySession.bind(runStore), tenantId, sid,
           (run) => this.host.eventStoreTenantForClient(client, run.tenantId, run.userId) ?? undefined,
         );
         if (durableBinding?.active === false) {
@@ -259,7 +259,9 @@ export class WebRuntimeRecovery {
   ): Promise<boolean> {
     const runStore = this.host.config.enqueueRuntime?.runStore;
     if (!runStore) return false;
-    const activeRun = await runStore.getActiveBySession?.(sessionId);
+    const lookupTenantId = this.host.eventStoreTenantForClient(client, undefined, this.host.eventBufferStore.get(sessionId)?.userId);
+    if (!lookupTenantId) return false;
+    const activeRun = await runStore.getActiveBySession?.(lookupTenantId, sessionId);
     if (!activeRun) return false;
     const active = this.host.findActiveStreamByRunId(activeRun.runId);
     const accessError = activeRun.userId || (activeRun.tenantId && activeRun.tenantId !== DEFAULT_TENANT_ID)
@@ -467,7 +469,7 @@ export class WebRuntimeRecovery {
     let authorizedOwnerUserId: string | undefined;
     let authorizedTenantId = client.user?.tenantId;
     if (runStore?.listUserMessagesBySession) {
-      const runs = await runStore.listUserMessagesBySession(sessionId);
+      const runs = await runStore.listUserMessagesBySession(sessionId, authorizedTenantId);
       const first = runs[0];
       if (first && this.host.sensitiveActionAccessError(client, {
         tenantId: first.tenantId,
@@ -477,7 +479,7 @@ export class WebRuntimeRecovery {
       authorizedTenantId = first?.tenantId ?? authorizedTenantId;
       snapshot.queueSnapshot = buildChatQueueSnapshot(sessionId, runs);
     }
-    snapshot.runtime = await this.host.getStreamStatus(sessionId);
+    snapshot.runtime = await this.host.getStreamStatus(sessionId, authorizedTenantId);
     const finalizePendingInteractions = await this.prepareAuthoritativePendingInteractions(
       client,
       sessionId,
@@ -584,10 +586,11 @@ export async function getRuntimeStreamStatus(
   runStore: RunStore | undefined,
   eventBufferStore: EventBufferStore,
   findActiveStreamIdBySession: (sessionId: string) => string | undefined,
+  tenantId?: string,
 ): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }> {
   try {
-    if (runStore?.getActiveBySession) {
-      const activeRun = await runStore.getActiveBySession(sessionId);
+    if (runStore?.getActiveBySession && tenantId) {
+      const activeRun = await runStore.getActiveBySession(tenantId, sessionId);
       if (activeRun) {
         const streamId = findActiveStreamIdBySession(sessionId)
           ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);

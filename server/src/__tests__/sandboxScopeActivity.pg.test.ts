@@ -56,7 +56,11 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     eventStore = new PgEventStore({ connectionString: testPgUrl!, tablePrefix: prefix, poolMax: 2 });
     await eventStore.init();
-    runStore = new PgRunStore({ pool, tablePrefix: prefix });
+    runStore = new PgRunStore({
+      pool,
+      tablePrefix: prefix,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
     await runStore.init();
     await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
   }, 30_000);

@@ -33,7 +33,7 @@ import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { LayoutProps } from "@/layouts/types";
 import type { AgentProfile, SessionRuntimeStatus } from "@agent/shared";
 
-/** 将 API 会话列表转换为 sidebar 所需的格式 */
+/** 将 API 会话列表（含自动化 compact projection）转换为 sidebar 所需格式 */
 function toSidebarSessions(
   sessions: ApiSessionListItem[],
   runningSessionIds: ReadonlySet<string>,
@@ -57,6 +57,10 @@ function toSidebarSessions(
     orgAgentId: s.orgAgentId,
     orgAgentName: s.orgAgentName,
     orgAgentAvailable: s.orgAgentAvailable,
+    // Shared API adds this compact projection in TASK-338. Keep the bridge structural so
+    // this Web branch remains typecheckable while the shared agent lands its export.
+    automation: (s as unknown as { automation?: unknown }).automation,
+    automationSummary: (s as unknown as { automationSummary?: unknown }).automationSummary,
     agentTarget: s.agentTarget,
     agentTargetSnapshot: s.agentTargetSnapshot,
     agentTargetUnavailableReason: s.agentTargetUnavailableReason,
@@ -93,6 +97,7 @@ function App() {
     handlePermissionResponse, handleAskUserResponse,
     modelList, selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell,
     tokenUsage, contextUsage, connectionState, resumeCurrentStream,
+    automationControllerNode, automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
     runningSessionIds, sessionRuntimeStatuses,
@@ -171,9 +176,13 @@ function App() {
     : activeAgentTarget?.kind === 'personal'
       ? '个人 Agent'
       : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家' : undefined;
-  const activeOrgAgentReadOnly = Boolean(activeAgentTargetUnavailableReason);
+  const activeOrgAgentReadOnly = !!activeAgentTargetUnavailableReason;
+  const sessionReadOnly = !!(sessionId && (
+    isLoadingMessages || !sessionParticipants
+    || sessionParticipants.owner.userId !== authUser?.id
+  ));
   const orgAgentIdentityLoading = !agentTargetCatalog && !compatibilityReason && (orgAgentsLoading || isLoadingSessions);
-  const adminOwnerView = Boolean(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
+  const adminOwnerView = !!(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
   const pendingPickerGroupIdRef = useRef<string | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<{
@@ -363,13 +372,14 @@ function App() {
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     ttsStateMap: ttsPlayer.ttsStateMap, modelList,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
+    automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
     previewFilePath, previewFileOwner, previewMode, openFilePreview: openPreview, dockFilePreview, expandFilePreview, closeFilePreview,
     previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser: toggleBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession: startOrgAgentWithTransition, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession: startOrgAgentWithTransition, activeOrgAgent, activeOrgAgentReadOnly, sessionReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   };
 
   // 反馈 Provider 恒挂载（2026-07 审查 F8：条件包裹会让 Layout 卸载重挂丢 DOM 状态）；
@@ -391,6 +401,8 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {automationControllerNode}
 
       <SubagentTranscriptProvider value={subagentTranscriptContextValue}>
         <FilePreviewProvider value={{

@@ -80,6 +80,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/runtime/runStoreSchema.ts',
   'server/src/runtime/runTerminalOutboxStore.ts',
   'server/src/runtime/runtimeSchedulerConfigStore.ts',
+  'server/src/runtime/sessionAutomationStore.ts',
   'server/src/runtime/sessionProjectionStore.ts',
   'server/src/runtime/systemMetricsStore.ts',
   'server/src/runtime/toolInvocationStore.ts',

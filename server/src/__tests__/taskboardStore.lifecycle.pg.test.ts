@@ -61,7 +61,7 @@ describePg('PgTaskboardStore contract', () => {
       max: 12,
     });
     store = new PgTaskboardStore({ pool, tablePrefix: prefix });
-    runStore = new PgRunStore({ pool, tablePrefix: prefix });
+    runStore = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     const peer = new PgTaskboardStore({ pool, tablePrefix: prefix });
     await Promise.all([store.init(), peer.init(), runStore.init()]);
   }, 30_000);

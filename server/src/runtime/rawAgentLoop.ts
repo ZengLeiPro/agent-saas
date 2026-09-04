@@ -1,18 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  InteractionEvent,
-  InteractionResponse,
-} from '../agent/types.js';
+import type { InteractionEvent, InteractionResponse } from '../agent/types.js';
 import {
   INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
-  type ModelRequestDiagnostic,
-  type AgentLoop,
-  type ApprovalStore,
-  type ApprovalRecord,
-  type EventStore,
-  type ModelAdapter,
-  type ModelChatMessage,
-  type ModelEvent,
+  type ModelRequestDiagnostic, type AgentLoop, type ApprovalStore, type ApprovalRecord,
+  type EventStore, type ModelAdapter, type ModelChatMessage, type ModelEvent,
   type ModelToolCall,
   type ModelUsage,
   type RunContext,
@@ -40,7 +31,7 @@ import {
 import { tryParseToolInput } from '../agent/toolRuntimePaths.js';
 import { DefaultToolPolicy } from './toolPolicy.js';
 import { refreshRunApprovalPolicy } from './approvalPolicyResolution.js';
-import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
+import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js'; // compaction calls use durable epochs
 import { standardizeToolError } from './agentPlanDefense.js';
 import { toolExecutionError } from './toolExecutionError.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
@@ -115,7 +106,7 @@ import {
   unavailableToolMessage,
   type InvalidPromptRequestBlockedFailure,
 } from './rawAgentLoopHelpers.js';
-import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
+import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js'; import { AutomationBudgetExceededError, AutomationFenceRejectedError } from './sessionAutomationRuntimeGuard.js';
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { createSuccessfulCompletionController, finishSuccessfulRun } from './rawAgentLoopCompletion.js';
 import { SteeringInterjectionCoordinator } from './rawAgentLoopInterjections.js';
@@ -143,7 +134,6 @@ export {
   ToolStreamSummaryBuilder,
   type StreamEventBatchOptions,
 } from './rawAgentLoopSupport.js';
-
 /**
  * RawAgentLoop 自身原本完全依赖 EventStore 留痕,不打 logger 日志。
  * 但 enqueue-only 异步路径绕过 dispatch wrapper,导致 server.log 里完全
@@ -180,7 +170,6 @@ const CONTEXT_SYNTHESIS_PROMPT = [
 ].join('\n');
 const INVALID_PROMPT_RECOVERY_INPUT = '继续';
 const INVALID_PROMPT_CUSTOMER_ERROR = 'Agent 开小差了，请发送「继续」';
-
 export interface RawAgentLoopOptions {
   modelAdapter: ModelAdapter;
   eventStore: EventStore;
@@ -211,9 +200,8 @@ export interface RawAgentLoopOptions {
    * 默认 35 分钟，可通过 env `AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS` 覆盖。
    * 设 0 表示「任意 invocationStarted 都立刻视为 zombie」（仅测试用）。
    */
-  zombieToolCallTimeoutMs?: number;
-}
-
+  zombieToolCallTimeoutMs?: number; automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard; modelMaxOutputTokens?: number;
+} export function compactionOperationForEvents(events: readonly Pick<PlatformEvent, 'type'>[]): string { return `compaction:${events.reduce((count,event)=>count+(event.type==='compaction'?1:0),0)+1}`; }
 export interface CompactInput {
   message: InboundMessage;
   /**
@@ -251,7 +239,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly toolInvocationStore?: ToolInvocationStore;
   private readonly handStore?: HandStore;
   private readonly runtimeIsolationRequirement?: RuntimeIsolationRequirement;
-  private readonly runStore?: RunStore;
+  private readonly runStore?: RunStore; private readonly automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard; private readonly modelMaxOutputTokens: number;
   private readonly mcpLoadingMode: EffectiveMcpLoadingMode; private readonly compactionPrompt: string;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
@@ -279,7 +267,7 @@ export class RawAgentLoop implements AgentLoop {
     this.toolInvocationStore = options.toolInvocationStore;
     this.handStore = options.handStore;
     this.runtimeIsolationRequirement = options.runtimeIsolationRequirement;
-    this.runStore = options.runStore;
+    this.runStore = options.runStore; this.automationGuard = options.automationGuard; this.modelMaxOutputTokens=Math.max(64,options.modelMaxOutputTokens??4096);
     this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager'; this.compactionPrompt = options.compactionPrompt?.trim() || DEFAULT_COMPACTION_REQUEST_PROMPT;
     this.streamEventBatch = {
       maxEvents: options.streamEventBatch?.maxEvents ?? 25,
@@ -312,9 +300,9 @@ export class RawAgentLoop implements AgentLoop {
     });
   }
 
-  private withModelRequestDiagnostics(context: RunContext): RunContext {
-    return {
-      ...context,
+  private withModelRequestDiagnostics(context: RunContext, automationAttempt?: import('./sessionAutomationRuntimeGuard.js').AutomationAttemptHandle): RunContext {
+    const authorizeModelTurn=context.authorizeModelTurn;let transportAuthorized=false;const authorize=authorizeModelTurn||(this.automationGuard&&automationAttempt)?async()=>{await authorizeModelTurn?.();if(this.automationGuard&&automationAttempt){await this.automationGuard.beforeModelTransport(context,automationAttempt,!transportAuthorized);transportAuthorized=true;}}:undefined;
+    return {...context,...(authorize?{authorizeModelTurn:authorize}:{}),
       recordModelRequestDiagnostic: async (diagnostic: ModelRequestDiagnostic) => {
         try {
           if (diagnostic.type === 'started') {
@@ -352,12 +340,12 @@ export class RawAgentLoop implements AgentLoop {
     };
   }
 
-  private async autoSelectTenantHandId(sessionId?: string, runId?: string, executionTarget?: import('../agent/toolRuntime.js').ExecutionTargetKind): Promise<string | undefined> {
+  private async autoSelectTenantHandId(tenantId: string, sessionId?: string, runId?: string, executionTarget?: import('../agent/toolRuntime.js').ExecutionTargetKind): Promise<string | undefined> {
     if (!this.handStore || !sessionId) {
       if (this.runtimeIsolationRequirement) throw new Error('RUNTIME_ISOLATION_HAND_STORE_MISSING'); else return undefined;
     }
     try {
-      const hands = await this.handStore.listBySession(sessionId);
+      const hands = await this.handStore.listBySession(sessionId, tenantId);
       const decision = selectRuntimeHandRoute(hands, {
         runId, executionTarget, runtimeIsolationRequirement: this.runtimeIsolationRequirement,
       });
@@ -369,7 +357,7 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /**
-   * RFC v1 P0.4：跨 run 接力 — 启动时从 runStore 查上一 run 的 last_response_id（未过期）。
+   * RFC v1 P0.4：跨 run 接力 — 启动时按 tenant/session 查上一 run 的 last_response_id（未过期）。
    * RunStore 缺失 / 接口未实现 / 查询出错全部退化为不接力（绝不阻断主流程）。
    *
    * 2026-07-02 模型匹配防线：response id 是上游后端的私有状态，只在「同一 model」下有效。
@@ -379,13 +367,13 @@ export class RawAgentLoop implements AgentLoop {
    * 本就不在旧 response 链上，全量才是语义正确的选择，不只是安全退化。
    */
   private async loadInitialResponseId(
-    sessionId: string,
+    tenantId: string, sessionId: string,
     model: string,
     profileConfigDigest?: string,
   ): Promise<string | undefined> {
     if (!this.runStore?.findLatestResponseSessionStateBySession) return undefined;
     try {
-      const state = await this.runStore.findLatestResponseSessionStateBySession(sessionId);
+      const state = await this.runStore.findLatestResponseSessionStateBySession(tenantId, sessionId);
       if (!state?.lastResponseId) return undefined;
       if (state.lastResponseModel !== model) {
         logger.info(
@@ -413,14 +401,14 @@ export class RawAgentLoop implements AgentLoop {
    * model 作为接力身份键一并落库（loadInitialResponseId 据此拒绝跨模型接力）。
    */
   private async persistResponseSessionState(
-    runId: string,
+    runId: string, tenantId: string, sessionId: string,
     completed: Extract<ModelEvent, { type: 'completed' }>,
     model: string,
     profileConfigDigest?: string,
   ): Promise<void> {
     if (!this.runStore?.updateResponseSessionState || !completed.responseId) return;
     try {
-      await this.runStore.updateResponseSessionState(runId, {
+      await this.runStore.updateResponseSessionState(runId, tenantId, sessionId, {
         lastResponseId: completed.responseId,
         lastResponseModel: model,
         ...(profileConfigDigest ? { lastResponseProfileDigest: profileConfigDigest } : {}),
@@ -438,13 +426,13 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /** Local tool-call repair creates a call id absent from provider-owned response state. */
-  private async clearResponseSessionStateForRepair(runId: string, sessionId: string): Promise<void> {
+  private async clearResponseSessionStateForRepair(runId: string, tenantId: string, sessionId: string): Promise<void> {
     if (!this.runStore) return;
     try {
       if (this.runStore.clearResponseSessionStateBySession) {
-        await this.runStore.clearResponseSessionStateBySession(sessionId);
+        await this.runStore.clearResponseSessionStateBySession(tenantId, sessionId);
       } else if (this.runStore.updateResponseSessionState) {
-        await this.runStore.updateResponseSessionState(runId, {
+        await this.runStore.updateResponseSessionState(runId, tenantId, sessionId, {
           lastResponseId: null,
           lastResponseExpireAt: null,
           actualModelSeen: null,
@@ -646,6 +634,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.automationFence ? { automationFence: context.automationFence } : {}),
       ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
@@ -819,9 +808,9 @@ export class RawAgentLoop implements AgentLoop {
     // ChatCompletionsAdapter 不消费 previousResponseId；dispatcher 已按 protocol 路由 adapter。
     const usesStoredResponseState = !context.disableResponseRelay
       && this.modelAdapter.capabilities?.responseState !== 'stateless';
-    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
+    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(requireEventTenantId(context), context.sessionId, 'run wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
-      ? await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest)
+      ? await this.loadInitialResponseId(requireEventTenantId(context), context.sessionId, context.model, context.profileConfigDigest)
       : undefined;
 
     try {
@@ -1097,7 +1086,7 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName,
         });
-        let modelStreamError: unknown;
+        let modelStreamError: unknown; const automationContext=context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`turn:${turn}`,{model:context.model,inputTokens:estimateContextTokens([messages,requestTools]),maxOutputTokens:this.modelMaxOutputTokens});
         const modelEvents = captureModelStreamError(
           this.modelAdapter.stream({
             model: context.model,
@@ -1107,7 +1096,7 @@ export class RawAgentLoop implements AgentLoop {
             signal: context.signal,
             ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
             ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-          }, this.withModelRequestDiagnostics(context)),
+          }, this.withModelRequestDiagnostics(context, automationAttempt)),
           (error) => { modelStreamError = error; },
         );
         for await (const event of modelEvents) {
@@ -1169,7 +1158,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'thinking_end' };
         }
 
-        if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        await this.automationGuard?.finishModel(automationContext,automationAttempt,completed?.usage,modelStreamError); if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
         const blockedFailure = getInvalidPromptRequestBlockedFailure(modelStreamError ?? completed);
         if (
           blockedFailure
@@ -1239,10 +1228,10 @@ export class RawAgentLoop implements AgentLoop {
         // currentResponseId 供同 run 下一轮及跨 run 接力。
         if (usesStoredResponseState && completed.responseStateReset) {
           currentResponseId = undefined;
-          await this.clearResponseSessionStateForRepair(context.runId, context.sessionId);
+          await this.clearResponseSessionStateForRepair(context.runId, requireEventTenantId(context), context.sessionId);
         } else if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
-          await this.persistResponseSessionState(context.runId, completed, context.model, context.profileConfigDigest);
+          await this.persistResponseSessionState(context.runId, requireEventTenantId(context), context.sessionId, completed, context.model, context.profileConfigDigest);
         }
         await this.persistLoadedMcpTools(completed, tools, messages, context);
 
@@ -1762,7 +1751,7 @@ export class RawAgentLoop implements AgentLoop {
     priorEvents: PlatformEvent[],
     options: CompactionOptions,
   ): AsyncGenerator<OutboundEvent, CompactionOutcome> {
-    yield { type: 'compaction_start' };
+    yield { type: 'compaction_start' }; const compactionOperation = compactionOperationForEvents(priorEvents);
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
@@ -1831,16 +1820,16 @@ export class RawAgentLoop implements AgentLoop {
         throw new Error(`compaction request exceeds context window: ${requestUpperTokens}/${contextWindow}`);
       }
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
-      await context.authorizeModelTurn?.();
+      await context.authorizeModelTurn?.(); const automationAttempt = await this.automationGuard?.beforeModel(context,compactionOperation,{model:context.model,inputTokens:estimateContextTokens([requestMessages,tools]),maxOutputTokens:plan.summaryBudgetTokens}); let compactionStreamError:unknown;
       // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容。
-      for await (const event of this.modelAdapter.stream({
+      for await (const event of captureModelStreamError(this.modelAdapter.stream({
         model: context.model,
         messages: requestMessages,
         tools,
         toolChoice: 'none',
         maxOutputTokens: plan.summaryBudgetTokens,
         signal: context.signal,
-      }, this.withModelRequestDiagnostics(context))) {
+      }, this.withModelRequestDiagnostics(context, automationAttempt)),error=>{compactionStreamError=error;})) {
         if (event.type === 'text_delta') {
           summaryText += event.content;
         } else if (event.type === 'draft_reset') {
@@ -1849,7 +1838,7 @@ export class RawAgentLoop implements AgentLoop {
           completed = event;
         }
       }
-      if (!completed) throw new Error('model stream completed without completion event');
+      if (compactionStreamError) { await this.automationGuard?.finishModel(context,automationAttempt,completed?.usage,compactionStreamError); throw compactionStreamError; } if (!completed) { const error=new Error('model stream completed without completion event'); await this.automationGuard?.finishModel(context,automationAttempt,undefined,error); throw error; } await this.automationGuard?.finishModel(context,automationAttempt,completed.usage);
       if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
       assertSuccessfulModelTerminal(completed);
       if (completed.usage) {
@@ -1869,7 +1858,7 @@ export class RawAgentLoop implements AgentLoop {
       if (!summaryAudit.validation.valid) logger.warn(`[compact] summary validation warning session=${context.sessionId} run=${context.runId} ${formatCompactionSummaryWarning(summaryAudit.validation)}`);
 
       if (this.runStore?.clearResponseSessionStateBySession) {
-        const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
+        const cleared = await this.runStore.clearResponseSessionStateBySession(requireEventTenantId(context), context.sessionId);
         if (cleared > 0) logger.info(`[compact] cleared ${cleared} response relay state(s) session=${context.sessionId}`);
       }
       await this.eventSink.append({
@@ -2218,6 +2207,7 @@ export class RawAgentLoop implements AgentLoop {
       env: resumeContext.env,
       sessionId: resumeContext.sessionId,
       runId: resumeContext.runId,
+      ...(resumeContext.automationFence ? { automationFence: resumeContext.automationFence } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: resumeContext.hooks,
       signal: resumeContext.signal,
@@ -2406,6 +2396,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.automationFence ? { automationFence: context.automationFence } : {}),
       ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
@@ -2415,7 +2406,7 @@ export class RawAgentLoop implements AgentLoop {
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
     const callableDescriptorsByName = this.callableDescriptorsForEvents(descriptorsByName, priorEvents);
     const call = pendingState.call;
-    const resultContent = formatAskUserQuestionResult(input.response);
+    const resultContent = formatAskUserQuestionResult(input.response); await this.automationGuard?.recordInteraction(context,input.interactionId,request.interactionType,'completed',{response:input.response});
 
     if (request.invocationId) {
       await this.toolInvocationStore?.complete(request.invocationId, 'completed').catch(() => undefined);
@@ -2581,7 +2572,7 @@ export class RawAgentLoop implements AgentLoop {
             toolInput: input && typeof input === 'object' ? input as Record<string, unknown> : { value: input },
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = err instanceof Error ? err.message : String(err); await this.automationGuard?.barrier(context);
           await this.approvalStore.resolvePending(approval.id, 'rejected', message);
           return toolExecutionError({ call, descriptor, parsedInput: input, message: `tool error: ${message}` });
         }
@@ -2621,8 +2612,10 @@ export class RawAgentLoop implements AgentLoop {
         err instanceof InteractionPendingWithoutInteractionHook
         || err instanceof ToolInvocationClaimLostError
         || err instanceof RunLeaseLostError
+        || err instanceof AutomationFenceRejectedError
+        || err instanceof AutomationBudgetExceededError
       ) throw err;
-      // 失败也保留摘要与结构化事实；approval-resume 分支同样执行该契约。
+      // 普通工具失败要保留摘要与结构化事实；approval-resume 分支同样执行该契约。
       const presentation = buildFailurePresentation(call.name, input, err, resolveRunTenantId(context));
       const metadata = err instanceof ToolExecutionError ? err.resultMetadata : undefined;
       return {
@@ -2648,7 +2641,7 @@ export class RawAgentLoop implements AgentLoop {
     baseToolContext: ToolCallContext;
     context: RunContext;
   }): Promise<ToolExecutionOutcome> {
-    const allow = args.response.allow === true;
+    const allow = args.response.allow === true; await this.automationGuard?.barrier(args.context);
     const resolvedApproval = await this.approvalStore.resolvePending(
       args.approval.id,
       allow ? 'approved' : 'rejected',
@@ -2688,7 +2681,8 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call: args.call, descriptor: args.descriptor, input: args.input, result };
     } catch (err) {
-      if (err instanceof ToolInvocationClaimLostError || err instanceof RunLeaseLostError) throw err;
+      if (err instanceof ToolInvocationClaimLostError || err instanceof RunLeaseLostError
+        || err instanceof AutomationFenceRejectedError || err instanceof AutomationBudgetExceededError) throw err;
       // 失败也要有摘要：优先用错误自带的（provider 按真实 metadata 产出），
       // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
       // 远好过一行「已执行，有异常」。
@@ -2716,15 +2710,17 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext;
   }): Promise<ToolResult> {
     const startedAt = Date.now();
-    const invocationId = `${args.context.runId}:${args.call.id}`;
+    const invocationId = `${args.context.runId}:${args.call.id}`; // stable across resume
     const executionAudit = createExecutionAuditRecorder();
     const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch, requireEventTenantId(args.context));
     const streamSummary = new ToolStreamSummaryBuilder();
-    const hooks = args.baseToolContext.hooks?.onInteraction || args.descriptor.name !== 'AskUserQuestion'
+    const externalInteractionHook = args.baseToolContext.hooks?.onInteraction;
+    const hooks = args.descriptor.name !== 'AskUserQuestion'
       ? args.baseToolContext.hooks
       : {
           ...(args.baseToolContext.hooks ?? {}),
-          onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => {
+          onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => { await this.automationGuard?.recordInteraction(args.context,event.interactionId,event.type,'active',{toolCallId:event.toolCallId??args.call.id,questions:event.questions??[]});
+            if (externalInteractionHook) return externalInteractionHook(event);
             await this.eventSink.append({
               type: 'interaction_requested',
               runId: args.context.runId,
@@ -2775,10 +2771,10 @@ export class RawAgentLoop implements AgentLoop {
         }
       },
     };
-    const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId, args.context.runId, args.baseToolContext.workspace.executionTarget);
+    const autoHandId = await this.autoSelectTenantHandId(resolveRunTenantId(args.context), args.context.sessionId, args.context.runId, args.baseToolContext.workspace.executionTarget);
     const effectiveHandId = autoHandId;
     toolContext.correlation = createInvocationCorrelation({ sessionId: args.context.sessionId, runId: args.context.runId, toolCallId: args.call.id, invocationId, ...(effectiveHandId ? { handId: effectiveHandId } : {}) });
-    const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
+    const skillName = resolveInvokedSkillName(args.descriptor.id, args.input); await this.automationGuard?.barrier(args.context);
     const invocation = await this.toolInvocationStore?.start({
       invocationId,
       runId: args.context.runId,
@@ -2862,7 +2858,7 @@ export class RawAgentLoop implements AgentLoop {
           parallelGate.onClaimed();
           await parallelGate.waitForRelease;
         }
-        const attemptCorrelation = createExecutionAttempt(toolContext.correlation!);
+        const attemptCorrelation = createExecutionAttempt(toolContext.correlation!); await this.automationGuard?.barrier(args.context);
         await this.eventSink.append({
           type: 'tool_invocation_started',
           runId: args.context.runId,
@@ -2872,6 +2868,7 @@ export class RawAgentLoop implements AgentLoop {
           toolName: args.descriptor.name,
           executionTarget: args.baseToolContext.workspace.executionTarget, attemptId: attemptCorrelation.attemptId,
         });
+        await this.automationGuard?.barrier(args.context); // last await before the side-effecting implementation
         return runWithInvocationCorrelation(attemptCorrelation, () => this.toolRuntime.invoke(
           { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
           { ...toolContext, correlation: attemptCorrelation },
@@ -3114,10 +3111,10 @@ export class RawAgentLoop implements AgentLoop {
     if (contextRewindRecoveryUsed) clearProviderContinuations(args.messages);
     const usesStoredResponseState = !args.context.disableResponseRelay
       && this.modelAdapter.capabilities?.responseState !== 'stateless';
-    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(args.context.sessionId, 'resume wake');
+    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(requireEventTenantId(args.context), args.context.sessionId, 'resume wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(
-        args.context.sessionId,
+        requireEventTenantId(args.context), args.context.sessionId,
         args.context.model,
         args.context.profileConfigDigest,
       )
@@ -3331,7 +3328,7 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName: args.descriptorsByName,
         });
-        let modelStreamError: unknown;
+        let modelStreamError: unknown; const automationContext=args.context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`resume-turn:${turn}`,{model:args.context.model,inputTokens:estimateContextTokens([args.messages,requestTools]),maxOutputTokens:this.modelMaxOutputTokens});
         const modelEvents = captureModelStreamError(
           this.modelAdapter.stream({
             model: args.context.model,
@@ -3341,7 +3338,7 @@ export class RawAgentLoop implements AgentLoop {
             signal: args.context.signal,
             ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
             ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-          }, this.withModelRequestDiagnostics(args.context)),
+          }, this.withModelRequestDiagnostics(args.context, automationAttempt)),
           (error) => { modelStreamError = error; },
         );
         for await (const event of modelEvents) {
@@ -3403,7 +3400,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'thinking_end' };
         }
 
-        if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        await this.automationGuard?.finishModel(automationContext,automationAttempt,completed?.usage,modelStreamError); if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
         const blockedFailure = getInvalidPromptRequestBlockedFailure(modelStreamError ?? completed);
         if (
           blockedFailure
@@ -3476,11 +3473,11 @@ export class RawAgentLoop implements AgentLoop {
         // RFC v1 P0.4：resume 路径同样持久化 last_response_id 等。
         if (usesStoredResponseState && completed.responseStateReset) {
           currentResponseId = undefined;
-          await this.clearResponseSessionStateForRepair(args.context.runId, args.context.sessionId);
+          await this.clearResponseSessionStateForRepair(args.context.runId, requireEventTenantId(args.context), args.context.sessionId);
         } else if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(
-            args.context.runId,
+            args.context.runId, requireEventTenantId(args.context), args.context.sessionId,
             completed,
             args.context.model,
             args.context.profileConfigDigest,
@@ -3811,10 +3808,10 @@ export class RawAgentLoop implements AgentLoop {
     }
   }
 
-  private async clearResponseRelayState(sessionId: string, source: string): Promise<void> {
+  private async clearResponseRelayState(tenantId: string, sessionId: string, source: string): Promise<void> {
     if (!this.runStore?.clearResponseSessionStateBySession) return;
     try {
-      const cleared = await this.runStore.clearResponseSessionStateBySession(sessionId);
+      const cleared = await this.runStore.clearResponseSessionStateBySession(tenantId, sessionId);
       logger.info(`[responses-chain] ${source} cleared ${cleared} relay state(s) session=${sessionId}`);
     } catch (error) {
       logger.warn(
@@ -3870,7 +3867,7 @@ export class RawAgentLoop implements AgentLoop {
         hiddenFromUserTranscript: true,
       },
     ]);
-    await this.clearResponseRelayState(args.context.sessionId, 'context rewind');
+    await this.clearResponseRelayState(requireEventTenantId(args.context), args.context.sessionId, 'context rewind');
 
     const replayEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,

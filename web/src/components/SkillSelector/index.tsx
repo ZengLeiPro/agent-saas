@@ -16,18 +16,8 @@ import { deleteMySkill, fetchMySkillDocument, SkillSelectionConflictError, updat
 import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import type { UserSkillInfo } from "@agent/shared";
 import { useMySkills } from "./hooks";
-import {
-  CatalogHeader,
-  CapabilityDetailDrawer,
-  CapabilityLogo,
-  CapabilitySourceBadge,
-  CatalogToolbar,
-  CAPABILITY_EMPTY_SURFACE,
-  CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
-  type CapabilitySource,
-} from "@/components/CapabilityCenter/CatalogUi";
+import { CapabilityDetailDrawer, CapabilityLogo, CapabilitySourceBadge, CatalogToolbar, CAPABILITY_EMPTY_SURFACE, CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER, type CapabilitySource } from "@/components/CapabilityCenter/CatalogUi";
+import { CatalogHeader } from "@/components/CapabilityCenter/CatalogHeader";
 
 interface SkillSelectorProps {
   targetUsername?: string;

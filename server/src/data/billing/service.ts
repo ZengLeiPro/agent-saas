@@ -33,6 +33,7 @@ export interface BillingServiceOptions {
   isMemoryPollBillable?: (tenantId: string) => boolean;
 }
 
+/** Independently billed utility-model invocation. */
 export interface BillingUtilityModelRun {
   runId: string;
   beforeModelCall(): Promise<void>;
@@ -262,7 +263,8 @@ export class BillingService {
     userId?: string;
     username: string;
     sessionId?: string;
-    channel: 'guardrail' | 'title' | 'memory_embedding';
+    channel: 'guardrail' | 'title' | 'memory_embedding' | 'automation_evaluator';
+    attribution?: { rootAutomationId: string; automationExecutionId: string; automationGeneration: number };
   }): Promise<BillingUtilityModelRun> {
     const runId = `utility-${input.channel}-${randomUUID()}`;
     const initial = await this.authorizeRun({
@@ -289,7 +291,7 @@ export class BillingService {
           modelValue: pending.model,
           requestIndex: pending.requestIndex,
           usage: pending.usage,
-          rawUsageJson: pending.usage,
+          rawUsageJson: input.attribution ? { usage: pending.usage, automationAttribution: input.attribution } : pending.usage,
           occurredAt: pending.occurredAt,
         });
         pendingUsage.shift();
@@ -335,6 +337,21 @@ export class BillingService {
 
   async chargeFixedDebit(input: FixedDebitInput): Promise<BillingLedgerEntry | null> {
     return await this.options.store.chargeFixedDebit(input);
+  }
+
+  async getAutomationCreditCap(tenantId: string): Promise<number | undefined> {
+    await this.drainRuntimeProjection();
+    const [account, policy] = await Promise.all([
+      this.options.store.getAccount(tenantId),
+      this.options.store.getTenantPolicy(tenantId),
+    ]);
+    if (!policy.billingEnabled || policy.billingMode === 'internal' || policy.hardCapMode === 'none') return undefined;
+    const runCap = policy.maxRunCreditsMicro;
+    if (runCap === undefined || runCap <= 0) return undefined;
+    const available = account.balanceCreditsMicro
+      + (policy.allowNegativeBalance ? policy.negativeLimitCreditsMicro : 0);
+    if (available <= 0) return undefined;
+    return Math.min(runCap, available) / CREDIT_MICRO;
   }
 
   async assertTenantCanStartRun(tenantId: string): Promise<{ ok: true } | { ok: false; code: 'BILLING_ORG_BALANCE_EXHAUSTED' | 'BILLING_RUN_LIMIT_NOT_CONFIGURED'; reason: string }> {

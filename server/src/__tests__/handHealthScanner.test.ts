@@ -24,6 +24,7 @@ function makeHand(overrides: Partial<HandRecord> & { handId: string }): HandReco
   };
 }
 
+// Mirrors the durable recovery/attempt ownership fences used by PgHandStore.
 class InMemoryHandStore implements HandStore {
   readonly hands = new Map<string, HandRecord>();
 
@@ -58,26 +59,27 @@ class InMemoryHandStore implements HandStore {
     return updated;
   }
 
-  async claimProvisionRecovery(
-    handId: string,
-    recoveryToken: string,
-    metadataPatch: Record<string, unknown> = {},
-    expectedUpdatedAt?: string,
-    expectedProvisionGeneration?: string,
-  ): Promise<HandRecord | null> {
+  async claimProvisionRecovery(handId: string, recoveryToken: string, metadataPatch: Record<string, unknown> = {},
+    expectedUpdatedAt?: string, expectedProvisionGeneration?: string): Promise<HandRecord | null> {
     const hand = this.hands.get(handId);
-    if (!hand || !['ready', 'unhealthy'].includes(hand.status)) return null;
+    if (!hand || !['provisioning', 'ready', 'unhealthy'].includes(hand.status)) return null;
+    if (hand.metadata.reconcileRequired === true) return null;
     if (expectedUpdatedAt && hand.updatedAt !== expectedUpdatedAt) return null;
     if (expectedProvisionGeneration && hand.metadata.provisionGeneration !== expectedProvisionGeneration) return null;
-    const token = hand.metadata.provisionRecoveryToken;
-    const claimedAt = hand.metadata.provisionRecoveryClaimedAtMs;
-    if (typeof token === 'string' && typeof claimedAt === 'number'
-      && claimedAt >= Date.now() - PROVISION_RECOVERY_CLAIM_TTL_MS) return null;
-    return await this.updateStatus(handId, 'unhealthy', {
-      ...metadataPatch,
-      provisionRecoveryToken: recoveryToken,
-      provisionRecoveryClaimedAtMs: Date.now(),
-    });
+    if (hand.status === 'provisioning') {
+      const attemptOwner = hand.metadata.provisionAttemptOwner;
+      const leaseExpiresAt = hand.metadata.provisionAttemptLeaseExpiresAtMs;
+      if (typeof attemptOwner === 'string' && (typeof leaseExpiresAt !== 'number'
+        || leaseExpiresAt >= Date.now())) return null;
+    } else {
+      const token = hand.metadata.provisionRecoveryToken;
+      const claimedAt = hand.metadata.provisionRecoveryClaimedAtMs;
+      if (typeof token === 'string' && typeof claimedAt === 'number'
+        && claimedAt >= Date.now() - PROVISION_RECOVERY_CLAIM_TTL_MS) return null;
+    }
+    return await this.updateStatus(handId, 'unhealthy', { ...metadataPatch,
+      provisionRecoveryToken: recoveryToken, provisionRecoveryClaimedAtMs: Date.now(),
+      provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null, provisionAttemptLeaseExpiresAtMs: null });
   }
 
   async completeProvisionAttempt(
@@ -269,9 +271,7 @@ describe('HandHealthScanner (B4)', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-
-
-  it('replays cached recipe for an unhealthy hand when health stays down', async () => {
+  it('replays cached recipe with its provision key when an unhealthy hand stays down', async () => {
     const handStore = new InMemoryHandStore();
     const eventStore = new InMemoryEventStore();
     await handStore.register({
@@ -281,7 +281,7 @@ describe('HandHealthScanner (B4)', () => {
       type: 'server-remote',
       status: 'unhealthy',
       endpoint: 'http://hand.example',
-      metadata: { recipe: { workspaceId: 'w-r', setupCommands: ['true'] } },
+      metadata: { recipe: { workspaceId: 'w-r', setupCommands: ['true'], provisionKey: 'stable-recovery-key' } },
     });
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       const href = String(url);
@@ -298,7 +298,9 @@ describe('HandHealthScanner (B4)', () => {
     expect(handStore.hands.get('h-reprovision')?.metadata.provision).toMatchObject({ attempts: 0, lastStatus: 'ok', recipeHash: 'abc' });
     const [, provisionInit] = (fetchImpl as unknown as { mock: { calls: Array<[any, RequestInit]> } }).mock.calls[1]!;
     expect(provisionInit.method).toBe('POST');
-    expect(JSON.parse(String(provisionInit.body))).toMatchObject({ workspaceId: 'w-r', recipe: { workspaceId: 'w-r', setupCommands: ['true'] } });
+    expect(provisionInit.headers).toMatchObject({ 'idempotency-key': 'stable-recovery-key' });
+    expect(JSON.parse(String(provisionInit.body))).toMatchObject({ workspaceId: 'w-r',
+      recipe: { workspaceId: 'w-r', setupCommands: ['true'], provisionKey: 'stable-recovery-key' } });
   });
 
   it('backs off cached recipe reprovision failures instead of hammering the hand', async () => {

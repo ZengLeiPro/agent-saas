@@ -22,13 +22,14 @@ export type {
   BusinessStepSection,
   RenderItem,
 } from "./message";
-// Message render/runtime exports.
+// Message 与会话 render/runtime exports.
 export { ACTIVITY_TYPES } from "./message";
 
 export type {
   SandboxProfile,
   SessionOwnerInfo,
   SessionParticipants,
+  SessionDetailAccessMode,
   ApiSessionListItem,
   SessionListActiveInteraction,
   SessionListPage,
@@ -68,6 +69,13 @@ export type {
   RuntimeFailureKind,
   RuntimeRecoveryAction,
 } from "./runtimeFailure";
+export type {
+  SessionAutomationKind, SessionAutomationMode, SessionAutomationStatus, SessionAutomationPhase,
+  SessionAutomationBudget, SessionAutomationSpec, SessionAutomationSnapshot,
+  SessionAutomationControlAction, SessionAutomationCommandRequest, SessionAutomationControlRequest,
+  SessionAutomationCommandResponse, SessionAutomationListResponse, SessionAutomationApiErrorBody,
+  ScheduleWakeupInput, UpdateGoalInput,
+} from "./sessionAutomation";
 // Sandbox workload ownership is authored by the Server runtime.
 export type { SandboxWorkloadDescriptor } from "./sandboxWorkload";
 

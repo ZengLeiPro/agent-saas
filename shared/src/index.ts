@@ -1,4 +1,6 @@
 export * from './types/correlation';
+export * from './types/sessionAutomation';
+export * from './lib/sessionAutomationCommands.js';
 export { GOVERNANCE_CAPABILITIES, governanceCapability } from './types/governanceCapability';
 export { GovernanceApiError, governanceApiErrorMessage } from './lib/governanceErrors';
 export * from './mobileV1';
@@ -58,9 +60,11 @@ export type {
   ActivityGroup,
   BusinessStepSection,
   RenderItem,
+  // Session API contracts.
   SandboxProfile,
   SessionOwnerInfo,
   SessionParticipants,
+  SessionDetailAccessMode,
   ApiSessionListItem,
   ApiSessionDetail,
   TokenUsage,

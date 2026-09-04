@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
 import type { AgentRunDispatch, AgentRunOptions } from '../agent/types.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
@@ -87,9 +86,9 @@ class MemoryRunStore implements RunStore {
     return this.records.get(runId) ?? null;
   }
 
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) =>
-      record.idempotencyKey === idempotencyKey && record.userId === userId,
+      record.idempotencyKey === idempotencyKey && (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId && record.userId === userId,
     ) ?? null;
   }
 
@@ -97,10 +96,11 @@ class MemoryRunStore implements RunStore {
     return [...this.records.values()].filter((record) => record.status === 'pending');
   }
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     // active = pending / running / waiting_*；与 RunStore.getActiveBySession 语义对齐
     return [...this.records.values()].find((r) =>
-      r.sessionId === sessionId
+      (r.tenantId ?? DEFAULT_TENANT_ID) === tenantId
+      && r.sessionId === sessionId
         && (r.status === 'pending' || r.status === 'running'
           || r.status === 'waiting_approval' || r.status === 'waiting_user'
           || r.status === 'waiting_hand'),
@@ -475,7 +475,7 @@ describe('WebChannel executionTarget gating', () => {
       reason: 'model returned empty turn',
     });
     expect((channel as any).activeStreams.has('stream-failed-1')).toBe(false);
-    expect(await channel.getStreamStatus('session-failed-1')).toEqual({ active: false });
+    expect(await channel.getStreamStatus(DEFAULT_TENANT_ID, 'session-failed-1')).toEqual({ active: false });
   });
 
   it('getStreamStatus prefers runStore over EventBuffer (buffer-gone but durable run still active)', async () => {
@@ -506,7 +506,7 @@ describe('WebChannel executionTarget gating', () => {
 
     expect((channel as any).eventBufferStore.isActive('session-buffer-gone-1')).toBe(false);
 
-    const status = await channel.getStreamStatus('session-buffer-gone-1');
+    const status = await channel.getStreamStatus(DEFAULT_TENANT_ID, 'session-buffer-gone-1');
     expect(status).toMatchObject({ active: true, runId: 'run-buffer-gone-1', status: 'waiting_user' });
   });
 
@@ -537,7 +537,7 @@ describe('WebChannel executionTarget gating', () => {
     await runStore.markStatus('run-stale-buffer-1', 'completed');
 
     expect((channel as any).eventBufferStore.isActive('session-stale-buffer-1')).toBe(true);
-    expect(await channel.getStreamStatus('session-stale-buffer-1')).toEqual({ active: false });
+    expect(await channel.getStreamStatus(DEFAULT_TENANT_ID, 'session-stale-buffer-1')).toEqual({ active: false });
   });
 
   it('enqueues web chat into durable runtime instead of directly dispatching when enqueueRuntime is configured', async () => {

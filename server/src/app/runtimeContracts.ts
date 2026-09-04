@@ -4,12 +4,15 @@ import type { CodexCredentialManager } from '../runtime/responses/codexCredentia
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
+import type { PgSessionAutomationStore } from '../runtime/sessionAutomationStore.js';
+import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
 import type { EventStore } from '../runtime/types.js';
 import type { PgRunStore } from '../runtime/runStore.js';
 import type { PgHandStore } from '../runtime/handStore.js';
 import type { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import type {
   TaskboardExecutionService,
+  TaskboardExecutionStore,
   TaskboardService,
 } from '../taskboard/types.js';
 import type { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
@@ -283,6 +286,8 @@ export interface AppRuntime {
   appealStore?: AppealStore;
   /** 个人任务看板；仅 PG runtime backend 装配，初始化失败时返回 503 并在后续请求重试。 */
   taskboardService?: TaskboardService;
+  /** TaskBoard execution session 到任务可见性权限的只读映射。 */
+  taskboardExecutionStore?: Pick<TaskboardExecutionStore, 'getExecutionContextBySessionId'> & Pick<TaskboardService, 'getTask'>;
   /** 任务看板单任务 Agent 执行闭环；依赖 PG durable scheduler。 */
   taskboardExecutionService?: TaskboardExecutionService;
   /**
@@ -376,6 +381,8 @@ export interface AppRuntime {
    * 运行监测读 API 复用其 pool / eventsTable 做聚合查询，避免另开第二份连接池。
    */
   runtimePgEventStore?: PgEventStore;
+  sessionAutomationStore?: PgSessionAutomationStore;
+  sessionAutomationCommandService?: SessionAutomationCommandService;
   /** 校验平台工具配置，包括 WebSearch SecretVault ref 解析。 */
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
   /** 更新平台工具配置并热写入后续 raw runtime dispatch。 */

@@ -28,16 +28,22 @@ function runtimeFailureIdentity(message: MessageItem): string | null {
   ]);
 }
 
+function userClientMessageId(message: MessageItem): string | null {
+  return (message.type === 'user' || message.type === 'user-voice') && message.clientMsgId
+    ? message.clientMsgId
+    : null;
+}
+
 function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]): MessageItem[] {
   if (tail.length === 0) return server;
 
-  // server 里已存在同 id 的消息说明这条本地尾部已被投影，再追加就是自我复制。
-  // preserveTail 刷新路径会把本地数组同时当作 server 基底与 local 尾部传入
-  // （useSession 的 baseMessages 与 localMsgs 同源），此时锚点之后的消息在 server
-  // 中本就存在；缺这道检查会导致每刷新一次尾部复制一份、且复制品沿用同一 id，
-  // 进而触发列表虚拟 key 冲突。正常场景 server id 形如 `line-N-*`、本地形如
-  // `msg-ts-n`，天然不冲突，这道检查是 no-op。
+  // server 里已存在同 id 或同 clientMsgId 的消息说明本地尾部已被投影，再追加就是自我复制。
+  // transcript 会把 optimistic `msg-*` id 替换成持久化 `line-*` id，标签页恢复/WS 重连的
+  // preserveTail 因而不能只按 id 判断，否则同一用户消息会在刷新后突然多出一条。
   const serverIds = new Set(server.map((message) => message.id));
+  const serverUserClientMessageIds = new Set(
+    server.map(userClientMessageId).filter((clientMsgId): clientMsgId is string => clientMsgId !== null),
+  );
   // compaction_status 会先生成本地临时分界线，随后 done 刷新又从 transcript 取得
   // 同一条持久化分界线。二者 id 不同，不能沿用普通消息的 id 去重。
   const projectedCompactions = new Set(
@@ -48,6 +54,8 @@ function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]):
   );
   const unprojectedTail = tail.filter((message) => {
     if (serverIds.has(message.id)) return false;
+    const clientMsgId = userClientMessageId(message);
+    if (clientMsgId !== null && serverUserClientMessageIds.has(clientMsgId)) return false;
     const compaction = compactionIdentity(message);
     if (compaction !== null && projectedCompactions.has(compaction)) return false;
     const runtimeFailure = runtimeFailureIdentity(message);
@@ -166,17 +174,44 @@ export function mergeSessionMessageDelta(
   if (delta.length === 0) return base;
 
   const baseIndexById = new Map(base.map((message, index) => [message.id, index]));
+  const baseUserIndexByClientMessageId = new Map<string, number>();
+  base.forEach((message, index) => {
+    const clientMsgId = userClientMessageId(message);
+    if (clientMsgId !== null) baseUserIndexByClientMessageId.set(clientMsgId, index);
+  });
+  const findBaseIndex = (message: MessageItem): number | undefined => {
+    const indexById = baseIndexById.get(message.id);
+    if (indexById !== undefined) return indexById;
+    const clientMsgId = userClientMessageId(message);
+    return clientMsgId === null ? undefined : baseUserIndexByClientMessageId.get(clientMsgId);
+  };
   const overlapIndex = delta
-    .map((message) => baseIndexById.get(message.id))
+    .map(findBaseIndex)
     .find((index): index is number => index !== undefined);
   const result = overlapIndex === undefined ? [...base] : base.slice(0, overlapIndex);
   const indexById = new Map(result.map((message, index) => [message.id, index]));
-  for (const message of delta) {
-    const existingIndex = indexById.get(message.id);
+  const userIndexByClientMessageId = new Map<string, number>();
+  result.forEach((message, index) => {
+    const clientMsgId = userClientMessageId(message);
+    if (clientMsgId !== null) userIndexByClientMessageId.set(clientMsgId, index);
+  });
+  for (const message of delta) { // authoritative delta order is preserved
+    const clientMsgId = userClientMessageId(message);
+    const existingIndex = indexById.get(message.id)
+      ?? (clientMsgId === null ? undefined : userIndexByClientMessageId.get(clientMsgId));
     if (existingIndex === undefined) {
       indexById.set(message.id, result.length);
+      if (clientMsgId !== null) userIndexByClientMessageId.set(clientMsgId, result.length);
       result.push(message);
     } else {
+      const previous = result[existingIndex];
+      const previousClientMsgId = userClientMessageId(previous);
+      indexById.delete(previous.id);
+      indexById.set(message.id, existingIndex);
+      if (previousClientMsgId !== null && previousClientMsgId !== clientMsgId) {
+        userIndexByClientMessageId.delete(previousClientMsgId);
+      }
+      if (clientMsgId !== null) userIndexByClientMessageId.set(clientMsgId, existingIndex);
       result[existingIndex] = message;
     }
   }

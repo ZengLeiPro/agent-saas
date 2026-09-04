@@ -21,7 +21,6 @@ export async function orphanUnrecoverableSubagentWake(input: {
   tenantId: string;
   logger?: TerminalEventLogger;
 }): Promise<void> {
-  await input.lease?.release('orphaned', 'subagent_run_not_recoverable');
   await markRunState(
     input.runStore,
     input.eventStore,
@@ -31,7 +30,8 @@ export async function orphanUnrecoverableSubagentWake(input: {
     'subagent_run_not_recoverable',
     input.logger,
     { tenantId: input.tenantId },
-  ).catch(() => undefined);
+  );
+  await input.lease?.release(undefined, 'subagent_run_not_recoverable');
 
   const durableRun = await input.runStore?.get(input.runId).catch(() => null);
   if (input.runStore && !isTerminalRunStatus(durableRun?.status)) return;

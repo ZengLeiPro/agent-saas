@@ -194,7 +194,7 @@ describePg('runtime drain handoff PostgreSQL contract', () => {
     await store.releaseLease(runId, 'worker-crashed', undefined, 'unexpected_worker_exit');
     const first = await store.reapExpiredLiveness(new Date(Date.now() + 3_600_000), 0);
     expect(first.orphaned.map(run => run.runId)).toContain(runId);
-    expect(readTerminalEventOutbox(await store.get(runId))).toBeUndefined();
+    expect(readTerminalEventOutbox(await store.get(runId))).toBeNull();
 
     // Simulate process exit after the orphan transaction committed and before scheduler finalization.
     const repaired = await store.reapExpiredLiveness(new Date(Date.now() + 3_600_001), 0);

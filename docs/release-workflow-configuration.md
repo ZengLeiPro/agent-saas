@@ -95,11 +95,12 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 `部署预发 RC` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
 同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
 Workflow 相同的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。
-ACS 分类器与 `acs-sandbox.yml` 的 `main` push `paths` 以 `.github/acs-bundle-inputs.txt` 为共同
-输入契约；契约测试会现场生成三个 Orchestrator entry 的 esbuild metafile，将输入规范化为仓库
-相对路径并与 `git ls-files` 取交集，逐项证明 `acs-orchestrator` 的真实生产源码、被引用的
-`server/src/**`、`shared/src/**` 等全部仓库源码输入同时命中清单、分类器与 push 路径。每个
-实际贡献源码的 workspace 还必须覆盖对应 `package.json`。源码 metafile 不是全部制品输入：
+`acs-sandbox.yml` 的 `main` push 顶层不使用 `paths`；`.github/scripts/acs-classify.sh` 是唯一影响
+分类真源，并以 `.github/acs-bundle-inputs.txt` 作为制品输入契约。契约测试会现场生成三个
+Orchestrator entry 的 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，
+逐项证明 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 等全部仓库
+源码输入同时命中清单与分类器。每个实际贡献源码的 workspace 还必须覆盖对应 `package.json`。
+源码 metafile 不是全部制品输入：
 `pnpm-lock.yaml` 可单独改变运行时依赖解析，因此 lockfile-only 变更同样保守判定 ACS publish；
 新增或遗漏源码输入都 fail closed，`node_modules` 等安装产物本身不误入仓库契约。
 如果该 SHA 已有通过 Schema 校验的不可变证据则直接复用，否则通过固定
@@ -194,7 +195,8 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   先生成最终传输字节，再由独立 helper 只创建或精确复用；写入由仓库锁定的 `ali-oss` SDK 读取 runner 上权限收紧的临时凭据文件，使用规范化 `oss-<region>` endpoint，并发送真实 `x-oss-forbid-overwrite:true` 条件请求；固定 ossutil 2.1.2 只运行安装后已探测支持的 stat/readback 参数，不承担条件写；只有 SDK 精确返回 HTTP 409 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；recovery Web 的 `assets/**` 与 `workbox-*.js` 也会在复制和 symlink 切换前逐字节验证同名共享文件，冲突时保持 current/previous 不变且不写 `activated`。补偿或证明不完整则进入人工处置。ACS 通道在初始检查和实际生产
   部署 mutation 前都会校验 latest main；即使 exact-SHA ACR build record 已进入 `PENDING`/`BUILDING`，
   main 前进也会让旧 dispatch 在部署前 fail closed。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
-  Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。push/PR 仍只执行 CI，不自动部署生产。
+  Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。ACS 的 `main` push 只分类/测试，非 `main` dispatch 也不进入
+  `build-deploy`；push/PR 均只执行 CI，不自动部署生产。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
   `预发验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。

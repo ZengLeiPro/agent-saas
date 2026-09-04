@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   createMigrationPlan,
@@ -47,7 +49,8 @@ function gitFixture({ baselines, targets = {}, diffs = {}, nameStatus = `M\t${PA
       return tree[path];
     }
     if (args[0] === 'ls-tree') {
-      const tree = args[3] === BASELINE ? (baselines ?? targets) : targets;
+      const revision = args[args.indexOf('--') - 1];
+      const tree = revision === BASELINE ? (baselines ?? targets) : targets;
       return Object.keys(tree).sort().join('\n');
     }
     if (args[0] === 'diff' && args.includes('--name-status')) return nameStatus;
@@ -88,20 +91,31 @@ function sqlSource(statement) {
 }
 
 test('emits a deterministic baseline-bound no-migration plan', () => {
+  const execFileSync = gitFixture({ targets: {}, nameStatus: '' });
   const first = createMigrationPlan({
     changedPaths: ['web/src/App.tsx'],
     baseline: BASELINE,
     target: TARGET,
+    execFileSync,
   });
-  const second = createMigrationPlan({ changedPaths: [], baseline: BASELINE, target: TARGET });
+  const second = createMigrationPlan({
+    changedPaths: [],
+    baseline: BASELINE,
+    target: TARGET,
+    execFileSync,
+  });
   assert.equal(first.ok, true);
   assert.equal(first.migrationPlan.phase, 'none');
   assert.equal(first.migrationPlan.confirmation, 'not_required');
   assert.equal(first.migrationPlan.planDigest, second.migrationPlan.planDigest);
   assert.notEqual(
     first.migrationPlan.planDigest,
-    createMigrationPlan({ changedPaths: [], baseline: 'c'.repeat(40), target: TARGET })
-      .migrationPlan.planDigest,
+    createMigrationPlan({
+      changedPaths: [],
+      baseline: 'c'.repeat(40),
+      target: TARGET,
+      execFileSync,
+    }).migrationPlan.planDigest,
   );
 });
 
@@ -1727,11 +1741,31 @@ test('does not treat direct data or side-effect-free reflective reads as callabl
 });
 
 // Dynamic module resolution is independent of the static callable/member closure above.
+test('fails closed when require propagates through a loader container', () => {
+  const root = 'server/src/data/migrations.ts';
+  const provider = 'config/destructive-provider.cjs';
+  const rootSource =
+    "const loaders = { load: require };\nexport const statements = loaders.load('../../../config/destructive-provider.cjs');";
+  const baselineProvider = "module.exports = ['CREATE TABLE IF NOT EXISTS safe(id text)'];";
+  const targetProvider = "module.exports = ['DROP TABLE users'];";
+  const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+    changedPaths: [provider],
+    baselines: { [root]: rootSource, [provider]: baselineProvider },
+    targets: { [root]: rootSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff(targetProvider) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /dynamic import or require/u);
+});
+
 test('fails closed for dynamic import, require, and createRequire loaders', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   for (const source of [
     "export async function migrate() { await import('./provider.js'); }",
     "export async function migrate() { require('./provider.js'); }",
+    "const loaders = { load: require.bind(null) }; export async function migrate() { loaders.load('./provider.js'); }",
+    "const load = enabled ? require : fallback; export async function migrate() { load('./provider.js'); }",
     "export async function migrate() { createRequire(import.meta.url)('./provider.js'); }",
     "export async function migrate() { const load = createRequire(import.meta.url); load('./provider.js'); }",
     "import * as moduleApi from 'node:module';\nexport async function migrate() { const load = moduleApi.createRequire(import.meta.url); load('./provider.js'); }",
@@ -2548,6 +2582,119 @@ test('classifies destructive SQL when only a statically imported JSON resource c
   assert.equal(result.ok, false);
   assert.notEqual(result.migrationPlan.phase, 'none');
   assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u);
+});
+
+test('parses NUL-delimited complete diffs without losing special external paths', () => {
+  const root = 'server/src/runtime/runStoreSchema.ts';
+  const provider = 'config/migration\tleaf.json';
+  const importSource = `import statements from ${JSON.stringify('../../../config/migration\tleaf.json')} with { type: 'json' };\nexport { statements };`;
+  const baselineProvider = '["CREATE TABLE IF NOT EXISTS safe(id text)"]';
+  const targetProvider = '["DROP TABLE users"]';
+  const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+    changedPaths: ['web/src/App.tsx'],
+    baselines: { [root]: importSource, [provider]: baselineProvider },
+    targets: { [root]: importSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff(targetProvider) },
+    nameStatus: `M\0${provider}\0`,
+  });
+  assert.equal(result.ok, false);
+  assert.notEqual(result.migrationPlan.phase, 'none');
+  assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u);
+});
+
+test('uses literal Git paths for newline and pathspec-magic migration providers', () => {
+  for (const provider of ['config/provider\n.json', 'config/:(exclude)provider.json']) {
+    const repo = mkdtempSync(join(tmpdir(), 'migration-plan-literal-path-'));
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: repo });
+      execFileSync('git', ['config', 'user.email', 'migration-plan@example.test'], { cwd: repo });
+      execFileSync('git', ['config', 'user.name', 'Migration Plan Test'], { cwd: repo });
+      mkdirSync(join(repo, 'server/src/runtime'), { recursive: true });
+      mkdirSync(join(repo, 'config'), { recursive: true });
+      const root = 'server/src/runtime/runStoreSchema.ts';
+      const specifier = `../../../${provider}`;
+      writeFileSync(
+        join(repo, root),
+        `import statements from ${JSON.stringify(specifier)} with { type: 'json' };\nexport { statements };`,
+      );
+      writeFileSync(join(repo, provider), '["CREATE TABLE IF NOT EXISTS safe(id text)"]');
+      execFileSync('git', ['add', '--all'], { cwd: repo });
+      execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: repo });
+      const baseline = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim();
+      writeFileSync(join(repo, provider), '["DROP TABLE users"]');
+      execFileSync('git', ['add', '--all'], { cwd: repo });
+      execFileSync('git', ['commit', '--quiet', '-m', 'target'], { cwd: repo });
+      const target = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim();
+
+      const result = createMigrationPlan({ changedPaths: [], baseline, target, cwd: repo });
+      assert.equal(result.ok, false, JSON.stringify(provider));
+      assert.match(
+        result.blockingReasons.join('\n'),
+        /contract or non-whitelisted/u,
+        JSON.stringify(provider),
+      );
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+});
+
+test('intersects the complete diff with authoritative root closures for external leaves', () => {
+  const root = 'server/src/runtime/runStoreSchema.ts';
+  for (const [provider, importSource, baselineProvider, targetProvider] of [
+    [
+      'config/migration.json',
+      "import statements from '../../../config/migration.json' with { type: 'json' };\nexport { statements };",
+      '["CREATE TABLE IF NOT EXISTS safe(id text)"]',
+      '["DROP TABLE users"]',
+    ],
+    [
+      'config/migration.sql',
+      "import statements from '../../../config/migration.sql';\nexport { statements };",
+      'CREATE TABLE IF NOT EXISTS safe(id text);',
+      'DROP TABLE users;',
+    ],
+  ]) {
+    const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+      changedPaths: [provider],
+      baselines: { [root]: importSource, [provider]: baselineProvider },
+      targets: { [root]: importSource, [provider]: targetProvider },
+      diffs: { [provider]: addedSourceDiff(targetProvider) },
+      nameStatus: `M\0${provider}\0`,
+    });
+    assert.equal(result.ok, false, provider);
+    assert.notEqual(result.migrationPlan.phase, 'none', provider);
+    assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u, provider);
+  }
+});
+
+test('fails closed when an authoritative root reaches a wrapped loader with a const path through a static helper', () => {
+  const root = 'server/src/runtime/runStoreSchema.ts';
+  const helper = 'server/src/runtime/schemaLoader.ts';
+  const provider = 'config/migration.json';
+  const rootSource = "export { statements } from './schemaLoader';";
+  const helperSource =
+    "const loaders = { load: require };\nconst provider = '../../../config/migration.json';\nexport const statements = loaders.load(provider);";
+  const targetProvider = '["DROP TABLE users"]';
+  const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+    changedPaths: [provider],
+    baselines: {
+      [root]: rootSource,
+      [helper]: helperSource,
+      [provider]: '["CREATE TABLE IF NOT EXISTS safe(id text)"]',
+    },
+    targets: { [root]: rootSource, [helper]: helperSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff(targetProvider) },
+    nameStatus: `M\0${provider}\0`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /dynamic import or require/u);
 });
 
 test('classifies aliased default node:fs resource reads outside migration directories', () => {

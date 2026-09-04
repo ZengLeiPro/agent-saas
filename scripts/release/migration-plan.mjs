@@ -87,8 +87,8 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/webPush/store.ts',
   'server/src/workspace/materialization/store.ts',
 ]);
-// This explicit list is the production authority. Roots are activated by changed path or by a
-// changed provider in the same source domain; the detector below only catches newly changed roots.
+// This explicit list is the production authority on both sides of the comparison; every root's
+// static reachability is intersected with the complete baseline-to-target diff before deep analysis.
 const STARTUP_SCHEMA_ENTRY_PATTERN =
   /\b(?:async\s+)?(?:function\s+(?:init|initialize)[A-Za-z0-9_$]*\s*\(|(?:init|initialize[A-Za-z0-9_$]*)\s*\([^)]*\)\s*:\s*Promise\s*<)/u;
 // Future init/initialize modules are recognized when their own file changes.
@@ -137,7 +137,14 @@ function digest(value) {
 }
 
 function gitRead(execFileSync, cwd, args) {
-  return String(execFileSync('git', args, { cwd, encoding: 'utf8' }));
+  return String(
+    execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      // A repository filename must never be interpreted as pathspec syntax.
+      env: { ...process.env, GIT_LITERAL_PATHSPECS: '1' },
+    }),
+  );
 }
 
 function isSqlIdentifierContinuation(character) {
@@ -3381,6 +3388,48 @@ function hasUnprovenRuntimeModuleLoad(content, path) {
     visitAliases(sourceFile);
   }
 
+  const isLoaderExpression = (expression) =>
+    ts.isIdentifier(expression) && loaderNames.has(expression.text);
+  const containsLoaderReference = (expression) => {
+    let found = false;
+    const visit = (node) => {
+      if (found) return;
+      if (ts.isIdentifier(node) && loaderNames.has(node.text)) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(expression);
+    return found;
+  };
+  let unprovenLoaderPropagation = false;
+  const visitLoaderPropagation = (node) => {
+    if (unprovenLoaderPropagation) return;
+    if (
+      (ts.isPropertyAssignment(node) && containsLoaderReference(node.initializer)) ||
+      (ts.isShorthandPropertyAssignment(node) && loaderNames.has(node.name.text)) ||
+      (ts.isSpreadAssignment(node) && containsLoaderReference(node.expression)) ||
+      (ts.isArrayLiteralExpression(node) && node.elements.some(containsLoaderReference)) ||
+      (ts.isReturnStatement(node) && node.expression && containsLoaderReference(node.expression)) ||
+      (ts.isCallExpression(node) && node.arguments.some(containsLoaderReference)) ||
+      (ts.isVariableDeclaration(node) &&
+        node.initializer &&
+        !isLoaderExpression(node.initializer) &&
+        containsLoaderReference(node.initializer)) ||
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        (!ts.isIdentifier(node.left) || !isLoaderExpression(node.right)) &&
+        containsLoaderReference(node.right))
+    ) {
+      unprovenLoaderPropagation = true;
+      return;
+    }
+    ts.forEachChild(node, visitLoaderPropagation);
+  };
+  visitLoaderPropagation(sourceFile);
+  if (unprovenLoaderPropagation) return true;
+
   let found = false;
   const visit = (node) => {
     if (found) return;
@@ -3773,12 +3822,174 @@ function isDeclarativeSqlProvider(path, content, requestedBindings) {
     .some((statement) => MIGRATION_PROVIDER_SQL_PATTERN.test(statement));
 }
 
-function buildMigrationDependencyClosure(execFileSync, cwd, sha, additionalRoots = new Set()) {
+// Batch input is NUL-delimited so repository filenames cannot add synthetic object queries.
+function createRepositorySnapshot(execFileSync, cwd, sha) {
   const repositoryPaths = new Set(
-    gitRead(execFileSync, cwd, ['ls-tree', '-r', '--name-only', sha, '--'])
-      .split(/\r?\n/u)
-      .filter(Boolean),
+    pathsFromTree(gitRead(execFileSync, cwd, ['ls-tree', '-r', '--name-only', '-z', sha, '--'])),
   );
+  const contents = new Map();
+  const batchPaths = [...repositoryPaths].filter((path) =>
+    /\.(?:[cm]?[jt]s|json|sql)$/iu.test(path),
+  );
+  try {
+    const output = execFileSync('git', ['cat-file', '--batch', '-z'], {
+      cwd,
+      input: `${batchPaths.map((path) => `${sha}:${path}`).join('\0')}\0`,
+      maxBuffer: 256 * 1024 * 1024,
+    });
+    const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output);
+    let offset = 0;
+    for (const path of batchPaths) {
+      const headerEnd = buffer.indexOf(10, offset);
+      if (headerEnd < 0) throw new Error('truncated git cat-file header');
+      const header = buffer.subarray(offset, headerEnd).toString('utf8');
+      const match = /^[a-f0-9]+ blob ([0-9]+)$/u.exec(header);
+      if (!match) throw new Error(`unexpected git cat-file response for ${path}`);
+      const size = Number(match[1]);
+      const contentStart = headerEnd + 1;
+      const contentEnd = contentStart + size;
+      if (!Number.isSafeInteger(size) || buffer[contentEnd] !== 10)
+        throw new Error(`truncated git cat-file object for ${path}`);
+      contents.set(path, buffer.subarray(contentStart, contentEnd).toString('utf8'));
+      offset = contentEnd + 1;
+    }
+  } catch {
+    // Test doubles or older Git builds may not expose NUL-input batch mode.
+  }
+  return {
+    repositoryPaths,
+    read(path) {
+      if (!contents.has(path))
+        contents.set(path, gitRead(execFileSync, cwd, ['show', `${sha}:${path}`]));
+      return contents.get(path);
+    },
+  };
+}
+
+// Static imports plus literal loader edges select the authority roots that need deep analysis.
+function authorityRootsIntersectingDiff(snapshot, candidatePaths) {
+  const candidateSet = new Set(candidatePaths);
+  const dependenciesByPath = new Map();
+  const dependenciesFor = (path) => {
+    if (dependenciesByPath.has(path)) return dependenciesByPath.get(path);
+    if (!SCRIPT_MIGRATION_PATTERN.test(path)) {
+      dependenciesByPath.set(path, []);
+      return [];
+    }
+    const content = snapshot.read(path);
+    const sourceFile = ts.createSourceFile(
+      path,
+      content,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    if ((sourceFile.parseDiagnostics ?? []).length > 0)
+      throw new Error(`Migration dependency ${path} is not valid TypeScript`);
+    const specifiers = new Set();
+    const inspectLoaderArguments = /\b(?:require|createRequire)\b|\bimport\s*\(/u.test(content);
+    const constantStrings = new Map();
+    const unwrapStatic = (node) => {
+      let current = node;
+      while (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isTypeAssertionExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isSatisfiesExpression(current)
+      )
+        current = current.expression;
+      return current;
+    };
+    const staticStrings = (node) => {
+      const current = unwrapStatic(node);
+      if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current))
+        return [current.text];
+      if (ts.isIdentifier(current)) return constantStrings.get(current.text) ?? [];
+      if (ts.isConditionalExpression(current))
+        return [...staticStrings(current.whenTrue), ...staticStrings(current.whenFalse)];
+      if (
+        ts.isBinaryExpression(current) &&
+        current.operatorToken.kind === ts.SyntaxKind.PlusToken
+      ) {
+        const left = staticStrings(current.left);
+        const right = staticStrings(current.right);
+        return left.flatMap((prefix) => right.map((suffix) => `${prefix}${suffix}`));
+      }
+      return [];
+    };
+    for (const statement of sourceFile.statements) {
+      if (
+        !ts.isVariableStatement(statement) ||
+        (statement.declarationList.flags & ts.NodeFlags.Const) === 0
+      )
+        continue;
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
+          const values = staticStrings(declaration.initializer);
+          if (values.length > 0) constantStrings.set(declaration.name.text, values);
+        }
+    }
+    const visit = (node) => {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        !node.isTypeOnly &&
+        !node.importClause?.isTypeOnly &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier) &&
+        RELATIVE_MODULE_SPECIFIER.test(node.moduleSpecifier.text)
+      )
+        specifiers.add(node.moduleSpecifier.text);
+      if (
+        ts.isNewExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'URL' &&
+        node.arguments?.[0] &&
+        (ts.isStringLiteral(node.arguments[0]) ||
+          ts.isNoSubstitutionTemplateLiteral(node.arguments[0])) &&
+        RELATIVE_MODULE_SPECIFIER.test(node.arguments[0].text)
+      )
+        specifiers.add(node.arguments[0].text);
+      if (inspectLoaderArguments && ts.isCallExpression(node))
+        for (const argument of node.arguments)
+          for (const value of staticStrings(argument))
+            if (RELATIVE_MODULE_SPECIFIER.test(value)) specifiers.add(value);
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    const dependencies = [...specifiers]
+      .map((specifier) => resolveRepositoryModule(path, specifier, snapshot.repositoryPaths))
+      .filter(Boolean);
+    dependenciesByPath.set(path, dependencies);
+    return dependencies;
+  };
+
+  const roots = new Set();
+  for (const root of PRODUCTION_STARTUP_SCHEMA_ROOTS) {
+    if (!snapshot.repositoryPaths.has(root)) continue;
+    const visited = new Set();
+    const queue = [root];
+    let intersects = false;
+    while (queue.length > 0) {
+      const path = queue.shift();
+      if (!path || visited.has(path)) continue;
+      visited.add(path);
+      if (candidateSet.has(path)) intersects = true;
+      for (const dependency of dependenciesFor(path)) queue.push(dependency);
+    }
+    if (intersects) roots.add(root);
+  }
+  return roots;
+}
+
+function buildMigrationDependencyClosure(
+  execFileSync,
+  cwd,
+  sha,
+  snapshot,
+  additionalRoots = new Set(),
+) {
+  const { repositoryPaths } = snapshot;
   const roots = [...repositoryPaths]
     .filter((path) => isMigrationPath(path) || additionalRoots.has(path))
     .sort();
@@ -3841,26 +4052,36 @@ function buildMigrationDependencyClosure(execFileSync, cwd, sha, additionalRoots
       .join('\0')}\0callable:${[...requestedCallableBindings].sort().join('\0')}`;
     if (processedSignatures.get(path) === signature) continue;
     processedSignatures.set(path, signature);
-    const content = gitRead(execFileSync, cwd, ['show', `${sha}:${path}`]);
+    const content = snapshot.read(path);
     if (hasUnprovenRuntimeModuleLoad(content, path))
       throw new Error(`Migration dependency ${path} uses dynamic import or require`);
+    const migrationExecutionModule = isMigrationExecutionModule(path, content);
+    const requestedCallableExport = hasRequestedCallableExport(
+      path,
+      content,
+      requestedCallableBindings,
+    );
+    const topLevelExecutable =
+      sideEffectPaths.has(path) && hasTopLevelExecutableCode(path, content);
+    const declarativeSqlProvider = isDeclarativeSqlProvider(path, content, requestedBindings);
     if (
-      isMigrationExecutionModule(path, content) ||
-      hasRequestedCallableExport(path, content, requestedCallableBindings) ||
-      (sideEffectPaths.has(path) && hasTopLevelExecutableCode(path, content)) ||
-      isDeclarativeSqlProvider(path, content, requestedBindings)
+      migrationExecutionModule ||
+      requestedCallableExport ||
+      topLevelExecutable ||
+      declarativeSqlProvider
     )
       closure.add(path);
     if (!SCRIPT_MIGRATION_PATTERN.test(path)) {
       closure.add(path);
       continue;
     }
-    for (const dependencyRequest of relativeModuleDependencies(
+    const dependencyRequests = relativeModuleDependencies(
       content,
       path,
       requestedBindings,
       requestedCallableBindings,
-    )) {
+    );
+    for (const dependencyRequest of dependencyRequests) {
       const dependency = resolveRepositoryModule(
         path,
         dependencyRequest.specifier,
@@ -3885,6 +4106,23 @@ function fullContentAsAddedDiff(content) {
 
 function pathsFromNameStatus(value) {
   const paths = [];
+  if (value.includes('\0')) {
+    const fields = value.split('\0');
+    for (let index = 0; index < fields.length;) {
+      const status = fields[index++];
+      if (!status) continue;
+      const path = fields[index++];
+      if (path === undefined) break;
+      paths.push(path);
+      if (/^[RC]/u.test(status)) {
+        const targetPath = fields[index++];
+        if (targetPath === undefined) break;
+        paths.push(targetPath);
+      }
+    }
+    return paths;
+  }
+  // Injected test doubles may still return the human-readable form.
   for (const line of value.split(/\r?\n/u)) {
     if (!line.trim()) continue;
     const [status, ...fields] = line.split('\t');
@@ -3893,6 +4131,10 @@ function pathsFromNameStatus(value) {
     else paths.push(fields[0]);
   }
   return paths;
+}
+
+function pathsFromTree(value) {
+  return value.split(value.includes('\0') ? '\0' : /\r?\n/u).filter(Boolean);
 }
 
 export function createMigrationPlan({
@@ -3907,67 +4149,63 @@ export function createMigrationPlan({
   if (!SHA_PATTERN.test(target ?? '')) blockingReasons.push('Migration target SHA is invalid.');
   if (blockingReasons.length > 0) return { ok: false, migrationPlan: null, blockingReasons };
 
-  const requestedPaths = [...changedPaths];
-  let candidatePaths = [...requestedPaths];
+  let candidatePaths = [...changedPaths];
   let baselineClosure = new Set();
   let targetClosure = new Set();
-  const resolveDependencyClosure = candidatePaths.some(
-    (path) => /^(?:server|scripts)\//u.test(path) || isMigrationPath(path),
-  );
-  if (resolveDependencyClosure) {
-    try {
-      candidatePaths.push(
-        ...pathsFromNameStatus(
-          gitRead(execFileSync, cwd, [
-            'diff',
-            '--name-status',
-            '--find-renames',
-            baseline,
-            target,
-            '--',
-          ]),
-        ),
-      );
-      candidatePaths = [...new Set(candidatePaths)];
-      const startupSchemaRoots = (sha) => {
-        const requestedDirectories = new Set(
-          requestedPaths.map((path) => path.slice(0, path.lastIndexOf('/'))),
-        );
-        const roots = new Set(
-          PRODUCTION_STARTUP_SCHEMA_ROOTS.filter(
-            (path) =>
-              requestedPaths.includes(path) ||
-              requestedDirectories.has(path.slice(0, path.lastIndexOf('/'))),
-          ),
-        );
-        for (const path of requestedPaths) {
-          try {
-            const content = gitRead(execFileSync, cwd, ['show', `${sha}:${path}`]);
-            if (isProductionStartupSchemaRootSource(path, content)) roots.add(path);
-          } catch {
-            // Removed paths remain represented by the opposite side's root set.
-          }
+  const snapshots = new Map();
+  const snapshotFor = (sha) => {
+    if (!snapshots.has(sha)) snapshots.set(sha, createRepositorySnapshot(execFileSync, cwd, sha));
+    return snapshots.get(sha);
+  };
+  try {
+    candidatePaths.push(
+      ...pathsFromNameStatus(
+        gitRead(execFileSync, cwd, [
+          'diff',
+          '--name-status',
+          '--find-renames',
+          '-z',
+          baseline,
+          target,
+          '--',
+        ]),
+      ),
+    );
+    candidatePaths = [...new Set(candidatePaths)];
+    const startupSchemaRoots = (sha) => {
+      const snapshot = snapshotFor(sha);
+      const roots = authorityRootsIntersectingDiff(snapshot, candidatePaths);
+      for (const path of candidatePaths) {
+        try {
+          const content = snapshot.read(path);
+          if (isProductionStartupSchemaRootSource(path, content)) roots.add(path);
+        } catch {
+          // Removed paths remain represented by the opposite side's root set.
         }
-        return roots;
-      };
-      baselineClosure = buildMigrationDependencyClosure(
-        execFileSync,
-        cwd,
-        baseline,
-        startupSchemaRoots(baseline),
-      );
-      targetClosure = buildMigrationDependencyClosure(
-        execFileSync,
-        cwd,
-        target,
-        startupSchemaRoots(target),
-      );
-    } catch (error) {
-      const detail = error instanceof Error ? ` ${error.message}` : '';
-      blockingReasons.push(
-        `Migration execution dependency closure could not be proven from the production baseline.${detail}`,
-      );
-    }
+      }
+      return roots;
+    };
+    const baselineSnapshot = snapshotFor(baseline);
+    const targetSnapshot = snapshotFor(target);
+    baselineClosure = buildMigrationDependencyClosure(
+      execFileSync,
+      cwd,
+      baseline,
+      baselineSnapshot,
+      startupSchemaRoots(baseline),
+    );
+    targetClosure = buildMigrationDependencyClosure(
+      execFileSync,
+      cwd,
+      target,
+      targetSnapshot,
+      startupSchemaRoots(target),
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? ` ${error.message}` : '';
+    blockingReasons.push(
+      `Migration execution dependency closure could not be proven from the production baseline.${detail}`,
+    );
   }
 
   const newlyReachable = new Set([...targetClosure].filter((path) => !baselineClosure.has(path)));

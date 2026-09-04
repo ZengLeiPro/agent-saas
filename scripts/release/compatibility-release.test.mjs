@@ -449,12 +449,36 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   const acsIdentityStart = acsWorkflow.indexOf('      - name: Refresh trusted Production identity');
   const acsDeployStep = acsWorkflow.slice(acsDeployStart, acsIdentityStart);
+  assert.match(acsWorkflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
+  assert.match(acsWorkflow, /Upload and seal orchestrator release/u);
+  assert.match(
+    acsWorkflow,
+    /bash -s -- verify '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
+  );
+  assert.match(
+    acsWorkflow,
+    /bash -s -- extract '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
+  );
+  assert.doesNotMatch(acsWorkflow, /:\/tmp\/agent-saas-acs-release\.tgz/u);
+  assert.match(acsWorkflow, /Clean sealed ACS Production staging/u);
+  assert.match(
+    acsWorkflow,
+    /if: always\(\) && steps\.necessity\.outputs\.deploy_needed == 'true'/u,
+  );
+  assert.match(acsWorkflow, /sudo rm -rf -- '\$release_remote' '\$identity_remote'/u);
   assert.match(acsDeployStep, /git fetch --no-tags origin main/u);
   assert.match(acsDeployStep, /latest_main_sha="\$\(git rev-parse origin\/main\)"/u);
   assert.match(acsDeployStep, /if \[ "\$latest_main_sha" != "\$GITHUB_SHA" \]/u);
   assert.ok(acsDeployStep.indexOf('latest_main_sha=') < acsDeployStep.indexOf('bash -s'));
   assert.match(releaseDocs, /实际生产\s+部署 mutation 前都会校验 latest main/u);
   assert.match(acsDeploy, /acs-releases\/\$\{ORCHESTRATOR_ARTIFACT_DIGEST#sha256:\}/u);
+  assert.match(acsDeploy, /RELEASE_TGZ="\$\{RELEASE_TGZ:-\/tmp\/agent-saas-acs-release\.tgz\}"/u);
+  assert.match(acsDeploy, /\/run\/agent-saas-production-staging\/acs-release-\*/u);
+  assert.match(acsDeploy, /^cleanup_release_payload\(\)/mu);
+  assert.ok(
+    acsDeploy.indexOf('trap cleanup_release_payload EXIT') <
+      acsDeploy.indexOf(': "${IMAGE:?missing IMAGE}"'),
+  );
   assert.match(acsDeploy, /ln -sfn "\$APP_DIR" "\$CURRENT_LINK"/u);
   assert.match(acsDeploy, /lock=\/run\/lock\/agent-saas\/promotion\.lock/u);
   assert.match(appWorkflow, /\/run\/lock\/agent-saas\/promotion\.lock/u);
@@ -509,11 +533,12 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
 });
 
-test('holds a single production host lock across compatibility Web commit and compensation', async () => {
+test('holds one production host lock through compatibility Web commit and compensation', async () => {
   const [workflow, lease] = await Promise.all([
     readFile('.github/workflows/ci.yml', 'utf8'),
     readFile('scripts/release/production-lock-lease.sh', 'utf8'),
   ]);
+  assert.match(workflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
   const acquire = workflow.indexOf(
     '      - name: Acquire production host lock for the complete Web transaction',
   );
@@ -544,10 +569,16 @@ test('holds a single production host lock across compatibility Web commit and co
   assert.match(workflow, /PRODUCTION_LOCK_SCRIPT' release '\$PRODUCTION_LOCK_TOKEN'/u);
   assert.match(workflow, /sudo install -m 0500 '\$PRODUCTION_LOCK_UPLOAD'/u);
   const identity = workflow.slice(commit, compensate);
-  assert.match(identity, /production-identity-payload\.sha256/u);
-  assert.match(identity, /sudo sha256sum -c production-identity-payload\.sha256/u);
-  assert.match(identity, /sudo chown -R root:root '\$remote'/u);
-  assert.match(identity, /sudo chmod -R a-w '\$remote'/u);
+  assert.match(identity, /payload_digest="\$\(sha256sum "\$payload_archive"/u);
+  assert.match(identity, /PRODUCTION_STAGING_ROOT\/production-identity-/u);
+  assert.doesNotMatch(workflow, /\/run\/agent-saas-release-staging/u);
+  assert.match(identity, /sudo install -d -m 0700 '\$remote'/u);
+  assert.match(identity, /sudo tee '\$remote\/payload\.tgz'/u);
+  assert.match(
+    identity,
+    /bash -s -- extract '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
+  );
+  assert.doesNotMatch(identity, /production-identity-payload\.sha256/u);
   assert.match(identity, /sudo node '\$remote\/read-live-production-components\.mjs'/u);
   assert.match(identity, /sudo rm -rf -- '\$remote'/u);
   assert.doesNotMatch(identity, /sudo rm -rf -- '\$remote'[^\n]*\|\| true/u);
@@ -556,6 +587,38 @@ test('holds a single production host lock across compatibility Web commit and co
   assert.match(lease, /start-time/u);
   assert.match(lease, /\/proc\/\$pid\/fd\/9/u);
   assert.match(lease, /Production lock lease expired before release/u);
+});
+
+test('pins every compatibility production SSH connection to the controlled host fingerprint', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  assert.equal(
+    workflow.match(
+      /PRODUCTION_SSH_HOST_KEY_SHA256: \$\{\{ vars\.PRODUCTION_SSH_HOST_KEY_SHA256 \}\}/gu,
+    )?.length,
+    3,
+  );
+  assert.equal(workflow.match(/ssh-keyscan -T 10 -t ed25519 -H "\$ECS_HOST"/gu)?.length, 3);
+  assert.equal(workflow.match(/ssh-keygen -lf "\$scan_path" -E sha256/gu)?.length, 3);
+  assert.equal(workflow.match(/cat "\$scan_path" >> ~\/\.ssh\/known_hosts/gu)?.length, 3);
+  assert.doesNotMatch(workflow, /ssh-keyscan -H "\$ECS_HOST" >> ~\/\.ssh\/known_hosts/u);
+});
+
+test('seals recovery Web bytes with a runner-pinned digest in root-only staging', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  const packageStart = workflow.indexOf('      - name: Package recovery Web release');
+  const verifyStart = workflow.indexOf('      - name: Verify recovery Web endpoint', packageStart);
+  const recovery = workflow.slice(packageStart, verifyStart);
+  assert.match(recovery, /RECOVERY_WEB_ARCHIVE_SHA256=\$\(sha256sum "\$archive"/u);
+  assert.match(recovery, /PRODUCTION_STAGING_ROOT\/recovery-web-/u);
+  assert.match(recovery, /sudo install -d -m 0700 '\$remote'/u);
+  assert.match(recovery, /sudo tee '\$remote\/recovery-web\.tgz'/u);
+  assert.match(
+    recovery,
+    /bash -s -- verify '\$RECOVERY_WEB_ARCHIVE_SHA256'[\s\S]*seal-root-staged-payload\.sh/u,
+  );
+  assert.match(recovery, /ARCHIVE='\$remote\/recovery-web\.tgz' bash -s/u);
+  assert.match(recovery, /trap cleanup EXIT/u);
+  assert.doesNotMatch(recovery, /ECS_HOST:\/tmp\/agent-saas-recovery-web/u);
 });
 
 test('pins and probes the real OSS client capabilities used by immutable uploads', async () => {
@@ -616,13 +679,21 @@ test('snapshots, restores, and proves every mutable Web key class and metadata',
   );
   const restore = workflow.slice(restoreStart, proofStart);
   assert.match(restore, /while IFS=\$'\\t' read -r state key/u);
+  assert.match(restore, /production-identity-restore\.tgz/u);
+  assert.match(restore, /bash -s -- extract '\$payload_digest'/u);
+  assert.doesNotMatch(restore, /remote_candidate="\/tmp\/runtime-identity-/u);
   assert.match(restore, /present\)[\s\S]*before\/objects\/\$key/u);
   assert.match(restore, /missing\)[\s\S]*ossutil rm "oss:\/\/\$OSS_BUCKET\/\$key"/u);
   const proof = workflow.slice(proofStart);
-  assert.match(proof, /production-proof-payload\.sha256/u);
-  assert.match(proof, /sudo chown -R root:root '\$remote'/u);
-  assert.match(proof, /sudo chmod -R a-w '\$remote'/u);
-  assert.match(proof, /sudo sha256sum -c production-proof-payload\.sha256/u);
+  assert.match(proof, /payload_digest="\$\(sha256sum "\$payload_archive"/u);
+  assert.match(proof, /PRODUCTION_STAGING_ROOT\/production-rollback-proof-/u);
+  assert.match(proof, /sudo install -d -m 0700 '\$remote'/u);
+  assert.match(proof, /sudo tee '\$remote\/payload\.tgz'/u);
+  assert.match(
+    proof,
+    /bash -s -- extract '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
+  );
+  assert.doesNotMatch(proof, /production-proof-payload\.sha256/u);
   assert.match(proof, /sudo node '\$remote\/read-production-state\.mjs'/u);
   assert.match(proof, /sudo rm -rf -- '\$remote'/u);
   assert.doesNotMatch(proof, /sudo rm -rf -- '\$remote'[^\n]*\|\| true/u);

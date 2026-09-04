@@ -4,6 +4,21 @@ set -euo pipefail
 
 PRESERVE_ACS_UNIT_BAK=false
 ACS_ROLLBACK_ATTEMPTED=false
+RELEASE_TGZ="${RELEASE_TGZ:-/tmp/agent-saas-acs-release.tgz}"
+RELEASE_STAGING_DIR="${RELEASE_STAGING_DIR:-}"
+
+cleanup_release_payload() {
+  case "$RELEASE_STAGING_DIR" in
+    /run/agent-saas-production-staging/acs-release-*)
+      rm -rf -- "$RELEASE_STAGING_DIR"
+      ;;
+    *)
+      [ -n "$RELEASE_TGZ" ] && rm -f -- "$RELEASE_TGZ"
+      ;;
+  esac
+}
+# Arm sealed payload cleanup before any validation or lock acquisition can fail.
+trap cleanup_release_payload EXIT
 
 cleanup_acs_unit_backup() {
   if [ "${PRESERVE_ACS_UNIT_BAK:-false}" = true ]; then
@@ -168,7 +183,6 @@ ACS_UNIT_HAD_PREVIOUS=false
 ACS_UNIT_UPDATED=false
 PRODUCTION_CLEANUP_ARMED=false
 CURRENT_LINK_UPDATED=false
-RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
 # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
 # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
 # cleanup 走到、SMOKE_SESSION 还是空 → cleanup 什么也不删 → sandbox 残留普通 TTL。
@@ -205,7 +219,7 @@ cleanup() {
     case "${RUNTIME_PREFLIGHT_DIR:-}" in
       /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
     esac
-    rm -f "$RELEASE_TGZ"
+    cleanup_release_payload
     cleanup_acs_unit_backup
     return "$deploy_status"
   fi
@@ -339,7 +353,8 @@ EOF
   case "${RUNTIME_PREFLIGHT_DIR:-}" in
     /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
   esac
-  rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" \
+  cleanup_release_payload
+  rm -f "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
   cleanup_acs_unit_backup
   if [ "$rollback_status" -ne 0 ]; then

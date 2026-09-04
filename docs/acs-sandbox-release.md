@@ -1,6 +1,6 @@
 # ACS Sandbox 镜像发布门禁
 
-> 当前结论：ACS Sandbox 已有独立 GitHub Actions 发布链路（`.github/workflows/acs-sandbox.yml`）。相关路径 push 到 `main` 时会构建 `acs-sandbox` 镜像、本地 contract smoke、经 ECS 推送到 ACR VPC endpoint、更新 `ACS_SANDBOX_IMAGE`、重启 `agent-saas-acs-orchestrator.service`，并跑正式 `/provision + /execute Shell` smoke。主服务 CI/CD 绿灯仍不能代表 Sandbox 已发布；必须看 ACS Sandbox workflow 结果。
+> 当前结论：ACS Sandbox 已有独立 GitHub Actions 链路（`.github/workflows/acs-sandbox.yml`）。`main` push 只进入分类与测试，不部署生产；只有指向最新 `main` 的 `workflow_dispatch` 才可能进入 `build-deploy`，经 ECS 处理当前 SHA 的不可变镜像、更新 `ACS_SANDBOX_IMAGE`、重启 `agent-saas-acs-orchestrator.service`，并跑正式 `/provision + /execute Shell` smoke。非 `main` dispatch 同样不会进入该生产 job。主服务 CI/CD 绿灯仍不能代表 Sandbox 已发布；必须核对该次 ACS Sandbox 手工发布结果。
 
 ## 生产链路边界
 
@@ -16,10 +16,7 @@ ACS workspace 挂载也跨这三段：主服务把真实用户目录相对 `/mnt
 
 ## 触发条件
 
-ACS Sandbox workflow 分两层判断：
-
-1. 顶层 `paths` 只负责唤醒 workflow，包含 ACS 相关源码、Docker/依赖输入，以及少量主服务到 hand 的契约文件。
-2. `Classify ACS Impact` job 再按 changed files 分类：命中发布路径才构建镜像并重启 `agent-saas-acs-orchestrator.service`；只命中契约路径时只跑 contract check，不滚生产 ACS。
+ACS Sandbox workflow 不使用顶层 `paths`；`main` push 与面向 `main` 的 PR 都会唤醒 workflow，`.github/scripts/acs-classify.sh` 是唯一影响分类真源。`Classify ACS Impact` job 按 changed files 输出发布或契约检查范围；分类结果只决定 CI 门禁，生产 `build-deploy` 仍只允许最新 `main` 的手工 dispatch。
 
 改到以下内容时，应发布新 ACS Sandbox 镜像：
 
@@ -223,8 +220,8 @@ curl -sf http://127.0.0.1:3400/health
 
 `.github/workflows/acs-sandbox.yml` 负责这条链路：
 
-- `Classify ACS Impact` 读取本次 push 的 changed files，输出 `publish` / `contract_check`。
-- `workflow_dispatch` 视为人工强制发布；非 main 手动触发只 build，不 deploy。
+- `Classify ACS Impact` 通过 `.github/scripts/acs-classify.sh` 读取 changed files，输出 `publish` / `contract_check`；workflow 顶层没有 `paths` 过滤。
+- `main` push 只分类并执行相应测试，不进入生产 `build-deploy`；只有最新 `main` 的 `workflow_dispatch` 才能进入该 job，非 `main` dispatch 也不会进入。
 - `publish=true` 时跑 typecheck、orchestrator tests 与 operational scripts；镜像由 GitHub push webhook 触发 ACR EE 源码构建。
 - `workflow_dispatch` 只接受当前 `GITHUB_SHA` 对应的不可变镜像，禁止用后继镜像替代；读取生产
   Secret 的 `build-deploy` job 显式绑定 `production` Environment。

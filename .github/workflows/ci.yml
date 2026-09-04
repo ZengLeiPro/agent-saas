@@ -482,6 +482,7 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
 
     steps:
       - name: Checkout code
@@ -505,6 +506,7 @@ jobs:
 
       - name: Configure SSH
         run: |
+          set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
           : "${ECS_USER:?Missing secret ECS_USER}"
           : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
@@ -512,8 +514,13 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts \
-            || echo "::warning title=ECS deploy plan::ssh-keyscan failed; Web-only gate will block if the host cannot be verified"
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/production-known-host"
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$scan_path"
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
 
       - name: Determine ECS deployment necessity
         id: plan
@@ -609,6 +616,7 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       RELEASE_RECORD_OSS_URI: oss://agent-saas-release-records
@@ -685,6 +693,7 @@ jobs:
 
       - name: Configure SSH
         run: |
+          set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
           : "${ECS_USER:?Missing secret ECS_USER}"
           : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
@@ -692,7 +701,13 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/production-known-host"
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$scan_path"
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
 
       - name: Install Alibaba Cloud CLI
         run: |
@@ -2612,7 +2627,10 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       RECOVERY_WEB_ROOT: /opt/agent-saas-web-recovery
+      # Runner payloads enter the dedicated Production root-only directory before digest verification.
+      PRODUCTION_STAGING_ROOT: /run/agent-saas-production-staging
       WEB_TRANSACTION_PREFIX: _transactions/${{ github.run_id }}-${{ github.run_attempt }}
       PRODUCTION_LOCK_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-compat-web
       PRODUCTION_LOCK_UPLOAD: /tmp/production-lock-${{ github.run_id }}-${{ github.run_attempt }}.sh
@@ -2692,6 +2710,7 @@ jobs:
 
       - name: Configure recovery SSH
         run: |
+          set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
           : "${ECS_USER:?Missing secret ECS_USER}"
           : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
@@ -2699,7 +2718,13 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_recovery_key
           chmod 600 ~/.ssh/ecs_recovery_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/production-known-host"
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$scan_path"
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
 
       - name: Acquire production host lock for the complete Web transaction
         run: |
@@ -2893,27 +2918,53 @@ jobs:
 
       - name: Package recovery Web release
         run: |
-          tar -C web/dist -czf "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" .
+          set -euo pipefail
+          archive="$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz"
+          tar -C web/dist -czf "$archive" .
+          echo "RECOVERY_WEB_ARCHIVE_SHA256=$(sha256sum "$archive" | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
-      - name: Upload recovery Web release
+      - name: Seal recovery Web release in root-only staging
         run: |
-          scp -i ~/.ssh/ecs_recovery_key \
+          set -euo pipefail
+          archive="$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz"
+          remote="$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          cat "$archive" | ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" \
-            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz"
+            "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/recovery-web.tgz' >/dev/null"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- verify '$RECOVERY_WEB_ARCHIVE_SHA256' \
+             '$remote/recovery-web.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
+          trap - EXIT
 
       - name: Activate recovery Web release
         run: |
+          set -euo pipefail
+          remote="$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
           printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
+            "sudo env RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
              RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q \
              RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' \
-             ARCHIVE='/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' bash -s" \
+             ARCHIVE='$remote/recovery-web.tgz' bash -s" \
             < scripts/deploy-recovery-web.sh
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
@@ -2952,14 +3003,14 @@ jobs:
           set -euo pipefail
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
-          remote="/tmp/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
+          remote="$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
           cleanup() {
             ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
               "sudo rm -rf -- '$remote'"
           }
           trap cleanup EXIT
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
-            "grep -Fx 'state=activated' \
+            "sudo grep -Fx 'state=activated' \
              '$RECOVERY_WEB_ROOT/transactions/${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.activation' >/dev/null"
           identity_payload=(
             scripts/release/artifact-lib.mjs
@@ -2970,28 +3021,33 @@ jobs:
             scripts/release/write-live-production-identity.mjs
             "$RUNNER_TEMP/runtime-identity.before.json"
           )
-          : > "$RUNNER_TEMP/production-identity-payload.sha256"
+          payload_stage="$RUNNER_TEMP/production-identity-payload"
+          payload_archive="$RUNNER_TEMP/production-identity-payload.tgz"
+          rm -rf "$payload_stage"
+          mkdir -p "$payload_stage"
           for source in "${identity_payload[@]}"; do
-            printf '%s  %s\n' "$(sha256sum "$source" | cut -d' ' -f1)" "$(basename "$source")" \
-              >> "$RUNNER_TEMP/production-identity-payload.sha256"
+            install -m 0444 "$source" "$payload_stage/$(basename "$source")"
           done
-          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/ecs_recovery_key "${identity_payload[@]}" \
-            "$RUNNER_TEMP/production-identity-payload.sha256" \
-            "$ECS_USER@$ECS_HOST:$remote/"
+          tar -C "$payload_stage" -czf "$payload_archive" .
+          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
+          cat "$payload_archive" | ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/payload.tgz' >/dev/null"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
-            "sudo chown -R root:root '$remote' && sudo chmod -R a-w '$remote' && \
-             cd '$remote' && sudo sha256sum -c production-identity-payload.sha256 >/dev/null"
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
-             jq -e --arg sha '$GITHUB_SHA' --arg digest '$WEB_ARTIFACT_DIGEST' \
+             sudo jq -e --arg sha '$GITHUB_SHA' --arg digest '$WEB_ARTIFACT_DIGEST' \
                '.components.web.gitSha==\$sha and .components.web.artifactDigest==\$digest' '$remote/live.json' >/dev/null && \
              if [ '${{ needs.deploy_plan.outputs.ecs_required }}' = false ]; then \
-               jq -e --slurpfile before '$remote/runtime-identity.before.json' \
+               sudo jq -e --slurpfile before '$remote/runtime-identity.before.json' \
                  'def keep: {api:{gitSha:.api.gitSha,artifactDigest:.api.artifactDigest},runtimeWorker:{gitSha:.runtimeWorker.gitSha,artifactDigest:.runtimeWorker.artifactDigest},acs:{gitSha:.acs.gitSha,orchestratorArtifactDigest:.acs.orchestratorArtifactDigest,sandboxImageDigest:.acs.sandboxImageDigest}}; (.components|keep)==(\$before[0].components|keep)' \
                  '$remote/live.json' >/dev/null; \
              else \
-               jq -e --arg sha '$GITHUB_SHA' \
+               sudo jq -e --arg sha '$GITHUB_SHA' \
                  --arg digest '${{ needs.deploy-ecs.outputs.server_artifact_digest }}' \
                  '.components.api.gitSha==\$sha and .components.api.artifactDigest==\$digest and
                   .components.runtimeWorker.gitSha==\$sha and .components.runtimeWorker.artifactDigest==\$digest' \
@@ -2999,7 +3055,7 @@ jobs:
              fi && \
              sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
              sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null && \
-             jq -e --slurpfile live '$remote/live.json' \
+             sudo jq -e --slurpfile live '$remote/live.json' \
                'def matrix: {web:{gitSha:.web.gitSha,artifactDigest:.web.artifactDigest},api:{gitSha:.api.gitSha,artifactDigest:.api.artifactDigest},runtimeWorker:{gitSha:.runtimeWorker.gitSha,artifactDigest:.runtimeWorker.artifactDigest},acs:{gitSha:.acs.gitSha,orchestratorArtifactDigest:.acs.orchestratorArtifactDigest,sandboxImageDigest:.acs.sandboxImageDigest}}; (.components|matrix)==(\$live[0].components|matrix)' \
                '$remote/confirmed.json' >/dev/null"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
@@ -3019,7 +3075,7 @@ jobs:
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
+            "sudo env RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
              RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q \
              RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' bash -s" \
             < scripts/rollback-recovery-web.sh
@@ -3062,18 +3118,35 @@ jobs:
             echo "trusted identity was not snapshotted and was never mutated"
             exit 0
           fi
-          remote_candidate="/tmp/runtime-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.before.json"
-          scp -i ~/.ssh/ecs_recovery_key \
-            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            "$RUNNER_TEMP/runtime-identity.before.json" \
-            "$ECS_USER@$ECS_HOST:$remote_candidate"
+          remote="$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          payload_stage="$RUNNER_TEMP/production-identity-restore"
+          payload_archive="$RUNNER_TEMP/production-identity-restore.tgz"
+          rm -rf "$payload_stage"
+          mkdir -p "$payload_stage"
+          install -m 0444 "$RUNNER_TEMP/runtime-identity.before.json" \
+            "$payload_stage/runtime-identity.before.json"
+          tar -C "$payload_stage" -czf "$payload_archive" .
+          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
+          cat "$payload_archive" | ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/payload.tgz' >/dev/null"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "sudo install -m 0444 '$remote_candidate' /etc/agent-saas/runtime-identity.json.candidate && \
+            "sudo install -m 0444 '$remote/runtime-identity.before.json' \
+               /etc/agent-saas/runtime-identity.json.candidate && \
              sudo mv /etc/agent-saas/runtime-identity.json.candidate /etc/agent-saas/runtime-identity.json && \
-             sudo cmp '$remote_candidate' /etc/agent-saas/runtime-identity.json && \
-             rm -f '$remote_candidate'"
+             sudo cmp '$remote/runtime-identity.before.json' /etc/agent-saas/runtime-identity.json"
 
       - name: Prove previous Web and trusted identity after compensation
         if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
@@ -3085,32 +3158,37 @@ jobs:
             echo "Web transaction failed before mutation; no compensation proof required"
             exit 0
           fi
-          remote="/tmp/production-rollback-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          remote="$PRODUCTION_STAGING_ROOT/production-rollback-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cleanup() {
             ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
               "sudo rm -rf -- '$remote'"
           }
           trap cleanup EXIT
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
-            "grep -Ex 'state=(rolled_back|not_started)' \
+            "sudo grep -Ex 'state=(rolled_back|not_started)' \
              '$RECOVERY_WEB_ROOT/transactions/${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.activation' >/dev/null"
           proof_payload=(
             scripts/release/artifact-lib.mjs
             scripts/release/read-production-state.mjs
             scripts/release/read-runtime-identity.mjs
           )
-          : > "$RUNNER_TEMP/production-proof-payload.sha256"
+          payload_stage="$RUNNER_TEMP/production-proof-payload"
+          payload_archive="$RUNNER_TEMP/production-proof-payload.tgz"
+          rm -rf "$payload_stage"
+          mkdir -p "$payload_stage"
           for source in "${proof_payload[@]}"; do
-            printf '%s  %s\n' "$(sha256sum "$source" | cut -d' ' -f1)" "$(basename "$source")" \
-              >> "$RUNNER_TEMP/production-proof-payload.sha256"
+            install -m 0444 "$source" "$payload_stage/$(basename "$source")"
           done
-          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/ecs_recovery_key "${proof_payload[@]}" \
-            "$RUNNER_TEMP/production-proof-payload.sha256" \
-            "$ECS_USER@$ECS_HOST:$remote/"
+          tar -C "$payload_stage" -czf "$payload_archive" .
+          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
+          cat "$payload_archive" | ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/payload.tgz' >/dev/null"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
-            "sudo chown -R root:root '$remote' && sudo chmod -R a-w '$remote' && \
-             cd '$remote' && sudo sha256sum -c production-proof-payload.sha256 >/dev/null"
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo node '$remote/read-production-state.mjs' --output '$remote/restored.json' >/dev/null && \
              sudo cat '$remote/restored.json'" \
@@ -3183,7 +3261,12 @@ jobs:
             release_status=1
           fi
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
-            "sudo rm -f '$PRODUCTION_LOCK_SCRIPT'; rm -f '$lock_log'" || release_status=1
+            "sudo rm -f '$PRODUCTION_LOCK_SCRIPT'; \
+             sudo rm -rf -- \
+               '$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' \
+               '$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web' \
+               '$PRODUCTION_STAGING_ROOT/production-rollback-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'; \
+             rm -f '$lock_log'" || release_status=1
           exit "$release_status"
 
       - name: Fail compatibility transaction after compensated identity error

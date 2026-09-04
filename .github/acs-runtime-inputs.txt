@@ -1,0 +1,14 @@
+# mode repository-relative-path
+0555 scripts/apply-orchestrator-env.py
+0555 scripts/acs-browser-lease-e2e.mjs
+0555 scripts/acs-tool-content-json.mjs
+0555 scripts/check-acs-shared-rollback-compatibility.mjs
+0555 workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py
+0444 scripts/release/artifact-lib.mjs
+0444 scripts/release/read-live-production-components.mjs
+0444 scripts/release/read-production-state.mjs
+0444 scripts/release/read-runtime-identity.mjs
+0444 scripts/release/seal-compatibility-release.mjs
+0444 scripts/release/verify-installed-release.mjs
+0444 scripts/release/write-compatibility-acs-identity.mjs
+0444 scripts/release/write-live-production-identity.mjs

@@ -3,6 +3,25 @@ import { readFile } from 'node:fs/promises';
 
 const RETRYABLE_TAIL_STATES = new Set(['approved', 'failed_before_change', 'needs_human']);
 const RECOVERABLE_MUTATION_TAIL_STATES = new Set([...RETRYABLE_TAIL_STATES, 'promoting']);
+// durable promoting 后的 failed_before_change 仍按 post-mutation 路径要求人工复核。
+
+function hasPromotionBinding(entry) {
+  if (entry?.state !== 'promoting' || typeof entry.reason !== 'string') return false;
+  try {
+    const value = JSON.parse(entry.reason);
+    return (
+      ['none', 'expand'].includes(value.migrationPhase) &&
+      [
+        value.manifestDigest,
+        value.migrationPlanDigest,
+        value.productionBeforeDigest,
+        value.productionTargetDigest,
+      ].every((digest) => /^sha256:[a-f0-9]{64}$/u.test(digest ?? ''))
+    );
+  } catch {
+    return false;
+  }
+}
 
 function hasReviewedMutationRecoveryTail(tail) {
   let mutationSeen = false;
@@ -12,14 +31,19 @@ function hasReviewedMutationRecoveryTail(tail) {
     const previousState = tail[index - 1]?.state;
     if (!mutationSeen) {
       if (state === 'promoting') {
-        if (previousState !== 'approved') return false;
+        if (previousState !== 'approved' || !hasPromotionBinding(tail[index])) return false;
         mutationSeen = true;
         reviewedCurrentMutation = false;
       } else if (!RETRYABLE_TAIL_STATES.has(state)) return false;
       continue;
     }
     if (state === 'promoting') {
-      if (previousState !== 'approved' || !reviewedCurrentMutation) return false;
+      if (
+        previousState !== 'approved' ||
+        !reviewedCurrentMutation ||
+        !hasPromotionBinding(tail[index])
+      )
+        return false;
       reviewedCurrentMutation = false;
     } else if (state === 'needs_human') {
       if (previousState !== 'promoting' && previousState !== 'needs_human') return false;
@@ -31,7 +55,8 @@ function hasReviewedMutationRecoveryTail(tail) {
       )
         return false;
     } else if (state === 'failed_before_change') {
-      if (!reviewedCurrentMutation || previousState !== 'approved') return false;
+      if (previousState === 'promoting') reviewedCurrentMutation = true;
+      else if (!reviewedCurrentMutation || previousState !== 'approved') return false;
     } else return false;
   }
   return mutationSeen && reviewedCurrentMutation;

@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,10 @@ const workflowPath = fileURLToPath(
   new URL('../../../.github/workflows/acs-sandbox.yml', import.meta.url),
 );
 const workflow = readFileSync(workflowPath, 'utf8');
+const acrRecordListHelper = readFileSync(
+  fileURLToPath(new URL('../../../scripts/release/list-acr-build-records.sh', import.meta.url)),
+  'utf8',
+);
 const ciWorkflow = readFileSync(
   fileURLToPath(new URL('../../../.github/workflows/ci.yml', import.meta.url)),
   'utf-8',
@@ -17,6 +22,56 @@ const ciWorkflow = readFileSync(
 const classifierPath = fileURLToPath(
   new URL('../../../.github/scripts/acs-classify.sh', import.meta.url),
 );
+const bundleInputsPath = fileURLToPath(
+  new URL('../../../.github/acs-bundle-inputs.txt', import.meta.url),
+);
+const orchestratorPackagePath = fileURLToPath(
+  new URL('../../../acs-orchestrator/package.json', import.meta.url),
+);
+const orchestratorDirectory = dirname(orchestratorPackagePath);
+const repoRoot = dirname(orchestratorDirectory);
+const requireFromOrchestrator = createRequire(orchestratorPackagePath);
+const bundleInputPatterns = readFileSync(bundleInputsPath, 'utf8')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter((line) => line && !line.startsWith('#'));
+
+function matchesBundleInput(path: string): boolean {
+  return bundleInputPatterns.some((pattern) => {
+    if (pattern.endsWith('/**')) return path.startsWith(pattern.slice(0, -2));
+    return path === pattern;
+  });
+}
+
+function actualBundleRepositoryInputs(): string[] {
+  const esbuild = requireFromOrchestrator('esbuild') as {
+    buildSync(options: Record<string, unknown>): {
+      metafile?: { inputs: Record<string, unknown> };
+    };
+  };
+  const result = esbuild.buildSync({
+    absWorkingDir: orchestratorDirectory,
+    entryPoints: ['src/index.ts', 'src/backgroundShellWorker.ts', 'src/restorePerPodCli.ts'],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    outdir: 'dist-contract',
+    external: ['pg-native', '@napi-rs/canvas'],
+    metafile: true,
+    write: false,
+    logLevel: 'silent',
+  });
+  if (!result.metafile) throw new Error('esbuild did not return a metafile');
+
+  const trackedFiles = new Set(
+    execFileSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' }).trim().split('\n'),
+  );
+  return Object.keys(result.metafile.inputs)
+    .map((path) => (path.startsWith('../') ? path.slice(3) : `acs-orchestrator/${path}`))
+    .filter((path) => trackedFiles.has(path))
+    .sort();
+}
 
 function classify(paths: string[]): Record<string, string> {
   const directory = mkdtempSync(join(tmpdir(), 'acs-impact-'));
@@ -43,7 +98,33 @@ const classificationCases = [
   { path: 'server/src/runtime/sandboxLifecycleStore.ts', publish: 'false', contractCheck: 'true' },
 
   { path: 'acs-orchestrator/src/config.ts', publish: 'true', contractCheck: 'false' },
+  { path: 'pnpm-lock.yaml', publish: 'true', contractCheck: 'false' },
+  { path: '.github/acs-bundle-inputs.txt', publish: 'true', contractCheck: 'false' },
+  {
+    path: 'scripts/release/create-component-artifact-index.mjs',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  {
+    path: 'scripts/release/seal-root-staged-payload.sh',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  {
+    path: 'scripts/release/verify-acr-build-revision.mjs',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  {
+    path: 'scripts/release/list-acr-build-records.sh',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  { path: 'server/src/runtime/invocationCorrelation.ts', publish: 'true', contractCheck: 'false' },
+  { path: 'shared/src/schemas/workflowScenario.ts', publish: 'true', contractCheck: 'false' },
+  { path: 'shared/package.json', publish: 'true', contractCheck: 'false' },
   { path: 'scripts/release/deploy-staging-release.sh', publish: 'true', contractCheck: 'false' },
+  { path: 'scripts/release/wait-for-acr-image.sh', publish: 'false', contractCheck: 'true' },
   { path: 'scripts/release/deploy-production-release.sh', publish: 'true', contractCheck: 'false' },
   { path: '.github/workflows/acs-sandbox.yml', publish: 'true', contractCheck: 'false' },
   { path: '.github/workflows/ci.yml', publish: 'true', contractCheck: 'false' },
@@ -51,7 +132,7 @@ const classificationCases = [
   { path: 'server/src/agent/toolRuntime.ts', publish: 'true', contractCheck: 'false' },
   { path: 'server/src/runtime/httpTransport.ts', publish: 'true', contractCheck: 'false' },
   { path: 'server/src/runtime/handStore.ts', publish: 'true', contractCheck: 'false' },
-  // Web/application admission code and helpers ship in the ACS image; deletion routes remain contract-only.
+  // Web/application admission code and helpers ship in the ACS image; deletion and staging-only paths remain contract-only.
   { path: 'server/src/app/runtime.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/app/serverRemoteConfig.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channel.ts', publish: 'true', contractCheck: 'true' },
@@ -63,10 +144,10 @@ const classificationCases = [
   { path: 'scripts/release/staging-workflow.test.mjs', publish: 'false', contractCheck: 'true' },
   { path: 'scripts/release/promotion-workflow.test.mjs', publish: 'false', contractCheck: 'true' },
 
-  { path: 'shared/src/types/sandboxWorkload.ts', publish: 'false', contractCheck: 'true' },
-  { path: 'shared/src/types/index.ts', publish: 'false', contractCheck: 'true' },
-  { path: 'shared/src/index.ts', publish: 'false', contractCheck: 'true' },
-  { path: 'server/src/agent/types.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'shared/src/types/sandboxWorkload.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'shared/src/types/index.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'shared/src/index.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'server/src/agent/types.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/__tests__/appConfig.test.ts', publish: 'false', contractCheck: 'true' },
   {
     path: 'server/src/__tests__/appServerRemoteConfig.test.ts',
@@ -240,6 +321,23 @@ describe('ACS deployment and classifier contract', () => {
     },
   );
 
+  it('从真实 Orchestrator bundle 锁定全部仓库输入的发布分类', () => {
+    const sourceInputs = actualBundleRepositoryInputs();
+    expect(sourceInputs).toContain('server/src/runtime/invocationCorrelation.ts');
+    expect(sourceInputs).toContain('shared/src/schemas/workflowScenario.ts');
+    expect(sourceInputs.length).toBeGreaterThan(0);
+
+    for (const sourceInput of sourceInputs) {
+      expect(matchesBundleInput(sourceInput), sourceInput).toBe(true);
+      expect(classify([sourceInput]), sourceInput).toMatchObject({ publish: 'true' });
+    }
+    for (const workspace of new Set(sourceInputs.map((path) => path.split('/')[0]))) {
+      const packageMetadata = `${workspace}/package.json`;
+      expect(matchesBundleInput(packageMetadata), packageMetadata).toBe(true);
+      expect(classify([packageMetadata]), packageMetadata).toMatchObject({ publish: 'true' });
+    }
+  });
+
   it('在 required、contract 与 publish gate 中执行完整 Server、Staging 与 Production lifecycle 契约', () => {
     const serverContracts = [
       'acsDeployWorkflowContract',
@@ -322,13 +420,18 @@ describe('ACS deployment and classifier contract', () => {
     );
   });
 
-  it('发现 exact SHA 构建记录后不因 main 推进中断等待', () => {
+  it('发现 exact SHA 构建记录后继续等待，但在实际部署前再次拒绝 main 漂移', () => {
     expect(workflow).toContain('build_record_found=false');
     expect(workflow).toContain('if [ "$build_record_found" = "true" ]; then');
     expect(workflow).toContain('ACR build record disappeared');
     expect(workflow).toContain('build_record_found=true');
-    expect(workflow).toContain('后续 main 推进不影响本次代码与镜像仍使用同一个 GITHUB_SHA');
-    expect(workflow).not.toContain('while this run was waiting for image');
+    expect(workflow).toContain('实际部署前的独立门禁会拒绝这个旧 dispatch');
+    const deployStart = workflow.indexOf('- name: Deploy orchestrator with drain and smoke');
+    const cleanupStart = workflow.indexOf('- name: Clean sealed ACS Production staging');
+    const deployStep = workflow.slice(deployStart, cleanupStart);
+    expect(deployStep).toContain('git fetch --no-tags origin main');
+    expect(deployStep).toContain('if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then');
+    expect(deployStep.indexOf('latest_main_sha=')).toBeLessThan(deployStep.indexOf('bash -s'));
   });
 
   it('与其他生产写入口全局串行且不取消正在进行的发布', () => {
@@ -337,7 +440,7 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).not.toContain('group: acs-production-deploy');
   });
 
-  it('只接受 exact SHA 镜像并对缺失构建记录快速失败', () => {
+  it('先按 6 位 tag 选候选，再用 GIT_CLONE 日志绑定完整 SHA', () => {
     const waitStep = workflow.slice(
       workflow.indexOf('- name: Wait for ACR auto-build of HEAD'),
       workflow.indexOf('- name: Resolve immutable ACS image'),
@@ -351,9 +454,31 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).toContain("data.get('IsSuccess') is not True");
     expect(workflow).toContain('Unable to query ACR build records');
     expect(waitStep).not.toContain('2>/dev/null || true');
-    expect(workflow).toContain("tag.endswith('-' + sha6)");
+    expect(workflow).toContain(".endswith('-' + sha6)");
+    expect(workflow).toContain("record.get('BuildRecordId')");
+    expect(workflow).toContain('ListRepoBuildRecordLog');
+    expect(workflow).toContain('scripts/release/verify-acr-build-revision.mjs');
+    expect(workflow).toContain('if len(matches) > 1:');
+    expect(workflow).toContain('selected_build_record_id');
+    expect(workflow).toContain('acr-build-records-confirmed.json');
+    expect(workflow).toContain('scripts/release/list-acr-build-records.sh');
+    expect(acrRecordListHelper).toContain('page_size=100');
+    expect(acrRecordListHelper).toContain('total changed during pagination');
+    expect(acrRecordListHelper).toContain('records.length !== expectedTotal');
+    expect(workflow).toContain('ACR tag no longer has one selected BuildRecordId');
+    expect(workflow).toContain('test "$confirmed_digest" = "$image_digest"');
+    expect(workflow).toContain("GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT'");
+    expect(workflow.indexOf('ListRepoBuildRecordLog')).toBeLessThan(
+      workflow.indexOf('echo "image_tag=$btag"'),
+    );
     expect(workflow).toContain('a later image will not be substituted');
     expect(workflow).not.toContain('for i in $(seq 1 60)');
+  });
+
+  it('只在 deploy 脚本持有 promotion.lock 时刷新 ACS trusted identity', () => {
+    expect(workflow).not.toContain('- name: Refresh trusted Production identity');
+    expect(workflow).not.toContain('production-identity-${GITHUB_RUN_ID}');
+    expect(workflow).toContain('scripts/release/write-live-production-identity.mjs');
   });
 
   it('为 ACR 排队和实际构建保留独立等待预算', () => {

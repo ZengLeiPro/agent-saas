@@ -6,7 +6,7 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState, type CSSProperties } from "react";
-import { Globe, MessageSquareShare, Play, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { ArrowRight, Globe, MessageSquareShare, Play, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -207,6 +207,8 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
 
 export interface WorkflowScenarioCardProps {
   scenario: CatalogScenarioPublic;
+  /** 岗位 id → 展示名；缺失时回退到 id */
+  roleLabels?: Record<string, string>;
   onOpenDetail: (scenario: CatalogScenarioPublic) => void;
   onPrimaryAction: (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => void;
   compact?: boolean;
@@ -214,14 +216,26 @@ export interface WorkflowScenarioCardProps {
   style?: CSSProperties;
 }
 
-/** V3 客户目录卡；不消费 prompt、tool 或旧 demoShareToken。 */
+/** 岗位行最多直接列出的数量，超出部分折成「+N」 */
+const ROLE_PREVIEW_COUNT = 3;
+
+/**
+ * V3 客户目录卡（09-04 曾磊定稿）：标题是主角，其余只有一行标签和一行页脚。
+ * 结构 = 标题（两行封顶）→ 目标标签 + 岗位 → hairline 页脚（触发时机 | 演示 / 试试）。
+ * 两个动作同级同形，只用色相区分：演示=品牌暖橙，试试=品牌蓝；卡内不出现第三种颜色。
+ * 不消费 prompt、tool 或旧 demoShareToken。
+ */
 export function WorkflowScenarioCard({
   scenario,
+  roleLabels,
   onOpenDetail,
   onPrimaryAction,
   className,
   style,
 }: WorkflowScenarioCardProps) {
+  const goal = scenario.goalTags[0];
+  const roleNames = scenario.roleIds.map((id) => roleLabels?.[id] ?? id);
+  const hiddenRoleCount = roleNames.length - ROLE_PREVIEW_COUNT;
   return (
     <article
       style={style}
@@ -238,41 +252,61 @@ export function WorkflowScenarioCard({
         }
       }}
       className={cn(
-        "group relative flex min-h-32 cursor-pointer flex-col overflow-hidden p-4 text-left text-card-foreground",
+        "group relative flex cursor-pointer flex-col rounded-2xl p-4 text-left text-card-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
         CAPABILITY_SURFACE,
         CAPABILITY_SURFACE_HOVER,
         className,
       )}
     >
-      <h3 className="text-base font-semibold leading-snug transition-colors group-hover:text-brand-600">
+      <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug tracking-tight transition-colors group-hover:text-brand-700">
         {scenario.title}
       </h3>
-      <div className="mt-auto grid w-full grid-cols-2 gap-2 pt-5" data-workflow-actions>
+      <div className="mb-3.5 mt-2 flex items-center gap-2 overflow-hidden whitespace-nowrap text-xs text-muted-foreground">
+        {goal ? (
+          <span className="shrink-0 rounded-md bg-brand-50 px-1.5 py-0.5 text-2xs font-medium text-brand-700">
+            {goal}
+          </span>
+        ) : null}
+        <span className="truncate">
+          {roleNames.slice(0, ROLE_PREVIEW_COUNT).join(" · ")}
+          {hiddenRoleCount > 0 ? <span className="text-muted-foreground/60"> +{hiddenRoleCount}</span> : null}
+        </span>
+      </div>
+      <div
+        className="mt-auto flex items-center gap-1.5 border-t border-border/50 pt-3"
+        data-workflow-actions
+      >
+        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="shrink-0 rounded bg-muted px-1.5 py-px text-2xs text-muted-foreground/70">触发</span>
+          <span className="truncate">{scenario.triggerBadge}</span>
+        </span>
+        <span className="flex-1" />
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-8 w-full border-border/80 bg-background px-3 text-xs text-foreground shadow-none hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
+          className="h-7 shrink-0 gap-1 rounded-full bg-brand-accent-soft px-3 text-xs font-medium text-brand-accent-ink hover:bg-brand-accent/25 hover:text-brand-accent-ink"
           onClick={(event) => {
             event.stopPropagation();
             onPrimaryAction("presentation", scenario);
           }}
         >
-          <Play className="h-3.5 w-3.5" aria-hidden="true" />
-          看演示
+          <Play className="size-3.5 fill-current" aria-hidden="true" />
+          演示
         </Button>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="h-8 w-full border-brand-200 bg-brand-50 px-3 text-xs text-brand-700 shadow-none hover:border-brand-600 hover:bg-brand-600 hover:text-white hover:shadow-sm focus-visible:border-brand-600 focus-visible:bg-brand-600 focus-visible:text-white active:translate-y-px active:bg-brand-700 active:text-white"
+          className="h-7 shrink-0 gap-1 rounded-full bg-brand-50 px-3 text-xs font-medium text-brand-700 hover:bg-brand-600 hover:text-white"
           onClick={(event) => {
             event.stopPropagation();
             onPrimaryAction("chat", scenario);
           }}
         >
-          立即试一试
+          试试
+          <ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
         </Button>
       </div>
     </article>

@@ -261,6 +261,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
 
   // 钩子场景只在「从一句话或业务事件开始」区出现；全部工作场景目录保持 28 条闭环工作流
   const catalogScenarios = workflowLibrary.scenarios.filter((scenario) => !isHookScenario(scenario));
+  const roleLabels = Object.fromEntries(workflowLibrary.roles.map((role) => [role.id, role.name]));
   const scenarios = filterWorkflowScenarios(catalogScenarios, {
     outcome: filters.activeOutcome,
     role: filters.activeRole,
@@ -527,13 +528,14 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
       ) : (
         <div
           key={`${filters.activeOutcome}-${filters.activeRole}-${filters.activeIndustry}-${filters.activeVertical}-${filters.activeBusinessModel}-${filters.activeMaturity}`}
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
           data-testid="workflow-catalog"
         >
           {scenarios.map((scenario, index) => (
             <WorkflowScenarioCard
               key={scenario.id}
               scenario={scenario}
+              roleLabels={roleLabels}
               className="cap-grid-item"
               style={{ "--i": Math.min(index, 12) } as CSSProperties}
               onOpenDetail={(scenario) => {

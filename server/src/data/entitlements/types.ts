@@ -2,13 +2,15 @@ import type { TenantSettings } from '../tenants/types.js';
 
 export type EntitlementSource = 'plan_default' | 'platform_override' | 'legacy_migrated';
 export type EntitlementStatus = 'trial' | 'active' | 'suspended' | 'expired';
-export type EntitlementResourceType =
-  | 'model'
-  | 'agent_template'
-  | 'skill'
-  | 'connector'
-  | 'environment_template'
-  | 'tool';
+export const ENTITLEMENT_RESOURCE_TYPES = [
+  'model',
+  'tool',
+  'connector',
+  'agent_template',
+  'skill',
+  'environment_template',
+] as const;
+export type EntitlementResourceType = typeof ENTITLEMENT_RESOURCE_TYPES[number];
 export type EntitlementScopeMode = 'all' | 'selected';
 
 export interface TenantEntitlementSet {
@@ -129,6 +131,14 @@ export interface LegacyEntitlementBackfillResult {
   tenantsProjected: number;
   scopesProjected: number;
   policiesProjected: number;
+  issuesRecorded: number;
+}
+
+export interface EntitlementScopeBaselineBackfillResult {
+  tenantsScanned: number;
+  scopesInserted: number;
+  scopesSkipped: number;
+  tenantsWithErrors: number;
   issuesRecorded: number;
 }
 

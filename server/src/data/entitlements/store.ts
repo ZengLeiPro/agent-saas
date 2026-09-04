@@ -5,7 +5,9 @@ import { PgGovernanceMigrationRunner, governanceTablePrefix, type GovernancePgPo
 import { DEFAULT_TENANT_SETTINGS, PLATFORM_TENANT_ID, type TenantSettings } from '../tenants/types.js';
 import {
   EntitlementInvariantError,
+  ENTITLEMENT_RESOURCE_TYPES,
   TENANT_POLICY_KEYS,
+  type EntitlementScopeBaselineBackfillResult,
   type EntitlementResourceScope,
   type EntitlementResourceType,
   type EntitlementScopeMode,
@@ -39,6 +41,13 @@ export interface EntitlementScopePatch {
   resourceIds: string[];
   expectedVersion: number;
   updatedBy: string;
+}
+
+export interface TenantEntitlementProvisioningInput {
+  tenantId: string;
+  settings: TenantSettings;
+  disabled?: boolean;
+  createdBy: string;
 }
 
 export class PgEntitlementStore {
@@ -114,6 +123,131 @@ export class PgEntitlementStore {
       [tenantId],
     );
     return result.rows.map(rowToPolicy);
+  }
+
+  async provisionTenantGovernance(input: TenantEntitlementProvisioningInput): Promise<void> {
+    this.assertCustomerTenant(input.tenantId);
+    await this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`entitlement:${input.tenantId}`]);
+      await client.query(`
+        INSERT INTO ${this.entitlementSetsTable} (
+          tenant_id, source, status, limits_json, created_by, updated_by, update_reason
+        ) VALUES ($1, 'plan_default', $2, $3::jsonb, $4, $4, 'tenant_provisioning')
+      `, [
+        input.tenantId,
+        input.disabled ? 'suspended' : 'active',
+        JSON.stringify(numericLimits(input.settings)),
+        input.createdBy,
+      ]);
+      for (const scope of completeResourceScopes(input.settings)) {
+        await client.query(`
+          INSERT INTO ${this.scopesTable} (
+            tenant_id, resource_type, mode, source, created_by, updated_by
+          ) VALUES ($1, $2, $3, 'governance', $4, $4)
+        `, [input.tenantId, scope.resourceType, scope.mode, input.createdBy]);
+        for (const resourceId of normalizeResourceIds(scope.mode, scope.resourceIds)) {
+          await client.query(`
+            INSERT INTO ${this.itemsTable} (
+              tenant_id, resource_type, resource_id, source, created_by
+            ) VALUES ($1, $2, $3, 'governance', $4)
+          `, [input.tenantId, scope.resourceType, resourceId, input.createdBy]);
+        }
+      }
+      for (const [policyKey, value] of legacyPolicies(input.settings)) {
+        await client.query(`
+          INSERT INTO ${this.policiesTable} (
+            tenant_id, policy_key, value_json, source, created_by, updated_by
+          ) VALUES ($1, $2, $3::jsonb, 'governance', $4, $4)
+        `, [input.tenantId, policyKey, JSON.stringify(value), input.createdBy]);
+      }
+    });
+  }
+
+  async deleteTenantGovernance(tenantId: string): Promise<void> {
+    this.assertCustomerTenant(tenantId);
+    await this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`entitlement:${tenantId}`]);
+      await client.query(`DELETE FROM ${this.policiesTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.scopesTable} WHERE tenant_id = $1`, [tenantId]);
+      await client.query(`DELETE FROM ${this.entitlementSetsTable} WHERE tenant_id = $1`, [tenantId]);
+    });
+  }
+
+  async backfillMissingResourceScopes(input: {
+    tenants: LegacyEntitlementBackfillInput['tenants'];
+    platformTenantId: string;
+    createdBy: string;
+  }): Promise<EntitlementScopeBaselineBackfillResult> {
+    return this.withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['governance-entitlement-scope-baseline-v1']);
+      const result: EntitlementScopeBaselineBackfillResult = {
+        tenantsScanned: 0,
+        scopesInserted: 0,
+        scopesSkipped: 0,
+        tenantsWithErrors: 0,
+        issuesRecorded: 0,
+      };
+      for (const tenant of input.tenants) {
+        if (tenant.id === input.platformTenantId) continue;
+        result.tenantsScanned += 1;
+        await client.query('SAVEPOINT entitlement_scope_tenant');
+        try {
+          let scopesInserted = 0;
+          let scopesSkipped = 0;
+          const existing = await client.query<{ resource_type: string }>(
+            `SELECT resource_type FROM ${this.scopesTable} WHERE tenant_id = $1`,
+            [tenant.id],
+          );
+          const existingTypes = new Set(existing.rows.map(row => row.resource_type));
+          const defaults = new Map(completeResourceScopes(tenant.settings ?? DEFAULT_TENANT_SETTINGS)
+            .map(scope => [scope.resourceType, scope]));
+          for (const resourceType of ENTITLEMENT_RESOURCE_TYPES) {
+            if (existingTypes.has(resourceType)) {
+              scopesSkipped += 1;
+              continue;
+            }
+            const scope = defaults.get(resourceType)!;
+            const inserted = await client.query(`
+              INSERT INTO ${this.scopesTable} (
+                tenant_id, resource_type, mode, source, created_by, updated_by
+              ) VALUES ($1, $2, $3, 'legacy_projection', $4, $4)
+              ON CONFLICT (tenant_id, resource_type) DO NOTHING
+              RETURNING resource_type
+            `, [tenant.id, resourceType, scope.mode, input.createdBy]);
+            if (!inserted.rows[0]) {
+              scopesSkipped += 1;
+              continue;
+            }
+            for (const resourceId of normalizeResourceIds(scope.mode, scope.resourceIds)) {
+              await client.query(`
+                INSERT INTO ${this.itemsTable} (
+                  tenant_id, resource_type, resource_id, source, created_by
+                ) VALUES ($1, $2, $3, 'legacy_projection', $4)
+                ON CONFLICT (tenant_id, resource_type, resource_id) DO NOTHING
+              `, [tenant.id, resourceType, resourceId, input.createdBy]);
+            }
+            scopesInserted += 1;
+          }
+          await client.query('RELEASE SAVEPOINT entitlement_scope_tenant');
+          result.scopesInserted += scopesInserted;
+          result.scopesSkipped += scopesSkipped;
+        } catch (error) {
+          await client.query('ROLLBACK TO SAVEPOINT entitlement_scope_tenant');
+          result.tenantsWithErrors += 1;
+          await this.issueStore.open({
+            issueType: 'entitlement_scope_baseline_backfill_failed',
+            tenantId: tenant.id,
+            resourceType: 'entitlement_scope',
+            resourceId: tenant.id,
+            detail: { error: error instanceof Error ? error.message : String(error) },
+            createdBy: input.createdBy,
+          }, client);
+          result.issuesRecorded += 1;
+          await client.query('RELEASE SAVEPOINT entitlement_scope_tenant');
+        }
+      }
+      return result;
+    });
   }
 
   async updateEntitlementSet(tenantId: string, patch: EntitlementSetPatch): Promise<TenantEntitlementSet> {
@@ -396,7 +530,7 @@ export function normalizeLegacyEntitlementSettings(settings: TenantSettings, dis
   return {
     status: disabled ? 'suspended' : 'active',
     limits: numericLimits(settings),
-    scopes: legacyScopes(settings).map(scope => ({
+    scopes: completeResourceScopes(settings).map(scope => ({
       resourceType: scope.resourceType, mode: scope.mode,
       resourceIds: [...scope.resourceIds].sort(),
     })).sort((a, b) => a.resourceType.localeCompare(b.resourceType)),
@@ -424,20 +558,29 @@ function legacyScopes(settings: TenantSettings): Array<{
   ] as const;
   return [
     {
-      resourceType: 'tool',
-      mode: 'selected',
-      resourceIds: tools.filter(([enabled]) => enabled).map(([, id]) => id),
-    },
-    {
       resourceType: 'model',
       mode: settings.models.allowedModels.length === 0 ? 'all' : 'selected',
       resourceIds: settings.models.allowedModels,
+    },
+    {
+      resourceType: 'tool',
+      mode: 'selected',
+      resourceIds: tools.filter(([enabled]) => enabled).map(([, id]) => id),
     },
     {
       resourceType: 'connector',
       mode: 'all',
       resourceIds: [],
     },
+  ];
+}
+
+function completeResourceScopes(settings: TenantSettings): ReturnType<typeof legacyScopes> {
+  return [
+    ...legacyScopes(settings),
+    { resourceType: 'agent_template', mode: 'selected', resourceIds: [] },
+    { resourceType: 'skill', mode: 'selected', resourceIds: [] },
+    { resourceType: 'environment_template', mode: 'selected', resourceIds: [] },
   ];
 }
 

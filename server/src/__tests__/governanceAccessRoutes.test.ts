@@ -74,6 +74,7 @@ async function rig(input: {
   projectionEnqueue?: ReturnType<typeof vi.fn>;
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   now?: () => Date;
+  scopeResourceIds?: string[];
 } = {}) {
   const user = input.user ?? { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' };
   const actor = input.actor ?? membership({
@@ -117,7 +118,8 @@ async function rig(input: {
     createdAt: NOW, createdBy: 'platform-1', updatedAt: NOW, updatedBy: 'platform-1',
   };
   const scope = {
-    tenantId: 'tenant-a', resourceType: 'skill', mode: 'all', resourceIds: [], source: 'governance',
+    tenantId: 'tenant-a', resourceType: 'skill', mode: input.scopeResourceIds ? 'selected' : 'all',
+    resourceIds: input.scopeResourceIds ?? [], source: 'governance',
     version: 1, createdAt: NOW, createdBy: 'platform-1', updatedAt: NOW, updatedBy: 'platform-1',
   };
   const updateEntitlement = vi.fn().mockResolvedValue({ ...entitlement, status: 'suspended', version: 2 });
@@ -483,6 +485,7 @@ describe('governance access routes', () => {
     const test = await rig({
       user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
       platformAdmin: true,
+      scopeResourceIds: ['retired-skill', 'skill-1'],
     });
     const entitlementChange = { expectedVersion: 1, status: 'suspended', reason: 'contract suspended' };
     const entitlementPreviewResponse = await test.request(
@@ -667,10 +670,10 @@ describe('governance access routes', () => {
   });
 
   it('Scope 预览后目录资源版本变化时提交必须 409', async () => {
-    const resolveEntitlementResource = vi.fn()
-      .mockResolvedValueOnce({ status: 'valid', version: 1 })
-      .mockResolvedValueOnce({ status: 'valid', version: 2 });
-    const test = await rig({ platformAdmin: true, resolveEntitlementResource });
+    const listEntitlementResources = vi.fn()
+      .mockResolvedValueOnce({ status: 'valid', items: [{ resourceId: 'skill-1', version: 1 }] })
+      .mockResolvedValueOnce({ status: 'valid', items: [{ resourceId: 'skill-1', version: 2 }] });
+    const test = await rig({ platformAdmin: true, listEntitlementResources });
     const change = { expectedVersion: 1, mode: 'selected', resourceIds: ['skill-1'] };
     const previewResponse = await test.request(
       '/api/governance/access/entitlement-scopes/skill/preview?tenantId=tenant-a', json('POST', change),

@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { parse as parseJsonc } from 'jsonc-parser';
 
@@ -25,6 +27,57 @@ function baseConfig(overrides: Record<string, unknown> = {}): AppConfig {
 function digestOf(config: AppConfig, processCwd = '/srv/server'): string {
   const { projection } = buildCanonicalConfigProjection(config, processCwd);
   return calculateConfigIdentityDigest(projection);
+}
+
+interface LocaleIdentityResult {
+  locale: string;
+  defaultOrder: string[];
+  projection: Record<string, unknown>;
+  digest: string;
+}
+
+function identityUnderLocale(locale: string): LocaleIdentityResult {
+  const tsxImport = createRequire(import.meta.url).resolve('tsx');
+  const appConfigUrl = new URL('../app/config.ts', import.meta.url).href;
+  const configIdentityUrl = new URL('./configIdentity.ts', import.meta.url).href;
+  const script = `
+    import { parseAppConfig } from ${JSON.stringify(appConfigUrl)};
+    import {
+      buildCanonicalConfigProjection,
+      calculateConfigIdentityDigest,
+    } from ${JSON.stringify(configIdentityUrl)};
+
+    const config = parseAppConfig({
+      agent: { cwd: '/srv/agent', permissionMode: 'default' },
+      server: { port: 3001, timezone: 'Asia/Shanghai' },
+      egress: {
+        server: {
+          enabled: true,
+          matchDomains: ['ä.example', 'z.example'],
+          bypassDomains: [],
+          timeoutMs: 20_000,
+          failOpen: true,
+        },
+      },
+    });
+    const projection = buildCanonicalConfigProjection(config, '/srv/server').projection;
+    process.stdout.write(JSON.stringify({
+      locale: new Intl.Collator().resolvedOptions().locale,
+      defaultOrder: ['ä.example', 'z.example'].sort((left, right) => left.localeCompare(right)),
+      projection,
+      digest: calculateConfigIdentityDigest(projection),
+    }));
+  `;
+  return JSON.parse(
+    execFileSync(
+      process.execPath,
+      ['--import', tsxImport, '--input-type=module', '--eval', script],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, LANG: locale, LC_ALL: locale },
+      },
+    ),
+  ) as LocaleIdentityResult;
 }
 
 describe('canonical projection：注释、键顺序与等价默认值不影响 identity', () => {
@@ -213,6 +266,36 @@ describe('URL query canonicalization 与数组字段语义', () => {
     expect(serialized).toContain('__opaqueDigest__');
   });
 
+  it('URL pathname 只以 path-bound opaque identity 进入投影，路径变化仍改变 digest', () => {
+    const withPath = (pathname: string) =>
+      baseConfig({
+        models: {
+          default: 'primary/model-a',
+          groups: [
+            {
+              id: 'primary',
+              name: 'Primary',
+              apiKey: 'model-secret',
+              baseUrl: `https://models.example.com${pathname}`,
+              models: [{ id: 'model-a', name: 'Model A', value: 'model-a' }],
+            },
+          ],
+        },
+      });
+    const first = withPath('/tenant/path-bearer-token/v1');
+    const changed = withPath('/tenant/different-path-token/v1');
+    const equivalentRootA = withPath('');
+    const equivalentRootB = withPath('/');
+    const serialized = JSON.stringify(buildCanonicalConfigProjection(first).projection);
+
+    expect(serialized).toContain('https://models.example.com');
+    expect(serialized).toContain('__path__');
+    expect(serialized).not.toContain('path-bearer-token');
+    expect(serialized).not.toContain('/tenant/');
+    expect(digestOf(changed)).not.toBe(digestOf(first));
+    expect(digestOf(equivalentRootA)).toBe(digestOf(equivalentRootB));
+  });
+
   it('不同 key 的 query 参数重排等价，同 key 值顺序与重复项保持行为信号，且投影不泄露明文', () => {
     const withQuery = (query: string) =>
       baseConfig({
@@ -265,6 +348,16 @@ describe('URL query canonicalization 与数组字段语义', () => {
     }
     expect(serialized).toContain('__query__');
     expect(serialized).toContain('__opaqueDigest__');
+  });
+
+  it('集合 canonical 排序不依赖进程默认 ICU locale', () => {
+    const english = identityUnderLocale('en_US.UTF-8');
+    const swedish = identityUnderLocale('sv_SE.UTF-8');
+
+    expect(english.locale).not.toBe(swedish.locale);
+    expect(english.defaultOrder).not.toEqual(swedish.defaultOrder);
+    expect(english.projection).toEqual(swedish.projection);
+    expect(english.digest).toBe(swedish.digest);
   });
 
   it('CORS 与 egress 域名列表按集合排序去重，而顺序敏感数组保持原序', () => {

@@ -32,7 +32,7 @@
 | 受管 inline/ref 双形态字段的 inline 值（含 memory embedding / model group API key） | `{form:'inline'}`（明文不进投影）                                                                                                                                                                                               |
 | 受管字段的 ref id                                                                   | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）                                                                                                                                                                  |
 | 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/tts 等）                       | `{__redacted:'secret'}`                                                                                                                                                                                                         |
-| URL（webhook/代理/signed URL 等）                                                   | 保留无凭据 endpoint；userinfo/query/hash 剥除                                                                                                                                                                                   |
+| URL（webhook/代理/signed URL 等）                                                   | 普通 HTTP(S) URL 只保留安全 origin，pathname/query 分别以 path-bound `{__opaqueDigest__}` 表达，userinfo/hash 不进入投影；signed URL 仅保留 origin                                                                                 |
 | DB 连接串                                                                           | 只保留 host/database                                                                                                                                                                                                            |
 | 绝对机器存储路径（agent.cwd、vault file、artifact root 等）                         | 不进投影（同语义配置在不同主机目录得到相同 digest）                                                                                                                                                                             |
 | 相对机器存储路径                                                                    | 以真实 `processCwd` 执行 `resolve(base,value)` 后再 `relative(base,resolved)`；空串规范为 `.`，`agent.sharedDir` 的 base 为真实 `projectRoot=resolve(processCwd,'..')`，其余字段 base 为 `processCwd`。canonical form 再投影为 `{__opaqueDigest__: sha256(...)}`，因此根截断、`./`、尾分隔符等运行期等价路径 identity 相同，目标变化可见且绝对 cwd/目标/路径原文不可见 |
@@ -47,7 +47,7 @@
 ### 2.2 digest
 
 - `digest = sha256("agent-saas-config-identity-v1\0" + canonicalJson(projection))`
-  —— 独立 domain separator，与 Manifest digest / 组件 artifact digest 不可混用。
+  —— 独立 domain separator，与 Manifest digest / 组件 artifact digest 不可混用；集合语义数组按 canonical string 的 Unicode code unit 顺序排序，不依赖进程默认 locale。
 - `credentialVersionDigest = sha256("agent-saas-config-credential-versions-v1\0"
   - canonicalJson({[refDigest]: version}))`
     —— 只覆盖受管 SecretVault ref 的 **opaque version**（put=1，rotate/revoke 递增；
@@ -94,7 +94,8 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 
 1. **脱敏硬约束**：投影、digest 输入、API 载荷、日志、页面文本中不允许出现
    secret 明文、可逆密文、连接串、token、本机绝对路径。ref 只保留
-   domain-separated sha256。signedUrl 仅保留 protocol/host/port origin，完全丢弃
+   domain-separated sha256。普通 HTTP(S) URL 只保留 origin，path/query 仅保留各自的
+   path-bound opaque digest；signedUrl 仅保留 protocol/host/port origin并完全丢弃
    userinfo/path/query；数据库连接只保留规范 protocol/host/port/database 与严格
    allowlist 的枚举/数值行为参数。
 2. **Production fail closed**：

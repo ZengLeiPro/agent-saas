@@ -287,32 +287,35 @@ function opaqueProjectionIdentity(
   };
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
 function redactUrl(
   value: string,
   path: ReadonlyArray<string | number>,
 ):
   | {
       __url__: string;
+      __path__: { __opaqueDigest__: string };
       __query__?: { __opaqueDigest__: string };
     }
   | { __opaqueDigest__: string } {
   try {
     const url = new URL(value);
-    if (url.username || url.password) {
-      url.username = 'credential';
-      url.password = '';
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return opaqueProjectionIdentity(value, path);
     }
-    // Query 可能携带 token，不能明文进入投影；但它也可能是模型版本、路由等
-    // endpoint 行为的一部分，不能像 fragment 一样直接丢弃。以解码后、仅按 key
-    // 稳定排序且不去重的序列生成 path-bound opaque digest：不同 key 的参数重排等价，
-    // 同 key 的值顺序可能影响 first/last-value 语义，必须保留，同时不泄漏内容。
-    const queryEntries = [...url.searchParams.entries()].sort(
-      ([leftKey], [rightKey]) => (leftKey === rightKey ? 0 : leftKey < rightKey ? -1 : 1),
+    // Path/query 都可能携带 token，也都可能改变 endpoint 行为。只保留安全 origin，
+    // pathname 与 query 分别以 path-bound opaque digest 表达，避免 projection 持有明文。
+    // Query 先按解码后的 key 做与 locale 无关的稳定排序；不同 key 的参数重排等价，
+    // 同 key 的值顺序可能影响 first/last-value 语义，必须保留且不去重。
+    const queryEntries = [...url.searchParams.entries()].sort(([leftKey], [rightKey]) =>
+      compareCodeUnits(leftKey, rightKey),
     );
-    url.search = '';
-    url.hash = '';
     return {
-      __url__: url.toString(),
+      __url__: url.origin,
+      __path__: opaqueProjectionIdentity(url.pathname, [...path, 'pathname']),
       ...(queryEntries.length > 0
         ? { __query__: opaqueProjectionIdentity(queryEntries, [...path, 'query']) }
         : {}),
@@ -367,7 +370,7 @@ function redactSignedUrl(
 function collectDbBehaviorOptions(url: URL): Record<string, string> {
   const options: Record<string, string> = {};
   for (const [rawKey, rawValue] of [...url.searchParams.entries()].sort(([a], [b]) =>
-    a.localeCompare(b),
+    compareCodeUnits(a, b),
   )) {
     const key = rawKey.toLowerCase();
     const value = rawValue.toLowerCase();
@@ -527,7 +530,7 @@ function projectValue(
       const unique = new Map<string, unknown>();
       for (const item of out) unique.set(canonicalJson(item), item);
       return [...unique.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => compareCodeUnits(left, right))
         .map(([, item]) => item);
     }
     return out;

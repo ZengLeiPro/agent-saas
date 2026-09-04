@@ -1,24 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-} from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { View, Text, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { authFetch } from "@agent/shared";
 import { useAuth } from "../src/contexts/AuthContext";
 import { showTextPrompt } from "../src/lib/prompt";
-import { useColors, spacing, typography } from "../src/theme";
+import { spacing, radius, fontScale, fontWeight, useThemedStyles } from "../src/theme";
+import { Button, Card, CardContent, Chip, Input } from "../src/components/ui";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
+const CODE_BUTTON_WIDTH = 116;
 
 export default function LoginScreen() {
-  const colors = useColors();
   const {
     login,
     loginWithSms,
@@ -38,162 +30,49 @@ export default function LoginScreen() {
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: {
-          flex: 1,
-          backgroundColor: colors.background,
-        },
-        keyboardView: {
-          flex: 1,
-          justifyContent: "center",
-        },
-        form: {
-          paddingHorizontal: spacing["3xl"],
-        },
-        title: {
-          ...typography.title,
-          fontSize: 28,
-          textAlign: "center",
-          color: colors.foreground,
-          marginBottom: spacing.xs,
-        },
-        subtitle: {
-          ...typography.body,
-          textAlign: "center",
-          color: colors.mutedForeground,
-          marginBottom: spacing.xl,
-        },
-        serviceCard: {
-          backgroundColor: colors.card,
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: 10,
-          padding: spacing.md,
-          marginBottom: spacing.xl,
-        },
-        serviceHeader: {
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: spacing.xs,
-        },
-        serviceLabel: {
-          ...typography.bodySmall,
-          color: colors.foreground,
-          fontWeight: "600",
-        },
-        serviceProfile: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-        },
-        serviceValue: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-        },
-        serviceIssue: {
-          ...typography.caption,
-          color: colors.destructive,
-          marginTop: spacing.xs,
-        },
-        serviceActions: {
-          flexDirection: "row",
-          gap: spacing.lg,
-          marginTop: spacing.sm,
-        },
-        serviceActionText: {
-          ...typography.bodySmall,
-          color: colors.primary,
-          fontWeight: "600",
-        },
-        input: {
-          backgroundColor: colors.card,
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: 10,
-          paddingHorizontal: spacing.lg,
-          paddingVertical: spacing.md,
-          fontSize: typography.body.fontSize,
-          fontWeight: typography.body.fontWeight,
-          color: colors.foreground,
-          marginBottom: spacing.md,
-        },
-        segmented: {
-          flexDirection: "row",
-          backgroundColor: colors.muted,
-          borderRadius: 10,
-          padding: 4,
-          marginBottom: spacing.lg,
-        },
-        segment: {
-          flex: 1,
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 8,
-          paddingVertical: 9,
-        },
-        segmentActive: {
-          backgroundColor: colors.card,
-        },
-        segmentText: {
-          ...typography.bodySmall,
-          color: colors.mutedForeground,
-          fontWeight: "600",
-        },
-        segmentTextActive: {
-          color: colors.foreground,
-        },
-        codeRow: {
-          flexDirection: "row",
-          gap: spacing.sm,
-          marginBottom: spacing.md,
-        },
-        codeInput: {
-          flex: 1,
-          marginBottom: 0,
-        },
-        codeButton: {
-          width: 116,
-          backgroundColor: colors.card,
-          borderWidth: 1,
-          borderColor: colors.border,
-          borderRadius: 10,
-          alignItems: "center",
-          justifyContent: "center",
-          paddingHorizontal: spacing.sm,
-        },
-        codeButtonDisabled: {
-          opacity: 0.6,
-        },
-        codeButtonText: {
-          ...typography.bodySmall,
-          color: colors.foreground,
-          fontWeight: "600",
-        },
-        error: {
-          ...typography.bodySmall,
-          color: colors.destructive,
-          marginBottom: spacing.md,
-          textAlign: "center",
-        },
-        button: {
-          backgroundColor: colors.primary,
-          borderRadius: 10,
-          paddingVertical: 14,
-          alignItems: "center",
-          marginTop: spacing.sm,
-        },
-        buttonDisabled: {
-          opacity: 0.6,
-        },
-        buttonText: {
-          ...typography.subtitle,
-          color: colors.primaryForeground,
-        },
-      }),
-    [colors],
-  );
+  const styles = useThemedStyles((colors) => ({
+    container: { flex: 1, backgroundColor: colors.background },
+    keyboardView: { flex: 1, justifyContent: "center" as const },
+    form: { paddingHorizontal: spacing["2xl"], gap: spacing.md },
+    title: {
+      ...fontScale.xl2,
+      fontWeight: fontWeight.semibold,
+      textAlign: "center" as const,
+      color: colors.foreground,
+    },
+    subtitle: {
+      ...fontScale.sm,
+      textAlign: "center" as const,
+      color: colors.mutedForeground,
+      marginBottom: spacing.sm,
+    },
+    serviceHeader: {
+      flexDirection: "row" as const,
+      justifyContent: "space-between" as const,
+      alignItems: "center" as const,
+    },
+    serviceLabel: {
+      ...fontScale.sm,
+      fontWeight: fontWeight.semibold,
+      color: colors.foreground,
+    },
+    serviceProfile: { ...fontScale.xs, color: colors.mutedForeground },
+    serviceValue: { ...fontScale.xs, color: colors.mutedForeground },
+    serviceIssue: { ...fontScale.xs, color: colors.dangerFamily.ink },
+    serviceActions: { flexDirection: "row" as const, gap: spacing.lg },
+    modeRow: { flexDirection: "row" as const, gap: spacing.sm },
+    codeRow: { flexDirection: "row" as const, gap: spacing.sm, alignItems: "center" as const },
+    codeInput: { flex: 1 },
+    codeButton: { width: CODE_BUTTON_WIDTH },
+    errorBanner: {
+      backgroundColor: colors.dangerFamily.subtle,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    errorText: { ...fontScale.sm, color: colors.dangerFamily.ink },
+    cardBody: { gap: spacing.xs, paddingTop: spacing.lg },
+  }));
 
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -315,6 +194,12 @@ export default function LoginScreen() {
     }
   };
 
+  const profileLabel = serviceConfig.profile === "production"
+    ? "生产"
+    : serviceConfig.profile === "preview"
+      ? "预览"
+      : "开发";
+
   return (
     <SafeAreaView style={styles.container} testID="login-screen" accessibilityLabel="登录">
       <KeyboardAvoidingView
@@ -325,82 +210,70 @@ export default function LoginScreen() {
           <Text style={styles.title}>Agent SaaS</Text>
           <Text style={styles.subtitle}>AI 智能助手</Text>
 
-          <View style={styles.serviceCard}>
-            <View style={styles.serviceHeader}>
-              <Text style={styles.serviceLabel}>服务确认</Text>
-              <Text style={styles.serviceProfile}>
-                {serviceConfig.profile === "production"
-                  ? "生产"
-                  : serviceConfig.profile === "preview"
-                    ? "预览"
-                    : "开发"}
+          <Card density="compact">
+            <CardContent style={styles.cardBody}>
+              <View style={styles.serviceHeader}>
+                <Text style={styles.serviceLabel}>服务确认</Text>
+                <Text style={styles.serviceProfile}>{profileLabel}</Text>
+              </View>
+              <Text style={styles.serviceValue} numberOfLines={2}>
+                {serviceConfig.apiOrigin ?? "未配置可信服务"}
               </Text>
-            </View>
-            <Text style={styles.serviceValue} numberOfLines={2}>
-              {serviceConfig.apiOrigin ?? "未配置可信服务"}
-            </Text>
-            {serviceConfig.issue ? (
-              <Text style={styles.serviceIssue}>{serviceConfig.issue.message}</Text>
-            ) : null}
-            <View style={styles.serviceActions}>
-              <TouchableOpacity
-                onPress={() => void handleReloadServiceConfig()}
-                disabled={checkingConfig || loading}
-              >
-                <Text style={styles.serviceActionText}>
-                  {checkingConfig ? "检查中…" : "重新检查"}
-                </Text>
-              </TouchableOpacity>
-              {serviceConfig.editable ? (
-                <TouchableOpacity onPress={handleChangeServiceOrigin} disabled={loading}>
-                  <Text style={styles.serviceActionText}>切换服务</Text>
-                </TouchableOpacity>
+              {serviceConfig.issue ? (
+                <Text style={styles.serviceIssue}>{serviceConfig.issue.message}</Text>
               ) : null}
-            </View>
-          </View>
+              <View style={styles.serviceActions}>
+                <Button
+                  variant="link"
+                  size="sm"
+                  label={checkingConfig ? "检查中…" : "重新检查"}
+                  disabled={checkingConfig || loading}
+                  onPress={() => void handleReloadServiceConfig()}
+                />
+                {serviceConfig.editable ? (
+                  <Button
+                    variant="link"
+                    size="sm"
+                    label="切换服务"
+                    disabled={loading}
+                    onPress={handleChangeServiceOrigin}
+                  />
+                ) : null}
+              </View>
+            </CardContent>
+          </Card>
 
-          <View style={styles.segmented}>
-            <TouchableOpacity
+          <View style={styles.modeRow}>
+            <Chip
               testID="login-password-mode"
               accessibilityLabel="密码登录"
-              style={[styles.segment, mode === "password" && styles.segmentActive]}
+              label="密码登录"
+              selected={mode === "password"}
               onPress={() => { setMode("password"); setError(""); }}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.segmentText, mode === "password" && styles.segmentTextActive]}>密码登录</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            />
+            <Chip
               testID="login-sms-mode"
               accessibilityLabel="验证码登录"
-              style={[styles.segment, mode === "sms" && styles.segmentActive]}
+              label="验证码登录"
+              selected={mode === "sms"}
               onPress={() => { setMode("sms"); setError(""); }}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.segmentText, mode === "sms" && styles.segmentTextActive]}>验证码登录</Text>
-            </TouchableOpacity>
+            />
           </View>
 
           {mode === "password" ? (
             <>
-              <TextInput
+              <Input
                 testID="login-username-input"
                 accessibilityLabel="用户名"
-                style={styles.input}
                 placeholder="用户名"
-                placeholderTextColor={colors.mutedForeground}
                 value={username}
                 onChangeText={setUsername}
-                autoCapitalize="none"
-                autoCorrect={false}
                 returnKeyType="next"
               />
-
-              <TextInput
+              <Input
                 testID="login-password-input"
                 accessibilityLabel="密码"
-                style={styles.input}
                 placeholder="密码"
-                placeholderTextColor={colors.mutedForeground}
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
@@ -410,28 +283,22 @@ export default function LoginScreen() {
             </>
           ) : (
             <>
-              <TextInput
+              <Input
                 testID="login-phone-input"
                 accessibilityLabel="手机号"
-                style={styles.input}
                 placeholder="手机号"
-                placeholderTextColor={colors.mutedForeground}
                 value={phone}
                 onChangeText={(value) => setPhone(value.replace(/\D/g, "").slice(0, 11))}
                 keyboardType="phone-pad"
-                autoCapitalize="none"
-                autoCorrect={false}
                 maxLength={11}
                 returnKeyType="next"
               />
-
               <View style={styles.codeRow}>
-                <TextInput
+                <Input
                   testID="login-otp-input"
                   accessibilityLabel="验证码"
-                  style={[styles.input, styles.codeInput]}
+                  style={styles.codeInput}
                   placeholder="验证码"
-                  placeholderTextColor={colors.mutedForeground}
                   value={code}
                   onChangeText={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))}
                   keyboardType="number-pad"
@@ -439,45 +306,38 @@ export default function LoginScreen() {
                   returnKeyType="done"
                   onSubmitEditing={handleLogin}
                 />
-                <TouchableOpacity
+                <Button
                   testID="login-send-otp"
                   accessibilityLabel="获取验证码"
-                  style={[
-                    styles.codeButton,
-                    (sendingCode || countdown > 0 || loading || !serviceConfig.ready) && styles.codeButtonDisabled,
-                  ]}
-                  onPress={handleSendSmsCode}
-                  disabled={sendingCode || countdown > 0 || loading || !serviceConfig.ready}
-                  activeOpacity={0.7}
-                >
-                  {sendingCode ? (
-                    <ActivityIndicator color={colors.foreground} />
-                  ) : (
-                    <Text style={styles.codeButtonText}>
-                      {countdown > 0 ? `${countdown}s` : "获取验证码"}
-                    </Text>
-                  )}
-                </TouchableOpacity>
+                  variant="outline"
+                  size="lg"
+                  style={styles.codeButton}
+                  label={countdown > 0 ? `${countdown}s` : "获取验证码"}
+                  loading={sendingCode}
+                  disabled={countdown > 0 || loading || !serviceConfig.ready}
+                  onPress={() => void handleSendSmsCode()}
+                />
               </View>
             </>
           )}
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {error ? (
+            <View style={styles.errorBanner} accessibilityRole="alert">
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
 
-          <TouchableOpacity
+          <Button
             testID="login-submit"
             accessibilityLabel="提交登录"
-            style={[styles.button, (loading || !serviceConfig.ready) && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading || !serviceConfig.ready}
-            activeOpacity={0.7}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.primaryForeground} />
-            ) : (
-              <Text style={styles.buttonText}>{mode === "password" ? "登录" : "验证码登录"}</Text>
-            )}
-          </TouchableOpacity>
+            variant="primary"
+            size="lg"
+            fullWidth
+            label={mode === "password" ? "登录" : "验证码登录"}
+            loading={loading}
+            disabled={!serviceConfig.ready}
+            onPress={() => void handleLogin()}
+          />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>

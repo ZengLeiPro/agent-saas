@@ -82,6 +82,7 @@ import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } fro
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
 import { requireSandboxPhysicalDeletion, type SandboxSessionDeletionResult } from './sandboxSessionDeletion.js'; export type { SandboxSessionDeletionResult } from './sandboxSessionDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
+import { canReadSessionDetail, type TaskboardSessionReadAuthorizer } from "./taskboardSessionReadAccess.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
@@ -395,13 +396,8 @@ export interface SessionsRouterOptions {
   };
   /** 用户维度会话未读状态真源。 */
   sessionReadStateStore?: SessionReadStateStore;
-  /** 任务看板成员只读打开 owner 执行会话；不得用于写入、分享或预热授权。 */
-  canReadTaskboardSession?: (user: {
-    userId: string;
-    username: string;
-    role: "admin" | "user";
-    tenantId: string;
-  }, sessionId: string) => Promise<boolean>;
+  /** 任务看板成员只读打开 owner 的执行会话；不得用于写入、分享或预热授权。 */
+  canReadTaskboardSession?: TaskboardSessionReadAuthorizer;
   /**
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
@@ -443,7 +439,6 @@ const sessionsListCache = new TTLCache<SessionsListResponse>(
   SESSIONS_LIST_CACHE_TTL_MS,
   SESSIONS_LIST_CACHE_TTL_MS,
 );
-
 /** 清除会话列表缓存，供 Agent 完成时调用以确保其他端轮询获取最新数据 */
 export function clearSessionsListCache(): void {
   sessionsListCache.clear();
@@ -686,20 +681,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const { transcriptPath, hasTranscript } = resolvedPath;
 
     const meta = await readSessionMeta(transcriptPath);
-    let canRead = canAccessSession(req.user, meta, options.userStore);
-    if (!canRead && req.user && meta?.sessionSource === "taskboard_execution" && options.canReadTaskboardSession) {
-      try {
-        canRead = await options.canReadTaskboardSession({
-          userId: req.user.sub,
-          username: req.user.username,
-          role: req.user.role,
-          tenantId: req.user.tenantId,
-        }, sessionId);
-      } catch (error) {
-        apiLogger.warn(`[sessions] taskboard session read authorization failed sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    if (!canRead) return { ok: false, status: 403, error: "Access denied" };
+    if (!await canReadSessionDetail(req.user, meta, sessionId, options.userStore, options.canReadTaskboardSession)) return { ok: false, status: 403, error: "Access denied" };
     if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
       return { ok: false, status: 404, error: "Session not found" };
     }

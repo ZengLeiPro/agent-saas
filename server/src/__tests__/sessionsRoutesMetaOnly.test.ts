@@ -55,7 +55,6 @@ async function startServer(
     runtimeEventStoreFor?: SessionsRouterOptions['runtimeEventStoreFor'];
     listPendingUserMessagesBySession?: SessionsRouterOptions['listPendingUserMessagesBySession'];
     findRunByClientMessageId?: SessionsRouterOptions['findRunByClientMessageId'];
-    canReadTaskboardSession?: SessionsRouterOptions['canReadTaskboardSession'];
   } = {},
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -79,7 +78,6 @@ async function startServer(
     sessionProjectionStore: options.sessionProjectionStore,
     listPendingUserMessagesBySession: options.listPendingUserMessagesBySession,
     findRunByClientMessageId: options.findRunByClientMessageId,
-    canReadTaskboardSession: options.canReadTaskboardSession,
   }));
 
   return new Promise((resolve) => {
@@ -193,71 +191,6 @@ describe('sessions routes for meta-only runtime sessions', () => {
     expect(response.status).toBe(200);
     return response.json() as Promise<SessionListResponse>;
   }
-
-  it('allows a taskboard collaborator to read the owner execution session when task authorization succeeds', async () => {
-    const { sessionId } = await writeRuntimeSession({
-      userId: 'board-owner',
-      username: 'owner',
-      content: '任务执行记录',
-      metaPatch: { sessionSource: 'taskboard_execution' },
-    });
-    const collaborator = { ...TEST_USER, id: 'collaborator', username: 'bob' };
-    const canReadTaskboardSession = vi.fn(async () => true);
-
-    const { server, baseUrl } = await startServer(agentCwd, { user: collaborator, canReadTaskboardSession });
-    try {
-      const detail = await fetch(`${baseUrl}/api/sessions/${sessionId}?silent=1`);
-      expect(detail.status).toBe(200);
-      await expect(detail.json()).resolves.toMatchObject({
-        sessionId,
-        owner: { userId: 'board-owner', username: 'owner' },
-      });
-      expect(canReadTaskboardSession).toHaveBeenCalledWith({
-        userId: collaborator.id,
-        username: collaborator.username,
-        role: collaborator.role,
-        tenantId: collaborator.tenantId,
-      }, sessionId);
-    } finally {
-      await stopServer(server);
-    }
-  });
-
-  it('denies a taskboard execution session when the collaborator cannot read its task', async () => {
-    const { sessionId } = await writeRuntimeSession({
-      userId: 'board-owner',
-      username: 'owner',
-      metaPatch: { sessionSource: 'taskboard_execution' },
-    });
-
-    const { server, baseUrl } = await startServer(agentCwd, {
-      user: { ...TEST_USER, id: 'outsider' },
-      canReadTaskboardSession: async () => false,
-    });
-    try {
-      const detail = await fetch(`${baseUrl}/api/sessions/${sessionId}?silent=1`);
-      expect(detail.status).toBe(403);
-    } finally {
-      await stopServer(server);
-    }
-  });
-
-  it('does not use taskboard authorization for an ordinary foreign session', async () => {
-    const { sessionId } = await writeRuntimeSession({ userId: 'another-user', username: 'owner' });
-    const canReadTaskboardSession = vi.fn(async () => true);
-
-    const { server, baseUrl } = await startServer(agentCwd, {
-      user: { ...TEST_USER, id: 'collaborator' },
-      canReadTaskboardSession,
-    });
-    try {
-      const detail = await fetch(`${baseUrl}/api/sessions/${sessionId}?silent=1`);
-      expect(detail.status).toBe(403);
-      expect(canReadTaskboardSession).not.toHaveBeenCalled();
-    } finally {
-      await stopServer(server);
-    }
-  });
 
   it('serves detail and stats before the legacy transcript is projected', async () => {
     const { sessionId } = await writeRuntimeSession({ content: 'hello before projection' });

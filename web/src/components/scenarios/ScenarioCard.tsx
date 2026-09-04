@@ -256,8 +256,12 @@ export function WorkflowScenarioCard({
       }}
       className={cn(
         "group relative flex cursor-pointer flex-col rounded-2xl p-4 text-left text-card-foreground",
+        // G7「磨砂玻璃」（09-04 曾磊定稿）：顶部 brand-50 雾从 0% 融到 55% 的白、brand-100 描边、
+        // 顶缘 1px 白高光。不复用 CAPABILITY_SURFACE 的灰描边，其余 hover 抬起/加深描边与其他目录卡一致。
+        "bg-gradient-to-b from-brand-50/80 via-white via-55% to-white ring-1 ring-brand-100",
+        "shadow-[inset_0_1px_0_#fff,0_1px_2px_rgba(0,0,0,0.03)]",
+        "dark:from-brand-900/30 dark:via-card dark:to-card dark:ring-brand-800 dark:shadow-none",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
-        CAPABILITY_SURFACE,
         CAPABILITY_SURFACE_HOVER,
         className,
       )}
@@ -278,11 +282,11 @@ export function WorkflowScenarioCard({
         {hiddenRoleCount > 0 ? <span className="text-muted-foreground/60"> +{hiddenRoleCount}</span> : null}
       </div>
       <div
-        className="mt-auto flex items-center gap-1.5 border-t border-border/50 pt-3"
+        className="mt-auto flex items-center gap-1.5 border-t border-foreground/[0.06] pt-3"
         data-workflow-actions
       >
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="shrink-0 rounded bg-muted px-1.5 py-px text-2xs text-muted-foreground/70">触发</span>
+          <span className="shrink-0 rounded bg-foreground/[0.05] px-1.5 py-px text-2xs text-muted-foreground/70">触发</span>
           <span className="truncate">{scenario.triggerBadge}</span>
         </span>
         <span className="flex-1" />

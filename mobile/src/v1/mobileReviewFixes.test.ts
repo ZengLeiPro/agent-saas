@@ -58,10 +58,13 @@ describe('TASK-375 移动端 V1 复核整改', () => {
   });
 
   it('固定高度的交互区提供可滚动容器', () => {
-    const source = readMobile('app/chat/[sessionId].tsx');
+    // 交互区已抽成独立组件（AskUserPromptPanel），会话页只负责挂载。
+    const screen = readMobile('app/chat/[sessionId].tsx');
+    const panel = readMobile('src/components/chat/AskUserPromptPanel.tsx');
 
-    expect(source).toContain('style={styles.interactionScroll}');
-    expect(source).toContain('nestedScrollEnabled');
-    expect(source).toContain('keyboardShouldPersistTaps="handled"');
+    expect(screen).toContain('<AskUserPromptPanel');
+    expect(panel).toContain('style={styles.interactionScroll}');
+    expect(panel).toContain('nestedScrollEnabled');
+    expect(panel).toContain('keyboardShouldPersistTaps="handled"');
   });
 });

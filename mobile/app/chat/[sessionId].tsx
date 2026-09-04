@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, ScrollView, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { showTextPrompt } from '../../src/lib/prompt';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,8 +17,10 @@ import { useOnlineStatus } from '../../src/hooks/useOnlineStatus';
 import { useWsLifecycle } from '../../src/hooks/useWsLifecycle';
 import { useAppLifecycle } from '../../src/hooks/useAppLifecycle';
 import { useScrollToTop } from '../../src/hooks/useScrollToTop';
+import { useRuntimeRecovery } from '../../src/hooks/useRuntimeRecovery';
 import { MessageList } from '../../src/components/chat/MessageList';
-import { AskUserBlock, PermissionBlock } from '../../src/components/chat/MessageItem';
+import { AskUserPromptPanel } from '../../src/components/chat/AskUserPromptPanel';
+import { QueuedMessageBar } from '../../src/components/chat/QueuedMessageBar';
 import { ChatInput } from '../../src/components/chat/ChatInput';
 import { ConnectionBanner } from '../../src/components/ConnectionBanner';
 import { TokenDetailTrigger, TokenDetailOverlay } from '../../src/components/chat/TokenDetail';
@@ -28,7 +30,7 @@ import { useHeaderHeight } from '@react-navigation/elements';
 import ReAnimated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { hapticLight } from '../../src/lib/haptics';
 import { glassFree } from '../../src/lib/headerItems';
-import { useColors, typography, type ThemeColors } from '../../src/theme';
+import { useColors, spacing, radius, fontScale, fontWeight, type ThemeColors } from '../../src/theme';
 
 export default function ChatDetailScreen() {
   const colors = useColors();
@@ -48,6 +50,8 @@ export default function ChatDetailScreen() {
   const styles = useScreenStyles(colors, screenWidth);
 
   const { listRef } = useScrollToTop<RenderItem>();
+  // 失败恢复：失败用户消息原位重试，其余失败补发「继续」（与 Web 同语义）。
+  const recoverFromFailure = useRuntimeRecovery();
   const [tooShortTip, setTooShortTip] = useState(false);
   const [showTokenDetail, setShowTokenDetail] = useState(false);
   const defaultBottomPadding = 56 + insets.bottom;
@@ -137,11 +141,11 @@ export default function ChatDetailScreen() {
     } else {
       chat.voiceCallbackRef.current = undefined;
     }
-  }, [tts.available, tts.autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tts.available, tts.autoPlay]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const handleVoiceSend = useCallback(async (fileUri: string, durationMs: number) => {
     await chat.sendVoiceMessage(fileUri, durationMs);
-  }, [chat.sendVoiceMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat.sendVoiceMessage]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const recorder = useVoiceRecorder({
     onVoiceSend: handleVoiceSend,
@@ -342,7 +346,7 @@ export default function ChatDetailScreen() {
         ],
       );
     }
-  }, [sessionId, isNewSession, currentSession?.title, currentGroupId, chat.agentTargetCatalog, chat.renameSession, chat.autoTitleSession, chat.compactSession, removeSessionsFromGroup, requestAgentSwitch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, isNewSession, currentSession?.title, currentGroupId, chat.agentTargetCatalog, chat.renameSession, chat.autoTitleSession, chat.compactSession, removeSessionsFromGroup, requestAgentSwitch]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const handleDrillDownSelect = useCallback((parentId: string, childId: string) => {
     if (!sessionId || isNewSession) return;
@@ -366,7 +370,7 @@ export default function ChatDetailScreen() {
     if (newSessionId) {
       router.replace({ pathname: '/chat/[sessionId]' as any, params: { sessionId: newSessionId } });
     }
-  }, [chat.forkFromMessage, router]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat.forkFromMessage, router]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const handlePreviewMd = useCallback((filePath: string) => {
     if (getPreviewFileType(filePath) === 'html') {
@@ -435,7 +439,7 @@ export default function ChatDetailScreen() {
     if (sessionId && sessionId !== chat.sessionId) {
       chat.selectSession(sessionId);
     }
-  }, [sessionId, chat.sessionId, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, chat.sessionId, navigation]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   // 系统级分享流程：share-target 页面把已上传完成的文件存到 PendingSharedFilesContext，
   // 这里在挂载时一次性消费并灌入 fileUpload state，等用户补一句话发送。
@@ -447,15 +451,8 @@ export default function ChatDetailScreen() {
       // Inbound text augments rather than replaces the owner-scoped composer draft.
       chat.setInput(mergeIncomingShareText(chat.input, incoming.text));
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
-  const pendingInteractions = useMemo(() => chat.messages
-    .filter((message): message is Extract<MessageItem, { type: 'ask_user' | 'permission_request' }> =>
-      (message.type === 'ask_user' || message.type === 'permission_request') && message.status === 'pending')
-    .sort((left, right) => (left.interactionOrder ?? Number.MAX_SAFE_INTEGER) - (right.interactionOrder ?? Number.MAX_SAFE_INTEGER)
-      || (left.interactionVersion ?? 0) - (right.interactionVersion ?? 0)
-      || left.interactionId.localeCompare(right.interactionId)), [chat.messages]);
-  const activeInteraction = pendingInteractions[0] ?? null;
   const interactionDisabled = Boolean(chat.activeAgentTargetUnavailableReason || !chat.activeAgentTarget);
 
   return (
@@ -536,7 +533,7 @@ export default function ChatDetailScreen() {
         listRef={listRef}
         onPermissionResponse={chat.handlePermissionResponse}
         onAskUserResponse={chat.handleAskUserResponse}
-        onRetryMessage={chat.retryMessage}
+        onRetryMessage={recoverFromFailure}
         onForkMessage={handleFork}
         onPreviewMd={handlePreviewMd}
         onTtsPlay={tts.available ? tts.play : undefined}
@@ -548,28 +545,13 @@ export default function ChatDetailScreen() {
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>
         <View onLayout={handleComposerLayout}>
-        {activeInteraction ? (
-          <View
-            style={styles.interactionZone}
-            accessibilityLabel={activeInteraction.type === 'ask_user' ? '待回答问题' : '待处理权限请求'}
-            testID="canonical-interaction-zone"
-          >
-            <ScrollView
-              style={styles.interactionScroll}
-              contentContainerStyle={styles.interactionScrollContent}
-              nestedScrollEnabled
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-            >
-              {activeInteraction.type === 'ask_user' ? (
-                <AskUserBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handleAskUserResponse} />
-              ) : (
-                <PermissionBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handlePermissionResponse} />
-              )}
-              {pendingInteractions.length > 1 ? <Text style={styles.interactionQueueText}>另有 {pendingInteractions.length - 1} 个交互按服务端顺序排队</Text> : null}
-            </ScrollView>
-          </View>
-        ) : null}
+        <QueuedMessageBar />
+        <AskUserPromptPanel
+          messages={chat.messages}
+          disabled={interactionDisabled}
+          onAskUserResponse={chat.handleAskUserResponse}
+          onPermissionResponse={chat.handlePermissionResponse}
+        />
         <ChatInput
           input={chat.input}
           setInput={chat.setInput}
@@ -650,9 +632,8 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
       overflow: 'hidden',
     },
     navTitle: {
-      fontSize: 15,
-      fontWeight: '600' as const,
-      lineHeight: 20,
+      ...fontScale.sm,
+      fontWeight: fontWeight.semibold,
       color: colors.foreground,
     },
     navModelRow: {
@@ -661,30 +642,7 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
       gap: 2,
     },
     navModelText: {
-      fontSize: 10,
-      lineHeight: 13,
-    },
-    interactionZone: {
-      marginHorizontal: 12,
-      marginBottom: 8,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 12,
-      backgroundColor: colors.card,
-      maxHeight: 360,
-    },
-    interactionScroll: {
-      flexShrink: 1,
-    },
-    interactionScrollContent: {
-      flexGrow: 0,
-      paddingBottom: 4,
-    },
-    interactionQueueText: {
-      marginTop: 8,
-      fontSize: 12,
-      color: colors.mutedForeground,
+      ...fontScale.xs2,
     },
     inputOverlay: {
       position: 'absolute',
@@ -724,9 +682,9 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
     },
     compactionNoticePill: {
       backgroundColor: colors.card,
-      borderRadius: 16,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
+      borderRadius: radius.lg,
+      paddingHorizontal: spacing.md + 2,
+      paddingVertical: spacing.sm,
       maxWidth: '85%',
       shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 2 },
@@ -737,7 +695,7 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
       borderColor: colors.border,
     },
     compactionNoticeText: {
-      fontSize: 13,
+      ...fontScale.xs,
       color: colors.mutedForeground,
       textAlign: 'center',
     },

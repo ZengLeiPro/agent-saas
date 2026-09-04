@@ -54,6 +54,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/data/memberships/store.ts',
   'server/src/data/migrationControl/store.ts',
   'server/src/data/oauthGrants/store.ts',
+  'server/src/data/orgGroupAgents/store.ts',
   'server/src/data/resourceReferences/store.ts',
   'server/src/data/sessionReadStateStore.ts',
   'server/src/data/sessionShares/store.ts',

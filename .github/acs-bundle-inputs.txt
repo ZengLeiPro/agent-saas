@@ -43,6 +43,7 @@ acs-orchestrator/src/sandboxResourceDrift.ts
 acs-orchestrator/src/sandboxSafeDeletion.ts
 acs-orchestrator/src/sandboxSafePause.ts
 acs-orchestrator/src/sandboxState.ts
+acs-orchestrator/src/sandboxWorkspaceMounts.ts
 acs-orchestrator/src/singleflightCleanup.ts
 acs-orchestrator/src/snatManager.ts
 acs-orchestrator/src/snatOperations.ts

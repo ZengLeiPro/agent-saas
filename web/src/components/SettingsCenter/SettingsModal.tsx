@@ -889,11 +889,7 @@ export function SettingsModalInner({
         if (!visited.has(id)) return null;
         const isActive = id === activeConfig.id;
         return (
-          <div
-            key={id}
-            className={cn(embedded ? "min-h-full" : "h-full min-h-0", !isActive && "hidden")}
-            aria-hidden={!isActive}
-          >
+          <div key={id} className={cn(embedded ? "min-h-full" : "h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
             <Suspense fallback={<SettingsSectionFallback />}>
               {node}
             </Suspense>
@@ -903,16 +899,7 @@ export function SettingsModalInner({
     </>
   );
 
-  if (embedded) {
-    return (
-      <EmbeddedSettingsFrame
-        content={content}
-        showPasswordDialog={showPasswordDialog}
-        onShowPasswordDialogChange={setShowPasswordDialog}
-        avatarUploading={avatarUploading}
-      />
-    );
-  }
+  if (embedded) return <EmbeddedSettingsFrame content={content} showPasswordDialog={showPasswordDialog} onShowPasswordDialogChange={setShowPasswordDialog} avatarUploading={avatarUploading} />;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-sm md:p-8" role="dialog" aria-modal="true" aria-label="设置" onClick={handleClose}>

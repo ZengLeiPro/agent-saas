@@ -35,10 +35,11 @@ function parseArguments(argv) {
 
 function writeFixtureManifest(path, distribution) {
   const manifest = JSON.parse(readFileSync(path, 'utf8'));
+  manifest.version.iosBuildNumber = Math.max(2, manifest.version.iosBuildNumber);
   manifest.version.androidVersionCode = Math.max(86, (manifest.version.latestPublished.androidVersionCode ?? 0) + 1);
   manifest.version.latestPublished = {
-    marketingVersion: '1.9.4-m60-03-test-fixture',
-    iosBuildNumber: Math.max(1, manifest.version.iosBuildNumber - 1),
+    marketingVersion: '0.9.4-m60-03-test-fixture',
+    iosBuildNumber: manifest.version.iosBuildNumber - 1,
     androidVersionCode: manifest.version.androidVersionCode - 1,
   };
   manifest.target = {
@@ -47,6 +48,7 @@ function writeFixtureManifest(path, distribution) {
     gitSha: '0000000000000000000000000000000000000000',
   };
   manifest.verification = { identity: 'verified', versions: 'verified', distribution: 'verified' };
+  manifest.oauthCallback.enabled.production = true;
   manifest.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }

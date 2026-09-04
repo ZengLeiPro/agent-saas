@@ -66,6 +66,7 @@ import {
   getModelContextWindow,
 } from '../data/usage/pricing.js';
 import { projectToolResultContentForModel } from './replayEventBounds.js';
+import { buildMeasuredContextProjection, createRuntimeReplayAccess, logRuntimeModelRequest } from './replayEventWindow.js';
 import {
   buildRuntimeReplayState,
   type RuntimeReplayState,
@@ -73,7 +74,6 @@ import {
 } from './replay.js';
 import {
   buildSyntheticToolResultContent,
-  closeUnfinishedReplayToolCalls,
   describeBlockingToolCall,
 } from './rawAgentLoopRecovery.js';
 import type { ToolInvocationStore } from './toolInvocationStore.js';
@@ -315,6 +315,7 @@ export class RawAgentLoop implements AgentLoop {
       recordModelRequestDiagnostic: async (diagnostic: ModelRequestDiagnostic) => {
         try {
           if (diagnostic.type === 'started') {
+            logRuntimeModelRequest({ sessionId: context.sessionId, runId: context.runId, logger }, diagnostic);
             await this.eventSink.append({
               type: 'model_request_started',
               runId: context.runId,
@@ -659,24 +660,15 @@ export class RawAgentLoop implements AgentLoop {
       signal: context.signal,
     };
     const descriptors = this.toolRuntime.list(baseToolContext);
-    const replayListOptions = {
-      excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-      replayMode: 'bounded' as const,
-    };
-    const sourceEvents = context.replaySourceSessionId
-      ? closeUnfinishedReplayToolCalls(
-          await this.eventStore.list(requireEventTenantId(context), context.replaySourceSessionId, replayListOptions),
-          context.replaySourceSessionId,
-        )
-      : [];
-    const loadCurrentEvents = () => this.eventStore.list(requireEventTenantId(context), context.sessionId, replayListOptions);
-    const combineReplayEvents = (currentEvents: PlatformEvent[]) => (
-      context.replaySourceSessionId ? [...sourceEvents, ...currentEvents] : currentEvents
-    );
+    const replay = await createRuntimeReplayAccess({ eventStore: this.eventStore,
+      tenantId: requireEventTenantId(context), sessionId: context.sessionId, runId: context.runId,
+      sourceSessionId: context.replaySourceSessionId, excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES, logger });
+    const { sourceEvents, combine: combineReplayEvents } = replay;
+    const loadCurrentEvents = (reason = 'refresh') => replay.loadCurrent(reason);
     // replay 父事件始终是只读快照；压缩 checkpoint 只写当前隐藏会话，
     // 但评估和投影必须基于“父快照 + 隐藏增量”，否则无法缓解 replay 上下文压力。
-    const loadEffectiveEvents = async () => combineReplayEvents(await loadCurrentEvents());
-    let currentEvents = await loadCurrentEvents();
+    const loadEffectiveEvents = (reason = 'refresh') => replay.loadEffective(reason);
+    let currentEvents = await loadCurrentEvents('run_start');
     const priorEvents = combineReplayEvents(currentEvents);
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
     // 普通会话恢复自身；隐藏审查只恢复隐藏会话自身。父会话永远只读，缺失的
@@ -691,7 +683,7 @@ export class RawAgentLoop implements AgentLoop {
       yield { type: 'error', error: recovery.message };
       return;
     }
-    if (recovery.recovered > 0) currentEvents = await loadCurrentEvents();
+    if (recovery.recovered > 0) currentEvents = await loadCurrentEvents('tool_recovery');
     const recoveredEvents = combineReplayEvents(currentEvents);
     const restoredDraftState = await this.loadReplaceableDraftState(context);
     let restoredDraftRecoveryUsed = false;
@@ -745,12 +737,12 @@ export class RawAgentLoop implements AgentLoop {
         );
       }
     }
-    const contextProjection = buildContextProjection(recoveredEvents, {
+    const contextProjection = buildMeasuredContextProjection(recoveredEvents, {
       sessionId: context.replaySourceSessionId ?? context.sessionId,
       runId: context.runId,
       policy: context.replaySourceSessionId ? { type: 'full_replay' } : this.contextPolicy,
       excludeMemoryContext: Boolean(input.memoryContext),
-    });
+    }, { sessionId: context.sessionId, runId: context.runId, logger });
     const memoryMessage = input.memoryContext
       ? [{ role: 'user' as const, content: formatMemoryContext(input.memoryContext) }]
       : [];
@@ -1690,7 +1682,7 @@ export class RawAgentLoop implements AgentLoop {
     this.activeTenantId = requireEventTenantId(context);
     const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-      replayMode: 'bounded',
+      replayMode: 'checkpoint',
     });
     await this.eventSink.append({
       type: 'run_started',
@@ -1962,7 +1954,7 @@ export class RawAgentLoop implements AgentLoop {
     const replayState = buildRuntimeReplayState(
       await this.eventStore.list(this.eventSink.requireTenantId(), sessionId, {
         excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-        replayMode: 'bounded',
+        replayMode: 'checkpoint',
       }),
       await this.approvalStore.list(sessionId),
       sessionId,
@@ -2186,7 +2178,7 @@ export class RawAgentLoop implements AgentLoop {
       return;
     }
 
-    const priorEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'checkpoint' });
     const approvals = await this.approvalStore.list(approval.sessionId);
     const replayState = buildRuntimeReplayState(priorEvents, approvals, approval.sessionId);
     const toolCallState = replayState.toolCallsById.get(approval.toolCallId);
@@ -2325,7 +2317,7 @@ export class RawAgentLoop implements AgentLoop {
     }
     if (resumeContext.drainHandoff?.requested) return;
 
-    const replayEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
+    const replayEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'checkpoint' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: approval.sessionId,
       runId: resumeContext.runId,
@@ -2354,7 +2346,7 @@ export class RawAgentLoop implements AgentLoop {
   async *resumeInteraction(input: ResumeInteractionInput, context: RunContext): AsyncIterable<OutboundEvent> {
     context = withDurableRunCancellation(context, this.runStore);
     this.activeTenantId = requireEventTenantId(context);
-    const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
+    const priorEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'checkpoint' });
     const request = [...priorEvents].reverse().find((event): event is Extract<PlatformEvent, { type: 'interaction_requested' }> => (
       event.type === 'interaction_requested'
       && event.sessionId === context.sessionId
@@ -2496,7 +2488,7 @@ export class RawAgentLoop implements AgentLoop {
     }
     if (context.drainHandoff?.requested) return;
 
-    const replayEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
+    const replayEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'checkpoint' });
     const contextProjection = buildContextProjection(replayEvents, {
       sessionId: context.sessionId,
       runId: context.runId,
@@ -3202,7 +3194,7 @@ export class RawAgentLoop implements AgentLoop {
         if (steeringInterjections.manualCheckpointSourceRunIds.size > 0) {
           const controlSourceRunIds = [...steeringInterjections.manualCheckpointSourceRunIds];
           const loadCheckpointEvents = () => this.eventStore.list(
-            requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'bounded' },
+            requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'checkpoint' },
           );
           const checkpointEvents = await loadCheckpointEvents();
           const alreadyCheckpointed = controlSourceRunIds.every((sourceRunId) => checkpointEvents.some((event) => (
@@ -3255,7 +3247,7 @@ export class RawAgentLoop implements AgentLoop {
           if (args.context.evaluateAutoCompaction && !autoCompactionSuppressed) {
             const checkpointEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
               excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-              replayMode: 'bounded',
+              replayMode: 'checkpoint',
             });
             const evaluation = args.context.evaluateAutoCompaction(checkpointEvents, 'context_governor');
             if (evaluation.shouldCompact) {
@@ -3278,7 +3270,7 @@ export class RawAgentLoop implements AgentLoop {
               if (outcome.status === 'compacted') {
                 const compactedEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
                   excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-                  replayMode: 'bounded',
+                  replayMode: 'checkpoint',
                 });
                 const compactedProjection = buildContextProjection(compactedEvents, {
                   sessionId: args.context.sessionId,
@@ -3870,7 +3862,7 @@ export class RawAgentLoop implements AgentLoop {
     instructions: string;
     tools: ReturnType<typeof toModelToolDefinition>[];
   }): Promise<{ messages: ModelChatMessage[]; replayEvents: PlatformEvent[] } | null> {
-    const allEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'bounded' });
+    const allEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'checkpoint' });
     if (allEvents.some((event) => event.type === 'context_rewind' && event.runId === args.context.runId)) {
       return null;
     }
@@ -3914,7 +3906,7 @@ export class RawAgentLoop implements AgentLoop {
 
     const replayEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,
-      replayMode: 'bounded',
+      replayMode: 'checkpoint',
     });
     const replayProjection = buildContextProjection(replayEvents, {
       sessionId: args.context.sessionId,

@@ -59,12 +59,12 @@ export async function getSessionSharePreview(sessionId: string): Promise<Session
 
 export async function updateSessionShare(
   sessionId: string,
-  input: { confirmPublicText: true; filePaths: string[]; expiresAt?: string },
+  input?: { expiresAt?: string },
 ): Promise<SessionShareSummary> {
   const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/share`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ confirmPublicText: true, ...input }),
   });
   if (!res.ok) throw new Error(await readApiError(res, "生成分享链接失败"));
   return res.json() as Promise<SessionShareSummary>;

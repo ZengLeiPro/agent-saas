@@ -20,7 +20,7 @@ describe('主会话非 Markdown 流向间距', () => {
       <ToolBlock key="tool" toolName="Read" toolInput="{}" executionStatus="completed" />,
       <RuntimeStatusBlock key="runtime" status="running" />,
       <ExecutionHiddenPlaceholder key="hidden" isActive={false} durationMs={1200} />,
-      <CompactionDivider key="compaction" item={{ id: 'c-1', type: 'compaction', status: 'done', coveredEventCount: 3 }} />,
+      <CompactionDivider key="compaction" item={{ id: 'c-1', type: 'compaction', status: 'done', coveredEventCount: 3 }} debugMode />,
     ];
 
     for (const view of views) {

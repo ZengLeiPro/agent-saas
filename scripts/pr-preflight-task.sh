@@ -54,7 +54,8 @@ case "$task" in
       src/__tests__/governanceProjectionPool.pg.test.ts \
       src/__tests__/pgRunStoreSteering.pg.test.ts \
       src/__tests__/pgToolInvocationTerminalGate.pg.test.ts \
-      src/__tests__/sandboxScopeActivity.pg.test.ts
+      src/__tests__/sandboxScopeActivity.pg.test.ts \
+      src/__tests__/taskboardOnReadyTrigger.pg.test.ts
     ;;
 
   web)

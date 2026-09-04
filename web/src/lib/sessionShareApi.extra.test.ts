@@ -60,14 +60,14 @@ describe("getSessionShare", () => {
 describe("updateSessionShare", () => {
   beforeEach(() => authFetchMock.mockReset());
 
-  it("POST 必须传递公开确认与显式文件清单", async () => {
+  it("POST 由客户端确认分享，文件范围由服务端按完整会话生成", async () => {
     authFetchMock.mockResolvedValue(okJson({ enabled: true }));
-    await updateSessionShare("s1", { confirmPublicText: true, filePaths: ["assets/demo.pdf"] });
+    await updateSessionShare("s1");
 
     expect(authFetchMock).toHaveBeenCalledWith("/api/sessions/s1/share", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmPublicText: true, filePaths: ["assets/demo.pdf"] }),
+      body: JSON.stringify({ confirmPublicText: true }),
     });
   });
 
@@ -77,7 +77,7 @@ describe("updateSessionShare", () => {
       status: 400,
       json: vi.fn().mockResolvedValue({}),
     });
-    await expect(updateSessionShare("s1", { confirmPublicText: true, filePaths: [] }))
+    await expect(updateSessionShare("s1"))
       .rejects.toThrow("生成分享链接失败");
   });
 });

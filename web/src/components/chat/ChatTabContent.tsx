@@ -31,7 +31,7 @@ interface ChatTabContentProps {
   scrollContainerRef: Ref<HTMLDivElement>;
   isNearBottomRef?: MutableRefObject<boolean>;
   onPermissionResponse?: (interactionId: string, allow: boolean) => void;
-  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void;
+  onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => void | Promise<void>;
   onRetry?: (message: MessageItem) => void;
   onFork?: (message: MessageItem) => void;
   uploadedFiles: UploadedFile[];
@@ -449,7 +449,7 @@ export function ChatTabContent({
                       <AskUserPromptPanel
                         key={activeAskUser.interactionId}
                         questions={activeAskUser.questions}
-                        onSubmit={(answers) => { if (!readOnly) onAskUserResponse?.(activeAskUser.interactionId, answers); }}
+                        onSubmit={(answers) => readOnly ? undefined : onAskUserResponse?.(activeAskUser.interactionId, answers)}
                       />
                     </div>
                   )}

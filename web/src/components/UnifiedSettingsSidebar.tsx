@@ -1,30 +1,55 @@
-import { useMemo, type MouseEventHandler, type ReactNode } from "react";
-import { CircleAlert, CircleGauge, ChevronLeft, Loader2, Settings2, type LucideIcon } from "lucide-react";
+import { Fragment, useMemo, type MouseEventHandler, type ReactNode } from "react";
+import {
+  ChevronLeft, CircleAlert, Database, FileStack, Globe2, KeyRound, Layers3,
+  Loader2, LockKeyhole, Palette, Search, Settings2, SlidersHorizontal,
+  UserMinus, type LucideIcon,
+} from "lucide-react";
 
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
-import { PLATFORM_SETTINGS_SECTIONS } from "@/components/SettingsCenter/unifiedSettingsConfig";
 import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from "@/components/DesktopSessionSidebarControls";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { EntityIcons } from "@/lib/icons";
+import { EntityIcons } from '@/lib/icons';
 import { cn } from "@/lib/utils";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
-import { ORGANIZATION_SETTINGS_WORKSPACES } from "@/components/OrganizationManagement/organizationManagementRegistry";
+import { managementPagesFor } from "@/lib/managementNavigation";
 
-const ORGANIZATION_WORKSPACE_ICONS: Record<string, LucideIcon> = {
-  overview: CircleGauge,
-  members: EntityIcons.members,
-  agents: EntityIcons.expert,
-  governance: EntityIcons.billing,
+const MANAGEMENT_ICONS: Readonly<Record<string, LucideIcon>> = {
+  bot: EntityIcons.expert,
+  building: EntityIcons.org,
+  clock: EntityIcons.cron,
+  cpu: EntityIcons.model,
+  database: Database,
+  globe: Globe2,
+  groups: Layers3,
+  key: KeyRound,
+  'layout-template': FileStack,
+  lock: LockKeyhole,
+  message: EntityIcons.systemPrompts,
+  palette: Palette,
+  plug: EntityIcons.connector,
+  scroll: EntityIcons.audit,
+  search: Search,
   settings: Settings2,
+  shield: EntityIcons.admin,
+  sliders: SlidersHorizontal,
+  sparkles: EntityIcons.skill,
+  'user-minus': UserMinus,
+  users: EntityIcons.members,
+  wallet: EntityIcons.billing,
+  workflow: EntityIcons.workflow,
+  wrench: EntityIcons.toolControls,
 };
 
-const ORGANIZATION_SETTINGS_ITEMS = ORGANIZATION_SETTINGS_WORKSPACES.map((workspace) => ({
-  id: workspace.id,
-  label: workspace.label,
-  icon: ORGANIZATION_WORKSPACE_ICONS[workspace.iconKey],
-}));
+function managementItems(area: 'organization' | 'platform') {
+  return managementPagesFor('config', area).map((page) => ({
+    id: page.id,
+    label: page.label,
+    group: page.group,
+    icon: MANAGEMENT_ICONS[page.iconKey] ?? Settings2,
+  }));
+}
 
 export interface UnifiedSettingsSidebarProps {
   width: number;
@@ -55,8 +80,8 @@ export function UnifiedSettingsSidebar({
         .filter((item) => personalAgentEnabled || item.id !== "my-agent")
         .map((item) => ({ id: item.id, label: item.label, icon: item.icon })),
     },
-    ...((access.status === "ready" || access.status === "refreshing") && access.tenantEntryAllowed ? [{ id: "tenant" as const, label: "组织管理", items: ORGANIZATION_SETTINGS_ITEMS }] : []),
-    ...((access.status === "ready" || access.status === "refreshing") && access.platformEntryAllowed ? [{ id: "platform" as const, label: "平台管理", items: PLATFORM_SETTINGS_SECTIONS }] : []),
+    ...((access.status === "ready" || access.status === "refreshing") && access.tenantEntryAllowed ? [{ id: "tenant" as const, label: "组织管理", items: managementItems('organization') }] : []),
+    ...((access.status === "ready" || access.status === "refreshing") && access.platformEntryAllowed ? [{ id: "platform" as const, label: "平台运营", items: managementItems('platform') }] : []),
   ], [access.platformEntryAllowed, access.status, access.tenantEntryAllowed, personalAgentEnabled]);
 
   return (
@@ -101,14 +126,22 @@ export function UnifiedSettingsSidebar({
             <div key={group.id}>
               <div className="mb-1 px-2 text-xs font-medium text-muted-foreground">{group.label}</div>
               <div className="flex flex-col gap-1">
-                {group.items.map((item) => {
+                {group.items.map((item, index) => {
                   const Icon = item.icon;
                   const active = target === group.id && activeSection === item.id;
+                  const itemGroup = 'group' in item ? item.group : null;
+                  const previous = index > 0 ? group.items[index - 1] : null;
+                  const previousGroup = previous && 'group' in previous ? previous.group : null;
                   return (
-                    <button key={`${group.id}:${item.id}`} type="button" className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors", active ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED)} aria-current={active ? "page" : undefined} onClick={() => onNavigate?.(group.id, item.id)}>
-                      <Icon className="size-4 shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                    </button>
+                    <Fragment key={`${group.id}:${item.id}`}>
+                      {itemGroup && itemGroup !== previousGroup ? (
+                        <div className="px-2 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/70 first:pt-1">{itemGroup}</div>
+                      ) : null}
+                      <button type="button" className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors", active ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED)} aria-current={active ? "page" : undefined} onClick={() => onNavigate?.(group.id, item.id)}>
+                        <Icon className="size-4 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      </button>
+                    </Fragment>
                   );
                 })}
               </div>

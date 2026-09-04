@@ -71,6 +71,43 @@ test('M60-04 downloaded artifact verifier invokes platform signing and identity 
   ])
     assert.match(verifier, new RegExp(command));
   assert.match(verifier, /debug signer rejected/u);
+  assert.match(verifier, /signed App Group entitlement mismatch/u);
+  assert.match(verifier, /signed Keychain Group entitlement mismatch/u);
+  assert.match(verifier, /provisioning profile Apple Team mismatch/u);
+  assert.match(verifier, /provisioning profile is not App Store distribution/u);
+  assert.match(verifier, /provisioning profile is expired or invalid/u);
+  assert.match(verifier, /signer is absent from its provisioning profile/u);
+  assert.match(verifier, /embedded provisioning profile missing/u);
+  assert.match(verifier, /verify_ios_store_profile .* share-extension /u);
+  assert.match(verifier, /unexpected push entitlement is outside iOS V1 scope/u);
+  assert.match(verifier, /Share Extension bundle identifier mismatch/u);
+  assert.match(verifier, /IPA signed source Git SHA mismatch/u);
+  assert.match(verifier, /\$label signed development entitlement rejected/u);
+  assert.match(verifier, /\$label unexpected push entitlement is outside iOS V1 scope/u);
+});
+
+test('M60-04 iOS build and submit are separate fail-closed operations', () => {
+  const build = readFileSync(resolve(root, 'mobile/scripts/build.sh'), 'utf8');
+  const submit = readFileSync(resolve(root, 'mobile/scripts/submit-ios.sh'), 'utf8');
+  assert.doesNotMatch(build, /eas submit/u);
+  assert.match(build, /scripts\/submit-ios\.sh/u);
+  assert.match(build, /merge-base --is-ancestor/u);
+  assert.match(build, /verify-mobile-release-artifact\.sh/u);
+  assert.match(submit, /verify-mobile-release-artifact\.sh/u);
+  assert.match(submit, /cmp -s/u);
+  assert.match(submit, /IPA source sidecar does not match the reviewed manifest at current HEAD/u);
+  assert.match(submit, /--print-artifact-identity/u);
+  assert.match(submit, /SUBMIT_IPA/u);
+  assert.match(submit, /chmod 400/u);
+  assert.match(submit, /exec 9<"\$SUBMIT_IPA"/u);
+  assert.match(submit, /unlink "\$SUBMIT_IPA"/u);
+  assert.match(submit, /--path \/dev\/fd\/9/u);
+  assert.match(submit, /require\.resolve\("eas-cli\/bin\/run"\)/u);
+  assert.match(submit, /no success receipt log was written/u);
+  assert.match(submit, /Current checkout does not match the IPA source commit/u);
+  assert.match(submit, /merge-base --is-ancestor/u);
+  assert.match(submit, /"\$EAS_CLI_ENTRY" submit -p ios/u);
+  assert.doesNotMatch(submit, /eas build/u);
 });
 
 test('M60-04 eas.json passes the schema bundled with the exact EAS CLI', async () => {
@@ -89,6 +126,8 @@ test('M60-04 EAS profiles pin exact CLI and immutable cloud images', () => {
   const eas = JSON.parse(readFileSync(resolve(root, 'mobile/eas.json'), 'utf8'));
   assert.equal(eas.cli.version, '18.1.0');
   assert.equal(eas.build.production.ios.image, 'macos-sequoia-15.6-xcode-16.4');
+  assert.equal(eas.build.production.distribution, 'store');
+  assert.equal(eas.build.production.ios.credentialsSource, 'remote');
   assert.equal(eas.build['production-store'].android.image, 'ubuntu-24.04-jdk-17-ndk-r27b-sdk-55');
   assert.equal(
     eas.build['production-enterprise'].android.image,

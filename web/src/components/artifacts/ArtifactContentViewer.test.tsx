@@ -6,7 +6,7 @@ import { ArtifactContentViewer } from "@/components/artifacts/ArtifactContentVie
 const authFetchMock = vi.fn();
 vi.mock("@agent/shared", async (importOriginal) => ({
   ...await importOriginal<typeof import("@agent/shared")>(),
-  authFetch: (...args: unknown[]) => authFetchMock(...args),
+  authFetchResource: (...args: unknown[]) => authFetchMock(...args),
 }));
 
 function grant(viewKind: ArtifactReadGrant["descriptor"]["viewKind"], overrides: Partial<ArtifactReadGrant["descriptor"]> = {}): ArtifactReadGrant {
@@ -33,7 +33,10 @@ describe("M50-02 Web ArtifactContentViewer", () => {
     const onPositionChange = vi.fn();
     render(<ArtifactContentViewer grant={grant("text")} position={{ scrollTop: 42 }} onPositionChange={onPositionChange} />);
     const text = await screen.findByText("safe");
-    expect(authFetchMock).toHaveBeenCalledWith("/api/artifacts/a/content?token=redacted", expect.objectContaining({ cache: "no-store", referrerPolicy: "no-referrer" }));
+    expect(authFetchMock).toHaveBeenCalledWith(
+      "/api/artifacts/a/content?token=redacted",
+      expect.objectContaining({ cache: "no-store", referrerPolicy: "no-referrer" }),
+    );
     fireEvent.scroll(text.parentElement!, { target: { scrollTop: 88 } });
     expect(onPositionChange).toHaveBeenCalledWith({ scrollTop: 88 });
   });
@@ -98,7 +101,7 @@ describe("M50-02 Web ArtifactContentViewer", () => {
     await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:artifact-preview"));
   });
 
-  it("maps authorization/quarantine failures without logging the signed URL", async () => {
+  it("keeps signed-resource authorization failures local without logging the URL", async () => {
     authFetchMock.mockResolvedValue(new Response("", { status: 423 }));
     const failure = vi.fn();
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

@@ -21,14 +21,20 @@
       }
     },
     "production": {
+      "distribution": "store",
       "environment": "production",
       "node": "22.23.1",
       "pnpm": "10.18.3",
       "env": {
-        "EXPO_PUBLIC_V1_PROFILE": "production"
+        "EXPO_PUBLIC_V1_PROFILE": "production",
+        "EXPO_PUBLIC_MOBILE_API_ORIGIN": "https://api.agent.kaiyan.net",
+        "EXPO_PUBLIC_MOBILE_API_ALLOWLIST": "https://api.agent.kaiyan.net",
+        "EXPO_PUBLIC_MOBILE_WS_ALLOWLIST": "wss://api.agent.kaiyan.net",
+        "MOBILE_IOS_APPLE_TEAM_ID": "T4D4M5B485",
+        "MOBILE_IOS_SHARE_APP_GROUP": "group.com.agentsaas.mobile.share"
       },
       "ios": {
-        "credentialsSource": "local",
+        "credentialsSource": "remote",
         "image": "macos-sequoia-15.6-xcode-16.4"
       },
       "android": {
@@ -70,7 +76,7 @@
   "submit": {
     "production": {
       "ios": {
-        "ascAppId": "6760248115"
+        "ascAppId": "6808382989"
       }
     }
   }

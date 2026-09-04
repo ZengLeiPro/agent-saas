@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "TASK-318 增加 Runtime 私有 ConfigIdentity 快照；TASK-331 增加移动端 V1 配置；TASK-341 增加 Sandbox lifecycle 策略配置",
-  "updatedAt": "2026-09-02",
+  "reason": "TASK-318 增加 Runtime 私有 ConfigIdentity 快照；TASK-331 增加移动端 V1 配置；TASK-341 增加 Sandbox lifecycle 策略配置；同步裁剪 web build-time 的 DEV",
+  "updatedAt": "2026-09-03",
   "domains": {
     "server": {
       "budget": 63,
@@ -148,10 +148,9 @@
       ]
     },
     "web build-time": {
-      "budget": 4,
+      "budget": 3,
       "names": [
         "BUNDLE_API_ORIGIN",
-        "DEV",
         "VITE_API_BASE",
         "VITE_WEB_ORIGIN"
       ]

@@ -1,9 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 
-import {
-  GovernanceCapabilityNotice,
-  OrganizationScopeBanner,
-} from '@/components/GovernanceConsole';
+import { GovernanceCapabilityNotice } from '@/components/GovernanceConsole';
 import {
   OrganizationCredentialsPage,
   OrganizationEnvironmentsPage,
@@ -24,9 +21,8 @@ import { GovernanceChangeAuditPage } from '@/components/Governance/GovernanceCha
 import { TenantSettingsPanel } from '@/components/TenantSettingsPanel';
 import { OverviewSection as TenantOverviewSection } from '@/components/TenantAnalytics/OverviewSection';
 import type { GovernanceRouteState } from '@/lib/governanceNavigation';
-import { OrganizationManagementLocalNav } from './OrganizationManagementLocalNav';
+import { governanceRoute } from '@/lib/governanceNavigation';
 import { organizationRouteDefinition } from './organizationManagementRouting';
-import { organizationSettingsWorkspaceForRoute } from './organizationManagementRegistry';
 
 const AgentDwsAccountsPage = lazy(() => import('@/components/AgentDwsAccounts'));
 const TenantConnectorDictionaryPanel = lazy(
@@ -66,8 +62,12 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.members.list': ({ tenantId, route }) => (
     <OrganizationMembersPage tenantId={tenantId} route={route} />
   ),
-  'organization.members.accounts': ({ tenantId, tenantName, renderAccounts }) =>
-    renderAccounts(tenantId, tenantName),
+  'organization.members.accounts': ({ tenantId }) => (
+    <OrganizationMembersPage
+      tenantId={tenantId}
+      route={governanceRoute('organization.members.list', { orgId: tenantId })}
+    />
+  ),
   'organization.members.owners': ({ tenantId, route }) => (
     <OrganizationMembersPage tenantId={tenantId} route={route} />
   ),
@@ -81,11 +81,10 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.members.offboarding': ({ tenantId }) => (
     <OrganizationOffboardingPage tenantId={tenantId} />
   ),
-  'organization.agents.org-agents': ({ tenantId, tenantName, renderOrgAgents }) => (
-    <div className="space-y-4">
-      <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="agent_template" title="智能体模板可用范围" description="控制平台智能体模板是否可被本组织创建和使用。" />
-      {renderOrgAgents?.(tenantId, tenantName) ?? <GovernanceCapabilityNotice title="组织智能体" />}
-    </div>
+  'organization.agents.org-agents': ({ tenantId, tenantName, renderOrgAgents, route }) => (
+    new URLSearchParams(route.search?.replace(/^\?/, '')).get('view') === 'templates'
+      ? <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="agent_template" title="智能体模板可用范围" description="控制平台智能体模板是否可被本组织创建和使用。" />
+      : renderOrgAgents?.(tenantId, tenantName) ?? <GovernanceCapabilityNotice title="组织智能体" />
   ),
   'organization.agents.workflows': ({ tenantId }) => (
     <WorkflowDisplaySettingsPage tenantId={tenantId} />
@@ -93,11 +92,10 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.agents.dingtalk-accounts': ({ tenantId }) => (
     <AgentDwsAccountsPage tenantId={tenantId} />
   ),
-  'organization.agents.skills': ({ tenantId, tenantName, renderSkills }) => (
-    <div className="space-y-4">
-      <OrganizationCatalogAccessPanel tenantId={tenantId} resourceType="skill" scopeTitle="平台技能可用范围" assignmentTitle="技能成员与群组授权" />
-      {renderSkills(tenantId, tenantName)}
-    </div>
+  'organization.agents.skills': ({ tenantId, tenantName, renderSkills, route }) => (
+    new URLSearchParams(route.search?.replace(/^\?/, '')).get('view') === 'access'
+      ? <OrganizationCatalogAccessPanel tenantId={tenantId} resourceType="skill" scopeTitle="平台技能可用范围" assignmentTitle="技能成员与群组授权" />
+      : renderSkills(tenantId, tenantName)
   ),
   'organization.agents.connectors': ({ tenantId }) => (
     <OrganizationCredentialsPage tenantId={tenantId} />
@@ -111,13 +109,12 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
     <OrganizationMemoryKnowledgePage tenantId={tenantId} />
   ),
   'organization.agents.files-data': ({ renderFiles }) => renderFiles(),
-  'organization.agents.model-tools': ({ tenantId }) => (
-    <div className="space-y-4">
-      <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="model" title="模型可用范围" description="模型白名单由 Entitlement 权威源维护；组织设置仅保留默认模型和展示策略。" />
-      <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="tool" title="工具可用范围" description="控制平台工具进入本组织的范围，由 Entitlement 权威源统一维护。" />
-      <TenantSettingsPanel tenantId={tenantId} section="model-tools" />
-    </div>
-  ),
+  'organization.agents.model-tools': ({ tenantId, route }) => {
+    const view = new URLSearchParams(route.search?.replace(/^\?/, '')).get('view');
+    if (view === 'tools') return <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="tool" title="工具可用范围" description="控制平台工具进入本组织的范围。" />;
+    if (view === 'defaults') return <TenantSettingsPanel tenantId={tenantId} section="model-tools" />;
+    return <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="model" title="模型可用范围" description="控制平台模型进入本组织的范围；默认模型在“默认策略”中配置。" />;
+  },
   'organization.agents.environments': ({ tenantId }) => (
     <OrganizationEnvironmentsPage tenantId={tenantId} />
   ),
@@ -171,34 +168,17 @@ export interface OrganizationManagementContentProps {
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
   renderAutomation?: () => ReactNode;
   dirtyController?: SettingsDirtyController;
+  embedded?: boolean;
 }
 
 export function OrganizationManagementContent(props: OrganizationManagementContentProps) {
-  const { route, tenantId, tenantName, dirtyController } = props;
-  const workspace = organizationSettingsWorkspaceForRoute(route.routeId);
-  const definition = workspace ? organizationRouteDefinition(route.routeId) : null;
+  const { route } = props;
+  const definition = organizationRouteDefinition(route.routeId);
   const renderer = ORGANIZATION_MANAGEMENT_RENDERERS[route.routeId];
 
-  if (route.area !== 'organization' || !workspace || !definition || !renderer) {
+  if (route.area !== 'organization' || !definition || !renderer) {
     return <GovernanceCapabilityNotice title="组织管理页面不可用" />;
   }
 
-  return (
-    <div
-      className="flex h-full min-h-0 flex-col bg-card"
-      data-testid="organization-management-content"
-    >
-      <header className="shrink-0 border-b px-4 py-3 md:px-6">
-        <div className="text-xs text-muted-foreground">
-          {tenantName ?? tenantId} / {workspace.label}
-        </div>
-        <h1 className="mt-0.5 text-base font-semibold">{definition.label}</h1>
-      </header>
-      <OrganizationScopeBanner route={route} dirtyController={dirtyController} settingsMode />
-      <OrganizationManagementLocalNav route={route} dirtyController={dirtyController} />
-      <main className="min-h-0 flex-1 overflow-auto p-4 md:p-6">
-        <Suspense fallback={<OrganizationPageFallback />}>{renderer(props)}</Suspense>
-      </main>
-    </div>
-  );
+  return <div data-testid="organization-management-content"><Suspense fallback={<OrganizationPageFallback />}>{renderer(props)}</Suspense></div>;
 }

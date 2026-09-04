@@ -39,7 +39,8 @@ describe('enqueueOnReadyTrigger', () => {
 
     const [sql, values] = query.mock.calls[0]!;
     expect(sql).toContain("task.status='ready_to_merge'");
-    expect(sql).toContain('task.reviewed_subject_digest IS NOT NULL');
+    expect(sql).not.toContain('reviewed_subject_digest');
+    expect(sql).toContain('task.provider_pull_request_id IS NOT NULL');
     expect(sql).toContain("source.state NOT IN ('merged','canceled')");
     expect(values).toEqual(expect.arrayContaining(['board-1', null, 'policy-1', 0]));
   });

@@ -1,4 +1,6 @@
 import type { AskUserQuestion } from '../../types/index.js';
+import { buildApprovalRecordsFromEvents } from '../../runtime/approvalStore.js';
+import { buildPendingInteractionsFromEvents, resolvedInteractionIdsFromEvents } from '../../runtime/interactionProjection.js';
 import type { EventStore, PlatformEvent } from '../../runtime/types.js';
 
 /**
@@ -18,6 +20,74 @@ export interface PendingInteractionShape {
   displayName?: string;
   toolInput?: Record<string, unknown>;
   planContent?: string;
+}
+
+export interface DurableInteractionSnapshot {
+  pending: PendingInteractionShape[];
+  resolvedIds: Set<string>;
+  ownerIds: Set<string>;
+}
+
+/**
+ * 读取完整 durable 交互真值。null 表示无法建立权威快照，调用方不得把它当作空集合。
+ */
+export async function loadDurableInteractionSnapshot(
+  store: EventStore | null,
+  tenantId: string,
+  sessionId: string,
+): Promise<DurableInteractionSnapshot | null> {
+  if (!store) return null;
+  try {
+    const events = await store.list(tenantId, sessionId, {
+      includeTypes: [
+        'interaction_requested',
+        'interaction_resolved',
+        'approval_requested',
+        'approval_resolved',
+      ],
+    });
+    const runtimePending = buildPendingInteractionsFromEvents(events, sessionId);
+    const pending: PendingInteractionShape[] = runtimePending.map((entry) => ({
+      interactionId: entry.interactionId,
+      type: entry.type,
+      version: entry.version ?? 0,
+      order: entry.order ?? entry.version ?? 0,
+      runId: entry.runId,
+      toolCallId: entry.toolCallId,
+      invocationId: entry.invocationId,
+      questions: entry.questions,
+      toolId: entry.toolId,
+      toolName: entry.toolName,
+      displayName: entry.displayName,
+      toolInput: entry.toolInput,
+    }));
+    const existingIds = new Set(pending.map((entry) => entry.interactionId));
+    for (const approval of buildApprovalRecordsFromEvents(events, sessionId)) {
+      if (approval.status !== 'pending' || existingIds.has(approval.id)) continue;
+      const order = Number.isFinite(Date.parse(approval.createdAt)) ? Date.parse(approval.createdAt) : 0;
+      pending.push({
+        interactionId: approval.id,
+        type: 'approval',
+        version: order,
+        order,
+        runId: approval.runId,
+        toolCallId: approval.toolCallId,
+        toolId: approval.toolId,
+        toolName: approval.toolName,
+        displayName: approval.displayName,
+        toolInput: approval.input && typeof approval.input === 'object' && !Array.isArray(approval.input)
+          ? approval.input as Record<string, unknown>
+          : { value: approval.input },
+      });
+    }
+    return {
+      pending,
+      resolvedIds: resolvedInteractionIdsFromEvents(events),
+      ownerIds: new Set(runtimePending.flatMap((entry) => entry.userId ? [entry.userId] : [])),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** 通知当前用户触发 resume，接收跨进程 durable interaction 的实时投影。 */

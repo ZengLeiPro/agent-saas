@@ -102,7 +102,7 @@ export interface ConfigIdentityRuntime {
   notifyConfigChanged(reason: string): void;
   /** 同步等待一次重算（测试与显式刷新用）。 */
   refresh(reason?: string): Promise<void>;
-  /** 只读脱敏摘要；未初始化时返回 not_collected。 */
+  /** 只读脱敏摘要；未初始化或周期重算进行中时返回 not_collected。 */
   getSummary(): ConfigIdentitySummary;
 }
 
@@ -329,19 +329,18 @@ export function createConfigIdentityRuntime(
       const currentMs = now().getTime();
       // 纯失效态必须等显式胜出版本通知；不得由周期读取重算仍在内存中的失选候选。
       if (!observationInvalidated && currentMs - lastComputedAtMs >= SUMMARY_RECOMPUTE_MIN_INTERVAL_MS) {
-        lastComputedAtMs = currentMs;
-        const generation = ++computeGeneration;
-        void compute()
-          .then((next) => {
-            if (generation === computeGeneration) applyObservation(next);
-          })
-          .catch((error) => {
-            logger?.warn(
-              `[ConfigIdentity] periodic recompute failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          });
+        // 周期重算也必须先同步撤销旧 observation。否则 SecretVault 已轮换时，
+        // 首次 readiness / evidence 读取会继续把旧 consistent 当成当前事实。
+        // refresh 复用既有 comparison observation 与 generation fencing：成功后
+        // 发布新摘要，失败或被更新的热加载抢占时保持 fail closed。
+        invalidateObservation();
+        void refresh('periodic_summary_read').catch((error) => {
+          logger?.warn(
+            `[ConfigIdentity] periodic recompute failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
       }
       return buildSummary();
     },

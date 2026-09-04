@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { parseAppConfig } from '../app/config.js';
+import { computeObservedConfigIdentity } from '../release/configIdentity.js';
 import { createHealthRouter } from '../routes/health.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
+import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import {
   projectRuntimeWorkerReadyFile,
@@ -629,6 +633,55 @@ describe('health router', () => {
     expect(response.status).toBe(200);
     expect(body).not.toHaveProperty('configIdentity');
     expect(JSON.stringify(body)).not.toContain('must-not-leak');
+  });
+
+  it('TASK-318：SecretVault 轮换后的首次 readiness 立即 fail closed', async () => {
+    const vault = new InMemorySecretVault();
+    const caller = {
+      actor: 'system' as const,
+      userId: '__system__',
+      scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:read'],
+    };
+    const ref = await vault.putSecret('global', 'tenant-hand', 'v1', caller);
+    const config = parseAppConfig({
+      agent: { cwd: '/srv/agent' },
+      server: {},
+      runtimeEventStore: {
+        backend: 'pg',
+        connectionString: 'postgresql://u:p@db.internal:5432/runtime',
+      },
+      tenantRemoteHands: {
+        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: ref.id }],
+      },
+    });
+    const deployTime = await computeObservedConfigIdentity(config, vault, '/srv/server');
+    let clock = 0;
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: vault,
+      environment: 'test',
+      processCwd: '/srv/server',
+      expected: {
+        schemaVersion: 1,
+        digest: deployTime.digest,
+        credentialVersionDigest: deployTime.credentialVersionDigest ?? undefined,
+      },
+      now: () => new Date(clock),
+    });
+    await runtime.initialize();
+    const server = await startHealthServer({ getConfigIdentitySummary: runtime.getSummary }, config);
+    servers.push(server);
+    expect((await server.request('/api/healthz/ready')).status).toBe(200);
+
+    await vault.rotateSecret(ref.id, 'v2', {
+      ...caller,
+      scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
+    });
+    clock = 6_000;
+    expect((await server.request('/api/healthz/ready')).status).toBe(503);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.getSummary().status).toBe('drifted');
   });
 
   it('TASK-318：已绑定 expected 的 drift 在匿名 readiness 只表现为 503', async () => {

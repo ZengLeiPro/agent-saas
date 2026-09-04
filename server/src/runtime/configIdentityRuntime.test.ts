@@ -595,6 +595,100 @@ describe('createConfigIdentityRuntime', () => {
     expect(runtime.getSummary().status).toBe('drifted');
   });
 
+  it('轮换后周期首读同步撤销旧 consistent，再发布 drifted', async () => {
+    const vault = new InMemorySecretVault();
+    const caller = {
+      actor: 'system' as const,
+      userId: '__system__',
+      scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:read'],
+    };
+    const ref = await vault.putSecret('global', 'tenant-hand', 'v1', caller);
+    const config = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: ref.id }],
+      },
+    });
+    const deployTime = await observe(config, vault);
+    let clock = 0;
+    const published: Array<{ status: string }> = [];
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: vault,
+      environment: 'test',
+      expected: {
+        schemaVersion: 1,
+        digest: deployTime.digest,
+        credentialVersionDigest: deployTime.credentialVersionDigest ?? undefined,
+      },
+      now: () => new Date(clock),
+      onSummaryUpdated: (summary) => published.push(summary),
+    });
+    await runtime.initialize();
+    expect(runtime.getSummary().status).toBe('consistent');
+
+    await vault.rotateSecret(ref.id, 'v2', {
+      ...caller,
+      scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
+    });
+    clock = 6_000;
+    expect(runtime.getSummary().status).toBe('not_collected');
+    expect(published.at(-1)?.status).toBe('not_collected');
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.getSummary().status).toBe('drifted');
+  });
+
+  it('周期重算失败后保持 not_collected，不恢复旧 consistent', async () => {
+    const metadata: SecretRef = {
+      id: 'hand-ref',
+      ownerId: 'global',
+      kind: 'tenant-hand',
+      version: 1,
+      metadata: {},
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    };
+    const inspectRef = vi.fn().mockResolvedValue(metadata);
+    const secretVault = { inspectRef } as unknown as SecretVault;
+    const config = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: metadata.id }],
+      },
+    });
+    const deployTime = await observe(config, secretVault);
+    let clock = 0;
+    let failClock = false;
+    const warn = vi.fn();
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault,
+      environment: 'test',
+      expected: {
+        schemaVersion: 1,
+        digest: deployTime.digest,
+        credentialVersionDigest: deployTime.credentialVersionDigest ?? undefined,
+      },
+      logger: { info: () => undefined, warn },
+      now: () => {
+        if (failClock) throw new Error('periodic identity recompute failed');
+        return new Date(clock);
+      },
+    });
+    await runtime.initialize();
+    expect(runtime.getSummary().status).toBe('consistent');
+
+    clock = 6_000;
+    expect(runtime.getSummary().status).toBe('not_collected');
+    failClock = true;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    failClock = false;
+
+    expect(runtime.getSummary().status).toBe('not_collected');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('periodic identity recompute failed'));
+  });
+
   it('较慢的周期重算不会覆盖较新的热更新 observed identity', async () => {
     let resolveSlow!: (value: SecretRef) => void;
     const slowMetadata = new Promise<SecretRef>((resolve) => { resolveSlow = resolve; });
@@ -629,7 +723,7 @@ describe('createConfigIdentityRuntime', () => {
       },
     }).tenantRemoteHands;
     clock = 6_000;
-    runtime.getSummary();
+    expect(runtime.getSummary().status).toBe('not_collected');
     config.tenantRemoteHands = baseConfig({
       ...PG,
       tenantRemoteHands: {

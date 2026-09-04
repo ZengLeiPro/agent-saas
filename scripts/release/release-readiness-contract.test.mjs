@@ -87,7 +87,7 @@ test('candidate contract rejects anonymous summary leaks and deployment/snapshot
   );
 });
 
-test('private ConfigIdentity release helper compares every release binding field', async () => {
+test('private ConfigIdentity release helper compares fields and rejects fail-closed snapshots', async () => {
   const summary = await fixture('candidate-config-identity.json');
   const dir = await mkdtemp(join(tmpdir(), 'worker-config-identity-binding-'));
   const privateSnapshotPath = join(dir, 'worker.json');
@@ -144,24 +144,30 @@ test('private ConfigIdentity release helper compares every release binding field
       );
     }
 
-    await writeFile(
-      privateSnapshotPath,
-      JSON.stringify({
+    for (const unavailableSummary of [
+      {
         schemaVersion: 1,
         status: 'unverifiable',
         reason: 'expected_not_bound',
         releaseId: summary.releaseId,
         observed: summary.observed,
-      }),
-    );
-    await assert.rejects(
-      validatePrivateConfigIdentityReleaseBinding({
-        privateSnapshotPath,
+      },
+      {
+        schemaVersion: 1,
+        status: 'not_collected',
         releaseId: summary.releaseId,
-        expectedConfigIdentity,
-      }),
-      /not consistent with the release binding/,
-    );
+      },
+    ]) {
+      await writeFile(privateSnapshotPath, JSON.stringify(unavailableSummary));
+      await assert.rejects(
+        validatePrivateConfigIdentityReleaseBinding({
+          privateSnapshotPath,
+          releaseId: summary.releaseId,
+          expectedConfigIdentity,
+        }),
+        /not consistent with the release binding/,
+      );
+    }
 
     await rm(privateSnapshotPath);
     await assert.rejects(

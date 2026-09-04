@@ -19,7 +19,12 @@ import {
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { TenantMembership, PlatformAdmin } from '../data/memberships/types.js';
-import type { EntitlementResourceScope, TenantEntitlementSet, TenantPolicy as TenantPolicyRecord } from '../data/entitlements/types.js';
+import {
+  PERSONAL_AGENT_TOOL_ENTITLEMENT_ID,
+  type EntitlementResourceScope,
+  type TenantEntitlementSet,
+  type TenantPolicy as TenantPolicyRecord,
+} from '../data/entitlements/types.js';
 import type { ResourceAssignmentSet } from '../data/assignments/types.js';
 import type { UserRecord } from '../data/users/index.js';
 import type { TenantRecord } from '../data/tenants/types.js';
@@ -167,6 +172,7 @@ interface PreflightFixtureOverrides {
   membership?: TenantMembership | null;
   platformAdmin?: PlatformAdmin | null;
   entitlement?: TenantEntitlementSet | null;
+  scope?: EntitlementResourceScope;
   policies?: TenantPolicyRecord[];
   assignmentSets?: Map<string, ResourceAssignmentSet | null>;
   orgAgent?: OrgAgentRecord;
@@ -204,7 +210,7 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
   };
   const entitlementStore = {
     getEntitlementSet: async () => entitlementValue,
-    listResourceScopes: async () => [scopeRecord()],
+    listResourceScopes: async () => [overrides.scope ?? scopeRecord()],
     getPolicies: async () => policies,
   };
   const assignmentStore = {
@@ -428,6 +434,30 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.accessDecision.action).toBe('personal_agent.run');
     expect(result.accessDecision.reasonCode).toBe('TENANT_POLICY_DISABLED');
     expect(result.snapshot.agent).toEqual({ type: 'personal_agent', id: 'user-1' });
+  });
+
+  it('恢复 selected personal_agent 后个人 Agent preflight 仍允许运行', async () => {
+    const service = buildService({
+      enforcementMode: 'enforce',
+      scope: {
+        ...scopeRecord(),
+        mode: 'selected',
+        resourceIds: [PERSONAL_AGENT_TOOL_ENTITLEMENT_ID],
+        version: 6,
+      },
+    });
+
+    const result = await service.preflight({ ...baseInput, orgAgentId: undefined });
+
+    expect(result.proceed).toBe(true);
+    expect(result.accessDecision).toMatchObject({
+      verdict: 'allow',
+      action: 'personal_agent.run',
+    });
+    expect(result.accessDecision.chain).toContainEqual(expect.objectContaining({
+      layer: 'entitlement',
+      result: 'pass',
+    }));
   });
 
   it('平台管理员运行本人 Personal Agent 不依赖客户 Entitlement 与 Tenant Policy', async () => {

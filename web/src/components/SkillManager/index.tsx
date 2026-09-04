@@ -531,9 +531,15 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       </Button>
                       <Select
                         value={skill.exposure}
-                        disabled={writeDisabled}
+                        disabled={writeDisabled || tenantsLoading}
                         onValueChange={(value) => {
-                          void handleUpdatePlatformSkill(skill, { exposure: value as PoolSkillInfo["exposure"] });
+                          const exposure = value as PoolSkillInfo["exposure"];
+                          void handleUpdatePlatformSkill(skill, {
+                            exposure,
+                            tenantIds: exposure === "allow_tenants" && skill.exposure === "all"
+                              ? platformTenantOptions.map((tenant) => tenant.id)
+                              : skill.tenantIds,
+                          });
                         }}
                       >
                         <SelectTrigger className="h-8 w-40" aria-label={`设置技能 ${skill.name} 的组织开放范围`}>
@@ -562,7 +568,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           <Checkbox
                             checked={skill.tenantIds.includes(tenant.id)}
                             aria-label={`设置技能 ${skill.name} 对组织 ${tenant.name} 的开放范围`}
-                            disabled={writeDisabled}
+                            disabled={writeDisabled || tenantsLoading}
                             onCheckedChange={(checked) => {
                               const tenantIds = checked === true
                                 ? Array.from(new Set([...skill.tenantIds, tenant.id]))

@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 353468,
-    "startupCssGzipBytes": 34618,
-    "startupJsBrotliBytes": 281365,
-    "startupCssBrotliBytes": 27421,
-    "largestJsGzipBytes": 353468,
-    "largestCssGzipBytes": 34618,
-    "largestJsBrotliBytes": 281365,
-    "largestCssBrotliBytes": 27421,
-    "largestJs": "assets/index-CtFza4E2.js",
-    "largestCss": "assets/index-DYtfArvb.css"
+    "startupJsGzipBytes": 353462,
+    "startupCssGzipBytes": 34766,
+    "startupJsBrotliBytes": 282201,
+    "startupCssBrotliBytes": 27541,
+    "largestJsGzipBytes": 353462,
+    "largestCssGzipBytes": 34766,
+    "largestJsBrotliBytes": 282201,
+    "largestCssBrotliBytes": 27541,
+    "largestJs": "assets/index-CkRFEdOF.js",
+    "largestCss": "assets/index-CqJItP7y.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "PR #432 桌面会话主区域宽度保护、局部容器观测与面板响应式降级进入启动图，增加约 2.6KB gzip JS；仍低于 600KB 绝对上限",
-  "updatedAt": "2026-09-03"
+  "reason": "TASK-318 配置身份只读概览及跨组件状态进入启动图，增加约 0.8KB Brotli JS；仍低于 450KB 单 chunk 与 600KB 启动 JS 绝对上限",
+  "updatedAt": "2026-09-04"
 }

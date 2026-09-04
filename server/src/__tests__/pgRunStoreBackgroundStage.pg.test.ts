@@ -25,7 +25,7 @@ describePg('PgRunStore v2 background task stage', () => {
     await pool.end();
   }, 30_000);
 
-  it('激活前不可恢复或取得 lease，ready 后才可领取', async () => {
+  it('激活前可被超时恢复扫描但不可取得 lease，ready 后才可领取', async () => {
     const runId = 'staged-background-task-run';
     await store.createPending({
       runId,
@@ -36,7 +36,7 @@ describePg('PgRunStore v2 background task stage', () => {
       metadata: { backgroundTask: true, backgroundTaskVersion: 2, backgroundTaskReady: false },
     });
 
-    await expect(store.listRecoverable()).resolves.not.toEqual(
+    await expect(store.listRecoverable()).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({ runId })]),
     );
     await expect(store.acquireLease(runId, 'worker-background-staged', 60_000)).resolves.toBeNull();

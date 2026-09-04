@@ -20,8 +20,8 @@ function fixture() {
   const layout = deriveOrgAgentTaskWorkspace({
     agentWorkspaceId: 'ws_tenant-a__agent_agent-a',
     agentRoot: '/agent-root/tenant-a/.agent-agent-a',
-    agentMountSubPath: 'workspaces/tenant-a/.agent-agent-a',
-    sharedReadOnlySubPath: 'workspaces/tenant-a/.agent-agent-a/shared/binding-a/wc-a',
+    agentMountSubPath: 'tenant-a/.agent-agent-a',
+    sharedReadOnlySubPath: 'tenant-a/.agent-agent-a/shared/binding-a/wc-a',
     taskId: 'bg-a',
     attemptNo: 1,
   });

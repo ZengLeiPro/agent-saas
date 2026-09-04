@@ -3,6 +3,16 @@ import type pg from 'pg';
 import type { OrgAgentWorkOrder, OrgAgentWorkOrderControl } from './types.js';
 import { mapWorkOrder } from './storeMappers.js';
 
+export async function getWorkOrder(
+  pool: pg.Pool, table: string, tenantId: string, workOrderId: string,
+): Promise<OrgAgentWorkOrder | null> {
+  const result = await pool.query(
+    `SELECT * FROM ${table} WHERE tenant_id=$1 AND work_order_id=$2`,
+    [tenantId, workOrderId],
+  );
+  return result.rows[0] ? mapWorkOrder(result.rows[0] as Record<string, unknown>) : null;
+}
+
 export async function getWorkOrderByShortId(
   pool: pg.Pool,
   table: string,

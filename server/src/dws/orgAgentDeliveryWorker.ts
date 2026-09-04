@@ -5,6 +5,10 @@ import {
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
 import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import {
+  DELIVERY_MAX_ATTEMPTS,
+  deliveryRetryDelayMs,
+} from '../data/orgGroupAgents/deliveryClaims.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
@@ -35,127 +39,163 @@ export async function deliverNextOrgAgentIntent(
   const delivery = await options.store.claimNextDelivery(options.workerId, options.leaseTtlMs);
   if (!delivery) return false;
 
-  const account = await options.accountStore.getForTenant(delivery.tenantId, delivery.accountId);
-  if (
-    !account ||
-    account.status !== 'active' ||
-    !hasExactAgentDwsProfile(account) ||
-    (Boolean(delivery.agentId) && account.agentId !== delivery.agentId)
-  ) {
-    await options.store.markClaimedDeliveryDeadLetter(
-      delivery.deliveryId,
-      options.workerId,
-      delivery.leaseFence,
-      'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
-    );
-    return true;
-  }
-
-  if (delivery.deliveryKind === 'task_completion') {
-    const work = delivery.sourceWorkOrderId
-      ? await options.store.getWorkOrder(delivery.tenantId, delivery.sourceWorkOrderId)
-      : null;
-    const attempt = work && delivery.sourceAttemptId
-      ? (await options.store.listWorkAttempts(delivery.tenantId, work.workOrderId))
-          .find(candidate => candidate.attemptId === delivery.sourceAttemptId)
-      : undefined;
+  let providerStarted = false;
+  try {
+    const account = await options.accountStore.getForTenant(delivery.tenantId, delivery.accountId);
     if (
-      !work ||
-      !attempt ||
-      work.currentAttemptNo !== attempt.attemptNo ||
-      work.state !== attempt.status ||
-      !['completed', 'failed', 'cancelled'].includes(work.state)
+      !account ||
+      account.status !== 'active' ||
+      !hasExactAgentDwsProfile(account) ||
+      (Boolean(delivery.agentId) && account.agentId !== delivery.agentId)
     ) {
       await options.store.markClaimedDeliveryDeadLetter(
         delivery.deliveryId,
         options.workerId,
         delivery.leaseFence,
-        'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
+        'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
       );
       return true;
     }
-    if (delivery.visibility === 'requester_only') {
-      const mappedUserId = work.createdByActor.mappedUserId;
-      const allowed = mappedUserId && delivery.agentId
-        ? await options.authorizeCompletionRequester?.(
-            delivery.tenantId, delivery.agentId, mappedUserId,
-          ) : false;
-      if (!allowed) {
-        await createRedactedTerminalNotice(options.store, delivery);
+
+    if (delivery.deliveryKind === 'task_completion') {
+      const work = delivery.sourceWorkOrderId
+        ? await options.store.getWorkOrder(delivery.tenantId, delivery.sourceWorkOrderId)
+        : null;
+      const attempt =
+        work && delivery.sourceAttemptId
+          ? (await options.store.listWorkAttempts(delivery.tenantId, work.workOrderId)).find(
+              (candidate) => candidate.attemptId === delivery.sourceAttemptId,
+            )
+          : undefined;
+      if (
+        !work ||
+        !attempt ||
+        work.currentAttemptNo !== attempt.attemptNo ||
+        work.state !== attempt.status ||
+        !['completed', 'failed', 'cancelled'].includes(work.state)
+      ) {
         await options.store.markClaimedDeliveryDeadLetter(
           delivery.deliveryId,
           options.workerId,
           delivery.leaseFence,
-          'ORG_AGENT_REQUESTER_MEMBERSHIP_REVOKED',
+          'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
+        );
+        return true;
+      }
+      if (delivery.visibility === 'requester_only') {
+        const mappedUserId = work.createdByActor.mappedUserId;
+        const allowed =
+          mappedUserId && delivery.agentId
+            ? await options.authorizeCompletionRequester?.(
+                delivery.tenantId,
+                delivery.agentId,
+                mappedUserId,
+              )
+            : false;
+        if (!allowed) {
+          await createRedactedTerminalNotice(options.store, delivery);
+          await options.store.markClaimedDeliveryDeadLetter(
+            delivery.deliveryId,
+            options.workerId,
+            delivery.leaseFence,
+            'ORG_AGENT_REQUESTER_MEMBERSHIP_REVOKED',
+          );
+          return true;
+        }
+      }
+    }
+
+    if (delivery.bindingId || delivery.agentId) {
+      const binding = await options.store.getBinding(
+        delivery.tenantId,
+        delivery.accountId,
+        delivery.conversationId,
+      );
+      if (
+        !binding ||
+        binding.bindingId !== delivery.bindingId ||
+        binding.agentId !== delivery.agentId
+      ) {
+        await options.store.markClaimedDeliveryDeadLetter(
+          delivery.deliveryId,
+          options.workerId,
+          delivery.leaseFence,
+          'ORG_AGENT_CHANNEL_LIVE_DENY',
+        );
+        return true;
+      }
+      const agent = delivery.agentId ? options.agentStore?.get(delivery.agentId) : undefined;
+      if (delivery.deliveryKind === 'task_completion' && binding.policy.completion === 'silent') {
+        await options.store.markClaimedDeliveryDeadLetter(
+          delivery.deliveryId,
+          options.workerId,
+          delivery.leaseFence,
+          'ORG_AGENT_COMPLETION_SILENT',
+        );
+        return true;
+      }
+      if (
+        binding.activationState !== 'active' ||
+        !binding.enabled ||
+        !binding.policy.enabled ||
+        binding.policy.liveDeny ||
+        !agent ||
+        agent.tenantId !== delivery.tenantId ||
+        !agent.enabled
+      ) {
+        if (delivery.deliveryKind === 'task_completion')
+          await createRedactedTerminalNotice(options.store, delivery);
+        await options.store.markClaimedDeliveryDeadLetter(
+          delivery.deliveryId,
+          options.workerId,
+          delivery.leaseFence,
+          'ORG_AGENT_CHANNEL_LIVE_DENY',
         );
         return true;
       }
     }
-  }
 
-  if (delivery.bindingId || delivery.agentId) {
-    const binding = await options.store.getBinding(
-      delivery.tenantId,
-      delivery.accountId,
-      delivery.conversationId,
-    );
-    if (!binding || binding.bindingId !== delivery.bindingId || binding.agentId !== delivery.agentId) {
-      await options.store.markClaimedDeliveryDeadLetter(
-        delivery.deliveryId,
-        options.workerId,
-        delivery.leaseFence,
-        'ORG_AGENT_CHANNEL_LIVE_DENY',
-      );
-      return true;
-    }
-    const agent = delivery.agentId ? options.agentStore?.get(delivery.agentId) : undefined;
-    if (delivery.deliveryKind === 'task_completion' && binding.policy.completion === 'silent') {
-      await options.store.markClaimedDeliveryDeadLetter(
-        delivery.deliveryId,
-        options.workerId,
-        delivery.leaseFence,
-        'ORG_AGENT_COMPLETION_SILENT',
-      );
-      return true;
-    }
-    if (binding.activationState !== 'active' || !binding.enabled || !binding.policy.enabled
-      || binding.policy.liveDeny || !agent || agent.tenantId !== delivery.tenantId || !agent.enabled
-    ) {
-      if (delivery.deliveryKind === 'task_completion')
-        await createRedactedTerminalNotice(options.store, delivery);
-      await options.store.markClaimedDeliveryDeadLetter(
-        delivery.deliveryId,
-        options.workerId,
-        delivery.leaseFence,
-        'ORG_AGENT_CHANNEL_LIVE_DENY',
-      );
-      return true;
-    }
-  }
-
-  try {
-    const receipt = await options.sender.send(
-      account,
-      deliveryEvent(delivery),
-      delivery.content,
-      delivery.idempotencyKey,
-    );
-    if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
-    await options.store.markDeliverySent(
+    await options.store.markDeliveryProviderStarted(
       delivery.deliveryId,
       options.workerId,
       delivery.leaseFence,
-      receipt,
     );
+    providerStarted = true;
+    try {
+      const receipt = await options.sender.send(
+        account,
+        deliveryEvent(delivery),
+        delivery.content,
+        delivery.idempotencyKey,
+      );
+      if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
+      await options.store.markDeliverySent(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        receipt,
+      );
+    } catch (error) {
+      await options.store.markDeliveryUnknown(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        error,
+      );
+    }
+    return true;
   } catch (error) {
-    await options.store.markDeliveryUnknown(
+    if (providerStarted) throw error;
+    await options.store.releaseClaimedDeliveryForRetry(
       delivery.deliveryId,
       options.workerId,
       delivery.leaseFence,
       error,
+      deliveryRetryDelayMs(delivery.attempt),
+      DELIVERY_MAX_ATTEMPTS,
     );
+    return true;
   }
-  return true;
 }
 
 const REDACTED_TERMINAL_NOTICE = '任务已结束，但当前群策略不允许披露结果，请联系管理员。';

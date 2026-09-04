@@ -36,6 +36,7 @@ const delivery: DwsDeliveryIntent = {
   conversationSpaceId: 'space-1',
   workConversationId: 'wc-1',
   policyRevision: 2,
+  providerAttemptPhase: 'legacy_unknown',
   visibility: 'conversation',
   source: 'command',
   deliveryKind: 'front_reply',
@@ -81,6 +82,11 @@ function harness(input?: {
       },
     }),
     markClaimedDeliveryDeadLetter: vi.fn().mockResolvedValue(undefined),
+    markDeliveryProviderStarted: vi.fn().mockResolvedValue({
+      ...(input?.claimedDelivery ?? delivery),
+      providerStartedAt: '2026-09-04T00:00:01.000Z',
+    }),
+    releaseClaimedDeliveryForRetry: vi.fn().mockResolvedValue(undefined),
     markDeliverySent: vi.fn().mockResolvedValue(undefined),
     markDeliveryUnknown: vi.fn().mockResolvedValue(undefined),
     createDelivery: vi.fn().mockImplementation(async value => ({ ...delivery, ...value,
@@ -142,6 +148,11 @@ describe('deliverNextOrgAgentIntent', () => {
       7,
       expect.objectContaining({ status: 'accepted' }),
     );
+    expect(test.store.markDeliveryProviderStarted).toHaveBeenCalledWith(
+      'delivery-1',
+      'worker-1',
+      7,
+    );
   });
 
   it('marks provider receipt ambiguity unknown and never retries it automatically', async () => {
@@ -185,6 +196,106 @@ describe('deliverNextOrgAgentIntent', () => {
       'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
     );
     expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('releases a claimed intent for retry when preflight fails before provider start', async () => {
+    const test = harness();
+    vi.mocked(test.options.accountStore.getForTenant).mockRejectedValueOnce(
+      new Error('account database unavailable'),
+    );
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryProviderStarted).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledWith(
+      'delivery-1',
+      'worker-1',
+      7,
+      expect.objectContaining({ message: 'account database unavailable' }),
+      1_000,
+      5,
+    );
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'work order',
+      (test: ReturnType<typeof harness>) =>
+        vi
+          .mocked(test.store.getWorkOrder)
+          .mockRejectedValueOnce(new Error('work database unavailable')),
+    ],
+    [
+      'attempt',
+      (test: ReturnType<typeof harness>) =>
+        vi
+          .mocked(test.store.listWorkAttempts)
+          .mockRejectedValueOnce(new Error('attempt database unavailable')),
+    ],
+    [
+      'binding',
+      (test: ReturnType<typeof harness>) =>
+        vi
+          .mocked(test.store.getBinding)
+          .mockRejectedValueOnce(new Error('binding database unavailable')),
+    ],
+    [
+      'agent',
+      (test: ReturnType<typeof harness>) =>
+        vi.mocked(test.options.agentStore.get).mockImplementationOnce(() => {
+          throw new Error('agent database unavailable');
+        }),
+    ],
+  ])('releases completion delivery when %s preflight fails', async (_label, fail) => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+    };
+    const test = harness({ claimedDelivery: completion });
+    fail(test);
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+  });
+
+  it('releases requester-only completion when ACL preflight fails', async () => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+      visibility: 'requester_only' as const,
+    };
+    const test = harness({ claimedDelivery: completion });
+    vi.mocked(test.store.getWorkOrder).mockResolvedValueOnce({
+      workOrderId: 'work-current',
+      currentAttemptNo: 2,
+      state: 'completed',
+      createdByActor: { mappedUserId: 'member-1' },
+    } as never);
+    const authorizeCompletionRequester = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ACL database unavailable'));
+
+    await expect(
+      deliverNextOrgAgentIntent({
+        ...test.options,
+        authorizeCompletionRequester,
+      }),
+    ).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
   });
 
   it('dead-letters a claimed intent when the live binding denies delivery', async () => {

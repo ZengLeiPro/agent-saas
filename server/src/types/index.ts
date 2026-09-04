@@ -357,6 +357,7 @@ export interface ChannelContext {
     allowedToolNames: string[];
     allowedSkillIds: string[];
     allowedSourceIds: string[];
+    dwsResourceIds: string[];
     contextEnabled: boolean;
     taskVisibility: 'conversation' | 'requester_only';
     actorRole?: 'member' | 'org_admin';

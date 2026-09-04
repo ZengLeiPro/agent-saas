@@ -36,6 +36,7 @@ export function WorkOrderControls({
   const [review, setReview] = useState('');
   const [workerType, setWorkerType] = useState<'general' | 'explore'>(workOrder.control.workerType);
   const active = ['queued', 'running', 'waiting_input'].includes(workOrder.state);
+  const terminal = ['completed', 'failed', 'cancelled'].includes(workOrder.state);
   useEffect(() => setWorkerType(workOrder.control.workerType), [workOrder.control.workerType]);
 
   return (
@@ -73,7 +74,7 @@ export function WorkOrderControls({
             <Button
               size="sm"
               variant="outline"
-              disabled={disabled || !review.trim()}
+              disabled={disabled || !terminal || !review.trim()}
               onClick={() => onAction('review', { text: review.trim() })}
             >
               发起复核

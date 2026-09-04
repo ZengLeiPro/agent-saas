@@ -20,7 +20,7 @@ import {
 } from '../data/agentDwsAccounts/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
-import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import type { OrgAgentChannelBinding, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { UserStore } from '../data/users/store.js';
 import type { RunStore } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
@@ -217,19 +217,28 @@ export class DwsBusinessToolProvider implements ToolProvider {
         workspace: context.workspace,
       }) : []),
     ];
+    let sharedBinding: OrgAgentChannelBinding | null = null;
     if (sharedGroup && orgChannel) {
-      const binding = await this.options.orgGroupAgentStore
-        ?.getBindingById(orgChannel.agentPrincipal.tenantId, orgChannel.bindingId);
-      if (!binding || binding.activationState !== 'active' || !binding.enabled
-        || !binding.policy.enabled || binding.policy.liveDeny
-        || binding.tenantId !== orgChannel.agentPrincipal.tenantId
-        || binding.accountId !== orgChannel.accountId
-        || binding.agentId !== orgChannel.agentId
-        || binding.conversationId !== orgChannel.channelPrincipal.conversationId
-        || binding.conversationSpaceId !== orgChannel.conversationSpaceId
-        || binding.workspaceId !== orgChannel.agentPrincipal.workspaceId
-        || binding.revision !== orgChannel.policyRevision
-        || !binding.effectiveConfig.capabilities.toolNames.includes('DwsBusiness')) {
+      sharedBinding =
+        (await this.options.orgGroupAgentStore?.getBindingById(
+          orgChannel.agentPrincipal.tenantId,
+          orgChannel.bindingId,
+        )) ?? null;
+      if (
+        !sharedBinding ||
+        sharedBinding.activationState !== 'active' ||
+        !sharedBinding.enabled ||
+        !sharedBinding.policy.enabled ||
+        sharedBinding.policy.liveDeny ||
+        sharedBinding.tenantId !== orgChannel.agentPrincipal.tenantId ||
+        sharedBinding.accountId !== orgChannel.accountId ||
+        sharedBinding.agentId !== orgChannel.agentId ||
+        sharedBinding.conversationId !== orgChannel.channelPrincipal.conversationId ||
+        sharedBinding.conversationSpaceId !== orgChannel.conversationSpaceId ||
+        sharedBinding.workspaceId !== orgChannel.agentPrincipal.workspaceId ||
+        sharedBinding.revision !== orgChannel.policyRevision ||
+        !sharedBinding.effectiveConfig.capabilities.toolNames.includes('DwsBusiness')
+      ) {
         mismatchFields.push('channelBinding.livePrincipal');
       }
     }
@@ -272,6 +281,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
       const sharedDecision = decideSharedGroupDwsAction({
         toolInput: input,
         channel: orgChannel,
+        resourceAllowlist: sharedBinding?.effectiveConfig.capabilities.dwsResourceIds ?? [],
         ...(session?.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
       });
       if (!sharedDecision.allowed) {

@@ -284,6 +284,8 @@ function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAg
     && raw.allowedSkillIds.every(item => typeof item === 'string') ? raw.allowedSkillIds as string[] : undefined;
   const allowedSourceIds = Array.isArray(raw.allowedSourceIds)
     && raw.allowedSourceIds.every(item => typeof item === 'string') ? raw.allowedSourceIds as string[] : undefined;
+  const dwsResourceIds = Array.isArray(raw.dwsResourceIds)
+    && raw.dwsResourceIds.every(item => typeof item === 'string') ? raw.dwsResourceIds as string[] : [];
   const triggerRoles = parseGovernanceRoles(raw.triggerRoles);
   const approvalRoles = parseGovernanceRoles(raw.approvalRoles);
   const taskVisibility = raw.taskVisibility === 'conversation' || raw.taskVisibility === 'requester_only'
@@ -308,6 +310,7 @@ function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAg
       : Boolean(externalActor.mappedUserId || externalActor.role || actorRole))) return undefined;
   return { accountId, agentId, bindingId, conversationSpaceId, workConversationId, policyRevision,
     agentPrincipal, externalActorAssurance: assurance, allowedToolNames, allowedSkillIds, allowedSourceIds,
+    dwsResourceIds,
     contextEnabled: raw.contextEnabled === true,
     taskVisibility,
     ...(actorRole ? { actorRole } : {}),

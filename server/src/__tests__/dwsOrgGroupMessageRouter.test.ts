@@ -8,7 +8,7 @@ import type {
   AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
-import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { DwsRequesterResolution } from '../dws/requesterIdentityResolver.js';
 
@@ -60,6 +60,16 @@ const item: AgentDwsInboxRecord = {
   },
 };
 
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  return {
+    promise: new Promise<void>((done) => {
+      resolve = done;
+    }),
+    resolve: () => resolve(),
+  };
+}
+
 function workOrder(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     workOrderId: 'work-route-a',
@@ -103,6 +113,16 @@ function setup(
     shortWorkOrder?: Record<string, unknown> | null;
     completionRequesterAuthorized?: boolean;
     memories?: Array<Record<string, unknown>>;
+    frontReplyDeadlineMs?: number;
+    dispatchGate?: Promise<void>;
+    failFirstDeliveryClaim?: boolean;
+    systemInstructions?: string;
+    existingRun?: Record<string, unknown>;
+    memoryPolicy?: {
+      readAgent: boolean;
+      readConversation: boolean;
+      adminWriteConversation: boolean;
+    };
   } = {},
 ) {
   const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
@@ -161,10 +181,17 @@ function setup(
     },
     effectiveConfig: {
       identity: { displayName: '开开' },
+      instructions: { system: options.systemInstructions ?? '' },
       knowledge: { contextEnabled: options.contextEnabled ?? false, sourceIds: ['source-a'] },
       capabilities: {
         skillIds: [],
         toolNames: ['Agent', 'BackgroundTask', 'ContextSearch', 'ContextGet'],
+        dwsResourceIds: [],
+      },
+      memory: options.memoryPolicy ?? {
+        readAgent: true,
+        readConversation: true,
+        adminWriteConversation: false,
       },
       access: { triggerRoles: options.triggerRoles ?? [], approvalRoles: ['org_admin'] },
       speech: { proactive: false, requireMention: true },
@@ -173,7 +200,7 @@ function setup(
     createdAt: now,
     updatedAt: now,
   };
-  const delivery = {
+  const delivery: DwsDeliveryIntent = {
     deliveryId: 'delivery-a',
     tenantId: 'tenant-a',
     inboxId: 'inbox-a',
@@ -184,6 +211,7 @@ function setup(
     conversationSpaceId: 'space-a',
     workConversationId: 'workconv-a',
     policyRevision: 1,
+    providerAttemptPhase: 'legacy_unknown',
     source: 'command' as const,
     deliveryKind: 'front_reply' as const,
     disposition: 'replied' as const,
@@ -201,6 +229,9 @@ function setup(
     createdAt: now,
     updatedAt: now,
   };
+  const storedDeliveries = new Map<string, typeof delivery>();
+  let deliverySequence = 0;
+  let deliveryClaimSequence = 0;
   const orgStore = {
     reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
     claimNextDelivery: vi.fn().mockResolvedValue(null),
@@ -253,28 +284,115 @@ function setup(
       shortId: string,
     ) => options.shortWorkOrder?.shortId === shortId ? options.shortWorkOrder : null),
     listWorkOrders: vi.fn().mockResolvedValue(options.workOrders ?? []),
-    listWorkAttempts: vi.fn().mockResolvedValue([{
-      attemptId: 'attempt-a', workOrderId: 'work-a', runtimeRunId: 'bg-a',
-      attemptNo: 1, status: 'completed',
-    }]),
-    listMemories: vi.fn().mockImplementation(async (query: {
-      memoryScope?: string; status?: string; bindingId?: string; workConversationId?: string;
-    }) => (options.memories ?? []).filter(memory => (
-      (!query.memoryScope || memory.memoryScope === query.memoryScope)
-      && (!query.status || memory.status === query.status)
-      && (!query.bindingId || memory.bindingId === query.bindingId)
-      && (!query.workConversationId || memory.workConversationId === query.workConversationId)
-    ))),
-    createDelivery: vi.fn().mockResolvedValue(delivery),
-    claimDelivery: vi
+    listWorkAttempts: vi.fn().mockResolvedValue([
+      {
+        attemptId: 'attempt-a',
+        workOrderId: 'work-a',
+        runtimeRunId: 'bg-a',
+        attemptNo: 1,
+        status: 'completed',
+      },
+    ]),
+    listMemories: vi
       .fn()
-      .mockResolvedValue({ ...delivery, deliveryState: 'sending', leaseFence: 1 }),
-    markDeliverySent: vi.fn(),
-    markDeliveryUnknown: vi.fn(),
+      .mockImplementation(
+        async (query: {
+          memoryScope?: string;
+          status?: string;
+          bindingId?: string;
+          workConversationId?: string;
+        }) =>
+          (options.memories ?? []).filter(
+            (memory) =>
+              (!query.memoryScope || memory.memoryScope === query.memoryScope) &&
+              (!query.status || memory.status === query.status) &&
+              (!query.bindingId || memory.bindingId === query.bindingId) &&
+              (!query.workConversationId || memory.workConversationId === query.workConversationId),
+          ),
+      ),
+    createDelivery: vi.fn().mockImplementation(async (input: Record<string, unknown>) => {
+      const key = String(input.idempotencyKey);
+      const existing = storedDeliveries.get(key);
+      if (existing) return existing;
+      deliverySequence += 1;
+      const created = {
+        ...delivery,
+        ...input,
+        deliveryId: deliverySequence === 1 ? 'delivery-a' : `delivery-${deliverySequence}`,
+        deliveryState: 'pending' as const,
+        attempt: 0,
+        leaseFence: 0,
+      };
+      storedDeliveries.set(key, created);
+      return created;
+    }),
+    claimDelivery: vi.fn().mockImplementation(async (deliveryId: string) => {
+      deliveryClaimSequence += 1;
+      if (options.failFirstDeliveryClaim && deliveryClaimSequence === 1) {
+        throw new Error('simulated process crash before delivery claim');
+      }
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (!current || current.deliveryState !== 'pending')
+        throw new Error('DWS_DELIVERY_NOT_CLAIMABLE');
+      const claimedDelivery = {
+        ...current,
+        deliveryState: 'sending' as const,
+        attempt: current.attempt + 1,
+        leaseFence: current.leaseFence + 1,
+      };
+      storedDeliveries.set(current.idempotencyKey, claimedDelivery);
+      return claimedDelivery;
+    }),
+    getDelivery: vi
+      .fn()
+      .mockImplementation(
+        async (_tenantId: string, deliveryId: string) =>
+          [...storedDeliveries.values()].find((candidate) => candidate.deliveryId === deliveryId) ??
+          null,
+      ),
+    markDeliveryProviderStarted: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (!current) throw new Error('DWS_DELIVERY_LEASE_LOST');
+      return current;
+    }),
+    releaseClaimedDeliveryForRetry: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (!current) throw new Error('DWS_DELIVERY_LEASE_LOST');
+      const released = { ...current, deliveryState: 'pending' as const };
+      storedDeliveries.set(current.idempotencyKey, released);
+      return released;
+    }),
+    markDeliverySent: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (current)
+        storedDeliveries.set(current.idempotencyKey, {
+          ...current,
+          deliveryState: 'sent' as const,
+        });
+    }),
+    markDeliveryUnknown: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (current)
+        storedDeliveries.set(current.idempotencyKey, {
+          ...current,
+          deliveryState: 'unknown' as const,
+        });
+    }),
     markDeliveryDeadLetter: vi.fn(),
   } as unknown as OrgGroupAgentStore;
   const dispatch = vi.fn((_message, context, _options, hooks) =>
     (async function* () {
+      if (options.dispatchGate) await options.dispatchGate;
       await hooks?.onResult?.({ resultText: '完成' });
       yield { type: 'session_init' as const, sessionId: context.resumeSessionId };
       yield { type: 'done' as const };
@@ -320,10 +438,16 @@ function setup(
     auditRequesterRejection: vi.fn(),
     auditToolPolicyRejection: vi.fn(),
     sender,
+    ...(options.existingRun
+      ? {
+          runStore: { get: vi.fn().mockResolvedValue(options.existingRun) } as never,
+        }
+      : {}),
     isOrgAgentRuntimeV2Ready: () => true,
     logger,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
+    ...(options.frontReplyDeadlineMs ? { frontReplyDeadlineMs: options.frontReplyDeadlineMs } : {}),
   });
   return { router, messageStore, orgStore, dispatch, sender, resolveRequester, logger };
 }
@@ -364,28 +488,10 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     expect(test.sender.send).toHaveBeenCalledWith(
       expect.any(Object), expect.any(Object), '完成', legacyProviderKey,
     );
+    expect(test.orgStore.markDeliveryProviderStarted).toHaveBeenCalledOnce();
     expect(test.orgStore.markDeliverySent).toHaveBeenCalledOnce();
   });
 
-  it('routes an explicit W-short number to that WorkConversation', async () => {
-    const routed = workOrder();
-    const test = setup({ content: '请继续 W-ABCDEF123456', shortWorkOrder: routed });
-
-    await expect(test.router.runOnce()).resolves.toBe(true);
-
-    expect(test.orgStore.getWorkOrderByShortId).toHaveBeenCalledWith(
-      'tenant-a', 'agent-a', 'W-ABCDEF123456',
-    );
-    expect(test.orgStore.pinInboxContext).toHaveBeenCalledWith(expect.objectContaining({
-      workConversationId: 'workconv-route-a',
-    }));
-    expect(test.dispatch).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.objectContaining({ resumeSessionId: 'session-routed' }),
-      expect.any(Object),
-      expect.any(Object),
-    );
-  });
 
   it('routes an obvious continuation when its native thread has exactly one visible task', async () => {
     const routed = workOrder({ shortId: 'W-123456ABCDEF' });

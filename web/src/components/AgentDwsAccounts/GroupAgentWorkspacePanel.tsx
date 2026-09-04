@@ -15,10 +15,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/authFetch';
-import { WorkOrderControls } from './WorkOrderControls';
+import { WorkspaceHierarchy } from './GroupAgentWorkspaceHierarchy';
 
-interface Binding {
+export interface Binding {
   bindingId: string;
   accountId: string;
   agentId: string;
@@ -36,16 +37,23 @@ interface Binding {
   };
   effectiveConfig: {
     identity: { displayName?: string };
+    instructions: { system: string };
     knowledge: { contextEnabled: boolean; sourceIds: string[] };
-    capabilities: { skillIds: string[]; toolNames: string[] };
+    capabilities: { skillIds: string[]; toolNames: string[]; dwsResourceIds: string[] };
+    memory: {
+      readAgent: boolean;
+      readConversation: boolean;
+      adminWriteConversation: boolean;
+    };
     access: { triggerRoles: string[]; approvalRoles: string[] };
     speech: { proactive: boolean; requireMention: boolean };
   };
   effectiveConfigComputation?: Record<string, unknown>;
 }
 
-interface WorkOrder {
+export interface WorkOrder {
   workOrderId: string;
+  workConversationId: string;
   shortId: string;
   title: string;
   state: string;
@@ -62,6 +70,7 @@ interface WorkOrder {
     }>;
   };
   updatedAt: string;
+  resultEnvelope?: ResultEnvelope;
   attempts: Array<{
     attemptId: string;
     status: string;
@@ -71,6 +80,8 @@ interface WorkOrder {
     mountSubPath?: string;
     sharedReadOnlySubPath?: string;
     publishState: 'pending' | 'published' | 'conflict' | 'rejected';
+    resultEnvelope?: ResultEnvelope;
+    failure?: string;
     artifactManifest?: {
       version?: number;
       files?: Array<{ path: string; digest: string; size: number }>;
@@ -79,8 +90,9 @@ interface WorkOrder {
     };
   }>;
 }
-interface Memory {
+export interface Memory {
   memoryId: string;
+  workConversationId?: string;
   memoryScope: string;
   status: string;
   version: number;
@@ -95,10 +107,34 @@ interface Delivery {
   updatedAt: string;
   sourceWorkOrderId?: string | null;
   sourceAttemptId?: string | null;
+  technicalEvidence: {
+    receiptPresent: boolean;
+    provider?: Record<string, string | number | boolean>;
+    lastErrorCode?: string;
+    leaseFence: number;
+  };
 }
-interface WorkspaceGroup {
-  bindingId: string;
+export interface ResultEnvelope {
+  status: string;
+  summary: string;
+  facts: Array<{ key: string; value: string }>;
+  artifacts: Array<{ path: string; digest: string; size: number }>;
+  writeScope: string[];
+}
+export interface WorkConversation {
+  workConversationId: string;
+  rootKey: string;
+  rootMessageId?: string;
+  sessionId: string;
+  state: 'active' | 'closed';
+  updatedAt: string;
   workOrders: WorkOrder[];
+  memories: Memory[];
+}
+export interface WorkspaceGroup {
+  bindingId: string;
+  conversationSpace: { conversationSpaceId: string; conversationId: string };
+  workConversations: WorkConversation[];
   memories: Memory[];
 }
 interface WorkspaceResponse {
@@ -106,6 +142,13 @@ interface WorkspaceResponse {
   workspaces: WorkspaceGroup[];
   deliveries: Delivery[];
 }
+
+export type WorkspaceMutation = (
+  key: string,
+  path: string,
+  body: unknown,
+  method?: 'POST' | 'PATCH',
+) => Promise<void>;
 
 function csv(value: string): string[] {
   return [
@@ -255,166 +298,14 @@ export function GroupAgentWorkspacePanel({
           </p>
         ) : null}
         {data?.workspaces.map((workspace) => (
-          <section key={workspace.bindingId} className="space-y-3">
-            <h3 className="font-medium">任务与记忆 · {workspace.bindingId}</h3>
-            <div className="space-y-2">
-              {workspace.workOrders.map((work) => (
-                <div key={work.workOrderId} className="rounded-lg border p-3 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      variant={
-                        work.state === 'completed'
-                          ? 'success'
-                          : work.state === 'failed'
-                            ? 'danger'
-                            : 'info'
-                      }
-                    >
-                      {work.state}
-                    </Badge>
-                    <span className="min-w-48 flex-1 font-medium">{work.title}</span>
-                    <span className="text-xs text-muted-foreground">
-                      尝试 {work.currentAttemptNo}
-                    </span>
-                    {!['completed', 'failed', 'cancelled'].includes(work.state) ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={Boolean(busy)}
-                        onClick={() =>
-                          void mutate(
-                            `cancel:${work.workOrderId}`,
-                            `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/work-orders/${encodeURIComponent(work.workOrderId)}/action`,
-                            { action: 'cancel', expectedVersion: work.version },
-                          )
-                        }
-                      >
-                        取消
-                      </Button>
-                    ) : null}
-                    {['completed', 'failed', 'cancelled'].includes(work.state) ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={Boolean(busy)}
-                        onClick={() =>
-                          void mutate(
-                            `retry:${work.workOrderId}`,
-                            `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/work-orders/${encodeURIComponent(work.workOrderId)}/action`,
-                            { action: 'retry', expectedVersion: work.version },
-                          )
-                        }
-                      >
-                        重试
-                      </Button>
-                    ) : null}
-                    {work.state === 'completed'
-                      && work.attempts.at(-1)?.publishState === 'pending' ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={Boolean(busy)}
-                          onClick={() => void mutate(
-                            `publish:${work.workOrderId}`,
-                            `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/work-orders/${encodeURIComponent(work.workOrderId)}/action`,
-                            { action: 'publish', expectedVersion: work.version },
-                          )}
-                        >
-                          发布产物
-                        </Button>
-                      ) : null}
-                  </div>
-                  <WorkOrderControls
-                    workOrder={work}
-                    disabled={Boolean(busy)}
-                    onAction={(action, extra = {}) =>
-                      mutate(
-                        `${action}:${work.workOrderId}`,
-                        `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/work-orders/${encodeURIComponent(work.workOrderId)}/action`,
-                        { action, expectedVersion: work.version, ...extra },
-                      )
-                    }
-                  />
-                  <details className="mt-2 text-xs text-muted-foreground">
-                    <summary className="cursor-pointer">查看执行证据</summary>
-                    <div className="mt-2 space-y-1 font-mono">
-                      <div>WorkOrder {work.shortId} · {work.workOrderId}</div>
-                      <div>Worker {work.control.workerType} · 控制版本 {work.control.revision}</div>
-                      {work.control.supplements.map((supplement, index) => (
-                        <div key={`${supplement.createdAt}:${index}`}>
-                          {supplement.kind} · {supplement.actorOpenId} · {supplement.text}
-                        </div>
-                      ))}
-                      {work.attempts.map((attempt, index) => (
-                        <div key={attempt.attemptId}>
-                          #{index + 1} {attempt.status} · {attempt.attemptId} · run{' '}
-                          {attempt.runtimeRunId}
-                          {attempt.taskWorkspaceId ? ` · workspace ${attempt.taskWorkspaceId}` : ''}
-                          {attempt.sandboxScopeId ? ` · sandbox ${attempt.sandboxScopeId}` : ''}
-                          {` · publish ${attempt.publishState}`}
-                          {attempt.artifactManifest?.files
-                            ? ` · artifacts ${attempt.artifactManifest.files.length}` : ''}
-                          {attempt.artifactManifest?.publishedRoot
-                            ? ` · published ${attempt.artifactManifest.publishedRoot}` : ''}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                </div>
-              ))}
-            </div>
-            <div className="space-y-2">
-              {workspace.memories.map((memory) => (
-                <div
-                  key={memory.memoryId}
-                  className="flex flex-wrap items-center gap-2 rounded-lg border p-3 text-sm"
-                >
-                  <Badge variant={memory.status === 'active' ? 'success' : 'muted'}>
-                    {memory.memoryScope} · {memory.status}
-                  </Badge>
-                  <code className="min-w-48 flex-1 whitespace-pre-wrap text-xs">
-                    {JSON.stringify(memory.content)}
-                  </code>
-                  {memory.status === 'active' && memory.memoryScope !== 'agent' ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={Boolean(busy)}
-                      onClick={() =>
-                        void mutate(
-                          `promote:${memory.memoryId}`,
-                          `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/memories/${encodeURIComponent(memory.memoryId)}/promote`,
-                          {
-                            reason: '管理员确认提升为 Agent 记忆',
-                            policyRevision: memory.policyRevision,
-                          },
-                        )
-                      }
-                    >
-                      提升
-                    </Button>
-                  ) : null}
-                  {memory.status === 'active' ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={Boolean(busy)}
-                      onClick={() =>
-                        void mutate(
-                          `revoke:${memory.memoryId}`,
-                          `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/memories/${encodeURIComponent(memory.memoryId)}`,
-                          { expectedVersion: memory.version, status: 'revoked' },
-                          'PATCH',
-                        )
-                      }
-                    >
-                      撤销
-                    </Button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </section>
+          <WorkspaceHierarchy
+            key={workspace.bindingId}
+            workspace={workspace}
+            binding={data.bindings.find((item) => item.bindingId === workspace.bindingId)}
+            accountId={accountId}
+            busy={busy}
+            mutate={mutate}
+          />
         ))}
         {data?.deliveries.length ? (
           <section className="space-y-2">
@@ -507,14 +398,23 @@ function BindingEditor({
   const [liveDeny, setLiveDeny] = useState(binding.policy.liveDeny);
   const [completion, setCompletion] = useState(binding.policy.completion);
   const [guest, setGuest] = useState(binding.policy.guest);
-  const [displayName, setDisplayName] = useState(binding.effectiveConfig.identity.displayName ?? '');
-  const [contextEnabled, setContextEnabled] = useState(binding.effectiveConfig.knowledge.contextEnabled);
+  const [displayName, setDisplayName] = useState(
+    binding.effectiveConfig.identity.displayName ?? '',
+  );
+  const [instructions, setInstructions] = useState(binding.effectiveConfig.instructions.system);
+  const [contextEnabled, setContextEnabled] = useState(
+    binding.effectiveConfig.knowledge.contextEnabled,
+  );
   const [taskVisibility, setTaskVisibility] = useState(binding.policy.taskVisibility);
   const [triggerRoles, setTriggerRoles] = useState(binding.effectiveConfig.access.triggerRoles);
   const [approvalRoles, setApprovalRoles] = useState(binding.effectiveConfig.access.approvalRoles);
   const [skills, setSkills] = useState(binding.effectiveConfig.capabilities.skillIds.join(', '));
   const [tools, setTools] = useState(binding.effectiveConfig.capabilities.toolNames.join(', '));
+  const [dwsResources, setDwsResources] = useState(
+    binding.effectiveConfig.capabilities.dwsResourceIds.join(', '),
+  );
   const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds.join(', '));
+  const [memoryPolicy, setMemoryPolicy] = useState(binding.effectiveConfig.memory);
   const save = async () => {
     onBusy(`binding:${binding.bindingId}`);
     onError('');
@@ -540,11 +440,17 @@ function BindingEditor({
             effectiveConfig: {
               ...binding.effectiveConfig,
               identity: { displayName: displayName.trim() || undefined },
+              instructions: { system: instructions.trim() },
               knowledge: {
                 contextEnabled,
                 sourceIds: csv(sources),
               },
-              capabilities: { skillIds: csv(skills), toolNames: csv(tools) },
+              capabilities: {
+                skillIds: csv(skills),
+                toolNames: csv(tools),
+                dwsResourceIds: csv(dwsResources),
+              },
+              memory: memoryPolicy,
               access: { triggerRoles, approvalRoles },
               // 当前钉钉入口只接收群内 @ 事件；这不是可由界面放开的能力。
               speech: { proactive: false, requireMention: true },
@@ -575,6 +481,15 @@ function BindingEditor({
           <Switch checked={liveDeny} onCheckedChange={setLiveDeny} />
           立即阻断
         </label>
+      </div>
+      <div>
+        <Label htmlFor={`instructions-${binding.bindingId}`}>群 Agent 指令</Label>
+        <Textarea
+          id={`instructions-${binding.bindingId}`}
+          value={instructions}
+          placeholder="只对当前群生效的职责、边界与输出要求"
+          onChange={(event) => setInstructions(event.target.value)}
+        />
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div>
@@ -609,6 +524,18 @@ function BindingEditor({
           <Label>知识源 ID</Label>
           <Input value={sources} onChange={(event) => setSources(event.target.value)} />
         </div>
+        <div>
+          <Label htmlFor={`dws-resources-${binding.bindingId}`}>钉钉资源范围</Label>
+          <Input
+            id={`dws-resources-${binding.bindingId}`}
+            value={dwsResources}
+            placeholder="例如 doc:节点ID、drive:文件夹ID"
+            onChange={(event) => setDwsResources(event.target.value)}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">
+            启用钉钉业务工具时必填；格式为模块:资源ID，多个用逗号分隔。
+          </p>
+        </div>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <label className="flex items-center gap-2 text-sm">
@@ -622,6 +549,26 @@ function BindingEditor({
         <p className="text-xs text-muted-foreground md:col-span-2">
           启用后须配置知识源，并在工具名中保留 ContextSearch 与 ContextGet；服务端会按当前群绑定再次校验。
         </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        {(
+          [
+            ['readAgent', '读取 Agent 级记忆'],
+            ['readConversation', '读取当前话题记忆'],
+            ['adminWriteConversation', '允许管理员写入话题记忆'],
+          ] as const
+        ).map(([key, label]) => (
+          <label key={key} className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={memoryPolicy[key]}
+              onCheckedChange={(checked) =>
+                setMemoryPolicy((current) => ({ ...current, [key]: checked }))
+              }
+              aria-label={label}
+            />
+            {label}
+          </label>
+        ))}
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div>

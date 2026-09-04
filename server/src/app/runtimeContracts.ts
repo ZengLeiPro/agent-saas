@@ -192,7 +192,9 @@ export interface AppRuntime {
   agentDwsContextPolicyUpdated?: (account: AgentDwsAccountRecord) => Promise<void>;
   agentDwsGroupBindingUpdated?: (account: AgentDwsAccountRecord, conversationId: string) => Promise<void>;
   agentDwsEnabledChanged?: (account: AgentDwsAccountRecord, enabled: boolean) => Promise<void>;
-  isOrgAgentRuntimeV2Ready?: () => boolean;
+  isOrgAgentRuntimeV2Ready?: (
+    account: import('../data/agentDwsAccounts/index.js').AgentDwsAccountRecord,
+  ) => boolean | Promise<boolean>;
   /** Notion 官方 ntn 两阶段登录，成功后 token 转存用户级 Vault。 */
   notionAuthFlowService?: NotionAuthFlowServiceLike;
   getNotionConnection?: (identity: {

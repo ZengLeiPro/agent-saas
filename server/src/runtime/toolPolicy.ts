@@ -43,6 +43,7 @@ export class DefaultToolPolicy implements ToolPolicy {
       const decision = decideSharedGroupDwsAction({
         toolInput: input,
         channel: channelPolicy,
+        resourceAllowlist: channelPolicy.dwsResourceIds,
         ...(_context.executionRole ? { executionRole: _context.executionRole } : {}),
       });
       return decision.allowed

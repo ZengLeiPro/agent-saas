@@ -112,13 +112,14 @@ export class MemoryRunStore implements RunStore {
 
   async listRecoverable(): Promise<RunRecord[]> {
     return [...this.records.values()]
-      .filter((record) => (
-        (record.status === 'pending' || record.status === 'running')
-        && !(record.status === 'pending'
-          && record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED)
-        && !(record.metadata?.backgroundTaskVersion === 2
-          && record.metadata?.backgroundTaskReady !== true)
-      ))
+      .filter(
+        (record) =>
+          (record.status === 'pending' || record.status === 'running') &&
+          !(
+            record.status === 'pending' &&
+            record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED
+          ),
+      )
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   }
 

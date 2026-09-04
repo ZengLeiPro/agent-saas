@@ -435,8 +435,6 @@ describe('PgRunStore steering inbox', () => {
         expect(sql).toContain("input.state = 'reserved'\n                AND target.status NOT IN ('completed','failed','cancelled','orphaned')");
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
         expect(sql).toContain("COALESCE(run.metadata->>'schedulerState', '') = 'staged'");
-        expect(sql).toContain("run.metadata->>'backgroundTaskVersion' = '2'");
-        expect(sql).toContain("COALESCE(run.metadata->>'backgroundTaskReady', 'false') <> 'true'");
         return { rows: [] };
       }),
     };

@@ -52,6 +52,7 @@ type SharedGroupInput = {
   assurance: 'mapped' | 'unmapped';
   actorRole?: 'member' | 'org_admin';
   approvalRoles?: Array<'member' | 'org_admin'>;
+  dwsResourceIds?: string[];
   bindingRevision?: number;
   sessionExecutionRole?: 'dispatcher' | 'worker';
 };
@@ -87,7 +88,11 @@ function setup(sharedGroup: SharedGroupInput) {
     effectiveConfig: {
       identity: {},
       knowledge: { contextEnabled: false, sourceIds: [] },
-      capabilities: { skillIds: [], toolNames: ['DwsBusiness'] },
+      capabilities: {
+        skillIds: [],
+        toolNames: ['DwsBusiness'],
+        dwsResourceIds: sharedGroup.dwsResourceIds ?? ['doc:doc-a'],
+      },
       access: { triggerRoles: [], approvalRoles: sharedGroup.approvalRoles ?? [] },
       speech: { proactive: false, requireMention: true },
     },
@@ -145,6 +150,7 @@ function setup(sharedGroup: SharedGroupInput) {
         allowedToolNames: ['DwsBusiness'],
         allowedSkillIds: [],
         allowedSourceIds: [],
+        dwsResourceIds: sharedGroup.dwsResourceIds ?? ['doc:doc-a'],
         contextEnabled: false,
         taskVisibility: 'conversation',
         ...(sharedGroup.actorRole ? { actorRole: sharedGroup.actorRole } : {}),
@@ -195,7 +201,7 @@ function setup(sharedGroup: SharedGroupInput) {
 }
 
 describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
-  it('mapped 与未映射访客都可使用 Agent 凭据读取已登记共享数据', async () => {
+  it('mapped 与未映射访客都只可读取当前 binding 显式登记的资源', async () => {
     for (const assurance of ['mapped', 'unmapped'] as const) {
       const test = setup({
         assurance,
@@ -222,6 +228,84 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
     }
   });
 
+  it('其他群资源、没有资源目标与没有 scope 都 fail closed', async () => {
+    const otherResource = setup({ assurance: 'mapped', actorRole: 'member' });
+    await expect(
+      otherResource.provider.invoke(
+        {
+          toolId: 'DwsBusiness',
+          input: { args: ['doc', 'read', '--node', 'doc-b'], credentialMode: 'agent' },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        otherResource.context,
+      ),
+    ).rejects.toThrow('DWS resource is not allowlisted for the current group binding');
+    expect(otherResource.invoke).not.toHaveBeenCalled();
+
+    const secondaryResource = setup({
+      assurance: 'mapped',
+      actorRole: 'member',
+      approvalRoles: ['member'],
+    });
+    await expect(
+      secondaryResource.provider.invoke(
+        {
+          toolId: 'DwsBusiness',
+          input: {
+            args: ['doc', 'copy', '--node', 'doc-a', '--folder', 'folder-b'],
+            credentialMode: 'agent',
+            confirmed: true,
+          },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        secondaryResource.context,
+      ),
+    ).rejects.toThrow('DWS resource is not allowlisted for the current group binding');
+    expect(secondaryResource.invoke).not.toHaveBeenCalled();
+
+    const undeclaredSecondSelector = setup({ assurance: 'unmapped' });
+    await expect(
+      undeclaredSecondSelector.provider.invoke(
+        {
+          toolId: 'DwsBusiness',
+          input: {
+            args: ['doc', 'read', '--node', 'doc-a', '--folder', 'folder-b'],
+            credentialMode: 'agent',
+          },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        undeclaredSecondSelector.context,
+      ),
+    ).rejects.toThrow('no deterministic shared-group resource target');
+    expect(undeclaredSecondSelector.invoke).not.toHaveBeenCalled();
+
+    const missingTarget = setup({ assurance: 'unmapped' });
+    await expect(
+      missingTarget.provider.invoke(
+        {
+          toolId: 'DwsBusiness',
+          input: { args: ['doc', 'search', '--query', '季度经营'], credentialMode: 'agent' },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        missingTarget.context,
+      ),
+    ).rejects.toThrow('no deterministic shared-group resource target');
+    expect(missingTarget.invoke).not.toHaveBeenCalled();
+
+    const missingScope = setup({ assurance: 'mapped', actorRole: 'member', dwsResourceIds: [] });
+    await expect(
+      missingScope.provider.invoke(
+        {
+          toolId: 'DwsBusiness',
+          input: { args: ['doc', 'read', '--node', 'doc-a'], credentialMode: 'agent' },
+          authorization: { approved: true, source: 'policy_auto' },
+        },
+        missingScope.context,
+      ),
+    ).rejects.toThrow('DWS resource is not allowlisted for the current group binding');
+    expect(missingScope.invoke).not.toHaveBeenCalled();
+  });
+
   it('低风险写只允许 mapped、approvalRoles 命中且 confirmed=true', async () => {
     const allowed = setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['member'] });
     await expect(
@@ -229,7 +313,7 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
         {
           toolId: 'DwsBusiness',
           input: {
-            args: ['doc', 'create', '--title', '群文档', '--content', '正文'],
+            args: ['doc', 'update', '--node', 'doc-a', '--content', '正文', '--mode', 'append'],
             credentialMode: 'agent',
             confirmed: true,
           },
@@ -249,7 +333,7 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
           {
             toolId: 'DwsBusiness',
             input: {
-              args: ['doc', 'create', '--title', '群文档', '--content', '正文'],
+              args: ['doc', 'update', '--node', 'doc-a', '--content', '正文', '--mode', 'append'],
               credentialMode: 'agent',
               confirmed: true,
             },

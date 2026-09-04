@@ -90,6 +90,9 @@ export function mapDelivery(row: Record<string, unknown>): DwsDeliveryIntent {
     ...(text(row.lease_owner) ? { leaseOwner: text(row.lease_owner) } : {}),
     leaseFence: Number(row.lease_fence),
     ...(row.lease_expires_at ? { leaseExpiresAt: iso(row.lease_expires_at) } : {}),
+    providerAttemptPhase: (text(row.provider_attempt_phase) ?? 'legacy_unknown') as DwsDeliveryIntent['providerAttemptPhase'],
+    ...(row.provider_started_at ? { providerStartedAt: iso(row.provider_started_at) } : {}),
+    ...(row.next_attempt_at ? { nextAttemptAt: iso(row.next_attempt_at) } : {}),
     ...(row.last_attempt_at ? { lastAttemptAt: iso(row.last_attempt_at) } : {}),
     ...(text(row.last_error) ? { lastError: text(row.last_error) } : {}),
     createdAt: iso(row.created_at),
@@ -217,14 +220,17 @@ export function validatePolicy(value: unknown): OrgAgentChannelPolicy {
 export function validateEffectiveConfig(value: unknown): OrgAgentEffectiveConfig {
   const raw = parseJson(value);
   const identity = parseJson(raw.identity);
+  const instructions = parseJson(raw.instructions);
   const knowledge = parseJson(raw.knowledge);
   const capabilities = parseJson(raw.capabilities);
+  const memory = parseJson(raw.memory);
   const access = parseJson(raw.access);
   const speech = parseJson(raw.speech);
   return {
     identity: {
       ...(text(identity.displayName) ? { displayName: text(identity.displayName) } : {}),
     },
+    instructions: { system: text(instructions.system) ?? '' },
     knowledge: {
       contextEnabled: knowledge.contextEnabled === true,
       sourceIds: stringArray(knowledge.sourceIds),
@@ -232,6 +238,12 @@ export function validateEffectiveConfig(value: unknown): OrgAgentEffectiveConfig
     capabilities: {
       skillIds: stringArray(capabilities.skillIds),
       toolNames: stringArray(capabilities.toolNames),
+      dwsResourceIds: stringArray(capabilities.dwsResourceIds),
+    },
+    memory: {
+      readAgent: memory.readAgent !== false,
+      readConversation: memory.readConversation !== false,
+      adminWriteConversation: memory.adminWriteConversation !== false,
     },
     access: {
       triggerRoles: governanceRoleArray(access.triggerRoles),

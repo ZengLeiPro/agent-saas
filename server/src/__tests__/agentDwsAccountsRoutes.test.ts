@@ -9,6 +9,7 @@ import type {
   CreateAgentDwsAccountInput,
 } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { OrgAgentChannelBinding } from '../data/orgGroupAgents/index.js';
 import { createAgentDwsAccountsRouter } from '../routes/agentDwsAccounts.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 
@@ -396,9 +397,13 @@ describe('Agent DWS accounts routes', () => {
       status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
     }));
     const updateBinding = vi.fn();
+    const currentBinding = makeGroupBinding({ conversationId: 'group-a' });
     const opened = await listen({
       store,
-      orgGroupAgentStore: { updateBinding } as never,
+      orgGroupAgentStore: {
+        updateBinding,
+        getBinding: vi.fn().mockResolvedValue(currentBinding),
+      } as never,
       orgAgentStore: { get: vi.fn(() => ({
         id: 'oa-sales', tenantId: 'tenant-a', enabled: true, allowedSkills: [], allowedKnowledge: [],
         runtime: { executionMode: 'dispatcher' },
@@ -433,33 +438,132 @@ describe('Agent DWS accounts routes', () => {
 
   it('群工作台返回任务尝试但不暴露投递 provider receipt，并通过审计取消任务', async () => {
     const store = new FakeAccountStore();
-    store.records.push(makeAccount({ status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a' }));
-    const binding = { bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'adws-1', agentId: 'oa-sales',
-      conversationId: 'cid-a', channelKind: 'group', activationState: 'active', enabled: true, revision: 2,
-      policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation', completion: 'reply_to_work_conversation', liveDeny: false },
-      effectiveConfig: { identity: {}, knowledge: { contextEnabled: false, sourceIds: [] }, capabilities: { skillIds: [], toolNames: [] }, access: { triggerRoles: [], approvalRoles: [] }, speech: { proactive: false, requireMention: true } } };
-    const work = { workOrderId: 'work-a', tenantId: 'tenant-a', agentId: 'oa-sales', bindingId: 'binding-a',
-      workConversationId: 'wc-a', idempotencyKey: 'key-a', title: '汇总', state: 'running', currentAttemptNo: 1,
-      visibility: 'conversation', createdByActor: {}, policySnapshot: {}, cancelPolicy: {}, version: 3,
-      shortId: 'W-ABCDEF123456', control: { revision: 1, supplements: [], workerType: 'general' },
-      createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z' };
+    store.records.push(
+      makeAccount({
+        status: 'active',
+        profileId: 'corp-a:ding-a',
+        corpId: 'corp-a',
+        dingtalkUserId: 'ding-a',
+      }),
+    );
+    const binding = {
+      bindingId: 'binding-a',
+      tenantId: 'tenant-a',
+      accountId: 'adws-1',
+      agentId: 'oa-sales',
+      conversationId: 'cid-a',
+      channelKind: 'group',
+      activationState: 'active',
+      enabled: true,
+      revision: 2,
+      policy: {
+        enabled: true,
+        membership: 'members',
+        guest: 'deny',
+        taskVisibility: 'conversation',
+        completion: 'reply_to_work_conversation',
+        liveDeny: false,
+      },
+      effectiveConfig: {
+        identity: {},
+        knowledge: { contextEnabled: false, sourceIds: [] },
+        capabilities: { skillIds: [], toolNames: [] },
+        access: { triggerRoles: [], approvalRoles: [] },
+        speech: { proactive: false, requireMention: true },
+      },
+    };
+    const work = {
+      workOrderId: 'work-a',
+      tenantId: 'tenant-a',
+      agentId: 'oa-sales',
+      bindingId: 'binding-a',
+      workConversationId: 'wc-a',
+      idempotencyKey: 'key-a',
+      title: '汇总',
+      state: 'running',
+      currentAttemptNo: 1,
+      visibility: 'conversation',
+      createdByActor: {},
+      policySnapshot: {},
+      cancelPolicy: {},
+      version: 3,
+      shortId: 'W-ABCDEF123456',
+      control: { revision: 1, supplements: [], workerType: 'general' },
+      createdAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    const workConversation = {
+      workConversationId: 'wc-a',
+      tenantId: 'tenant-a',
+      bindingId: 'binding-a',
+      rootKey: 'root-a',
+      sessionId: 'session-a',
+      state: 'active',
+      createdAt: work.createdAt,
+      updatedAt: work.updatedAt,
+    };
     const orgGroupAgentStore = {
-      listBindings: vi.fn(async () => [binding]), listDeliveries: vi.fn(async () => [{ deliveryId: 'delivery-a',
-        tenantId: 'tenant-a', accountId: 'adws-1', conversationId: 'cid-a', source: 'command',
-        deliveryKind: 'front_reply', disposition: 'replied', deliveryState: 'unknown', destination: { kind: 'group' },
-        content: '结果', providerReceipt: { secret: 'never' }, idempotencyKey: 'key', attempt: 1, leaseFence: 1,
-        createdAt: work.createdAt, updatedAt: work.updatedAt }, { deliveryId: 'delivery-private',
-        tenantId: 'tenant-a', accountId: 'adws-1', conversationId: 'cid-a', source: 'background_completion',
-        deliveryKind: 'task_completion', disposition: 'replied', deliveryState: 'sent',
-        destination: { kind: 'direct', peerOpenId: 'private-open-id' }, content: '仅发起人结果',
-        providerReceipt: { messageId: 'private-message' }, idempotencyKey: 'private-key', attempt: 1,
-        leaseFence: 1, createdAt: work.createdAt, updatedAt: work.updatedAt }]),
-      listWorkOrders: vi.fn(async () => [work]), listWorkAttempts: vi.fn(async () => [{ attemptId: 'attempt-a',
-        tenantId: 'tenant-a', workOrderId: 'work-a', attemptNo: 1, runtimeRunId: 'run-a', status: 'running',
-        taskWorkspaceId: 'task-ws', sandboxScopeId: 'scope', mountSubPath: 'task', sharedReadOnlySubPath: 'shared',
-        publishState: 'pending', createdAt: work.createdAt, updatedAt: work.updatedAt }]),
-      listMemories: vi.fn(async () => []), getWorkOrder: vi.fn(async () => work), getBindingById: vi.fn(async () => binding),
-    } as unknown as NonNullable<Parameters<typeof createAgentDwsAccountsRouter>[0]['orgGroupAgentStore']>;
+      listBindings: vi.fn(async () => [binding]),
+      listDeliveries: vi.fn(async () => [
+        {
+          deliveryId: 'delivery-a',
+          tenantId: 'tenant-a',
+          accountId: 'adws-1',
+          conversationId: 'cid-a',
+          source: 'command',
+          deliveryKind: 'front_reply',
+          disposition: 'replied',
+          deliveryState: 'unknown',
+          destination: { kind: 'group' },
+          content: '结果',
+          providerReceipt: { secret: 'never' },
+          idempotencyKey: 'key',
+          attempt: 1,
+          leaseFence: 1,
+          createdAt: work.createdAt,
+          updatedAt: work.updatedAt,
+        },
+        {
+          deliveryId: 'delivery-private',
+          tenantId: 'tenant-a',
+          accountId: 'adws-1',
+          conversationId: 'cid-a',
+          source: 'background_completion',
+          deliveryKind: 'task_completion',
+          disposition: 'replied',
+          deliveryState: 'sent',
+          destination: { kind: 'direct', peerOpenId: 'private-open-id' },
+          content: '仅发起人结果',
+          providerReceipt: { messageId: 'private-message' },
+          idempotencyKey: 'private-key',
+          attempt: 1,
+          leaseFence: 1,
+          createdAt: work.createdAt,
+          updatedAt: work.updatedAt,
+        },
+      ]),
+      loadGroupWorkspace: vi.fn(async () => ({
+        conversations: [workConversation], workOrders: [work], attempts: [{
+          attemptId: 'attempt-a',
+          tenantId: 'tenant-a',
+          workOrderId: 'work-a',
+          attemptNo: 1,
+          runtimeRunId: 'run-a',
+          status: 'running',
+          taskWorkspaceId: 'task-ws',
+          sandboxScopeId: 'scope',
+          mountSubPath: 'task',
+          sharedReadOnlySubPath: 'shared',
+          publishState: 'pending',
+          createdAt: work.createdAt,
+          updatedAt: work.updatedAt,
+        }], memories: [],
+      })),
+      getWorkOrder: vi.fn(async () => work),
+      getBindingById: vi.fn(async () => binding),
+    } as unknown as NonNullable<
+      Parameters<typeof createAgentDwsAccountsRouter>[0]['orgGroupAgentStore']
+    >;
     const cancelWorkOrder = vi.fn(async () => null);
     const publishWorkOrderArtifacts = vi.fn(async () => ({ attemptId: 'attempt-a', publishState: 'published' }));
     const opened = await listen({ store, orgGroupAgentStore, orgAgentStore: { get: vi.fn(() => ({
@@ -505,12 +609,18 @@ describe('Agent DWS accounts routes', () => {
       policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation', completion: 'reply_to_work_conversation', liveDeny: false },
       effectiveConfig: { identity: {}, knowledge: { contextEnabled: false, sourceIds: [] }, capabilities: { skillIds: [], toolNames: [] }, access: { triggerRoles: [], approvalRoles: [] }, speech: { proactive: false, requireMention: true } } };
     const orgGroupAgentStore = {
-      listBindings: vi.fn(async () => [binding]), listDeliveries: vi.fn(async () => []),
-      listWorkOrders: vi.fn(async () => []), listMemories: vi.fn(async () => []),
+      listBindings: vi.fn(async () => [binding]),
+      listDeliveries: vi.fn(async () => []),
+      loadGroupWorkspace: vi.fn(async () => ({
+        conversations: [], workOrders: [], attempts: [], memories: [],
+      })),
     } as never;
-    const assignmentStore = { listEffectiveResourceIds: vi.fn(async () => [
-      { resourceId: 'wiki-only' }, { resourceId: 'chat-enabled' },
-    ]) } as never;
+    const assignmentStore = {
+      listEffectiveResourceIds: vi.fn(async () => [
+        { resourceId: 'wiki-only' },
+        { resourceId: 'chat-enabled' },
+      ]),
+    } as never;
     const contextStore = {
       listCollections: vi.fn(async () => [
         { collectionId: 'wiki-only', sourceId: 'source-wiki', externalKey: 'wiki', status: 'active' },
@@ -608,6 +718,46 @@ describe('Agent DWS accounts routes', () => {
       expectedVersion: 4, status: 'revoked',
     });
   });
+
+  it('群配置未开放管理员写入时拒绝创建群记忆', async () => {
+    const store = new FakeAccountStore();
+    store.records.push(makeAccount({ status: 'active' }));
+    const createMemory = vi.fn();
+    const orgGroupAgentStore = {
+      getBindingById: vi.fn(async () => ({
+        bindingId: 'binding-a',
+        tenantId: 'tenant-a',
+        accountId: 'adws-1',
+        agentId: 'oa-sales',
+        revision: 2,
+        effectiveConfig: { memory: { adminWriteConversation: false } },
+      })),
+      createMemory,
+    } as unknown as NonNullable<
+      Parameters<typeof createAgentDwsAccountsRouter>[0]['orgGroupAgentStore']
+    >;
+    const opened = await listen({ store, orgGroupAgentStore });
+    server = opened.server;
+
+    const response = await fetch(
+      `${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace/memories`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          bindingId: 'binding-a',
+          workConversationId: 'conversation-a',
+          memoryScope: 'conversation',
+          content: { text: '群内事实' },
+          provenance: { source: 'admin_workspace' },
+          policyRevision: 2,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(createMemory).not.toHaveBeenCalled();
+  });
 });
 
 function makeAccount(overrides: Partial<AgentDwsAccountRecord> = {}): AgentDwsAccountRecord {
@@ -618,5 +768,30 @@ function makeAccount(overrides: Partial<AgentDwsAccountRecord> = {}): AgentDwsAc
     revision: 1, createdAt: '2026-08-13T00:00:00.000Z', createdBy: 'admin-a',
     updatedAt: '2026-08-13T00:00:00.000Z', updatedBy: 'admin-a',
     ...overrides,
+  };
+}
+
+function makeGroupBinding(
+  overrides: Partial<OrgAgentChannelBinding> = {},
+): OrgAgentChannelBinding {
+  return {
+    bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'adws-1', agentId: 'oa-sales',
+    conversationId: 'cid-a', channelKind: 'group', conversationSpaceId: 'space-a',
+    serviceSessionId: 'org-agent-service:binding-a',
+    workspaceId: 'tenant-a/.agent-oa-sales', activationState: 'active', enabled: true,
+    policy: {
+      enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation',
+      completion: 'reply_to_work_conversation', liveDeny: false,
+    },
+    effectiveConfig: {
+      identity: {}, instructions: { system: '' },
+      knowledge: { contextEnabled: false, sourceIds: [] },
+      capabilities: { skillIds: [], toolNames: [], dwsResourceIds: [] },
+      memory: { readAgent: true, readConversation: true, adminWriteConversation: true },
+      access: { triggerRoles: [], approvalRoles: [] },
+      speech: { proactive: false, requireMention: true },
+    },
+    revision: 1, createdAt: '2026-09-04T00:00:00.000Z',
+    updatedAt: '2026-09-04T00:00:00.000Z', ...overrides,
   };
 }

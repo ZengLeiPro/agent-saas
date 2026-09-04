@@ -6,6 +6,7 @@ import {
   DEFAULT_ORG_AGENT_CHANNEL_POLICY,
   DEFAULT_ORG_AGENT_EFFECTIVE_CONFIG,
   type DwsDeliveryIntent,
+  type DwsDeliveryIntentCreate,
   type ExternalActorRef,
   type OrgAgentChannelActorRef,
   type OrgAgentChannelBinding,
@@ -29,14 +30,23 @@ import {
   claimNextDeliveryIntent,
   compactDeliveryError,
   finishClaimedDelivery,
+  getDeliveryIntent,
+  listDeliveryIntents,
+  reconcileExpiredDeliveriesForAccount,
   reconcileExpiredAndStaleDeliveries,
+  reconcileUnknownDelivery,
+  releaseDeliveryBeforeProvider,
   sanitizeDeliveryReceipt,
+  startDeliveryProviderAttempt,
 } from './deliveryClaims.js';
 import {
   transitionWorkAttempt as transitionAttempt,
   transitionWorkAttemptPublishState as transitionAttemptPublishState,
 } from './workAttemptArtifacts.js';
+import { getStoredWorkConversation, listStoredWorkConversations } from './workConversationQueries.js';
+import { listStoredWorkAttempts, loadStoredGroupWorkspace } from './groupWorkspaceQueries.js';
 import {
+  getWorkOrder as selectWorkOrder,
   getWorkOrderByShortId as selectWorkOrderByShortId,
   pauseWorkOrder as pauseStoredWorkOrder,
   queueWorkOrderAttempt as queueStoredWorkOrderAttempt,
@@ -312,12 +322,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     if (!result.rows[0]) throw new Error('ORG_AGENT_INBOX_NOT_FOUND');
   }
 
-  async createDelivery(
-    input: Omit<
-      DwsDeliveryIntent,
-      'deliveryId' | 'deliveryState' | 'attempt' | 'leaseFence' | 'createdAt' | 'updatedAt'
-    >,
-  ): Promise<DwsDeliveryIntent> {
+  async createDelivery(input: DwsDeliveryIntentCreate): Promise<DwsDeliveryIntent> {
     assertTexts(
       input.tenantId,
       input.accountId,
@@ -388,6 +393,39 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     return reconcileExpiredAndStaleDeliveries(this.pool, this.deliveryTables(), bounded);
   }
 
+  async markDeliveryProviderStarted(
+    deliveryId: string,
+    owner: string,
+    fence: number,
+  ): Promise<DwsDeliveryIntent> {
+    assertTexts(deliveryId, owner);
+    return startDeliveryProviderAttempt(this.pool, this.deliveriesTable, deliveryId, owner, fence);
+  }
+
+  async releaseClaimedDeliveryForRetry(
+    deliveryId: string,
+    owner: string,
+    fence: number,
+    error: unknown,
+    delayMs: number,
+    maxAttempts: number,
+  ): Promise<DwsDeliveryIntent> {
+    assertTexts(deliveryId, owner);
+    if (
+      !Number.isInteger(delayMs) ||
+      delayMs < 0 ||
+      delayMs > 300_000 ||
+      !Number.isInteger(maxAttempts) ||
+      maxAttempts < 1 ||
+      maxAttempts > 100
+    ) {
+      throw new Error('DWS_DELIVERY_INVALID');
+    }
+    return releaseDeliveryBeforeProvider(
+      this.pool, this.deliveriesTable, deliveryId, owner, fence, error, delayMs, maxAttempts,
+    );
+  }
+
   async markDeliverySent(
     deliveryId: string,
     owner: string,
@@ -453,18 +491,9 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   ): Promise<number> {
     assertTexts(tenantId, accountId);
     const bounded = Math.max(1, Math.min(1_000, Math.trunc(limit)));
-    const result = await this.pool.query(
-      `WITH expired AS (
-      SELECT delivery_id FROM ${this.deliveriesTable}
-      WHERE tenant_id=$1 AND account_id=$2 AND delivery_state='sending' AND lease_expires_at<=NOW()
-      ORDER BY lease_expires_at,delivery_id FOR UPDATE SKIP LOCKED LIMIT $3
-    ) UPDATE ${this.deliveriesTable} delivery
-      SET delivery_state='unknown',lease_owner=NULL,lease_expires_at=NULL,
-          last_error='DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',completed_at=NOW(),updated_at=NOW()
-      FROM expired WHERE delivery.delivery_id=expired.delivery_id`,
-      [tenantId, accountId, bounded],
+    return reconcileExpiredDeliveriesForAccount(
+      this.pool, this.deliveriesTable, tenantId, accountId, bounded,
     );
-    return result.rowCount ?? 0;
   }
 
   async listDeliveries(
@@ -474,21 +503,12 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   ): Promise<DwsDeliveryIntent[]> {
     assertTexts(tenantId, accountId);
     const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.deliveriesTable}
-      WHERE tenant_id=$1 AND account_id=$2 ORDER BY created_at DESC,delivery_id DESC LIMIT $3`,
-      [tenantId, accountId, bounded],
-    );
-    return result.rows.map((row) => mapDelivery(row as Record<string, unknown>));
+    return listDeliveryIntents(this.pool, this.deliveriesTable, tenantId, accountId, bounded);
   }
 
   async getDelivery(tenantId: string, deliveryId: string): Promise<DwsDeliveryIntent | null> {
     assertTexts(tenantId, deliveryId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.deliveriesTable} WHERE tenant_id=$1 AND delivery_id=$2`,
-      [tenantId, deliveryId],
-    );
-    return result.rows[0] ? mapDelivery(result.rows[0] as Record<string, unknown>) : null;
+    return getDeliveryIntent(this.pool, this.deliveriesTable, tenantId, deliveryId);
   }
 
   async reconcileDelivery(input: {
@@ -500,32 +520,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     outcome: 'confirmed_sent' | 'confirmed_not_sent' | 'indeterminate';
   }): Promise<DwsDeliveryIntent> {
     assertTexts(input.tenantId, input.deliveryId, input.actorId, input.reason);
-    const evidence = sanitizeDeliveryReceipt({
-      ...input.evidence,
-      reconciledAt: new Date().toISOString(),
-      reconcileOutcome: input.outcome,
-    });
-    const state =
-      input.outcome === 'confirmed_sent'
-        ? 'sent'
-        : input.outcome === 'confirmed_not_sent'
-          ? 'pending'
-          : 'unknown';
-    const result = await this.pool.query(
-      `UPDATE ${this.deliveriesTable}
-      SET delivery_state=$3,provider_receipt_json=$4::jsonb,lease_owner=NULL,lease_expires_at=NULL,
-          last_error=$5,completed_at=CASE WHEN $3='pending' THEN NULL ELSE NOW() END,updated_at=NOW()
-      WHERE tenant_id=$1 AND delivery_id=$2 AND delivery_state='unknown' RETURNING *`,
-      [
-        input.tenantId,
-        input.deliveryId,
-        state,
-        JSON.stringify({ ...evidence, reconciledBy: input.actorId }),
-        compactDeliveryError(input.reason),
-      ],
-    );
-    if (!result.rows[0]) throw new Error('DWS_DELIVERY_NOT_RECONCILABLE');
-    return mapDelivery(result.rows[0] as Record<string, unknown>);
+    return reconcileUnknownDelivery(this.pool, this.deliveriesTable, input);
   }
 
   async createWorkOrder(input: {
@@ -683,12 +678,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
 
   async getWorkOrder(tenantId: string, workOrderId: string): Promise<OrgAgentWorkOrder | null> {
     assertTexts(tenantId, workOrderId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.workOrdersTable}
-      WHERE tenant_id=$1 AND work_order_id=$2`,
-      [tenantId, workOrderId],
-    );
-    return result.rows[0] ? mapWorkOrder(result.rows[0] as Record<string, unknown>) : null;
+    return await selectWorkOrder(this.pool, this.workOrdersTable, tenantId, workOrderId);
   }
 
   async getWorkOrderByShortId(
@@ -705,22 +695,38 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     workConversationId: string,
   ): Promise<OrgAgentWorkConversation | null> {
     assertTexts(tenantId, workConversationId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.conversationsTable}
-      WHERE tenant_id=$1 AND work_conversation_id=$2`,
-      [tenantId, workConversationId],
+    return await getStoredWorkConversation(
+      this.pool, this.conversationsTable, tenantId, workConversationId,
     );
-    return result.rows[0] ? mapWorkConversation(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async listWorkConversations(
+    tenantId: string,
+    bindingId: string,
+    limit = 50,
+  ): Promise<OrgAgentWorkConversation[]> {
+    assertTexts(tenantId, bindingId);
+    const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
+    return listStoredWorkConversations(
+      this.pool, this.conversationsTable, tenantId, bindingId, bounded,
+    );
   }
 
   async listWorkAttempts(tenantId: string, workOrderId: string): Promise<OrgAgentWorkAttempt[]> {
     assertTexts(tenantId, workOrderId);
-    const result = await this.pool.query(
-      `SELECT * FROM ${this.attemptsTable}
-      WHERE tenant_id=$1 AND work_order_id=$2 ORDER BY attempt_no ASC`,
-      [tenantId, workOrderId],
-    );
-    return result.rows.map((row) => mapWorkAttempt(row as Record<string, unknown>));
+    return await listStoredWorkAttempts(this.pool, this.attemptsTable, tenantId, workOrderId);
+  }
+
+  async loadGroupWorkspace(input: Parameters<OrgGroupAgentStore['loadGroupWorkspace']>[0]) {
+    assertTexts(input.tenantId, ...input.bindingIds);
+    return await loadStoredGroupWorkspace({
+      pool: this.pool, tenantId: input.tenantId, bindingIds: [...new Set(input.bindingIds)],
+      limitPerBinding: Math.max(1, Math.min(100, Math.trunc(input.limitPerBinding ?? 50))),
+      tables: {
+        conversations: this.conversationsTable, workOrders: this.workOrdersTable,
+        attempts: this.attemptsTable, memories: this.memoriesTable,
+      },
+    });
   }
 
   async transitionWorkAttempt(input: {
@@ -873,7 +879,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     if (input.memoryScope === 'task_checkpoint' && !input.workOrderId)
       throw new Error('ORG_AGENT_MEMORY_SCOPE_INVALID');
     const binding = await this.getBindingById(input.tenantId, input.bindingId);
-    if (!binding || binding.agentId !== input.agentId)
+    if (!binding || binding.agentId !== input.agentId || binding.revision !== input.policyRevision)
       throw new Error('ORG_AGENT_MEMORY_ASSOCIATION_INVALID');
     let effectiveWorkConversationId = input.workConversationId;
     if (input.memoryScope === 'task_checkpoint') {

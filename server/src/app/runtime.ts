@@ -2749,7 +2749,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
-    isOrgAgentRuntimeV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
+    isRuntimeWorkerV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
   });
 
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
@@ -2900,7 +2900,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
     agentDwsGroupBindingUpdated: agentDwsRuntime?.onGroupBindingUpdated,
     agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
-    isOrgAgentRuntimeV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
+    isOrgAgentRuntimeV2Ready: agentDwsRuntime?.isOrgAgentRuntimeV2Ready,
     getNotionConnection,
     disconnectNotionConnection,
     googleWorkspaceOAuthService,

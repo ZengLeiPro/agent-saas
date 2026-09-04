@@ -25,6 +25,7 @@ import type { PgRunStore } from '../runtime/runStore.js';
 import type { UserIdentity } from '../types/index.js';
 import type { Logger } from '../utils/logger.js';
 import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
+import { createOrgAgentRuntimeCapabilityProbe } from './orgAgentRuntimeCapability.js';
 
 export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) => Promise<{
   baseUrl: string;
@@ -36,6 +37,7 @@ export interface AgentDwsRuntimeBundle {
   authFlowService: AgentDwsAuthFlowService;
   messageRouter?: AgentDwsMessageRouter;
   eventGateway: DwsPersonalEventGateway;
+  isOrgAgentRuntimeV2Ready(account: AgentDwsAccountRecord): Promise<boolean>;
   onContextPolicyUpdated(account: AgentDwsAccountRecord): Promise<void>;
   onGroupBindingUpdated(account: AgentDwsAccountRecord, conversationId: string): Promise<void>;
   onEnabledChanged(account: AgentDwsAccountRecord, enabled: boolean): Promise<void>;
@@ -111,7 +113,7 @@ export async function createAgentDwsRuntime(options: {
   remoteAvailable: boolean;
   enableWorker: boolean;
   isExecutionEnabled?: () => boolean | Promise<boolean>;
-  isOrgAgentRuntimeV2Ready?: () => boolean;
+  isRuntimeWorkerV2Ready: () => boolean;
   logger: Logger;
 }): Promise<AgentDwsRuntimeBundle | undefined> {
   if (!options.pgEventStore || !options.remoteAvailable) {
@@ -150,6 +152,10 @@ export async function createAgentDwsRuntime(options: {
     auditStore: options.governanceAuditStore,
     resolveServerRemote: options.resolveServerRemote,
   });
+  const isOrgAgentRuntimeV2Ready = createOrgAgentRuntimeCapabilityProbe({
+    isRuntimeWorkerV2Ready: options.isRuntimeWorkerV2Ready,
+    resolveServerRemote: options.resolveServerRemote,
+  });
   const messageRouter = options.messageStore
     ? new AgentDwsMessageRouter({
         agentCwd: options.agentCwd,
@@ -173,9 +179,7 @@ export async function createAgentDwsRuntime(options: {
           const membership = await options.membershipStore?.getMembership(tenantId, userId);
           return membership?.status === 'active' ? membership.persona : undefined;
         },
-        ...(options.isOrgAgentRuntimeV2Ready
-          ? { isOrgAgentRuntimeV2Ready: options.isOrgAgentRuntimeV2Ready }
-          : {}),
+        isOrgAgentRuntimeV2Ready,
         authorizeCompletionRequester: async (tenantId, agentId, userId) => {
           const [membership, user] = await Promise.all([
             options.membershipStore?.getMembership(tenantId, userId),
@@ -290,6 +294,7 @@ export async function createAgentDwsRuntime(options: {
     authFlowService,
     messageRouter,
     eventGateway,
+    isOrgAgentRuntimeV2Ready,
     async onContextPolicyUpdated(account) {
       await contextRuntime?.onContextPolicyUpdated(account);
     },

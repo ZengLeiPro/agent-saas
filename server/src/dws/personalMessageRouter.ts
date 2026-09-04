@@ -15,10 +15,7 @@ import {
   type AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
 import type { RunStore } from '../runtime/runStore.js';
-import {
-  type OrgAgentChannelBinding,
-  type OrgGroupAgentStore,
-} from '../data/orgGroupAgents/index.js';
+import { type OrgAgentChannelBinding, type OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { deriveOrgAgentSharedView } from '../runtime/orgAgentTaskWorkspace.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
@@ -34,10 +31,8 @@ import {
   type SharedGroupResolution,
 } from './orgAgentSharedGroupContext.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
-import {
-  createRedactedTerminalNotice,
-  deliverNextOrgAgentIntent,
-} from './orgAgentDeliveryWorker.js';
+import { deliverNextOrgAgentIntent } from './orgAgentDeliveryWorker.js';
+import { OrgAgentVisibleReplyService, settleFrontReply } from './orgAgentVisibleReply.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
@@ -48,6 +43,7 @@ const DEFAULT_MAX_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 32;
 const ACTIVE_RUN_RECHECK_MS = 30_000;
 const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
+const DEFAULT_FRONT_REPLY_DEADLINE_MS = 3_000;
 const MAX_EVENT_ID_LENGTH = 512;
 const MAX_CONVERSATION_ID_LENGTH = 1_024;
 const MAX_MESSAGE_CONTENT_LENGTH = 100_000;
@@ -101,7 +97,7 @@ export interface AgentDwsMessageRouterOptions {
     tenantId: string,
     userId: string,
   ) => Promise<'member' | 'org_admin' | undefined> | 'member' | 'org_admin' | undefined;
-  isOrgAgentRuntimeV2Ready?: () => boolean;
+  isOrgAgentRuntimeV2Ready?: (account: AgentDwsAccountRecord) => boolean | Promise<boolean>;
   authorizeCompletionRequester?: (
     tenantId: string,
     agentId: string,
@@ -132,6 +128,7 @@ export interface AgentDwsMessageRouterOptions {
   leaseTtlMs?: number;
   leaseRenewMs?: number;
   maxConcurrency?: number;
+  frontReplyDeadlineMs?: number;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -145,6 +142,8 @@ export class AgentDwsMessageRouter {
   private readonly leaseTtlMs: number;
   private readonly leaseRenewMs: number;
   private readonly maxConcurrency: number;
+  private readonly frontReplyDeadlineMs: number;
+  private readonly visibleReply: OrgAgentVisibleReplyService;
   private readonly active = new Set<Promise<void>>();
   private readonly activeAborts = new Set<AbortController>();
   private timer?: NodeJS.Timeout;
@@ -156,7 +155,17 @@ export class AgentDwsMessageRouter {
     this.pollMs = boundedPositive(options.pollMs, DEFAULT_POLL_MS);
     this.leaseTtlMs = boundedPositive(options.leaseTtlMs, DEFAULT_LEASE_TTL_MS);
     this.leaseRenewMs = boundedPositive(options.leaseRenewMs, DEFAULT_LEASE_RENEW_MS);
-    this.maxConcurrency = Math.min(boundedPositive(options.maxConcurrency, DEFAULT_MAX_CONCURRENCY), MAX_CONCURRENCY);
+    this.maxConcurrency = Math.min(
+      boundedPositive(options.maxConcurrency, DEFAULT_MAX_CONCURRENCY),
+      MAX_CONCURRENCY,
+    );
+    this.frontReplyDeadlineMs = boundedPositive(
+      options.frontReplyDeadlineMs,
+      DEFAULT_FRONT_REPLY_DEADLINE_MS,
+    );
+    this.visibleReply = new OrgAgentVisibleReplyService(
+      options, this.workerId, this.leaseTtlMs, this.frontReplyDeadlineMs,
+    );
     if (this.leaseRenewMs >= this.leaseTtlMs) {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
@@ -453,7 +462,7 @@ export class AgentDwsMessageRouter {
         item.inboxId, this.workerId, item.leaseFence, shared.routingClarification,
       );
       await this.options.messageStore.markReplyAttemptStarted(item.inboxId, this.workerId, item.leaseFence);
-      await this.sendVisibleReply(account, item, shared.routingClarification, shared, 'front_reply', 'replied');
+      await this.visibleReply.send(account, item, shared.routingClarification, shared, 'front_reply', 'replied');
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
     }
@@ -470,18 +479,45 @@ export class AgentDwsMessageRouter {
       runId,
     );
 
+    const frontReplyDeadline =
+      shared && !serviceEvent ? this.visibleReply.schedule(account, item, shared) : undefined;
     let responseText = claimed.responseText;
-    if (responseText === undefined) {
-      responseText = item.runId
-        ? await this.recoverOrResumeMissingRun(item, sessionId, runId, account, requester ?? serviceIdentity(account), abortController, shared)
-        : await this.dispatch(item, sessionId, runId, account, requester ?? serviceIdentity(account), abortController, shared);
-      if (!responseText.trim()) throw new Error('Agent runtime completed without a reply');
-      await this.options.messageStore.saveDispatchResult(
-        item.inboxId,
-        this.workerId,
-        item.leaseFence,
-        responseText,
-      );
+    try {
+      if (responseText === undefined) {
+        responseText = item.runId
+          ? await this.recoverOrResumeMissingRun(
+              item,
+              sessionId,
+              runId,
+              account,
+              requester ?? serviceIdentity(account),
+              abortController,
+              shared,
+            )
+          : await this.dispatch(
+              item,
+              sessionId,
+              runId,
+              account,
+              requester ?? serviceIdentity(account),
+              abortController,
+              shared,
+            );
+        if (!responseText.trim()) throw new Error('Agent runtime completed without a reply');
+        await this.options.messageStore.saveDispatchResult(
+          item.inboxId,
+          this.workerId,
+          item.leaseFence,
+          responseText,
+        );
+      }
+    } catch (error) {
+      if (error instanceof AgentDwsMessageDeferredError) {
+        await frontReplyDeadline?.fireNow();
+      } else {
+        await frontReplyDeadline?.cancel();
+      }
+      throw error;
     }
 
     if (abortController.signal.aborted) throw new Error('Agent DWS inbox processing aborted');
@@ -499,7 +535,11 @@ export class AgentDwsMessageRouter {
       || !matchesInboxAccountIdentity(item, replyAccount)) {
       throw new Error('Agent DWS account identity changed before reply');
     }
-    await this.sendVisibleReply(replyAccount, item, responseText, shared, 'front_reply', 'replied');
+    await settleFrontReply(frontReplyDeadline,
+      () => this.visibleReply.send(replyAccount, item, responseText, shared,
+        'front_reply', 'replied', 'first'),
+      () => this.visibleReply.send(replyAccount, item, responseText, shared,
+        'front_reply', 'replied', 'final'));
     await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
     this.options.logger?.info(
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,
@@ -521,7 +561,7 @@ export class AgentDwsMessageRouter {
     const responseText = rejectionMessage(reason);
     await this.options.messageStore.saveDispatchResult(item.inboxId, this.workerId, item.leaseFence, responseText);
     await this.options.messageStore.markReplyAttemptStarted(item.inboxId, this.workerId, item.leaseFence);
-    await this.sendVisibleReply(account, item, responseText, undefined, 'access_rejection', 'rejected');
+    await this.visibleReply.send(account, item, responseText, undefined, 'access_rejection', 'rejected');
     await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
     this.options.logger?.warn(
       `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reason}`,
@@ -619,6 +659,7 @@ export class AgentDwsMessageRouter {
         allowedToolNames: sharedAllowedTools(shared),
         allowedSkillIds: [...shared.binding.effectiveConfig.capabilities.skillIds],
         allowedSourceIds: [...shared.binding.effectiveConfig.knowledge.sourceIds],
+        dwsResourceIds: [...shared.binding.effectiveConfig.capabilities.dwsResourceIds],
         contextEnabled: shared.binding.effectiveConfig.knowledge.contextEnabled,
         taskVisibility: shared.binding.policy.taskVisibility,
         ...(shared.governanceRole ? { actorRole: shared.governanceRole } : {}),
@@ -690,143 +731,7 @@ export class AgentDwsMessageRouter {
   ): Promise<SharedGroupResolution> {
     return await resolveSharedGroupContext(this.options, account, item, requester, senderName);
   }
-  private async sendVisibleReply(
-    account: AgentDwsAccountRecord,
-    item: AgentDwsInboxRecord,
-    text: string,
-    shared: SharedGroupContext | undefined,
-    deliveryKind: 'front_reply' | 'access_rejection',
-    disposition: 'replied' | 'rejected',
-  ): Promise<void> {
-    // Provider idempotency must remain byte-for-byte compatible with the legacy sender
-    // during N/N+1 rollout and rollback. DeliveryIntent keeps its richer kind separately.
-    const idempotencyKey = deterministicId('agent-dws-reply', `${item.accountId}:${item.eventId}`);
-    if (!this.options.orgGroupAgentStore) {
-      await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey);
-      return;
-    }
-    const visibility = shared?.completionWork?.visibility ?? shared?.binding.policy.taskVisibility;
-    const requesterAllowed = shared?.completionWork?.visibility === 'requester_only'
-      && shared.completionWork.createdByActor.mappedUserId
-      ? await this.options.authorizeCompletionRequester?.(
-          shared.binding.tenantId, shared.binding.agentId,
-          shared.completionWork.createdByActor.mappedUserId,
-        ) : false;
-    const visibleText = shared?.completionWork?.visibility === 'requester_only' && !requesterAllowed
-      ? '任务已经结束，但你的组织权限已发生变化，当前无法展示任务结果。请联系管理员确认权限。'
-      : text;
-    const destination = shared?.completionWork?.visibility === 'requester_only'
-      ? {
-          provider: 'dingtalk' as const,
-          accountId: item.accountId,
-          conversationId: item.conversationId,
-          kind: 'direct' as const,
-          peerOpenId: shared.completionWork.createdByActor.openId,
-        }
-      : {
-          provider: 'dingtalk' as const,
-          accountId: item.accountId,
-          conversationId: item.conversationId,
-          kind: item.eventType === 'user_im_message_receive_at' ? 'group' as const : 'direct' as const,
-          ...(item.eventType === 'user_im_message_receive_o2o_all' && item.senderOpenDingtalkId
-            ? { peerOpenId: item.senderOpenDingtalkId } : {}),
-        };
-    const delivery = await this.options.orgGroupAgentStore.createDelivery({
-      tenantId: item.tenantId, inboxId: item.inboxId, accountId: item.accountId,
-      conversationId: item.conversationId,
-      ...(shared ? { agentId: shared.binding.agentId, bindingId: shared.binding.bindingId,
-        conversationSpaceId: shared.binding.conversationSpaceId,
-        workConversationId: shared.workConversation.workConversationId,
-        policyRevision: shared.binding.revision,
-        ...(visibility ? { visibility } : {}) } : {}),
-      ...(typeof item.payload.workOrderId === 'string' ? { sourceWorkOrderId: item.payload.workOrderId } : {}),
-      ...(typeof item.payload.attemptId === 'string' ? { sourceAttemptId: item.payload.attemptId } : {}),
-      source: item.payload.source === 'background_task_completion' ? 'background_completion' : 'command',
-      deliveryKind: item.payload.source === 'background_task_completion' ? 'task_completion' : deliveryKind,
-      disposition,
-      destination,
-      content: visibleText, idempotencyKey,
-    });
-    if (delivery.deliveryState === 'sent' || delivery.deliveryState === 'unknown'
-      || delivery.deliveryState === 'dead_letter') return;
-    if (shared) {
-      const [current, currentAccount] = await Promise.all([
-        this.options.orgGroupAgentStore.getBinding(
-          shared.binding.tenantId, shared.binding.accountId, shared.binding.conversationId,
-        ),
-        this.options.accountStore.getForTenant(shared.binding.tenantId, shared.binding.accountId),
-      ]);
-      const currentAgent = this.options.orgAgentStore?.get(shared.binding.agentId);
-      if (!current || current.bindingId !== shared.binding.bindingId
-        || current.agentId !== shared.binding.agentId
-        || !currentAccount || currentAccount.status !== 'active'
-        || !hasExactAgentDwsProfile(currentAccount)
-        || currentAccount.agentId !== shared.binding.agentId) {
-        await this.options.orgGroupAgentStore.markDeliveryDeadLetter(delivery.deliveryId, 'ORG_AGENT_CHANNEL_LIVE_DENY');
-        return;
-      }
-      if (delivery.deliveryKind === 'task_completion' && current.policy.completion === 'silent') {
-        await this.options.orgGroupAgentStore.markDeliveryDeadLetter(
-          delivery.deliveryId,
-          'ORG_AGENT_COMPLETION_SILENT',
-        );
-        return;
-      }
-      if (current.activationState !== 'active' || !current.enabled || !current.policy.enabled
-        || current.policy.liveDeny || !currentAgent || !currentAgent.enabled
-        || currentAgent.tenantId !== shared.binding.tenantId) {
-        if (delivery.deliveryKind === 'task_completion')
-          await createRedactedTerminalNotice(this.options.orgGroupAgentStore, delivery);
-        await this.options.orgGroupAgentStore.markDeliveryDeadLetter(
-          delivery.deliveryId,
-          'ORG_AGENT_CHANNEL_LIVE_DENY',
-        );
-        return;
-      }
-    }
-    const claimed = await this.options.orgGroupAgentStore.claimDelivery(delivery.deliveryId, this.workerId, this.leaseTtlMs);
-    try {
-      const receipt = await this.options.sender.send(
-        account,
-        outboundEvent(item, destination),
-        visibleText,
-        idempotencyKey,
-      );
-      if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
-      await this.options.orgGroupAgentStore.markDeliverySent(delivery.deliveryId, this.workerId, claimed.leaseFence, receipt);
-    } catch (error) {
-      await this.options.orgGroupAgentStore.markDeliveryUnknown(delivery.deliveryId, this.workerId, claimed.leaseFence, error);
-    }
-  }
-}
 
-function outboundEvent(
-  item: AgentDwsInboxRecord,
-  destination: { kind: 'group' | 'direct'; peerOpenId?: string },
-): DwsPersonalEvent {
-  if (destination.kind === 'group') return inboxEvent(item);
-  return {
-    type: 'user_im_message_receive_o2o_all',
-    eventId: item.eventId,
-    conversationId: item.conversationId,
-    senderOpenDingtalkId: destination.peerOpenId,
-    content: item.content,
-    ...(item.eventTimestamp ? { timestamp: new Date(item.eventTimestamp).getTime() } : {}),
-    raw: item.payload,
-  };
-}
-
-function inboxEvent(item: AgentDwsInboxRecord): DwsPersonalEvent {
-  return {
-    type: item.eventType,
-    eventId: item.eventId,
-    conversationId: item.conversationId,
-    ...(item.messageId ? { messageId: item.messageId } : {}),
-    ...(item.senderOpenDingtalkId ? { senderOpenDingtalkId: item.senderOpenDingtalkId } : {}),
-    content: item.content,
-    ...(item.eventTimestamp ? { timestamp: new Date(item.eventTimestamp).getTime() } : {}),
-    raw: item.payload,
-  };
 }
 
 function isV1InboxWithoutIdentity(item: AgentDwsInboxRecord): boolean {
@@ -846,7 +751,7 @@ function matchesInboxAccountIdentity(
     && identity.dingtalkUserId === account.dingtalkUserId;
 }
 
-function buildSystemContext(
+export function buildSystemContext(
   account: AgentDwsAccountRecord,
   item: AgentDwsInboxRecord,
   shared?: SharedGroupContext,
@@ -856,19 +761,34 @@ function buildSystemContext(
     `你正在通过组织 Agent「${bounded(shared?.binding.effectiveConfig.identity.displayName?.trim() || account.displayName)}」的专属钉钉成员账号参与工作。`,
     '回复会由平台以该成员账号发回当前钉钉会话。不要声称自己是机器人，也不要泄露内部账号、事件或会话标识。',
     '需要澄清时直接用普通文本提问，不要调用 AskUserQuestion；当前钉钉通道不承载平台审批交互。',
-    ...(isBackgroundCompletion ? [
-      '当前消息是平台生成的 durable Worker 完成通知，不是用户的新请求。请播报其中的任务 ID、准确终态和精炼结果；不要再创建 Worker。',
-    ] : []),
-    ...(shared ? [
-      `当前工作空间：${shared.binding.conversationSpaceId}；当前话题：${shared.workConversation.workConversationId}。`,
-      `本轮调用者身份可信度：${shared.externalActor.kind === 'service_event' ? 'service' : shared.externalActor.assurance}。只能调用本群 effective config 明确开放的工具。`,
-      '这是组织共享会话。禁止读取请求者个人记忆、个人连接器或其他群内容；未映射身份只能处理本群允许的组织共享信息。',
-      ...(shared.visibleWorkOrders.length ? [
-        `当前话题任务（短号仅用于路由和歧义澄清）：${bounded(JSON.stringify(shared.visibleWorkOrders.map(work => ({ shortId: work.shortId, title: work.title, state: work.state, attempt: work.currentAttemptNo }))), 8_000)}`,
-        '需要操作既有任务时，用 BackgroundTask 的 amend/pause/resume/review/reassign/cancel；可直接把 W-短号作为 task_id。除非存在歧义，不要主动向用户展示内部短号。',
-      ] : []),
-      ...(shared.memories.length ? [`当前已治理记忆（只读）：${bounded(JSON.stringify(shared.memories.map(memory => ({ scope: memory.memoryScope, content: memory.content }))), 12_000)}`] : []),
-    ] : []),
+    ...(isBackgroundCompletion
+      ? [
+          '当前消息是平台生成的 durable Worker 完成通知，不是用户的新请求。请播报其中的任务 ID、准确终态和精炼结果；不要再创建 Worker。',
+        ]
+      : []),
+    ...(shared
+      ? [
+          `当前工作空间：${shared.binding.conversationSpaceId}；当前话题：${shared.workConversation.workConversationId}。`,
+          `本轮调用者身份可信度：${shared.externalActor.kind === 'service_event' ? 'service' : shared.externalActor.assurance}。只能调用本群 effective config 明确开放的工具。`,
+          ...(shared.binding.effectiveConfig.instructions.system.trim()
+            ? [
+                `当前群管理员指令：${bounded(shared.binding.effectiveConfig.instructions.system.trim(), 8_000)}`,
+              ]
+            : []),
+          '这是组织共享会话。禁止读取请求者个人记忆、个人连接器或其他群内容；未映射身份只能处理本群允许的组织共享信息。',
+          ...(shared.visibleWorkOrders.length
+            ? [
+                `当前话题任务（短号仅用于路由和歧义澄清）：${bounded(JSON.stringify(shared.visibleWorkOrders.map((work) => ({ shortId: work.shortId, title: work.title, state: work.state, attempt: work.currentAttemptNo }))), 8_000)}`,
+                '需要操作既有任务时，用 BackgroundTask 的 amend/pause/resume/review/reassign/cancel；可直接把 W-短号作为 task_id。除非存在歧义，不要主动向用户展示内部短号。',
+              ]
+            : []),
+          ...(shared.memories.length
+            ? [
+                `当前已治理记忆（只读）：${bounded(JSON.stringify(shared.memories.map((memory) => ({ scope: memory.memoryScope, content: memory.content }))), 12_000)}`,
+              ]
+            : []),
+        ]
+      : []),
     `当前入口：${item.eventType === 'user_im_message_receive_at' ? '群聊 @' : '单聊'}。`,
     ...(item.eventType === 'user_im_message_receive_at'
       ? ['当前钉钉接入只会收到群内 @ 消息；未 @ 的续话不会送达，请在需要时如实说明该限制。'] : []),

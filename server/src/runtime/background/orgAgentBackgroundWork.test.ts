@@ -1,7 +1,20 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../security/trustedFile.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../security/trustedFile.js')>();
+  const [{ readFile }, { join: joinPath }] = await Promise.all([
+    import('node:fs/promises'),
+    import('node:path'),
+  ]);
+  return {
+    ...actual,
+    readTrustedFile: async (root: string, path: string) => await readFile(joinPath(root, path)),
+  };
+});
 
 import type { OrgAgentWorkOrder, OrgGroupAgentStore } from '../../data/orgGroupAgents/index.js';
 import type { RunRecord, RunStore } from '../runStore.js';
@@ -12,6 +25,7 @@ import {
   OrgAgentBackgroundWorkCoordinator,
   prepareOrgAgentBackgroundWork,
 } from './orgAgentBackgroundWork.js';
+import { verifyOrgAgentContinuationArtifacts } from './orgAgentContinuation.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -58,6 +72,26 @@ const orgChannel = {
   },
 };
 
+function liveBinding() {
+  return {
+    bindingId: 'binding-1',
+    tenantId: 'tenant-1',
+    accountId: 'account-1',
+    agentId: 'agent-1',
+    workspaceId: 'ws_tenant-1__agent_agent-1',
+    revision: 3,
+    effectiveConfig: {
+      identity: {},
+      instructions: { system: '' },
+      knowledge: { contextEnabled: false, sourceIds: [] },
+      capabilities: { skillIds: [], toolNames: [], dwsResourceIds: [] },
+      memory: { readAgent: true, readConversation: true, adminWriteConversation: true },
+      access: { triggerRoles: [], approvalRoles: [] },
+      speech: { proactive: false, requireMention: true },
+    },
+  };
+}
+
 function previousRun(sharedReadOnlySubPath: string): RunRecord {
   return {
     runId: 'run-1',
@@ -91,6 +125,25 @@ function previousRun(sharedReadOnlySubPath: string): RunRecord {
   } as RunRecord;
 }
 
+function durableAttempt(overrides: Record<string, unknown> = {}) {
+  return {
+    attemptId: 'attempt-1',
+    runtimeRunId: 'run-1',
+    attemptNo: 1,
+    status: 'failed',
+    publishState: 'rejected',
+    checkpoint: { runtimeRunId: 'run-1', status: 'failed', finishedAt: now() },
+    resultEnvelope: {
+      status: 'failed',
+      summary: '上一轮已定位异常行',
+      facts: [{ key: 'checkedRows', value: '120' }],
+      artifacts: [],
+      writeScope: ['/old-task'],
+    },
+    ...overrides,
+  };
+}
+
 describe('OrgAgentBackgroundWorkCoordinator', () => {
   it('derives an isolated task mount beside the exact read-only shared topic view', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-layout-'));
@@ -100,7 +153,10 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     const result = await prepareOrgAgentBackgroundWork({
       config: {
         agentCwd: root,
-        orgGroupAgentStore: { createWorkOrder: vi.fn().mockResolvedValue(createdWork) },
+        orgGroupAgentStore: {
+          getBindingById: vi.fn().mockResolvedValue(liveBinding()),
+          createWorkOrder: vi.fn().mockResolvedValue(createdWork),
+        },
       } as never,
       context: {
         runId: 'parent-run', toolCallId: 'tool-1',
@@ -145,10 +201,17 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     };
     const store = {
       getWorkOrder: vi.fn().mockResolvedValue(work),
-      listWorkAttempts: vi
+      getBindingById: vi.fn().mockResolvedValue(liveBinding()),
+      listWorkAttempts: vi.fn().mockResolvedValue([durableAttempt()]),
+      queueWorkOrderAttempt: vi
         .fn()
-        .mockResolvedValue([{ attemptId: 'attempt-1', runtimeRunId: 'run-1' }]),
-      queueWorkOrderAttempt: vi.fn().mockResolvedValue({ ...work, state: 'queued', version: 5, shortId: 'W-123456ABCDEF', control: { revision: 1, supplements: [], workerType: 'general' } }),
+        .mockResolvedValue({
+          ...work,
+          state: 'queued',
+          version: 5,
+          shortId: 'W-123456ABCDEF',
+          control: { revision: 1, supplements: [], workerType: 'general' },
+        }),
       createWorkAttempt: vi.fn().mockResolvedValue(undefined),
       transitionWorkAttempt: vi.fn(),
       transitionWorkOrder: vi.fn(),
@@ -186,22 +249,22 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     } as unknown as RunStore;
     const upsertSession = vi.fn();
     const sessionCatalog = {
-      get: vi
-        .fn()
-        .mockResolvedValue({
-          sessionId: 'session-1',
-          userId: 'service-user',
-          username: 'agent-dws:agent-1',
-          userRole: 'user',
-          tenantId: 'tenant-1',
-          channel: 'dingtalk',
-          cwd: '/old-task',
-          modelRef: 'models/model-1',
-          executionTarget: 'server-container',
-          workspaceId: 'old-workspace',
-          status: 'error',
-          principal: orgChannel.agentPrincipal,
-        }),
+      get: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        userId: 'service-user',
+        username: 'agent-dws:agent-1',
+        userRole: 'user',
+        tenantId: 'tenant-1',
+        channel: 'dingtalk',
+        cwd: '/old-task',
+        modelRef: 'models/model-1',
+        executionTarget: 'server-container',
+        workspaceId: 'old-workspace',
+        status: 'error',
+        orgAgentId: 'agent-1',
+        orgAgentSnapshot: {} as never,
+        principal: orgChannel.agentPrincipal,
+      }),
       upsert: upsertSession,
     } as unknown as SessionCatalog;
     const coordinator = new OrgAgentBackgroundWorkCoordinator({
@@ -240,6 +303,68 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     });
   });
 
+  it('rejects retry metadata that points at another tenant or workspace before queueing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'org-agent-retry-scope-'));
+    roots.push(root);
+    const work = {
+      workOrderId: 'work-1',
+      tenantId: 'tenant-1',
+      agentId: 'agent-1',
+      bindingId: 'binding-1',
+      workConversationId: 'wc-1',
+      state: 'failed',
+      currentAttemptNo: 1,
+      version: 4,
+    } as unknown as OrgAgentWorkOrder;
+    for (const scenario of ['foreign_mount', 'foreign_principal', 'foreign_session_workspace']) {
+      const previous = previousRun(
+        scenario === 'foreign_mount'
+          ? 'tenant-b/.agent-agent-b/shared/binding-1/wc-1'
+          : 'tenant-1/.agent-agent-1/shared/binding-1/wc-1',
+      );
+      if (scenario === 'foreign_principal') {
+        previous.metadata.orgAgentChannel = {
+          ...orgChannel,
+          agentPrincipal: { ...orgChannel.agentPrincipal, tenantId: 'tenant-b' },
+        };
+      }
+      const queueWorkOrderAttempt = vi.fn();
+      const coordinator = new OrgAgentBackgroundWorkCoordinator({
+        agentCwd: root,
+        orgGroupAgentStore: {
+          getWorkOrder: vi.fn().mockResolvedValue(work),
+          getBindingById: vi.fn().mockResolvedValue(liveBinding()),
+          listWorkAttempts: vi.fn().mockResolvedValue([durableAttempt()]),
+          queueWorkOrderAttempt,
+        },
+        runStore: { get: vi.fn().mockResolvedValue(previous), upsertPending: vi.fn() },
+        sessionCatalog: {
+          get: vi.fn().mockResolvedValue({
+            sessionId: 'session-1',
+            userId: 'service-user',
+            username: 'agent-dws:agent-1',
+            tenantId: 'tenant-1',
+            channel: 'dingtalk',
+            cwd: '/old-task',
+            orgAgentId: 'agent-1',
+            orgAgentSnapshot: {} as never,
+            principal:
+              scenario === 'foreign_session_workspace'
+                ? { ...orgChannel.agentPrincipal, workspaceId: 'ws_tenant-b__agent_agent-b' }
+                : orgChannel.agentPrincipal,
+          }),
+          upsert: vi.fn(),
+        },
+      } as never);
+      await expect(coordinator.retry('tenant-1', 'work-1', 4)).rejects.toThrow(
+        scenario === 'foreign_mount'
+          ? 'ORG_AGENT_WORK_ORDER_SHARED_ROOT_MISMATCH'
+          : 'ORG_AGENT_WORK_ORDER_IDENTITY_MISMATCH',
+      );
+      expect(queueWorkOrderAttempt).not.toHaveBeenCalled();
+    }
+  });
+
   it('rebuilds every attempt from one immutable base prompt without accumulating continuations', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-prompt-'));
     roots.push(root);
@@ -248,7 +373,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     first.metadata.prompt = 'P';
     delete first.metadata.basePrompt;
     const runs = new Map<string, RunRecord>([[first.runId, first]]);
-    const attempts = [{ attemptId: 'attempt-1', runtimeRunId: first.runId, attemptNo: 1 }];
+    const attempts = [durableAttempt({ runtimeRunId: first.runId })];
     let work: OrgAgentWorkOrder = {
       workOrderId: 'work-1', tenantId: 'tenant-1', agentId: 'agent-1', bindingId: 'binding-1',
       workConversationId: 'wc-1', idempotencyKey: 'key', title: '整理异常', state: 'failed' as const,
@@ -259,6 +384,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     };
     const store = {
       getWorkOrder: vi.fn().mockImplementation(async () => work),
+      getBindingById: vi.fn().mockResolvedValue(liveBinding()),
       listWorkAttempts: vi.fn().mockImplementation(async () => [...attempts]),
       queueWorkOrderAttempt: vi.fn().mockImplementation(async (input) => {
         work = {
@@ -275,6 +401,16 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
           attemptId: input.attemptId,
           runtimeRunId: input.runtimeRunId,
           attemptNo: work.currentAttemptNo,
+          status: 'failed',
+          publishState: 'rejected',
+          checkpoint: { runtimeRunId: input.runtimeRunId, status: 'failed', finishedAt: now() },
+          resultEnvelope: {
+            status: 'failed',
+            summary: `attempt ${work.currentAttemptNo}`,
+            facts: [],
+            artifacts: [],
+            writeScope: [],
+          },
         });
       }),
       transitionWorkAttempt: vi.fn(),
@@ -297,10 +433,20 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     } as unknown as RunStore;
     const sessionCatalog = {
       get: vi.fn().mockResolvedValue({
-        sessionId: 'session-1', userId: 'service-user', username: 'agent-dws:agent-1',
-        userRole: 'user', tenantId: 'tenant-1', channel: 'dingtalk', cwd: '/old-task',
-        modelRef: 'models/model-1', executionTarget: 'server-container', workspaceId: 'old-workspace',
-        status: 'error', principal: orgChannel.agentPrincipal,
+        sessionId: 'session-1',
+        userId: 'service-user',
+        username: 'agent-dws:agent-1',
+        userRole: 'user',
+        tenantId: 'tenant-1',
+        channel: 'dingtalk',
+        cwd: '/old-task',
+        modelRef: 'models/model-1',
+        executionTarget: 'server-container',
+        workspaceId: 'old-workspace',
+        status: 'error',
+        orgAgentId: 'agent-1',
+        orgAgentSnapshot: {} as never,
+        principal: orgChannel.agentPrincipal,
       }),
       upsert: vi.fn(),
     } as unknown as SessionCatalog;
@@ -324,17 +470,132 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     });
 
     expect(second.metadata).toMatchObject({ basePrompt: 'P', attemptNo: 2 });
-    expect(second.metadata.prompt).toBe(
-      'P\n\n<work-order-continuation revision="2">\n1. [补充要求] A\n</work-order-continuation>',
+    expect(second.metadata.prompt).toContain('P\n\n<work-order-prior-attempt');
+    expect(second.metadata.prompt).toContain('上一轮已定位异常行');
+    expect(second.metadata.prompt).toContain(
+      '<work-order-continuation revision="2">\n1. [补充要求] A\n</work-order-continuation>',
     );
     expect(third.metadata).toMatchObject({ basePrompt: 'P', attemptNo: 3 });
-    expect(third.metadata.prompt).toBe(
-      'P\n\n<work-order-continuation revision="3">\n1. [补充要求] A\n2. [补充要求] B\n</work-order-continuation>',
+    expect(third.metadata.prompt).toContain(
+      '<work-order-continuation revision="3">\n1. [补充要求] A\n2. [补充要求] B\n</work-order-continuation>',
     );
+    expect(third.metadata.prompt).not.toContain('revision=\"2\"');
     expect(fourth.metadata).toMatchObject({ basePrompt: 'P', attemptNo: 4 });
-    expect(fourth.metadata.prompt).toBe(
-      'P\n\n<work-order-continuation revision="4">\n1. [补充要求] B\n</work-order-continuation>',
+    expect(fourth.metadata.prompt).toContain(
+      '<work-order-continuation revision="4">\n1. [补充要求] B\n</work-order-continuation>',
     );
+    expect(fourth.metadata.prompt).not.toContain('revision=\"3\"');
+  });
+
+  it('injects the previous result and published artifacts as an explicit read-only continuation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'org-agent-published-continuation-'));
+    roots.push(root);
+    const previous = previousRun('tenant-1/.agent-agent-1/shared/binding-1/wc-1');
+    previous.status = 'completed';
+    const work = {
+      workOrderId: 'work-1',
+      tenantId: 'tenant-1',
+      agentId: 'agent-1',
+      bindingId: 'binding-1',
+      workConversationId: 'wc-1',
+      state: 'completed',
+      currentAttemptNo: 1,
+      version: 2,
+      control: { revision: 1, supplements: [], workerType: 'general' },
+    } as unknown as OrgAgentWorkOrder;
+    const publishedContent = Buffer.from('x'.repeat(12));
+    const publishedDigest = `sha256:${createHash('sha256').update(publishedContent).digest('hex')}`;
+    const attempt = durableAttempt({
+      status: 'completed',
+      publishState: 'published',
+      resultEnvelope: {
+        status: 'completed',
+        summary: '完成初稿',
+        facts: [],
+        artifacts: [{ path: '报告.md', digest: publishedDigest, size: 12 }],
+        writeScope: ['/old-task'],
+      },
+      artifactManifest: {
+        version: 1,
+        files: [{ path: '报告.md', digest: publishedDigest, size: 12 }],
+        totalBytes: 12,
+        capturedAt: now(),
+        publishedRoot: 'published/work-1/attempt-1',
+      },
+    });
+    const publishedRoot = join(
+      root,
+      'tenant-1',
+      '.agent-agent-1',
+      'shared',
+      'binding-1',
+      'wc-1',
+      'published',
+      'work-1',
+      'attempt-1',
+    );
+    await mkdir(publishedRoot, { recursive: true });
+    await writeFile(join(publishedRoot, '报告.md'), publishedContent);
+    let staged: RunRecord | undefined;
+    const store = {
+      getWorkOrder: vi.fn().mockResolvedValue(work),
+      getBindingById: vi.fn().mockResolvedValue(liveBinding()),
+      listWorkAttempts: vi.fn().mockResolvedValue([attempt]),
+      queueWorkOrderAttempt: vi.fn().mockResolvedValue({ ...work, state: 'queued', version: 3 }),
+      createWorkAttempt: vi.fn(),
+      transitionWorkAttempt: vi.fn(),
+      transitionWorkOrder: vi.fn(),
+    } as unknown as OrgGroupAgentStore;
+    const runStore = {
+      get: vi.fn().mockResolvedValue(previous),
+      upsertPending: vi.fn().mockImplementation(async (value) => {
+        staged = { ...value, status: 'pending', updatedAt: now() } as RunRecord;
+        return staged;
+      }),
+      activateStagedOrgAgentBackgroundTask: vi
+        .fn()
+        .mockImplementation(async (_id, _reason, patch) => {
+          staged = { ...staged!, metadata: { ...staged!.metadata, ...patch } };
+          return staged;
+        }),
+    } as unknown as RunStore;
+    const sessionCatalog = {
+      get: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        userId: 'service-user',
+        username: 'agent-dws:agent-1',
+        userRole: 'user',
+        tenantId: 'tenant-1',
+        channel: 'dingtalk',
+        cwd: '/old-task',
+        modelRef: 'models/model-1',
+        executionTarget: 'server-container',
+        workspaceId: 'old-workspace',
+        status: 'idle',
+        orgAgentId: 'agent-1',
+        orgAgentSnapshot: {} as never,
+        principal: orgChannel.agentPrincipal,
+      }),
+      upsert: vi.fn(),
+    } as unknown as SessionCatalog;
+
+    const retried = await new OrgAgentBackgroundWorkCoordinator({
+      agentCwd: root,
+      orgGroupAgentStore: store,
+      runStore,
+      sessionCatalog,
+    } as unknown as RawRuntimeRunDispatchConfig).retry('tenant-1', 'work-1', 2);
+
+    expect(retried.metadata.basePrompt).toBe('执行');
+    expect(retried.metadata.prompt).toContain('完成初稿');
+    expect(retried.metadata.prompt).toContain('报告.md');
+    expect(retried.metadata.prompt).toContain('/agent-shared/published/work-1/attempt-1');
+    expect(retried.metadata.continuationSource).toMatchObject({
+      attemptId: 'attempt-1',
+      artifactCount: 1,
+      publishedArtifactsRoot: '/agent-shared/published/work-1/attempt-1',
+    });
+    expect(retried.metadata.mountSubPath).not.toBe(previous.metadata.mountSubPath);
   });
 
   it('requires a completed attempt artifact decision before opening a retry', async () => {
@@ -438,6 +699,11 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       getWorkOrder: vi.fn().mockResolvedValue(work),
       listWorkAttempts: vi.fn().mockResolvedValue([attempt]),
       pauseWorkOrder: vi.fn().mockResolvedValue({ ...work, state: 'paused', version: 4 }),
+      transitionWorkAttempt: vi.fn().mockResolvedValue({
+        ...attempt,
+        status: 'cancelled',
+        workOrderId: 'work-1',
+      }),
     } as unknown as OrgGroupAgentStore;
     const coordinator = new OrgAgentBackgroundWorkCoordinator({
       agentCwd: '/tmp', orgGroupAgentStore: store, runStore,
@@ -453,6 +719,16 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     expect(store.pauseWorkOrder).toHaveBeenCalledWith({
       tenantId: 'tenant-1', workOrderId: 'work-1', expectedVersion: 3,
     });
+    expect(store.transitionWorkAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeRunId: 'run-1',
+        status: 'cancelled',
+        checkpoint: expect.objectContaining({
+          continuationAllowed: true,
+          reason: 'paused_by_operator',
+        }),
+      }),
+    );
   });
 
   it('does not falsely report a pause when the current attempt has already become terminal', async () => {

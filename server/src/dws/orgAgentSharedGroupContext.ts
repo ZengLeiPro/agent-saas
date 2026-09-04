@@ -37,7 +37,7 @@ export interface SharedGroupContextResolverOptions {
     tenantId: string,
     userId: string,
   ) => Promise<'member' | 'org_admin' | undefined> | 'member' | 'org_admin' | undefined;
-  isOrgAgentRuntimeV2Ready?: () => boolean;
+  isOrgAgentRuntimeV2Ready?: (account: AgentDwsAccountRecord) => boolean | Promise<boolean>;
 }
 
 export async function resolveSharedGroupContext(
@@ -64,7 +64,7 @@ export async function resolveSharedGroupContext(
   if (binding.activationState === 'shadow') return { state: 'legacy' };
   if (!binding.enabled || !binding.policy.enabled)
     return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_DISABLED' };
-  if (options.isOrgAgentRuntimeV2Ready?.() !== true)
+  if ((await options.isOrgAgentRuntimeV2Ready?.(account)) !== true)
     return { state: 'denied', reason: 'ORG_AGENT_RUNTIME_PROTOCOL_UNAVAILABLE' };
   const serviceEvent = item.payload.source === 'background_task_completion';
   if (!serviceEvent && !item.senderOpenDingtalkId)
@@ -187,24 +187,7 @@ export async function resolveSharedGroupContext(
       rootKey,
       ...(item.messageId ? { rootMessageId: item.messageId } : {}),
     }));
-  const [agentMemories, conversationMemories] = await Promise.all([
-    store.listMemories({
-      tenantId: binding.tenantId,
-      agentId: binding.agentId,
-      memoryScope: 'agent',
-      status: 'active',
-      limit: 20,
-    }),
-    store.listMemories({
-      tenantId: binding.tenantId,
-      agentId: binding.agentId,
-      bindingId: binding.bindingId,
-      workConversationId: workConversation.workConversationId,
-      memoryScope: 'conversation',
-      status: 'active',
-      limit: 20,
-    }),
-  ]);
+  const memories = await loadConfiguredMemories(store, binding, workConversation);
   const visibleWorkOrders = (await store.listWorkOrders(binding.tenantId, binding.bindingId, 30))
     .filter((work) => work.workConversationId === workConversation.workConversationId)
     .filter(
@@ -232,9 +215,39 @@ export async function resolveSharedGroupContext(
       ...(governanceRole ? { governanceRole } : {}),
       ...(routeHint.clarification ? { routingClarification: routeHint.clarification } : {}),
       visibleWorkOrders,
-      memories: [...agentMemories, ...conversationMemories],
+      memories,
     },
   };
+}
+
+export async function loadConfiguredMemories(
+  store: Pick<OrgGroupAgentStore, 'listMemories'>,
+  binding: OrgAgentChannelBinding,
+  workConversation: OrgAgentWorkConversation,
+): Promise<OrgAgentMemory[]> {
+  const [agentMemories, conversationMemories] = await Promise.all([
+    binding.effectiveConfig.memory.readAgent
+      ? store.listMemories({
+          tenantId: binding.tenantId,
+          agentId: binding.agentId,
+          memoryScope: 'agent',
+          status: 'active',
+          limit: 20,
+        })
+      : Promise.resolve([]),
+    binding.effectiveConfig.memory.readConversation
+      ? store.listMemories({
+          tenantId: binding.tenantId,
+          agentId: binding.agentId,
+          bindingId: binding.bindingId,
+          workConversationId: workConversation.workConversationId,
+          memoryScope: 'conversation',
+          status: 'active',
+          limit: 20,
+        })
+      : Promise.resolve([]),
+  ]);
+  return [...agentMemories, ...conversationMemories];
 }
 
 function routingMessageIds(item: AgentDwsInboxRecord): string[] {

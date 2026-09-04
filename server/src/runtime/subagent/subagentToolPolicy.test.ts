@@ -49,6 +49,7 @@ describe('organization Worker tool policy wiring', () => {
             allowedToolNames: ['WriteTool'],
             allowedSkillIds: [],
             allowedSourceIds: [],
+            dwsResourceIds: [],
             contextEnabled: false,
             taskVisibility: 'conversation',
             actorRole: 'member',

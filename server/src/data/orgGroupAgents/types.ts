@@ -49,8 +49,22 @@ export interface OrgAgentChannelPolicy {
 
 export interface OrgAgentEffectiveConfig {
   identity: { displayName?: string };
+  instructions: { system: string };
   knowledge: { contextEnabled: boolean; sourceIds: string[] };
-  capabilities: { skillIds: string[]; toolNames: string[] };
+  capabilities: {
+    skillIds: string[];
+    toolNames: string[];
+    /**
+     * 组织群可由 DwsBusiness 访问的资源。每项使用 `<module>:<resourceId>`，例如
+     * `doc:abc123`。字段缺失与空数组都表示没有任何 DWS 数据权限。
+     */
+    dwsResourceIds: string[];
+  };
+  memory: {
+    readAgent: boolean;
+    readConversation: boolean;
+    adminWriteConversation: boolean;
+  };
   access: { triggerRoles: OrgAgentGovernanceRole[]; approvalRoles: OrgAgentGovernanceRole[] };
   speech: { proactive: boolean; requireMention: boolean };
 }
@@ -114,12 +128,21 @@ export interface DwsDeliveryIntent {
   leaseOwner?: string;
   leaseFence: number;
   leaseExpiresAt?: string;
+  providerAttemptPhase: 'legacy_unknown' | 'before_provider' | 'provider_started';
+  providerStartedAt?: string;
+  nextAttemptAt?: string;
   lastAttemptAt?: string;
   lastError?: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
 }
+
+export type DwsDeliveryIntentCreate = Omit<
+  DwsDeliveryIntent,
+  'deliveryId' | 'deliveryState' | 'attempt' | 'leaseFence' | 'providerAttemptPhase'
+    | 'createdAt' | 'updatedAt'
+>;
 
 export type OrgAgentWorkOrderState =
   'queued' | 'running' | 'waiting_input' | 'paused' | 'completed' | 'failed' | 'cancelled';
@@ -210,6 +233,13 @@ export interface OrgAgentMemory {
   deletedAt?: string;
 }
 
+export interface OrgAgentGroupWorkspaceData {
+  conversations: OrgAgentWorkConversation[];
+  workOrders: OrgAgentWorkOrder[];
+  attempts: OrgAgentWorkAttempt[];
+  memories: OrgAgentMemory[];
+}
+
 export interface OrgGroupAgentStore {
   init(): Promise<void>;
   ensureShadowBinding(input: {
@@ -262,15 +292,23 @@ export interface OrgGroupAgentStore {
     workConversationId: string;
     policyRevision: number;
   }): Promise<void>;
-  createDelivery(
-    input: Omit<
-      DwsDeliveryIntent,
-      'deliveryId' | 'deliveryState' | 'attempt' | 'leaseFence' | 'createdAt' | 'updatedAt'
-    >,
-  ): Promise<DwsDeliveryIntent>;
+  createDelivery(input: DwsDeliveryIntentCreate): Promise<DwsDeliveryIntent>;
   claimDelivery(deliveryId: string, owner: string, ttlMs: number): Promise<DwsDeliveryIntent>;
   claimNextDelivery(owner: string, ttlMs: number): Promise<DwsDeliveryIntent | null>;
   reconcileAllExpiredDeliveries(limit?: number): Promise<number>;
+  markDeliveryProviderStarted(
+    deliveryId: string,
+    owner: string,
+    fence: number,
+  ): Promise<DwsDeliveryIntent>;
+  releaseClaimedDeliveryForRetry(
+    deliveryId: string,
+    owner: string,
+    fence: number,
+    error: unknown,
+    delayMs: number,
+    maxAttempts: number,
+  ): Promise<DwsDeliveryIntent>;
   markDeliverySent(
     deliveryId: string,
     owner: string,
@@ -326,6 +364,11 @@ export interface OrgGroupAgentStore {
     sharedReadOnlySubPath: string;
   }): Promise<OrgAgentWorkAttempt>;
   listWorkAttempts(tenantId: string, workOrderId: string): Promise<OrgAgentWorkAttempt[]>;
+  loadGroupWorkspace(input: {
+    tenantId: string;
+    bindingIds: string[];
+    limitPerBinding?: number;
+  }): Promise<OrgAgentGroupWorkspaceData>;
   transitionWorkAttempt(input: {
     tenantId: string;
     runtimeRunId: string;
@@ -344,8 +387,20 @@ export interface OrgGroupAgentStore {
     artifactManifest?: Record<string, unknown>;
   }): Promise<OrgAgentWorkAttempt>;
   getWorkOrder(tenantId: string, workOrderId: string): Promise<OrgAgentWorkOrder | null>;
-  getWorkOrderByShortId(tenantId: string, agentId: string, shortId: string): Promise<OrgAgentWorkOrder | null>;
-  getWorkConversation(tenantId: string, workConversationId: string): Promise<OrgAgentWorkConversation | null>;
+  getWorkOrderByShortId(
+    tenantId: string,
+    agentId: string,
+    shortId: string,
+  ): Promise<OrgAgentWorkOrder | null>;
+  getWorkConversation(
+    tenantId: string,
+    workConversationId: string,
+  ): Promise<OrgAgentWorkConversation | null>;
+  listWorkConversations(
+    tenantId: string,
+    bindingId: string,
+    limit?: number,
+  ): Promise<OrgAgentWorkConversation[]>;
   listWorkOrders(tenantId: string, bindingId: string, limit?: number): Promise<OrgAgentWorkOrder[]>;
   listStagedWorkOrders(staleBefore: Date, limit?: number): Promise<OrgAgentWorkOrder[]>;
   transitionWorkOrder(input: {
@@ -425,8 +480,10 @@ export const DEFAULT_ORG_AGENT_CHANNEL_POLICY: OrgAgentChannelPolicy = {
 
 export const DEFAULT_ORG_AGENT_EFFECTIVE_CONFIG: OrgAgentEffectiveConfig = {
   identity: {},
+  instructions: { system: '' },
   knowledge: { contextEnabled: false, sourceIds: [] },
-  capabilities: { skillIds: [], toolNames: [] },
+  capabilities: { skillIds: [], toolNames: [], dwsResourceIds: [] },
+  memory: { readAgent: true, readConversation: true, adminWriteConversation: true },
   access: { triggerRoles: [], approvalRoles: [] },
   speech: { proactive: false, requireMention: true },
 };

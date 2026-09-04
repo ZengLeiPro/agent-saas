@@ -9,9 +9,8 @@ import type {
   OrgAgentWorkOrderControl,
 } from '../../data/orgGroupAgents/index.js';
 import { atomicWriteTrustedFile } from '../../security/trustedFile.js';
-import { resolveAgentCwd } from '../../workspace/resolver.js';
+import { resolveAgentCwd, resolveAgentMountSubPath } from '../../workspace/resolver.js';
 import {
-  agentMountSubPathFromSharedView,
   deriveOrgAgentSharedView,
   deriveOrgAgentTaskWorkspace,
   type OrgAgentTaskWorkspaceLayout,
@@ -34,6 +33,11 @@ import type { BackgroundAgentRequest } from './backgroundTaskRuntime.js';
 import { parseStoredResult, type StoredBackgroundResult } from './backgroundTaskFormatting.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
+import {
+  buildOrgAgentContinuation,
+  buildPausedAttemptContext,
+  verifyOrgAgentContinuationArtifacts,
+} from './orgAgentContinuation.js';
 
 export async function prepareOrgAgentBackgroundWork(input: {
   config: RawRuntimeRunDispatchConfig;
@@ -50,10 +54,16 @@ export async function prepareOrgAgentBackgroundWork(input: {
     orgChannel.agentPrincipal.tenantId,
     orgChannel.agentId,
   );
-  const sharedReadOnlySubPath = input.context.workspace.mountSubPath ?? (() => {
-    throw new Error('组织群后台任务缺少 Agent workspace mount');
-  })();
-  const agentMountSubPath = agentMountSubPathFromSharedView(sharedReadOnlySubPath);
+  const sharedReadOnlySubPath =
+    input.context.workspace.mountSubPath ??
+    (() => {
+      throw new Error('组织群后台任务缺少 Agent workspace mount');
+    })();
+  const agentMountSubPath = resolveAgentMountSubPath(
+    input.config.agentCwd,
+    orgChannel.agentPrincipal.tenantId,
+    orgChannel.agentId,
+  );
   const sharedView = deriveOrgAgentSharedView({
     agentRoot,
     agentMountSubPath,
@@ -71,6 +81,19 @@ export async function prepareOrgAgentBackgroundWork(input: {
     attemptNo: 1,
   });
   await mkdir(join(taskLayout.taskRoot, 'artifacts'), { recursive: true });
+  const bindingSnapshot =
+    orgChannel.externalActor.kind === 'external_user'
+      ? await input.config.orgGroupAgentStore?.getBindingById(
+          orgChannel.agentPrincipal.tenantId,
+          orgChannel.bindingId,
+        )
+      : undefined;
+  if (
+    orgChannel.externalActor.kind === 'external_user' &&
+    (!bindingSnapshot || bindingSnapshot.revision !== orgChannel.policyRevision)
+  ) {
+    throw new Error('组织群后台任务无法固化当前群配置');
+  }
   const workOrder =
     orgChannel.externalActor.kind === 'external_user'
       ? await input.config.orgGroupAgentStore?.createWorkOrder({
@@ -89,7 +112,9 @@ export async function prepareOrgAgentBackgroundWork(input: {
             allowedToolNames: orgChannel.allowedToolNames,
             allowedSkillIds: orgChannel.allowedSkillIds,
             allowedSourceIds: orgChannel.allowedSourceIds,
+            dwsResourceIds: orgChannel.dwsResourceIds,
             contextEnabled: orgChannel.contextEnabled,
+            effectiveConfig: bindingSnapshot!.effectiveConfig,
           },
           cancelPolicy: {
             mode: orgChannel.taskVisibility === 'conversation' && orgChannel.externalActorAssurance === 'mapped'
@@ -225,7 +250,11 @@ export class OrgAgentBackgroundWorkCoordinator {
       || conversation.bindingId !== binding.bindingId)
       throw new Error('ORG_AGENT_ARTIFACT_SCOPE_INVALID');
     const agentRoot = resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId);
-    const agentMountSubPath = agentMountSubPathFromSharedView(attempt.sharedReadOnlySubPath);
+    const agentMountSubPath = resolveAgentMountSubPath(
+      this.config.agentCwd,
+      tenantId,
+      work.agentId,
+    );
     const shared = deriveOrgAgentSharedView({
       agentRoot,
       agentMountSubPath,
@@ -398,27 +427,83 @@ export class OrgAgentBackgroundWorkCoordinator {
     if (!metadata.sharedReadOnlySubPath)
       throw new Error('ORG_AGENT_WORK_ORDER_SHARED_ROOT_MISSING');
     const earliestAttempt = attempts[0];
-    const earliestRun = earliestAttempt?.runtimeRunId === previous.runId
-      ? previous
-      : earliestAttempt
-        ? await runStore.get(earliestAttempt.runtimeRunId)
-        : null;
-    const earliestBasePrompt = earliestRun && typeof earliestRun.metadata.basePrompt === 'string'
-      && earliestRun.metadata.basePrompt.length > 0 ? earliestRun.metadata.basePrompt : undefined;
-    const earliestPrompt = earliestRun && typeof earliestRun.metadata.prompt === 'string'
-      && earliestRun.metadata.prompt.length > 0 ? earliestRun.metadata.prompt : undefined;
-    const basePrompt = earliestBasePrompt ?? earliestPrompt ?? metadata.basePrompt ?? metadata.prompt;
+    const earliestRun =
+      earliestAttempt?.runtimeRunId === previous.runId
+        ? previous
+        : earliestAttempt
+          ? await runStore.get(earliestAttempt.runtimeRunId)
+          : null;
+    const earliestBasePrompt =
+      earliestRun &&
+      typeof earliestRun.metadata.basePrompt === 'string' &&
+      earliestRun.metadata.basePrompt.length > 0
+        ? earliestRun.metadata.basePrompt
+        : undefined;
+    const earliestPrompt =
+      earliestRun &&
+      typeof earliestRun.metadata.prompt === 'string' &&
+      earliestRun.metadata.prompt.length > 0
+        ? earliestRun.metadata.prompt
+        : undefined;
+    const basePrompt =
+      earliestBasePrompt ?? earliestPrompt ?? metadata.basePrompt ?? metadata.prompt;
+    const continuation = buildOrgAgentContinuation({
+      work,
+      attempt: previousAttempt,
+      allowPendingArtifacts: options.allowPendingArtifacts === true,
+    });
     const catalog = resolveSessionCatalog(this.config);
     const previousSession = await catalog.get(previous.sessionId);
     if (!previousSession) throw new Error('ORG_AGENT_WORK_ORDER_SESSION_MISSING');
+    const binding = await store.getBindingById(tenantId, work.bindingId);
+    const principal = metadata.orgAgentChannel.agentPrincipal;
+    if (
+      !binding ||
+      binding.agentId !== work.agentId ||
+      principal.tenantId !== tenantId ||
+      principal.agentId !== work.agentId ||
+      metadata.orgAgentChannel.bindingId !== work.bindingId ||
+      principal.accountId !== binding.accountId ||
+      principal.workspaceId !== binding.workspaceId ||
+      previous.tenantId !== tenantId ||
+      previousSession.tenantId !== tenantId ||
+      previousSession.orgAgentId !== work.agentId ||
+      !previousSession.orgAgentSnapshot ||
+      previousSession.principal?.kind !== 'org_agent' ||
+      previousSession.principal.tenantId !== tenantId ||
+      previousSession.principal.agentId !== work.agentId ||
+      previousSession.principal.accountId !== binding.accountId ||
+      previousSession.principal.workspaceId !== binding.workspaceId
+    ) {
+      throw new Error('ORG_AGENT_WORK_ORDER_IDENTITY_MISMATCH');
+    }
     const nextAttemptNo = work.currentAttemptNo + 1;
     const digest = createHash('sha256').update(`${workOrderId}:${nextAttemptNo}`).digest('hex');
     const taskId = `bg-retry-${digest.slice(0, 32)}`;
     const sessionId = `sub-bg-retry-${digest.slice(0, 32)}`;
+    const agentRoot = resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId);
+    const agentMountSubPath = resolveAgentMountSubPath(
+      this.config.agentCwd,
+      tenantId,
+      work.agentId,
+    );
+    const sharedView = deriveOrgAgentSharedView({
+      agentRoot,
+      agentMountSubPath,
+      bindingId: work.bindingId,
+      workConversationId: work.workConversationId,
+    });
+    if (sharedView.mountSubPath !== metadata.sharedReadOnlySubPath)
+      throw new Error('ORG_AGENT_WORK_ORDER_SHARED_ROOT_MISMATCH');
+    await verifyOrgAgentContinuationArtifacts({
+      work,
+      attempt: previousAttempt!,
+      sharedRoot: sharedView.root,
+    });
     const layout = deriveOrgAgentTaskWorkspace({
       agentWorkspaceId: metadata.orgAgentChannel.agentPrincipal.workspaceId,
-      agentRoot: resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId),
-      agentMountSubPath: agentMountSubPathFromSharedView(metadata.sharedReadOnlySubPath),
+      agentRoot,
+      agentMountSubPath,
       sharedReadOnlySubPath: metadata.sharedReadOnlySubPath,
       taskId,
       attemptNo: nextAttemptNo,
@@ -482,7 +567,7 @@ export class OrgAgentBackgroundWorkCoordinator {
           backgroundTaskVersion: 2,
           description: queuedWork.title,
           basePrompt,
-          prompt: withWorkOrderControlPrompt(basePrompt, queuedWork),
+          prompt: withWorkOrderContinuationPrompt(basePrompt, queuedWork, continuation.prompt),
           agentType: queuedWork.control.workerType,
           workOrderShortId: queuedWork.shortId,
           workOrderControlRevision: queuedWork.control.revision,
@@ -490,6 +575,7 @@ export class OrgAgentBackgroundWorkCoordinator {
           attemptId: layout.attemptId,
           attemptNo: nextAttemptNo,
           ...(previousAttempt ? { parentAttemptId: previousAttempt.attemptId } : {}),
+          continuationSource: continuation.metadata,
           cwd: layout.taskRoot,
           workspaceId: layout.taskWorkspaceId,
           mountSubPath: layout.mountSubPath,
@@ -549,18 +635,39 @@ export class OrgAgentBackgroundWorkCoordinator {
       throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_TERMINAL_RACE');
     }
     if (task && !isRunTerminal(task.status)) {
-      const stopped = await markBackgroundTaskTerminal(runStore, task.runId, 'cancelled', '组织群任务已暂停', {
-        backgroundResult: failedResult('cancelled', '组织群任务已暂停，恢复时会创建新 attempt'),
-        wakeState: 'pending',
-        backgroundFinishedAt: new Date().toISOString(),
-        orgAgentAttemptSuperseded: true,
-        orgAgentPauseAttemptNo: work.currentAttemptNo,
-      });
+      const taskMetadata = parseBackgroundTaskMetadata(task);
+      if (!taskMetadata?.workOrderId || taskMetadata.workOrderId !== workOrderId)
+        throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_SCOPE_INVALID');
+      const stopped = await markBackgroundTaskTerminal(
+        runStore,
+        task.runId,
+        'cancelled',
+        '组织群任务已暂停',
+        {
+          backgroundResult: failedResult('cancelled', '组织群任务已暂停，恢复时会创建新 attempt'),
+          wakeState: 'pending',
+          backgroundFinishedAt: new Date().toISOString(),
+          orgAgentAttemptSuperseded: true,
+          orgAgentPauseAttemptNo: work.currentAttemptNo,
+        },
+      );
       if (!stopped) {
         const current = await runStore.get(task.runId);
         if (!current || current.status !== 'cancelled' || current.metadata.orgAgentAttemptSuperseded !== true)
           throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_RUN_CONFLICT');
       }
+      const pausedContext = buildPausedAttemptContext(task.runId, taskMetadata.cwd);
+      const pausedAttempt = await store.transitionWorkAttempt({
+        tenantId,
+        runtimeRunId: task.runId,
+        status: 'cancelled',
+        resultEnvelope: pausedContext.resultEnvelope,
+        checkpoint: pausedContext.checkpoint,
+        publishState: 'rejected',
+        failure: 'superseded_by_work_order_pause',
+      });
+      if (!pausedAttempt || pausedAttempt.workOrderId !== workOrderId)
+        throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_CHECKPOINT_FAILED');
       runtimeRunController.abort(task.runId);
       await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
     }
@@ -629,12 +736,24 @@ export class OrgAgentBackgroundWorkCoordinator {
   }
 }
 
-function withWorkOrderControlPrompt(basePrompt: string, work: OrgAgentWorkOrder): string {
-  if (work.control.supplements.length === 0) return basePrompt;
-  const additions = work.control.supplements.map((item, index) => (
-    `${index + 1}. [${item.kind === 'review' ? '复核要求' : '补充要求'}] ${item.text}`
-  )).join('\n');
-  return `${basePrompt}\n\n<work-order-continuation revision="${work.control.revision}">\n${additions}\n</work-order-continuation>`;
+function withWorkOrderContinuationPrompt(
+  basePrompt: string,
+  work: OrgAgentWorkOrder,
+  previousAttemptPrompt: string,
+): string {
+  const controlPrompt = withWorkOrderControlPrompt(work);
+  return `${basePrompt}\n\n${previousAttemptPrompt}${controlPrompt}`;
+}
+
+function withWorkOrderControlPrompt(work: OrgAgentWorkOrder): string {
+  if (work.control.supplements.length === 0) return '';
+  const additions = work.control.supplements
+    .map(
+      (item, index) =>
+        `${index + 1}. [${item.kind === 'review' ? '复核要求' : '补充要求'}] ${item.text}`,
+    )
+    .join('\n');
+  return `\n\n<work-order-continuation revision="${work.control.revision}">\n${additions}\n</work-order-continuation>`;
 }
 
 export function isOrgTaskVisible(task: RunRecord, context: ToolCallContext): boolean {

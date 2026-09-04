@@ -89,8 +89,10 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       },
       effectiveConfig: {
         identity: { displayName: '开开' },
+        instructions: { system: '' },
         knowledge: { contextEnabled: true, sourceIds: ['kb-a'] },
-        capabilities: { skillIds: ['skill-a'], toolNames: ['ContextSearch'] },
+        capabilities: { skillIds: ['skill-a'], toolNames: ['ContextSearch'], dwsResourceIds: [] },
+        memory: { readAgent: true, readConversation: true, adminWriteConversation: true },
         access: { triggerRoles: ['member'], approvalRoles: ['org_admin'] },
         speech: { proactive: false, requireMention: true },
       },
@@ -234,6 +236,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       idempotencyKey: 'delivery-a',
     });
     const claimed = await store.claimDelivery(intent.deliveryId, 'worker-a', 60_000);
+    await store.markDeliveryProviderStarted(intent.deliveryId, 'worker-a', claimed.leaseFence);
     await store.markDeliveryUnknown(
       intent.deliveryId,
       'worker-a',
@@ -252,6 +255,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       outcome: 'confirmed_not_sent',
     });
     const retried = await store.claimDelivery(intent.deliveryId, 'worker-b', 60_000);
+    await store.markDeliveryProviderStarted(intent.deliveryId, 'worker-b', retried.leaseFence);
     await expect(
       store.markDeliverySent(intent.deliveryId, 'worker-b', retried.leaseFence, {
         messageId: 'provider-message-a',
@@ -327,6 +331,22 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       store.listMemories({ tenantId: 'tenant-b', agentId: 'agent-a', limit: 20 }),
     ).resolves.toEqual([]);
 
+    const workspace = await store.loadGroupWorkspace({
+      tenantId: 'tenant-a', bindingIds: [binding.bindingId, otherShadow.bindingId], limitPerBinding: 20,
+    });
+    expect(workspace.conversations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workConversationId: conversation.workConversationId }),
+    ]));
+    expect(workspace.workOrders).toEqual(expect.arrayContaining([
+      expect.objectContaining({ workOrderId: work.workOrderId }),
+    ]));
+    expect(workspace.attempts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ attemptId: attempt.attemptId }),
+    ]));
+    expect(workspace.memories).toEqual(expect.arrayContaining([
+      expect.objectContaining({ memoryId: memory.memoryId }),
+    ]));
+
     const completedBeforeRetry = await store.getWorkOrder('tenant-a', work.workOrderId);
     const reopened = await store.reopenWorkOrder({
       tenantId: 'tenant-a', workOrderId: work.workOrderId,
@@ -386,8 +406,66 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       expiringClaim.leaseFence, 'late failure')).rejects.toThrow('DWS_DELIVERY_LEASE_LOST');
     await expect(store.reconcileAllExpiredDeliveries()).resolves.toBe(1);
     await expect(store.getDelivery('tenant-a', expiring.deliveryId)).resolves.toMatchObject({
-      deliveryState: 'unknown', lastError: 'DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',
+      deliveryState: 'pending',
+      lastError: 'DWS_DELIVERY_RETRY_AFTER_LEASE_EXPIRY_BEFORE_PROVIDER',
     });
+
+    const legacyWriter = await store.createDelivery({
+      tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'direct-legacy-writer',
+      source: 'system', deliveryKind: 'system_notice', disposition: 'replied',
+      destination: { provider: 'dingtalk', accountId: 'account-a',
+        conversationId: 'direct-legacy-writer', kind: 'direct', peerOpenId: 'member-a' },
+      content: '旧 Worker 租约测试', idempotencyKey: 'delivery-legacy-writer',
+    });
+    await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
+      SET delivery_state='sending',attempt=attempt+1,lease_owner='old-worker',lease_fence=1,
+        lease_expires_at=NOW()-INTERVAL '1 second'
+      WHERE delivery_id=$1`, [legacyWriter.deliveryId]);
+    await expect(store.reconcileAllExpiredDeliveries()).resolves.toBe(1);
+    await expect(store.getDelivery('tenant-a', legacyWriter.deliveryId)).resolves.toMatchObject({
+      deliveryState: 'unknown', providerAttemptPhase: 'legacy_unknown',
+      lastError: 'DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',
+    });
+
+    const providerExpiring = await store.createDelivery({
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+      conversationId: 'direct-provider-expiring',
+      source: 'system',
+      deliveryKind: 'system_notice',
+      disposition: 'replied',
+      destination: {
+        provider: 'dingtalk',
+        accountId: 'account-a',
+        conversationId: 'direct-provider-expiring',
+        kind: 'direct',
+        peerOpenId: 'member-a',
+      },
+      content: '供应商调用租约测试',
+      idempotencyKey: 'delivery-provider-expiring',
+    });
+    const providerClaim = await store.claimDelivery(
+      providerExpiring.deliveryId,
+      'worker-provider-expired',
+      60_000,
+    );
+    await store.markDeliveryProviderStarted(
+      providerExpiring.deliveryId,
+      'worker-provider-expired',
+      providerClaim.leaseFence,
+    );
+    await pool.query(
+      `UPDATE ${prefix}_agent_dws_delivery_intents
+      SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE delivery_id=$1`,
+      [providerExpiring.deliveryId],
+    );
+    await expect(store.reconcileAllExpiredDeliveries()).resolves.toBe(1);
+    await expect(store.getDelivery('tenant-a', providerExpiring.deliveryId)).resolves.toMatchObject(
+      {
+        deliveryState: 'unknown',
+        lastError: 'DWS_DELIVERY_RECEIPT_UNKNOWN_AFTER_LEASE_EXPIRY',
+      },
+    );
   });
 
   it('uses SKIP LOCKED claims so concurrent delivery workers never own the same intent', async () => {
@@ -423,16 +501,38 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
   });
 
   it('serializes one WorkConversation while allowing different topics in the same group to run concurrently', async () => {
-    const shadow = await store.ensureShadowBinding({ tenantId: 'tenant-a', accountId: 'account-a',
-      agentId: 'agent-a', conversationId: 'group-parallel', channelKind: 'group',
-      workspaceId: 'agent-workspace-a' });
-    const binding = await store.updateBinding({ tenantId: 'tenant-a', accountId: 'account-a',
-      conversationId: 'group-parallel', expectedRevision: shadow.revision, enabled: true,
-      policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation',
-        completion: 'reply_to_work_conversation', liveDeny: false },
-      effectiveConfig: { identity: {}, knowledge: { contextEnabled: false, sourceIds: [] },
-        capabilities: { skillIds: [], toolNames: [] }, access: { triggerRoles: [], approvalRoles: [] },
-        speech: { proactive: false, requireMention: true } } });
+    const shadow = await store.ensureShadowBinding({
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+      agentId: 'agent-a',
+      conversationId: 'group-parallel',
+      channelKind: 'group',
+      workspaceId: 'agent-workspace-a',
+    });
+    const binding = await store.updateBinding({
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+      conversationId: 'group-parallel',
+      expectedRevision: shadow.revision,
+      enabled: true,
+      policy: {
+        enabled: true,
+        membership: 'members',
+        guest: 'deny',
+        taskVisibility: 'conversation',
+        completion: 'reply_to_work_conversation',
+        liveDeny: false,
+      },
+      effectiveConfig: {
+        identity: {},
+        instructions: { system: '' },
+        knowledge: { contextEnabled: false, sourceIds: [] },
+        capabilities: { skillIds: [], toolNames: [], dwsResourceIds: [] },
+        access: { triggerRoles: [], approvalRoles: [] },
+        memory: { readAgent: true, readConversation: true, adminWriteConversation: true },
+        speech: { proactive: false, requireMention: true },
+      },
+    });
     const [topicA, topicB] = await Promise.all([
       store.getOrCreateWorkConversation({ tenantId: 'tenant-a', bindingId: binding.bindingId, rootKey: 'root-a' }),
       store.getOrCreateWorkConversation({ tenantId: 'tenant-a', bindingId: binding.bindingId, rootKey: 'root-b' }),

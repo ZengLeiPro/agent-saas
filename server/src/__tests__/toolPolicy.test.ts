@@ -122,7 +122,7 @@ describe('DefaultToolPolicy 组织 Agent 群聊门禁', () => {
         agentPrincipal: { kind: 'org_agent', tenantId: 'tenant-1', agentId: 'agent-1',
           accountId: 'account-1', workspaceId: 'workspace-1' },
         externalActorAssurance: 'mapped', allowedToolNames: ['DwsBusiness'],
-        allowedSkillIds: [], allowedSourceIds: [], contextEnabled: false,
+        allowedSkillIds: [], allowedSourceIds: [], dwsResourceIds: ['doc:doc-1'], contextEnabled: false,
         taskVisibility: 'conversation', actorRole: 'member', triggerRoles: [], approvalRoles: ['member'],
         externalActor: { kind: 'external_user', provider: 'dingtalk', corpId: 'corp-1', openId: 'open-1',
           mappedUserId: 'user-1', role: 'member', assurance: 'mapped' },
@@ -135,7 +135,7 @@ describe('DefaultToolPolicy 组织 Agent 群聊门禁', () => {
       args: ['doc', 'read', '--node', 'doc-1'], credentialMode: 'agent',
     }, { channelContext: dwsChannel } as RunContext)).resolves.toEqual({ type: 'allow' });
     await expect(policy.decide(dwsBusinessToolDescriptor, {
-      args: ['doc', 'create', '--title', '群文档', '--content', '正文'],
+      args: ['doc', 'update', '--node', 'doc-1', '--content', '正文'],
       credentialMode: 'agent', confirmed: true,
     }, { channelContext: dwsChannel } as RunContext)).resolves.toEqual({ type: 'allow' });
 

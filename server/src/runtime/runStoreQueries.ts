@@ -456,7 +456,10 @@ export class PgRunStoreQueries {
     }
   }
 
-  /** Legacy expired rows remain recoverable; versioned M40 rows are owned exclusively by the two-phase reaper. */
+  /**
+   * Staged background rows stay visible to the scheduler's timeout reaper, while
+   * acquireLease keeps them unclaimable until their durable setup is complete.
+   */
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
@@ -472,10 +475,6 @@ export class PgRunStoreQueries {
         AND NOT (
           run.status = 'pending'
           AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'
-        )
-        AND NOT (
-          run.metadata->>'backgroundTaskVersion' = '2'
-          AND COALESCE(run.metadata->>'backgroundTaskReady', 'false') <> 'true'
         )
         AND NOT EXISTS (
           SELECT 1

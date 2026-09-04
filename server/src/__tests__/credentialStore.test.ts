@@ -170,7 +170,7 @@ describe('Credential 治理事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_credential_commits');
     expect(sql).toContain('PRIMARY KEY (tenant_id,operation,idempotency_key)');
     expect(sql).toContain('UNIQUE (tenant_id,operation,nonce_digest)');
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(36);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(37);
   });
 
   it('create 强制 secretRef/owner/kind，重复 secretRef fail closed', async () => {

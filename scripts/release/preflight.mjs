@@ -77,6 +77,7 @@ export function runPreflight({
     classification.ok && targetIsFullSha
       ? createMigrationPlan({
           changedPaths: classification.changedFiles,
+          baseline,
           target,
           cwd,
           execFileSync,

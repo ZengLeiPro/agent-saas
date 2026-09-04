@@ -282,6 +282,22 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
+    def test_lockfile_only_change_conservatively_triggers_publish(self):
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('pnpm-lock.yaml\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=true', classified.stdout)
+        self.assertIn('contract_check=false', classified.stdout)
+        self.assertIn('reason=pnpm-lock.yaml runtime dependency resolution', classified.stdout)
+        self.assertIn('skipped=none', classified.stdout)
     def test_direct_deploy_recovers_restart_and_reload_failures(self):
         self.assertIn('scripts/release/manage-acs-systemd-unit.sh', self.workflow)
         self.assertIn(
@@ -363,6 +379,13 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
+
+    def test_all_main_pushes_reach_classifier_without_path_filter(self):
+        push_start = self.workflow.index('  push:')
+        dispatch_start = self.workflow.index('  workflow_dispatch:', push_start)
+        push_trigger = self.workflow[push_start:dispatch_start]
+        self.assertIn('branches: [main]', push_trigger)
+        self.assertNotIn('paths:', push_trigger)
 
     def test_mixed_changes_run_publish_and_contract_gates(self):
         self.assertIn(

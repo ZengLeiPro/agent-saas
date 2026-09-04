@@ -2,8 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assertPromotionRetryable } from './assert-promotion-retry.mjs';
 
-function entry(state, operationKey = state) {
-  return { state, operationKey };
+const DIGEST = `sha256:${'a'.repeat(64)}`;
+function entry(state, operationKey = state, reason) {
+  return { state, operationKey, ...(reason ? { reason } : {}) };
+}
+function promoting(operationKey = 'promoting', overrides = {}) {
+  return entry(
+    'promoting',
+    operationKey,
+    JSON.stringify({
+      migrationPhase: 'none',
+      manifestDigest: DIGEST,
+      migrationPlanDigest: DIGEST,
+      productionBeforeDigest: DIGEST,
+      productionTargetDigest: DIGEST,
+      ...overrides,
+    }),
+  );
 }
 
 test('accepts a fresh verified release and a fail-closed pre-mutation retry', () => {
@@ -34,12 +49,12 @@ test('accepts a fresh verified release and a fail-closed pre-mutation retry', ()
   });
 });
 
-test('allows reviewed post-mutation recovery but rejects ambiguous mutation histories', () => {
+test('selects digest-bound reviewed recovery mode after durable mutation markers', () => {
   assert.deepEqual(
     assertPromotionRetryable([
       entry('verified', 'verified:1'),
       entry('approved'),
-      entry('promoting', 'promoting:1'),
+      promoting('promoting:1'),
       entry('needs_human'),
     ]),
     {
@@ -55,7 +70,7 @@ test('allows reviewed post-mutation recovery but rejects ambiguous mutation hist
       assertPromotionRetryable([
         entry('verified'),
         entry('approved'),
-        entry('promoting'),
+        promoting(),
         entry('partial_failed'),
         entry('needs_human'),
       ]),
@@ -65,23 +80,48 @@ test('allows reviewed post-mutation recovery but rejects ambiguous mutation hist
     () => assertPromotionRetryable([entry('verified'), entry('needs_human')]),
     /prior approval/u,
   );
+  assert.deepEqual(
+    assertPromotionRetryable([
+      entry('verified', 'verified:1'),
+      entry('approved', 'approved:1'),
+      promoting('promoting:1'),
+      entry('failed_before_change', 'failed-before-change:1'),
+    ]),
+    {
+      mode: 'retry_after_change',
+      latestState: 'failed_before_change',
+      verifiedOperationKey: 'verified:1',
+      promotingOperationKey: 'promoting:1',
+      previousApprovalCount: 1,
+    },
+  );
   assert.throws(
     () =>
       assertPromotionRetryable([
         entry('verified'),
         entry('approved'),
         entry('promoting'),
-        entry('failed_before_change'),
+        entry('needs_human'),
+      ]),
+    /ambiguous post-mutation/u,
+  );
+  assert.throws(
+    () =>
+      assertPromotionRetryable([
+        entry('verified'),
+        entry('approved'),
+        promoting('promoting:bad', { manifestDigest: 'sha256:bad' }),
+        entry('needs_human'),
       ]),
     /ambiguous post-mutation/u,
   );
 });
 
-test('keeps repeated pre-write recovery failures in retry_after_change mode', () => {
+test('keeps repeated digest-bound recovery failures in retry_after_change mode', () => {
   const failedRecoveryAttempt = [
     entry('verified', 'verified:1'),
     entry('approved', 'approved:1'),
-    entry('promoting', 'promoting:1'),
+    promoting('promoting:1'),
     entry('needs_human', 'needs-human:1'),
     entry('approved', 'approved:2'),
     entry('failed_before_change', 'failed-before-change:2'),
@@ -106,7 +146,7 @@ test('keeps repeated pre-write recovery failures in retry_after_change mode', ()
   assert.deepEqual(
     assertPromotionRetryable([
       ...reapproved,
-      entry('promoting', 'promoting:2'),
+      promoting('promoting:2'),
       entry('needs_human', 'needs-human:2'),
     ]),
     {

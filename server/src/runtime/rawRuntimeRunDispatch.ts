@@ -3042,23 +3042,16 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     ? current.metadata.drainHandoffAttempts
     : 0;
   const handoffAttempts = isSteeringRecovery ? previousAttempts + 1 : previousAttempts;
-  const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, {
+  const handoffMetadata = {
     drainHandoffAt: handedOffAt,
     drainHandoffWorkerId: input.lease.workerId,
     ...(isSteeringRecovery ? { drainHandoffAttempts: handoffAttempts } : {}),
-  });
-  if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
-  await appendRunStateChanged(
-    input.eventStore,
-    input.run.sessionId,
-    input.run.runId,
-    'running',
-    current.status,
-    reason,
-    { tenantId: eventTenantId },
-  );
+  };
 
   if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
+    const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, handoffMetadata);
+    if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
+    await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId, 'running', current.status, reason, { tenantId: eventTenantId });
     await input.eventStore.append({
       type: 'run_finished',
       runId: input.run.runId,
@@ -3079,8 +3072,9 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     return true;
   }
 
+  if (!input.lease.handoff) throw new Error(`run lease handoff is unavailable: ${input.run.runId}`);
   await input.sessionCatalog.markStatus(input.run.sessionId, 'running');
-  await input.lease.release(undefined, reason);
+  await input.lease.handoff(reason, handoffMetadata);
   input.config.logger?.info(
     `Runtime drain handoff released run=${input.run.runId} session=${input.run.sessionId} worker=${input.lease.workerId}`,
   );

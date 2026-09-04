@@ -509,8 +509,9 @@ process.on('SIGUSR2', () => {
 
   // 硬性截止（默认 15min，AGENT_SAAS_DRAIN_DEADLINE_MS 可调）：蓝绿模式下
   // 旧色在后台排空、不阻塞部署，可以给长 run 充足余量。到点后仅允许
-  // 先取消 in-process run 并等待终态事件落盘；真正来不及收尾的 run 才交给
-  // 新实例的 lease/session recovery。HTTP 上传仍在进行时继续等待，绝不强退。
+  // 先取消 in-process run 并等待终态事件落盘；只有到达安全边界并完成显式
+  // handoff 的 run 才由新实例续跑，其余意外中断最终进入 orphaned。HTTP 上传
+  // 仍在进行时继续等待，绝不强退。
   const deadlineMs = parseInt(process.env.AGENT_SAAS_DRAIN_DEADLINE_MS || '', 10) || 900_000;
   const onDrainDeadline = (): void => {
     const remaining = runtime?.channelManager.getActiveStreamCount() ?? 0;

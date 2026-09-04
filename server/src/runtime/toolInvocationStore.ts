@@ -408,20 +408,22 @@ export class PgToolInvocationStore implements ToolInvocationStore {
       await client.query('BEGIN');
       // 与 run 终态 UPDATE 锁同一行：start 先拿锁时，终态提交随后能看到 invocation；
       // 终态先拿锁时，start 原子落为不可执行记录。只有 cancelled 需要 durable cancel outbox。
-      const run = await client.query<{ status: string }>(`
-        SELECT status FROM ${this.runsTable} WHERE run_id = $1 FOR SHARE
+      const run = await client.query<{ status: string; worker_id: string | null; metadata: Record<string, unknown> }>(`
+        SELECT status, worker_id, metadata FROM ${this.runsTable} WHERE run_id = $1 FOR SHARE
       `, [input.runId]);
       if (!run.rows[0]) throw new Error(`Cannot start tool invocation for missing run ${input.runId}`);
       const runStatus = run.rows[0].status;
       const terminalRunStatus = ['completed', 'failed', 'cancelled', 'orphaned'].includes(runStatus)
         ? runStatus
         : null;
+      const handoffReady = run.rows[0].worker_id === null && run.rows[0].metadata.drainHandoffReady === true;
+      const blockedRunStatus = terminalRunStatus ?? (handoffReady ? 'handoff_ready' : null);
       const runAlreadyCancelled = terminalRunStatus === 'cancelled';
       const now = new Date().toISOString();
       const cancelReason = runAlreadyCancelled ? 'run_already_cancelled_before_tool_start' : null;
       const terminalError = terminalRunStatus && !runAlreadyCancelled
         ? `run_already_terminal_before_tool_start status=${terminalRunStatus}`
-        : null;
+        : handoffReady ? 'run_handoff_ready_before_tool_start' : null;
       const metadata = {
         ...(input.metadata ?? {}),
         ...(terminalRunStatus ? { terminalRunStatus } : {}),
@@ -497,7 +499,7 @@ export class PgToolInvocationStore implements ToolInvocationStore {
         input.tenantId ?? null,
         now,
         JSON.stringify(metadata),
-        terminalRunStatus,
+        blockedRunStatus,
         cancelReason,
         terminalError,
       ]);

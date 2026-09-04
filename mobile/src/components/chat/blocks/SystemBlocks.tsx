@@ -4,20 +4,32 @@
  * runtime_status 的中文标签、图标语义位与语气全部取自 `@agent/shared` 的
  * `getRuntimeStatusMeta` / `getRuntimeStatusTone`（与 Web RuntimeStatusBlock 同源），
  * 不再把裸状态串（`waiting_hand`）直接打到屏幕上。
+ *
+ * system-error 走 `selectErrorPresentation` + `selectClientFailureCopy`：
+ * 前者决定语气与是否可看原文，后者决定客户面文案与唯一恢复动作——
+ * 普通失败提示发送「继续」，策略拒绝/配额只提示切换模型，绝不互相串味。
  */
-import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import { Clock, Loader2, Server, Shield, User } from 'lucide-react-native';
 import Animated from 'react-native-reanimated';
-import type { MessageItem, RawPresentationGate, RuntimeStatusIcon } from '@agent/shared';
+import type {
+  ClientFailureCopy,
+  MessageItem,
+  RawPresentationGate,
+  RuntimeStatusIcon,
+} from '@agent/shared';
 import {
   getRuntimeStatusMeta,
   getRuntimeStatusTone,
+  selectClientFailureCopy,
   selectErrorPresentation,
   selectRenderModel,
 } from '@agent/shared';
 import { useColors, spacing, radius, fontWeight, useChatTypography } from '../../../theme';
-import { useSpinStyle } from '../../ui';
+import { Button, useSpinStyle } from '../../ui';
+import { useChatAppState } from '../../../contexts/ChatAppStateContext';
+import { showActionMenu } from '../../../lib/prompt';
 import { resolveActivityToneTokens } from './tone';
 
 const ICON_BY_KEY: Record<RuntimeStatusIcon, typeof Clock> = {
@@ -63,32 +75,80 @@ function RuntimeStatusRow({
   );
 }
 
+/**
+ * 恢复动作按钮：一条失败至多一个动作（shared 已收敛），这里只负责接线。
+ * 拿不到对应能力时不渲染按钮——不允许出现「点了没反应」的恢复入口。
+ */
+function RecoveryButton({
+  copy,
+  onRetry,
+}: {
+  copy: ClientFailureCopy;
+  onRetry?: () => void;
+}) {
+  const { modelList, selectedModel, onModelChange } = useChatAppState();
+
+  const openModelPicker = useCallback(() => {
+    if (!modelList) return;
+    showActionMenu({
+      title: '切换模型',
+      message: copy.hint ?? copy.message,
+      actions: modelList.groups.flatMap((group) => group.models.map((model) => ({
+        label: `${group.name} · ${model.name}`,
+        disabled: `${group.id}/${model.id}` === selectedModel,
+        onPress: () => onModelChange(`${group.id}/${model.id}`),
+      }))),
+    });
+  }, [copy.hint, copy.message, modelList, onModelChange, selectedModel]);
+
+  const action = copy.action;
+  if (!action) return null;
+  if (action.kind === 'retry') {
+    return onRetry
+      ? <Button variant="outline" size="sm" label={action.label} onPress={onRetry} />
+      : null;
+  }
+  if (action.kind === 'switch_model') {
+    return modelList
+      ? <Button variant="outline" size="sm" label={action.label} onPress={openModelPicker} />
+      : null;
+  }
+  return null;
+}
+
 function SystemErrorBanner({
   message,
   gate,
+  isLoading,
   onRetry,
 }: {
   message: Extract<MessageItem, { type: 'system-error' }>;
   gate?: RawPresentationGate;
+  /** 运行中不提供恢复入口：这一轮还没结束（与 Web SystemErrorMessage 一致）。 */
+  isLoading?: boolean;
   onRetry?: (message: MessageItem) => void;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
-  const item = selectRenderModel({ messages: [message] }).items[0];
-  const presentation = selectErrorPresentation(item, gate);
+  const presentation = useMemo(
+    () => selectErrorPresentation(selectRenderModel({ messages: [message] }).items[0], gate),
+    [gate, message],
+  );
+  // 分类只读结构化字段（severity / failureKind / recoveryAction / canonicalFailure），不猜错误文本。
+  const copy = useMemo(() => selectClientFailureCopy({
+    presentation,
+    ...(message.severity ? { severity: message.severity } : {}),
+    ...(message.failureKind ? { failureKind: message.failureKind } : {}),
+    ...(message.recoveryAction ? { recoveryAction: message.recoveryAction } : {}),
+    ...(message.canonicalFailure ? { canonicalFailure: message.canonicalFailure } : {}),
+  }), [message, presentation]);
   const danger = presentation.tone === 'danger';
   const tone = resolveActivityToneTokens(danger ? 'danger' : 'neutral', colors);
-  const recovery = presentation.recoveryAction;
 
   return (
     <View
       accessibilityRole={danger ? 'alert' : 'summary'}
-      accessibilityLabel={[
-        presentation.title,
-        presentation.statusLabel,
-        presentation.summary,
-        recovery?.label,
-      ]
+      accessibilityLabel={[copy.title, copy.message, copy.hint, copy.action?.label]
         .filter(Boolean)
         .join('，')}
       accessibilityLiveRegion={danger ? 'assertive' : 'polite'}
@@ -106,28 +166,23 @@ function SystemErrorBanner({
           { color: danger ? tone.ink : colors.foreground, fontWeight: fontWeight.semibold },
         ]}
       >
-        {presentation.title}
+        {copy.title}
       </Text>
       <Text style={[typo.bodySmall, { color: danger ? tone.ink : colors.mutedForeground }]}>
-        {presentation.summary ?? presentation.statusLabel}
+        {copy.message}
       </Text>
-      {presentation.showRaw && presentation.summary !== message.content ? (
+      {copy.hint ? (
+        <Text style={[typo.caption, { color: colors.mutedForeground }]}>{copy.hint}</Text>
+      ) : null}
+      {/* 原始终态文本只在 debugMode/RawPresentationGate 放行时露出，安全边界不变。 */}
+      {presentation.showRaw && copy.message !== message.content ? (
         <Text style={[typo.caption, { color: colors.mutedForeground }]}>{message.content}</Text>
       ) : null}
-      {recovery?.kind === 'retry' && onRetry ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`${presentation.title}，${recovery.label}`}
-          onPress={() => onRetry(message)}
-          style={styles.recovery}
-        >
-          <Text
-            style={[typo.bodySmall, { color: colors.foreground, fontWeight: fontWeight.semibold }]}
-          >
-            {recovery.label}
-          </Text>
-        </Pressable>
-      ) : null}
+      {isLoading ? null : (
+        <View style={styles.recovery}>
+          <RecoveryButton copy={copy} onRetry={onRetry ? () => onRetry(message) : undefined} />
+        </View>
+      )}
     </View>
   );
 }
@@ -135,17 +190,19 @@ function SystemErrorBanner({
 export function SystemTimelineMessage({
   message,
   gate,
+  isLoading,
   onRetry,
 }: {
   message: Extract<MessageItem, { type: 'runtime_status' | 'system_event' | 'system-error' }>;
   gate?: RawPresentationGate;
+  isLoading?: boolean;
   onRetry?: (message: MessageItem) => void;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
 
   if (message.type === 'system-error') {
-    return <SystemErrorBanner message={message} gate={gate} onRetry={onRetry} />;
+    return <SystemErrorBanner message={message} gate={gate} isLoading={isLoading} onRetry={onRetry} />;
   }
   if (message.type === 'runtime_status') return <RuntimeStatusRow message={message} />;
 
@@ -203,9 +260,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   recovery: {
-    minHeight: 44,
-    justifyContent: 'center',
+    flexDirection: 'row',
     alignSelf: 'flex-start',
-    paddingHorizontal: spacing.sm,
   },
 });

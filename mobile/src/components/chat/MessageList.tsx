@@ -3,8 +3,9 @@ import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-nativ
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RawPresentationGate, RenderModel } from '@agent/shared';
-import { groupMessages, isDebugModeAvailable, selectRenderModel } from '@agent/shared';
+import { businessStepMainItems, groupMessages, isDebugModeAvailable, selectRenderModel } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
+import { BlockActionProvider } from './blocks/BlockActionContext';
 import { CompactionDivider } from './CompactionDivider';
 import { isCompactionItem } from '../../lib/compaction';
 import { scheduleIdle } from '../../lib/ric';
@@ -232,6 +233,8 @@ interface AiBubbleViewProps {
   lastActivityGroupId: string | null;
   onPermissionResponse?: (interactionId: string, allow: boolean) => Promise<void>;
   onAskUserResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
+  /** 块内恢复动作（工具失败重试、system-error 重试）依赖它，缺省则按钮不出现。 */
+  onRetryMessage?: (message: MessageItem) => void;
   onPreviewMd?: (filePath: string) => void;
   onTtsPlay?: (key: string, text: string) => void;
   loading: boolean;
@@ -249,6 +252,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
   lastActivityGroupId,
   onPermissionResponse,
   onAskUserResponse,
+  onRetryMessage,
   onPreviewMd,
   onTtsPlay,
   loading,
@@ -304,6 +308,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
             skipAnimation
             onPermissionResponse={onPermissionResponse}
             onAskUserResponse={onAskUserResponse}
+            onRetryMessage={onRetryMessage}
             onPreviewMd={onPreviewMd}
             onTtsPlay={onTtsPlay}
             isLoading={loading}
@@ -364,6 +369,7 @@ export function MessageList({
   onLoadEarlier,
 }: MessageListProps) {
   const colors = useColors();
+  const typo = useChatTypography();
   const internalRef = useRef<FlashListRef<RenderItem>>(null);
   const listRef = externalRef ?? internalRef;
 
@@ -407,11 +413,17 @@ export function MessageList({
     () => groupMessages(filteredMessages, loading, groupOptions),
     [filteredMessages, loading, groupOptions],
   );
+  // 主区投影（与 Web 同源纯函数）：一个 Run 只留最新一张计划卡，
+  // 长会话不再堆叠历史计划。步骤节在移动端就是详情载体，保留内联渲染。
+  const mainThreadItems = useMemo(
+    () => businessStepMainItems(renderItems, { sections: 'keep' }),
+    [renderItems],
+  );
   const renderKeyFor = useCallback(
     (item: RenderItem) => renderKeyByMessageId.get(item.id) ?? item.id,
     [renderKeyByMessageId],
   );
-  const bubbleItems = useMemo(() => groupIntoBubbles(renderItems, renderKeyFor), [renderItems, renderKeyFor]);
+  const bubbleItems = useMemo(() => groupIntoBubbles(mainThreadItems, renderKeyFor), [mainThreadItems, renderKeyFor]);
 
   const initialScrollDoneRef = useRef(false);
   const listPolicyRef = useRef(INITIAL_MOBILE_TIMELINE_LIST_STATE);
@@ -535,6 +547,7 @@ export function MessageList({
           lastActivityGroupId={lastActivityGroupId}
           onPermissionResponse={onPermissionResponse}
           onAskUserResponse={onAskUserResponse}
+          onRetryMessage={onRetryMessage}
           onPreviewMd={onPreviewMd}
           onTtsPlay={onTtsPlay}
           loading={loading}
@@ -589,7 +602,7 @@ export function MessageList({
       return (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: spacing.md }}>
           <ActivityIndicator size="small" color={colors.mutedForeground} />
-          <Text style={{ fontSize: 13, color: colors.mutedForeground }}>正在压缩上下文…</Text>
+          <Text style={[typo.caption, { color: colors.mutedForeground }]}>正在压缩上下文…</Text>
         </View>
       );
     }
@@ -597,10 +610,10 @@ export function MessageList({
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: spacing.md }}>
         <ActivityIndicator size="small" color={colors.mutedForeground} />
-        <Text style={{ fontSize: 13, color: colors.mutedForeground }}>正在加载最新消息...</Text>
+        <Text style={[typo.caption, { color: colors.mutedForeground }]}>正在加载最新消息...</Text>
       </View>
     );
-  }, [showCompactionBar, showSyncLoading, colors.mutedForeground]);
+  }, [showCompactionBar, showSyncLoading, colors.mutedForeground, typo.caption]);
 
   const styles = useMemo(() => StyleSheet.create({
     container: {
@@ -628,7 +641,7 @@ export function MessageList({
       <View style={styles.centerLoading}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <ActivityIndicator size="small" color={colors.mutedForeground} />
-          <Text style={{ fontSize: 13, color: colors.mutedForeground }}>加载中...</Text>
+          <Text style={[typo.caption, { color: colors.mutedForeground }]}>加载中...</Text>
         </View>
       </View>
     );
@@ -636,6 +649,8 @@ export function MessageList({
 
   return (
     <View style={styles.container}>
+      {/* 呈现块动作的回写通道：拿不到 interaction 回写函数时块内按钮保持 disabled。 */}
+      <BlockActionProvider onPermissionResponse={onPermissionResponse}>
       <FlashList
         ref={listRef as any}
         data={bubbleItems}
@@ -655,6 +670,7 @@ export function MessageList({
         onStartReachedThreshold={0.2}
         ListFooterComponent={syncFooter}
       />
+      </BlockActionProvider>
     </View>
   );
 }

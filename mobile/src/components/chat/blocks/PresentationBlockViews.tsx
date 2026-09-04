@@ -20,6 +20,7 @@ import {
   useChatTypography,
 } from '../../../theme';
 import { Button } from '../../ui';
+import { useBlockActionContext } from './BlockActionContext';
 import { DetailLines } from './DetailLines';
 import { RecordsBlockView } from './RecordsBlockView';
 import { resolvePresentationToneTokens } from './tone';
@@ -214,7 +215,9 @@ export function PresentationBlocks({
   blocks: readonly PresentationBlock[];
   ctx?: BlockContext;
 }) {
-  const context = ctx ?? { readOnly: true };
+  // 显式 ctx 优先；缺省时取会话页挂的回写通道（无 Provider 则为只读）。
+  const inherited = useBlockActionContext();
+  const context = ctx ?? inherited;
   if (!blocks.length) return null;
   return (
     <View style={styles.stack}>

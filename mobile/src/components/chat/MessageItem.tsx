@@ -67,8 +67,11 @@ export const MessageItemView = React.memo(function MessageItemView({
 
   let content: React.ReactNode;
 
+  // 运行中不提供块内恢复入口：这一轮还没结束，补发「继续」既无意义也会打断当前步骤。
+  const recoveryHandler = isLoading ? undefined : onRetryMessage;
+
   if (item.type === 'activity_group') {
-    content = <ActivityGroupView group={item} isLast={isLast} gate={presentationGate} onRetry={onRetryMessage} />;
+    content = <ActivityGroupView group={item} isLast={isLast} gate={presentationGate} onRetry={recoveryHandler} />;
   } else {
     switch (item.type) {
       case 'user':
@@ -83,7 +86,7 @@ export const MessageItemView = React.memo(function MessageItemView({
         content = <ThinkingBlock message={item} />;
         break;
       case 'tool_use':
-        content = <ToolUseBlock message={item} gate={presentationGate} onRecovery={onRetryMessage ? () => onRetryMessage(item) : undefined} />;
+        content = <ToolUseBlock message={item} gate={presentationGate} onRecovery={recoveryHandler ? () => recoveryHandler(item) : undefined} />;
         break;
       case 'tool_result':
         content = <ToolResultBlock message={item} gate={presentationGate} />;
@@ -134,7 +137,7 @@ export const MessageItemView = React.memo(function MessageItemView({
       case 'runtime_status':
       case 'system_event':
       case 'system-error':
-        content = <SystemTimelineMessage message={item} gate={presentationGate} onRetry={onRetryMessage} />;
+        content = <SystemTimelineMessage message={item} gate={presentationGate} isLoading={isLoading} onRetry={recoveryHandler} />;
         break;
       default:
         content = null;

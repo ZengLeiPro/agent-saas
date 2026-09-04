@@ -9,6 +9,7 @@ export {
 export { BusinessStepDetailSheet, BusinessStepResultContent, OutcomeLine } from './BusinessStepDetailSheet';
 export { BusinessStepFlow, BusinessStepPlanUpdate } from './BusinessStepFlow';
 export { BusinessStepStatusIcon, BusinessStepTimelineRow } from './BusinessStepTimeline';
+export { BlockActionProvider, useBlockActionContext } from './BlockActionContext';
 export { DetailLines, type DetailVariant } from './DetailLines';
 export { FileDownloadCard } from './FileDownloadCard';
 export { PermissionBlock } from './PermissionBlock';

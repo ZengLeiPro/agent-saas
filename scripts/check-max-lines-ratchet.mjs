@@ -13,7 +13,7 @@ import {
   resolveBase,
 } from './ratchet-utils.mjs';
 
-export const SOURCE_ROOTS = ['server/src', 'web/src', 'shared/src', 'hand-server/src', 'acs-orchestrator/src'];
+export const SOURCE_ROOTS = ['server/src', 'web/src', 'shared/src', 'hand-server/src', 'acs-orchestrator/src', 'mobile/src', 'mobile/app'];
 export const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
 export const THRESHOLDS = Object.freeze({ production: 1000, test: 800 });
 export const BASELINE_PATH = 'config/max-lines-baseline.txt';

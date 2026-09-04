@@ -78,12 +78,6 @@ function AuthGate() {
                 headerShown: true,
               }}
             />
-            <Stack.Screen
-              name="user-form"
-              options={{
-                headerShown: true,
-              }}
-            />
             <Stack.Screen name="cron" />
             <Stack.Screen
               name="cron-form"

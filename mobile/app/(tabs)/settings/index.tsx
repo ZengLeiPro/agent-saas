@@ -71,7 +71,6 @@ export default function SettingsScreen() {
 
   // V1 范围裁剪（M00-01）：生产构建隐藏延期菜单项。
   const v1Profile = getV1BuildProfile();
-  const showAllAgents = isV1RouteAllowed("settings/all-agents", v1Profile);
   const showCron = isV1RouteAllowed("cron", v1Profile);
   const showGovernance = isV1RouteAllowed("settings/my-permissions", v1Profile);
   const showConnections = isV1RouteAllowed("settings/connections", v1Profile);
@@ -348,20 +347,6 @@ export default function SettingsScreen() {
                 strokeWidth={2}
               />
             </TouchableOpacity>
-            {showAllAgents && (
-              <TouchableOpacity
-                style={[styles.row, styles.rowBorder]}
-                onPress={() => router.push("/settings/all-agents")}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.rowLabel}>所有 Agent</Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
-              </TouchableOpacity>
-            )}
             {tenantFeatures.cronEnabled && showCron && (
               <TouchableOpacity
                 style={styles.row}

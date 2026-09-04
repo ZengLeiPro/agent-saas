@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   V1_ALLOWED_ROUTES,
   V1_DEFERRED_ROUTES,
+  V1_DELETED_ROUTES,
   classifyV1Route,
 } from './v1Capabilities';
 
@@ -88,6 +89,44 @@ describe('M00-01 路由清单完整性', () => {
     expect(existsSync(join(APP_DIR, 'webview-spike.tsx'))).toBe(false);
     expect(existsSync(join(APP_DIR, 'chat/html-preview.tsx'))).toBe(false);
     expect(existsSync(join(APP_DIR, '../src/services/previewTokenCache.ts'))).toBe(false);
+  });
+
+  // 09-04 拍板：移动端定位员工使用端，管理类页面物理删除（管理后台留 Web）。
+  it('已删除的管理类路由文件与其专属组件/hook 不再存在', () => {
+    const deletedRouteFiles = [
+      'settings/users.tsx',
+      'user-form.tsx',
+      'settings/audit-log.tsx',
+      'settings/all-agents.tsx',
+      'settings/agent-profile/[username].tsx',
+      'settings/skills-admin.tsx',
+      'settings/skills-tenant-admin.tsx',
+    ];
+    for (const rel of deletedRouteFiles) {
+      expect(existsSync(join(APP_DIR, rel)), rel).toBe(false);
+    }
+    for (const route of [
+      'settings/users',
+      'user-form',
+      'settings/audit-log',
+      'settings/all-agents',
+      'settings/agent-profile/[username]',
+      'settings/skills-admin',
+      'settings/skills-tenant-admin',
+    ]) {
+      expect(routes, route).not.toContain(route);
+      expect(V1_DELETED_ROUTES[route], `${route} 缺少墓碑理由`).toBeTruthy();
+    }
+    const deletedSources = [
+      '../src/components/UserManager',
+      '../src/components/user/UserForm.tsx',
+      '../src/components/audit',
+      '../src/hooks/useLoginLogs.ts',
+      '../src/hooks/useAdminSkills.ts',
+    ];
+    for (const rel of deletedSources) {
+      expect(existsSync(join(APP_DIR, rel)), rel).toBe(false);
+    }
   });
 
   it('Mobile WebView 代码不执行 workspace HTML 或 preview URL', () => {

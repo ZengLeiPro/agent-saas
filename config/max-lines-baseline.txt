@@ -7,6 +7,9 @@
 acs-orchestrator/src/sandboxManager.test.ts	1677	test
 acs-orchestrator/src/sandboxManager.ts	1152	production
 acs-orchestrator/src/snatManager.test.ts	854	test
+mobile/app/(tabs)/chat/index.tsx	1028	production
+mobile/src/components/chat/MessageItem.tsx	1755	production
+mobile/src/hooks/useChatAppState.ts	2264	production
 server/src/__tests__/appConfig.test.ts	877	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test
 server/src/__tests__/feishuTokenBroker.test.ts	809	test

@@ -7,11 +7,8 @@ import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.j
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
-import {
-  createContextAdminConsumerStore,
-  createContextProductService,
-  createContextRetentionWorker,
-} from './runtimeContextAdmin.js';
+import { createContextAdminConsumerStore, createContextAdminTargetOrganizationAccess,
+  createContextProductService, createContextRetentionWorker } from './runtimeContextAdmin.js';
 export { activeOffboardingWriteFence } from './routeGuards.js';
 import type { UserInfo } from '../data/users/types.js';
 import {
@@ -299,6 +296,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       consumers: createContextAdminConsumerStore(runtime, config),
       product: createContextProductService(runtime, config),
       retention: createContextRetentionWorker(runtime, config),
+      targetOrganizationAccess: createContextAdminTargetOrganizationAccess(runtime),
     }),
   );
   const webChannel = channelManager.getChannel<WebChannel>('web');
@@ -947,7 +945,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         verifyExternalRuntime: externalTenantRuntime.verify,
       },
     );
-    // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
         '/api/tenants',
@@ -958,6 +955,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           resolveMemoryFeatureStatus: runtime.getTenantMemoryFeatureStatus,
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
           orgAgentStore: runtime.orgAgentStore,
+          entitlementStore: runtime.entitlementStore,
           governanceAuditStore: runtime.governanceAuditStore,
           legacyWriteGate,
           onTenantDisabled: webChannel

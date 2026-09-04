@@ -65,9 +65,11 @@ function GovernancePageFallback() {
 export function GovernanceCapabilityNotice({
   title,
   mode = "unavailable",
+  description,
 }: {
   title: string;
   mode?: "unavailable" | "readonly";
+  description?: string;
 }) {
   const readOnly = mode === "readonly";
   return (
@@ -78,7 +80,7 @@ export function GovernanceCapabilityNotice({
         </div>
         <h2 className="text-base font-semibold">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {readOnly ? "当前能力仅提供只读查看，暂不支持在此修改。" : "能力尚未接入。当前没有可用页面或 API，不会展示模拟数据或产生假成功。"}
+          {description ?? (readOnly ? "当前能力仅提供只读查看，暂不支持在此修改。" : "能力尚未接入。当前没有可用页面或 API，不会展示模拟数据或产生假成功。")}
         </p>
         <Badge variant="outline" className="mt-4">{readOnly ? "只读" : "尚未接入"}</Badge>
       </div>

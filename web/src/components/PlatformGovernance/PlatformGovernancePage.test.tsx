@@ -107,7 +107,7 @@ describe("PlatformOrganizationGovernance", () => {
   it("Scope 使用后端 impact 版本并在提交后留屏展示治理回执", async () => {
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "resource-scope" })} />);
     fireEvent.click(await screen.findByRole("button", { name: "从目录编辑" }));
-    fireEvent.click(await screen.findByRole("button", { name: "全部允许" }));
+    fireEvent.change(await screen.findByLabelText("连接器范围编辑模式"), { target: { value: "all" } });
     fireEvent.click(screen.getByRole("button", { name: "预览变更" }));
     expect(await screen.findByText(/v2 → v9/)).toBeTruthy();
     expect(screen.queryByText(/v2 → v3/)).not.toBeTruthy();
@@ -119,15 +119,20 @@ describe("PlatformOrganizationGovernance", () => {
     expect(screen.queryByText(/投影：pending/)).toBeNull();
   });
 
-  it("目录已移除的历史选项标为失效并阻断预览", async () => {
+  it("目录已移除的历史选项可单独清理并重新预览", async () => {
     mocks.getEntitlements.mockResolvedValue({
       ...response,
       scopes: [{ ...response.scopes[0], resourceIds: ["retired-connector"] }],
     });
     render(<PlatformOrganizationGovernance tenantId="tenant-a" route={governanceRoute("platform.org-business.tenants", { entityId: "tenant-a", tab: "resource-scope" })} />);
     fireEvent.click(await screen.findByRole("button", { name: "从目录编辑" }));
-    expect(await screen.findByText(/当前范围含已退出目录的资源：/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "预览变更" }).hasAttribute("disabled")).toBe(true);
+    expect(await screen.findByText("已退出目录")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "移除旧资源 retired-connector" }));
+    fireEvent.click(screen.getByRole("button", { name: "预览变更" }));
+    await waitFor(() => expect(mocks.previewScope).toHaveBeenCalledWith("connector", expect.objectContaining({
+      expectedVersion: 2,
+      resourceIds: [],
+    }), "tenant-a"));
   });
 
   it.each([

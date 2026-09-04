@@ -333,7 +333,7 @@ describe('组织 Skill 治理上传服务', () => {
 
     expect(outcomes.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(outcomes.filter(result => result.status === 'rejected')).toEqual([
-      expect.objectContaining({ reason: expect.objectContaining({ code: 'SKILL_ALREADY_EXISTS', status: 409 }) }),
+      expect.objectContaining({ reason: expect.objectContaining({ code: 'SKILL_VERSION_CONFLICT', status: 409 }) }),
     ]);
     expect(test.createAndPublishResource).toHaveBeenCalledTimes(1);
     expect(await readFile(join(test.installedDir('concurrent-skill'), 'SKILL.md'), 'utf-8'))

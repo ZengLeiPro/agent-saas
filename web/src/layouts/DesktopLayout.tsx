@@ -718,7 +718,6 @@ export function DesktopLayout(props: LayoutProps) {
             route={governanceRoute}
             access={managementAccess}
             onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
-            openFilePreview={handleOpenFilePreview}
             platformAdminSection={platformAdminSection}
             platformAdminEntityId={platformAdminEntityId}
             setPlatformAdminRoute={setPlatformAdminRoute}

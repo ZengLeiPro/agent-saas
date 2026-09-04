@@ -107,6 +107,49 @@ describe('ResourceAccessEditors', () => {
     );
   });
 
+  it('旧目录资源默认保留，可逐项移除或一次清理后执行预览', async () => {
+    mocks.getEntitlements.mockResolvedValueOnce({
+      scopes: [{
+        resourceType: 'model', mode: 'selected',
+        resourceIds: ['group/model-a', 'retired/model-x', 'retired/model-y'],
+        source: 'governance', version: 4,
+      }],
+    }).mockResolvedValue({
+      scopes: [{
+        resourceType: 'model', mode: 'selected', resourceIds: ['group/model-a'],
+        source: 'governance', version: 5,
+      }],
+    });
+    mocks.listCatalog.mockResolvedValue({
+      resourceType: 'model',
+      items: [{ resourceId: 'group/model-a', label: '模型 A', version: 1 }],
+    });
+    mocks.previewScope.mockResolvedValue({
+      previewId: `gpv1.${'a'.repeat(64)}`,
+      baselineDigest: 'b'.repeat(64),
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      impact: { blockers: [] },
+    });
+    mocks.updateScope.mockResolvedValue({ changeId: 'change-cleanup', auditId: 'audit-cleanup' });
+
+    render(<OrganizationEntitlementScopeEditor
+      tenantId="tenant-a" resourceType="model" title="模型可用范围" description="测试"
+    />);
+    expect(await screen.findByText('已退出目录')).toBeTruthy();
+    expect((screen.getByRole('checkbox', { name: '历史资源 retired/model-x' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '移除旧资源 retired/model-x' }));
+    fireEvent.click(screen.getByRole('button', { name: '清理全部旧引用' }));
+    fireEvent.click(screen.getByRole('button', { name: '预览范围变更' }));
+    await waitFor(() => expect(mocks.previewScope).toHaveBeenCalledWith('model', {
+      expectedVersion: 4,
+      mode: 'selected',
+      resourceIds: ['group/model-a'],
+    }, 'tenant-a'));
+    fireEvent.click(screen.getByRole('button', { name: '确认提交' }));
+    expect(await screen.findByText('changeId：change-cleanup')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('已退出目录')).toBeNull());
+  });
+
   it('资源指派支持成员与群组并严格执行签名预览', async () => {
     mocks.getAssignment.mockResolvedValue({ version: 0, assignments: [] });
     mocks.previewAssignment.mockResolvedValue({

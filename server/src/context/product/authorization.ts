@@ -52,9 +52,20 @@ export class ContextProductAuthorization {
     const eligible: Array<{ index: number; candidate: ProductRecordLocator }> = [];
     candidates.forEach((candidate, index) => {
       if (!allowedCollections.has(candidate.collectionId)
+        || (subject.accessMode === 'platform_manage'
+          && candidate.ownerPrincipal !== undefined
+          && candidate.ownerPrincipal !== subject.actorId
+          && candidate.sourceKind !== 'directory'
+          && !candidate.aclPrincipals?.includes(`org:${subject.tenantId}`))
         || candidate.currentDeleted || candidate.currentRevoked || candidate.refused
         || candidate.currentRevision < 1 || candidate.recordRevision < 1
         || candidate.recordRevision > candidate.currentRevision) return;
+      if (subject.accessMode === 'platform_manage'
+        && (candidate.sourceKind === 'directory'
+          || candidate.aclPrincipals?.includes(`org:${subject.tenantId}`))) {
+        decisions[index] = true;
+        return;
+      }
       eligible.push({ index, candidate });
     });
     if (!eligible.length) return decisions;
@@ -106,12 +117,15 @@ export class ContextProductAuthorization {
   }
 
   cursor(subject: ContextProductSubject, fingerprint: string, offset: number): string {
-    return this.sign('cp1', { t: subject.tenantId, a: subject.actorId, f: fingerprint, o: offset });
+    return this.sign('cp1', {
+      t: subject.tenantId, a: subject.actorId, m: subject.accessMode ?? null, f: fingerprint, o: offset,
+    });
   }
 
   parseCursor(subject: ContextProductSubject, fingerprint: string, cursor: string): number {
     const parsed = this.verify('cp1', cursor);
-    if (parsed.t !== subject.tenantId || parsed.a !== subject.actorId || parsed.f !== fingerprint
+    if (parsed.t !== subject.tenantId || parsed.a !== subject.actorId
+      || parsed.m !== (subject.accessMode ?? null) || parsed.f !== fingerprint
       || !Number.isSafeInteger(parsed.o) || Number(parsed.o) < 0 || Number(parsed.o) > 100_000) {
       throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
     }
@@ -120,12 +134,15 @@ export class ContextProductAuthorization {
 
   entityCursor(subject: ContextProductSubject, fingerprint: string, entityId: string): string {
     if (!validId(entityId)) throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
-    return this.sign('cp2', { t: subject.tenantId, a: subject.actorId, f: fingerprint, e: entityId });
+    return this.sign('cp2', {
+      t: subject.tenantId, a: subject.actorId, m: subject.accessMode ?? null, f: fingerprint, e: entityId,
+    });
   }
 
   parseEntityCursor(subject: ContextProductSubject, fingerprint: string, cursor: string): string {
     const parsed = this.verify('cp2', cursor);
-    if (parsed.t !== subject.tenantId || parsed.a !== subject.actorId || parsed.f !== fingerprint
+    if (parsed.t !== subject.tenantId || parsed.a !== subject.actorId
+      || parsed.m !== (subject.accessMode ?? null) || parsed.f !== fingerprint
       || !validId(parsed.e)) throw new ContextProductError('CONTEXT_PRODUCT_CURSOR_INVALID');
     return String(parsed.e);
   }

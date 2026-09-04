@@ -147,7 +147,7 @@ describe('ContextProductService authorization boundary', () => {
     expect(page.items).toEqual([]);
   });
 
-  it('denies a platform admin without tenant-b membership before everyone Assignment or organization Taskboard ACL', async () => {
+  it('denies a subject without server-resolved platform access before everyone Assignment or organization Taskboard ACL', async () => {
     const listEffectiveResourceIds = vi.fn(async () => [{
       resourceId: 'collection-a', assignmentVersion: 1,
     }]);

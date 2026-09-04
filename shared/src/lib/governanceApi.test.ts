@@ -12,16 +12,17 @@ import {
   fetchMyGovernanceSummary,
   governanceAccessApi,
   governanceResourcesApi,
+  governanceApiErrorMessage,
   GovernanceApiError,
   preflightExecution,
 } from './governanceApi';
 
 const mockAuthFetch = vi.mocked(authFetch);
 
-function jsonResponse(value: unknown, status = 200): Response {
+function jsonResponse(value: unknown, status = 200, requestId?: string): Response {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(requestId ? { 'x-request-id': requestId } : {}) },
   }) as unknown as Response;
 }
 
@@ -79,10 +80,16 @@ describe('governanceApi fail closed', () => {
   });
 
   it('非 2xx 时保留后端 code 并明确抛错', async () => {
-    mockAuthFetch.mockResolvedValue(jsonResponse({ code: 'ACCESS_DENIED', message: '无权评估' }, 403));
+    mockAuthFetch.mockResolvedValue(jsonResponse({ code: 'ACCESS_DENIED', message: '无权评估' }, 403, 'req-123'));
     const error = await evaluateAccess({}).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(GovernanceApiError);
-    expect(error).toMatchObject({ code: 'ACCESS_DENIED', status: 403, message: '无权评估' });
+    expect(error).toMatchObject({ code: 'ACCESS_DENIED', status: 403, message: '无权评估', requestId: 'req-123' });
+  });
+
+  it('集中映射可操作错误并保留请求 ID', () => {
+    expect(governanceApiErrorMessage(new GovernanceApiError(
+      'GOVERNANCE_PARTIAL_CHANGE', 'partial', 500, 'req-partial',
+    ))).toContain('禁止盲目重试。 请求 ID：req-partial');
   });
 
   it('2xx 错误 envelope 也抛错，不降级为本地 allow', async () => {
@@ -543,25 +550,25 @@ describe('governanceApi fail closed', () => {
     );
   });
 
-  it('Context Center DTO 漂移 fail closed，403/404/503 显示真实不可用语义', async () => {
+  it('Context Center DTO 漂移 fail closed，并保留后端权威错误码', async () => {
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({
       generatedAt: '2026-08-22T15:40:00.000Z', sources: [], consumers: [], productionDemo: true,
     }));
     await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({ code: 'INVALID_GOVERNANCE_RESPONSE' });
 
-    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ error: 'Forbidden' }, 403));
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ code: 'TARGET_ORGANIZATION_FORBIDDEN', error: 'Forbidden' }, 403));
     await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({
-      code: 'CONTEXT_PLANE_FORBIDDEN', status: 403, message: '当前账号无权查看 Context Center。',
+      code: 'TARGET_ORGANIZATION_FORBIDDEN', status: 403, message: 'Forbidden',
     });
 
-    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ error: 'Not found' }, 404));
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ code: 'CONTEXT_NOT_FOUND', error: 'Not found' }, 404));
     await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({
-      code: 'CONTEXT_PLANE_UNAVAILABLE', status: 404, message: 'Context Center 服务端能力尚未提供。',
+      code: 'CONTEXT_NOT_FOUND', status: 404, message: 'Not found',
     });
 
-    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ error: 'Unavailable' }, 503));
+    mockAuthFetch.mockResolvedValueOnce(jsonResponse({ code: 'CONTEXT_AUTHORITY_UNAVAILABLE', error: 'Unavailable' }, 503));
     await expect(contextCenterApi.getSnapshot()).rejects.toMatchObject({
-      code: 'CONTEXT_PLANE_UNAVAILABLE', status: 503, message: 'Context Center 服务暂不可用，请稍后重试。',
+      code: 'CONTEXT_AUTHORITY_UNAVAILABLE', status: 503, message: 'Unavailable',
     });
   });
 
@@ -679,7 +686,7 @@ describe('governanceApi fail closed', () => {
     mockAuthFetch.mockResolvedValueOnce(jsonResponse({ code: 'REVISION_CONFLICT', message: 'stale' }, 409));
     await expect(contextCenterApi.createCorrection('entity-1', {
       action: 'reject', scope: 'personal', expectedRevision: 4, targetItemId: 'item-1', evidenceIds: ['ce1.x.y'],
-    })).rejects.toMatchObject({ code: 'CONTEXT_REVISION_CONFLICT', status: 409, message: '内容版本已变化，请刷新实体详情后重试。' });
+    })).rejects.toMatchObject({ code: 'REVISION_CONFLICT', status: 409, message: 'stale' });
   });
 
   it('strict 跨层 fixture 匹配 scope revision、relation 路径与各层 item 类型', async () => {

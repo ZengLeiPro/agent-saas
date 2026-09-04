@@ -2,16 +2,18 @@ import { rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { OrgAgentStore } from '../orgAgents/store.js';
+import type { PgEntitlementStore } from '../entitlements/store.js';
 import { seedOrgAgentTemplatesForTenant } from '../orgAgentTemplates.js';
 import { apiLogger } from '../../utils/logger.js';
 import { resolveTenantCompanyInfoPath, writeTenantCompanyInfo } from './companyInfo.js';
 import type { TenantStore } from './store.js';
-import type { TenantRecord } from './types.js';
+import { DEFAULT_TENANT_SETTINGS, type TenantRecord } from './types.js';
 
 export interface TenantProvisioningOptions {
   tenantStore: TenantStore;
   sharedDir: string;
   orgAgentStore?: OrgAgentStore;
+  entitlementStore?: Pick<PgEntitlementStore, 'provisionTenantGovernance' | 'deleteTenantGovernance'>;
 }
 
 export interface TenantProvisioningInput {
@@ -39,6 +41,27 @@ export async function provisionTenant(
   input: TenantProvisioningInput,
 ): Promise<TenantRecord> {
   const tenant = await options.tenantStore.create(input);
+
+  if (options.entitlementStore) {
+    try {
+      await options.entitlementStore.provisionTenantGovernance({
+        tenantId: tenant.id,
+        settings: tenant.settings ?? DEFAULT_TENANT_SETTINGS,
+        disabled: tenant.disabled,
+        createdBy: input.createdBy,
+      });
+    } catch (error) {
+      try {
+        await rollbackProvisionedTenant(options, tenant.id);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `Tenant entitlement provisioning failed and rollback was incomplete: ${tenant.id}`,
+        );
+      }
+      throw error;
+    }
+  }
 
   try {
     await writeTenantCompanyInfo(options.sharedDir, tenant.id, buildInitialCompanyInfo(tenant.name));
@@ -73,9 +96,11 @@ export async function rollbackProvisionedTenant(
   options: TenantProvisioningOptions,
   tenantId: string,
 ): Promise<void> {
-  await options.tenantStore.delete(tenantId);
-
   const cleanupResults = await Promise.allSettled([
+    options.tenantStore.delete(tenantId),
+    ...(options.entitlementStore
+      ? [options.entitlementStore.deleteTenantGovernance(tenantId)]
+      : []),
     rm(dirname(resolveTenantCompanyInfoPath(options.sharedDir, tenantId)), { recursive: true, force: true }),
     ...(options.orgAgentStore
       ? options.orgAgentStore.listByTenant(tenantId).map(agent => options.orgAgentStore!.remove(agent.id))

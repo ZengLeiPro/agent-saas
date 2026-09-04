@@ -48,7 +48,9 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
   const { router } = options;
 
   router.post('/policies/:policyKey/preview', async (req, res) => {
-    if (options.personaFor(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(options.personaFor(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const parsed = policyPreviewSchema.safeParse(req.body);
     if (!parsed.success || !(TENANT_POLICY_KEYS as readonly string[]).includes(req.params.policyKey)) {
       return res.status(400).json({ error: 'Invalid request' });
@@ -69,7 +71,8 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
     const baselineDigest = governanceDigest(current);
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signature = {
-      version: 1, kind: 'policy', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'policy', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       policyKey: req.params.policyKey, baselineDigest, expiresAt,
       changeDigest: governanceDigest(parsed.data),
     };
@@ -89,7 +92,9 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
   });
 
   router.put('/policies/:policyKey', async (req, res) => {
-    if (options.personaFor(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(options.personaFor(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const parsed = policyCommitSchema.safeParse(req.body);
     if (!parsed.success || !(TENANT_POLICY_KEYS as readonly string[]).includes(req.params.policyKey)) {
       return res.status(400).json({ error: 'Invalid request' });
@@ -104,7 +109,8 @@ export function registerGovernanceOrganizationAccessRoutes(options: {
       return res.status(409).json({ error: 'Governance preview expired', code: 'GOVERNANCE_PREVIEW_EXPIRED' });
     }
     const expectedPreviewId = `gpv1.${sign(options.secret, {
-      version: 1, kind: 'policy', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'policy', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       policyKey: req.params.policyKey, baselineDigest, expiresAt,
       changeDigest: governanceDigest(mutation),
     })}`;

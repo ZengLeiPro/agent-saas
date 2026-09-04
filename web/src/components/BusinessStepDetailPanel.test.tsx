@@ -191,7 +191,7 @@ describe("BusinessStepDetailPanel", () => {
     expect(callbacks.onSelectStep).toHaveBeenCalledWith("id:write");
   });
 
-  it("过程和依据合并在结果下方，并以折叠区展开", () => {
+  it("已完成步骤的过程和依据默认折叠，并可手动展开", () => {
     const { container } = render(<BusinessStepDetailPanel {...props()} />);
     const process = container.querySelector<HTMLDetailsElement>('[data-business-step-collapsible="process"]');
     const evidence = container.querySelector<HTMLDetailsElement>('[data-business-step-collapsible="evidence"]');
@@ -208,6 +208,33 @@ describe("BusinessStepDetailPanel", () => {
     expect(evidence?.open).toBe(true);
     expect(screen.getByText("order:SO-1001")).toBeTruthy();
     expect(screen.getByText("receipt:check-18")).toBeTruthy();
+  });
+
+  it("进行中步骤的过程默认展开，且切换状态时重置默认值", () => {
+    const runningDetail = {
+      ...detail,
+      todo: { ...todo, status: "in_progress" as const },
+      terminal: undefined,
+    };
+    const callbacks = props();
+    const { container, rerender } = render(
+      <BusinessStepDetailPanel {...callbacks} detail={runningDetail} />,
+    );
+
+    const process = () => container.querySelector<HTMLDetailsElement>(
+      '[data-business-step-collapsible="process"]',
+    );
+    expect(process()?.open).toBe(true);
+
+    fireEvent.click(screen.getByText("过程"));
+    expect(process()?.open).toBe(false);
+    rerender(<BusinessStepDetailPanel {...callbacks} detail={runningDetail} />);
+    expect(process()?.open).toBe(false);
+
+    rerender(<BusinessStepDetailPanel {...callbacks} detail={detail} />);
+    expect(process()?.open).toBe(false);
+    rerender(<BusinessStepDetailPanel {...callbacks} detail={runningDetail} />);
+    expect(process()?.open).toBe(true);
   });
 
   it("非 debug 终态仍保留安全过程摘要与外部写操作", () => {

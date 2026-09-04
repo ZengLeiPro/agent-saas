@@ -1,10 +1,4 @@
-import type {
-  RunLeaseReleaseOptions,
-  RunRecord,
-  RunStatus,
-  RunStore,
-  UpsertRunInput,
-} from '../runtime/runStore.js';
+import type { RunLeaseAuthority, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 import {
   SCHEDULER_STATE_METADATA_KEY,
   SCHEDULER_STATE_READY,
@@ -13,6 +7,7 @@ import {
 import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/types.js';
 
 const TEST_TENANT_ID = 'test-tenant';
+
 
 export class MemoryRunStore implements RunStore {
   records = new Map<string, RunRecord>();
@@ -108,11 +103,70 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async markStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    status: RunStatus,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+    leaseAuthority?: RunLeaseAuthority,
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record || !expectedStatuses.includes(record.status)
+      || (leaseAuthority && (record.workerId !== leaseAuthority.workerId
+        || record.metadata.runLeaseToken !== leaseAuthority.leaseToken))) return null;
+    const now = new Date().toISOString();
+    const updated: RunRecord = {
+      ...record,
+      status,
+      statusReason: reason,
+      updatedAt: now,
+      workerId: undefined,
+      leaseExpiresAt: undefined,
+      metadata: { ...record.metadata, ...metadataPatch },
+      ...(status === 'completed' ? { completedAt: now } : {}),
+      ...(status === 'failed' || status === 'orphaned' ? { failedAt: now } : {}),
+      ...(status === 'cancelled' ? { cancelledAt: now } : {}),
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async claimStateOnlyTerminalOutbox(
+    runId: string,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+    reason: string | undefined,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record || record.status !== status || record.metadata.terminalEventOutbox) return null;
+    const updated: RunRecord = {
+      ...record,
+      statusReason: record.statusReason ?? reason,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record) return null;
+    const updated = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
 
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) =>
-      record.idempotencyKey === idempotencyKey && record.userId === userId,
+      record.idempotencyKey === idempotencyKey && (record.tenantId ?? TEST_TENANT_ID) === tenantId && record.userId === userId,
     ) ?? null;
   }
 
@@ -159,10 +213,10 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
+  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), _max?: number, _admission?: unknown, _identity?: unknown, leaseToken?: string): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;
-    // 忠实复刻 pgRunStore.acquireLease 的原子 CAS 守卫（runStore.ts:433-437）：
+    // 忠实复刻 pgRunStore.acquireLease 的原子 CAS 守卫：
     //   status='pending' OR (status='running' AND (lease_expires_at IS NULL OR lease_expires_at < now))
     // 只有满足其一才能夺得 lease；running 且 lease 未过期 → 返回 null（互斥）。
     const leaseExpired =
@@ -183,19 +237,17 @@ export class MemoryRunStore implements RunStore {
       workerId,
       leaseExpiresAt: expiresAt,
       updatedAt: now.toISOString(),
-      metadata,
-      liveness: {
-        state: 'busy', ownerId: workerId, leaseExpiresAt: expiresAt,
-        recoveryActions: ['cancel'], detectedAt: now.toISOString(), version: 1,
-      },
+      metadata: { ...metadata, ...(leaseToken ? { runLeaseToken: leaseToken } : {}) },
+      liveness: { state: 'busy', ownerId: workerId, leaseExpiresAt: expiresAt,
+        recoveryActions: ['cancel'], detectedAt: now.toISOString(), version: 1 },
     };
     this.records.set(runId, updated);
     return updated;
   }
 
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), _source?: unknown, leaseToken?: string): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || record.workerId !== workerId) return null;
+    if (!record || record.workerId !== workerId || (leaseToken && record.metadata.runLeaseToken !== leaseToken)) return null;
     const requestedExpiry = now.getTime() + leaseMs;
     const currentExpiry = record.leaseExpiresAt ? Date.parse(record.leaseExpiresAt) : Number.NEGATIVE_INFINITY;
     const updated = {
@@ -207,15 +259,9 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async releaseLease(
-    runId: string,
-    workerId: string,
-    finalStatus?: RunStatus,
-    reason?: string,
-    options: RunLeaseReleaseOptions = {},
-  ): Promise<RunRecord | null> {
+  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, options: RunLeaseReleaseOptions = {}): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || record.workerId !== workerId) return null;
+    if (!record || record.workerId !== workerId || (options.leaseToken && record.metadata.runLeaseToken !== options.leaseToken)) return null;
     const now = new Date().toISOString();
     const updated: RunRecord = {
       ...record,

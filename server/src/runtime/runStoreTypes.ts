@@ -194,10 +194,9 @@ export interface RunLeaseAdmission {
   inheritFromRunId?: string;
 }
 
-export interface RunLeaseReleaseOptions {
-  handoff?: boolean;
-  metadataPatch?: Record<string, unknown>;
-}
+export interface RunLeaseIdentity { tenantId: string; sessionId: string; }
+export interface RunLeaseAuthority { workerId: string; leaseToken: string; }
+export interface RunLeaseReleaseOptions { leaseToken?: string; handoff?: boolean; metadataPatch?: Record<string, unknown>; }
 
 export interface SandboxCleanupClaimGuard {
   cleanupRunId: string;
@@ -216,10 +215,10 @@ export interface RunStore {
   enqueueUserMessage?(input: UpsertRunInput, deliveryMode: MessageDeliveryMode): Promise<RunRecord>;
   /** 兼容旧调用：等价于 enqueueUserMessage(input, 'steer')。 */
   enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
-  /** 当前会话尚未开始执行的普通/插话消息，按服务端接受顺序返回。 */
-  listPendingUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
+  /** 当前 tenant/session 尚未开始执行的普通/插话消息，按服务端接受顺序返回。 */
+  listPendingUserMessagesBySession?(sessionId: string, tenantId?: string): Promise<RunRecord[]>;
   /** M20-02：会话内所有 durable V1 用户提交，供统一 queue/runtime snapshot 投影。 */
-  listUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
+  listUserMessagesBySession?(sessionId: string, tenantId?: string): Promise<RunRecord[]>;
   listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
   /** 在写入 durable user_message、构造模型上下文前原子取得输入所有权。 */
   reserveSteeringInputs?(targetRunId: string, sourceRunIds: string[]): Promise<string[]>;
@@ -244,11 +243,12 @@ export interface RunStore {
   cancelPendingSteeringSourceRun?(sourceRunId: string, reason?: string): Promise<CancelSteeringResult>;
   /** 撤回尚未取得执行权的普通 queue 或 steer 消息。 */
   cancelPendingUserMessage?(runId: string, reason?: string): Promise<CancelSteeringResult>;
-  /** stop-all 专用：同 session 的 pending/reserved 输入在 steering advisory lock 内原子取消。 */
+  /** stop-all 专用：同 tenant/session 的 pending/reserved 输入在 steering advisory lock 内原子取消。 */
   cancelSteeringBeforeDispatchBySession?(
     sessionId: string,
     reason: string,
     targetRunId?: string,
+    tenantId?: string,
   ): Promise<SteeringInputRecord[]>;
   /** stop 专用：steering/target 取消与 run_cancel_requested 同事务提交。 */
   cancelSteeringBeforeDispatchBySessionWithEvent?(
@@ -260,7 +260,7 @@ export interface RunStore {
     cleanupGuard?: SandboxCleanupClaimGuard,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }>;
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
-  listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;
+  listPendingSteeringBySession?(sessionId: string, tenantId?: string): Promise<SteeringInputRecord[]>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
   /** 仅 pending + schedulerState=staged 时原子切到 ready；未命中返回当前记录。 */
   activateStagedRun?(runId: string): Promise<RunRecord | null>;
@@ -291,6 +291,13 @@ export interface RunStore {
     waitingStatus: Extract<RunStatus, 'waiting_user' | 'waiting_approval'>,
     reason?: string,
   ): Promise<RunRecord | null>;
+  /** State-only terminal repair: atomically claim only when the terminal outbox is absent. */
+  claimStateOnlyTerminalOutbox?(
+    runId: string,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+    reason: string | undefined,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null>;
   /** CAS 状态迁移；仅当前状态命中 expectedStatuses 时更新，未命中返回 null。 */
   markStatusIfCurrent?(
     runId: string,
@@ -298,11 +305,14 @@ export interface RunStore {
     status: RunStatus,
     reason?: string,
     metadataPatch?: Record<string, unknown>,
+    leaseAuthority?: RunLeaseAuthority,
   ): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
-  findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
-  getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
+  /** Permanent message acceptance lookup, isolated by authoritative tenant and submitter. */
+  findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
+  findUniqueByIdempotencyKeyAcrossTenants?(userId: string, idempotencyKey: string): Promise<RunRecord | null>;
+  getActiveBySession?(tenantId: string, sessionId: string): Promise<RunRecord | null>;
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
   cancelActiveByTenant?(tenantId: string, reason: string): Promise<number>;
   listActiveByUser?(userId: string): Promise<RunRecord[]>;
@@ -323,7 +333,7 @@ export interface RunStore {
    */
   enqueueBackgroundTask?(input: UpsertRunInput, limits: EnqueueBackgroundTaskLimits): Promise<RunRecord>;
   listBackgroundTasks?(parentSessionId: string, options?: ListBackgroundTasksOptions): Promise<RunRecord[]>;
-  /** Taskboard 关联 Session 中仍在运行或尚未完成唤醒投递的工作。 */
+  /** Taskboard 关联 Session 中仍在运行或尚未完成唤醒投递的工作（tenant-aware）。 */
   hasTaskboardSessionActivity?(sessionIds: string[], tenantId?: string): Promise<boolean>;
   findBackgroundTasksByIdentifier?(
     parentSessionId: string,
@@ -357,6 +367,8 @@ export interface RunStore {
     now?: Date,
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
+    identity?: RunLeaseIdentity,
+    leaseToken?: string,
   ): Promise<RunRecord | null>;
   renewLease?(
     runId: string,
@@ -364,6 +376,7 @@ export interface RunStore {
     leaseMs: number,
     now?: Date,
     source?: RunHeartbeatSource,
+    leaseToken?: string,
   ): Promise<RunRecord | null>;
   /** Immediate activity pulse used by stream/tool/subagent execution paths (server-owned). */
   heartbeatRun?(
@@ -399,12 +412,21 @@ export interface RunStore {
    * RFC v1 P0.4：增量更新 Responses API session state。
    * 用 COALESCE 让 null 显式清空，undefined 保留原值；delta 累加到 cumulative_input_tokens。
    */
-  updateResponseSessionState?(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null>;
+  updateResponseSessionState?(
+    runId: string,
+    tenantId: string,
+    sessionId: string,
+    patch: ResponseSessionStatePatch,
+  ): Promise<RunRecord | null>;
   /**
    * RFC v1 P0.4：按 sessionId 查最近有 last_response_id 的 run（用于新 run 启动时接力上一 run）。
    * 过滤掉已过期的（last_response_expire_at < now）。
    */
-  findLatestResponseSessionStateBySession?(sessionId: string, now?: Date): Promise<LatestResponseSessionState | null>;
+  findLatestResponseSessionStateBySession?(
+    tenantId: string,
+    sessionId: string,
+    now?: Date,
+  ): Promise<LatestResponseSessionState | null>;
   /**
    * /compact 真实现（2026-07-03）：清空整个 session 的 Responses API 接力状态。
    * 压缩后若仍接力旧 response chain，远端保存的全量历史会绕过本地投影，压缩等于没做——
@@ -412,11 +434,21 @@ export interface RunStore {
    * compact run 自身无 responseId 并不能自然阻断，必须显式按 session 清空。
    * 不更新 updated_at（避免把老 run 顶到观测排序顶部）。返回受影响行数。
    */
-  clearResponseSessionStateBySession?(sessionId: string): Promise<number>;
+  clearResponseSessionStateBySession?(tenantId: string, sessionId: string): Promise<number>;
 }
+
+export type PgRunStoreWriterCapability =
+  | { capability: 'tenant-native-v1'; tenantId?: never; allowPrivilegedRoleForTests?: boolean }
+  | { capability: 'legacy-single-tenant'; tenantId: string; allowPrivilegedRoleForTests?: boolean };
 
 export interface PgRunStoreOptions {
   pool?: PgPool;
   connectionString?: string;
   tablePrefix?: string;
+  /**
+   * Explicit bootstrap declaration for the immutable session_user. Omit only when an administrator
+   * has already registered the connection URL's LOGIN role; init then validates it fail-closed.
+   * allowPrivilegedRoleForTests is intentionally unavailable through application config.
+   */
+  writerCapability?: PgRunStoreWriterCapability;
 }

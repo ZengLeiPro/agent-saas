@@ -81,7 +81,13 @@ export async function reconcileBackgroundWakeDeliveries(
       });
       continue;
     }
-    const activeParentRun = await runStore.getActiveBySession?.(metadata.parentSessionId);
+    if (!task.tenantId || parentSession.tenantId !== task.tenantId) {
+      await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'discarded', {
+        wakeDiscardReason: !task.tenantId ? 'parent_tenant_missing' : 'parent_tenant_mismatch',
+      });
+      continue;
+    }
+    const activeParentRun = await runStore.getActiveBySession?.(task.tenantId, metadata.parentSessionId);
     if (activeParentRun) {
       await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'pending', {
         wakeDeferredReason: 'parent_session_active',

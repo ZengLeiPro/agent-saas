@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
+import type { PlatformEventInput } from '../runtime/types.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -114,6 +115,50 @@ describePg('PgEventStore tenant isolation PostgreSQL contract', () => {
     await expect(store.listByToolCall(tenantA, 'shared-session', 'shared-tool-call'))
       .resolves.toMatchObject([{ content: 'tool-result only-a' }]);
     await expect(store.listByToolCall(wrongTenant, 'shared-session', 'shared-tool-call')).resolves.toEqual([]);
+  });
+
+  it('并发 append 以 terminal delivery 稳定 eventId 命中持久唯一幂等', async () => {
+    const { store, prefix } = createStore('event_terminal_idempotency');
+    await store.init();
+    const tenantId = 'terminal-idempotency-tenant';
+    const deliveryId = randomUUID();
+    const marker = { terminalDeliveryId: deliveryId };
+    const terminalEvents: PlatformEventInput[] = [{
+      id: `terminal:${deliveryId}:0`,
+      type: 'run_state_changed',
+      runId: 'terminal-idempotency-run',
+      sessionId: 'terminal-idempotency-session',
+      status: 'completed',
+      terminalDeliveryIndex: 0,
+      ...marker,
+    }, {
+      id: `terminal:${deliveryId}:1`,
+      type: 'run_finished',
+      runId: 'terminal-idempotency-run',
+      sessionId: 'terminal-idempotency-session',
+      subtype: 'success',
+      numTurns: 1,
+      terminalDeliveryIndex: 1,
+      ...marker,
+    }] as unknown as PlatformEventInput[];
+
+    const [first, second] = await Promise.all([
+      store.appendBatch(terminalEvents, { tenantId }),
+      store.appendBatch(terminalEvents, { tenantId }),
+    ]);
+
+    expect(first.map((event) => event.id)).toEqual(second.map((event) => event.id));
+    const stored = await store.list(tenantId, 'terminal-idempotency-session');
+    expect(stored).toHaveLength(2);
+    expect(stored.map((event) => event.id)).toEqual([
+      `terminal:${deliveryId}:0`,
+      `terminal:${deliveryId}:1`,
+    ]);
+    const rows = await store.pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM ${prefix}_events WHERE tenant_id=$1 AND event_json->>'terminalDeliveryId'=$2`,
+      [tenantId, deliveryId],
+    );
+    expect(rows.rows[0]?.count).toBe('2');
   });
 
   it('旧 schema 幂等迁移为 LEGACY，保留非目标约束并且不产生重复 cursor', async () => {

@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
+import { finalizeTerminalRun, readTerminalEventOutbox } from '../runtime/runTerminalCoordinator.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import {
   cleanupSteeringPgTest,
@@ -30,7 +31,7 @@ describePg('runtime drain handoff PostgreSQL contract', () => {
       poolMax: 4,
     });
     await eventStore.init();
-    store = new PgRunStore({ pool, tablePrefix: prefix });
+    store = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await store.init();
     toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await toolInvocationStore.init();
@@ -184,6 +185,32 @@ describePg('runtime drain handoff PostgreSQL contract', () => {
       workerId: 'worker-current',
       liveness: { state: 'busy' },
     });
+  });
+
+  it('重启扫描修复 orphan COMMIT 后缺失的 terminal outbox，且并发修复只发布一次', async () => {
+    const runId = 'run-orphan-outbox-restart'; const sessionId = 'session-orphan-outbox-restart';
+    await store.upsertPending({ runId, sessionId });
+    await store.acquireLease(runId, 'worker-crashed', 60_000);
+    await store.releaseLease(runId, 'worker-crashed', undefined, 'unexpected_worker_exit');
+    const first = await store.reapExpiredLiveness(new Date(Date.now() + 3_600_000), 0);
+    expect(first.orphaned.map(run => run.runId)).toContain(runId);
+    expect(readTerminalEventOutbox(await store.get(runId))).toBeNull();
+
+    // Simulate process exit after the orphan transaction committed and before scheduler finalization.
+    const repaired = await store.reapExpiredLiveness(new Date(Date.now() + 3_600_001), 0);
+    const record = repaired.orphaned.find(run => run.runId === runId)!;
+    const finalize = () => finalizeTerminalRun({
+      runStore: store, eventStore, runId, status: 'orphaned', reason: 'lease_expired',
+      expectedStatuses: ['orphaned'], stateOnlyRepair: true,
+      events: [{ type: 'run_state_changed', runId, sessionId, status: 'orphaned', previousStatus: 'running', reason: 'lease_expired' }],
+      ctx: { tenantId: record.tenantId! },
+    });
+    const results = await Promise.all([finalize(), finalize()]);
+    expect(results.filter(result => result.won)).toHaveLength(1);
+    expect(readTerminalEventOutbox(await store.get(runId))).toMatchObject({ state: 'delivered', terminalStatus: 'orphaned' });
+    const events = await eventStore.list(record.tenantId!, sessionId);
+    expect(events.filter(event => event.type === 'run_state_changed' && event.runId === runId)).toHaveLength(1);
+    expect((await store.reapExpiredLiveness(new Date(Date.now() + 3_600_002), 0)).orphaned.map(run => run.runId)).not.toContain(runId);
   });
 
   it('N+1 交接后回滚到 N 时，旧版 version-null acquire 谓词仍能取得任务', async () => {

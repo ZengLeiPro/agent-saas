@@ -449,7 +449,9 @@ export class SandboxLifecycleService {
   } | undefined> {
     const record = await this.options.sessionCatalog.get(sessionId);
     if (!record || record.kind === 'subagent') return undefined;
-    const hand = await this.options.handStore?.get(`${sessionId}:server-remote`);
+    const hand = record.tenantId
+      ? await this.options.handStore?.get(`${sessionId}:server-remote`, record.tenantId)
+      : undefined;
     const registeredServerRemoteEndpoint = hand?.providerId === 'server-remote'
       ? stringValue(hand.endpoint)
       : undefined;
@@ -459,7 +461,7 @@ export class SandboxLifecycleService {
     const pinnedTargetHandId = stringValue(hand?.metadata?.tenantRemoteHandId);
     const registeredHands = pinnedTargetHandId
       ? []
-      : await this.options.handStore?.listBySession(sessionId).catch(() => []);
+      : record.tenantId ? await this.options.handStore?.listBySession(sessionId, record.tenantId).catch(() => []) : [];
     const registeredIds = registeredHands
       ?.map((registered) => stringValue(registered.metadata?.tenantRemoteHandId) ?? stringValue(registered.providerId));
     const registeredTargetHandId = pinnedTargetHandId
@@ -540,7 +542,7 @@ export class SandboxLifecycleService {
     if (!this.options.serverRemote || !routing?.targetHandId) return undefined;
     const registeredHand = routing.serverRemoteEndpoint
       ? undefined
-      : await this.options.handStore?.get(`${sessionId}:server-remote`).catch(() => undefined);
+      : tenantId ? await this.options.handStore?.get(`${sessionId}:server-remote`, tenantId).catch(() => undefined) : undefined;
     const registeredEndpoint = routing.serverRemoteEndpoint
       ?? (registeredHand?.providerId === 'server-remote' ? stringValue(registeredHand.endpoint) : undefined);
     const registeredAuthTokenRef = routing.serverRemoteAuthTokenRef

@@ -69,6 +69,7 @@ export function MobileLayout(props: LayoutProps) {
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
+    automation, automationTimeline, automationPending, automationError, controlAutomation,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
@@ -489,6 +490,11 @@ export function MobileLayout(props: LayoutProps) {
               onEditQueuedInterjection={editQueuedInterjection}
               onResendQueuedInterjection={resendQueuedInterjection}
               onDismissQueuedInterjection={dismissQueuedInterjection}
+              automation={automation}
+              automationTimeline={automationTimeline}
+              automationPending={automationPending}
+              automationError={automationError}
+              onAutomationControl={controlAutomation}
               onFileSelect={(event) => { void handleFileSelect(event); }}
               onAssetSelect={handleAssetSelect}
               onPaste={(event) => { void handlePaste(event); }}

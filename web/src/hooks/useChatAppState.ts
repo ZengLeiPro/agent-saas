@@ -9,6 +9,8 @@ import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope } from "@/lib/wsClient";
 import { approvalPolicyPayloadForTier, resolveApprovalTier } from "@/lib/approvalTier";
 import { useApprovalTierRunPolicy } from "./useApprovalTierRunPolicy";
+import { useSessionAutomation } from "./useSessionAutomation";
+import { isSessionAutomationCommand } from "@/lib/sessionAutomationCommand";
 import { useSessionReadTracking } from "./useSessionReadTracking";
 import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
@@ -80,7 +82,6 @@ import {
 import {
   activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
   reconnectAfterServerDrain, runtimeStatusFromSessionStatus, sessionlessDoneBelongsToRuntime, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
-
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
   ChatAppState, ChatAppStateOptions, OutboxEntry,
@@ -99,7 +100,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const approvalTier = resolveApprovalTier(user?.preferences);
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
-
   // ---- Agent Profile ----
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
   useEffect(() => {
@@ -108,10 +108,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       .then(setAgentProfile)
       .catch(() => setAgentProfile(null));
   }, [user]);
-
   // ---- Session Participants ----
   const [sessionParticipants, setSessionParticipants] = useState<SessionParticipants | null>(null);
-
   // ---- File preview ----
   const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
   const [explicitPreviewOwner, setExplicitPreviewOwner] = useState<string | undefined>(undefined);
@@ -134,16 +132,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setExplicitPreviewOwner(undefined);
     setPreviewMode("dialog");
   }, []);
-
   // ---- File browser ----
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const toggleFileBrowser = useCallback(() => setFileBrowserOpen(v => !v), []);
   const closeFileBrowser = useCallback(() => setFileBrowserOpen(false), []);
-
   // ---- Trash preview (admin only) ----
   const [trashPreviewSessionId, setTrashPreviewSessionId] = useState<string | null>(null);
   const isTrashPreview = trashPreviewSessionId !== null;
-
   // ---- Input state（按用户 + 会话保存浏览器本地草稿）----
   const initialComposerScope = getComposerDraftScope(identity, urlState.sessionId);
   const composerScopeRef = useRef(initialComposerScope);
@@ -159,15 +154,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       saveComposerText(scope, "");
     }
   }, []);
-
   // ---- Loading / stream control ----
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
-
   const { notifications, dismissNotification, pushNotification,
     lastMemoryRecall, dismissMemoryRecall, showMemoryRecall, pluginInstallStatus,
     showPluginInstallStatus, resetChatNotifications } = useChatNotificationState();
-
   const [activeTab, setActiveTabRaw] = useState<AppTab>(urlState.tab);
   const [governanceRouteState, setGovernanceRouteRaw] = useState<GovernanceRouteState | null>(urlState.governanceRoute);
   const [platformAdminSection, setPlatformAdminSectionRaw] = useState<PlatformAdminSection>(urlState.adminSection ?? 'overview');
@@ -198,7 +190,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const interactionRuntimeSyncRef = useRef<(sessionId: string) => void>(() => {});
   const lastEventIdRef = useRef<number | null>(null);
   const lastEventCursorRef = useRef<string | null>(null);
-
   /**
    * Per-session 运行态快照（架构升级,2026-06-25）。
    *
@@ -217,7 +208,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const runtimeVersionBySessionRef = useRef<Map<string, number>>(new Map());
   const [runningSessionIds, setRunningSessionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [sessionRuntimeStatuses, setSessionRuntimeStatuses] = useState<ReadonlyMap<string, SessionRuntimeStatus>>(() => new Map());
-
   // ─── 消息可靠性：outbox 队列 + ACK 超时跟踪（2026-04-18）───
   /**
    * Outbox：用户已提交但尚未到达"服务端已处理"终态的消息队列。
@@ -236,7 +226,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const ACK_TIMEOUT_MS = 15_000;
   /** cancel_queued 请求的等待器：sourceRunId → resolve(ok)（2026-08-04 终态设计） */
   const cancelWaitersRef = useRef<Map<string, (ok: boolean) => void>>(new Map());
-
   // ─── 插话队列区（2026-08-04 终态设计）───
   const queuedSessionIdRef = useRef<string | null>(urlState.sessionId);
   // 运行中发送的消息不进时间线，在输入框上方的队列区排队，被目标 run 消费
@@ -341,7 +330,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     registerRefresh("models", async () => { fetchModelList(); });
     return () => unregisterRefresh("models");
   }, [fetchModelList]);
-
   // ---- Sub-hooks ----
   const msg = useMessages();
   const uploadSessionIdRef = useRef<string | null>(urlState.sessionId); const getUploadSessionId = useCallback(() => uploadSessionIdRef.current, []);
@@ -350,7 +338,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     online: connectionState !== 'disconnected',
     identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
   });
-
   // ---- Refs for unstable values ----
   const inputRef = useRef(input); inputRef.current = input;
   const loadingRef = useRef(loading);
@@ -396,7 +383,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       unregisterHook();
     };
   }, []);
-
   // ---- WS event processing state ----
   const wsBlockRef = useRef<WsBlockState>({ currentBlockIndex: -1, currentBlockType: null });
   const wsLatestSessionIdRef = useRef<{ value: string | null }>(null!);
@@ -430,7 +416,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       : entry);
   }, []);
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
-
   /** Partial patch Map.get(sid)；若 sid === current,同步 ref（不动 setState 状态） */
   const patchSessionRuntime = useCallback((sid: string, patch: SessionRuntimePatch, opts?: { silent?: boolean }) => {
     // silent：dump 类 ref->Map 同步不是 run 生命周期变化，不递增 version（TASK-312：否则切换会话会让在途终态探活误判失效）。
@@ -485,7 +470,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     return next;
   }, []);
-
   const runtimeHydrationNonceRef = useRef(0);
   const hydrateSessionRuntimeSnapshot = useCallback(async (sessions: ApiSessionListItem[]) => {
     const nonce = ++runtimeHydrationNonceRef.current;
@@ -511,7 +495,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }>;
       }));
       if (runtimeHydrationNonceRef.current !== nonce) return;
-
       const snapshotStatus = new Map<string, boolean>();
       const snapshotRuntimeStatuses = new Map<string, SessionRuntimeStatus>();
       for (const data of responses) {
@@ -571,7 +554,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 会话列表仍可正常展示；WS session_status 与当前会话探活继续兜底。
     }
   }, []);
-
   /** 用户点击"停止"按钮：发送 abort，等 done 到达后才恢复 UI */
   const cancelActiveStream = useCallback(() => {
     const targetSessionId = sessionIdRef.current;
@@ -584,7 +566,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // 服务端 stop 只撤销 steering_inputs；普通 queue 仍会在当前 run 终态后串行执行。
     // steer 乐观撤销，最终以 steering_cancelled/detail 快照为准。
     mutateQueuedInterjections(markSteeringCancelledForStop);
-
     const nonceAtAbort = streamNonceRef.current;
     setTimeout(() => {
       const existingRuntime = targetSessionId ? activeRunsBySession.current.get(targetSessionId) : undefined;
@@ -617,7 +598,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
     }, 10_000);
   }, [patchSessionRuntime, mutateQueuedInterjections]);
-
   /** 把当前 ref（current session 的运行态镜像）dump 进 Map,保留 cursor 等持久字段 */
   const dumpCurrentSessionRuntime = useCallback(() => {
     const sid = sessionIdRef.current;
@@ -640,7 +620,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       attached: wsAttachedRef.current,
     }, { silent: true });
   }, [patchSessionRuntime]);
-
   /** 从 Map 加载 sid 的 runtime 到当前 ref（不调 setState,UI 由调用方决定） */
   const loadSessionRuntimeToRef = useCallback((sid: string): SessionRuntime | undefined => {
     const cached = activeRunsBySession.current.get(sid);
@@ -650,7 +629,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     lastEventCursorRef.current = cached?.lastEventCursor ?? null;
     return cached;
   }, []);
-
   /**
    * 会话切换时：立即清理本地 ref 状态，不发 abort（避免误终止其他设备的流）。
    *
@@ -679,7 +657,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // 全局唯一，跨会话保留不会误拦截真实仍在排队的新消息。服务端 buffer 仍保留，resume 时可用 cursor 增量回放。
     wsClient.send({ action: 'detach' });
   }, [dumpCurrentSessionRuntime]);
-
   const sessionCallbacks = useMemo(() => ({
     resetMessages: msg.resetMessages,
     setMessages: msg.setMessages,
@@ -705,7 +682,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       reconcileServerInterjections(sessionId, serverQueued);
     }, onSandboxProfile: hydrateSandboxProfile, onSessionInvalidated: (id: string) => { const current = immediateSessionIdRef.current === id || sessionIdRef.current === id; if (immediateSessionIdRef.current === id) immediateSessionIdRef.current = null; if (sessionIdRef.current === id) sessionIdRef.current = null; if (queuedSessionIdRef.current === id) queuedSessionIdRef.current = null; if (wsLatestSessionIdRef.current?.value === id) wsLatestSessionIdRef.current = { value: null }; if (current) { mutateQueuedInterjections((prev) => prev); startNewSandboxProfile(); } }, onNewSession: startNewSandboxProfile,
   }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, projectAuthoritativeQueue, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
-
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId, identity });
   // Delegated contract: selectSessionUnread({ visible: visible, atBottom: msg.isNearBottomRef.current }).
   // The hook preserves `if (!unread.shouldMarkSeen) return;` before authenticated `/read`.
@@ -737,7 +713,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const attachmentsHydratedRef = useRef(false);
   const attachmentScopeRef = useRef<string | null>(null);
   const composerScopeInitializedRef = useRef(false);
-
   // 会话切换时先保存旧草稿，再恢复目标会话的文字和附件。
   useEffect(() => {
     const previousScope = composerScopeRef.current;
@@ -750,14 +725,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     } else {
       composerScopeInitializedRef.current = true;
     }
-
     const nextScope = getComposerDraftScope(identity, session.sessionId);
     composerScopeRef.current = nextScope;
     attachmentsHydratedRef.current = false;
     attachmentScopeRef.current = null;
     setInputRaw(loadComposerText(nextScope));
     fileUpload.replaceFiles([]);
-
     let cancelled = false;
     void loadComposerAttachments(nextScope).then((files) => {
       if (!cancelled && composerScopeRef.current === nextScope) {
@@ -768,20 +741,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     });
     return () => { cancelled = true; };
   }, [session.sessionId, user?.id, fileUpload.replaceFiles]);
-
   useEffect(() => {
     const scope = composerScopeRef.current;
     if (!attachmentsHydratedRef.current || attachmentScopeRef.current !== scope) return;
     void saveComposerAttachments(scope, fileUpload.uploadedFiles);
   }, [fileUpload.uploadedFiles]);
-
   const previewFileOwner = useMemo(() => {
     if (explicitPreviewOwner) return explicitPreviewOwner;
     if (!session.sessionId) return undefined;
     return session.sessions.find(s => s.sessionId === session.sessionId)?.owner?.username;
   }, [explicitPreviewOwner, session.sessionId, session.sessions]);
   const sessionOwnerRef = useRef(previewFileOwner); sessionOwnerRef.current = previewFileOwner;
-
   // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile ----
   useEffect(() => {
     const owner = session.sessionOwner;
@@ -801,16 +771,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       });
     return () => { cancelled = true; };
   }, [session.sessionOwner, user?.username]);
-
   sessionIdRef.current = session.sessionId; uploadSessionIdRef.current = immediateSessionIdRef.current ?? session.sessionId;
   refreshTokenUsageRef.current = session.refreshTokenUsage; loadSessionDetailRef.current = session.loadSessionDetail;
-
   useEffect(() => {
     if (activeTab === 'chat' && session.sessionId && !trashPreviewSessionId) {
       markSessionRead(session.sessionId);
     }
   }, [activeTab, msg.messages, session.sessionId, trashPreviewSessionId, markSessionRead]);
-
   useEffect(() => {
     const attempt = () => markSessionRead(sessionIdRef.current);
     const container = msg.scrollContainerRef.current;
@@ -821,7 +788,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       document.removeEventListener('visibilitychange', attempt);
     };
   }, [markSessionRead, msg.scrollContainerRef, session.sessionId]);
-
   // 切换会话时清理 SDK 新 state，避免跨会话串扰
   // - notifications 是 user scope（跨会话保留？业务含义说是 REPL 级，切会话应该清）
   // - lastMemoryRecall / pluginInstallStatus 是 session scope，必须清
@@ -1020,6 +986,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!normalizedAgentId || !user) return;
     startAgentTargetSession({ kind: 'org-agent', tenantId: user.tenantId, orgAgentId: normalizedAgentId }, groupId);
   }, [startAgentTargetSession, user]);
+
+  const handleAutomationSessionCommitted = useCallback((committedSessionId: string) => {
+    if (committedSessionId !== sessionIdRef.current) selectSessionWithUrl(committedSessionId);
+    else session.refreshCurrentSession();
+  }, [selectSessionWithUrl, session.refreshCurrentSession]);
+  const automation = useSessionAutomation({
+    sessionId: session.sessionId,
+    onSessionCommitted: handleAutomationSessionCommitted,
+    onNotification: pushNotification,
+  });
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -2545,6 +2521,22 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const submitCurrentMessage = useCallback(async () => {
     if ((sessionRef.current.accessRef?.current ?? "owner") !== "owner") return; const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
+    if (isSessionAutomationCommand(trimmedInput)) {
+      const { submitChatAutomationCommand } = await import("./chatAutomationSubmission");
+      await submitChatAutomationCommand({
+        command: trimmedInput,
+        files: [...uploadedFilesRef.current],
+        submit: automation.submitCommand,
+        clearDraft: () => {
+          inputRef.current = '';
+          uploadedFilesRef.current = [];
+          setInput('');
+          fileUpload.clearFiles();
+        },
+      });
+      return;
+    }
+
     if (stoppingRef.current) return;
     const releaseSubmissionSlot = acquireMessageSubmissionSlot(messageSubmissionGateRef);
     if (!releaseSubmissionSlot) return;
@@ -2602,7 +2594,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     } finally {
       releaseSubmissionSlot();
     }
-  }, [setInput, fileUpload.clearFiles, fileUpload.reportUploadError, sendChatViaWs, mutateQueuedInterjections]);
+  }, [automation.submitCommand, setInput, fileUpload.clearFiles, fileUpload.reportUploadError, sendChatViaWs, mutateQueuedInterjections]);
 
   const sendMessage = useCallback(submitCurrentMessage, [submitCurrentMessage]);
 
@@ -3045,6 +3037,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     runningSessionIds: effectiveRunningSessionIds,
     sessionRuntimeStatuses: effectiveSessionRuntimeStatuses,
     connectionState,
+    automationControllerNode: automation.controllerNode,
+    automation: automation.snapshot,
+    automationTimeline: automation.timeline,
+    automationPending: automation.commandPending || automation.controlPending || automation.loading,
+    automationError: automation.error,
+    controlAutomation: automation.control,
+    refreshAutomation: automation.refresh,
     refreshCurrentSession: session.refreshCurrentSession,
     resumeCurrentStream,
     hasMoreSessions: session.hasMore,

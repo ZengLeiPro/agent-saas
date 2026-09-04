@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { PgRunStore } from '../runtime/runStore.js';
 
 class CapacityPool {
-  readonly queries: string[] = [];
+  readonly queries: string[] = []; // captured SQL is asserted below
   updateCalls = 0;
   rollbackCalls = 0;
   releaseCalls = 0;
@@ -34,6 +34,9 @@ class CapacityPool {
             candidate_eligible: this.candidateEligible,
             inherited_active: this.inheritedActive,
           }] as T[] };
+        }
+        if (sql.includes('SELECT tenant_id, session_id FROM runtime_runs')) {
+          return { rows: [{ tenant_id: 'tenant-1', session_id: 'session-1' }] as T[] };
         }
         if (sql.includes('SELECT session_id FROM runtime_runs')) {
           return { rows: [{ session_id: 'session-1' }] as T[] };
@@ -65,7 +68,7 @@ class CapacityPool {
   }
 }
 
-describe('PgRunStore unified parent/child scheduler capacity, liveness and schema compatibility', () => {
+describe('PgRunStore unified parent/child scheduler capacity, liveness and schema compatibility using an explicit test writer', () => {
   it('skips startup ALTER TABLE statements when all compatibility columns exist', async () => {
     const queries: string[] = [];
     const existingColumns = [
@@ -98,17 +101,21 @@ describe('PgRunStore unified parent/child scheduler capacity, liveness and schem
     };
     const store = new PgRunStore({
       pool: { connect: async () => client } as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
     });
 
     await store.init();
 
     expect(queries.some((sql) => sql.includes('FROM pg_attribute'))).toBe(true);
-    expect(queries.some((sql) => sql.includes('ALTER TABLE runtime_runs'))).toBe(false);
+    expect(queries.filter((sql) => /ALTER TABLE runtime_runs (?:ADD|ALTER) COLUMN/.test(sql))).toEqual([]);
   });
 
   it('refuses a new run lease when another instance already filled the global cap', async () => {
     const pool = new CapacityPool(2);
-    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const store = new PgRunStore({
+      pool: pool as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
 
     const acquired = await store.acquireLease(
       'run-capacity-full',
@@ -128,7 +135,10 @@ describe('PgRunStore unified parent/child scheduler capacity, liveness and schem
 
   it('atomically claims a run lease while capacity remains', async () => {
     const pool = new CapacityPool(1);
-    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const store = new PgRunStore({
+      pool: pool as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
 
     const acquired = await store.acquireLease(
       'run-capacity-open',
@@ -156,7 +166,10 @@ describe('PgRunStore unified parent/child scheduler capacity, liveness and schem
 
   it('atomically grants one child the active parent slot even when the global cap is full', async () => {
     const pool = new CapacityPool(2);
-    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const store = new PgRunStore({
+      pool: pool as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
 
     await expect(store.acquireLease(
       'run-child', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2,
@@ -174,7 +187,10 @@ describe('PgRunStore unified parent/child scheduler capacity, liveness and schem
 
   it('keeps a sibling on a normal slot while another inherited child is active', async () => {
     const pool = new CapacityPool(1, true, true);
-    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const store = new PgRunStore({
+      pool: pool as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
     await expect(store.acquireLease(
       'run-child-normal', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2,
       { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' },
@@ -184,7 +200,10 @@ describe('PgRunStore unified parent/child scheduler capacity, liveness and schem
 
   it('hands the inherited parent slot to an already-waiting sibling after the current child finishes', async () => {
     const pool = new CapacityPool(2, true, true);
-    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const store = new PgRunStore({
+      pool: pool as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
     const admission = { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' };
 
     await expect(store.acquireLease(
@@ -203,7 +222,10 @@ describe('PgRunStore unified parent/child scheduler capacity, liveness and schem
 
   it('does not inherit or start after the parent lease is no longer active', async () => {
     const pool = new CapacityPool(1, false);
-    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const store = new PgRunStore({
+      pool: pool as unknown as pg.Pool,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
     await expect(store.acquireLease(
       'run-orphan-child', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2,
       { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' },

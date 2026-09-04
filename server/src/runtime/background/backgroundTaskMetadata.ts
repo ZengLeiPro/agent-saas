@@ -1,7 +1,10 @@
+import { createHash } from 'node:crypto';
 import type { ChannelContext } from '../../types/index.js';
 import type { SandboxWorkloadWireDescriptor } from '../../agent/toolRuntime.js';
+import { automationFenceFromMetadata } from '../automationFence.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord } from '../runStore.js';
+import type { RunContext } from '../types.js';
 import { deriveRuntimeIsolationRequirement, type RuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
 import { parseSandboxResources, type SandboxResources } from '../sandboxProfile.js';
 
@@ -65,6 +68,11 @@ interface CommonBackgroundTaskMetadata {
   parentChannel: ChannelContext['channel'];
   parentOutputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
+  /** Root authority plus this durable background task's invoking run identity. */
+  automationFence?: RunContext['automationFence'];
+  /** Durable identity reserved for the agent execution child before it creates resources. */
+  executionChildSessionId?: string;
+  executionChildRunId?: string;
   orgAgentChannel?: NonNullable<ChannelContext['orgAgentChannel']>;
 }
 
@@ -85,6 +93,20 @@ export interface BackgroundCommandTaskMetadata extends CommonBackgroundTaskMetad
 }
 
 export type BackgroundTaskMetadata = BackgroundAgentTaskMetadata | BackgroundCommandTaskMetadata;
+
+
+export function resolvePreparedChildIdentity(
+  record: RunRecord, metadata: BackgroundTaskMetadata,
+): { childSessionId: string; childRunId: string } {
+  if (metadata.executionChildSessionId && metadata.executionChildRunId) {
+    return { childSessionId: metadata.executionChildSessionId, childRunId: metadata.executionChildRunId };
+  }
+  const fence = metadata.automationFence;
+  const digest = createHash('sha256')
+    .update([record.runId, fence?.automationId, fence?.incarnationId, fence?.generation, fence?.executionId].join(':'))
+    .digest('hex');
+  return { childSessionId: `sub-${digest.slice(0, 32)}`, childRunId: `bg-child-${digest.slice(0, 32)}` };
+}
 
 export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMetadata | null {
   const value = record.metadata;
@@ -108,6 +130,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
   const sandboxResources = parseSandboxResources(value.sandboxResources);
   const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
+  const automationFence = automationFenceFromMetadata(value);
   const orgAgentChannel = parseOrgAgentChannel(value.orgAgentChannel);
   // This metadata is durable and may predate the current ACS descriptor schema.
   const workload = parseWorkload(value.workload);
@@ -154,6 +177,13 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
     ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
+    ...(automationFence ? { automationFence } : {}),
+    ...(metadataString(value, 'executionChildSessionId')
+      ? { executionChildSessionId: metadataString(value, 'executionChildSessionId') }
+      : {}),
+    ...(metadataString(value, 'executionChildRunId')
+      ? { executionChildRunId: metadataString(value, 'executionChildRunId') }
+      : {}),
     ...(orgAgentChannel ? { orgAgentChannel } : {}),
   };
 

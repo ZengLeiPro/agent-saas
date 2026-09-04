@@ -46,3 +46,5 @@ export function classifyModelFailure(
   if (!POLICY_REJECTION_ERROR_CODES.has(errorCode.toLowerCase())) return undefined;
   return { failureKind: 'policy_rejection', recoveryAction: 'switch_model' };
 }
+
+export { SessionAutomationBackgroundResource } from './background/sessionAutomationBackgroundResource.js';

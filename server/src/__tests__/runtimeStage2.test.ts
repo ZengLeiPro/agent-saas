@@ -136,13 +136,13 @@ describe('runtime stage 2 primitives', () => {
     expect(markStatus).not.toHaveBeenCalled();
   });
 
-  it('PG session lease 丢失会中止 dispatch 并把 session 收口为 idle', async () => {
+  it('tenant-scoped PG session lease 丢失会中止 dispatch 并把 session 收口为 idle', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'runtime-session-lease-lost-'));
     cleanupDirs.add(cwd);
     const sessionCatalog = new MemorySessionCatalog();
     const release = vi.fn(async () => undefined);
     const sessionLock: SessionLockAcquirer = {
-      async tryAcquire(_sessionId, options) {
+      async tryAcquire(_tenantId, _sessionId, options) {
         options?.onLost?.(new Error('session lease lost'));
         return { release };
       },
@@ -681,8 +681,8 @@ describe('runtime stage 2 primitives', () => {
 
     let tryAcquireCalls = 0;
     const sessionLock: SessionLockAcquirer = {
-      async tryAcquire(sessionId: string) {
-        tryAcquireCalls += 1;
+      async tryAcquire(tenantId: string, sessionId: string) {
+        tryAcquireCalls += 1; expect(tenantId).toBe('pantheon');
         expect(sessionId).toBe('session-locked');
         return null; // 模拟锁已被另一 brain 持有
       },
@@ -752,8 +752,8 @@ describe('runtime stage 2 primitives', () => {
     };
     let tryAcquireCalls = 0;
     const sessionLock: SessionLockAcquirer = {
-      async tryAcquire(sessionId: string) {
-        tryAcquireCalls += 1;
+      async tryAcquire(tenantId: string, sessionId: string) {
+        tryAcquireCalls += 1; expect(tenantId).toBe('pantheon');
         expect(sessionId).toBe('session-release');
         return handle;
       },

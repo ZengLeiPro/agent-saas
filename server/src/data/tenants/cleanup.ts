@@ -463,7 +463,7 @@ export async function deleteTenantResources(options: DeleteTenantResourcesOption
     ? await options.runtimeSessionProjectionStore.deleteByTenant(tenantId)
     : 0;
   const handsDeleted = options.runtimeHandStore
-    ? await options.runtimeHandStore.deleteByWorkspaceIds(workspaceIds)
+    ? await options.runtimeHandStore.deleteByWorkspaceIds(workspaceIds, tenantId)
     : 0;
 
   const avatarsDeleted = await deleteAvatars(options.avatarsDir, users);

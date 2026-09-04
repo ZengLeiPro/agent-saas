@@ -149,7 +149,8 @@ export class HandHealthScanner {
       }
       const ready = await store.listByType('server-remote', { status: 'ready' });
       const unhealthy = await store.listByType('server-remote', { status: 'unhealthy' });
-      const candidates = [...ready, ...unhealthy];
+      const provisioning = await store.listByType('server-remote', { status: 'provisioning' });
+      const candidates = [...ready, ...unhealthy, ...provisioning];
 
       // 按 (endpoint, authToken) 分组。token 参与 key：同 endpoint 不同凭据的
       // 探测结果可能不同（401 → unhealthy）。resolveToken 对非 tenant hand 是
@@ -158,6 +159,47 @@ export class HandHealthScanner {
       let flipped = 0;
       for (const scannedHand of candidates) {
         let hand = scannedHand;
+        if (hand.status === 'provisioning' && typeof hand.metadata.tenantRemoteHandId === 'string') {
+          // A process may die after the tenant appliance accepted /provision but before
+          // the result was persisted. Shared /health cannot establish this session's
+          // result and replay may duplicate provider side effects: atomically park it.
+          const generation = typeof hand.metadata.provisionGeneration === 'string'
+            ? hand.metadata.provisionGeneration
+            : undefined;
+          const parked = generation && store.completeProvisionAttempt
+            ? await store.completeProvisionAttempt(hand.handId, generation, 'unhealthy', {
+              provisionFailure: 'tenant remote provision result unknown; manual reconciliation required',
+              provisionResult: 'result_unknown',
+              reconcileRequired: true,
+              provision: {
+                ...parseProvisionMetadata(hand.metadata.provision),
+                lastStatus: 'result_unknown',
+                lastAttemptAt: new Date().toISOString(),
+              },
+            }, requireHandTenantId(hand))
+            : null;
+          if (parked) {
+            await this.appendHealthEvent(hand, 'unhealthy', 'tenant_provision_result_unknown');
+            flipped += 1;
+          } else {
+            this.options.logger?.warn(
+              `HandHealthScanner: tenant provisioning hand could not be atomically parked handId=${hand.handId}; manual reconciliation required`,
+            );
+          }
+          continue;
+        }
+        if (hand.status === 'provisioning') {
+          // A live provision transport owns the attempt until its durable owner claim expires.
+          // Shared /health must never complete that attempt. Only a scanner that atomically
+          // takes over an ownerless/expired attempt may use health to recover it.
+          const recoveryToken = randomUUID();
+          const claimed = await this.claimProvisionRecovery(hand, recoveryToken, {
+            lastHealthCheckAt: new Date().toISOString(),
+            provisionRecoveryReason: 'orphaned_attempt',
+          });
+          if (!claimed) continue;
+          hand = claimed;
+        }
         if (hand.status === 'ready' && hasUnresolvedHandProvisionFailure(hand)) {
           // endpoint/token 即使不可用，数据库状态也必须先收敛为 unhealthy。PG 实现
           // 用 unresolved marker 条件原子 claim，避免与正常 provision 成功互相覆盖。
@@ -172,13 +214,13 @@ export class HandHealthScanner {
               'unhealthy',
               { lastHealthCheckAt: new Date().toISOString() },
             );
-            hand = converged ?? await store.get(hand.handId) ?? hand;
+            hand = converged ?? await store.get(hand.handId, requireHandTenantId(hand)) ?? hand;
             if (converged) {
               await this.appendHealthEvent(scannedHand, 'unhealthy', 'provision_failure_pending');
               flipped += 1;
             }
           } else {
-            hand = await store.get(hand.handId) ?? hand;
+            hand = await store.get(hand.handId, requireHandTenantId(hand)) ?? hand;
           }
         }
         if (!hand.endpoint) continue;
@@ -206,6 +248,28 @@ export class HandHealthScanner {
           targetStatus = await this.probeEndpoint(group.endpoint, group.authToken);
         }
         for (const hand of group.hands) {
+          if (hand.metadata.provisionRecoveryReason === 'orphaned_attempt') {
+            const recoveryToken = typeof hand.metadata.provisionRecoveryToken === 'string'
+              ? hand.metadata.provisionRecoveryToken
+              : undefined;
+            const completed = recoveryToken
+              ? await this.completeProvisionRecovery(hand, recoveryToken, targetStatus, {
+                lastHealthCheckAt: new Date().toISOString(),
+                provisionFailure: targetStatus === 'ready' ? null : 'shared hand health probe failed during orphan recovery',
+                provisionRecoveryReason: null,
+                provision: {
+                  ...parseProvisionMetadata(hand.metadata.provision),
+                  lastStatus: targetStatus === 'ready' ? 'ok' : 'error',
+                  lastAttemptAt: new Date().toISOString(),
+                },
+              })
+              : null;
+            if (!completed) continue;
+            await this.appendHealthEvent(hand, targetStatus, 'provisioning_process_recovered');
+            flipped += 1;
+            if (targetStatus === 'unhealthy') await this.reprovisionIfDue(completed);
+            continue;
+          }
           // /health 只证明共享 orchestrator 活着，不能证明这个 Session/Sandbox 的
           // /provision 成功。存在 unresolved failure 时必须执行 session-specific
           // reprovision，成功前一律保持 unhealthy，禁止全局健康 fan-out 假恢复。
@@ -313,11 +377,14 @@ export class HandHealthScanner {
       const capacityKey = `${hand.endpoint}\u0000${this.options.defaultServerRemoteAuthToken ?? ''}`;
       if (this.recoveryCapacityBlocksThisScan.has(capacityKey)) return false;
     }
-    const latest = await this.options.handStore.get(hand.handId);
+    const latest = await this.options.handStore.get(hand.handId, requireHandTenantId(hand));
     if (latest) {
       if (latest.status === 'ready' && !hasUnresolvedHandProvisionFailure(latest)) return false;
       hand = latest;
     }
+    // result_unknown is a durable side-effect fence. Only the explicit reconciler
+    // may clear it; generic health recovery must never replay the provision call.
+    if (hand.metadata?.reconcileRequired === true) return false;
     if (!hand.endpoint) return false;
     const endpoint = hand.endpoint;
     const recipe = parseCachedRecipe(hand.metadata?.recipe, hand.workspaceId);
@@ -356,6 +423,7 @@ export class HandHealthScanner {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          ...(recipe.provisionKey ? { 'idempotency-key': recipe.provisionKey } : {}),
           ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
         },
         body: JSON.stringify({ workspaceId: recipe.workspaceId, recipe }),
@@ -507,6 +575,7 @@ export class HandHealthScanner {
       metadataPatch,
       hand.updatedAt,
       typeof provisionGeneration === 'string' ? provisionGeneration : undefined,
+      requireHandTenantId(hand),
     );
   }
 
@@ -521,6 +590,7 @@ export class HandHealthScanner {
       recoveryToken,
       status,
       metadataPatch,
+      requireHandTenantId(hand),
     );
   }
 

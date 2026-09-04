@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js'; import { createSessionAutomationAttachmentBinding } from './sessionAutomationAttachmentBinding.js';
 import type { Express, Request, Response } from 'express';
-import type { AppRuntime } from './runtime.js';
-import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
+import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
@@ -41,7 +41,7 @@ import {
   createDwsRouter,
   createFeishuRouter,
   createContextCitationsRouter,
-  createContextAdminRouter,
+  createContextAdminRouter, createSessionAutomationsRouter,
 } from '../routes/index.js';
 import { registerAuthConnectionRoutes } from './routesAuthConnections.js';
 import { createSignupRouters } from '../routes/signup.js';
@@ -169,6 +169,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
+  if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
+    app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore,
+      service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog,
+      createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd), compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
+      ...createSessionAutomationAttachmentBinding(runtime), broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload) }));
+  }
   app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
@@ -311,7 +317,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
       agentStore: runtime.agentStore,
       orgAgentStore: runtime.orgAgentStore,
-      getStreamStatus: webChannel ? (sid) => webChannel.getStreamStatus(sid) : undefined,
+      getStreamStatus: webChannel ? (tenantId, sid) => webChannel.getStreamStatus(tenantId, sid) : undefined,
       broadcastToUser: webChannel
         ? (userId, data) => webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,
@@ -334,17 +340,17 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       canReadTaskboardSession: createTaskboardSessionReadAuthorizer(runtime.taskboardExecutionStore),
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId, tenantId)
         : undefined,
       listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId, tenantId)
         : undefined,
       listUserMessagesBySession: runtime.runtimeRunStore?.listUserMessagesBySession
         ? (sessionId) => runtime.runtimeRunStore!.listUserMessagesBySession!(sessionId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
-        ? (userId, clientMessageId) =>
-            runtime.runtimeRunStore!.findByIdempotencyKey(userId, clientMessageId)
+        ? (tenantId, userId, clientMessageId) =>
+            runtime.runtimeRunStore!.findByIdempotencyKey(tenantId, userId, clientMessageId)
         : undefined,
     }),
   );
@@ -536,7 +542,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   if (runtime.billingService) {
     app.use('/api/billing', createBillingRouter({ billingService: runtime.billingService }));
     app.use(
@@ -549,7 +554,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // Runtime audit 读 API（admin-only）：按 sessionId/runId 查 tool_audit 投影，
   // 不引 DB，直接读 *.runtime-events.jsonl。
   if (runtime.runtimeAuditQuery) {
@@ -559,7 +563,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createRuntimeAuditRouter({ auditQuery: runtime.runtimeAuditQuery }),
     );
   }
-
   // Agent 运行监测读 API（admin-only，router 内 resolveTenant 隔离：平台 admin 全量、
   // 组织 admin 锁本租户 + ¥ 成本按 policy.showCost 脱敏）：
   // run trace drill-down + 最近 run 列表 + 效率聚合。仅 PG runtime backend 可用
@@ -584,7 +587,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // 组织对话质检台（会话记录/门禁日志/反馈标注；2026-07 唯恩批次）。
   // 须挂在 /api/admin 观测路由之前，避免前缀匹配先落进 observability router。
   app.use(
@@ -633,7 +635,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
     }),
   );
-
   app.use(
     '/api/admin',
     requireAdmin,
@@ -651,7 +652,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
     }),
   );
-
   app.use('/api/admin/system', requireAdmin, createSystemAdminRouter({
       agentCwd,
       systemMetricsStore: runtime.systemMetricsStore,

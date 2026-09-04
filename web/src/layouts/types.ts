@@ -16,6 +16,7 @@ import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import type { SandboxProfile } from "@/types/sandboxProfile";
 import type { ArtifactPreviewTarget } from "@/contexts/FilePreviewContext";
+import type { AutomationControlRequest, AutomationTimelineEvent, SessionAutomationSnapshot } from "@/lib/sessionAutomation";
 
 export interface LayoutProps {
   // 会话导航
@@ -129,6 +130,14 @@ export interface LayoutProps {
   // Token usage
   tokenUsage: TokenUsage | null;
   contextUsage: ContextUsageData | null;
+
+  // Session automation control plane
+  automation: SessionAutomationSnapshot | null;
+  automationTimeline: AutomationTimelineEvent[];
+  automationPending: boolean;
+  automationError: string | null;
+  controlAutomation: (request: AutomationControlRequest) => Promise<void>;
+  refreshAutomation: (sessionId?: string | null) => Promise<void>;
 
   // 会话分页
   hasMoreSessions: boolean;

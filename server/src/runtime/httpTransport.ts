@@ -54,7 +54,7 @@ export interface HttpTransportOptions {
   /** server-to-hand 鉴权 token；远端校验 Authorization Bearer。 */
   authToken: string;
   /**
-   * HTTP fetch 的整体超时（毫秒）；超时会 abort 并返回 error response。
+   * HTTP fetch 的整体超时（毫秒）；超时会 abort；provision 将其抛给上层标记为结果未知。
    * 不影响 hand 端工具自己的 timeoutMs（在 input 里独立传递）。
    * Default 60 秒。
    */
@@ -105,8 +105,8 @@ export interface HttpTransportOptions {
  * - **invokeTimeoutMs**：fetch 整体兜底超时；hand 端工具自己的 timeoutMs 在
  *   input 内独立传递，不与本字段冲突。
  *
- * 错误归一化：fetch 抛错 / HTTP 非 2xx / 业务 error → 统一返回
- * `{ status: 'error', error, audit?, metadata? }`，让上层 WorkspaceToolProvider
+ * 工具调用错误归一化：fetch 抛错 / HTTP 非 2xx / 业务 error → 统一返回
+ * `{ status: 'error', error, audit?, metadata? }`；provision 的传输异常则抛出以保留结果未知语义，让上层 WorkspaceToolProvider
  * 像处理本地 transport 一样处理。
  *
  * 见 `assets/20260607/Managed-Agents架构-完整路线规划.md` §7.3 PR 1.4 / §7.2。
@@ -217,6 +217,7 @@ export class HttpTransport implements ExecutionTransport {
   }
 
   async provision(recipe: WorkspaceRecipe): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> {
+    // The same key is carried in both the API header and canonical recipe for replay-safe providers.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.invokeTimeoutMs);
     timer.unref?.();
@@ -226,6 +227,7 @@ export class HttpTransport implements ExecutionTransport {
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${this.authToken}`,
+          ...(recipe.provisionKey ? { 'idempotency-key': recipe.provisionKey } : {}),
         },
         body: JSON.stringify({ workspaceId: recipe.workspaceId, recipe }),
         signal: controller.signal,
@@ -238,10 +240,16 @@ export class HttpTransport implements ExecutionTransport {
           metadata: body,
         };
       }
-      return { status: body?.status === 'ok' ? 'ok' : 'error', metadata: body };
+      return {
+        status: body?.status === 'ok' ? 'ok' : 'error',
+        ...(typeof body?.error === 'string' ? { error: body.error } : {}),
+        metadata: body,
+      };
     } catch (err) {
-      if (controller.signal.aborted) return { status: 'error', error: `hand-server provision 超时 (${this.invokeTimeoutMs}ms)` };
-      return { status: 'error', error: err instanceof Error ? err.message : String(err) };
+      if (controller.signal.aborted) {
+        throw new Error(`hand-server provision 超时 (${this.invokeTimeoutMs}ms)`, { cause: err });
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }

@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientDaemonConnection, ClientDaemonTransport } from './clientDaemonTransport.js';
 import {
   deriveClientDaemonHandId,
+  deriveTenantQualifiedClientDaemonHandId,
   parseClientDaemonMessage,
   serializeClientDaemonMessage,
   type ClientDaemonMessage,
@@ -13,6 +14,17 @@ import type { ToolInvocationRequest, ToolInvocationResponse, ToolInvocationStrea
 import type { HandStore } from './handStore.js';
 import { verifyClientDaemonBearer, type ClientDaemonRegistry } from './clientDaemonRegistry.js';
 import type { SecretVault } from '../security/secretVault.js';
+import type { SessionCatalog } from './sessionCatalog.js';
+
+interface ResolvedClientDaemonTenant {
+  tenantId: string;
+  sessionWorkspaceId?: string;
+}
+
+export interface ClientDaemonTenantResolutionInput {
+  daemonId: string;
+  sessionId?: string;
+}
 
 export interface ClientDaemonGatewayOptions {
   transport: ClientDaemonTransport;
@@ -29,6 +41,10 @@ export interface ClientDaemonGatewayOptions {
   deviceRegistry?: ClientDaemonRegistry;
   /** Required when deviceRegistry is set — backing SecretVault for per-device bearers. */
   deviceSecretVault?: SecretVault;
+  /** Authoritative session binding used to resolve the real tenant fence. */
+  sessionCatalog?: Pick<SessionCatalog, 'get'>;
+  /** Authoritative daemon binding; never derive this from an unverified hello tenant field. */
+  resolveDaemonTenantId?: (input: ClientDaemonTenantResolutionInput) => string | undefined | Promise<string | undefined>;
   helloTimeoutMs?: number;
   /** 单个 daemon 连接 lastSeenAt 未刷新超过该值视为失联；0 关闭扫描。默认 60s。 */
   heartbeatTimeoutMs?: number;
@@ -105,6 +121,7 @@ class AsyncChunkQueue {
 class WebSocketClientDaemonConnection implements ClientDaemonConnection {
   readonly handId: string;
   readonly daemonId: string;
+  readonly tenantId: string;
   capabilities: ClientDaemonConnection['capabilities'];
   /**
    * C3: opaque tag the daemon assigns to its capability set. When a reconnect
@@ -129,10 +146,13 @@ class WebSocketClientDaemonConnection implements ClientDaemonConnection {
     ws: WebSocket,
     private readonly gateway: ClientDaemonGateway,
     hello: Extract<ClientDaemonMessage, { type: 'daemon_hello' }>,
+    tenantId: string,
+    handId: string,
   ) {
     this.ws = ws;
-    this.handId = hello.handId ?? deriveClientDaemonHandId(hello.daemonId);
+    this.handId = handId;
     this.daemonId = hello.daemonId;
+    this.tenantId = tenantId;
     this.capabilities = hello.capabilities;
     this.capabilitiesVersion = hello.capabilitiesVersion;
     const now = Date.now();
@@ -372,7 +392,7 @@ export class ClientDaemonGateway {
     this.options.logger?.warn?.(message, error);
   }
 
-  /** 暴露给测试：手动触发一次扫描，避免依赖 setInterval 真实时序。 */
+  /** 暴露给测试：手动触发扫描，避免依赖 setInterval 真实时序。 */
   scanHeartbeatsOnce(now: number = Date.now()): void {
     if (this.heartbeatTimeoutMs <= 0) return;
     for (const [handId, entry] of this.activeConnections) {
@@ -400,6 +420,16 @@ export class ClientDaemonGateway {
     this.heartbeatScanner.unref?.();
   }
 
+  private async registerClientDaemonHand(input: Parameters<HandStore['register']>[0], rawHandId: string): Promise<void> {
+    if (!this.options.handStore) return;
+    const legacyHandIds = [rawHandId];
+    if (this.options.handStore.registerClientDaemon) {
+      await this.options.handStore.registerClientDaemon(input, legacyHandIds);
+    } else {
+      await this.options.handStore.register(input);
+    }
+  }
+
   private handleConnection(ws: WebSocket, request: IncomingMessage): void {
     const helloTimer = setTimeout(() => {
       ws.close(1008, 'daemon hello timeout');
@@ -413,29 +443,54 @@ export class ClientDaemonGateway {
         const hello = parseClientDaemonMessage(raw.toString());
         if (hello.type !== 'daemon_hello') throw new Error('first client daemon message must be daemon_hello');
         if (!(await this.authenticateHello(request, hello))) throw new Error('invalid client daemon auth token');
-        const provisionalHandId = hello.handId ?? deriveClientDaemonHandId(hello.daemonId);
-        // C2: check graceful-disconnect cache first. Same handId reconnecting
-        // within the grace window means we can revive the prior connection
-        // object — its pendingInvokes / pendingCancels maps are still alive
-        // and upstream callers haven't been failed yet.
-        const grace = this.gracefulDisconnects.get(provisionalHandId);
+        const resolvedTenant = await this.resolveTenant(hello);
+        const rawHandId = hello.handId ?? deriveClientDaemonHandId(hello.daemonId);
+        const qualifiedHandId = deriveTenantQualifiedClientDaemonHandId(resolvedTenant.tenantId, rawHandId);
+        // All process-global registries are keyed by the server-issued,
+        // tenant-qualified identity; the untrusted raw id is metadata only.
+        const grace = this.gracefulDisconnects.get(qualifiedHandId);
         const resumedInvocationIds = new Set(
           (hello.resumeInvocations ?? []).map((item) => item.invocationId),
         );
         const canResumeGrace = grace
+          && grace.connection.tenantId === resolvedTenant.tenantId
           && [...grace.connection.pendingInvokes.values()]
             .every((pending) => resumedInvocationIds.has(pending.invocationId));
         if (grace && canResumeGrace) {
-          clearTimeout(grace.timer);
-          this.gracefulDisconnects.delete(provisionalHandId);
           connection = grace.connection;
-          connection.rebindSocket(ws);
-          // C3 capability resync: skip the capabilities rewrite when both
-          // sides have a non-empty version tag that matches. Brand new
-          // version OR missing-on-either-side → trust the incoming list.
+          // Persist the resumed generation before publishing it to any
+          // process-global registry or mutating the still-valid grace entry.
           const cachedVersion = connection.capabilitiesVersion;
           const incomingVersion = hello.capabilitiesVersion;
           const versionMatches = !!cachedVersion && !!incomingVersion && cachedVersion === incomingVersion;
+          const reconnectMetadata = {
+            reconnectedAt: new Date().toISOString(),
+            disconnectReason: null,
+            ...(versionMatches ? { capabilityResync: 'skipped_same_version' } : { capabilityResync: 'updated' }),
+            ...(incomingVersion ? { capabilitiesVersion: incomingVersion } : {}),
+          };
+          if (versionMatches && this.options.handStore) {
+            const updated = await this.options.handStore.updateStatus(
+              connection.handId, 'ready', reconnectMetadata, connection.tenantId,
+            );
+            if (!updated) throw new Error('client daemon durable reconnect rejected');
+          } else if (this.options.handStore) {
+            const existing = await this.options.handStore.get(connection.handId, connection.tenantId);
+            await this.registerClientDaemonHand({
+              handId: connection.handId,
+              tenantId: connection.tenantId,
+              sessionId: hello.sessionId ?? existing?.sessionId,
+              workspaceId: resolvedTenant.sessionWorkspaceId ?? hello.workspaceId ?? existing?.workspaceId ?? `client:${hello.daemonId}`,
+              type: 'client',
+              status: 'ready',
+              endpoint: `daemon://${hello.daemonId}`,
+              capabilities: hello.capabilities,
+              metadata: { daemonId: hello.daemonId, rawHandId, ...reconnectMetadata },
+            }, rawHandId);
+          }
+          clearTimeout(grace.timer);
+          this.gracefulDisconnects.delete(qualifiedHandId);
+          connection.rebindSocket(ws);
           if (!versionMatches) {
             connection.capabilities = hello.capabilities;
             connection.capabilitiesVersion = incomingVersion;
@@ -443,27 +498,6 @@ export class ClientDaemonGateway {
           this.latestSockets.set(connection.handId, ws);
           this.activeConnections.set(connection.handId, { ws, connection });
           this.options.transport.register(connection);
-          const reconnectMetadata = {
-            reconnectedAt: new Date().toISOString(),
-            disconnectReason: null,
-            ...(versionMatches ? { capabilityResync: 'skipped_same_version' } : { capabilityResync: 'updated' }),
-            ...(incomingVersion ? { capabilitiesVersion: incomingVersion } : {}),
-          };
-          if (versionMatches) {
-            await this.options.handStore?.updateStatus(connection.handId, 'ready', reconnectMetadata);
-          } else if (this.options.handStore) {
-            const existing = await this.options.handStore.get(connection.handId);
-            await this.options.handStore.register({
-              handId: connection.handId,
-              sessionId: hello.sessionId ?? existing?.sessionId,
-              workspaceId: hello.workspaceId ?? existing?.workspaceId ?? `client:${hello.daemonId}`,
-              type: 'client',
-              status: 'ready',
-              endpoint: `daemon://${hello.daemonId}`,
-              capabilities: connection.capabilities,
-              metadata: { daemonId: hello.daemonId, ...reconnectMetadata },
-            });
-          }
           ws.send(serializeClientDaemonMessage({
             type: 'daemon_registered',
             protocolVersion: 1,
@@ -474,14 +508,25 @@ export class ClientDaemonGateway {
             `Client daemon reconnected within grace period: daemonId=${hello.daemonId} handId=${connection.handId} pendingInvokes=${connection.pendingInvokes.size} capabilityResync=${versionMatches ? 'skipped' : 'updated'}`,
           );
         } else {
+          const replaced = this.activeConnections.get(qualifiedHandId);
+          connection = new WebSocketClientDaemonConnection(ws, this, hello, resolvedTenant.tenantId, qualifiedHandId);
+          await this.registerClientDaemonHand({
+            handId: connection.handId,
+            tenantId: connection.tenantId,
+            sessionId: hello.sessionId,
+            workspaceId: resolvedTenant.sessionWorkspaceId ?? hello.workspaceId ?? `client:${hello.daemonId}`,
+            type: 'client',
+            status: 'ready',
+            endpoint: `daemon://${hello.daemonId}`,
+            capabilities: hello.capabilities,
+            metadata: { daemonId: hello.daemonId, rawHandId, connectedAt: new Date().toISOString() },
+          }, rawHandId);
           if (grace) {
             clearTimeout(grace.timer);
-            this.gracefulDisconnects.delete(provisionalHandId);
+            this.gracefulDisconnects.delete(qualifiedHandId);
             grace.connection.failAll(new Error('client daemon did not resume pending invocations'));
-            this.options.logger?.info?.(`Client daemon grace resumption declined: handId=${provisionalHandId}`);
+            this.options.logger?.info?.(`Client daemon grace resumption declined: handId=${qualifiedHandId}`);
           }
-          const replaced = this.activeConnections.get(provisionalHandId);
-          connection = new WebSocketClientDaemonConnection(ws, this, hello);
           this.latestSockets.set(connection.handId, ws);
           this.activeConnections.set(connection.handId, { ws, connection });
           this.options.transport.register(connection);
@@ -489,16 +534,6 @@ export class ClientDaemonGateway {
             replaced.connection.failAll(new Error('client daemon connection replaced'));
             replaced.ws.close(1000, 'daemon connection replaced');
           }
-          await this.options.handStore?.register({
-            handId: connection.handId,
-            sessionId: hello.sessionId,
-            workspaceId: hello.workspaceId ?? `client:${hello.daemonId}`,
-            type: 'client',
-            status: 'ready',
-            endpoint: `daemon://${hello.daemonId}`,
-            capabilities: hello.capabilities,
-            metadata: { daemonId: hello.daemonId, connectedAt: new Date().toISOString() },
-          });
           ws.send(serializeClientDaemonMessage({
             type: 'daemon_registered',
             protocolVersion: 1,
@@ -507,8 +542,13 @@ export class ClientDaemonGateway {
           }));
           this.options.logger?.info?.(`Client daemon connected: daemonId=${hello.daemonId} handId=${connection.handId}`);
         }
-      } catch {
-        this.options.logger?.warn?.('Client daemon hello rejected');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        this.options.logger?.warn?.(
+          message === 'client daemon tenant binding missing'
+            ? 'Client daemon hello rejected: reconcile device metadata.tenantId or bind a valid session'
+            : 'Client daemon hello rejected',
+        );
         ws.close(1008, 'invalid daemon hello');
       }
     });
@@ -549,7 +589,7 @@ export class ClientDaemonGateway {
           void this.options.handStore?.updateStatus(orphanedConnection.handId, 'unhealthy', {
             disconnectedAt: new Date().toISOString(),
             disconnectReason: `grace_period_elapsed:${reason}`,
-          });
+          }, orphanedConnection.tenantId);
           this.options.logger?.warn?.(`Client daemon grace period elapsed: handId=${orphanedConnection.handId}`);
         }, this.disconnectGracePeriodMs);
         timer.unref?.();
@@ -561,7 +601,7 @@ export class ClientDaemonGateway {
       void this.options.handStore?.updateStatus(connection.handId, 'unhealthy', {
         disconnectedAt: new Date().toISOString(),
         disconnectReason: reason,
-      });
+      }, connection.tenantId);
       this.options.logger?.info?.(`Client daemon disconnected: handId=${connection.handId} reason=${reason}`);
     });
   }
@@ -586,6 +626,40 @@ export class ClientDaemonGateway {
    * back to the shared bearer for backward compat with daemons that don't
    * declare a device identity yet.
    */
+  private async resolveTenant(hello: Extract<ClientDaemonMessage, { type: 'daemon_hello' }>): Promise<ResolvedClientDaemonTenant> {
+    const session = hello.sessionId && this.options.sessionCatalog
+      ? await this.options.sessionCatalog.get(hello.sessionId)
+      : null;
+    if (hello.sessionId && this.options.sessionCatalog && !session) {
+      throw new Error('client daemon session binding not found');
+    }
+    const sessionTenantId = session?.tenantId?.trim();
+    if (session && !sessionTenantId) throw new Error('client daemon session tenant missing');
+
+    const deviceRecord = this.options.deviceRegistry
+      ? await this.options.deviceRegistry.get(hello.daemonId)
+      : null;
+    const metadataTenant = deviceRecord?.metadata?.tenantId;
+    const deviceTenantId = typeof metadataTenant === 'string' ? metadataTenant.trim() : undefined;
+    const resolvedDaemonTenantId = (await this.options.resolveDaemonTenantId?.({
+      daemonId: hello.daemonId,
+      sessionId: hello.sessionId,
+    }))?.trim();
+    if (deviceTenantId && resolvedDaemonTenantId && deviceTenantId !== resolvedDaemonTenantId) {
+      throw new Error('client daemon authoritative tenant bindings disagree');
+    }
+    const daemonTenantId = deviceTenantId || resolvedDaemonTenantId;
+    if (sessionTenantId && daemonTenantId && sessionTenantId !== daemonTenantId) {
+      throw new Error('client daemon session and device tenant mismatch');
+    }
+    const tenantId = sessionTenantId || daemonTenantId;
+    if (!tenantId) throw new Error('client daemon tenant binding missing');
+    return {
+      tenantId,
+      ...(session?.workspaceId ? { sessionWorkspaceId: session.workspaceId } : {}),
+    };
+  }
+
   private async authenticateHello(request: IncomingMessage, hello: { daemonId: string; authToken?: string }): Promise<boolean> {
     const presented = hello.authToken ?? this.presentedBearer(request);
     if (this.options.deviceRegistry && this.options.deviceSecretVault) {

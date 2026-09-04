@@ -123,7 +123,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     user: WorkspaceUser | null,
     opts: {
       dingtalkSessionsBasePath?: string;
-      getStreamStatus?: (sessionId: string) => Promise<StreamStatus>;
+      getStreamStatus?: (tenantId: string, sessionId: string) => Promise<StreamStatus>;
       groupStore?: GroupStore;
     } = {},
   ): Promise<{ baseUrl: string }> {
@@ -390,10 +390,10 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
   it('stream-status：非法 sessionId 400；非 owner 降级 active:false 且不触发 getStreamStatus；owner 透传流状态', async () => {
     const { sessionId } = await writeSession(OWNER);
 
-    const ownerCalls: string[] = [];
+    const ownerCalls: Array<[string, string]> = [];
     const { baseUrl: ownerBase } = await startServer(OWNER, {
-      getStreamStatus: async (id) => {
-        ownerCalls.push(id);
+      getStreamStatus: async (tenantId, id) => {
+        ownerCalls.push([tenantId, id]);
         return { active: true, streamId: 'stream-1', runId: 'run-1', status: 'waiting_user' };
       },
     });
@@ -407,13 +407,13 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     const ok = await fetch(`${ownerBase}/api/sessions/${sessionId}/stream-status`);
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ active: true, streamId: 'stream-1', runId: 'run-1', status: 'waiting_user' });
-    expect(ownerCalls).toEqual([sessionId]);
+    expect(ownerCalls).toEqual([[OWNER.tenantId, sessionId]]);
 
     // 非 owner → 探活接口不暴露 403，降级 active:false，且 getStreamStatus 不被调用
-    const otherCalls: string[] = [];
+    const otherCalls: Array<[string, string]> = [];
     const { baseUrl: otherBase } = await startServer(OTHER, {
-      getStreamStatus: async (id) => {
-        otherCalls.push(id);
+      getStreamStatus: async (tenantId, id) => {
+        otherCalls.push([tenantId, id]);
         return { active: true, streamId: 'leak', runId: 'leak' };
       },
     });
@@ -427,10 +427,10 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     const ownedActive = await writeSession(OWNER);
     const ownedInactive = await writeSession(OWNER);
     const foreign = await writeSession(OTHER);
-    const calls: string[] = [];
+    const calls: Array<[string, string]> = [];
     const { baseUrl } = await startServer(OWNER, {
-      getStreamStatus: async (id) => {
-        calls.push(id);
+      getStreamStatus: async (tenantId, id) => {
+        calls.push([tenantId, id]);
         return id === ownedActive.sessionId
           ? { active: true, streamId: 'stream-batch', runId: 'run-batch', status: 'waiting_approval' }
           : { active: false };
@@ -455,7 +455,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     // 路由用 Promise.all 并发查询，calls 的 push 顺序由各自异步权限校验的完成时机决定，
     // 与入参顺序无关（CI 上曾因此偶发失败）。这里只断言「查了哪些」：长度 2 证明去重生效
     // （ownedActive 传了两次只查一次），内容证明无权的 foreign 从未被查询。
-    expect([...calls].sort()).toEqual([ownedActive.sessionId, ownedInactive.sessionId].sort());
+    expect([...calls].sort()).toEqual([[OWNER.tenantId, ownedActive.sessionId], [OWNER.tenantId, ownedInactive.sessionId]].sort());
 
     for (const body of [
       undefined,

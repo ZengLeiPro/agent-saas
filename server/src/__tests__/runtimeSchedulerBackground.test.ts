@@ -1,17 +1,227 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { DurableBackgroundTaskService } from '../runtime/background/backgroundTaskService.js';
+import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import type { RunRecord, RunStatus } from '../runtime/runStore.js';
 import { deferred, MemoryEventStore, MemoryRunStore } from './runtimeScheduler.testHelpers.js';
 
+function terminalRuntimeConfig(runStore: MemoryRunStore, eventStore: MemoryEventStore): RawRuntimeRunDispatchConfig {
+  return {
+    agentCwd: '/tmp',
+    sharedDir: '/tmp',
+    runStore,
+    sessionCatalog: {
+      async upsert() {},
+      async ensure() {},
+      async get(sessionId: string) {
+        const run = [...runStore.records.values()].find(candidate => candidate.sessionId === sessionId);
+        if (!run) return null;
+        const now = new Date().toISOString();
+        return {
+          sessionId,
+          userId: run.userId ?? 'background-user',
+          username: 'background-user',
+          tenantId: run.tenantId,
+          channel: run.channel ?? 'web',
+          cwd: '/tmp/workspace',
+          transcriptPath: `/tmp/${sessionId}.jsonl`,
+          createdAt: now,
+          updatedAt: now,
+        };
+      },
+      async markStatus() {},
+      async findTranscriptPath(sessionId: string) { return `/tmp/${sessionId}.jsonl`; },
+    },
+    eventStoreFactory: () => eventStore,
+  } as RawRuntimeRunDispatchConfig;
+}
+
+function automationAgentMetadata(runId: string): Record<string, unknown> {
+  return {
+    backgroundTask: true,
+    backgroundTaskType: 'agent',
+    backgroundTaskReady: true,
+    parentRunId: 'automation-root-run',
+    parentSessionId: 'automation-root-session',
+    parentToolCallId: 'tool-call-1',
+    description: 'durable automation child',
+    prompt: 'continue',
+    agentType: 'general',
+    modelRef: 'group/model',
+    includeCompanyInfo: false,
+    cwd: '/tmp/workspace',
+    workspaceId: 'automation-root-session',
+    parentChannel: 'web',
+    outputTransactionMode: 'terminal_buffered',
+    parentOutputTransactionMode: 'replaceable_draft',
+    wakeState: 'none',
+    executionChildSessionId: 'sub-fixed-child',
+    executionChildRunId: 'fixed-child-run',
+    automationFence: {
+      automationId: 'automation-1',
+      incarnationId: 'incarnation-1',
+      generation: 1,
+      specVersion: 1,
+      executionId: 'execution-1',
+      runId,
+      rootSessionId: 'automation-root-session',
+      rootRunId: 'automation-root-run',
+    },
+  };
+}
+
 describe('RuntimeScheduler background task recovery', () => {
-  it('freezes an expired running background task and never calls wake to replay it', async () => {
+  it('requeues an interrupted automation agent and executes it with the fixed child identity', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();
     const record = await runStore.upsertPending({
+      runId: 'bg-automation-crashed',
+      sessionId: 'sub-bg-automation-crashed',
+      metadata: automationAgentMetadata('bg-automation-crashed'),
+    });
+    runStore.records.set(record.runId, {
+      ...record,
+      status: 'running',
+      workerId: 'dead-worker',
+      leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const recoverInterruptedBackgroundChild = vi.fn(async () => {
+      await runStore.markStatusIfCurrent(record.runId, ['running'], 'pending',
+        'background_task_interrupted_replay_ready', { backgroundTaskReady: true, wakeState: 'none' });
+      return 'requeued' as const;
+    });
+    const service = new DurableBackgroundTaskService({
+      agentCwd: '/tmp', sharedDir: '/tmp', runStore,
+      sessionAutomationRuntimeGuard: { recoverInterruptedBackgroundChild } as never,
+    } as RawRuntimeRunDispatchConfig);
+    const wake = vi.fn(async (candidate: RunRecord, lease: { release(status?: RunStatus): Promise<void> }) => {
+      expect(candidate.metadata).toMatchObject({
+        executionChildSessionId: 'sub-fixed-child',
+        executionChildRunId: 'fixed-child-run',
+        automationFence: {
+          runId: 'bg-automation-crashed',
+          rootSessionId: 'automation-root-session',
+          rootRunId: 'automation-root-run',
+        },
+      });
+      await lease.release('completed');
+    });
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-new',
+      autoWake: true,
+      wake,
+      failInterruptedBackgroundTask: candidate => service.failInterrupted(candidate),
+    });
+
+    await scheduler.tick();
+    await expect(runStore.get(record.runId)).resolves.toMatchObject({
+      status: 'pending',
+      statusReason: 'background_task_interrupted_replay_ready',
+    });
+    await scheduler.tick();
+    await scheduler.stop();
+
+    await expect(runStore.get(record.runId)).resolves.toMatchObject({
+      status: 'completed',
+      metadata: {
+        backgroundTaskReady: true,
+        executionChildSessionId: 'sub-fixed-child',
+        executionChildRunId: 'fixed-child-run',
+      },
+    });
+    expect(wake).toHaveBeenCalledOnce();
+  });
+
+  it('does not freeze an interrupted Agent when the old worker renewed after the recovery snapshot', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const record = await runStore.upsertPending({
+      runId: 'bg-agent-renewed', sessionId: 'sub-bg-agent-renewed',
+      metadata: automationAgentMetadata('bg-agent-renewed'),
+    });
+    runStore.records.set(record.runId, {
+      ...record, status: 'running', workerId: 'old-worker',
+      leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    vi.spyOn(runStore, 'acquireLease').mockResolvedValueOnce(null);
+    const failInterruptedBackgroundTask = vi.fn();
+    const scheduler = new RuntimeScheduler({
+      runStore, eventStore, workerId: 'worker-new', autoWake: true, wake: vi.fn(),
+      failInterruptedBackgroundTask,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(failInterruptedBackgroundTask).not.toHaveBeenCalled();
+    await expect(runStore.get(record.runId)).resolves.toMatchObject({ status: 'running', workerId: 'old-worker' });
+  });
+
+  it('freezes a running parent when the interrupted child terminal is already preserved', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const interrupted = await runStore.upsertPending({
+      runId: 'bg-automation-child-cancelled',
+      sessionId: 'sub-bg-automation-child-cancelled',
+      metadata: automationAgentMetadata('bg-automation-child-cancelled'),
+    });
+    runStore.records.set(interrupted.runId, { ...interrupted, status: 'running' });
+    const service = new DurableBackgroundTaskService({
+      ...terminalRuntimeConfig(runStore, eventStore),
+      sessionAutomationRuntimeGuard: {
+        recoverInterruptedBackgroundChild: vi.fn(async () => 'terminal_preserved' as const),
+      } as never,
+    });
+
+    await service.failInterrupted(runStore.records.get(interrupted.runId)!);
+
+    await expect(runStore.get(interrupted.runId)).resolves.toMatchObject({
+      status: 'failed',
+      statusReason: 'background_task_interrupted_child_terminal',
+      metadata: { wakeState: 'pending' },
+    });
+  });
+
+  it('preserves concurrent cancellation and never falls back to the automation root run', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    await runStore.upsertPending({ runId: 'automation-root-run', sessionId: 'automation-root-session' });
+    const interrupted = await runStore.upsertPending({
+      runId: 'bg-automation-cancelled',
+      sessionId: 'sub-bg-automation-cancelled',
+      metadata: automationAgentMetadata('bg-automation-cancelled'),
+    });
+    runStore.records.set(interrupted.runId, { ...interrupted, status: 'running' });
+    const staleInterrupted = runStore.records.get(interrupted.runId)!;
+    await runStore.markStatus(interrupted.runId, 'cancelled', 'user_cancelled');
+    const service = new DurableBackgroundTaskService({
+      ...terminalRuntimeConfig(runStore, eventStore),
+      sessionAutomationRuntimeGuard: {
+        recoverInterruptedBackgroundChild: vi.fn(async () => 'terminal_preserved' as const),
+      } as never,
+    });
+
+    await service.failInterrupted(staleInterrupted);
+
+    await expect(runStore.get(interrupted.runId)).resolves.toMatchObject({
+      status: 'cancelled', statusReason: 'user_cancelled',
+    });
+    await expect(runStore.get('automation-root-run')).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('freezes a legacy expired agent without durable intent and never calls wake to replay it', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const metadata = automationAgentMetadata('bg-crashed');
+    delete metadata.executionChildSessionId;
+    delete metadata.executionChildRunId;
+    const record = await runStore.upsertPending({
       runId: 'bg-crashed',
       sessionId: 'sub-bg-crashed',
-      metadata: { backgroundTask: true, wakeState: 'none' },
+      metadata,
     });
     runStore.records.set(record.runId, {
       ...record,
@@ -20,11 +230,8 @@ describe('RuntimeScheduler background task recovery', () => {
       leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
     });
     const wake = vi.fn();
-    const failInterrupted = vi.fn(async (candidate: RunRecord) => {
-      await runStore.markStatus(candidate.runId, 'failed', 'background_task_interrupted_no_replay', {
-        wakeState: 'pending',
-      });
-    });
+    const service = new DurableBackgroundTaskService(terminalRuntimeConfig(runStore, eventStore));
+    const failInterrupted = vi.fn((candidate: RunRecord) => service.failInterrupted(candidate));
     const scheduler = new RuntimeScheduler({
       runStore,
       eventStore,
@@ -114,7 +321,7 @@ describe('RuntimeScheduler background task recovery', () => {
     await expect(runStore.get('shell-bg-starting')).resolves.toMatchObject({ status: 'pending' });
   });
 
-  it('fails and cleans up a background command reservation whose ACS acknowledgement never arrived', async () => {
+  it('fails stale unactivated command and Agent background reservations', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();
     const record = await runStore.upsertPending({
@@ -131,6 +338,11 @@ describe('RuntimeScheduler background task recovery', () => {
       ...record,
       requestedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
     });
+    const agent = await runStore.upsertPending({
+      runId: 'bg-agent-stale-start', sessionId: 'sub-agent-stale-start',
+      metadata: { backgroundTask: true, backgroundTaskType: 'agent', backgroundTaskVersion: 2, backgroundTaskReady: false },
+    });
+    runStore.records.set(agent.runId, { ...agent, requestedAt: new Date(Date.now() - 3 * 60_000).toISOString() });
     const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string) => {
       await runStore.markStatus(candidate.runId, 'failed', 'background_command_start_timeout', {
         wakeState: 'pending',
@@ -151,6 +363,10 @@ describe('RuntimeScheduler background task recovery', () => {
 
     expect(failBackgroundTask).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'shell-bg-stale-start' }),
+      expect.stringContaining('启动确认超时'),
+    );
+    expect(failBackgroundTask).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'bg-agent-stale-start' }),
       expect.stringContaining('启动确认超时'),
     );
     await expect(runStore.get('shell-bg-stale-start')).resolves.toMatchObject({
@@ -253,7 +469,7 @@ describe('RuntimeScheduler background task recovery', () => {
     await runStore.upsertPending({
       runId: 'bg-blocked',
       sessionId: 'sub-bg-blocked',
-      metadata: { backgroundTask: true, wakeState: 'none' },
+      metadata: { backgroundTask: true, backgroundTaskReady: true, wakeState: 'none' },
     });
     const failBackground = vi.fn(async (candidate: RunRecord, message: string) => {
       await runStore.markStatus(candidate.runId, 'failed', 'background_task_start_failed', {

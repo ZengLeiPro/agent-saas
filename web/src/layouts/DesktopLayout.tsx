@@ -62,7 +62,6 @@ const SuspenseFallback = (
     <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
-
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
@@ -76,6 +75,7 @@ export function DesktopLayout(props: LayoutProps) {
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
+    automation, automationTimeline, automationPending, automationError, controlAutomation,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
     previewArtifact, closeArtifactPreview,
@@ -121,14 +121,11 @@ export function DesktopLayout(props: LayoutProps) {
     updatePreferences({ sidebarLayout: layout });
     void saveUserPreferences({ sidebarLayout: layout }).then((saved) => { if (saved) updatePreferences(saved); });
   }, [updatePreferences]);
-
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
-
   // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
   const { snapshot: systemPanel, pulse: systemPanelPulse, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
     useSystemPanelDock(messages, sessionId);
-
   const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
   // 工作流回放自行渲染会话卡与系统数据卡；目录态仍由外层提供统一浮动白框。
   const contentPanelFloating = settingsMode || analysisMode
@@ -545,6 +542,11 @@ export function DesktopLayout(props: LayoutProps) {
               onEditQueuedInterjection={editQueuedInterjection}
               onResendQueuedInterjection={resendQueuedInterjection}
               onDismissQueuedInterjection={dismissQueuedInterjection}
+              automation={automation}
+              automationTimeline={automationTimeline}
+              automationPending={automationPending}
+              automationError={automationError}
+              onAutomationControl={controlAutomation}
               onFileSelect={(event) => { void handleFileSelect(event); }}
               onAssetSelect={handleAssetSelect}
               onPaste={(event) => { void handlePaste(event); }}

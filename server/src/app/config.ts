@@ -3,7 +3,7 @@ import { join, resolve } from 'path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
 import { buildWebToolsSchemas } from './webToolsSchema.js';
-import { runtimeEventRetentionConfigSchema } from './runtimeEventRetentionConfig.js';
+import { runtimeEventRetentionConfigSchema } from './runtimeEventRetentionConfig.js'; import { sessionAutomationConfigSchema } from './sessionAutomationConfig.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
   NETWORK_POLICY_MODES,
@@ -999,9 +999,9 @@ const runtimeEventStoreConfigSchema = z.discriminatedUnion('backend', [
     tablePrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/).transform((value) => value.toLowerCase()).optional(),
     /** 共享查询池上限；默认 6，为并发事件写入保留短连接余量。 */
     poolMax: z.number().int().min(1).max(50).optional(),
+    writerCapability: z.discriminatedUnion('capability', [z.object({ capability: z.literal('tenant-native-v1') }), z.object({ capability: z.literal('legacy-single-tenant'), tenantId: z.string().min(1) })]).optional(),
   }),
 ]);
-
 
 const clientDaemonConfigSchema = z.object({
   /** Reverse WebSocket endpoint path for customer-side daemon connections. */
@@ -1245,7 +1245,7 @@ export const appConfigSchema = z.object({
   runtimeEventStore: runtimeEventStoreConfigSchema.optional(),
   runtimeScheduler: runtimeSchedulerConfigSchema.optional(),
   runtimeHandHealthScanner: runtimeHandHealthScannerConfigSchema.optional(),
-  runtimeEventRetention: runtimeEventRetentionConfigSchema.optional(),
+  runtimeEventRetention: runtimeEventRetentionConfigSchema.optional(), sessionAutomation: sessionAutomationConfigSchema.optional(),
   clientDaemon: clientDaemonConfigSchema,
   secretVault: secretVaultConfigSchema.optional(),
   webTools: webToolsConfigSchema,

@@ -43,6 +43,7 @@ export async function releaseRunLease(
   workerId: string,
   finalStatus?: RunStatus,
   reason?: string,
+  leaseToken?: string,
 ): Promise<RunRecord | null> {
   // Lock the owned run first; database time is sampled only after the lease owner
   // obtains the row update right, so lock waiting cannot move terminal TTL earlier.
@@ -104,7 +105,8 @@ export async function releaseRunLease(
     FROM transition_time
     WHERE run.run_id = $1
       AND run.worker_id = $2
+      AND ($5::text IS NULL OR run.metadata->>'runLeaseToken' = $5)
     RETURNING row_to_json(run.*) AS row_json
-  `, [runId, workerId, finalStatus ?? null, reason ?? null]);
+  `, [runId, workerId, finalStatus ?? null, reason ?? null, leaseToken ?? null]);
   return result.rows[0] ? context.normalizeRunRecord(result.rows[0].row_json) : null;
 }

@@ -2596,7 +2596,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [automation.submitCommand, setInput, fileUpload.clearFiles, fileUpload.reportUploadError, sendChatViaWs, mutateQueuedInterjections]);
 
-
   const sendMessage = useCallback(submitCurrentMessage, [submitCurrentMessage]);
 
   // ---- 活跃会话事件流订阅 ----

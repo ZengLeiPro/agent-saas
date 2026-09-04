@@ -10,6 +10,7 @@ export interface RuntimeWakeLease {
   runId: string;
   workerId?: string;
   renew(source?: RunHeartbeatSource): Promise<void>;
+  handoff?(reason: string, metadataPatch?: Record<string, unknown>): Promise<void>;
   release(finalStatus?: RunStatus, reason?: string): Promise<void>;
 }
 

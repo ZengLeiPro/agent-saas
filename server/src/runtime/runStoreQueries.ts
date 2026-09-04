@@ -5,6 +5,9 @@ import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOp
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
+import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
+import { UNREADY_BACKGROUND_TASK_SQL } from './background/backgroundTaskRuntime.js';
+import { listRecoverableRuns } from './runRecoveryQueries.js';
 
 /** SQL implementation for authoritative Runtime Run state. */
 export class PgRunStoreQueries {
@@ -461,41 +464,9 @@ export class PgRunStoreQueries {
    * acquireLease keeps them unclaimable until their durable setup is complete.
    */
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE (
-        run.status = 'pending'
-        OR (
-          run.status = 'running'
-          AND run.liveness_version IS NULL
-          AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1)
-        )
-      )
-        AND NOT (
-          run.status = 'pending'
-          AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
-            AND (
-              (
-                input.state = 'reserved'
-                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
-              )
-              OR (
-                input.state = 'pending'
-                AND target.status IN ('pending','running','waiting_hand')
-                AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
-              )
-            )
-        )
-      ORDER BY run.enqueue_seq ASC
-    `, [now.toISOString()]);
-    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+    return await listRecoverableRuns({ pool: this.pool, runsTable: this.runsTable,
+      steeringInputsTable: this.steeringInputsTable,
+      toolInvocationsTable: this.toolInvocationsTable, now });
   }
 
   async listStaleWaitingApproval(cutoff: Date, limit = 50): Promise<RunRecord[]> {
@@ -646,8 +617,11 @@ export class PgRunStoreQueries {
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
             metadata = CASE
-              WHEN $5::boolean THEN jsonb_set(candidate.metadata, '{subagentCapacityInherited}', 'true'::jsonb, true)
-              ELSE candidate.metadata - 'subagentCapacityInherited'
+              WHEN $5::boolean THEN jsonb_set(
+                candidate.metadata - 'drainHandoffReady',
+                '{subagentCapacityInherited}', 'true'::jsonb, true
+              )
+              ELSE candidate.metadata - 'subagentCapacityInherited' - 'drainHandoffReady'
             END
         WHERE candidate.run_id = $1
           AND (
@@ -657,15 +631,13 @@ export class PgRunStoreQueries {
               AND candidate.liveness_version IS NULL
               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
             )
+            OR ${recoverableRunHandoffSql('candidate', this.toolInvocationsTable)}
           )
           AND NOT (
             candidate.status = 'pending'
             AND COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'
           )
-          AND NOT (
-            candidate.metadata->>'backgroundTaskVersion' = '2'
-            AND COALESCE(candidate.metadata->>'backgroundTaskReady', 'false') <> 'true'
-          )
+          AND NOT (${UNREADY_BACKGROUND_TASK_SQL})
           AND (
             candidate.status <> 'pending'
             OR NOT EXISTS (
@@ -721,6 +693,15 @@ export class PgRunStoreQueries {
     source: RunHeartbeatSource = 'worker',
   ): Promise<RunRecord | null> {
     return renewRunLease(this, runId, workerId, leaseMs, now, source);
+  }
+
+  async releaseLeaseForHandoff(
+    runId: string,
+    workerId: string,
+    reason: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    return releaseRunLeaseForHandoff(this, runId, workerId, reason, metadataPatch);
   }
 
   async markLivenessStale(

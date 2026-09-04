@@ -432,7 +432,9 @@ describe('PgRunStore steering inbox', () => {
     const pool = {
       query: vi.fn(async (sql: string) => {
         expect(sql.match(/AND target\.status IN \('pending','running','waiting_hand'\)/g)).toHaveLength(1);
-        expect(sql).toContain("input.state = 'reserved'\n                AND target.status NOT IN ('completed','failed','cancelled','orphaned')");
+        expect(sql).toMatch(
+          /input\.state = 'reserved'\s+AND target\.status NOT IN \('completed','failed','cancelled','orphaned'\)/,
+        );
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
         expect(sql).toContain("COALESCE(run.metadata->>'schedulerState', '') = 'staged'");
         return { rows: [] };
@@ -484,7 +486,9 @@ describe('PgRunStore steering inbox', () => {
     expect(leaseUpdateSql).toContain(
       "COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'",
     );
-    expect(leaseUpdateSql).toContain("candidate.metadata->>'backgroundTaskVersion' = '2'");
+    expect(leaseUpdateSql).toContain(
+      "COALESCE(candidate.metadata->>'backgroundTaskVersion', '') = '2'",
+    );
     expect(leaseUpdateSql).toContain(
       "COALESCE(candidate.metadata->>'backgroundTaskReady', 'false') <> 'true'",
     );

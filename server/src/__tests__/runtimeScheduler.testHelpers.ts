@@ -1,4 +1,10 @@
-import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
+import type {
+  RunLeaseReleaseOptions,
+  RunRecord,
+  RunStatus,
+  RunStore,
+  UpsertRunInput,
+} from '../runtime/runStore.js';
 import {
   SCHEDULER_STATE_METADATA_KEY,
   SCHEDULER_STATE_READY,
@@ -169,12 +175,19 @@ export class MemoryRunStore implements RunStore {
     const stagedBackgroundTask = record.metadata?.backgroundTaskVersion === 2
       && record.metadata?.backgroundTaskReady !== true;
     if (!acquirable || stagedPending || stagedBackgroundTask) return null;
+    const expiresAt = new Date(now.getTime() + leaseMs).toISOString();
+    const { drainHandoffReady: _drainHandoffReady, ...metadata } = record.metadata;
     const updated: RunRecord = {
       ...record,
       status: 'running',
       workerId,
-      leaseExpiresAt: new Date(now.getTime() + leaseMs).toISOString(),
+      leaseExpiresAt: expiresAt,
       updatedAt: now.toISOString(),
+      metadata,
+      liveness: {
+        state: 'busy', ownerId: workerId, leaseExpiresAt: expiresAt,
+        recoveryActions: ['cancel'], detectedAt: now.toISOString(), version: 1,
+      },
     };
     this.records.set(runId, updated);
     return updated;
@@ -194,16 +207,29 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null> {
+  async releaseLease(
+    runId: string,
+    workerId: string,
+    finalStatus?: RunStatus,
+    reason?: string,
+    options: RunLeaseReleaseOptions = {},
+  ): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record || record.workerId !== workerId) return null;
+    const now = new Date().toISOString();
     const updated: RunRecord = {
       ...record,
       status: finalStatus ?? record.status,
       statusReason: reason,
       workerId: undefined,
       leaseExpiresAt: undefined,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      ...(options.handoff ? {
+        metadata: { ...record.metadata, ...options.metadataPatch, drainHandoffReady: true },
+        liveness: {
+          state: 'unknown', recoveryActions: [], version: 0,
+        },
+      } : {}),
     };
     this.records.set(runId, updated);
     return updated;

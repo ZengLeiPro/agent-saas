@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { AppState } from 'react-native';
-import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import { File } from 'expo-file-system';
 import { authFetch } from '@agent/shared';
 import { useAuth } from '../contexts/AuthContext';
@@ -31,7 +31,7 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
   const abortRef = useRef<AbortController | null>(null);
   const tempFileRef = useRef<File | null>(null);
   const generationRef = useRef(0);
-  const player = useAudioPlayer(null);
+  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const { user } = useAuth();
   const ownerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
 
@@ -43,17 +43,30 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
     generationRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
-    player.pause();
+    // A native media-services reset can still invalidate the wrapper independently of React.
+    try { playerRef.current?.pause(); } catch {}
     releaseVoiceMediaFile(tempFileRef.current);
     tempFileRef.current = null;
     if (activeIdRef.current) setState(activeIdRef.current, 'idle');
     activeIdRef.current = null;
     setActiveId(null);
     if (stopGlobalPlayback === stopCurrent) stopGlobalPlayback = null;
-  }, [player, setState]);
+  }, [setState]);
+
+  useEffect(() => {
+    const player = createAudioPlayer(null);
+    playerRef.current = player;
+    return () => {
+      stopCurrent();
+      if (playerRef.current === player) playerRef.current = null;
+      try { player.release(); } catch {}
+    };
+  }, [stopCurrent]);
 
   const play = useCallback((id: string, attachmentId: string) => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachmentId)) return;
+    const player = playerRef.current;
+    if (!player) return;
     void (async () => {
       stopGlobalPlayback?.();
       stopCurrent();
@@ -85,19 +98,25 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
         if ((error as Error).name !== 'AbortError') stopCurrent();
       }
     })();
-  }, [ownerKey, player, setState, stopCurrent]);
+  }, [ownerKey, setState, stopCurrent]);
 
   const togglePause = useCallback((id: string) => {
     if (activeIdRef.current !== id) return;
-    if (player.playing) {
-      player.pause();
-      setState(id, 'paused');
-    } else {
-      // expo-audio resumes the same source at the retained currentTime.
-      player.play();
-      setState(id, 'playing');
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      if (player.playing) {
+        player.pause();
+        setState(id, 'paused');
+      } else {
+        // expo-audio resumes the same source at the retained currentTime.
+        player.play();
+        setState(id, 'playing');
+      }
+    } catch {
+      stopCurrent();
     }
-  }, [player, setState]);
+  }, [setState, stopCurrent]);
 
   const getState = useCallback((id: string): VoicePlayState => stateMap[id] || 'idle', [stateMap]);
 

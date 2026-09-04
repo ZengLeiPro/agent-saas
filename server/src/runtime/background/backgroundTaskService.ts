@@ -818,7 +818,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message === BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON) {
-        await lease?.release(undefined, BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON).catch(() => undefined);
+        if (lease?.handoff) await lease.handoff(BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON);
         return;
       }
       const current = await this.config.runStore?.get(record.runId);

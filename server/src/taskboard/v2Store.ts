@@ -561,7 +561,6 @@ export async function enqueueOnReadyTrigger(
          WHERE task.board_id=$2 AND task.kind='delivery' AND task.status='ready_to_merge'
            AND task.archived_at IS NULL
            AND task.provider_pull_request_id IS NOT NULL
-           AND task.reviewed_subject_digest IS NOT NULL
            AND NOT EXISTS (
              SELECT 1 FROM ${options.integrationSourcesTable} source
               WHERE source.delivery_task_id=task.id AND source.state NOT IN ('merged','canceled')

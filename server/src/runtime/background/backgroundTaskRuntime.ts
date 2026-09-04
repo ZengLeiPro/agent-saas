@@ -6,6 +6,7 @@ export const BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON = 'background_command_mon
 
 export interface BackgroundTaskLease {
   renew(): Promise<void>;
+  handoff?(reason: string, metadataPatch?: Record<string, unknown>): Promise<void>;
   release(finalStatus?: import('../runStore.js').RunStatus, reason?: string): Promise<void>;
 }
 
@@ -114,6 +115,10 @@ export function isBackgroundCommandTaskRun(record: Pick<RunRecord, 'metadata'>):
 export function isBackgroundTaskReady(record: Pick<RunRecord, 'metadata'>): boolean {
   return record.metadata?.backgroundTaskVersion !== 2 || record.metadata.backgroundTaskReady === true;
 }
+
+export const UNREADY_BACKGROUND_TASK_SQL =
+  "COALESCE(candidate.metadata->>'backgroundTaskVersion', '') = '2' AND "
+  + "COALESCE(candidate.metadata->>'backgroundTaskReady', 'false') <> 'true'";
 
 export function isBackgroundTaskWakeRun(record: Pick<RunRecord, 'metadata'>): boolean {
   return record.metadata?.backgroundTaskWake === true;

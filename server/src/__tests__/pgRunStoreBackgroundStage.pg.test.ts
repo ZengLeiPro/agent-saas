@@ -4,6 +4,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
 import { PgRunStore } from '../runtime/runStore.js';
+import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 
 const { Pool } = pg;
@@ -17,10 +18,12 @@ describePg('PgRunStore v2 background task stage', () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000 });
     store = new PgRunStore({ pool, tablePrefix: prefix });
     await store.init();
+    await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
   }, 30_000);
 
   afterAll(async () => {
     if (!pool) return;
+    await pool.query(`DROP TABLE IF EXISTS ${prefix}_tool_invocations`);
     await pool.query(`DROP TABLE IF EXISTS ${prefix}_runs`);
     await pool.end();
   }, 30_000);

@@ -15,6 +15,12 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
   const prefix = `orggroup_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgOrgGroupAgentStore;
+  const accountIdentity = {
+    profileId: 'corp-a:agent-member-a',
+    corpId: 'corp-a',
+    dingtalkUserId: 'agent-member-a',
+    identityUpdatedAt: '2026-09-04T00:00:00.000Z',
+  };
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
@@ -54,7 +60,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     }
   }, 30_000);
 
-  it('pins binding/topic/work/attempt identity and keeps unknown delivery from automatic resend', async () => {
+  it('pins account/binding/topic/work/attempt identity and keeps unknown delivery from automatic resend', async () => {
     const shadow = await store.ensureShadowBinding({
       tenantId: 'tenant-a',
       accountId: 'account-a',
@@ -62,7 +68,9 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       conversationId: 'group-a',
       channelKind: 'group',
       workspaceId: 'agent-workspace-a',
+      accountIdentity,
     });
+    expect(shadow.accountIdentity).toEqual(accountIdentity);
     await expect(
       store.ensureShadowBinding({
         tenantId: 'tenant-a',
@@ -71,8 +79,17 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
         conversationId: 'group-a',
         channelKind: 'group',
         workspaceId: 'agent-workspace-a',
+        accountIdentity,
       }),
     ).resolves.toMatchObject({ bindingId: shadow.bindingId });
+    await expect(store.ensureShadowBinding({
+      tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-a', channelKind: 'group', workspaceId: 'agent-workspace-a',
+      accountIdentity: {
+        profileId: 'corp-b:agent-member-b', corpId: 'corp-b', dingtalkUserId: 'agent-member-b',
+        identityUpdatedAt: '2026-09-05T00:00:00.000Z',
+      },
+    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
     const binding = await store.updateBinding({
       tenantId: 'tenant-a',
       accountId: 'account-a',
@@ -280,6 +297,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     const otherShadow = await store.ensureShadowBinding({
       tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
       conversationId: 'group-memory-other', channelKind: 'group', workspaceId: 'agent-workspace-a',
+      accountIdentity,
     });
     await expect(store.createMemory({
       tenantId: 'tenant-a', agentId: 'agent-a', bindingId: otherShadow.bindingId,
@@ -508,6 +526,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       conversationId: 'group-parallel',
       channelKind: 'group',
       workspaceId: 'agent-workspace-a',
+      accountIdentity,
     });
     const binding = await store.updateBinding({
       tenantId: 'tenant-a',

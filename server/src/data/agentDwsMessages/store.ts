@@ -6,6 +6,7 @@ import {
   AgentDwsMessageInvariantError,
   DWS_INBOX_V1_IDENTITY_UNPROVABLE,
   type AgentDwsConversationBindingRecord,
+  type AgentDwsCurrentAccountIdentity,
   type AgentDwsLegacyAccountIdentityCandidate,
   type AgentDwsInboxRecord,
   type AgentDwsIngestResult,
@@ -78,16 +79,27 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     tenantId: string,
     accountId: string,
     limit = 50,
+    identity?: AgentDwsCurrentAccountIdentity,
   ): Promise<AgentDwsInboxRecord[]> {
     assertTexts(tenantId, accountId);
+    if (identity) assertCurrentIdentity(identity);
     const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const identityFilter = identity
+      ? `AND created_at >= $4::timestamptz
+          AND payload_json->'accountIdentity'->>'profileId'=$5
+          AND payload_json->'accountIdentity'->>'corpId'=$6
+          AND payload_json->'accountIdentity'->>'dingtalkUserId'=$7`
+      : '';
     const result = await this.pool.query(`
       SELECT *
       FROM ${this.inboxTable}
-      WHERE tenant_id=$1 AND account_id=$2
+      WHERE tenant_id=$1 AND account_id=$2 ${identityFilter}
       ORDER BY created_at DESC,inbox_id DESC
       LIMIT $3
-    `, [tenantId, accountId, boundedLimit]);
+    `, identity
+      ? [tenantId, accountId, boundedLimit, identity.identityUpdatedAt,
+          identity.profileId, identity.corpId, identity.dingtalkUserId]
+      : [tenantId, accountId, boundedLimit]);
     return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
   }
 
@@ -95,15 +107,22 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     tenantId: string,
     accountId: string,
     conversationId: string,
+    identity: AgentDwsCurrentAccountIdentity,
   ): Promise<boolean> {
     assertTexts(tenantId, accountId, conversationId);
+    assertCurrentIdentity(identity);
     const result = await this.pool.query(`
       SELECT EXISTS (
         SELECT 1 FROM ${this.inboxTable}
         WHERE tenant_id=$1 AND account_id=$2 AND conversation_id=$3
           AND event_type='user_im_message_receive_at'
+          AND created_at >= $4::timestamptz
+          AND payload_json->'accountIdentity'->>'profileId'=$5
+          AND payload_json->'accountIdentity'->>'corpId'=$6
+          AND payload_json->'accountIdentity'->>'dingtalkUserId'=$7
       ) AS observed
-    `, [tenantId, accountId, conversationId]);
+    `, [tenantId, accountId, conversationId, identity.identityUpdatedAt,
+      identity.profileId, identity.corpId, identity.dingtalkUserId]);
     return booleanValue((result.rows[0] as Record<string, unknown> | undefined)?.observed);
   }
 
@@ -797,6 +816,19 @@ function assertEvent(event: AgentDwsNormalizedEvent): void {
   optionalDate(event.eventTimestamp);
 }
 
+function assertCurrentIdentity(identity: AgentDwsCurrentAccountIdentity): void {
+  assertTexts(
+    identity.profileId,
+    identity.corpId,
+    identity.dingtalkUserId,
+    identity.identityUpdatedAt,
+  );
+  if (identity.profileId !== `${identity.corpId}:${identity.dingtalkUserId}`
+    || !Number.isFinite(Date.parse(identity.identityUpdatedAt))) {
+    throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+  }
+}
+
 function assertOwnerFence(owner: string, fence: number, requireFence = true): void {
   assertTexts(owner);
   if (requireFence && (!Number.isSafeInteger(fence) || fence < 1)) {
@@ -805,7 +837,7 @@ function assertOwnerFence(owner: string, fence: number, requireFence = true): vo
 }
 
 function assertTexts(...values: string[]): void {
-  if (values.some(value => typeof value !== 'string' || !value.trim())) {
+  if (values.some((value) => typeof value !== 'string' || !value.trim())) {
     throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
   }
 }

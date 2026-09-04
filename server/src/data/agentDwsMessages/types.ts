@@ -16,6 +16,11 @@ export interface AgentDwsLegacyAccountIdentityCandidate {
   dingtalkUserId: string;
 }
 
+export interface AgentDwsCurrentAccountIdentity
+  extends AgentDwsLegacyAccountIdentityCandidate {
+  identityUpdatedAt: string;
+}
+
 export interface AgentDwsNormalizedEvent {
   tenantId: string;
   accountId: string;
@@ -90,8 +95,18 @@ export interface AgentDwsIngestResult {
 export interface AgentDwsMessageStore {
   init(): Promise<void>;
   ingest(event: AgentDwsNormalizedEvent, rawPayload: unknown): Promise<AgentDwsIngestResult>;
-  listForAccount(tenantId: string, accountId: string, limit?: number): Promise<AgentDwsInboxRecord[]>;
-  hasObservedGroup(tenantId: string, accountId: string, conversationId: string): Promise<boolean>;
+  listForAccount(
+    tenantId: string,
+    accountId: string,
+    limit?: number,
+    identity?: AgentDwsCurrentAccountIdentity,
+  ): Promise<AgentDwsInboxRecord[]>;
+  hasObservedGroup(
+    tenantId: string,
+    accountId: string,
+    conversationId: string,
+    identity: AgentDwsCurrentAccountIdentity,
+  ): Promise<boolean>;
   listActiveForAccount(tenantId: string, accountId: string): Promise<AgentDwsInboxRecord[]>;
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
   releaseClaim(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;

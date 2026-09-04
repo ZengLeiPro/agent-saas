@@ -26,20 +26,17 @@ import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
 import { deriveDwsAgentDelegationResourceId } from '../dws/businessToolProvider.js';
 import { OrgAgentApprovalError, type OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
-import { deliveryReconcileSchema, groupBindingCreateSchema,
-  groupWorkspaceQuerySchema, groupWorkspaceUpdateSchema, groupDwsCapabilityError,
-  memoryCreateSchema, memoryPromoteSchema, memoryStatusSchema,
-  mergeGroupWorkspaceEffectiveConfig,
-  workOrderActionSchema } from './agentDwsGroupWorkspaceSchemas.js';
 import {
-  ensureObservedGroupBinding,
-  hasObservedGroup,
-  observedGroupOptions,
-  toPublicAccount,
-  toPublicInboxRecord,
+  deliveryReconcileSchema, groupBindingCreateSchema, groupWorkspaceQuerySchema,
+  groupWorkspaceUpdateSchema, groupDwsCapabilityError, memoryCreateSchema, memoryPromoteSchema,
+  memoryStatusSchema, mergeGroupWorkspaceEffectiveConfig, workOrderActionSchema,
+} from './agentDwsGroupWorkspaceSchemas.js';
+import {
+  currentIdentityBindings, ensureObservedGroupBinding, hasObservedGroup, hasStaleIdentityBinding,
+  observedGroupOptions, toPublicAccount, toPublicInboxRecord,
 } from './agentDwsAccountDiscovery.js';
 import { buildGroupWorkspaceView } from './agentDwsGroupWorkspaceView.js';
-
+import { currentAgentDwsAccountIdentity } from '../dws/agentDwsAccountIdentity.js';
 const eventKindSchema = z.enum(['at_me', 'all_direct']);
 const createSchema = z.object({
   tenantId: z.string().trim().min(1).max(64).optional(),
@@ -182,28 +179,28 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
     if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
     try {
-      const [bindings, deliveries, approvals, inbox] = await Promise.all([
+      const identity = currentAgentDwsAccountIdentity(account);
+      const [allBindings, deliveries, approvals, inbox] = await Promise.all([
         options.orgGroupAgentStore.listBindings(tenantId, account.accountId),
         options.orgGroupAgentStore.listDeliveries(tenantId, account.accountId, parsed.data.limit),
         options.approvalService?.listPending(tenantId, account.accountId, parsed.data.limit)
           ?? Promise.resolve([]),
-        options.messageStore?.listForAccount(tenantId, account.accountId, 100)
-          ?? Promise.resolve([]),
+        options.messageStore?.listForAccount(tenantId, account.accountId, 100, identity) ?? Promise.resolve([]),
       ]);
+      const bindings = currentIdentityBindings(allBindings, account);
       const contextCeiling = await resolveGroupContextCeiling(options, account);
       return res.json({
         ...await buildGroupWorkspaceView({ tenantId, account, bindings, deliveries,
           store: options.orgGroupAgentStore, agentStore: options.orgAgentStore,
           limit: parsed.data.limit, frontdeskTools: GROUP_AGENT_FRONTDESK_TOOL_MAX, contextCeiling }),
         approvals,
-        observedGroups: observedGroupOptions(inbox, bindings),
+        observedGroups: observedGroupOptions(inbox, bindings, account),
       });
     } catch {
       return res.status(503).json({ error: '组织群工作台读取失败' });
     }
   });
-
-  // 创建权限基于服务端精确存在查询，不能把工作台的展示分页当权限事实。
+  // 创建权限基于当前精确账号身份的持久观测，不能把工作台展示分页当权限事实。
   router.post('/agent-dws-accounts/:accountId/group-workspace/bindings', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     if (
@@ -220,9 +217,11 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!account || account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       return res.status(409).json({ error: '只能为已授权且已启用的成员账号创建群绑定' });
     }
-    if (!await hasObservedGroup(
-      options.messageStore, tenantId, account.accountId, parsed.data.conversationId,
-    )) return res.status(404).json({ error: '该群尚未被当前账号的 Personal Stream 观测到' });
+    if (!await hasObservedGroup(options.messageStore, account, parsed.data.conversationId))
+      return res.status(404).json({ error: '该群尚未被当前账号的 Personal Stream 观测到' });
+    if (await hasStaleIdentityBinding(options.orgGroupAgentStore, account,
+      parsed.data.conversationId))
+      return res.status(409).json({ error: '该群绑定属于旧授权身份；请为当前钉钉成员新建账号配置' });
     return await runMutation(req, res, options, {
       action: 'org_agent.channel_binding.create', tenantId, targetId: account.accountId,
       purpose: 'create shadow binding from observed DingTalk group',
@@ -292,6 +291,8 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!account || !currentBinding) {
       return res.status(404).json({ error: 'Agent 钉钉账号或群绑定不存在' });
     }
+    if (currentIdentityBindings([currentBinding], account).length === 0)
+      return res.status(409).json({ error: '群绑定属于旧授权身份；不能在当前账号下修改或激活' });
     const effectiveConfig = mergeGroupWorkspaceEffectiveConfig(
       currentBinding.effectiveConfig, parsed.data.effectiveConfig,
     );
@@ -350,7 +351,6 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       }
     });
   });
-
   router.post('/agent-dws-accounts/:accountId/group-workspace/deliveries/:deliveryId/reconcile', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     if (!options.accountStore || !options.orgGroupAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
@@ -364,6 +364,8 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!account || !delivery || delivery.accountId !== account.accountId) {
       return res.status(404).json({ error: '账号或投递记录不存在' });
     }
+    const binding = delivery.bindingId ? await options.orgGroupAgentStore.getBindingById(tenantId, delivery.bindingId) : null;
+    if (!binding || currentIdentityBindings([binding], account).length === 0) return res.status(404).json({ error: '投递记录不属于当前账号身份' });
     return await runMutation(req, res, options, {
       action: 'org_agent.delivery.reconcile', tenantId, targetId: req.params.deliveryId,
       purpose: parsed.data.reason,
@@ -372,7 +374,6 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       reason: parsed.data.reason, evidence: parsed.data.evidence, outcome: parsed.data.outcome,
     }) } }));
   });
-
   router.post('/agent-dws-accounts/:accountId/group-workspace/work-orders/:workOrderId/action', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     if (!options.accountStore || !options.orgGroupAgentStore || !options.backgroundTasks) {
@@ -387,7 +388,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     ]);
     if (!account || !workOrder) return res.status(404).json({ error: '账号或任务不存在' });
     const binding = await options.orgGroupAgentStore.getBindingById(tenantId, workOrder.bindingId);
-    if (!binding || binding.accountId !== account.accountId) return res.status(404).json({ error: '任务不属于当前账号' });
+    if (!binding || binding.accountId !== account.accountId || currentIdentityBindings([binding], account).length === 0) return res.status(404).json({ error: '任务不属于当前账号身份' });
     return await runMutation(req, res, options, {
       action: `org_agent.work_order.${parsed.data.action}`, tenantId, targetId: workOrder.workOrderId,
       purpose: `${parsed.data.action} group work order`,
@@ -455,7 +456,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     }
     if (memory.bindingId) {
       const binding = await options.orgGroupAgentStore.getBindingById(tenantId, memory.bindingId);
-      if (!binding || binding.accountId !== account.accountId) return res.status(404).json({ error: '记忆不属于当前账号' });
+      if (!binding || binding.accountId !== account.accountId || currentIdentityBindings([binding], account).length === 0) return res.status(404).json({ error: '记忆不属于当前账号身份' });
       if (binding.revision !== parsed.data.policyRevision)
         return res.status(409).json({ error: '群配置已变化，请刷新后重试' });
     }
@@ -476,8 +477,8 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
     if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
     const binding = await options.orgGroupAgentStore.getBindingById(tenantId, parsed.data.bindingId);
-    if (!binding || binding.accountId !== account.accountId || binding.agentId !== account.agentId) {
-      return res.status(404).json({ error: '群绑定不存在' });
+    if (!binding || binding.accountId !== account.accountId || binding.agentId !== account.agentId || currentIdentityBindings([binding], account).length === 0) {
+      return res.status(404).json({ error: '当前账号身份的群绑定不存在' });
     }
     if (binding.revision !== parsed.data.policyRevision) {
       return res.status(409).json({ error: '群配置已变化，请刷新后重试' });
@@ -531,7 +532,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     }
     if (memory.bindingId) {
       const binding = await options.orgGroupAgentStore.getBindingById(tenantId, memory.bindingId);
-      if (!binding || binding.accountId !== account.accountId) return res.status(404).json({ error: '记忆不属于当前账号' });
+      if (!binding || binding.accountId !== account.accountId || currentIdentityBindings([binding], account).length === 0) return res.status(404).json({ error: '记忆不属于当前账号身份' });
     }
     return await runMutation(req, res, options, {
       action: `org_agent.memory.${parsed.data.status}`, tenantId, targetId: req.params.memoryId,

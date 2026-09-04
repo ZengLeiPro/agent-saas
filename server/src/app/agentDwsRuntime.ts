@@ -285,9 +285,11 @@ export async function createAgentDwsRuntime(options: {
     },
     logger: options.logger.child('AgentDwsAuthFlow'),
   });
+  // Approval recovery rechecks the current DWS account identity before resuming side effects.
   const approvalService = options.messageStore && options.orgGroupAgentStore
     && options.pgRunStore && options.runtimeScheduler
     ? new OrgAgentApprovalService({
+        accountStore: options.accountStore,
         messageStore: options.messageStore,
         runStore: options.pgRunStore,
         eventStoreFor: () => options.pgEventStore!,

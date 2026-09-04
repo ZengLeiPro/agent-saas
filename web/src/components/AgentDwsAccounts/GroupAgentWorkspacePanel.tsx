@@ -645,13 +645,13 @@ function BindingEditor({
           <Input
             id={`dws-resources-${binding.bindingId}`}
             value={dwsResources}
-            placeholder="例如 doc:节点ID、drive:文件夹ID"
+            placeholder="例如 doc:节点ID"
             onChange={(event) => setDwsResources(event.target.value)}
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            当前接口无法枚举 DWS 资源。请在对应钉钉文档或云盘的资源详情/地址中复制节点或文件夹 ID，
-            再按 &lt;module&gt;:&lt;resourceId&gt; 填写（如 doc:节点ID、drive:文件夹ID），多个用逗号分隔。
-            不确定 ID 时先不要选择 DwsBusiness，避免凭名称猜测。
+            当前接口无法枚举 DWS 资源。共享群目前只验证了钉钉文档命令；请从文档资源详情或地址复制节点 ID，
+            按 doc:&lt;nodeId&gt; 填写（多个用逗号分隔）。其他模块尚无确定性资源选择器，不能在此配置。
+            不确定节点 ID 时先不要选择 DwsBusiness，避免凭名称猜测。
           </p>
         </div>
       </div>

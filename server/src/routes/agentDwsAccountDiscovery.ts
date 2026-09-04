@@ -3,6 +3,11 @@ import {
   type AgentDwsAccountRecord,
 } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import {
+  bindingMatchesCurrentAccountIdentity,
+  currentAgentDwsAccountIdentity,
+  inboxMatchesCurrentAccountIdentity,
+} from '../dws/agentDwsAccountIdentity.js';
 import type {
   OrgAgentChannelBinding,
   OrgGroupAgentStore,
@@ -12,6 +17,7 @@ import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
 export function observedGroupOptions(
   inbox: AgentDwsInboxRecord[],
   bindings: OrgAgentChannelBinding[],
+  account: AgentDwsAccountRecord,
 ): Array<{ conversationId: string; lastEventAt: string; bindingId: string | null }> {
   const bindingByConversation = new Map(bindings.map(binding => [
     binding.conversationId,
@@ -19,7 +25,9 @@ export function observedGroupOptions(
   ]));
   const observed = new Map<string, string>();
   for (const item of inbox) {
-    if (item.eventType !== 'user_im_message_receive_at' || observed.has(item.conversationId)) continue;
+    if (item.eventType !== 'user_im_message_receive_at'
+      || !inboxMatchesCurrentAccountIdentity(item, account)
+      || observed.has(item.conversationId)) continue;
     observed.set(item.conversationId, item.eventTimestamp ?? item.createdAt);
   }
   return [...observed].map(([conversationId, lastEventAt]) => ({
@@ -29,22 +37,43 @@ export function observedGroupOptions(
   }));
 }
 
-export async function hasObservedGroup(
-  messageStore: Partial<Pick<AgentDwsMessageStore, 'hasObservedGroup'>>,
-  tenantId: string,
-  accountId: string,
-  conversationId: string,
-): Promise<boolean> {
-  if (!messageStore.hasObservedGroup) return false;
-  return await messageStore.hasObservedGroup(tenantId, accountId, conversationId);
+/** Bindings from an earlier authenticated DingTalk identity never enter the current workspace. */
+export function currentIdentityBindings(
+  bindings: OrgAgentChannelBinding[],
+  account: AgentDwsAccountRecord,
+): OrgAgentChannelBinding[] {
+  return bindings.filter((binding) => bindingMatchesCurrentAccountIdentity(binding, account));
 }
 
-/** 只有服务端按 conversationId 精确确认已观测到的群，才允许管理员创建 shadow binding。 */
+export async function hasObservedGroup(
+  messageStore: Partial<Pick<AgentDwsMessageStore, 'hasObservedGroup'>>,
+  account: AgentDwsAccountRecord,
+  conversationId: string,
+): Promise<boolean> {
+  const identity = currentAgentDwsAccountIdentity(account);
+  if (!messageStore.hasObservedGroup || !identity) return false;
+  return await messageStore.hasObservedGroup(
+    account.tenantId, account.accountId, conversationId, identity,
+  );
+}
+
+export async function hasStaleIdentityBinding(
+  store: OrgGroupAgentStore,
+  account: AgentDwsAccountRecord,
+  conversationId: string,
+): Promise<boolean> {
+  const existing = await store.getBinding(account.tenantId, account.accountId, conversationId);
+  return Boolean(existing && !bindingMatchesCurrentAccountIdentity(existing, account));
+}
+
+/** 只有当前精确账号身份观测到的 conversationId 才能创建 shadow binding。 */
 export async function ensureObservedGroupBinding(
   store: OrgGroupAgentStore,
   account: AgentDwsAccountRecord,
   conversationId: string,
 ): Promise<OrgAgentChannelBinding> {
+  const accountIdentity = currentAgentDwsAccountIdentity(account);
+  if (!accountIdentity) throw new Error('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_UNAVAILABLE');
   return await store.ensureShadowBinding({
     tenantId: account.tenantId,
     accountId: account.accountId,
@@ -52,6 +81,7 @@ export async function ensureObservedGroupBinding(
     conversationId,
     channelKind: 'group',
     workspaceId: deriveAgentWorkspaceId(account.tenantId, account.agentId),
+    accountIdentity,
   });
 }
 

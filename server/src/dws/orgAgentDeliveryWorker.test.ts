@@ -20,6 +20,7 @@ const account: AgentDwsAccountRecord = {
   runtimeStatus: 'ready',
   eventKinds: ['at_me'],
   revision: 1,
+  identityUpdatedAt: '2026-09-03T00:00:00.000Z',
   createdAt: '2026-09-04T00:00:00.000Z',
   createdBy: 'admin',
   updatedAt: '2026-09-04T00:00:00.000Z',
@@ -75,6 +76,10 @@ function harness(input?: {
       agentId: 'agent-1',
       activationState: 'active',
       enabled: true,
+      accountIdentity: {
+        profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+        identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+      },
       policy: {
         enabled: true,
         liveDeny: input?.liveDeny ?? false,
@@ -151,7 +156,7 @@ function harness(input?: {
 }
 
 describe('deliverNextOrgAgentIntent', () => {
-  it('returns false without a pending intent', async () => {
+  it('没有待投递 intent 时返回 false', async () => {
     const test = harness({ pending: false });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(false);
     expect(test.sender.send).not.toHaveBeenCalled();
@@ -333,6 +338,25 @@ describe('deliverNextOrgAgentIntent', () => {
     expect(test.sender.send).not.toHaveBeenCalled();
     expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
     expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+  });
+
+  it('账号身份切换后不会用旧 binding 投递，而是 dead-letter', async () => {
+    const test = harness();
+    const currentBinding = await test.store.getBinding('tenant-1', 'account-1', 'group-1');
+    vi.mocked(test.store.getBinding).mockResolvedValueOnce({
+      ...currentBinding!,
+      accountIdentity: {
+        profileId: 'corp-old:user-old', corpId: 'corp-old', dingtalkUserId: 'user-old',
+        identityUpdatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+    );
   });
 
   it('dead-letters a claimed intent when the live binding denies delivery', async () => {

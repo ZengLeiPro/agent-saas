@@ -12,6 +12,7 @@ import {
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
+import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 
 export interface OrgAgentDeliveryWorkerOptions {
   store: OrgGroupAgentStore;
@@ -122,6 +123,7 @@ export async function deliverNextOrgAgentIntent(
       );
       if (
         !binding ||
+        !bindingMatchesCurrentAccountIdentity(binding, account) ||
         binding.bindingId !== delivery.bindingId ||
         binding.agentId !== delivery.agentId
       ) {

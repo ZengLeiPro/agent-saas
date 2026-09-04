@@ -46,6 +46,10 @@ export function createBinding(options: DwsOrgGroupRouterHarnessOptions): OrgAgen
     conversationSpaceId: 'space-a',
     serviceSessionId: 'service-session-a',
     workspaceId: 'ws_tenant-a__agent_agent-a',
+    accountIdentity: {
+      profileId: 'corp-a:agent-self', corpId: 'corp-a', dingtalkUserId: 'agent-self',
+      identityUpdatedAt: now,
+    },
     policy: {
       enabled: true,
       membership: options.guestReadOnly ? 'members_and_guests' : 'members',
@@ -126,6 +130,7 @@ export const account: AgentDwsAccountRecord = {
   runtimeStatus: 'ready',
   eventKinds: ['at_me'],
   revision: 1,
+  identityUpdatedAt: now,
   createdAt: now,
   createdBy: 'admin',
   updatedAt: now,

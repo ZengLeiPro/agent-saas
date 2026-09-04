@@ -3,8 +3,6 @@ import type pg from 'pg';
 
 import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
 import {
-  DEFAULT_ORG_AGENT_CHANNEL_POLICY,
-  DEFAULT_ORG_AGENT_EFFECTIVE_CONFIG,
   type DwsDeliveryIntent,
   type DwsDeliveryIntentCreate,
   type ExternalActorRef,
@@ -53,6 +51,10 @@ import {
   updateWorkOrderControl as updateStoredWorkOrderControl,
 } from './workOrderLifecycle.js';
 import { changeStoredMemoryStatus, promoteStoredMemory } from './memoryLifecycle.js';
+import {
+  ensureIdentityBoundShadowBinding,
+  type EnsureIdentityBoundShadowBindingInput,
+} from './bindingIdentityStore.js';
 
 const MAX_DELIVERY_LEASE_MS = 24 * 60 * 60 * 1_000;
 
@@ -84,57 +86,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     await new PgGovernanceMigrationRunner(this.pool, this.prefix).run();
   }
 
-  async ensureShadowBinding(input: {
-    tenantId: string;
-    accountId: string;
-    agentId: string;
-    conversationId: string;
-    channelKind: 'group' | 'direct';
-    workspaceId: string;
-  }): Promise<OrgAgentChannelBinding> {
-    assertTexts(
-      input.tenantId,
-      input.accountId,
-      input.agentId,
-      input.conversationId,
-      input.workspaceId,
-    );
-    const bindingId = `oacb-${randomUUID()}`;
-    const result = await this.pool.query(
-      `
-      INSERT INTO ${this.bindingsTable} AS binding (
-        binding_id,tenant_id,account_id,agent_id,conversation_id,channel_kind,activation_state,enabled,
-        conversation_space_id,service_session_id,workspace_id,policy_json,effective_config_json,
-        revision,created_at,updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,'shadow',FALSE,$7,$8,$9,$10::jsonb,$11::jsonb,1,NOW(),NOW())
-      ON CONFLICT (account_id,conversation_id) DO UPDATE
-      SET updated_at=binding.updated_at
-      RETURNING binding.*
-    `,
-      [
-        bindingId,
-        input.tenantId,
-        input.accountId,
-        input.agentId,
-        input.conversationId,
-        input.channelKind,
-        `space-${randomUUID()}`,
-        `agent-dws-service-${randomUUID()}`,
-        input.workspaceId,
-        JSON.stringify(DEFAULT_ORG_AGENT_CHANNEL_POLICY),
-        JSON.stringify(DEFAULT_ORG_AGENT_EFFECTIVE_CONFIG),
-      ],
-    );
-    const binding = mapBinding(requiredRow(result.rows[0]));
-    if (
-      binding.tenantId !== input.tenantId ||
-      binding.agentId !== input.agentId ||
-      binding.channelKind !== input.channelKind ||
-      binding.workspaceId !== input.workspaceId
-    ) {
-      throw new Error('ORG_AGENT_BINDING_IDENTITY_CONFLICT');
-    }
-    return binding;
+  async ensureShadowBinding(
+    input: EnsureIdentityBoundShadowBindingInput,
+  ): Promise<OrgAgentChannelBinding> {
+    return await ensureIdentityBoundShadowBinding(this.pool, this.bindingsTable, input);
   }
 
   async getBinding(

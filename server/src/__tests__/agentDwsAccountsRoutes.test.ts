@@ -371,7 +371,8 @@ describe('Agent DWS accounts routes', () => {
   it('活动 Runtime Worker 未声明群任务协议 v2 时安全拒绝激活群绑定', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({
-      status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+      status: 'active',
+      profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
     }));
     const updateBinding = vi.fn();
     const currentBinding = makeGroupBinding({ conversationId: 'group-a' });
@@ -432,6 +433,10 @@ describe('Agent DWS accounts routes', () => {
       channelKind: 'group',
       activationState: 'active',
       enabled: true,
+      accountIdentity: {
+        profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+        identityUpdatedAt: '2026-08-12T00:00:00.000Z',
+      },
       revision: 2,
       policy: {
         enabled: true,
@@ -487,6 +492,7 @@ describe('Agent DWS accounts routes', () => {
           tenantId: 'tenant-a',
           accountId: 'adws-1',
           conversationId: 'cid-a',
+          bindingId: 'binding-a',
           source: 'command',
           deliveryKind: 'front_reply',
           disposition: 'replied',
@@ -505,6 +511,7 @@ describe('Agent DWS accounts routes', () => {
           tenantId: 'tenant-a',
           accountId: 'adws-1',
           conversationId: 'cid-a',
+          bindingId: 'binding-a',
           source: 'background_completion',
           deliveryKind: 'task_completion',
           disposition: 'replied',
@@ -546,7 +553,11 @@ describe('Agent DWS accounts routes', () => {
     const messageStore = { listForAccount: vi.fn(async () => [{
       inboxId: 'inbox-group-b', tenantId: 'tenant-a', accountId: 'adws-1',
       eventId: 'event-group-b', eventType: 'user_im_message_receive_at',
-      conversationId: 'cid-b', content: '@开开', payload: {}, state: 'completed' as const,
+      conversationId: 'cid-b', content: '@开开', payload: {
+        accountIdentity: {
+          profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+        },
+      }, state: 'completed' as const,
       attempt: 1, maxAttempts: 8, leaseFence: 1,
       eventTimestamp: '2026-09-04T01:00:00.000Z',
       createdAt: '2026-09-04T01:00:00.000Z', updatedAt: '2026-09-04T01:00:00.000Z',
@@ -590,12 +601,10 @@ describe('Agent DWS accounts routes', () => {
   it('群 Context 目录只开放已分配的 chat collection，不展示 wiki/minutes 伪能力', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({
-      status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+      status: 'active',
+      profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
     }));
-    const binding = { bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'adws-1', agentId: 'oa-sales',
-      conversationId: 'cid-a', channelKind: 'group', activationState: 'active', enabled: true, revision: 2,
-      policy: { enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation', completion: 'reply_to_work_conversation', liveDeny: false },
-      effectiveConfig: { identity: {}, knowledge: { contextEnabled: false, sourceIds: [] }, capabilities: { skillIds: [], toolNames: [] }, access: { triggerRoles: [], approvalRoles: [] }, speech: { proactive: false, requireMention: true } } };
+    const binding = makeGroupBinding({ revision: 2 });
     const orgGroupAgentStore = {
       listBindings: vi.fn(async () => [binding]),
       listDeliveries: vi.fn(async () => []),
@@ -641,11 +650,10 @@ describe('Agent DWS accounts routes', () => {
     expect(body.bindings[0]!.effectiveConfigComputation.channelCeiling.contextDirectoryAvailable)
       .toBe(true);
   });
-
   it('review 控制会保留待发布成果，并以新控制版本创建后续 attempt', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({ status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a' }));
-    const binding = { bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'adws-1', agentId: 'oa-sales' };
+    const binding = makeGroupBinding();
     const work = {
       workOrderId: 'work-a', shortId: 'W-ABCDEF123456', tenantId: 'tenant-a', agentId: 'oa-sales', bindingId: 'binding-a',
       workConversationId: 'wc-a', idempotencyKey: 'key-a', title: '汇总', state: 'completed', currentAttemptNo: 1,
@@ -673,10 +681,11 @@ describe('Agent DWS accounts routes', () => {
         supplements: [expect.objectContaining({ kind: 'review', text: '请复核缺失项' })] }),
     }));
   });
-
   it('撤销群内源记忆时把源 ID 和版本交给原子派生撤权入口', async () => {
     const store = new FakeAccountStore();
-    store.records.push(makeAccount({ status: 'active' }));
+    store.records.push(makeAccount({
+      status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+    }));
     const memory = {
       memoryId: 'conversation-memory-a', tenantId: 'tenant-a', agentId: 'oa-sales',
       bindingId: 'binding-a', workConversationId: 'conversation-a', memoryScope: 'conversation',
@@ -689,9 +698,7 @@ describe('Agent DWS accounts routes', () => {
     }));
     const orgGroupAgentStore = {
       getMemory: vi.fn(async () => memory),
-      getBindingById: vi.fn(async () => ({
-        bindingId: 'binding-a', tenantId: 'tenant-a', accountId: 'adws-1', agentId: 'oa-sales',
-      })),
+      getBindingById: vi.fn(async () => makeGroupBinding()),
       changeMemoryStatus,
     } as unknown as NonNullable<Parameters<typeof createAgentDwsAccountsRouter>[0]['orgGroupAgentStore']>;
     const opened = await listen({ store, orgGroupAgentStore });
@@ -709,19 +716,19 @@ describe('Agent DWS accounts routes', () => {
       expectedVersion: 4, status: 'revoked',
     });
   });
-
   it('群配置未开放管理员写入时拒绝创建群记忆', async () => {
     const store = new FakeAccountStore();
-    store.records.push(makeAccount({ status: 'active' }));
+    store.records.push(makeAccount({
+      status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+    }));
     const createMemory = vi.fn();
     const orgGroupAgentStore = {
-      getBindingById: vi.fn(async () => ({
-        bindingId: 'binding-a',
-        tenantId: 'tenant-a',
-        accountId: 'adws-1',
-        agentId: 'oa-sales',
+      getBindingById: vi.fn(async () => makeGroupBinding({
         revision: 2,
-        effectiveConfig: { memory: { adminWriteConversation: false } },
+        effectiveConfig: {
+          ...makeGroupBinding().effectiveConfig,
+          memory: { adminWriteConversation: false, readAgent: true, readConversation: true },
+        },
       })),
       createMemory,
     } as unknown as NonNullable<
@@ -756,7 +763,8 @@ function makeAccount(overrides: Partial<AgentDwsAccountRecord> = {}): AgentDwsAc
     accountId: 'adws-1', tenantId: 'tenant-a', agentId: 'oa-sales',
     displayName: '销售数字员工', loginId: 'sales-agent-001',
     status: 'draft', runtimeStatus: 'stopped', eventKinds: ['at_me', 'all_direct'],
-    revision: 1, createdAt: '2026-08-13T00:00:00.000Z', createdBy: 'admin-a',
+    revision: 1, identityUpdatedAt: '2026-08-12T00:00:00.000Z',
+    createdAt: '2026-08-13T00:00:00.000Z', createdBy: 'admin-a',
     updatedAt: '2026-08-13T00:00:00.000Z', updatedBy: 'admin-a',
     ...overrides,
   };
@@ -770,6 +778,10 @@ function makeGroupBinding(
     conversationId: 'cid-a', channelKind: 'group', conversationSpaceId: 'space-a',
     serviceSessionId: 'org-agent-service:binding-a',
     workspaceId: 'tenant-a/.agent-oa-sales', activationState: 'active', enabled: true,
+    accountIdentity: {
+      profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+      identityUpdatedAt: '2026-08-12T00:00:00.000Z',
+    },
     policy: {
       enabled: true, membership: 'members', guest: 'deny', taskVisibility: 'conversation',
       completion: 'reply_to_work_conversation', liveDeny: false,

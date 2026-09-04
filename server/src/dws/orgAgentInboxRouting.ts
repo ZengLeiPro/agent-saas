@@ -2,6 +2,7 @@ import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
+import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 
 const MAX_EVENT_ID_LENGTH = 512;
 
@@ -37,7 +38,7 @@ export async function pinActiveOrgAgentGroupRouting(input: {
     account.accountId,
     event.conversationId!,
   );
-  if (!binding) return;
+  if (!binding || !bindingMatchesCurrentAccountIdentity(binding, account)) return;
   if (
     binding.activationState !== 'active' ||
     !binding.enabled ||

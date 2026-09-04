@@ -199,7 +199,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(query.mock.calls[1]?.[1]).toEqual(['inbox-2', 'worker-1', 4]);
   });
 
-  it('按租户和账号读取最新 inbox，并限制诊断页大小', async () => {
+  it('未提供身份过滤时按租户和账号读取诊断 inbox，并限制页大小', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'retry_wait', attempt: 2 })] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
 
@@ -209,6 +209,25 @@ describe('PgAgentDwsMessageStore', () => {
     expect(records[0]).toMatchObject({ state: 'retry_wait', attempt: 2 });
     expect(String(query.mock.calls[0]?.[0])).toContain('WHERE tenant_id=$1 AND account_id=$2');
     expect(query.mock.calls[0]?.[1]).toEqual(['tenant-1', 'account-1', 100]);
+  });
+
+  it('群观测列表在 SQL limit 前按当前精确身份和身份纪元过滤', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+    const identity = {
+      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      identityUpdatedAt: '2026-09-04T00:00:00.000Z',
+    };
+
+    await store.listForAccount('tenant-1', 'account-1', 100, identity);
+
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain('created_at >= $4::timestamptz');
+    expect(String(sql)).toContain("payload_json->'accountIdentity'->>'dingtalkUserId'=$7");
+    expect(values).toEqual([
+      'tenant-1', 'account-1', 100, identity.identityUpdatedAt,
+      identity.profileId, identity.corpId, identity.dingtalkUserId,
+    ]);
   });
 
   it('审批定位读取账号全部活跃 inbox，不受诊断页 100 条窗口限制', async () => {
@@ -289,12 +308,21 @@ describe('PgAgentDwsMessageStore', () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [{ observed: true }] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
 
-    await expect(store.hasObservedGroup('tenant-1', 'account-1', 'group-101'))
+    const identity = {
+      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      identityUpdatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    await expect(store.hasObservedGroup('tenant-1', 'account-1', 'group-101', identity))
       .resolves.toBe(true);
     const [sql, values] = query.mock.calls[0]!;
     expect(String(sql)).toContain("event_type='user_im_message_receive_at'");
     expect(String(sql)).toContain('conversation_id=$3');
-    expect(values).toEqual(['tenant-1', 'account-1', 'group-101']);
+    expect(String(sql)).toContain("payload_json->'accountIdentity'->>'profileId'=$5");
+    expect(String(sql)).toContain('created_at >= $4::timestamptz');
+    expect(values).toEqual([
+      'tenant-1', 'account-1', 'group-101', identity.identityUpdatedAt,
+      identity.profileId, identity.corpId, identity.dingtalkUserId,
+    ]);
   });
 
   it('普通回复持久化 replyKind 并校验 owner/fence/有效 lease', async () => {

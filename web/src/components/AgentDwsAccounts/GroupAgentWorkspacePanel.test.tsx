@@ -418,8 +418,9 @@ describe('GroupAgentWorkspacePanel', () => {
     expect(screen.getByText('当前群入口未开放可选工具。')).toBeTruthy();
     expect(screen.getByText('知识源目录暂不可用；已保留当前配置，请刷新或检查账号的 Context 授权。')).toBeTruthy();
     expect(screen.getByText('当前保留：source-1')).toBeTruthy();
-    expect(screen.getByText(/当前接口无法枚举 DWS 资源/)).toBeTruthy();
-    expect(screen.getByText(/<module>:<resourceId>/)).toBeTruthy();
+    expect(screen.getByText(/共享群目前只验证了钉钉文档命令/)).toBeTruthy();
+    expect(screen.getByText(/doc:<nodeId>/)).toBeTruthy();
+    expect(screen.queryByText(/drive:/)).toBeNull();
   });
 
   it('任务控制调用 amend、pause、resume、review 与 reassign API', async () => {

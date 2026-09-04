@@ -11,6 +11,7 @@ const account: AgentDwsAccountRecord = {
   accountId: 'adws-1', tenantId: 'tenant-a', agentId: 'oa-sales', displayName: '开开',
   loginId: 'agent-login', status: 'active', runtimeStatus: 'ready', eventKinds: ['at_me'],
   profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a', revision: 1,
+  identityUpdatedAt: '2026-09-03T00:00:00.000Z',
   createdAt: '2026-09-04T00:00:00.000Z', createdBy: 'admin-a',
   updatedAt: '2026-09-04T00:00:00.000Z', updatedBy: 'admin-a',
 };
@@ -19,6 +20,10 @@ const binding = {
   conversationId: 'group-a', channelKind: 'group' as const, activationState: 'active' as const,
   enabled: true, conversationSpaceId: 'space-a', serviceSessionId: 'service-a',
   workspaceId: 'ws_tenant-a__agent_oa-sales', revision: 1,
+  accountIdentity: {
+    profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+    identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+  },
   policy: {
     enabled: true, membership: 'members' as const, guest: 'deny' as const,
     taskVisibility: 'conversation' as const, completion: 'reply_to_work_conversation' as const,
@@ -41,6 +46,7 @@ async function listen(options: {
   };
   orgGroupAgentStore?: Record<string, unknown>;
   orgAgentStore?: Record<string, unknown>;
+  account?: AgentDwsAccountRecord;
 }): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -49,9 +55,10 @@ async function listen(options: {
     next();
   });
   app.use('/api', createAgentDwsAccountsRouter({
-    accountStore: { getForTenant: vi.fn(async (tenantId, accountId) => (
-      tenantId === account.tenantId && accountId === account.accountId ? account : null
-    )) } as never,
+    accountStore: { getForTenant: vi.fn(async (tenantId, accountId) => {
+      const current = options.account ?? account;
+      return tenantId === current.tenantId && accountId === current.accountId ? current : null;
+    }) } as never,
     messageStore: options.messageStore as never,
     orgGroupAgentStore: options.orgGroupAgentStore as never,
     orgAgentStore: options.orgAgentStore as never,
@@ -70,7 +77,9 @@ function observedInbox() {
   return {
     inboxId: 'inbox-observed', tenantId: 'tenant-a', accountId: 'adws-1',
     eventId: 'event-observed', eventType: 'user_im_message_receive_at',
-    conversationId: 'group-observed', content: '@开开', payload: {}, state: 'completed' as const,
+    conversationId: 'group-observed', content: '@开开', payload: {
+      accountIdentity: { profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a' },
+    }, state: 'completed' as const,
     attempt: 1, maxAttempts: 8, leaseFence: 1,
     createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
   };
@@ -113,7 +122,7 @@ describe('Agent DWS recovery routes', () => {
     expect(body.items[0]).not.toHaveProperty('responseText');
   });
 
-  it('管理员只能从当前账号已观测的群创建 shadow binding', async () => {
+  it('管理员只能用当前精确身份的群观测创建 shadow binding', async () => {
     const listForAccount = vi.fn(async () => [observedInbox()]);
     const hasObservedGroup = vi.fn(async (
       _tenantId: string, _accountId: string, conversationId: string,
@@ -124,7 +133,7 @@ describe('Agent DWS recovery routes', () => {
     }));
     const opened = await listen({
       messageStore: { listForAccount, hasObservedGroup },
-      orgGroupAgentStore: { ensureShadowBinding },
+      orgGroupAgentStore: { ensureShadowBinding, getBinding: vi.fn(async () => null) },
     });
     server = opened.server;
 
@@ -137,7 +146,10 @@ describe('Agent DWS recovery routes', () => {
     expect(created.status).toBe(201);
     expect(ensureShadowBinding).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', accountId: 'adws-1', conversationId: 'group-observed',
-      channelKind: 'group', workspaceId: expect.any(String),
+      channelKind: 'group', workspaceId: expect.any(String), accountIdentity: {
+        profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
+        identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+      },
     }));
 
     const unknown = await fetch(
@@ -149,11 +161,87 @@ describe('Agent DWS recovery routes', () => {
     expect(unknown.status).toBe(404);
     expect(ensureShadowBinding).toHaveBeenCalledTimes(1);
     expect(hasObservedGroup).toHaveBeenCalledWith(
-      'tenant-a', 'adws-1', 'group-not-observed',
+      'tenant-a', 'adws-1', 'group-not-observed', expect.objectContaining({
+        profileId: 'corp-a:ding-a', identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+      }),
     );
   });
 
-  it('组织智能体不可用时仍允许管理员紧急停用群绑定', async () => {
+  it('账号从身份 A 换绑 B 后不展示或授权 A 的群观测与 binding', async () => {
+    const reboundAccount: AgentDwsAccountRecord = {
+      ...account,
+      profileId: 'corp-b:ding-b', corpId: 'corp-b', dingtalkUserId: 'ding-b',
+      identityUpdatedAt: '2026-09-05T00:00:00.000Z', revision: 2,
+    };
+    const listForAccount = vi.fn(async () => [observedInbox()]);
+    const hasObservedGroup = vi.fn(async (
+      _tenantId: string,
+      _accountId: string,
+      _conversationId: string,
+      identity: { profileId: string },
+    ) => identity.profileId === 'corp-a:ding-a');
+    const opened = await listen({
+      account: reboundAccount,
+      messageStore: { listForAccount, hasObservedGroup },
+      orgGroupAgentStore: {
+        listBindings: vi.fn(async () => [binding]),
+        listDeliveries: vi.fn(async () => [{
+          deliveryId: 'delivery-old', tenantId: 'tenant-a', accountId: 'adws-1',
+          conversationId: 'group-a', bindingId: 'binding-a', source: 'command',
+          deliveryKind: 'front_reply', disposition: 'replied', deliveryState: 'sent',
+          content: '旧身份群回复', attempt: 1, leaseFence: 1,
+          createdAt: '2026-09-04T00:00:00.000Z', updatedAt: '2026-09-04T00:00:00.000Z',
+        }]),
+        loadGroupWorkspace: vi.fn(async () => ({
+          conversations: [], workOrders: [], attempts: [], memories: [],
+        })),
+        getBinding: vi.fn(async () => binding),
+      },
+      orgAgentStore: { get: vi.fn(() => null) },
+    });
+    server = opened.server;
+
+    const workspaceResponse = await fetch(
+      `${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace`,
+    );
+    expect(workspaceResponse.status).toBe(200);
+    const workspaceBody = await workspaceResponse.json() as {
+      bindings: unknown[];
+      deliveries: unknown[];
+      observedGroups: unknown[];
+    };
+    expect(workspaceBody.bindings).toEqual([]);
+    expect(workspaceBody.deliveries).toEqual([]);
+    expect(workspaceBody.observedGroups).toEqual([]);
+    expect(listForAccount).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 100, expect.objectContaining({
+        profileId: 'corp-b:ding-b', identityUpdatedAt: '2026-09-05T00:00:00.000Z',
+      }),
+    );
+
+    const created = await fetch(
+      `${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace/bindings`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        conversationId: 'group-observed',
+      }) },
+    );
+    expect(created.status).toBe(404);
+    expect(await created.json()).toMatchObject({ error: expect.stringContaining('当前账号') });
+    expect(hasObservedGroup).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 'group-observed', expect.objectContaining({ profileId: 'corp-b:ding-b' }),
+    );
+
+    const update = await fetch(
+      `${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace`,
+      { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(
+        disablePayload(),
+      ) },
+    );
+    expect(update.status).toBe(409);
+    expect(await update.json()).toMatchObject({ error: expect.stringContaining('旧授权身份') });
+  });
+
+  it('当前身份 binding 在组织智能体不可用时仍允许管理员紧急停用', async () => {
     const updateBinding = vi.fn(async () => ({
       ...binding, activationState: 'disabled' as const, enabled: false, revision: 2,
     }));

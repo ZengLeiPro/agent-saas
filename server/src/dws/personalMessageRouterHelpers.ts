@@ -5,6 +5,7 @@ import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
 import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
+import { inboxMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
 const MAX_SYSTEM_CONTEXT_FIELD = 500;
@@ -21,14 +22,7 @@ export function matchesInboxAccountIdentity(
   item: AgentDwsInboxRecord,
   account: AgentDwsAccountRecord,
 ): boolean {
-  const rawIdentity = item.payload.accountIdentity;
-  if (!rawIdentity || typeof rawIdentity !== 'object' || Array.isArray(rawIdentity)) return false;
-  const identity = rawIdentity as Record<string, unknown>;
-  return (
-    identity.profileId === account.profileId &&
-    identity.corpId === account.corpId &&
-    identity.dingtalkUserId === account.dingtalkUserId
-  );
+  return inboxMatchesCurrentAccountIdentity(item, account);
 }
 
 export function buildSystemContext(

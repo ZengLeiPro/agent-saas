@@ -22,6 +22,8 @@ export async function buildGroupWorkspaceView(input: {
   };
 }) {
   const groupBindings = input.bindings.filter((binding) => binding.channelKind === 'group');
+  // Group resources without a currently visible identity-bound binding stay fail-closed.
+  const visibleBindingIds = new Set(groupBindings.map((binding) => binding.bindingId));
   const data = await input.store.loadGroupWorkspace({
     tenantId: input.tenantId,
     bindingIds: groupBindings.map((binding) => binding.bindingId),
@@ -89,7 +91,9 @@ export async function buildGroupWorkspaceView(input: {
       };
     }),
     workspaces,
-    deliveries: input.deliveries.map(toPublicDeliveryRecord),
+    deliveries: input.deliveries
+      .filter((record) => Boolean(record.bindingId && visibleBindingIds.has(record.bindingId)))
+      .map(toPublicDeliveryRecord),
   };
 }
 

@@ -81,6 +81,12 @@ export interface OrgAgentChannelBinding {
   conversationSpaceId: string;
   serviceSessionId: string;
   workspaceId: string;
+  accountIdentity?: {
+    profileId: string;
+    corpId: string;
+    dingtalkUserId: string;
+    identityUpdatedAt: string;
+  };
   policy: OrgAgentChannelPolicy;
   effectiveConfig: OrgAgentEffectiveConfig;
   revision: number;
@@ -249,6 +255,12 @@ export interface OrgGroupAgentStore {
     conversationId: string;
     channelKind: 'group' | 'direct';
     workspaceId: string;
+    accountIdentity: {
+      profileId: string;
+      corpId: string;
+      dingtalkUserId: string;
+      identityUpdatedAt: string;
+    };
   }): Promise<OrgAgentChannelBinding>;
   getBinding(
     tenantId: string,

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type {
+  AgentDwsInboxRecord,
+  AgentDwsMessageStore,
+} from '../data/agentDwsMessages/index.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 
 const now = new Date().toISOString();
@@ -9,7 +12,8 @@ const account: AgentDwsAccountRecord = {
   accountId: 'account-a', tenantId: 'tenant-a', agentId: 'agent-a', displayName: '开开',
   loginId: '17300000000', profileId: 'corp-a:agent-self', corpId: 'corp-a',
   dingtalkUserId: 'agent-self', status: 'active', runtimeStatus: 'ready',
-  eventKinds: ['at_me'], revision: 1, createdAt: now, createdBy: 'admin-a',
+  eventKinds: ['at_me'], revision: 1, identityUpdatedAt: now,
+  createdAt: now, createdBy: 'admin-a',
   updatedAt: now, updatedBy: 'admin-a',
 };
 const item: AgentDwsInboxRecord = {

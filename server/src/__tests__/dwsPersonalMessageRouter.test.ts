@@ -26,12 +26,12 @@ const account: AgentDwsAccountRecord = {
   runtimeStatus: 'ready',
   eventKinds: ['at_me', 'all_direct'],
   revision: 2,
+  identityUpdatedAt: '2026-08-13T00:00:00.000Z',
   createdAt: '2026-08-14T00:00:00.000Z',
   createdBy: 'admin-a',
   updatedAt: '2026-08-14T00:00:00.000Z',
   updatedBy: 'admin-a',
 };
-
 const requester = {
   id: 'user-a',
   username: 'alice',
@@ -496,6 +496,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       ...account,
       profileId: 'corp-a:agent-other',
       dingtalkUserId: 'agent-other',
+      identityUpdatedAt: '2026-08-15T00:00:00.000Z',
       revision: account.revision + 1,
     };
     const { router, accountStore, sender, messageStore } = setup();

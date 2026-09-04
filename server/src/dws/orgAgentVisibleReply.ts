@@ -16,6 +16,7 @@ import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
 import { createRedactedTerminalNotice } from './orgAgentDeliveryWorker.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
+import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 
 const FRONT_REPLY_FALLBACK = '收到，我正在处理，完成后会在这里回复结果。';
 
@@ -253,9 +254,10 @@ export class OrgAgentVisibleReplyService {
     const currentAgent = this.options.orgAgentStore?.get(shared.binding.agentId);
     const unavailable =
       !current ||
+      !currentAccount ||
+      !bindingMatchesCurrentAccountIdentity(current, currentAccount) ||
       current.bindingId !== shared.binding.bindingId ||
       current.agentId !== shared.binding.agentId ||
-      !currentAccount ||
       currentAccount.status !== 'active' ||
       !hasExactAgentDwsProfile(currentAccount) ||
       currentAccount.agentId !== shared.binding.agentId;

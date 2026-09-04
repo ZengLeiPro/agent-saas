@@ -58,9 +58,11 @@ export type {
   ActivityGroup,
   BusinessStepSection,
   RenderItem,
+  // Session API contracts.
   SandboxProfile,
   SessionOwnerInfo,
   SessionParticipants,
+  SessionDetailAccessMode,
   ApiSessionListItem,
   ApiSessionDetail,
   TokenUsage,

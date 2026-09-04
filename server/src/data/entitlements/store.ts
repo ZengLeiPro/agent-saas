@@ -18,6 +18,7 @@ import {
   type TenantPolicy,
   type TenantPolicyKey,
   type TenantPolicyValue,
+  type ToolEntitlementResourceId,
 } from './types.js';
 
 export interface PgEntitlementStoreOptions {
@@ -555,7 +556,7 @@ function legacyScopes(settings: TenantSettings): Array<{
     [settings.features.memoryPollingEnabled === true, 'memory_polling'],
     [settings.features.memoryConsolidationEnabled === true, 'memory_consolidation'],
     [settings.features.memoryWriteDelegationEnabled === true, 'memory_write_delegation'],
-  ] as const;
+  ] as const satisfies ReadonlyArray<readonly [boolean, ToolEntitlementResourceId]>;
   return [
     {
       resourceType: 'model',

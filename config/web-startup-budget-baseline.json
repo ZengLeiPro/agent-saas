@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 353468,
-    "startupCssGzipBytes": 34618,
-    "startupJsBrotliBytes": 281365,
-    "startupCssBrotliBytes": 27421,
-    "largestJsGzipBytes": 353468,
-    "largestCssGzipBytes": 34618,
-    "largestJsBrotliBytes": 281365,
-    "largestCssBrotliBytes": 27421,
-    "largestJs": "assets/index-CtFza4E2.js",
-    "largestCss": "assets/index-DYtfArvb.css"
+    "startupJsGzipBytes": 354195,
+    "startupCssGzipBytes": 34760,
+    "startupJsBrotliBytes": 282574,
+    "startupCssBrotliBytes": 27533,
+    "largestJsGzipBytes": 354195,
+    "largestCssGzipBytes": 34760,
+    "largestJsBrotliBytes": 282574,
+    "largestCssBrotliBytes": 27533,
+    "largestJs": "assets/index-DdKf9WSv.js",
+    "largestCss": "assets/index-Bsod5qDS.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "PR #432 桌面会话主区域宽度保护、局部容器观测与面板响应式降级进入启动图，增加约 2.6KB gzip JS；仍低于 600KB 绝对上限",
-  "updatedAt": "2026-09-03"
+  "reason": "TASK-395 批次集成 TASK-393、TASK-390、TASK-391：消息去重、治理设置修复与任务会话只读授权进入启动图，组合后启动 JS 增加约 1.1KB Brotli；仍低于 600KB 绝对上限",
+  "updatedAt": "2026-09-04"
 }

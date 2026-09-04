@@ -10,12 +10,14 @@ import type { SessionShareSnapshot } from '../data/sessionShares/store.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import type { RunLiveness } from '../runtime/runLiveness.js';
+import type { SessionDetailAccessMode } from '@agent/shared';
 
 const SESSION_DETAIL_DELTA_OVERLAP_BLOCKS = 32;
 export const SESSION_DETAIL_DEFAULT_PAGE_SIZE = 100;
 export const SESSION_DETAIL_MAX_PAGE_SIZE = 200;
 
 export type SessionDetailPayload = SessionShareSnapshot & {
+  accessMode?: SessionDetailAccessMode;
   mode: 'full' | 'delta' | 'before';
   cursor?: string;
   oldestCursor?: string;
@@ -60,7 +62,7 @@ function withoutTranscriptRaw(blocks: SessionShareSnapshot['blocks']): SessionSh
 
 /** Project the transcript detail window without exposing raw transcript records. */
 export function buildSessionDetailPayload(
-  detail: SessionShareSnapshot,
+  detail: SessionShareSnapshot & { accessMode?: SessionDetailAccessMode },
   options: SessionDetailPayloadOptions = {},
 ): SessionDetailPayload {
   const { after, before } = options;

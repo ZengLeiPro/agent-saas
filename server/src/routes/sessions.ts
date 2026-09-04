@@ -82,6 +82,7 @@ import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } fro
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
 import { requireSandboxPhysicalDeletion, type SandboxSessionDeletionResult } from './sandboxSessionDeletion.js'; export type { SandboxSessionDeletionResult } from './sandboxSessionDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
+import { resolveSessionDetailAccess, type TaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
@@ -92,6 +93,7 @@ import {
   type AgentTarget,
   type AgentTargetIdentitySnapshot,
   type AgentTargetUnavailableReason,
+  type SessionDetailAccessMode,
   type SessionListActiveInteraction,
 } from '@agent/shared';
 import { parseCanonicalChatSubmission } from '@agent/shared';
@@ -395,6 +397,8 @@ export interface SessionsRouterOptions {
   };
   /** 用户维度会话未读状态真源。 */
   sessionReadStateStore?: SessionReadStateStore;
+  /** 任务看板成员只读打开 owner 的执行会话；不得用于写入、分享或预热授权。 */
+  canReadTaskboardSession?: TaskboardSessionReadAuthorizer;
   /**
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
@@ -436,7 +440,6 @@ const sessionsListCache = new TTLCache<SessionsListResponse>(
   SESSIONS_LIST_CACHE_TTL_MS,
   SESSIONS_LIST_CACHE_TTL_MS,
 );
-
 /** 清除会话列表缓存，供 Agent 完成时调用以确保其他端轮询获取最新数据 */
 export function clearSessionsListCache(): void {
   sessionsListCache.clear();
@@ -658,7 +661,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           indexDurationMs: number;
           readParseDurationMs: number;
         };
-        detail: SessionShareSnapshot;
+        detail: SessionShareSnapshot & { accessMode: SessionDetailAccessMode };
       }
     | { ok: false; status: number; error: string }
   > {
@@ -679,12 +682,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const { transcriptPath, hasTranscript } = resolvedPath;
 
     const meta = await readSessionMeta(transcriptPath);
-    if (!canAccessSession(req.user, meta, options.userStore)) {
-      return { ok: false, status: 403, error: "Access denied" };
-    }
-    if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
-      return { ok: false, status: 404, error: "Session not found" };
-    }
+    const accessMode = await resolveSessionDetailAccess(req.user, meta, sessionId, options.userStore, options.canReadTaskboardSession); if (!accessMode) return { ok: false, status: 403, error: "Access denied" };
+    if (meta?.deletedAt && (accessMode !== "owner" || !optionsForBuild.includeDeleted)) return { ok: false, status: 404, error: "Session not found" };
     if (hidesSystemSessionFrom(req.user, meta)) {
       return { ok: false, status: 404, error: "Session not found" };
     }
@@ -874,6 +873,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         },
       } : {}),
       detail: {
+        accessMode,
         sessionId: parsed.sessionId ?? sessionId,
         stats: parsed.stats,
         blocks: parsed.blocks,

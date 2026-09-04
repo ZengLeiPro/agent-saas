@@ -1,5 +1,5 @@
 import type { AssignmentResourceType } from '../data/assignments/index.js';
-import type { EntitlementResourceType } from '../data/entitlements/types.js';
+import { TOOL_ENTITLEMENT_RESOURCE_IDS, type EntitlementResourceType } from '../data/entitlements/types.js';
 import type { AppRuntime } from './runtime.js';
 
 export function createAssignmentResourceResolver(runtime: AppRuntime) {
@@ -64,6 +64,12 @@ export function createEntitlementResourceCatalogResolver(runtime: AppRuntime) {
         }))),
       };
     }
+    if (resourceType === 'tool') {
+      return {
+        status: 'valid',
+        items: TOOL_ENTITLEMENT_RESOURCE_IDS.map(resourceId => ({ resourceId, version: 1 })),
+      };
+    }
     if (resourceType === 'agent_template') {
       if (!runtime.agentResourceStore) return { status: 'unavailable' };
       return { status: 'valid', items: (await runtime.agentResourceStore.listByKind('agent_template'))
@@ -101,6 +107,11 @@ export function createEntitlementResourceResolver(runtime: AppRuntime) {
       const exists = runtime.config.models.groups.some(group =>
         group.models.some(model => `${group.id}/${model.id}` === resourceId));
       return exists ? { status: 'valid', version: 1 } : { status: 'not_found' };
+    }
+    if (resourceType === 'tool') {
+      return (TOOL_ENTITLEMENT_RESOURCE_IDS as readonly string[]).includes(resourceId)
+        ? { status: 'valid', version: 1 }
+        : { status: 'not_found' };
     }
     if (resourceType === 'agent_template') {
       if (!runtime.agentResourceStore) return { status: 'unavailable' };

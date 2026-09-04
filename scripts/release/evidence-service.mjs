@@ -4,7 +4,11 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { canonicalJson, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
-import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
+import {
+  RELEASE_EVIDENCE_SCHEMA_VERSION,
+  SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS,
+  validateReleaseEvidenceDocument,
+} from './release-evidence-schema.mjs';
 import { evaluateObservationSamples } from './observe-production.mjs';
 import { assertIsolationEvidence } from '../staging/assert-isolation.mjs';
 
@@ -85,6 +89,15 @@ export function createEvidenceService({ root, readToken, writeToken, now = () =>
         return;
       }
       const url = new URL(req.url ?? '/', 'http://evidence.local');
+      if (url.pathname === '/capabilities' && method === 'GET') {
+        json(res, 200, {
+          schemaVersion: 1,
+          service: 'agent-saas-release-evidence',
+          currentReleaseEvidenceSchemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
+          supportedReleaseEvidenceSchemaVersions: [...SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS],
+        });
+        return;
+      }
       if (url.pathname === '/release-evidence') {
         const sha = url.searchParams.get('sha') ?? '';
         if (!SHA_PATTERN.test(sha)) throw new Error('sha must be a complete lowercase SHA');

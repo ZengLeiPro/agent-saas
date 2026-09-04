@@ -5,9 +5,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { createEvidenceService } from './evidence-service.mjs';
 import {
+  createValidLegacyReleaseEvidence,
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
+import {
+  RELEASE_EVIDENCE_SCHEMA_VERSION,
+  SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS,
+} from './release-evidence-schema.mjs';
 import {
   REQUIRED_ISOLATION_PROBES,
   SHARED_NAS_RESIDUAL_RISK,
@@ -19,6 +24,31 @@ const SHA = RELEASE_EVIDENCE_SHA;
 const RELEASE_ID = 'rc-20260827-01';
 const MANIFEST_DIGEST = `sha256:${'d'.repeat(64)}`;
 const NOW = Date.parse('2026-08-27T00:00:00.000Z');
+
+test('advertises authenticated Release Evidence schema capabilities', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'evidence-service-capabilities-'));
+  const server = createEvidenceService({ root, readToken: READ_TOKEN, writeToken: WRITE_TOKEN });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const url = `http://127.0.0.1:${port}/capabilities`;
+
+  assert.equal((await fetch(url)).status, 401);
+  assert.equal(
+    (await fetch(url, { headers: { authorization: `Bearer ${WRITE_TOKEN}` } })).status,
+    401,
+  );
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${READ_TOKEN}` },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    schemaVersion: 1,
+    service: 'agent-saas-release-evidence',
+    currentReleaseEvidenceSchemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
+    supportedReleaseEvidenceSchemaVersions: [...SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS],
+  });
+});
 
 test('serves an authenticated immutable release-evidence producer endpoint', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'evidence-service-'));
@@ -49,6 +79,31 @@ test('serves an authenticated immutable release-evidence producer endpoint', asy
     body: JSON.stringify(divergent),
   });
   assert.notEqual(conflict.status, 201);
+});
+
+test('continues to write and read historical v1 Release Evidence', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'evidence-service-v1-'));
+  const server = createEvidenceService({ root, readToken: READ_TOKEN, writeToken: WRITE_TOKEN });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const url = `http://127.0.0.1:${port}/release-evidence?sha=${SHA}`;
+  const evidence = createValidLegacyReleaseEvidence();
+
+  const created = await fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${WRITE_TOKEN}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(evidence),
+  });
+  assert.equal(created.status, 201);
+  const read = await fetch(url, {
+    headers: { authorization: `Bearer ${READ_TOKEN}` },
+  });
+  assert.equal(read.status, 200);
+  assert.deepEqual(await read.json(), evidence);
 });
 
 test('rejects incomplete evidence before immutable persistence without poisoning the SHA', async (t) => {

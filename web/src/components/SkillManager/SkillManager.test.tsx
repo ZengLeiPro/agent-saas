@@ -126,7 +126,8 @@ describe('SkillManager 技能操作可访问名称', () => {
 
     expect(await screen.findByRole('combobox', { name: '组织自有技能成员与群组授权资源' })).toBeTruthy();
     expect(screen.getByRole('option', { name: /组织自有技能/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '编辑技能 组织自有技能' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '编辑 组织自有技能 的展示信息' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '编辑技能文档 组织自有技能' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '提升技能 组织自有技能 到平台技能池' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除技能 组织自有技能' })).toBeTruthy();
     expect(screen.getByText('Assignment 权威授权')).toBeTruthy();

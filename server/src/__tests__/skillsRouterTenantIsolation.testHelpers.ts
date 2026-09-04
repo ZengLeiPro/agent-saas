@@ -33,6 +33,8 @@ import { computeSkillPackageFingerprint } from '../workspace/materialization/fin
 import { tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import { SkillMaterializationService } from '../workspace/materialization/service.js';
 import { InMemorySkillMaterializationStore } from '../workspace/materialization/store.js';
+import { InMemorySkillPresentationStore } from '../data/skillPresentations/index.js';
+import { InMemoryGovernanceAuditStore } from '../data/governance-audit/index.js';
 
 export const PLATFORM_ADMIN: JwtPayload = { sub: 'u-platform', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID };
 export const KAIYAN_USER: JwtPayload = { sub: 'u-ku', username: 'alice', role: 'user', tenantId: 'kaiyan' };
@@ -67,6 +69,8 @@ export interface TestRig {
   tenantSkillsRootDir: string;
   poolDir: string;
   skillConfigStore: SkillConfigStore;
+  skillPresentationStore: InMemorySkillPresentationStore;
+  governanceAuditStore: InMemoryGovernanceAuditStore;
   userSkillsDir(username: string): string;
   setTenantSkillHistoricalDigests(tenantId: string, skillId: string, digests: string[]): void;
   waitSync(res: Response): Promise<{
@@ -263,7 +267,9 @@ function fakeSkillConfigStore(): SkillConfigStore {
   } as unknown as SkillConfigStore;
 }
 
-export async function makeTestRig(): Promise<TestRig> {
+export async function makeTestRig(options: {
+  legacyWriteGate?: { assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void> };
+} = {}): Promise<TestRig> {
   const tmpRoot = mkdtempSync(join(tmpdir(), 'skills-tenant-iso-'));
   const agentCwd = join(tmpRoot, 'workspace');
   const sharedDir = join(tmpRoot, 'shared');
@@ -291,6 +297,8 @@ export async function makeTestRig(): Promise<TestRig> {
   app.use(express.json());
   let currentCaller: JwtPayload = PLATFORM_ADMIN;
   const skillConfigStore = fakeSkillConfigStore();
+  const skillPresentationStore = new InMemorySkillPresentationStore();
+  const governanceAuditStore = new InMemoryGovernanceAuditStore();
   const userStore = fakeUserStore();
   const tenantSkillHistory = new Map<string, { tenantId: string; skillId: string; digests: string[] }>();
   const skillGovernanceStore = {
@@ -391,6 +399,9 @@ export async function makeTestRig(): Promise<TestRig> {
       tenantSkillsRootDir,
       skillMaterialization,
       skillGovernanceStore,
+      skillPresentationStore,
+      governanceAuditStore,
+      ...(options.legacyWriteGate ? { legacyWriteGate: options.legacyWriteGate } : {}),
     }));
   // 跑 requireAdmin error 路径需要中间件链；这里整链已挂
   void requireAdmin;
@@ -406,6 +417,8 @@ export async function makeTestRig(): Promise<TestRig> {
     tenantSkillsRootDir,
     poolDir,
     skillConfigStore,
+    skillPresentationStore,
+    governanceAuditStore,
     userSkillsDir(username) {
       const user = userStore.findByUsername(username)!;
       return join(agentCwd, user.tenantId, user.id, '.ky-agent', 'skills');

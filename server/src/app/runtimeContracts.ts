@@ -61,6 +61,7 @@ import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js'
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { PgAgentResourceStore } from '../data/agentResources/index.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import type { PgSkillPresentationStore } from '../data/skillPresentations/index.js';
 import type {
   GovernanceChangePlanner,
   PgGovernanceChangeJobStore,
@@ -330,6 +331,8 @@ export interface AppRuntime {
   agentResourceStore?: PgAgentResourceStore;
   /** Platform/Tenant/Personal Skill stable resource、版本与候选审批链。 */
   skillGovernanceStore?: PgSkillGovernanceStore;
+  /** 技能在能力中心的本地化展示名称、简介与组织覆盖。 */
+  skillPresentationStore?: PgSkillPresentationStore;
   /** 可重试 Tenant/Delete/Retire/Revoke 治理 Change Job。 */
   governanceChangeJobStore?: PgGovernanceChangeJobStore;
   governanceChangePlanner?: GovernanceChangePlanner;

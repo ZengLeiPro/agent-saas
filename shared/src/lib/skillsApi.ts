@@ -12,6 +12,8 @@ import type {
   PoolSkillDeleteImpact,
   PoolSkillDeleteResponse,
   SkillSelectionUpdateResponse,
+  SkillPresentationUpdate,
+  SkillPresentationUpdateResponse,
 } from '../types/skill';
 
 // ── 用户自助 ──────────────────────────────────────────────
@@ -408,4 +410,96 @@ export async function promoteTenantSkillToPool(tenantId: string, skillId: string
     } catch { /* ignore */ }
     throw new Error(message);
   }
+}
+
+export class SkillPresentationApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly changed = false,
+    readonly intentAuditId?: string,
+  ) {
+    super(message);
+    this.name = 'SkillPresentationApiError';
+  }
+}
+
+async function updateSkillPresentation(
+  url: string,
+  input: SkillPresentationUpdate,
+): Promise<SkillPresentationUpdateResponse> {
+  const res = await authFetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    let message = `更新技能展示信息失败：${res.status}`;
+    let code: string | undefined;
+    let changed = false;
+    let intentAuditId: string | undefined;
+    try {
+      const data = await res.json() as { error?: string; code?: string; changed?: boolean; intentAuditId?: string };
+      if (data.error) message = data.error;
+      code = data.code;
+      changed = data.changed === true;
+      intentAuditId = data.intentAuditId;
+    } catch { /* ignore */ }
+    throw new SkillPresentationApiError(message, code, changed, intentAuditId);
+  }
+  return res.json() as Promise<SkillPresentationUpdateResponse>;
+}
+
+/** 平台技能的全局默认展示信息。 */
+export function updatePlatformSkillPresentation(skillId: string, input: SkillPresentationUpdate) {
+  return updateSkillPresentation(`/api/skills/pool/${encodeURIComponent(skillId)}/presentation`, input);
+}
+
+/** 平台技能在指定组织内的展示覆盖。 */
+export function updateTenantPlatformSkillPresentation(
+  tenantId: string,
+  skillId: string,
+  input: SkillPresentationUpdate,
+) {
+  return updateSkillPresentation(
+    `/api/skills/tenants/${encodeURIComponent(tenantId)}/pool/${encodeURIComponent(skillId)}/presentation`,
+    input,
+  );
+}
+
+export async function deleteTenantPlatformSkillPresentation(
+  tenantId: string,
+  skillId: string,
+  expectedRevision: number,
+): Promise<void> {
+  const res = await authFetch(
+    `/api/skills/tenants/${encodeURIComponent(tenantId)}/pool/${encodeURIComponent(skillId)}/presentation?expectedRevision=${expectedRevision}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    let message = `恢复平台默认展示失败：${res.status}`;
+    let code: string | undefined;
+    let changed = false;
+    let intentAuditId: string | undefined;
+    try {
+      const data = await res.json() as { error?: string; code?: string; changed?: boolean; intentAuditId?: string };
+      if (data.error) message = data.error;
+      code = data.code;
+      changed = data.changed === true;
+      intentAuditId = data.intentAuditId;
+    } catch { /* ignore */ }
+    throw new SkillPresentationApiError(message, code, changed, intentAuditId);
+  }
+}
+
+/** 组织自有技能的默认展示信息。 */
+export function updateTenantOwnSkillPresentation(
+  tenantId: string,
+  skillId: string,
+  input: SkillPresentationUpdate,
+) {
+  return updateSkillPresentation(
+    `/api/skills/tenants/${encodeURIComponent(tenantId)}/skills/${encodeURIComponent(skillId)}/presentation`,
+    input,
+  );
 }

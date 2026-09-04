@@ -18,6 +18,7 @@ import type { UserSkillInfo } from "@agent/shared";
 import { useMySkills } from "./hooks";
 import { CapabilityDetailDrawer, CapabilityLogo, CapabilitySourceBadge, CatalogToolbar, CAPABILITY_EMPTY_SURFACE, CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER, type CapabilitySource } from "@/components/CapabilityCenter/CatalogUi";
 import { CatalogHeader } from "@/components/CapabilityCenter/CatalogHeader";
+import { skillDisplayName, skillDisplaySummary } from "@/lib/skillPresentation";
 
 interface SkillSelectorProps {
   targetUsername?: string;
@@ -103,6 +104,9 @@ export function SkillSelector({
     if (!normalizedQuery) return skills;
     return skills.filter(
       (skill) =>
+        skillDisplayName(skill).toLocaleLowerCase().includes(normalizedQuery) ||
+        skillDisplaySummary(skill).toLocaleLowerCase().includes(normalizedQuery) ||
+        skill.id.toLocaleLowerCase().includes(normalizedQuery) ||
         skill.name.toLocaleLowerCase().includes(normalizedQuery) ||
         skill.description.toLocaleLowerCase().includes(normalizedQuery),
     );
@@ -176,7 +180,7 @@ export function SkillSelector({
     try {
       const doc = await fetchMySkillDocument(skill.id);
       setEditContent(doc.content);
-      setEditTarget({ id: skill.id, name: skill.name });
+      setEditTarget({ id: skill.id, name: skillDisplayName(skill) });
     } catch (err) {
       setEditErr(err instanceof Error ? err.message : "读取失败");
     } finally {
@@ -305,6 +309,8 @@ export function SkillSelector({
     const selected = localSelections[skill.id] === true;
     const SkillGlyph = skillIcon(skill.id);
     const versionLabel = skill.governance?.version ? `v${skill.governance.version}` : "";
+    const displayName = skillDisplayName(skill);
+    const displaySummary = skillDisplaySummary(skill);
     return (
       <Card
         key={skill.id}
@@ -330,7 +336,7 @@ export function SkillSelector({
         <CardContent className="flex min-h-[9.5rem] flex-col p-4">
           <div className="flex items-start gap-3">
             <CapabilityLogo
-              label={skill.name}
+              label={displayName}
               tone={selected ? "bg-success/10 text-success-ink ring-success/20" : skillCategoryClass(skill.id)}
             >
               <SkillGlyph className="size-5" />
@@ -339,7 +345,7 @@ export function SkillSelector({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold">
-                    <HighlightedText text={skill.name} query={query} />
+                    <HighlightedText text={displayName} query={query} />
                   </div>
                   <div className="mt-1">
                     <CapabilitySourceBadge source={source} className="px-1.5 text-2xs" />
@@ -358,7 +364,7 @@ export function SkillSelector({
                     void toggle(skill.id, !selected);
                   }}
                   disabled={saving}
-                  aria-label={`${selected ? "停用" : "启用"} ${skill.name}`}
+                  aria-label={`${selected ? "停用" : "启用"} ${displayName}`}
                 >
                   {pendingSkillId === skill.id ? (
                     <Loader2 className="size-4 animate-spin" />
@@ -372,7 +378,7 @@ export function SkillSelector({
             </div>
           </div>
           <p className="mt-3 min-h-10 line-clamp-2 text-sm leading-5 text-muted-foreground">
-            <HighlightedText text={skill.description || "暂无技能说明"} query={query} />
+            <HighlightedText text={displaySummary || "暂无技能说明"} query={query} />
           </p>
           <div className="mt-auto flex items-center justify-between gap-2 pt-3 text-2xs text-muted-foreground">
             <span className="truncate">
@@ -451,13 +457,13 @@ export function SkillSelector({
         onOpenChange={(open) => {
           if (!open) setDetailSkill(null);
         }}
-        title={detailSkill?.name ?? "技能详情"}
-        description={detailSkill?.description}
+        title={detailSkill ? skillDisplayName(detailSkill) : "技能详情"}
+        description={detailSkill ? skillDisplaySummary(detailSkill) : undefined}
       >
         {detailSkill ? (
           <>
             <div className="flex items-center gap-3">
-              <CapabilityLogo label={detailSkill.name}>
+              <CapabilityLogo label={skillDisplayName(detailSkill)}>
                 {DetailSkillGlyph ? <DetailSkillGlyph className="size-5" /> : null}
               </CapabilityLogo>
               <div>
@@ -522,7 +528,7 @@ export function SkillSelector({
                   className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
                   onClick={() => {
                     setDeleteErr(null);
-                    setDeleteTarget({ id: detailSkill.id, name: detailSkill.name });
+                    setDeleteTarget({ id: detailSkill.id, name: skillDisplayName(detailSkill) });
                   }}
                 >
                   <Trash2 className="size-4" />

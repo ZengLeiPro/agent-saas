@@ -1,5 +1,5 @@
 import { basename, join } from 'node:path';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { lstat, readFile, readdir, stat } from 'node:fs/promises';
 
 const SAFE_SKILL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 
@@ -54,4 +54,15 @@ export function isMacOsMetadataZipEntry(entry: string): boolean {
   if (!entry || /^[\\/]/.test(entry) || /^[a-zA-Z]:[\\/]/.test(entry)) return false;
   const parts = entry.replace(/\\/g, '/').split('/').filter(Boolean);
   return parts[0] === '__MACOSX' && parts.every(part => part !== '.' && part !== '..');
+}
+
+/** 解压后递归拒绝符号链接，避免技能包借链接读取沙箱外文件。 */
+export async function containsSymlink(dir: string): Promise<boolean> {
+  for (const entry of await readdir(dir)) {
+    const full = join(dir, entry);
+    const info = await lstat(full);
+    if (info.isSymbolicLink()) return true;
+    if (info.isDirectory() && await containsSymlink(full)) return true;
+  }
+  return false;
 }

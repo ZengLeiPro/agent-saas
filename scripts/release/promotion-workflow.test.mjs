@@ -8,11 +8,23 @@ import { reconcilePromotion } from './reconcile-promotion.mjs';
 import { verifyPromotionAcsSelection } from './verify-promotion-acs-selection.mjs';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
-const rollbackRetryFixturePath = new URL(
-  './fixtures/promotion-rollback-retry.json',
+const confirmationWorkflowPath = new URL(
+  '../../.github/workflows/confirm-expand-migration.yml',
   import.meta.url,
 );
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
+const attestationCliPath = new URL(
+  '../../server/src/release/releaseAttestationCli.ts',
+  import.meta.url,
+);
+const releaseDocsPath = new URL(
+  '../../docs/agent-saas-GitHub测试预览与正式发布流程说明.md',
+  import.meta.url,
+);
+const releaseConfigDocsPath = new URL(
+  '../../docs/release-workflow-configuration.md',
+  import.meta.url,
+);
 const buildReleasePath = new URL('./build-release.mjs', import.meta.url);
 const phaseVerifierPath = new URL('./verify-promotion-phase-state.mjs', import.meta.url);
 const acsUnitPath = new URL(
@@ -31,7 +43,7 @@ const workerUnitPath = new URL(
 function ordered(text, markers) {
   let cursor = -1;
   for (const marker of markers) {
-    const next = text.indexOf(marker);
+    const next = text.indexOf(marker, cursor + 1);
     assert.ok(next > cursor, `${marker} must appear in the required order`);
     cursor = next;
   }
@@ -51,6 +63,16 @@ function runScriptLines(text) {
     if (runIndent !== null) output.push(line);
   }
   return output;
+}
+
+function productionWebEntrypoints(workflow) {
+  return workflow
+    .split('\n')
+    .filter(
+      (line) =>
+        line.includes('sudo PHASE=web ') &&
+        line.includes("bash '$PROMOTION_REMOTE/deploy-production-release.sh'"),
+    );
 }
 
 test('durable promoting marker interruptions always converge through needs_human', async () => {
@@ -129,182 +151,10 @@ test('promotion accepts only an approved release id and shares the production ru
     /\[ "\$retry_mode" = retry_after_change \] && \[ "\$latest_state" = approved \]/u,
   );
   assert.match(workflow, /APPROVAL_RECORDED=true/u);
-});
-
-test('rolled-back App and Web failures require staging revalidation and reviewed retry_after_change', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
-  const fixture = JSON.parse(await readFile(rollbackRetryFixturePath, 'utf8'));
-  const approvalStart = workflow.indexOf(
-    '- name: Fail-closed revalidate deterministic Staging evidence and record human approval',
-  );
-  const approvalEnd = workflow.indexOf('- name: Configure production SSH', approvalStart);
-  assert.ok(approvalStart >= 0 && approvalEnd > approvalStart, 'approval gate must be present');
-  const approvalGate = workflow.slice(approvalStart, approvalEnd);
-  ordered(approvalGate, [
-    'assert-promotion-retry.mjs',
-    'select(.state=="staging_deployed")',
-    'deployments/$deployment_id/statuses',
-    'actions/runs/$staging_run_id',
-    '--arg recoveryMode "$retry_mode"',
-    '--state approved',
-  ]);
-
-  for (const { failedStage, observedAtFailure } of fixture.temporaryFailures) {
-    assert.equal(
-      reconcilePromotion({
-        releaseId: `rc-${failedStage}`,
-        before: fixture.before,
-        target: fixture.target,
-        observed: observedAtFailure,
-        observationComplete: true,
-      }).outcome,
-      'partial_failed',
-    );
-    assert.equal(
-      reconcilePromotion({
-        releaseId: `rc-${failedStage}`,
-        before: fixture.before,
-        target: fixture.target,
-        observed: fixture.before,
-        observationComplete: true,
-        rollbackAttempted: true,
-      }).outcome,
-      'rolled_back',
-    );
-
-    const recoveryState =
-      fixture.recoveryStates[
-        fixture.temporaryFailures.findIndex((failure) => failure.failedStage === failedStage)
-      ];
-    const rolledBackHistory = [
-      ...fixture.attestationPrefix,
-      { state: recoveryState, operationKey: `${recoveryState}:${failedStage}` },
-      { state: 'rolled_back', operationKey: `rollback:${failedStage}` },
-    ];
-    const retry = assertPromotionRetryable(rolledBackHistory);
-    assert.equal(retry.mode, 'retry_after_change');
-    assert.deepEqual(
-      planPromotionConfigIdentityBaseline({
-        retryMode: retry.mode,
-        ...fixture.manifestActions,
-      }),
-      {
-        reader: 'read-live-production-components.mjs',
-        configIdentityStage: 'legacy-api-upgrade-retry-baseline',
-      },
-    );
-
-    const secondReviewedRound = [
-      ...rolledBackHistory,
-      { state: 'approved', operationKey: `approval:${failedStage}:2` },
-      { state: 'promoting', operationKey: `promoting:${failedStage}:2` },
-      { state: 'partial_failed', operationKey: `partial:${failedStage}:2` },
-      { state: 'rolled_back', operationKey: `rollback:${failedStage}:2` },
-    ];
-    assert.equal(assertPromotionRetryable(secondReviewedRound).mode, 'retry_after_change');
-  }
-
-  for (const history of fixture.illegalTails) {
-    assert.throws(() => assertPromotionRetryable(history), /terminal post-mutation state/u);
-  }
-});
-
-test('approval and promoting operations are unique per run attempt and idempotent within an attempt', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
-  const approvalStart = workflow.indexOf(
-    '- name: Fail-closed revalidate deterministic Staging evidence and record human approval',
-  );
-  const approvalEnd = workflow.indexOf('- name: Configure production SSH', approvalStart);
-  const approvalGate = workflow.slice(approvalStart, approvalEnd);
-  const approvalOperationTemplate = approvalGate.match(
-    /--state approved --operation "([^"]+)"/u,
-  )?.[1];
-  const promotingOperationTemplate = workflow.match(
-    /--state promoting --operation "([^"]+)"/u,
-  )?.[1];
-  assert.equal(approvalOperationTemplate, 'approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT');
-  assert.equal(promotingOperationTemplate, 'promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT');
-
-  const operationFor = (template, runId, runAttempt) =>
-    template
-      .replace('$GITHUB_RUN_ID', runId)
-      .replace('$GITHUB_RUN_ATTEMPT', String(runAttempt));
-  const appendIdempotently = (history, approval) => {
-    const existing = history.find((entry) => entry.operationKey === approval.operationKey);
-    if (existing) {
-      assert.deepEqual(existing, approval, 'same-attempt replay must carry identical content');
-      return existing;
-    }
-    history.push(approval);
-    return approval;
-  };
-
-  const runId = '424242';
-  const firstApproval = {
-    state: 'approved',
-    operationKey: operationFor(approvalOperationTemplate, runId, 1),
-    reason: 'attempt-1-review',
-  };
-  const retryFixtures = [
-    {
-      name: 'failed_before_change',
-      expectedMode: 'retry_before_change',
-      history: [
-        { state: 'verified', operationKey: 'verified:fixture' },
-        firstApproval,
-        { state: 'failed_before_change', operationKey: `failed-before-change:${runId}:1` },
-      ],
-    },
-    {
-      name: 'rolled_back',
-      expectedMode: 'retry_after_change',
-      history: [
-        { state: 'verified', operationKey: 'verified:fixture' },
-        firstApproval,
-        {
-          state: 'promoting',
-          operationKey: operationFor(promotingOperationTemplate, runId, 1),
-        },
-        { state: 'partial_failed', operationKey: `outcome:${runId}:1` },
-        { state: 'rolled_back', operationKey: `rollback:${runId}:1` },
-      ],
-    },
-  ];
-
-  for (const fixture of retryFixtures) {
-    assert.equal(
-      assertPromotionRetryable(fixture.history).mode,
-      fixture.expectedMode,
-      fixture.name,
-    );
-    const nextApproval = {
-      state: 'approved',
-      operationKey: operationFor(approvalOperationTemplate, runId, 2),
-      reason: `attempt-2-${fixture.expectedMode}`,
-    };
-    assert.notEqual(nextApproval.operationKey, firstApproval.operationKey);
-    appendIdempotently(fixture.history, nextApproval);
-    const lengthAfterApproval = fixture.history.length;
-    assert.equal(assertPromotionRetryable(fixture.history).previousApprovalCount, 2);
-    assert.strictEqual(appendIdempotently(fixture.history, { ...nextApproval }), nextApproval);
-    assert.equal(
-      fixture.history.length,
-      lengthAfterApproval,
-      `${fixture.name} replay must not append`,
-    );
-    const nextPromoting = {
-      state: 'promoting',
-      operationKey: operationFor(promotingOperationTemplate, runId, 2),
-    };
-    assert.notEqual(
-      nextPromoting.operationKey,
-      operationFor(promotingOperationTemplate, runId, 1),
-    );
-    appendIdempotently(fixture.history, nextPromoting);
-    const lengthAfterPromoting = fixture.history.length;
-    assert.strictEqual(appendIdempotently(fixture.history, { ...nextPromoting }), nextPromoting);
-    assert.equal(fixture.history.length, lengthAfterPromoting);
-  }
+  assert.match(workflow, /--arg releaseSha "\$RELEASE_SHA"/u);
+  assert.match(workflow, /releaseSha:\$releaseSha/u);
+  assert.match(workflow, /--arg migrationPhase "\$MIGRATION_PHASE"/u);
+  assert.match(workflow, /migrationPhase:\$migrationPhase/u);
 });
 
 test('Web rollback marker is written only by the armed restore path', async () => {
@@ -367,22 +217,20 @@ test('deploy output creates exact run-attempt fallback evidence without swallowi
   assert.match(deploy, /2> >\(sed 's\/\^\/\[config-identity-cli\] \/' >&2\)/u);
 });
 
-test('reconcile derives rollback attempts from Web local, ACS/App fallback, and remote markers', async () => {
+test('reconcile derives strict ACS/App/Web rollback receipts', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const start = workflow.indexOf('- name: Reconcile component outcome');
   const end = workflow.indexOf('- name: Record truthful final outcome', start);
   const reconcile = workflow.slice(start, end);
-  assert.match(reconcile, /for component in web acs app; do/u);
-  assert.match(
-    reconcile,
-    /local_rollback_attempted_marker="\$RUNNER_TEMP\/rollback-attempted-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-\$component"/u,
-  );
-  assert.match(reconcile, /\[ -f "\$local_rollback_attempted_marker" \]/u);
-  assert.match(reconcile, /\[ -n "\$\{PROMOTION_REMOTE:-\}" \]/u);
-  assert.match(reconcile, /if ssh -o BatchMode=yes -o ConnectTimeout=10/u);
-  assert.doesNotMatch(reconcile, /steps\.deploy_(?:acs|app|web)\.outcome/u);
-  assert.match(reconcile, /rollback-attempted-acs/u);
-  assert.match(reconcile, /rollback-attempted-app/u);
+  assert.match(reconcile, /rollback-web\.attempted/u);
+  assert.match(reconcile, /rollback-web\.succeeded/u);
+  assert.match(reconcile, /remote_receipt_exists/u);
+  assert.match(reconcile, /rollback-acs\.attempted/u);
+  assert.match(reconcile, /rollback-acs\.succeeded/u);
+  assert.match(reconcile, /rollback-app\.attempted/u);
+  assert.match(reconcile, /rollback-app\.succeeded/u);
+  assert.match(reconcile, /rollback_receipts=/u);
+  assert.match(reconcile, /rollbackReceipts:\$rollbackReceipts/u);
 });
 
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
@@ -409,8 +257,11 @@ test('remote workspaces and approval attestations are isolated by run attempt', 
   assert.deepEqual(remoteDirectories, [
     '/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT',
     '/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT',
-    '/tmp/release-readback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT',
   ]);
+  assert.match(
+    workflow,
+    /promotion-identity-lock-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\.ready/u,
+  );
   assert.match(workflow, /--operation "approval:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u);
   assert.doesNotMatch(workflow, /--operation "approval:\$GITHUB_RUN_ID"/u);
   assert.match(workflow, /--operation "promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u);
@@ -439,7 +290,7 @@ test('trusted identity write is followed by a strict stable ConfigIdentity confi
   ordered(readback, [
     'test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-after.json")" = "$expected_config_release_id"',
     'write-production-identity.mjs',
-    "read-production-state.mjs' --output '$remote/production-confirmed.json'",
+    "read-production-state.mjs' --config-identity-stage steady-state",
     'test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-confirmed.json")" = consistent',
     'test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-confirmed.json")" =',
     'config_identity_projection=',
@@ -460,7 +311,7 @@ test('trusted identity write is followed by a strict stable ConfigIdentity confi
   ]);
 });
 
-test('final outcome and attestation preserve a reconciliation needs_human result', async () => {
+test('final outcome preserves fail-closed reconciliation and trusted identity evidence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const start = workflow.indexOf('- name: Record truthful final outcome');
   const end = workflow.indexOf(
@@ -473,10 +324,11 @@ test('final outcome and attestation preserve a reconciliation needs_human result
     'outcome=needs_human',
     'outcome="$(jq -r .outcome "$RUNNER_TEMP/reconcile.json")"',
     'if [ "$outcome" = completed ]',
+    'component convergence lacks one or more durable operation receipts',
+    'component convergence lacks a confirmed trusted production identity',
     '--state "$outcome"',
     'state=failure',
-    '[ "$outcome" = completed ] && state=success',
-    'test "$outcome" = completed',
+    'case "$outcome" in completed|awaiting_expand_confirmation) state=success ;; esac',
   ]);
   assert.doesNotMatch(finalOutcome, /^\s*outcome=completed$/mu);
 });
@@ -597,6 +449,8 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
   assert.match(workflow, /run_with_web_lock aliyun --secure oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
+  assert.match(workflow, /OSS attestation mirror/u);
+  assert.match(workflow, /OSS operation mirror/u);
   assert.match(workflow, /--arg recoveryMode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /prior post-mutation recovery remains required/u);
   assert.match(workflow, /previous promotion ended after the durable promoting marker/u);
@@ -604,7 +458,39 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
   assert.match(workflow, /--state failed_before_change/u);
   assert.match(workflow, /already equals the immutable target/u);
-  assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
+  assert.match(workflow, /read-live-production-components\.mjs/u);
+  assert.match(
+    workflow,
+    /Read every live component[\s\S]*if: always\(\) && env\.PROMOTION_STARTED == 'true'/u,
+  );
+  assert.match(workflow, /steps\.deploy_acs\.outcome[^\n]*!= skipped/u);
+  const readbackBlock = workflow
+    .split('Read every live component', 2)[1]
+    .split('Reconcile component outcome', 1)[0];
+  assert.match(readbackBlock, /remote="\$PROMOTION_REMOTE"/u);
+  assert.doesNotMatch(readbackBlock, /release-preflight-/u);
+  assert.doesNotMatch(readbackBlock, /mkdir -p|scp -i/u);
+  assert.match(
+    readbackBlock,
+    /\/tmp\/promotion-identity-lock-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\.ready/u,
+  );
+  assert.doesNotMatch(readbackBlock, /\$PROMOTION_REMOTE\/identity-lock/u);
+  assert.match(readbackBlock, /WEB_LOCK_TIMEOUT_SECONDS=900/u);
+  assert.match(readbackBlock, /PHASE=web/u);
+  assert.match(readbackBlock, /trap cleanup_identity_lock EXIT/u);
+  assert.match(readbackBlock, /run_identity_ssh\(\)/u);
+  assert.match(
+    readbackBlock,
+    /sudo node '\$remote\/read-live-production-components\.mjs'[^\n]*\n[^\n]*production-after\.json/u,
+  );
+  assert.ok(
+    readbackBlock.indexOf("read-live-production-components.mjs'") <
+      readbackBlock.indexOf("write-production-identity.mjs'"),
+  );
+  assert.ok(
+    readbackBlock.indexOf("write-production-identity.mjs'") <
+      readbackBlock.indexOf("read-production-state.mjs'"),
+  );
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /identity_projection=/u);
   assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
@@ -673,7 +559,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /PHASE=app VERIFY_ONLY='\$verify_only'/u);
   assert.match(workflow, /release-identity\.json/u);
   assert.match(workflow, /web-oss-readback/u);
-  assert.match(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /WEB_LOCK_READY='\$web_lock_ready'/u);
   assert.match(workflow, /timeout-minutes: 180/u);
   assert.match(workflow, /timeout --signal=TERM --kill-after=10 1800 sudo PHASE=web/u);
@@ -689,7 +575,47 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.doesNotMatch(workflow, /PRODUCTION_OBSERVATION_(?:TOKEN|URL)/u);
   assert.doesNotMatch(workflow, /production-observation(?:\.json|\/)/u);
   assert.doesNotMatch(workflow, /--clobber/u);
+  assert.match(
+    workflow,
+    /GitHub Release is authoritative; retry OSS mirror maintenance separately/u,
+  );
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('both Production Web shell entrypoints satisfy the real deploy script parameter contract', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const entrypoints = productionWebEntrypoints(workflow);
+  assert.equal(entrypoints.length, 2);
+  const values = {
+    PHASE: 'web',
+    RELEASE_DIR: '/nonexistent/release',
+    MANIFEST_PATH: '/nonexistent/manifest.json',
+    EXPECTED_MANIFEST_DIGEST: `sha256:${'a'.repeat(64)}`,
+    VERIFY_INSTALLED_SCRIPT: '/nonexistent/verify-installed-release.mjs',
+    READ_LIVE_COMPONENTS_SCRIPT: '/nonexistent/read-live-production-components.mjs',
+    VERIFY_PROMOTION_PHASE_SCRIPT: '/nonexistent/verify-promotion-phase-state.mjs',
+    WEB_LOCK_READY: '/tmp/agent-saas-promotion-test-ready',
+    WEB_LOCK_RELEASE: '/tmp/agent-saas-promotion-test-release',
+    WEB_LOCK_TIMEOUT_SECONDS: '1',
+    GITHUB_RUN_ID: '123456',
+    GITHUB_RUN_ATTEMPT: '2',
+  };
+  for (const entrypoint of entrypoints) {
+    const assigned = new Set(
+      [...entrypoint.matchAll(/\b([A-Z][A-Z0-9_]*)=(?:'[^']*'|web)(?=\s|$)/gu)].map(
+        (match) => match[1],
+      ),
+    );
+    const env = { ...process.env };
+    for (const [key, value] of Object.entries(values)) if (assigned.has(key)) env[key] = value;
+    const result = spawnSync('bash', [deployPath.pathname], { encoding: 'utf8', env });
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(
+      result.stderr,
+      /(?:PHASE|RELEASE_DIR|MANIFEST_PATH|EXPECTED_MANIFEST_DIGEST|VERIFY_INSTALLED_SCRIPT|READ_LIVE_COMPONENTS_SCRIPT|VERIFY_PROMOTION_PHASE_SCRIPT|WEB_LOCK_READY|WEB_LOCK_RELEASE|GITHUB_RUN_ID|GITHUB_RUN_ATTEMPT) is required/u,
+    );
+    assert.match(result.stderr, /Cannot find module|MODULE_NOT_FOUND/u);
+  }
 });
 
 test('production ACS promotion enforces lifecycle policy and fails closed on health mismatch', async () => {
@@ -730,6 +656,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     workflow.indexOf('- name: Publish Web entry last'),
     workflow.indexOf('- name: Persist Web operation receipt'),
   );
+  assert.equal(webStep.match(/cleanup_web_on_exit\(\)/gu)?.length, 1);
   assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
   assert.match(
     buildRelease,
@@ -746,11 +673,63 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /target_match=false/u);
   assert.match(workflow, /production-before\.json[\s\S]*\.configIdentity\.releaseId/u);
   assert.match(workflow, /\.configIdentity\.releaseId/u);
+  assert.match(workflow, /steps\.readback\.outcome.*!= success/su);
+  assert.match(workflow, /steps\.readback\.outputs\.target_match.*!= true/su);
+  assert.match(workflow, /component convergence lacks a confirmed trusted production identity/u);
   assert.match(workflow, /write-production-identity\.mjs/u);
   assert.match(workflow, /verify-installed-release\.mjs/u);
+  assert.match(workflow, /promotion-upload\.tgz/u);
+  assert.match(workflow, /archive_digest="\$\(sha256sum/u);
+  assert.match(
+    workflow,
+    /root_archive="\/run\/agent-saas-locks\/promotion-payload-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\.tgz"/u,
+  );
+  assert.match(workflow, /sudo install -m 0400 '\$remote_archive' '\$root_archive'/u);
+  assert.match(workflow, /sudo sha256sum '\$root_archive'/u);
+  assert.match(workflow, /sudo install -d -m 0700 '\$remote'/u);
+  assert.match(workflow, /sudo tar --no-same-owner --no-same-permissions/u);
+  assert.match(workflow, /sudo chown -R root:root '\$remote'/u);
+  assert.match(workflow, /sudo chmod -R a-w '\$remote'/u);
+  assert.match(workflow, /sudo rm -rf '\$remote' '\$root_archive'/u);
+  assert.match(workflow, /rm -f '\$remote_archive'/u);
   assert.match(workflow, /separate_release/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|appAcsCompatibility/u);
   assert.match(workflow, /separate_confirmation_required/u);
+  assert.match(workflow, /awaiting_expand_confirmation/u);
+  assert.match(workflow, /promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /migrationPlanDigest/u);
+  assert.match(workflow, /productionBeforeDigest/u);
+  assert.match(workflow, /productionTargetDigest/u);
+  assert.match(workflow, /optional_staging_acceptance/u);
+  assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
+  assert.match(workflow, /contractExecuted:false/u);
+  assert.match(workflow, /restore_web_entry/u);
+  assert.match(workflow, /rollback-web\.attempted/u);
+  assert.match(workflow, /rollback-web\.succeeded/u);
+  assert.match(workflow, /rollback-acs\.attempted/u);
+  assert.match(workflow, /rollback-acs\.succeeded/u);
+  assert.match(workflow, /rollback-app\.attempted/u);
+  assert.match(workflow, /rollback-app\.succeeded/u);
+  assert.doesNotMatch(workflow, /rollback-(?:acs|app)\.receipt/u);
+  assert.match(workflow, /remote_receipt_exists\(\)/u);
+  assert.match(workflow, /case "\$rc" in/u);
+  assert.match(workflow, /remote rollback receipt query failed/u);
+  assert.match(workflow, /return "\$rc"/u);
+  assert.match(workflow, /rollback_receipts=/u);
+  assert.match(workflow, /webAttempted.*webSucceeded/su);
+  assert.match(workflow, /acsAttempted.*acsSucceeded/su);
+  assert.match(workflow, /appAttempted.*appSucceeded/su);
+  assert.match(workflow, /rollbackReceipts:\$rollbackReceipts/u);
+  assert.doesNotMatch(workflow, /--argjson rollbackSucceeded/u);
+  assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.doesNotMatch(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(deploy, /candidate-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(deploy, /rollback-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.doesNotMatch(
+    workflow,
+    /steps\.deploy_(?:acs|app|web)\.outcome[^\n]*failure[\s\S]{0,180}rollback_attempted=true/u,
+  );
   assert.match(workflow, /\boptional_staging_acceptance\b/u);
   assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
   assert.match(workflow, /contractExecuted:false/u);
@@ -773,11 +752,6 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   );
   assert.match(webStep, /wait "\$web_lock_pid" 2>\/dev\/null \|\| true/u);
   assert.doesNotMatch(webStep, /--region "\$RELEASE_RECORD_OSS_REGION" \|\| true/u);
-  assert.match(workflow, /rollback_attempted=true/u);
-  assert.doesNotMatch(
-    workflow,
-    /steps\.deploy_(?:acs|app|web)\.outcome[\s\S]{0,180}rollback_attempted=true/u,
-  );
   assert.match(workflow, /Persist ACS operation receipt/u);
   assert.match(workflow, /Persist ACS operation start receipt/u);
   assert.match(workflow, /Persist API and Worker operation start receipts/u);
@@ -805,11 +779,21 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.doesNotMatch(deploy, /\[ -e "\$env_backup" \] \|\| cp/u);
   assert.doesNotMatch(deploy, /\[ -e "\$identity_backup" \] \|\| cp/u);
   assert.match(deploy, /rollback_app_release/u);
-  assert.match(deploy, /return 70/u);
   assert.match(deploy, /cleanup_acs_failure/u);
-  assert.match(
-    deploy,
-    /rollback_acs_release\(\) \{[\s\S]*local rollback_status=0[\s\S]*return 70/u,
+  assert.match(deploy, /record_rollback_attempt/u);
+  assert.match(deploy, /record_rollback_success/u);
+  assert.match(deploy, /ROLLBACK_ATTEMPTED_RECEIPT_PATH/u);
+  assert.match(deploy, /ROLLBACK_SUCCEEDED_RECEIPT_PATH/u);
+  assert.match(deploy, /return 70/u);
+  const acsRollbackStart = deploy.indexOf('rollback_acs_release()');
+  const acsRollbackEnd = deploy.indexOf('cleanup_acs_failure()', acsRollbackStart);
+  const acsRollback = deploy.slice(acsRollbackStart, acsRollbackEnd);
+  assert.ok(
+    acsRollback.indexOf('record_rollback_attempt') < acsRollback.indexOf('ln -sfn "$previous"'),
+  );
+  assert.ok(
+    acsRollback.indexOf('record_rollback_success') >
+      acsRollback.indexOf('curl -fsS http://127.0.0.1:3400/health'),
   );
   assert.match(
     deploy,
@@ -819,12 +803,71 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     deploy,
     /if \[ "\$rollback_status" -ne 0 \]; then[\s\S]*exit "\$rollback_status"[\s\S]*fi\n  rm -rf "\$rollback_root"/u,
   );
-  assert.match(deploy, /local had_previous_unit=false/u);
+  assert.match(deploy, /local had_previous_identity=false had_previous_unit=false/u);
   assert.match(deploy, /if \[ -f "\$unit_path" \]; then[\s\S]*had_previous_unit=true/u);
   assert.match(
-    deploy,
+    acsRollback,
     /if \[ "\$had_previous_unit" = true \]; then[\s\S]*else[\s\S]*rm -f "\$unit_path"/u,
   );
+  const appRollbackStart = deploy.indexOf('rollback_app_release()');
+  const appRollbackEnd = deploy.indexOf('cleanup_app_failure()', appRollbackStart);
+  const appRollback = deploy.slice(appRollbackStart, appRollbackEnd);
+  assert.ok(
+    appRollback.indexOf('record_rollback_attempt') <
+      appRollback.indexOf('systemctl restart "agent-saas-runtime-worker@$worker_active"'),
+  );
+  const previousWorkerRestart = appRollback.indexOf(
+    'systemctl restart "agent-saas-runtime-worker@$worker_active"',
+  );
+  const previousApiRestart = appRollback.indexOf(
+    'systemctl restart "agent-saas-server@$api_active"',
+  );
+  const nginxRestore = appRollback.indexOf('cp -a "$rollback_root/nginx-upstream.conf"');
+  const candidateWorkerStop = appRollback.indexOf(
+    'systemctl disable --now "agent-saas-runtime-worker@$worker_idle"',
+  );
+  const candidateApiStop = appRollback.indexOf(
+    'systemctl disable --now "agent-saas-server@$api_idle"',
+  );
+  assert.ok(previousWorkerRestart >= 0 && previousApiRestart > previousWorkerRestart);
+  assert.ok(nginxRestore > previousApiRestart);
+  assert.ok(candidateWorkerStop > nginxRestore && candidateApiStop > candidateWorkerStop);
+  assert.ok(
+    candidateWorkerStop > appRollback.indexOf('cmp "$rollback_root/runtime-worker@.service"'),
+  );
+  assert.match(
+    appRollback,
+    /if \[ "\$rollback_status" -eq 0 \]; then[\s\S]*systemctl disable --now "agent-saas-runtime-worker@\$worker_idle"/u,
+  );
+  assert.match(appRollback, /最终现场验证通过后才停止 candidate/u);
+  assert.match(appRollback, /retaining candidate services/u);
+  assert.ok(appRollback.indexOf('record_rollback_success') > candidateApiStop);
+  assert.match(
+    appRollback,
+    /rm -f[\s\S]*agent-saas-server-\$api_active\.draining[\s\S]*agent-saas-runtime-worker-\$worker_active\.draining/u,
+  );
+  assert.match(appRollback, /api-active-ready\.json/u);
+  assert.match(appRollback, /worker_rollback_pid.*worker_rollback_ready/su);
+  assert.match(appRollback, /api-authoritative-ready\.json/u);
+  assert.match(appRollback, /cmp "\$rollback_root\/server@\.service" "\$server_unit"/u);
+  assert.match(appRollback, /cmp "\$rollback_root\/runtime-worker@\.service" "\$worker_unit"/u);
+  assert.ok(
+    workflow.indexOf('rollback-web.attempted', workflow.indexOf('restore_web_entry()')) <
+      workflow.indexOf(
+        'run_with_web_lock aliyun --secure oss cp',
+        workflow.indexOf('restore_web_entry()'),
+      ),
+  );
+  assert.ok(
+    workflow.indexOf(
+      'cmp "$RUNNER_TEMP/web-before/index.html"',
+      workflow.indexOf('restore_web_entry()'),
+    ) < workflow.indexOf('rollback-web.succeeded', workflow.indexOf('restore_web_entry()')),
+  );
+  assert.match(deploy, /acs_mutation_started=true/u);
+  assert.match(deploy, /app_mutation_started=true/u);
+  assert.match(deploy, /正式路径始终执行现场 readback[\s\S]*ROLLBACK_RUNTIME_VERIFY=true/u);
+  assert.match(deploy, /systemctl reload nginx[\s\S]*api-authoritative-ready\.json/u);
   assert.match(phaseVerifier, /Production changed after promotion gate/u);
   assert.match(phaseVerifier, /PHASES\.slice\(0, phaseIndex\)/u);
   assert.match(phaseVerifier, /PHASES\.slice\(phaseIndex\)/u);
@@ -837,7 +880,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   );
   assert.ok(
     workflow.indexOf('test "$lock_ready" = true') <
-      workflow.indexOf('aliyun --secure oss cp "$RUNNER_TEMP/web-assets/"'),
+      workflow.indexOf('run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/"'),
   );
   assert.ok(workflow.indexOf('web_committed=true') < workflow.indexOf('release_web_lock\n'));
   assert.ok(
@@ -855,8 +898,8 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(deploy, /if \[ -L "\$ACS_CURRENT_PATH" \]; then/u);
   assert.match(deploy, /Existing ACS release path must be a symlink/u);
   assert.match(deploy, /Existing ACS managed unit must be absent or a regular file/u);
-  assert.match(deploy, /systemctl daemon-reload \|\| rollback_status=1/u);
-  assert.match(deploy, /systemctl restart "\$ACS_SERVICE_NAME" \|\| rollback_status=1/u);
+  assert.match(deploy, /systemctl daemon-reload/u);
+  assert.match(deploy, /systemctl restart "\$ACS_SERVICE_NAME"/u);
   assert.doesNotMatch(
     deploy,
     /previous="\$\(readlink -f "\$ACS_CURRENT_PATH" 2>\/dev\/null \|\| true\)"/u,
@@ -929,4 +972,114 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     /^BindPaths=\/opt\/agent-saas\/workspace-shared:\/opt\/agent-saas-app\/worker\/%i\/workspace-shared$/mu,
   );
   execFileSync('bash', ['-n', deployPath.pathname]);
+});
+
+test('expand confirmation is a separate release-bound and production-serialized workflow', async () => {
+  const [workflow, attestationCli, releaseDocs, releaseConfigDocs] = await Promise.all([
+    readFile(confirmationWorkflowPath, 'utf8'),
+    readFile(attestationCliPath, 'utf8'),
+    readFile(releaseDocsPath, 'utf8'),
+    readFile(releaseConfigDocsPath, 'utf8'),
+  ]);
+  assert.match(workflow, /name: 确认扩展迁移/u);
+  assert.match(workflow, /name: 校验确认请求/u);
+  assert.match(workflow, /group: production-runtime\s+cancel-in-progress: false/u);
+  assert.match(workflow, /environment: production/u);
+  assert.match(workflow, /release_id:/u);
+  assert.match(workflow, /attestation-snapshot\.mjs select/u);
+  assert.match(workflow, /confirm-expand-migration\.mjs/u);
+  assert.match(workflow, /Expand confirmation request is invalid or expired after two hours/u);
+  assert.match(workflow, /dispatch a new Promotion instead of refreshing this request/u);
+  assert.doesNotMatch(workflow, /REFRESH_CONFIRMATION_WINDOW/u);
+  assert.doesNotMatch(workflow, /expand-reobservation:/u);
+  assert.doesNotMatch(workflow, /confirmation_window_refreshed/u);
+  ordered(workflow, [
+    'Expand confirmation request is invalid or expired after two hours',
+    'Confirm live binding and append completed attestation under the Production host lock',
+  ]);
+  assert.match(workflow, /read-live-production-components\.mjs/u);
+  assert.match(workflow, /production-api-ready\.json/u);
+  assert.match(workflow, /production-lock-lease\.sh/u);
+  assert.match(workflow, /bash -s -- hold '\$lock_token'/u);
+  assert.match(workflow, /bash -s -- assert '\$lock_token'/u);
+  assert.match(workflow, /bash -s -- release '\$lock_token'/u);
+  ordered(workflow, [
+    'setsid timeout --signal=TERM --kill-after=10 7250 ssh',
+    'live-initial.json',
+    'migration-confirmation-initial.json',
+    'live-final.json',
+    'migration-confirmation.json',
+    '先按内容 digest 持久化最终锁内读回',
+    '--state completed',
+  ]);
+  assert.match(workflow, /PRODUCTION_LOCK_TIMEOUT_SECONDS=7200/u);
+  assert.match(workflow, /run_guarded\(\)[\s\S]*setsid "\$@"/u);
+  assert.match(workflow, /terminate_guarded\(\)[\s\S]*kill -0 -- "-\$guarded_pid"/u);
+  assert.match(workflow, /terminate_guarded\(\)[\s\S]*kill -KILL -- "-\$guarded_pid"/u);
+  assert.match(workflow, /cleanup\(\)[\s\S]*terminate_guarded[\s\S]*bash -s -- release/u);
+  assert.match(workflow, /run_guarded\(\)[\s\S]*kill -0 "\$lock_pid"/u);
+  assert.match(workflow, /next_owner_check[\s\S]*if ! assert_lock/u);
+  assert.match(workflow, /run_guarded pnpm exec tsx[\s\S]*--state completed/u);
+  assert.match(
+    workflow,
+    /run_guarded bash scripts\/release\/upload-github-release-asset-immutable\.sh/u,
+  );
+  assert.match(workflow, /run_guarded bash scripts\/release\/upload-oss-object-immutable\.sh/u);
+  assert.match(workflow, /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt\)/u);
+  assert.match(workflow, /upload-oss-object-immutable\.sh[\s\S]*--state completed/u);
+  assert.match(workflow, /Release was already confirmed by another workflow run/u);
+  assert.doesNotMatch(workflow, /--state completed[\s\S]*migration-confirmations\/confirmation-/u);
+  assert.match(workflow, /--api-ready/u);
+  assert.match(workflow, /--state completed/u);
+  assert.match(workflow, /expand-confirmation:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /migration-confirmations\/\$\{confirmation_digest#sha256:\}\.json/u);
+  assert.match(workflow, /api\.agent\.kaiyan\.net\/api\/healthz\/ready/u);
+  ordered(workflow, [
+    '先按内容 digest 持久化最终锁内读回',
+    '--state completed',
+    'GitHub Release 是重跑读取源',
+    'upload-github-release-asset-immutable.sh',
+  ]);
+  assert.match(workflow, /--confirmation-evidence/u);
+  assert.match(attestationCli, /confirmation-evidence/u);
+  assert.match(attestationCli, /currentState === 'awaiting_expand_confirmation'/u);
+  assert.match(attestationCli, /confirmationEvidenceDigest !== evidenceDigest/u);
+  assert.match(releaseDocs, /GitHub 上六个 Workflow/u);
+  assert.match(releaseDocs, /`Confirm Expand Migration`/u);
+  assert.match(releaseDocs, /2 小时确认窗口和 5 分钟现场\/证据新鲜度/u);
+  assert.match(releaseDocs, /psql 反斜杠元命令均拒绝/u);
+  assert.match(releaseDocs, /全部 INSERT/u);
+  assert.match(releaseDocs, /未自愿标 metadata 也会先进入闭包/u);
+  assert.match(releaseDocs, /确认窗口一旦过期即 fail closed/u);
+  assert.doesNotMatch(releaseDocs, /expand-reobservation/u);
+  assert.match(releaseConfigDocs, /target_match=true/u);
+  assert.match(releaseConfigDocs, /identity 写入或 `production-confirmed\.json` 回读失败/u);
+  assert.match(releaseConfigDocs, /producer 仅用写 Token/u);
+  assert.match(releaseConfigDocs, /publisher 仅用读 Token/u);
+  assert.doesNotMatch(releaseConfigDocs, /准备发布证据` 只持有读身份/u);
+  assert.match(workflow, /CONFIRMATION_REPAIR=true/u);
+  assert.match(workflow, /Repair OSS attestation mirror/u);
+  assert.doesNotMatch(workflow, /--clobber/u);
+  assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('App cleanup after Worker drain restarts the previous API and Worker before success receipt', async () => {
+  const deploy = await readFile(deployPath, 'utf8');
+  const rollbackStart = deploy.indexOf('rollback_app_release()');
+  const rollbackEnd = deploy.indexOf('cleanup_app_failure()', rollbackStart);
+  const rollback = deploy.slice(rollbackStart, rollbackEnd);
+  const workerDrain = deploy.indexOf(
+    'install -m 0644 /dev/null "/run/agent-saas-runtime-worker-$worker_active.draining"',
+    rollbackEnd,
+  );
+  const apiDrain = deploy.indexOf(
+    'install -m 0644 /dev/null "/run/agent-saas-server-$api_active.draining"',
+    workerDrain,
+  );
+  assert.ok(workerDrain > rollbackEnd && apiDrain > workerDrain);
+  assert.ok(rollback.indexOf('agent-saas-runtime-worker-$worker_active.draining') >= 0);
+  assert.ok(rollback.indexOf('systemctl restart "agent-saas-runtime-worker@$worker_active"') >= 0);
+  assert.ok(rollback.indexOf('worker_rollback_pid') >= 0);
+  assert.ok(rollback.indexOf('worker_rollback_ready') >= 0);
+  assert.ok(rollback.indexOf('record_rollback_success') > rollback.indexOf('sleep 2'));
 });

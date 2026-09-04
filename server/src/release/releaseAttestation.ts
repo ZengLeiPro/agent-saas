@@ -7,6 +7,7 @@ export const RELEASE_STATES = [
   'verified',
   'approved',
   'promoting',
+  'awaiting_expand_confirmation',
   'completed',
   'failed_before_change',
   'rejected',
@@ -39,6 +40,9 @@ export interface ReleaseAttestationTiming {
 export const DEFAULT_MAX_ATTESTATION_AGE_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 export const DEFAULT_APPROVAL_VALIDITY_MS = 24 * 60 * 60 * 1000;
+const MAX_EXPAND_CONFIRMATION_DELAY_MS = 2 * 60 * 60 * 1000;
+const MAX_CONFIRMATION_EVIDENCE_AGE_MS = 5 * 60 * 1000;
+const MAX_CONFIRMATION_FUTURE_SKEW_MS = 60 * 1000;
 
 const SEQUENTIAL_TRANSITIONS: Partial<Record<ReleaseState, readonly ReleaseState[]>> = {
   created: ['built'],
@@ -46,7 +50,6 @@ const SEQUENTIAL_TRANSITIONS: Partial<Record<ReleaseState, readonly ReleaseState
   staging_deployed: ['verified'],
   verified: ['approved'],
   approved: ['promoting'],
-  promoting: ['completed'],
 };
 const REVOCABLE_STATES = new Set<ReleaseState>([
   'created',
@@ -55,6 +58,7 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'verified',
   'approved',
   'promoting',
+  'awaiting_expand_confirmation',
   'completed',
   'failed_before_change',
   'rejected',
@@ -63,6 +67,9 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'needs_human',
   'superseded',
 ]);
+// durable promoting 后即使现场证明尚未变更，也只能经人工复核证据重新进入批准；
+// post-mutation failure states 同样不能未经复核直接重试。
+// awaiting_expand_confirmation 只能由带完整绑定证据的专用确认操作进入 completed。
 const FAILURE_STATES = new Set<ReleaseState>([
   'failed_before_change',
   'rejected',
@@ -85,14 +92,25 @@ function hasReviewedMutationRecoveryTail(tail: readonly ReleaseAttestation[]): b
     const previousState = tail[index - 1]?.state;
     if (!mutationSeen) {
       if (state === 'promoting') {
-        if (previousState !== 'approved') return false;
+        const entry = tail[index]!;
+        if (
+          previousState !== 'approved' ||
+          !promotionContext(entry.reason, entry.releaseId, entry.manifestDigest)
+        )
+          return false;
         mutationSeen = true;
         reviewedCurrentMutation = false;
       } else if (!state || !RETRYABLE_PRE_MUTATION_STATES.has(state)) return false;
       continue;
     }
     if (state === 'promoting') {
-      if (previousState !== 'approved' || !reviewedCurrentMutation) return false;
+      const entry = tail[index]!;
+      if (
+        previousState !== 'approved' ||
+        !reviewedCurrentMutation ||
+        !promotionContext(entry.reason, entry.releaseId, entry.manifestDigest)
+      )
+        return false;
       reviewedCurrentMutation = false;
     } else if (state === 'needs_human') {
       if (previousState !== 'promoting' && previousState !== 'needs_human') return false;
@@ -104,15 +122,127 @@ function hasReviewedMutationRecoveryTail(tail: readonly ReleaseAttestation[]): b
       )
         return false;
     } else if (state === 'failed_before_change') {
-      if (!reviewedCurrentMutation || previousState !== 'approved') return false;
+      if (previousState === 'promoting') reviewedCurrentMutation = true;
+      else if (!reviewedCurrentMutation || previousState !== 'approved') return false;
     } else return false;
   }
   return mutationSeen && reviewedCurrentMutation;
 }
 
+function isReviewedRecoveryApproval(
+  input: Pick<ReleaseAttestation, 'state' | 'reason' | 'manifestDigest'>,
+  releaseId: string,
+): boolean {
+  if (input.state !== 'approved' || !input.reason) return false;
+  try {
+    const evidence = JSON.parse(input.reason) as Record<string, unknown>;
+    return (
+      evidence.releaseId === releaseId &&
+      evidence.manifestDigest === input.manifestDigest &&
+      evidence.recoveryMode === 'retry_after_change' &&
+      typeof evidence.reason === 'string' &&
+      evidence.reason.trim().length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 function assertDigest(digest: string): void {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest))
     throw new Error('Attestation must bind a SHA-256 manifest digest');
+}
+
+type MigrationPhase = 'none' | 'expand';
+
+interface PromotionContext {
+  releaseId: string;
+  releaseSha: string;
+  manifestDigest: string;
+  migrationPhase: MigrationPhase;
+  migrationPlanDigest: string;
+  productionBeforeDigest: string;
+  productionTargetDigest: string;
+}
+
+function promotionContext(
+  reason: string | undefined,
+  releaseId: string,
+  manifestDigest: string,
+): PromotionContext | null {
+  if (!reason) return null;
+  try {
+    const value = JSON.parse(reason) as Record<string, unknown>;
+    if (
+      value.releaseId !== releaseId ||
+      typeof value.releaseSha !== 'string' ||
+      !/^[a-f0-9]{40}$/u.test(value.releaseSha) ||
+      value.manifestDigest !== manifestDigest ||
+      !['none', 'expand'].includes(String(value.migrationPhase)) ||
+      typeof value.migrationPlanDigest !== 'string' ||
+      typeof value.productionBeforeDigest !== 'string' ||
+      typeof value.productionTargetDigest !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/u.test(value.migrationPlanDigest) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(value.productionBeforeDigest) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(value.productionTargetDigest)
+    )
+      return null;
+    return value as unknown as PromotionContext;
+  } catch {
+    return null;
+  }
+}
+
+function isExpandConfirmation(
+  input: Pick<ReleaseAttestation, 'state' | 'operationKey' | 'reason' | 'manifestDigest'>,
+  releaseId: string,
+  promotion: PromotionContext | null,
+  recordedAtMs: number,
+  awaitingAtMs: number,
+): boolean {
+  if (
+    input.state !== 'completed' ||
+    !/^expand-confirmation:[1-9][0-9]*:[1-9][0-9]*$/u.test(input.operationKey) ||
+    !input.reason ||
+    promotion?.migrationPhase !== 'expand'
+  ) {
+    return false;
+  }
+  try {
+    const evidence = JSON.parse(input.reason) as Record<string, unknown>;
+    if (
+      evidence.schemaVersion !== 1 ||
+      evidence.status !== 'completed' ||
+      evidence.releaseId !== releaseId ||
+      evidence.manifestDigest !== input.manifestDigest ||
+      evidence.apiReadyReleaseId !== releaseId ||
+      evidence.apiReadyReleaseSha !== promotion.releaseSha ||
+      typeof evidence.liveObservedAt !== 'string' ||
+      typeof evidence.confirmedAt !== 'string' ||
+      typeof evidence.operatorReason !== 'string' ||
+      evidence.operatorReason.trim().length === 0 ||
+      typeof evidence.confirmationEvidenceDigest !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/u.test(evidence.confirmationEvidenceDigest) ||
+      evidence.migrationPlanDigest !== promotion.migrationPlanDigest ||
+      evidence.productionBeforeDigest !== promotion.productionBeforeDigest ||
+      evidence.productionTargetDigest !== promotion.productionTargetDigest
+    ) {
+      return false;
+    }
+    const liveObservedAtMs = timestamp(evidence.liveObservedAt, 'Production live readback');
+    const confirmedAtMs = timestamp(evidence.confirmedAt, 'Migration confirmation');
+    return (
+      recordedAtMs - awaitingAtMs <= MAX_EXPAND_CONFIRMATION_DELAY_MS &&
+      liveObservedAtMs >= awaitingAtMs &&
+      confirmedAtMs >= liveObservedAtMs &&
+      recordedAtMs - liveObservedAtMs <= MAX_CONFIRMATION_EVIDENCE_AGE_MS &&
+      recordedAtMs - confirmedAtMs <= MAX_CONFIRMATION_EVIDENCE_AGE_MS &&
+      liveObservedAtMs <= recordedAtMs + MAX_CONFIRMATION_FUTURE_SKEW_MS &&
+      confirmedAtMs <= recordedAtMs + MAX_CONFIRMATION_FUTURE_SKEW_MS
+    );
+  } catch {
+    return false;
+  }
 }
 
 function timestamp(value: string, label: string): number {
@@ -130,6 +260,7 @@ export class ReleaseAttestationLog {
   private readonly maxFutureSkewMs: number;
   private readonly approvalValidityMs: number;
   private readonly now: () => Date;
+  private replayingLegacyHistory = false;
 
   constructor(
     private readonly releaseId: string,
@@ -156,13 +287,18 @@ export class ReleaseAttestationLog {
       ...timing,
       now: () => replayNow,
     });
-    for (const entry of entries) {
-      if (entry.releaseId !== releaseId)
-        throw new Error('Stored attestation releaseId does not match its log');
-      replayNow = new Date(entry.recordedAt);
-      const { releaseId: _releaseId, ...input } = entry;
-      void _releaseId;
-      log.append(input);
+    log.replayingLegacyHistory = true;
+    try {
+      for (const entry of entries) {
+        if (entry.releaseId !== releaseId)
+          throw new Error('Stored attestation releaseId does not match its log');
+        replayNow = new Date(entry.recordedAt);
+        const { releaseId: _releaseId, ...input } = entry;
+        void _releaseId;
+        log.append(input);
+      }
+    } finally {
+      log.replayingLegacyHistory = false;
     }
     replayNow = timing.now?.() ?? new Date();
     return log;
@@ -210,6 +346,17 @@ export class ReleaseAttestationLog {
       throw new Error('Attestation recordedAt is out of order');
 
     const current = this.currentState();
+    const newPromotionContext =
+      input.state === 'promoting'
+        ? promotionContext(input.reason, this.releaseId, this.manifestDigest)
+        : null;
+    const replayingLegacyPromoting =
+      this.replayingLegacyHistory &&
+      input.state === 'promoting' &&
+      input.reason === undefined &&
+      !newPromotionContext;
+    if (input.state === 'promoting' && !newPromotionContext && !replayingLegacyPromoting)
+      throw new Error('Promoting attestation must bind an immutable migration phase and plan');
     const sequential = SEQUENTIAL_TRANSITIONS[current]?.includes(input.state) ?? false;
     let verifiedIndex = -1;
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
@@ -219,6 +366,7 @@ export class ReleaseAttestationLog {
       }
     }
     const retryTail = verifiedIndex >= 0 ? this.entries.slice(verifiedIndex + 1) : [];
+
     const retryAfterFailureBeforeChange =
       current === 'failed_before_change' &&
       input.state === 'approved' &&
@@ -226,8 +374,39 @@ export class ReleaseAttestationLog {
       retryTail.every((entry) => RETRYABLE_PRE_MUTATION_STATES.has(entry.state));
     const retryAfterReviewedMutation =
       (current === 'needs_human' || current === 'failed_before_change') &&
-      input.state === 'approved' &&
+      isReviewedRecoveryApproval(input, this.releaseId) &&
       hasReviewedMutationRecoveryTail(retryTail);
+    let boundPromotionContext: PromotionContext | null = null;
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const entry = this.entries[index];
+      if (entry?.state === 'promoting') {
+        boundPromotionContext = promotionContext(entry.reason, this.releaseId, this.manifestDigest);
+        break;
+      }
+    }
+    const promotionOutcome =
+      current === 'promoting' &&
+      ((input.state === 'completed' && boundPromotionContext?.migrationPhase === 'none') ||
+        (input.state === 'awaiting_expand_confirmation' &&
+          boundPromotionContext?.migrationPhase === 'expand'));
+    const replayingLegacyCompletion =
+      this.replayingLegacyHistory &&
+      current === 'promoting' &&
+      boundPromotionContext === null &&
+      input.state === 'completed';
+    const awaitingAtMs =
+      current === 'awaiting_expand_confirmation' && latest !== undefined
+        ? timestamp(latest.recordedAt, 'Awaiting confirmation recordedAt')
+        : null;
+    const expandConfirmation =
+      awaitingAtMs !== null &&
+      isExpandConfirmation(
+        input,
+        this.releaseId,
+        boundPromotionContext,
+        recordedAtMs,
+        awaitingAtMs,
+      );
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
     const failureTransition =
       FAILURE_STATES.has(input.state) &&
@@ -236,6 +415,9 @@ export class ReleaseAttestationLog {
       !sequential &&
       !retryAfterFailureBeforeChange &&
       !retryAfterReviewedMutation &&
+      !promotionOutcome &&
+      !replayingLegacyCompletion &&
+      !expandConfirmation &&
       !revocation &&
       !failureTransition
     )

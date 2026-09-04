@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { componentIdentityMatrix, reconcilePromotion } from './reconcile-promotion.mjs';
+import {
+  componentIdentityMatrix,
+  reconcilePromotion,
+  summarizeRollbackReceipts,
+} from './reconcile-promotion.mjs';
 
 const component = (value) => ({ gitSha: value, artifactDigest: `sha256:${value.repeat(64)}` });
 const acs = (value) => ({
@@ -33,41 +37,31 @@ test('completes target convergence only with explicit ConfigIdentity confirmatio
 
   for (const configIdentityConfirmed of [false, undefined]) {
     const input = { ...base, observed: target };
-    if (configIdentityConfirmed !== undefined) {
-      input.configIdentityConfirmed = configIdentityConfirmed;
-    }
+    if (configIdentityConfirmed !== undefined) input.configIdentityConfirmed = false;
     const result = reconcilePromotion(input);
     assert.equal(result.outcome, 'needs_human');
     assert.match(result.reason, /ConfigIdentity and trusted identity confirmation/u);
   }
 });
 
-test('classifies before-change failure only from a real rollback marker plus authoritative readback', () => {
-  // A failed deploy step contributes no rollback evidence by itself: no marker + before is unchanged.
+test('classifies before-change failure while rejecting legacy rollback flags', () => {
   assert.equal(reconcilePromotion({ ...base, observed: before }).outcome, 'failed_before_change');
-  // A real attempted marker plus the same authoritative before readback proves rolled_back.
-  assert.equal(
-    reconcilePromotion({ ...base, observed: before, rollbackAttempted: true }).outcome,
-    'rolled_back',
-  );
-  assert.equal(
-    reconcilePromotion({
-      ...base,
-      observed: before,
-      rollbackAttempted: true,
-      externalSideEffects: 'unknown',
-    }).outcome,
-    'rolled_back',
-  );
+  for (const rollbackSucceeded of [true, false]) {
+    assert.equal(
+      reconcilePromotion({
+        ...base,
+        observed: before,
+        rollbackAttempted: true,
+        rollbackSucceeded,
+      }).outcome,
+      'needs_human',
+    );
+  }
 });
 
-test('keeps mixed or unknown production state explicit even when rollback was attempted', () => {
+test('keeps mixed or unknown production state explicit', () => {
   const mixed = { ...target, web: before.web };
   assert.equal(reconcilePromotion({ ...base, observed: mixed }).outcome, 'partial_failed');
-  assert.equal(
-    reconcilePromotion({ ...base, observed: mixed, rollbackAttempted: true }).outcome,
-    'partial_failed',
-  );
   assert.equal(
     reconcilePromotion({ ...base, observed: mixed, externalSideEffects: 'unknown' }).outcome,
     'needs_human',
@@ -78,7 +72,7 @@ test('keeps mixed or unknown production state explicit even when rollback was at
   );
 });
 
-test('compares only authoritative component identities after confirmation, not metadata', () => {
+test('compares only authoritative component identities, not observation metadata', () => {
   const observed = Object.fromEntries(
     Object.entries(target).map(([name, value]) => [
       name,
@@ -102,4 +96,56 @@ test('never completes after a forbidden contract migration even when components 
     }).outcome,
     'needs_human',
   );
+});
+
+test('requires succeeded evidence for every attempted ACS/App/Web rollback', () => {
+  for (const componentName of ['acs', 'app', 'web']) {
+    const rollbackReceipts = {
+      acs: { attempted: false, succeeded: false },
+      app: { attempted: false, succeeded: false },
+      web: { attempted: false, succeeded: false },
+      [componentName]: { attempted: true, succeeded: false },
+    };
+    assert.deepEqual(summarizeRollbackReceipts(rollbackReceipts), {
+      attempted: true,
+      succeeded: false,
+    });
+    assert.equal(
+      reconcilePromotion({ ...base, observed: before, rollbackReceipts }).outcome,
+      'needs_human',
+      `${componentName} restoration failed after its attempted receipt`,
+    );
+    assert.equal(
+      reconcilePromotion({ ...base, observed: target, rollbackReceipts }).outcome,
+      'needs_human',
+      `${componentName} incomplete rollback cannot be hidden by a target-shaped readback`,
+    );
+    rollbackReceipts[componentName].succeeded = true;
+    assert.equal(
+      reconcilePromotion({ ...base, observed: before, rollbackReceipts }).outcome,
+      'rolled_back',
+      `${componentName} restoration has matching succeeded evidence`,
+    );
+  }
+});
+
+test('requires an exact typed ACS/App/Web rollback receipt schema', () => {
+  const valid = {
+    acs: { attempted: false, succeeded: false },
+    app: { attempted: true, succeeded: true },
+    web: { attempted: false, succeeded: false },
+  };
+  for (const receipts of [
+    { acs: valid.acs, app: valid.app },
+    { ...valid, database: { attempted: false, succeeded: false } },
+    { ...valid, web: { attempted: 'false', succeeded: false } },
+    { ...valid, web: { attempted: false, succeeded: true } },
+    { ...valid, web: { attempted: false, succeeded: false, detail: 'ok' } },
+  ]) {
+    assert.equal(summarizeRollbackReceipts(receipts), null);
+    assert.equal(
+      reconcilePromotion({ ...base, observed: before, rollbackReceipts: receipts }).outcome,
+      'needs_human',
+    );
+  }
 });

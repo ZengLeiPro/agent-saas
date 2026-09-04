@@ -12,6 +12,7 @@ const [workflow, wrapper, tasks, serverPackage] = await Promise.all([
 
 const requiredTaskCommands = [
   'pnpm check:ratchets',
+  'pnpm test:release-contracts',
   'pnpm -F server typecheck',
   'pnpm -F server context:relation-eval:baseline',
   'pnpm -F server build',

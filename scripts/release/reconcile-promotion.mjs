@@ -33,6 +33,36 @@ export function componentIdentityMatrix(components) {
   };
 }
 
+export function summarizeRollbackReceipts(receipts) {
+  if (!receipts || typeof receipts !== 'object' || Array.isArray(receipts)) return null;
+  const requiredComponents = ['acs', 'app', 'web'];
+  if (
+    Object.keys(receipts).sort().join(',') !== requiredComponents.join(',') ||
+    requiredComponents.some((component) => {
+      const receipt = receipts[component];
+      return (
+        !receipt ||
+        typeof receipt !== 'object' ||
+        Array.isArray(receipt) ||
+        Object.keys(receipt).sort().join(',') !== 'attempted,succeeded' ||
+        typeof receipt.attempted !== 'boolean' ||
+        typeof receipt.succeeded !== 'boolean' ||
+        (!receipt.attempted && receipt.succeeded)
+      );
+    })
+  )
+    return null;
+  const attempted = requiredComponents.some((component) => receipts[component].attempted);
+  return {
+    attempted,
+    succeeded:
+      attempted &&
+      requiredComponents.every(
+        (component) => !receipts[component].attempted || receipts[component].succeeded,
+      ),
+  };
+}
+
 export function reconcilePromotion(input) {
   if (!input?.releaseId || !input.before || !input.target)
     throw new Error('Promotion reconciliation requires release, before and target identities');
@@ -53,6 +83,37 @@ export function reconcilePromotion(input) {
       reason: 'promotion started a forbidden destructive contract migration',
     };
   }
+  let rollback = { attempted: false, succeeded: false };
+  if (input.rollbackReceipts !== undefined) {
+    rollback = summarizeRollbackReceipts(input.rollbackReceipts);
+    if (!rollback)
+      return {
+        outcome: 'needs_human',
+        reason: 'rollback receipts are incomplete or violate the strict ACS/App/Web schema',
+      };
+  } else if (input.rollbackAttempted !== undefined || input.rollbackSucceeded !== undefined) {
+    return {
+      outcome: 'needs_human',
+      reason: 'legacy aggregate rollback flags are not authoritative receipts',
+    };
+  }
+  if (rollback.attempted) {
+    if (!rollback.succeeded)
+      return {
+        outcome: 'needs_human',
+        reason: 'rollback was attempted but one or more component restorations were not verified',
+      };
+    if (matrixEquals(observed, before))
+      return {
+        outcome: 'rolled_back',
+        reason: 'all components and restored entry bytes match the frozen pre-promotion state',
+      };
+    return {
+      outcome: 'needs_human',
+      reason:
+        'rollback receipts claim success but the authoritative component matrix is not restored',
+    };
+  }
   if (matrixEquals(observed, target)) {
     if (input.configIdentityConfirmed !== true) {
       return {
@@ -67,16 +128,9 @@ export function reconcilePromotion(input) {
     };
   }
   if (matrixEquals(observed, before)) {
-    if (input.rollbackAttempted === true) {
-      return {
-        outcome: 'rolled_back',
-        reason:
-          'a dedicated rollback started and all components match the frozen pre-promotion state',
-      };
-    }
     return {
       outcome: 'failed_before_change',
-      reason: 'no rollback started and no production component differs from the frozen baseline',
+      reason: 'no production component changed before the failure',
     };
   }
   if (input.externalSideEffects === 'unknown') {
@@ -87,7 +141,7 @@ export function reconcilePromotion(input) {
   }
   return {
     outcome: 'partial_failed',
-    reason: 'production components contain a mixed identity matrix after reconciliation',
+    reason: 'production components contain a mixed or unverified identity matrix',
   };
 }
 

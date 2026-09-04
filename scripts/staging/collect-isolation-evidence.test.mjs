@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import test from 'node:test';
+import { canonicalJson, digestBuffer } from '../release/artifact-lib.mjs';
 
 import { assembleIsolationEvidence, readJsonStandardInput } from './collect-isolation-evidence.mjs';
 import { assertIsolationEvidence, SHARED_NAS_RESIDUAL_RISK } from './assert-isolation.mjs';
@@ -8,16 +9,22 @@ import { assertIsolationEvidence, SHARED_NAS_RESIDUAL_RISK } from './assert-isol
 const OBSERVED_AT = '2026-08-29T16:00:00.000Z';
 const NOW = Date.parse(OBSERVED_AT);
 
-function denied(id, observed = {}) {
+function signed(probe) {
   return {
+    ...probe,
+    evidenceDigest: digestBuffer(Buffer.from(canonicalJson(probe.observed))),
+  };
+}
+
+function denied(id, observed = {}) {
+  return signed({
     id,
     status: 'denied',
     sourceEnvironment: 'staging',
     targetEnvironment: 'production',
     observed,
     observedAt: OBSERVED_AT,
-    evidenceDigest: `sha256:${'a'.repeat(64)}`,
-  };
+  });
 }
 
 function hostEvidence() {
@@ -29,7 +36,7 @@ function hostEvidence() {
     observedAt: OBSERVED_AT,
     probes: [
       denied('database-role-cannot-read-or-write-production'),
-      {
+      signed({
         id: 'nas-client-is-all-squashed-and-mounted-to-staging-subdirectory',
         status: 'verified-with-accepted-residual-risk',
         sourceEnvironment: 'staging',
@@ -44,12 +51,11 @@ function hostEvidence() {
           residualRisk: SHARED_NAS_RESIDUAL_RISK,
         },
         observedAt: OBSERVED_AT,
-        evidenceDigest: `sha256:${'c'.repeat(64)}`,
-      },
+      }),
       denied('notification-identity-cannot-deliver-to-production'),
       denied('api-worker-cannot-connect-production-hand-or-acs'),
       denied('acs-service-account-cannot-read-production-namespace-resources'),
-      {
+      signed({
         id: 'sandbox-workspace-uses-staging-only-pvc-and-paths',
         status: 'verified-with-accepted-residual-risk',
         sourceEnvironment: 'staging',
@@ -63,8 +69,7 @@ function hostEvidence() {
           residualRisk: SHARED_NAS_RESIDUAL_RISK,
         },
         observedAt: OBSERVED_AT,
-        evidenceDigest: `sha256:${'d'.repeat(64)}`,
-      },
+      }),
     ],
   };
 }

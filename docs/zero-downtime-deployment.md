@@ -108,25 +108,28 @@
 
 ## 3. 部署流程
 
-触发方式（ci.yml 头注释）：`push main` 只构建 + 测试 + 打包，**不部署生产**；
-发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`）。
-`deploy_plan` 会从 `/etc/agent-saas/active-color` 和 active 色 release symlink 读取生产
-ECS SHA，以该 SHA 到目标 SHA 的累计 diff 判断 ECS 是否必要。确认只有 Web、Mobile、
-文档或测试路径时，`deploy-ecs` 为 skipped，`deploy-web-oss` 直接发布 OSS 和独立
-recovery-web；存在 ECS 相关路径时，后端成功后才放行 Web。生产基线或分类不可用时
-fail-open 继续部署 ECS；`force_ecs=true` 可无条件重发。Server release 始终不含前端文件。
+触发方式：`push main` 只构建、测试与打包，**不部署生产**。`ci.yml` 的旧
+`workflow_dispatch` 已收窄为必须显式确认 `web_only_compatibility=true` 的 Web-only
+兼容入口。`deploy_plan` 从 `/etc/agent-saas/active-color` 和 active 色 release symlink
+读取生产 ECS SHA，以该 SHA 到目标 SHA 的累计 diff 证明是否仅影响 Web。只有 Web、Mobile、
+文档或测试路径时才允许 `deploy-web-oss` 发布 OSS 与独立 recovery-web；只要存在 Server、
+Shared、技能源、依赖、部署配置或未知路径，或生产基线/分类不可用，都会在任何生产 mutation
+前 fail closed。该入口不再支持 `force_ecs`，`deploy-ecs` 不可达；API/Runtime Worker
+变更必须走 Staging RC 与 Production Promotion。Server release 始终不含前端文件。
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
 只允许一个批次从 build 走到 Web OSS 发布结束；普通 push CI 使用独立 `run_id`，不受
-生产发布队列影响。远端脚本还会非阻塞获取
-`/run/lock/agent-saas-deploy.lock` 的 `flock`，覆盖手工 SSH 等绕过 GitHub Actions 的入口。
-两层任一冲突都不会等待或打断在途发布，后发远端批次直接失败并删除自己的独立上传包。
+生产发布队列影响。所有生产入口共享 `/run/lock/agent-saas/promotion.lock`：Web-only
+compatibility 在读取基线前创建远端锁租约，并持续持有到 identity commit，或失败补偿与
+权威证明结束；ECS 与 Promotion mutation 也必须取得同一把 `flock`。这覆盖手工 SSH 等绕过
+GitHub Actions 的入口，锁租约丢失时禁止继续 mutation 或无锁补偿。
 
 deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与脚本注释一致）：
 
+<!-- prettier-ignore -->
 | 步 | 动作 | 失败时 |
 | --- | --- | --- |
-| 0 | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
+| 0 | 获取共享 Production `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
 | 1 | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue|green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口 | 直接退出，什么都没动 |
 | 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
 | 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
@@ -163,6 +166,7 @@ CI 侧还有两个配套 step（不在远端脚本内）：
 
 路由定义在 `server/src/routes/health.ts`，生产挂载于 `/api` 前缀下：
 
+<!-- prettier-ignore -->
 | 端点 | 谁用 | 返回 | 何时 503 |
 | --- | --- | --- | --- |
 | `/api/healthz` | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining` | draining 时 |

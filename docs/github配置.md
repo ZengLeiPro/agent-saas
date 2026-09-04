@@ -32,7 +32,8 @@ Workflow、部署服务或修改云资源。
 - 先只读盘点，再执行变更；发现与本文档不一致的已有配置时停止，不得覆盖或删除未知配置。
 - 不修改 `.github/workflows/` 下任何文件。
 - 不关闭 `App CI / Deploy` 和 `ACS CI / Deploy` 两个旧人工部署入口。
-- 不删除、不改名、不迁移现有 Repository Secrets。旧人工入口仍依赖 Repository Secrets。
+- 生产凭据只允许保存在 `production` Environment；迁移完成并核对全部生产 Secret 读取 job 的
+  Environment 绑定后，必须删除同名 Repository/organization Secret，禁止把高层级 Secret 当兜底。
 - 不执行 `workflow_dispatch`，不创建 Release，不创建 RC tag，不 push，不部署。
 - 不在命令、日志、文档、Issue 或 PR 中打印 Secret 的值。
 - `fc.kaiyan.net` 是共享域名，本次 GitHub 配置不得修改其路由，也不得引入或执行
@@ -299,6 +300,8 @@ NODE
 
 - `ALIYUN_ACCESS_KEY_ID`
 - `ALIYUN_ACCESS_KEY_SECRET`
+- `ACR_READ_ACCESS_KEY_ID`
+- `ACR_READ_ACCESS_KEY_SECRET`
 - `STAGING_ECS_HOST`
 - `STAGING_ECS_USER`
 - `STAGING_ECS_SSH_KEY`
@@ -308,7 +311,8 @@ NODE
 
 要求：
 
-- 阿里云凭据必须属于 Staging 专用、最小权限 RAM 身份，不得复用生产身份。
+- 通用阿里云凭据必须属于 Staging 专用、最小权限 RAM 身份，不得复用生产身份。
+- `ACR_READ_ACCESS_KEY_ID` / `ACR_READ_ACCESS_KEY_SECRET` 仅允许读取 ACR build record、构建日志和 image metadata，禁止创建、覆盖或删除镜像；必须按上述命令写入 `staging` Environment，不得给 Staging 通用 RAM 身份追加 ACR 权限。Staging 同样依赖 ACR repository 的 tag 写权限仅授予受控自动构建身份。
 - SSH 私钥必须对应 Staging ECS 用户。
 - `RELEASE_EVIDENCE_TOKEN` 必须是 Evidence Service 的只读 Token，不得使用写入 Token。
 - E2E 账号必须是隔离 Staging 专用平台管理员测试账号。
@@ -426,22 +430,35 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 
 - `ALIYUN_ACCESS_KEY_ID`
 - `ALIYUN_ACCESS_KEY_SECRET`
+- `ACR_READ_ACCESS_KEY_ID`
+- `ACR_READ_ACCESS_KEY_SECRET`
 - `ECS_HOST`
 - `ECS_USER`
 - `ECS_SSH_KEY`
+- `OSS_WEB_DEPLOY_AK_ID`
+- `OSS_WEB_DEPLOY_AK_SECRET`
 - `PRODUCTION_OBSERVATION_TOKEN`
 - `RELEASE_EVIDENCE_WRITE_TOKEN`
 
+可选恢复凭据：
+
+- `ACS_WEBHOOK_REDELIVERY_TOKEN`：只在 ACS compatibility 找不到当前 SHA 的 ACR 自动构建记录时，
+  用于补投一次 GitHub webhook。正常命中构建记录时不需要；需要补投但未配置时 Workflow fail closed。
+  该 token 必须仅授权 `ZengLeiPro/agent-saas`，Repository permissions 仅设 `Webhooks: write`。
+
 要求：
 
-- 使用生产专用、最小权限的 RAM 与 SSH 身份。
+- 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、`GIT_CLONE` 日志与 image metadata，不得写入或删除镜像。
+- ACR repository 的 tag 写权限只能授予受控自动构建身份，必须移除人工账号及其他自动化的 tag 覆盖权限。build-record API 不返回该 record 的产物 digest；因此全分页、完整 SHA 与稳定 digest 读回不能替代这项现场权限前提，未完成权限审计时禁止触发 ACS Production compatibility。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
   `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
   `prepare-evidence` 前置 job 使用；禁止与只读 Token 相同，也禁止进入实际 Staging 部署 job。
-- Environment Secret 可以与现有 Repository Secret 使用同一真实生产凭据，但必须由可信凭据源重新写入；
-  GitHub 不允许读取已保存 Secret 的明文。
-- 不得删除同名 Repository Secrets，旧人工部署入口仍依赖它们。
+- GitHub 不允许读取已保存 Secret 的明文；必须从可信凭据源重新写入 Environment Secret。
+- `deploy_plan`、`deploy-ecs`、`deploy-web-oss` 与 ACS `build-deploy` 均从 `production`
+  Environment 取生产凭据，不依赖 Repository Secret。
+- Environment 迁移并完成 job 绑定核对后，必须删除同名 Repository/organization Secret；静态代码
+  无法证明现场已删除，管理员必须在 GitHub 配置侧审计。
 
 安全写入形式：
 
@@ -499,10 +516,18 @@ PRODUCTION_KEY='/Users/kaiyan001/Documents/Macbook_Pro.pem'
 STAGING_HOST='120.76.54.103'
 STAGING_KEY='/Users/kaiyan001/.ssh/id_ed25519'
 
-# 这两项由批准的生产凭据源通过标准输入写入：
+# 这四项由批准的生产凭据源通过标准输入写入：
 gh secret set ALIYUN_ACCESS_KEY_ID \
   --repo "$TARGET_REPOSITORY" --env production
 gh secret set ALIYUN_ACCESS_KEY_SECRET \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set ACR_READ_ACCESS_KEY_ID \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set ACR_READ_ACCESS_KEY_SECRET \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set OSS_WEB_DEPLOY_AK_ID \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set OSS_WEB_DEPLOY_AK_SECRET \
   --repo "$TARGET_REPOSITORY" --env production
 
 printf '%s' "$PRODUCTION_HOST" \
@@ -523,6 +548,10 @@ ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
   'cat /etc/agent-saas-staging/release-evidence-write.token' \
   | gh secret set RELEASE_EVIDENCE_WRITE_TOKEN \
       --repo "$TARGET_REPOSITORY" --env production
+
+# 可选：仅在 ACS webhook 补投恢复能力启用、且最小权限 fine-grained token 已准备好时写入。
+gh secret set ACS_WEBHOOK_REDELIVERY_TOKEN \
+  --repo "$TARGET_REPOSITORY" --env production
 
 gh variable set PRODUCTION_OBSERVATION_URL \
   --repo "$TARGET_REPOSITORY" --env production \

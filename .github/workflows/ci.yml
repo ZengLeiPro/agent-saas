@@ -3,9 +3,9 @@
 # ============================================================================
 # 触发:
 #   - push to main: 只构建 + 测试 + 打包 artifact（不部署生产）
-#   - workflow_dispatch: 为尚未迁移到 RC Promotion 的旧版本保留人工兼容部署入口；
-#     构建通过后按生产 active ECS SHA→目标 SHA 的累计差异决定是否部署 ECS，再发布 Web OSS。
-#     force_ecs=true 可强制滚动 ECS。新版本仍应优先使用 promote-release.yml。
+#   - workflow_dispatch: 仅保留 Web-only 人工兼容发布。若生产 active ECS SHA→目标 SHA
+#     存在任何 ECS 相关差异（或无法证明无差异），部署计划在生产 mutation 前 fail closed；
+#     Server/API/Runtime Worker 必须走 RC + Production Promotion，禁止跨 job 非原子发布。
 # 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
 #   只改 idle 色 symlink（active 色 symlink 永不动）→ start idle 实例 →
 #   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
@@ -26,8 +26,9 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      force_ecs:
-        description: 'Force ECS deploy even when no ECS-relevant path changed since production'
+      web_only_compatibility:
+        description: 'Confirm Web-only compatibility publish; Server/API/Worker changes require RC Promotion'
+        required: true
         type: boolean
         default: false
 
@@ -469,6 +470,7 @@ jobs:
   deploy_plan:
     name: Plan production deployment
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 5
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -480,6 +482,7 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
 
     steps:
       - name: Checkout code
@@ -488,8 +491,22 @@ jobs:
           # 必须覆盖生产 active SHA 到目标 SHA 的累计差异，不能只看最后一个 commit。
           fetch-depth: 0
 
+      - name: Confirm Web-only compatibility scope
+        if: inputs.web_only_compatibility != true
+        run: |
+          {
+            echo "### Compatibility deployment blocked"
+            echo
+            echo "- This legacy entrypoint is Web-only."
+            echo "- Re-run with web_only_compatibility=true only for a Web-only target."
+            echo "- Server/API/Runtime Worker changes must use RC + Production Promotion."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Compatibility scope::Explicit Web-only confirmation is required"
+          exit 1
+
       - name: Configure SSH
         run: |
+          set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
           : "${ECS_USER:?Missing secret ECS_USER}"
           : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
@@ -497,36 +514,31 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts \
-            || echo "::warning title=ECS deploy plan::ssh-keyscan failed; necessity gate will fail-open"
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/production-known-host"
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$scan_path"
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
 
       - name: Determine ECS deployment necessity
         id: plan
-        env:
-          FORCE_ECS_DEPLOY: ${{ inputs.force_ecs }}
         run: |
           set -euo pipefail
 
-          fail_open() {
-            echo "::warning title=ECS necessity gate inconclusive::$1 — proceeding with ECS deploy (fail-open)."
+          block_server_compatibility() {
             echo "ecs_required=true" >> "$GITHUB_OUTPUT"
             {
-              echo "### ECS deploy necessity gate"
+              echo "### Compatibility deployment blocked"
               echo
-              echo "- inconclusive: $1 — proceeded with ECS deploy (fail-open)"
+              echo "- $1"
+              echo "- This entrypoint cannot atomically compensate ECS + Web across jobs."
+              echo "- Publish Server/API/Runtime Worker changes through RC + Production Promotion."
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error title=Web-only compatibility::$1"
+            exit 1
           }
-
-          if [ "${FORCE_ECS_DEPLOY:-false}" = "true" ]; then
-            echo "ecs_required=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### ECS deploy necessity gate"
-              echo
-              echo "- \`force_ecs=true\` — deploying ECS unconditionally"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
 
           production_ecs_sha="$(ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
@@ -543,11 +555,11 @@ jobs:
             ' 2>/dev/null || true)"
 
           printf '%s' "$production_ecs_sha" | grep -Eq '^[0-9a-f]{40}$' \
-            || fail_open "cannot read a full active ECS release SHA"
+            || block_server_compatibility "cannot prove the active ECS release SHA"
           git cat-file -e "$production_ecs_sha^{commit}" 2>/dev/null \
-            || fail_open "production ECS commit $production_ecs_sha is outside checkout history"
+            || block_server_compatibility "production ECS commit $production_ecs_sha is outside checkout history"
           git merge-base --is-ancestor "$production_ecs_sha" "$GITHUB_SHA" \
-            || fail_open "production ECS commit $production_ecs_sha is not an ancestor of target"
+            || block_server_compatibility "production ECS commit $production_ecs_sha is not an ancestor of target"
 
           echo "production_ecs_sha=$production_ecs_sha" >> "$GITHUB_OUTPUT"
           if [ "$production_ecs_sha" = "$GITHUB_SHA" ]; then
@@ -557,7 +569,7 @@ jobs:
               echo
               echo "- **ECS skipped**: production already runs target \`${production_ecs_sha:0:8}\`"
               echo "- Web OSS may still publish or repair the same target independently"
-              echo "- override: \`gh workflow run ci.yml -f force_ecs=true\`"
+              echo "- compatibility scope: Web-only; Server/API/Worker must use RC Promotion"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -566,47 +578,45 @@ jobs:
           git diff --name-only "$production_ecs_sha" "$GITHUB_SHA" > "$changed_files"
           out="$RUNNER_TEMP/ecs-release-classification.out"
           bash .github/scripts/ecs-release-classify.sh "$changed_files" > "$out" \
-            || fail_open "ecs-release-classify.sh failed"
+            || block_server_compatibility "ECS release classification failed"
           cat "$out"
 
           required="$(sed -n 's/^required=//p' "$out")"
           reason="$(sed -n 's/^reason=//p' "$out")"
           skipped="$(sed -n 's/^skipped=//p' "$out")"
-          case "$required" in true|false) ;; *) fail_open "classifier returned invalid required=$required" ;; esac
+          case "$required" in true|false) ;; *) block_server_compatibility "classifier returned invalid required=$required" ;; esac
           echo "ecs_required=$required" >> "$GITHUB_OUTPUT"
 
           if [ "$required" = "true" ]; then
-            {
-              echo "### ECS deploy necessity gate"
-              echo
-              echo "- ECS deploy required since production \`${production_ecs_sha:0:8}\`"
-              echo "- ECS-relevant paths: $reason"
-            } >> "$GITHUB_STEP_SUMMARY"
+            block_server_compatibility "ECS changes are required since production ${production_ecs_sha:0:8}: $reason"
           else
             {
-              echo "### ECS deploy necessity gate"
+              echo "### Web-only compatibility gate"
               echo
-              echo "- **ECS skipped**: only Web/Mobile/docs/test paths changed since production \`${production_ecs_sha:0:8}\`"
+              echo "- **ECS mutation prohibited**: only Web/Mobile/docs/test paths changed since production `${production_ecs_sha:0:8}`"
               echo "- non-ECS paths: $skipped"
-              echo "- Web OSS will publish without rolling Web/API or Runtime Worker"
-              echo "- override: \`gh workflow run ci.yml -f force_ecs=true\`"
+              echo "- Web OSS may publish without rolling Web/API or Runtime Worker"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
   deploy-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
+    environment: production
     # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
     timeout-minutes: 55
     needs: [build, deploy_plan]
-    # 生产部署只走手动触发；确认生产以来仅有 Web/Mobile/docs/test 变更时跳过。
-    # 分类读取或解析失败由 deploy_plan fail-open 为 true，不得阻塞必要发布。
+    # 保留旧 job 定义只为历史可追溯；绑定 production 的 deploy_plan 对任何
+    # ecs_required=true 或无法证明 Web-only 的 dispatch 都先失败，因此该 job 不再可达。
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.deploy_plan.outputs.ecs_required == 'true'
+    outputs:
+      server_artifact_digest: ${{ steps.pack.outputs.server_artifact_digest }}
 
     env:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       RELEASE_RECORD_OSS_URI: oss://agent-saas-release-records
@@ -673,6 +683,7 @@ jobs:
             --runtime-dependencies "$stage/server/runtime-dependencies.json" \
             --output "$RUNNER_TEMP/server-artifact-index.json"
           server_digest="$(jq -r .artifacts.serverBundle.digest "$RUNNER_TEMP/server-artifact-index.json")"
+          echo "server_artifact_digest=$server_digest" >> "$GITHUB_OUTPUT"
           server_size="$(jq -r .artifacts.serverBundle.size "$RUNNER_TEMP/server-artifact-index.json")"
           release_id="rc-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
           {
@@ -683,6 +694,7 @@ jobs:
 
       - name: Configure SSH
         run: |
+          set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
           : "${ECS_USER:?Missing secret ECS_USER}"
           : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
@@ -690,7 +702,13 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/production-known-host"
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$scan_path"
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
 
       - name: Install Alibaba Cloud CLI
         run: |
@@ -2573,29 +2591,28 @@ jobs:
             log "runtime worker active in committed App generation: color=$WORKER_IDLE release=$RELEASE_ID"
           fi
 
-          # ── 10.6 从已收敛的物理运行态原子重建 Production identity ──
-          # 这一步必须发生在旧 API drain 之前；不能让兼容入口只换字节、不换身份。
+          # ── 10.6 核对 App 物理态，但不提前提交可信 Production identity ──
+          # compatibility 通道还要发布 Web；只有 Web 完成后才能把完整组件矩阵一次提交。
           IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           rm -rf "$IDENTITY_SYNC_DIR"
           mkdir -p "$IDENTITY_SYNC_DIR"
           IDENTITY_SYNCED=0
           for identity_attempt in $(seq 1 10); do
-            rm -f "$IDENTITY_SYNC_DIR/live.json" "$IDENTITY_SYNC_DIR/confirmed.json"
+            rm -f "$IDENTITY_SYNC_DIR/live.json"
             if node "$RELEASE_DIR/scripts/release/read-live-production-components.mjs" \
                 --output "$IDENTITY_SYNC_DIR/live.json" >/dev/null \
-              && node "$RELEASE_DIR/scripts/release/write-live-production-identity.mjs" \
-                --input "$IDENTITY_SYNC_DIR/live.json" \
-                --output "$RUNTIME_IDENTITY_FILE" >/dev/null \
-              && node "$RELEASE_DIR/scripts/release/read-production-state.mjs" \
-                --output "$IDENTITY_SYNC_DIR/confirmed.json" >/dev/null; then
+              && jq -e --arg sha "$RELEASE_SHA" --arg digest "$SERVER_ARTIFACT_DIGEST" \
+                '.components.api.gitSha==$sha and .components.api.artifactDigest==$digest and
+                 .components.runtimeWorker.gitSha==$sha and .components.runtimeWorker.artifactDigest==$digest' \
+                "$IDENTITY_SYNC_DIR/live.json" >/dev/null; then
               IDENTITY_SYNCED=1
               break
             fi
-            log "Production identity convergence attempt $identity_attempt/10 failed"
+            log "Production App physical-state readback attempt $identity_attempt/10 failed"
             sleep 2
           done
           if [ "$IDENTITY_SYNCED" -ne 1 ]; then
-            log "ERROR: trusted Production identity could not be rebuilt; restoring atomic API/Worker authority before draining old API"
+            log "ERROR: Production App physical state could not be confirmed; restoring API/Worker before draining old API"
             cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
             if ! commit_app_active_colors "$ACTIVE" "${WORKER_ACTIVE:-absent}"; then
               log "ERROR: failed to restore previous App authority; preserving new traffic for manual recovery"
@@ -2613,7 +2630,7 @@ jobs:
             rollback_idle_and_exit
           fi
           rm -rf "$IDENTITY_SYNC_DIR"
-          log "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
+          log "API and Runtime Worker physical state converged; trusted identity remains unchanged until Web converges"
 
           # App authority、nginx、ConfigIdentity 与 Runtime Dependency Identity 已收敛。
           # 仅移除本次精确 attempt owner；主线 rollback state/script 继续作为人工回滚入口。
@@ -2755,41 +2772,19 @@ jobs:
           fi
           echo "zero-downtime gate passed"
 
-      - name: Refresh trusted Production identity
-        run: |
-          set -euo pipefail
-          remote="/tmp/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup() {
-            ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
-          }
-          trap cleanup EXIT
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/ecs_deploy_key \
-            scripts/release/artifact-lib.mjs \
-            scripts/release/read-live-production-components.mjs \
-            scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs \
-            scripts/release/verify-installed-release.mjs \
-            scripts/release/write-live-production-identity.mjs \
-            "$ECS_USER@$ECS_HOST:$remote/"
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
-             sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
-             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null"
-          echo "Production identity refreshed from independently verified live components"
-
   # 前端静态托管在 OSS（bucket agent-saas-web，绑定 agent.kaiyan.net），
   # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。
   # ECS 冷灾备使用同一份分域构建，但发布到独立 recovery-web 目录，
   # 不进入 Server release，也不由 Express 托管。
-  # 与 ECS 部署同为 dispatch-only；ECS 有必要时必须先成功，无必要时可独立发布。
+  # dispatch-only 且仅允许 Web-only；deploy_plan 发现任何 ECS 相关差异即在 mutation 前阻断。
   # 上传顺序：先 hash 资源（immutable，只增不删，兼容在途会话的旧 chunk 懒加载）,
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
   deploy-web-oss:
     name: Deploy Web to OSS
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 15
-    # ECS 必要时要求其成功；确认无需 ECS 时，允许在 deploy-ecs skipped 后直接发布 OSS。
+    # 只接受 deploy_plan 已证明无需 ECS，且不可达的 deploy-ecs 保持 skipped。
     needs: [build, deploy_plan, deploy-ecs]
     if: >-
       always() &&
@@ -2797,8 +2792,8 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       needs.build.result == 'success' &&
       needs.deploy_plan.result == 'success' &&
-      ((needs.deploy_plan.outputs.ecs_required == 'false' && needs.deploy-ecs.result == 'skipped') ||
-       (needs.deploy_plan.outputs.ecs_required == 'true' && needs.deploy-ecs.result == 'success'))
+      needs.deploy_plan.outputs.ecs_required == 'false' &&
+      needs.deploy-ecs.result == 'skipped'
 
     env:
       OSS_ACCESS_KEY_ID: ${{ secrets.OSS_WEB_DEPLOY_AK_ID }}
@@ -2814,7 +2809,14 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       RECOVERY_WEB_ROOT: /opt/agent-saas-web-recovery
+      # Runner payloads enter the dedicated Production root-only directory before digest verification.
+      PRODUCTION_STAGING_ROOT: /run/agent-saas-production-staging
+      WEB_TRANSACTION_PREFIX: _transactions/${{ github.run_id }}-${{ github.run_attempt }}
+      PRODUCTION_LOCK_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}-compat-web
+      PRODUCTION_LOCK_UPLOAD: /tmp/production-lock-${{ github.run_id }}-${{ github.run_attempt }}.sh
+      PRODUCTION_LOCK_SCRIPT: /run/agent-saas-locks/production-lock-${{ github.run_id }}-${{ github.run_attempt }}.sh
 
     steps:
       - name: Checkout code
@@ -2850,13 +2852,19 @@ jobs:
             echo "COMPAT_RELEASE_ID=$release_id"
           } >> "$GITHUB_ENV"
 
-      - name: Install OSS clients
+      - name: Install and verify OSS clients
         run: |
           set -euo pipefail
           curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
           unzip -o -q /tmp/ossutil.zip -d /tmp
           sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
-          ossutil version
+          ossutil version | grep -F '2.1.2'
+          ossutil cp --help > "$RUNNER_TEMP/ossutil-cp-help.txt"
+          ossutil stat --help > "$RUNNER_TEMP/ossutil-stat-help.txt"
+          grep -Eq -- '(^|[[:space:],])-f([[:space:],]|$)' "$RUNNER_TEMP/ossutil-cp-help.txt"
+          grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-cp-help.txt"
+          grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-stat-help.txt"
+          node scripts/release/put-web-asset-create-only.mjs --self-check
           curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz \
             -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
@@ -2882,88 +2890,214 @@ jobs:
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > web/dist/release-identity.json
 
-      - name: Snapshot current Web entry files
+      - name: Configure recovery SSH
         run: |
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/$f" \
-              "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/$f" -f \
-              --region "$OSS_REGION" --copy-props default
-          done
+          set -euo pipefail
+          : "${ECS_HOST:?Missing secret ECS_HOST}"
+          : "${ECS_USER:?Missing secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_recovery_key
+          chmod 600 ~/.ssh/ecs_recovery_key
+          : "${PRODUCTION_SSH_HOST_KEY_SHA256:?Missing pinned Production SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/production-known-host"
+          ssh-keyscan -T 10 -t ed25519 -H "$ECS_HOST" > "$scan_path"
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$PRODUCTION_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
 
-      - name: Upload to OSS
+      - name: Acquire production host lock for the complete Web transaction
         run: |
-          : "${OSS_ACCESS_KEY_ID:?Missing secret OSS_WEB_DEPLOY_AK_ID}"
-          : "${OSS_ACCESS_KEY_SECRET:?Missing secret OSS_WEB_DEPLOY_AK_SECRET}"
-          cd web/dist
-          # 1) hash 静态资源：不可变长缓存（只增量新增，不删除旧 hash 文件）
-          ossutil cp assets "oss://$OSS_BUCKET/assets" -r -f --region "$OSS_REGION" \
-            --cache-control "public, max-age=31536000, immutable"
-          # JS/CSS 预压缩后覆盖同一对象键，并显式写入 Content-Encoding。
-          # 浏览器按原 URL 获取，OSS 直接返回 gzip，避免约 1MB 主脚本冷加载。
-          compressed_js_assets=0
-          compressed_css_assets=0
-          while IFS= read -r -d '' asset_file; do
-            relative_file="${asset_file#assets/}"
-            case "$asset_file" in
-              *.js|*.mjs)
-                compressed_file="$RUNNER_TEMP/oss-gzip-js/assets/$relative_file"
-                compressed_js_assets=$((compressed_js_assets + 1))
+          set -euo pipefail
+          lock_log="/tmp/production-lock-$PRODUCTION_LOCK_TOKEN.log"
+          scp -i ~/.ssh/ecs_recovery_key scripts/release/production-lock-lease.sh \
+            "$ECS_USER@$ECS_HOST:$PRODUCTION_LOCK_UPLOAD"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo mkdir -p /run/agent-saas-locks; \
+             sudo install -m 0500 '$PRODUCTION_LOCK_UPLOAD' '$PRODUCTION_LOCK_SCRIPT'; \
+             rm -f '$PRODUCTION_LOCK_UPLOAD' '$lock_log'; \
+             nohup sudo env PRODUCTION_LOCK_TIMEOUT_SECONDS=1800 \
+               bash '$PRODUCTION_LOCK_SCRIPT' hold '$PRODUCTION_LOCK_TOKEN' \
+               >'$lock_log' 2>&1 </dev/null &"
+          for _ in $(seq 1 60); do
+            if ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+                "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'" \
+                >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "cat '$lock_log'" >&2 || true
+          exit 1
+
+      - name: Snapshot trusted Production identity before Web transaction
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "sudo cat /etc/agent-saas/runtime-identity.json" \
+            > "$RUNNER_TEMP/runtime-identity.before.json"
+          jq -e '.schemaVersion == 1 and .environment == "production" and .components.web' \
+            "$RUNNER_TEMP/runtime-identity.before.json" >/dev/null
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "set -e; \
+             target=\$(readlink -f '$RECOVERY_WEB_ROOT/current'); \
+             case \"\$target\" in '$RECOVERY_WEB_ROOT'/releases/*) ;; \
+               *) echo 'recovery Web current target is not an immutable release' >&2; exit 1 ;; \
+             esac; \
+             for f in manifest.webmanifest release-identity.json index.html sw.js; do \
+               test -s \"\$target/\$f\" || { echo \"recovery Web before target is missing \$f\" >&2; exit 1; }; \
+             done; \
+             jq -e '.schemaVersion == 1 and .environment == \"production\" and .releaseId and .releaseSha and .webDigest' \
+               \"\$target/release-identity.json\" >/dev/null; \
+             printf '%s\\n' \"\$target\"" \
+            > "$RUNNER_TEMP/recovery-web-target.before"
+
+      - name: Snapshot all mutable Web keys under continuously verified Production lock ownership
+        run: |
+          set -euo pipefail
+          snapshot_web() {
+          set -euo pipefail
+          keys="$RUNNER_TEMP/web-mutable-keys.txt"
+          states="$RUNNER_TEMP/web-mutable-before.tsv"
+          (
+            cd web/dist
+            for f in manifest.webmanifest release-identity.json index.html sw.js \
+              apple-touch-icon.png favicon-16x16.png favicon-32x32.png favicon.ico \
+              kaikai-avatar.png workbox-*.js; do
+              [ -f "$f" ] && printf '%s\n' "$f"
+            done
+            for d in icons kaikai-presets; do
+              [ -d "$d" ] && find "$d" -type f -print
+            done
+          ) | LC_ALL=C sort -u > "$keys"
+          test -s "$keys"
+          ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
+          : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
+          # Compare serving metadata while excluding mutation timestamps and transaction paths.
+          normalize_oss_metadata() {
+            grep -Ei '^[[:space:]]*(ACL|Cache-?Control|Content-?(Disposition|Encoding|Language|Length|MD5|Type)|ETag|Expires|Metadata|Storage-?Class|X-Oss-(Meta-|Object-Acl|Storage-Class|Server-Side-Encryption))' "$1" \
+              | sed -E 's/\r$//; s/^[[:space:]]+//; s/[[:space:]]*:[[:space:]]*/:/' \
+              | LC_ALL=C sort
+          }
+          : > "$states"
+          while IFS= read -r key; do
+            printf '%s' "$key" | grep -Eq '^[A-Za-z0-9._/-]+$'
+            stat_log="$RUNNER_TEMP/web-mutable-stat.log"
+            if ossutil stat "oss://$OSS_BUCKET/$key" --region "$OSS_REGION" \
+              > "$stat_log" 2>&1; then
+              state=present
+            elif grep -Eiq 'ErrorCode[=: ]+NoSuchKey([[:space:],}]|$)' "$stat_log"; then
+              state=missing
+            else
+              cat "$stat_log" >&2
+              exit 1
+            fi
+            case "$key:$state" in
+              manifest.webmanifest:missing|release-identity.json:missing|index.html:missing|sw.js:missing)
+                echo "required Production Web key is missing before transaction: $key" >&2
+                exit 1
                 ;;
-              *.css)
-                compressed_file="$RUNNER_TEMP/oss-gzip-css/assets/$relative_file"
-                compressed_css_assets=$((compressed_css_assets + 1))
-                ;;
-              *) continue ;;
             esac
-            mkdir -p "$(dirname "$compressed_file")"
-            gzip -n -9 -c "$asset_file" > "$compressed_file"
-          done < <(find assets -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' \) -print0)
-          if [ "$compressed_js_assets" -gt 0 ]; then
-            ossutil cp "$RUNNER_TEMP/oss-gzip-js/assets" "oss://$OSS_BUCKET/assets" \
-              -r -f --region "$OSS_REGION" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --content-type "text/javascript; charset=utf-8" --content-encoding gzip
-          fi
-          if [ "$compressed_css_assets" -gt 0 ]; then
-            ossutil cp "$RUNNER_TEMP/oss-gzip-css/assets" "oss://$OSS_BUCKET/assets" \
-              -r -f --region "$OSS_REGION" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --content-type "text/css; charset=utf-8" --content-encoding gzip
-          fi
-          if [ "$compressed_js_assets" -eq 0 ] || [ "$compressed_css_assets" -eq 0 ]; then
-            echo "No JS/CSS assets found for OSS compression"
-            exit 1
-          fi
-          echo "uploaded $compressed_js_assets JS and $compressed_css_assets CSS precompressed assets"
-          # 2) 图标与预置资源：短缓存
-          for d in icons kaikai-presets; do
-            [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \
-              --cache-control "public, max-age=86400"
-          done
-          for f in apple-touch-icon.png favicon-16x16.png favicon-32x32.png favicon.ico kaikai-avatar.png; do
-            [ -f "$f" ] && ossutil cp "$f" "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" \
-              --cache-control "public, max-age=86400"
-          done
-          # 3) SW 依赖先覆盖；manifest 显式修正 MIME
-          for f in workbox-*.js; do
-            ossutil cp "$f" "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" \
-              --cache-control "no-cache" --content-type "text/javascript"
-          done
-          ossutil cp manifest.webmanifest "oss://$OSS_BUCKET/manifest.webmanifest" -f \
-            --region "$OSS_REGION" --cache-control "no-cache" \
-            --content-type "application/manifest+json"
-          # 4) 发布身份与 HTML 切入口；sw.js 必须最后上传，避免引用尚未就位的 Workbox 文件
-          ossutil cp release-identity.json "oss://$OSS_BUCKET/release-identity.json" -f \
-            --region "$OSS_REGION" --cache-control "no-cache" \
-            --content-type "application/json; charset=utf-8"
-          ossutil cp index.html "oss://$OSS_BUCKET/index.html" -f --region "$OSS_REGION" \
-            --cache-control "no-cache" --content-type "text/html; charset=utf-8"
-          ossutil cp sw.js "oss://$OSS_BUCKET/sw.js" -f --region "$OSS_REGION" \
-            --cache-control "no-cache" --content-type "text/javascript"
-          echo "web dist uploaded to oss://$OSS_BUCKET"
+            before="$RUNNER_TEMP/web-before/$key"
+            recovery="$RUNNER_TEMP/web-recovery-before/$key"
+            mkdir -p "$(dirname "$before")" "$(dirname "$recovery")"
+            http_code="$(curl -sS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+              -H 'cache-control: no-cache' -o "$recovery" -w '%{http_code}' \
+              "https://agent.kaiyan.net/$key?before_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" || true)"
+            if [ "$state" = present ]; then
+              ossutil cp "oss://$OSS_BUCKET/$key" \
+                "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" -f \
+                --region "$OSS_REGION" --copy-props default
+              ossutil cp "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                "$before" -f --region "$OSS_REGION"
+              before_metadata="$RUNNER_TEMP/web-before-metadata/$key"
+              backup_stat="$RUNNER_TEMP/web-backup-stat/$key"
+              backup_metadata="$RUNNER_TEMP/web-backup-metadata/$key"
+              mkdir -p "$(dirname "$before_metadata")" "$(dirname "$backup_stat")" \
+                "$(dirname "$backup_metadata")"
+              normalize_oss_metadata "$stat_log" > "$before_metadata"
+              test -s "$before_metadata"
+              ossutil stat \
+                "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                --region "$OSS_REGION" > "$backup_stat"
+              normalize_oss_metadata "$backup_stat" > "$backup_metadata"
+              cmp "$before_metadata" "$backup_metadata"
+              test "$http_code" = 200
+              cmp "$before" "$recovery"
+            else
+              test "$http_code" = 404
+            fi
+            printf '%s\t%s\n' "$state" "$key" >> "$states"
+          done < "$keys"
+          ossutil cp "$states" \
+            "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/mutable-keys.tsv" -f \
+            --region "$OSS_REGION" --cache-control "no-store" \
+            --content-type "text/tab-separated-values; charset=utf-8"
+          touch "$RUNNER_TEMP/web-entry-snapshot-complete"
+          }
+          export -f snapshot_web
+          PRODUCTION_LOCK_SSH_KEY=~/.ssh/ecs_recovery_key \
+            bash scripts/release/run-with-production-lock-guard.sh bash -c snapshot_web
 
-      - name: Verify live Web/API split-domain contract
+      - name: Upload to OSS under continuously verified Production lock ownership
         run: |
+          set -euo pipefail
+          upload_web() {
+            set -euo pipefail
+            : "${OSS_ACCESS_KEY_ID:?Missing secret OSS_WEB_DEPLOY_AK_ID}"
+            : "${OSS_ACCESS_KEY_SECRET:?Missing secret OSS_WEB_DEPLOY_AK_SECRET}"
+            credentials="$RUNNER_TEMP/web-oss-sdk-credentials.json"
+            umask 077
+            jq -n --arg accessKeyId "$OSS_ACCESS_KEY_ID" \
+              --arg accessKeySecret "$OSS_ACCESS_KEY_SECRET" \
+              '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$credentials"
+            cd web/dist
+            # 1) hash 静态资源：最终字节只允许创建或复用，禁止覆盖既有对象键。
+            bash ../../scripts/release/upload-web-assets-immutable.sh \
+              assets "oss://$OSS_BUCKET/assets" "$credentials"
+            # 2) 图标与预置资源：短缓存
+            for d in icons kaikai-presets; do
+              [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \
+                --cache-control "public, max-age=86400"
+            done
+            for f in apple-touch-icon.png favicon-16x16.png favicon-32x32.png favicon.ico kaikai-avatar.png; do
+              [ -f "$f" ] && ossutil cp "$f" "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" \
+                --cache-control "public, max-age=86400"
+            done
+            # 3) SW 依赖先覆盖；manifest 显式修正 MIME
+            for f in workbox-*.js; do
+              ossutil cp "$f" "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" \
+                --cache-control "no-cache" --content-type "text/javascript"
+            done
+            ossutil cp manifest.webmanifest "oss://$OSS_BUCKET/manifest.webmanifest" -f \
+              --region "$OSS_REGION" --cache-control "no-cache" \
+              --content-type "application/manifest+json"
+            # 4) 发布身份与 HTML 切入口；sw.js 必须最后上传，避免引用尚未就位的 Workbox 文件
+            ossutil cp release-identity.json "oss://$OSS_BUCKET/release-identity.json" -f \
+              --region "$OSS_REGION" --cache-control "no-cache" \
+              --content-type "application/json; charset=utf-8"
+            ossutil cp index.html "oss://$OSS_BUCKET/index.html" -f --region "$OSS_REGION" \
+              --cache-control "no-cache" --content-type "text/html; charset=utf-8"
+            ossutil cp sw.js "oss://$OSS_BUCKET/sw.js" -f --region "$OSS_REGION" \
+              --cache-control "no-cache" --content-type "text/javascript"
+            echo "web dist uploaded to oss://$OSS_BUCKET"
+          }
+          export -f upload_web
+          PRODUCTION_LOCK_SSH_KEY=~/.ssh/ecs_recovery_key \
+            bash scripts/release/run-with-production-lock-guard.sh bash -c upload_web
+
+      - name: Verify live Web/API split-domain contract under the Production lock
+        run: |
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
           node web/scripts/check-live-oss.mjs
           node web/scripts/check-live-compression.mjs
           curl -fsS --retry 10 -H 'cache-control: no-cache' \
@@ -2972,37 +3106,61 @@ jobs:
 
       - name: Package recovery Web release
         run: |
-          tar -C web/dist -czf "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" .
+          set -euo pipefail
+          archive="$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz"
+          tar -C web/dist -czf "$archive" .
+          echo "RECOVERY_WEB_ARCHIVE_SHA256=$(sha256sum "$archive" | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
-      - name: Configure recovery SSH
+      - name: Seal recovery Web release in root-only staging
         run: |
-          : "${ECS_HOST:?Missing secret ECS_HOST}"
-          : "${ECS_USER:?Missing secret ECS_USER}"
-          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_recovery_key
-          chmod 600 ~/.ssh/ecs_recovery_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
-
-      - name: Upload recovery Web release
-        run: |
-          scp -i ~/.ssh/ecs_recovery_key \
+          set -euo pipefail
+          archive="$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz"
+          remote="$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          cat "$archive" | ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" \
-            "$ECS_USER@$ECS_HOST:/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz"
+            "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/recovery-web.tgz' >/dev/null"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- verify '$RECOVERY_WEB_ARCHIVE_SHA256' \
+             '$remote/recovery-web.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
+          trap - EXIT
 
       - name: Activate recovery Web release
         run: |
+          set -euo pipefail
+          remote="$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' ARCHIVE='/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' bash -s" \
+            "sudo env RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
+             RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q \
+             RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' \
+             ARCHIVE='$remote/recovery-web.tgz' bash -s" \
             < scripts/deploy-recovery-web.sh
-          touch "$RUNNER_TEMP/recovery-web-activated"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
 
       - name: Verify recovery Web endpoint
         run: |
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
           ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
           : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
           curl -fsS \
@@ -3016,62 +3174,295 @@ jobs:
 
       - name: Snapshot successful Web release
         run: |
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/$f" \
-              "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/current/$f" -f \
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          while IFS=$'\t' read -r _state key; do
+            ossutil cp "oss://$OSS_BUCKET/$key" \
+              "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/current/$key" -f \
               --region "$OSS_REGION" --copy-props default
-          done
+          done < "$RUNNER_TEMP/web-mutable-before.tsv"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
 
-      - name: Restore previous recovery Web on failure
-        if: failure()
+      - name: Commit trusted Production identity after all compatibility targets converge
+        id: commit_trusted_identity
+        continue-on-error: true
         run: |
-          if [ ! -f "$RUNNER_TEMP/recovery-web-activated" ]; then
-            echo "recovery Web was not activated; nothing to restore"
+          set -euo pipefail
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          remote="$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo grep -Fx 'state=activated' \
+             '$RECOVERY_WEB_ROOT/transactions/${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.activation' >/dev/null"
+          identity_payload=(
+            scripts/release/artifact-lib.mjs
+            scripts/release/read-live-production-components.mjs
+            scripts/release/read-production-state.mjs
+            scripts/release/read-runtime-identity.mjs
+            scripts/release/verify-installed-release.mjs
+            scripts/release/write-live-production-identity.mjs
+            "$RUNNER_TEMP/runtime-identity.before.json"
+          )
+          payload_stage="$RUNNER_TEMP/production-identity-payload"
+          payload_archive="$RUNNER_TEMP/production-identity-payload.tgz"
+          rm -rf "$payload_stage"
+          mkdir -p "$payload_stage"
+          for source in "${identity_payload[@]}"; do
+            install -m 0444 "$source" "$payload_stage/$(basename "$source")"
+          done
+          tar -C "$payload_stage" -czf "$payload_archive" .
+          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
+          cat "$payload_archive" | ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/payload.tgz' >/dev/null"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
+             sudo jq -e --arg sha '$GITHUB_SHA' --arg digest '$WEB_ARTIFACT_DIGEST' \
+               '.components.web.gitSha==\$sha and .components.web.artifactDigest==\$digest' '$remote/live.json' >/dev/null && \
+             if [ '${{ needs.deploy_plan.outputs.ecs_required }}' = false ]; then \
+               sudo jq -e --slurpfile before '$remote/runtime-identity.before.json' \
+                 'def keep: {api:{gitSha:.api.gitSha,artifactDigest:.api.artifactDigest},runtimeWorker:{gitSha:.runtimeWorker.gitSha,artifactDigest:.runtimeWorker.artifactDigest},acs:{gitSha:.acs.gitSha,orchestratorArtifactDigest:.acs.orchestratorArtifactDigest,sandboxImageDigest:.acs.sandboxImageDigest}}; (.components|keep)==(\$before[0].components|keep)' \
+                 '$remote/live.json' >/dev/null; \
+             else \
+               sudo jq -e --arg sha '$GITHUB_SHA' \
+                 --arg digest '${{ needs.deploy-ecs.outputs.server_artifact_digest }}' \
+                 '.components.api.gitSha==\$sha and .components.api.artifactDigest==\$digest and
+                  .components.runtimeWorker.gitSha==\$sha and .components.runtimeWorker.artifactDigest==\$digest' \
+                 '$remote/live.json' >/dev/null; \
+             fi && \
+             sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
+             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null && \
+             sudo jq -e --slurpfile live '$remote/live.json' \
+               'def matrix: {web:{gitSha:.web.gitSha,artifactDigest:.web.artifactDigest},api:{gitSha:.api.gitSha,artifactDigest:.api.artifactDigest},runtimeWorker:{gitSha:.runtimeWorker.gitSha,artifactDigest:.runtimeWorker.artifactDigest},acs:{gitSha:.acs.gitSha,orchestratorArtifactDigest:.acs.orchestratorArtifactDigest,sandboxImageDigest:.acs.sandboxImageDigest}}; (.components|matrix)==(\$live[0].components|matrix)' \
+               '$remote/confirmed.json' >/dev/null"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          echo "Production identity committed once after Web/API/Worker/ACS live readback"
+      - name: Restore previous recovery Web on failure
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          if [ ! -s "$RUNNER_TEMP/recovery-web-target.before" ]; then
+            echo "recovery Web baseline was not captured and no recovery mutation started"
             exit 0
           fi
+          printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' bash -s" \
+            "sudo env RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
+             RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q \
+             RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' bash -s" \
             < scripts/rollback-recovery-web.sh
 
-      - name: Restore previous Web entry files on failure
-        if: failure()
+      - name: Restore all previous mutable Web keys under continuously verified Production lock ownership
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
+          set -euo pipefail
+          restore_web() {
+          set -euo pipefail
           if ! command -v ossutil >/dev/null 2>&1; then
             echo "ossutil unavailable; no Web upload could have completed"
             exit 0
           fi
-          if ! ossutil stat "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/index.html" \
-            --region "$OSS_REGION" >/dev/null 2>&1; then
-            echo "previous Web snapshot unavailable; nothing to restore"
+          if [ ! -f "$RUNNER_TEMP/web-entry-snapshot-complete" ]; then
+            echo "Web key snapshot did not complete; production Web mutation never started"
             exit 0
           fi
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/$f" \
-              "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" --copy-props default
-          done
-          echo "previous Web entry files restored after failed deployment"
+          while IFS=$'\t' read -r state key; do
+            case "$state" in
+              present)
+                ossutil cp "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                  "oss://$OSS_BUCKET/$key" -f --region "$OSS_REGION" --copy-props default
+                ;;
+              missing)
+                ossutil rm "oss://$OSS_BUCKET/$key" -f --region "$OSS_REGION" || true
+                ;;
+              *) echo "invalid Web snapshot state for $key: $state" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/web-mutable-before.tsv"
+          echo "all previous mutable Web keys restored after failed deployment"
+          }
+          export -f restore_web
+          PRODUCTION_LOCK_SSH_KEY=~/.ssh/ecs_recovery_key \
+            bash scripts/release/run-with-production-lock-guard.sh bash -c restore_web
 
-      - name: Refresh trusted Production identity
+      - name: Restore trusted Production identity on failure
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
-          remote="/tmp/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          if [ ! -s "$RUNNER_TEMP/runtime-identity.before.json" ]; then
+            echo "trusted identity was not snapshotted and was never mutated"
+            exit 0
+          fi
+          remote="$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
           cleanup() {
-            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
           }
           trap cleanup EXIT
-          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/ecs_recovery_key \
-            scripts/release/artifact-lib.mjs \
-            scripts/release/read-live-production-components.mjs \
-            scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs \
-            scripts/release/verify-installed-release.mjs \
-            scripts/release/write-live-production-identity.mjs \
-            "$ECS_USER@$ECS_HOST:$remote/"
+          payload_stage="$RUNNER_TEMP/production-identity-restore"
+          payload_archive="$RUNNER_TEMP/production-identity-restore.tgz"
+          rm -rf "$payload_stage"
+          mkdir -p "$payload_stage"
+          install -m 0444 "$RUNNER_TEMP/runtime-identity.before.json" \
+            "$payload_stage/runtime-identity.before.json"
+          tar -C "$payload_stage" -czf "$payload_archive" .
+          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
+          cat "$payload_archive" | ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/payload.tgz' >/dev/null"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
-             sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
-             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null"
-          echo "Production identity refreshed after Web deployment"
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "sudo install -m 0444 '$remote/runtime-identity.before.json' \
+               /etc/agent-saas/runtime-identity.json.candidate && \
+             sudo mv /etc/agent-saas/runtime-identity.json.candidate /etc/agent-saas/runtime-identity.json && \
+             sudo cmp '$remote/runtime-identity.before.json' /etc/agent-saas/runtime-identity.json"
+
+      - name: Prove previous Web and trusted identity after compensation
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+          if [ ! -f "$RUNNER_TEMP/web-entry-snapshot-complete" ]; then
+            echo "Web transaction failed before mutation; no compensation proof required"
+            exit 0
+          fi
+          remote="$PRODUCTION_STAGING_ROOT/production-rollback-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo rm -rf -- '$remote'"
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo grep -Ex 'state=(rolled_back|not_started)' \
+             '$RECOVERY_WEB_ROOT/transactions/${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.activation' >/dev/null"
+          proof_payload=(
+            scripts/release/artifact-lib.mjs
+            scripts/release/read-production-state.mjs
+            scripts/release/read-runtime-identity.mjs
+          )
+          payload_stage="$RUNNER_TEMP/production-proof-payload"
+          payload_archive="$RUNNER_TEMP/production-proof-payload.tgz"
+          rm -rf "$payload_stage"
+          mkdir -p "$payload_stage"
+          for source in "${proof_payload[@]}"; do
+            install -m 0444 "$source" "$payload_stage/$(basename "$source")"
+          done
+          tar -C "$payload_stage" -czf "$payload_archive" .
+          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
+          cat "$payload_archive" | ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -rf -- '$remote' && \
+             sudo install -d -m 0700 '$remote' && \
+             sudo tee '$remote/payload.tgz' >/dev/null"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
+             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
+            < scripts/release/seal-root-staged-payload.sh
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$remote/read-production-state.mjs' --output '$remote/restored.json' >/dev/null && \
+             sudo cat '$remote/restored.json'" \
+            > "$RUNNER_TEMP/production-state.restored.json"
+          jq -e --slurpfile before "$RUNNER_TEMP/runtime-identity.before.json" \
+            '.components == $before[0].components' \
+            "$RUNNER_TEMP/production-state.restored.json" >/dev/null
+          mkdir -p "$RUNNER_TEMP/web-before" "$RUNNER_TEMP/web-oss-restored" "$RUNNER_TEMP/web-recovery-restored"
+          ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
+          : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
+          # Compare serving metadata while excluding mutation timestamps and transaction paths.
+          normalize_oss_metadata() {
+            grep -Ei '^[[:space:]]*(ACL|Cache-?Control|Content-?(Disposition|Encoding|Language|Length|MD5|Type)|ETag|Expires|Metadata|Storage-?Class|X-Oss-(Meta-|Object-Acl|Storage-Class|Server-Side-Encryption))' "$1" \
+              | sed -E 's/\r$//; s/^[[:space:]]+//; s/[[:space:]]*:[[:space:]]*/:/' \
+              | LC_ALL=C sort
+          }
+          while IFS=$'\t' read -r state key; do
+            before="$RUNNER_TEMP/web-before/$key"
+            restored="$RUNNER_TEMP/web-oss-restored/$key"
+            recovery="$RUNNER_TEMP/web-recovery-restored/$key"
+            mkdir -p "$(dirname "$before")" "$(dirname "$restored")" "$(dirname "$recovery")"
+            if [ "$state" = present ]; then
+              ossutil cp \
+                "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                "$before" -f --region "$OSS_REGION"
+              ossutil cp "oss://$OSS_BUCKET/$key" "$restored" -f --region "$OSS_REGION"
+              cmp "$before" "$restored"
+              restored_stat="$RUNNER_TEMP/web-restored-stat/$key"
+              restored_metadata="$RUNNER_TEMP/web-restored-metadata/$key"
+              mkdir -p "$(dirname "$restored_stat")" "$(dirname "$restored_metadata")"
+              ossutil stat "oss://$OSS_BUCKET/$key" --region "$OSS_REGION" > "$restored_stat"
+              normalize_oss_metadata "$restored_stat" > "$restored_metadata"
+              cmp "$RUNNER_TEMP/web-before-metadata/$key" "$restored_metadata"
+              http_code="$(curl -sS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+                -H 'cache-control: no-cache' -o "$recovery" -w '%{http_code}' \
+                "https://agent.kaiyan.net/$key?rollback_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" || true)"
+              test "$http_code" = 200
+              cmp "$before" "$recovery"
+            elif [ "$state" = missing ]; then
+              stat_log="$RUNNER_TEMP/web-restored-stat.log"
+              if ossutil stat "oss://$OSS_BUCKET/$key" --region "$OSS_REGION" \
+                > "$stat_log" 2>&1; then
+                echo "Web key introduced by failed transaction remains after compensation: $key" >&2
+                exit 1
+              fi
+              grep -Eiq 'ErrorCode[=: ]+NoSuchKey([[:space:],}]|$)' "$stat_log"
+              http_code="$(curl -sS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+                -H 'cache-control: no-cache' -o "$recovery" -w '%{http_code}' \
+                "https://agent.kaiyan.net/$key?rollback_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" || true)"
+              test "$http_code" = 404
+            else
+              echo "invalid Web snapshot state for $key: $state" >&2
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/web-mutable-before.tsv"
+          jq -e --slurpfile before "$RUNNER_TEMP/web-before/release-identity.json" \
+            '.releaseSha == $before[0].releaseSha and .webDigest == $before[0].webDigest' \
+            "$RUNNER_TEMP/web-recovery-restored/release-identity.json" >/dev/null
+          echo "all previous OSS/recovery Web mutable keys and trusted Production identity authoritatively restored"
+
+      - name: Release and clean up production host lock after commit or compensation
+        if: always()
+        run: |
+          set -euo pipefail
+          lock_log="/tmp/production-lock-$PRODUCTION_LOCK_TOKEN.log"
+          release_status=0
+          if ! ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+              "sudo bash '$PRODUCTION_LOCK_SCRIPT' release '$PRODUCTION_LOCK_TOKEN'"; then
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "cat '$lock_log'" >&2 || true
+            release_status=1
+          fi
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo rm -f '$PRODUCTION_LOCK_SCRIPT'; \
+             sudo rm -rf -- \
+               '$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' \
+               '$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web' \
+               '$PRODUCTION_STAGING_ROOT/production-rollback-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}'; \
+             rm -f '$lock_log'" || release_status=1
+          exit "$release_status"
+
+      - name: Fail compatibility transaction after compensated identity error
+        if: steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          echo "trusted Production identity commit/readback failed; locked compensation completed" >&2
+          exit 1

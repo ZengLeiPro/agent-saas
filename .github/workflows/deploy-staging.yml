@@ -14,8 +14,9 @@ permissions:
   deployments: write
   pull-requests: read
 
+# Deploy 与 Acceptance 共享唯一在线 Staging 槽位，避免验收中途被换版。
 concurrency:
-  group: staging-deploy
+  group: staging-runtime
   cancel-in-progress: false
 
 env:
@@ -391,7 +392,8 @@ jobs:
             exit 1
           fi
           node scripts/release/migration-plan.mjs \
-            --changed-paths "$RUNNER_TEMP/classification.json" --target "$RELEASE_SHA" \
+            --changed-paths "$RUNNER_TEMP/classification.json" \
+            --baseline "$baseline" --target "$RELEASE_SHA" \
             > "$RUNNER_TEMP/migration.json"
           node scripts/release/produce-release-evidence.mjs \
             --sha "$RELEASE_SHA" \
@@ -568,15 +570,20 @@ jobs:
           diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
                <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
           node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
-            --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
+            --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
           diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
       - name: Resolve exact ACS image when required
         if: env.REUSE_RC != 'true'
+        env:
+          ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
+          ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
         run: |
           set -euo pipefail
           include_acs=false
           if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/authoritative-evidence.json" >/dev/null; then
+            : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing staging secret ACR_READ_ACCESS_KEY_ID}"
+            : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing staging secret ACR_READ_ACCESS_KEY_SECRET}"
             include_acs=true
             RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
               bash scripts/release/wait-for-acr-image.sh

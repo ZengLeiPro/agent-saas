@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
+const acrWaitPath = new URL('./wait-for-acr-image.sh', import.meta.url);
 const acceptanceWorkflowPath = new URL(
   '../../.github/workflows/staging-acceptance.yml',
   import.meta.url,
@@ -14,6 +15,7 @@ const deployPath = new URL('./deploy-staging-release.sh', import.meta.url);
 const resourcePath = new URL('../../infra/staging/resource-plan.json', import.meta.url);
 const acsRuntimePath = new URL('../../infra/staging/acs-runtime.yaml', import.meta.url);
 const observationPath = new URL('./observe-production.mjs', import.meta.url);
+const stagingBindingPath = new URL('./verify-staging-release-binding.mjs', import.meta.url);
 const isolationPath = new URL('../staging/assert-isolation.mjs', import.meta.url);
 const serverUnitPath = new URL(
   '../../daemon-packaging/systemd/agent-saas-server-staging.service.template',
@@ -29,6 +31,7 @@ const staticDataCopyPath = new URL('../../server/scripts/copy-static-data.mjs', 
 const e2eHelpersPath = new URL('../../e2e/staging/helpers.ts', import.meta.url);
 const e2eConfigPath = new URL('../../e2e/playwright.config.ts', import.meta.url);
 const e2eGlobalSetupPath = new URL('../../e2e/staging/global-setup.ts', import.meta.url);
+const e2eAuthPath = new URL('../../e2e/staging/auth.spec.ts', import.meta.url);
 const chatInputPath = new URL('../../web/src/components/ChatInput.tsx', import.meta.url);
 
 function runScriptLines(text) {
@@ -47,11 +50,14 @@ function runScriptLines(text) {
   return output;
 }
 
-test('Staging workflow accepts only a reason and locks the dispatch SHA and single slot', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR read identity', async () => {
+  const [workflow, acrWait] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(acrWaitPath, 'utf8'),
+  ]);
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
-  assert.match(workflow, /group: staging-deploy\s+cancel-in-progress: false/u);
+  assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(
     workflow,
     /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
@@ -63,6 +69,22 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
     /created_at="\$\(node -e "process\.stdout\.write\(new Date\(process\.argv\[1\]\)\.toISOString\(\)\)" "\$created_at"\)"/u,
   );
   assert.match(workflow, /environment: staging/u);
+  const acrResolveStep = workflow.slice(
+    workflow.indexOf('- name: Resolve exact ACS image when required'),
+    workflow.indexOf('- name: Build immutable artifacts once'),
+  );
+  assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_ID/u);
+  assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_SECRET/u);
+  assert.match(acrResolveStep, /Missing staging secret ACR_READ_ACCESS_KEY_ID/u);
+  assert.match(acrResolveStep, /Missing staging secret ACR_READ_ACCESS_KEY_SECRET/u);
+  assert.match(acrWait, /list-acr-build-records\.sh/u);
+  assert.doesNotMatch(acrWait, /--PageNo 1 --PageSize 100/u);
+  assert.match(acrWait, /ListRepoBuildRecordLog/u);
+  assert.match(acrWait, /verify-acr-build-revision\.mjs/u);
+  assert.equal(acrWait.match(/GetRepoTag/gu)?.length, 2);
+  assert.match(acrWait, /acr-build-records-confirmed\.json/u);
+  assert.match(acrWait, /first_digest#sha256:/u);
+  assert.match(acrWait, /confirmed_digest#sha256:/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
   assert.match(workflow, /VITE_API_BASE: https:\/\/api\.agent\.kaiyan\.net/u);
@@ -156,26 +178,84 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
       migrationIndex < isolationIndex &&
       isolationIndex < recordIndex,
   );
+  assert.match(
+    workflow,
+    /--arg releaseSha "\$\(jq -r \.components\.web\.sourceSha "\$RUNNER_TEMP\/manifest\.json"\)"/u,
+  );
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
-  const workflow = await readFile(acceptanceWorkflowPath, 'utf8');
+  const [workflow, stagingBinding, authSpec] = await Promise.all([
+    readFile(acceptanceWorkflowPath, 'utf8'),
+    readFile(stagingBindingPath, 'utf8'),
+    readFile(e2eAuthPath, 'utf8'),
+  ]);
   assert.match(workflow, /name: 预发验收/u);
   assert.match(workflow, /NODE_VERSION: '22\.23\.1'/u);
   assert.match(workflow, /node-version: \$\{\{ env\.NODE_VERSION \}\}/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
-  assert.match(workflow, /group: staging-acceptance\s+cancel-in-progress: false/u);
+  assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
   assert.match(workflow, /Setup exact Runtime contract Node/u);
   assert.match(workflow, /Verify exact RC is still active on Staging/u);
   assert.match(workflow, /staging-web-identity\.json/u);
   assert.match(workflow, /staging-api-ready\.json/u);
-  assert.match(workflow, /Run browser and Agent acceptance suite/u);
+  assert.match(workflow, /staging-acs-health\.json/u);
+  assert.match(workflow, /Prepare browser and Agent acceptance suite/u);
+  assert.match(workflow, /Re-verify exact RC immediately before acceptance execution/u);
+  assert.match(workflow, /staging-web-identity-critical\.json/u);
+  assert.match(workflow, /staging-api-ready-critical\.json/u);
+  assert.match(workflow, /staging-acs-health-critical\.json/u);
+  const criticalRecheck = workflow.indexOf(
+    '      - name: Re-verify exact RC immediately before acceptance execution',
+  );
+  const acceptanceExecution = workflow.indexOf(
+    '      - name: Run browser and Agent acceptance suite',
+  );
+  assert.ok(criticalRecheck > 0 && acceptanceExecution > criticalRecheck);
+  assert.match(
+    workflow.slice(criticalRecheck, acceptanceExecution),
+    /verify-staging-release-binding\.mjs[\s\S]*--expected-manifest-digest "\$MANIFEST_DIGEST"/u,
+  );
   assert.match(workflow, /playwright test -c e2e\/playwright\.config\.ts/u);
   assert.match(workflow, /summarize-e2e\.mjs/u);
   assert.match(workflow, /Clean and read back Staging acceptance fixtures\s+if: always\(\)/u);
+  assert.match(workflow, /Verify Staging Manifest and component identities remained unchanged/u);
+  assert.ok(
+    workflow.indexOf('Verify Staging Manifest and component identities remained unchanged') <
+      workflow.indexOf('Revoke temporary Staging SSH ingress'),
+  );
+  assert.match(workflow, /staging-web-identity-critical\.json/u);
+  assert.match(workflow, /staging-web-identity-final\.json/u);
+  assert.match(workflow, /staging-api-ready-final\.json/u);
+  assert.match(workflow, /staging-acs-health-final\.json/u);
+  assert.match(workflow, /release-final\/manifest\.json/u);
+  assert.equal(workflow.match(/verify-staging-release-binding\.mjs/gu)?.length, 3);
+  assert.equal(workflow.match(/--acs-health/gu)?.length, 3);
+  assert.equal(workflow.match(/127\.0\.0\.1:3410\/health/gu)?.length, 3);
+  assert.match(workflow, /releaseIdentityAttested|--acs-health/u);
+  assert.match(workflow, /--expected-manifest-digest "\$MANIFEST_DIGEST"/u);
+  assert.match(
+    workflow,
+    /api_source_sha="\$\(jq -r \.components\.api\.sourceSha "\$RUNNER_TEMP\/release\/manifest\.json"\)"/u,
+  );
+  assert.match(workflow, /echo "STAGING_API_SOURCE_SHA=\$api_source_sha"/u);
+  assert.doesNotMatch(workflow, /STAGING_API_SOURCE_SHA=\$release_sha/u);
+  assert.match(
+    authSpec,
+    /body\.release\.releaseSha\)\.toBe\(required\('STAGING_API_SOURCE_SHA'\)\)/u,
+  );
+  assert.doesNotMatch(authSpec, /required\('STAGING_RELEASE_SHA'\)/u);
+  assert.match(stagingBinding, /configFingerprint/u);
+  assert.match(stagingBinding, /webDigest/u);
+  assert.match(stagingBinding, /apiSourceSha/u);
+  assert.match(stagingBinding, /webSourceSha/u);
+  assert.match(stagingBinding, /acsSourceSha/u);
+  assert.match(stagingBinding, /serverDigest/u);
+  assert.match(stagingBinding, /acsOrchestratorDigest/u);
+  assert.match(stagingBinding, /acsSandboxImageDigest/u);
   assert.match(workflow, /retention-days: 14/u);
   assert.doesNotMatch(workflow, /releaseAttestationCli|state approved|deploy-staging-release\.sh/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
@@ -397,6 +477,8 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy.indexOf('Staging runtime profile preflight failed') <
       deploy.indexOf('ln -sfn "$target" "$current"'),
   );
+  assert.match(deploy, /AGENT_SAAS_RELEASE_SHA: manifest\.components\.api\.sourceSha/u);
+  assert.doesNotMatch(deploy, /AGENT_SAAS_RELEASE_SHA: manifest\.releaseSha/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT # one-shot dispatcher/u);
@@ -475,6 +557,7 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
       releaseId: 'release-1',
       releaseSha: 'sha-1',
       components: {
+        api: { sourceSha: 'api-sha' },
         acs: {
           sourceSha: 'acs-sha',
           orchestratorArtifactDigest: 'sha256:orchestrator',

@@ -37,13 +37,22 @@
 
 ## GitHub Actions
 
-`.github/workflows/ci.yml`。`push main` 只构建 + 测试 + 打包，**不部署生产**；
-发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`），
-`deploy_plan` 先读取生产 active ECS SHA，并对比到目标 SHA 的累计变更：确认只有
-`web/`、`mobile/`、文档或测试路径时跳过 `deploy-ecs`，直接由 `deploy-web-oss`
-发布 OSS 与 ECS 冷灾备；涉及 Server、Shared、技能源、依赖或部署配置时，仍先发布
-ECS，成功后才放行 Web。生产基线不可读、不是目标祖先或分类异常时一律 fail-open
-继续部署 ECS；需要无条件重发时使用 `gh workflow run ci.yml -f force_ecs=true`。
+`.github/workflows/ci.yml`。`push main` 只构建、测试与打包，**不部署生产**。
+这个旧 compatibility `workflow_dispatch` 已收窄为显式确认的 **Web-only** 发布：调用者
+必须设置 `web_only_compatibility=true`。`deploy_plan` 读取生产 active ECS SHA，并对比到
+目标 SHA 的累计变更；仅当差异可证明只涉及 Web、Mobile、文档、测试等非 Server 路径时，
+才允许 `deploy-web-oss` 发布 OSS 与 ECS 冷灾备。只要包含 Server、Shared、技能源、依赖、
+部署配置或未知路径，或生产基线不可读、不是目标祖先、分类命令失败，工作流都会在任何生产
+mutation 前 **fail closed**。该入口不再接受 `force_ecs`，`deploy-ecs` 在 compatibility
+手动入口不可达；Server/API/Runtime Worker 变更必须走 Staging RC 与 Production
+Promotion 正式链路。
+
+Web-only compatibility 将 OSS 入口、ECS recovery Web 与 trusted Production identity
+作为一个可补偿事务。事务在读取基线前取得 `/run/lock/agent-saas/promotion.lock`，并持续持有到
+identity commit 完成，或失败补偿与权威读回证明结束；锁租约丢失时禁止继续 mutation 或无锁
+补偿。最终现场读回、identity 写入或确认读回任一步失败，都会恢复上一版 OSS/recovery Web
+和原 trusted identity，并在权威读回证明三者一致后以失败结束。若补偿或证明失败，必须人工
+处置，不能把该次运行视为发布成功。
 
 `deploy-ecs` 蓝绿流程概要（远端脚本 13 步详解见[零停机部署](zero-downtime-deployment.md)）：
 
@@ -64,7 +73,8 @@ fail-fast，旧 all-in-one 拓扑保持不动。
 
 `deploy-web-oss` 在 OSS 线上门禁通过后，将同一份 `web/dist` 打包上传到
 `/opt/agent-saas-web-recovery/releases/<sha>`，校验 `index.html`/`sw.js` 后原子切换
-`current`，并保留原 `current` 为 `previous`。随后 CI 用 `--resolve` 绕过公网 DNS，
+`current`，并保留原 `current` 为 `previous`。该切换与 OSS 入口 mutation 共享上述主机锁。
+随后 CI 用 `--resolve` 绕过公网 DNS，
 直连 ECS 的 `agent.kaiyan.net` vhost，验证 TLS、`X-Agent-Saas-Recovery` 和完整
 `index.html`。`assets/` 与 `workbox-*` 同步到只增不删的 `shared-root`，上传包保留在
 `agent-saas-web-recovery/artifacts`，均不自动清理；任一步失败都会把 recovery

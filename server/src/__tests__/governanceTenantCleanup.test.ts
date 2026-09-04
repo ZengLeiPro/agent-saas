@@ -48,7 +48,9 @@ describe('GovernanceTenantCleanup', () => {
     await cleanup.execute('acme', 'agents_skills');
     const accountsIndex = queries.findIndex(query => query.startsWith('DELETE FROM test_agent_dws_accounts'));
     const agentsIndex = queries.findIndex(query => query.startsWith('DELETE FROM test_managed_agents'));
+    const presentationsIndex = queries.findIndex(query => query.startsWith('DELETE FROM test_skill_presentations'));
     expect(accountsIndex).toBeGreaterThan(0);
+    expect(presentationsIndex).toBeGreaterThan(0);
     expect(agentsIndex).toBeGreaterThan(accountsIndex);
   });
 

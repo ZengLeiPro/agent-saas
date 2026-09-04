@@ -19,6 +19,7 @@ import { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import { PgOrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import { PgSkillPresentationStore } from '../data/skillPresentations/index.js';
 import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
 import { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
@@ -183,6 +184,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
   let agentDwsMessageStore: PgAgentDwsMessageStore | undefined;
   let orgGroupAgentStore: PgOrgGroupAgentStore | undefined;
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
+  let skillPresentationStore: PgSkillPresentationStore | undefined;
   let resolveLegacySkillResourceId = (_user: { id: string; tenantId: string }, skillId: string) => skillId;
   let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
   let governanceChangePlanner: GovernanceChangePlanner | undefined;
@@ -585,6 +587,11 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
       tablePrefix: tablePrefix,
     });
     await skillGovernanceStore.init();
+    skillPresentationStore = new PgSkillPresentationStore({
+      pool: pgEventStore.pool,
+      tablePrefix,
+    });
+    await skillPresentationStore.init();
     if (orgAgentStore && userStore && tenantStore && skillConfigStore) {
       const projectedBy = 'system:governance-shadow';
       for (const legacyAgent of orgAgentStore.listAll()) {
@@ -926,6 +933,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
     agentDwsMessageStore,
     orgGroupAgentStore,
     skillGovernanceStore,
+    skillPresentationStore,
     resolveLegacySkillResourceId,
     governanceChangeJobStore,
     governanceChangePlanner,

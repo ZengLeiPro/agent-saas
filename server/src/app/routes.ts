@@ -61,6 +61,7 @@ import { createSystemAdminRouter } from '../routes/systemAdmin.js';
 import { createInternalAcsAlertsRouter } from '../routes/internalAcsAlerts.js';
 import { RuntimeEfficiencyQuery } from '../runtime/efficiencyQuery.js';
 import { createSkillsRouter } from '../routes/skills.js';
+import { buildSkillsRouterDeps } from './skillRouteAssembly.js';
 import { createGovernanceMigrationRouter } from '../routes/governanceMigration.js';
 import { createMcpRouter } from '../routes/mcp.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
@@ -988,16 +989,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       );
       app.use(
         '/api/skills',
-        createSkillsRouter({
-          skillConfigStore: runtime.skillConfigStore,
-          userStore: runtime.userStore!,
+        createSkillsRouter(buildSkillsRouterDeps({
+          runtime,
           agentCwd,
           sharedDir,
-          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
-          skillMaterialization: runtime.skillMaterialization,
-          skillGovernanceStore: runtime.skillGovernanceStore,
           legacyWriteGate,
-        }),
+        })),
       );
     }
     // 原生连接器账号与凭据；独立于 MCP feature gate。

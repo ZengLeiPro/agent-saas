@@ -307,6 +307,9 @@ export type {
 
 export type {
   SkillInfo,
+  SkillPresentationInfo,
+  SkillPresentationUpdate,
+  SkillPresentationUpdateResponse,
   PlatformSkillExposure,
   TenantSkillMemberExposure,
   PlatformSkillSettings,

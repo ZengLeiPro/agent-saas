@@ -35,6 +35,7 @@ import { TextSelectModal } from '../TextSelectModal';
 import { createMarkdownStyles } from '../markdownStyles';
 import { createMarkdownRules } from '../markdownRules';
 import { MessageCitationCard } from './CitationCard';
+import { MessageFeedbackButton } from './MessageFeedback';
 import { CATEGORY_ICON, useMessageStyles } from './shared';
 
 // --- Text Message (Markdown) ---
@@ -239,6 +240,18 @@ export function TextMessage({
       );
     });
 
+  /**
+   * 气泡底部动作区：最终回复给「反馈」入口。
+   * MessageFeedbackContext 缺省（个人 Agent 会话 / 数据面 503）时按钮零渲染，
+   * 这里的容器随之收成空行，不改变非专职会话的既有版式。
+   */
+  const actionRow =
+    !message.streaming && message.finalOutput ? (
+      <View style={styles.messageActions}>
+        <MessageFeedbackButton messageId={message.id} content={message.content} />
+      </View>
+    ) : null;
+
   const [assistMenuVisible, setAssistMenuVisible] = useState(false);
   const [assistAnchorTop, setAssistAnchorTop] = useState(0);
   const finalOutputDivider = message.finalOutput ? (
@@ -313,6 +326,7 @@ export function TextMessage({
           <View style={styles.assistantBubble}>
             {finalOutputDivider}
             {renderSegments(true)}
+            {actionRow}
             {lightboxUri && (
               <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
             )}
@@ -342,6 +356,7 @@ export function TextMessage({
           <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
             {message.content}
           </Markdown>
+          {actionRow}
           {lightboxUri && (
             <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
           )}

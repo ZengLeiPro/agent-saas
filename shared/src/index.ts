@@ -617,6 +617,25 @@ export {
 } from './lib/markers';
 export type { MarkerSegment, CitationSegment } from './lib/markers';
 
+// Lib - 消息反馈（点踩）与门禁拒答申诉的端点 / 幂等 / 文案契约
+export {
+  MESSAGE_FEEDBACK_COMMENT_MAX,
+  MESSAGE_FEEDBACK_PATH,
+  GUARDRAIL_APPEAL_PATH,
+  messageFeedbackSessionPath,
+  buildMessageFeedbackPayload,
+  parseSubmittedFeedbackHashes,
+  messageFeedbackOutcome,
+  buildGuardrailAppealPayload,
+  guardrailAppealOutcome,
+  guardrailAppealFailureCopy,
+} from './lib/messageFeedback';
+export type {
+  MessageFeedbackInput,
+  MessageFeedbackOutcome,
+  GuardrailAppealOutcome,
+} from './lib/messageFeedback';
+
 // Lib - 会话 Context 引用证据（[CITE] contextId 分支）只读展示模型
 export {
   normalizeContextCitationDetail,

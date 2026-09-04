@@ -19,6 +19,7 @@ import { useAppLifecycle } from '../../src/hooks/useAppLifecycle';
 import { useScrollToTop } from '../../src/hooks/useScrollToTop';
 import { useRuntimeRecovery } from '../../src/hooks/useRuntimeRecovery';
 import { MessageList } from '../../src/components/chat/MessageList';
+import { MessageFeedbackProvider } from '../../src/contexts/MessageFeedbackContext';
 import { AskUserPromptPanel } from '../../src/components/chat/AskUserPromptPanel';
 import { QueuedMessageBar } from '../../src/components/chat/QueuedMessageBar';
 import { ChatInput } from '../../src/components/chat/ChatInput';
@@ -521,6 +522,8 @@ export default function ChatDetailScreen() {
         </View>
       ) : null}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
+      {/* 反馈入口的数据面开关：无会话或后端 503 时 value=null，气泡里的按钮零渲染 */}
+      <MessageFeedbackProvider sessionId={chat.sessionId}>
       <MessageList
         headerPadding={0}
         bottomPadding={Platform.OS === 'ios' ? composerHeight - (isKeyboardOpen ? insets.bottom : 0) : defaultBottomPadding}
@@ -542,6 +545,7 @@ export default function ChatDetailScreen() {
         isLoadingEarlier={chat.isLoadingEarlier}
         onLoadEarlier={chat.loadEarlierMessages}
       />
+      </MessageFeedbackProvider>
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>
         <View onLayout={handleComposerLayout}>

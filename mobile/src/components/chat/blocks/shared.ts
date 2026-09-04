@@ -97,6 +97,13 @@ export function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
         assistantBubble: {
           maxWidth: '100%',
         },
+        /** 气泡底部动作区（反馈 / 申诉）：右对齐、无内容时高度自然为 0 */
+        messageActions: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: spacing.sm,
+        },
         cursor: {
           width: 8,
           height: 16,

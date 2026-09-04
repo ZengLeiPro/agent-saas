@@ -14,6 +14,7 @@ export { MessageCitationCard } from './CitationCard';
 export { ContextCitationSheet, type ContextCitationSheetProps } from './ContextCitationSheet';
 export { DetailLines, type DetailVariant } from './DetailLines';
 export { FileDownloadCard } from './FileDownloadCard';
+export { MessageFeedbackButton } from './MessageFeedback';
 export { PermissionBlock } from './PermissionBlock';
 export { CanonicalPresentationBody, EvidenceRefs, ReceiptRow } from './PresentationBlock';
 export { PresentationBlocks, type BlockContext } from './PresentationBlockViews';

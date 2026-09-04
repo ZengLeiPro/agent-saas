@@ -6,6 +6,7 @@ import { governanceV23Statements } from './v23Migration.js';
 import { governanceV32Statements, governanceV33Statements } from './v32V33Migration.js';
 import { governanceV34Statements } from './v34Migration.js';
 import { governanceV35Statements } from './v35Migration.js';
+import { governanceLatestMigrations } from './latestMigrations.js';
 
 import { governanceV18Statements } from './v18Migration.js';
 import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
@@ -16,7 +17,7 @@ import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationS
 import { governanceTablePrefix } from './governanceTablePrefix.js';
 export { governanceTablePrefix } from './governanceTablePrefix.js';
 
-export const GOVERNANCE_SCHEMA_VERSION = 35;
+export const GOVERNANCE_SCHEMA_VERSION = 37;
 
 export type GovernancePgPool = pg.Pool;
 
@@ -944,7 +945,8 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 32, statements: governanceV32Statements(prefix) },
     { version: 33, statements: governanceV33Statements(assignments) },
     { version: 34, statements: governanceV34Statements(prefix) },
-    { version: GOVERNANCE_SCHEMA_VERSION, statements: governanceV35Statements(prefix) },
+    { version: 35, statements: governanceV35Statements(prefix) },
+    ...governanceLatestMigrations(prefix),
   ];
 }
 

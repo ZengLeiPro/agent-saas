@@ -397,6 +397,27 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
+    def test_tool_runtime_helper_dependencies_trigger_publish(self):
+        for path in (
+            'server/src/agent/toolRuntimePaths.ts',
+            'server/src/agent/workspaceRead.ts',
+            'server/src/agent/serverLocalSandboxPolicy.ts',
+        ):
+            with self.subTest(path=path), tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8'
+            ) as changed:
+                changed.write(f'{path}\n')
+                changed.flush()
+                classified = subprocess.run(
+                    ['bash', str(ACS_CLASSIFIER), changed.name],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            self.assertEqual(classified.returncode, 0, classified.stderr)
+            self.assertIn('publish=true', classified.stdout)
+
     def test_immutable_baseline_uploader_requires_an_exact_sha_acs_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('scripts/release/upload-oss-object-immutable.sh\n')

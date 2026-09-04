@@ -33,6 +33,7 @@ export interface ApprovalStore {
 
 export type ToolPolicyDecision =
   | { type: 'allow' }
+  | { type: 'deny'; reason: string }
   | { type: 'requires_approval'; reason: string };
 
 export interface ToolPolicy {

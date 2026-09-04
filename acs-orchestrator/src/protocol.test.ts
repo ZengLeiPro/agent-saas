@@ -10,7 +10,7 @@ describe('parseWireRequest', () => {
       input: { command: 'pwd' },
       context: {
         invocationId: 'run-1:tool-1',
-        workspace: { id: 'ws_1', sessionId: 'session-1', sandboxScopeId: 'ws_1', userId: 'u-1', username: 'alice', mountSubPath: 'workspaces/kaiyan/u-1' },
+        workspace: { id: 'ws_1', sessionId: 'session-1', sandboxScopeId: 'ws_1', userId: 'u-1', username: 'alice', mountSubPath: 'workspaces/kaiyan/u-1/work/task-a', sharedReadOnlySubPath: 'workspaces/kaiyan/u-1' },
       },
     });
     expect(parsed.ok).toBe(true);
@@ -18,7 +18,8 @@ describe('parseWireRequest', () => {
       expect(parsed.value.context.workspace.id).toBe('ws_1');
       expect(parsed.value.context.workspace.sessionId).toBe('session-1');
       expect(parsed.value.context.workspace.sandboxScopeId).toBe('ws_1');
-      expect(parsed.value.context.workspace.mountSubPath).toBe('workspaces/kaiyan/u-1');
+      expect(parsed.value.context.workspace.mountSubPath).toBe('workspaces/kaiyan/u-1/work/task-a');
+      expect(parsed.value.context.workspace.sharedReadOnlySubPath).toBe('workspaces/kaiyan/u-1');
       expect(parsed.value.context.invocationId).toBe('run-1:tool-1');
     }
   });
@@ -220,6 +221,21 @@ describe('parseProvisionRecipe', () => {
     expect(parseProvisionRecipe({
       workspaceId: 'ws',
       recipe: { sessionId: 's', mountSubPath: '/mnt/agent-saas/workspaces/kaiyan/u-1' },
+    })).toMatchObject({ ok: false });
+    expect(parseProvisionRecipe({
+      workspaceId: 'ws',
+      recipe: {
+        sessionId: 's',
+        mountSubPath: 'workspaces/kaiyan/task-1',
+        sharedReadOnlySubPath: 'workspaces/kaiyan/shared/topic-1',
+      },
+    })).toMatchObject({
+      ok: true,
+      value: { sharedReadOnlySubPath: 'workspaces/kaiyan/shared/topic-1' },
+    });
+    expect(parseProvisionRecipe({
+      workspaceId: 'ws',
+      recipe: { sessionId: 's', sharedReadOnlySubPath: '../other-agent' },
     })).toMatchObject({ ok: false });
   });
 });

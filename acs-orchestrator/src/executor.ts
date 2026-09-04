@@ -90,6 +90,7 @@ export class AcsExecutor {
       sessionId: workspace.sessionId!,
       sandboxScopeId: workspace.sandboxScopeId,
       mountSubPath: workspace.mountSubPath,
+      sharedReadOnlySubPath: workspace.sharedReadOnlySubPath,
       ...(resourceOverride ? { resources: resourceOverride } : {}),
       ...(workspace.workload ? { workload: workspace.workload } : {}),
     };
@@ -179,6 +180,7 @@ export class AcsExecutor {
           username: workspace.username,
           sessionId: workspace.sessionId,
           root: this.config.workspaceMountPath,
+          ...(workspace.sharedReadOnlySubPath ? { sharedReadOnlyMounted: true } : {}),
         },
         stream: options.stream,
         ...(wireEnv && Object.keys(wireEnv).length > 0 ? { env: wireEnv } : {}),
@@ -775,14 +777,7 @@ export class AcsExecutor {
 
   private async ensureSandboxRunning(
     ref: SandboxRef,
-    identity: {
-      workspaceId: string;
-      sessionId: string;
-      sandboxScopeId?: string;
-      mountSubPath?: string;
-      resources?: SandboxResourceOverride;
-      workload?: import('./sandboxLifecyclePolicy.js').SandboxWorkloadDescriptor;
-    },
+    identity: Parameters<SandboxManager['ensureRunning']>[0],
     invocationKey: string,
     recordActivity = true,
   ): Promise<void> {

@@ -110,10 +110,11 @@ export class ContextSearchToolProvider implements ToolProvider {
       const input = contextSearchSchema.parse(call.input);
       const subject = resolveContextRecallSubject(context);
       const scope = await this.resolveNonEmptyScope(subject, { operation: 'search' });
+      const sources = resolveAuthorizedSources(subject, input.sources);
       const filters: ContextRecallSearchFilters = {
         ...(input.timeRange ? { timeRange: input.timeRange } : {}),
         ...(input.kinds ? { kinds: input.kinds } : {}),
-        ...(input.sources ? { sources: input.sources } : {}),
+        ...(sources ? { sources } : {}),
       };
       const result = await this.recall.search({
         subject,
@@ -123,7 +124,7 @@ export class ContextSearchToolProvider implements ToolProvider {
         filters,
         ...(context.signal ? { signal: context.signal } : {}),
       });
-      result.hits.forEach(hit => assertHitAuthorized(hit, scope));
+      result.hits.forEach(hit => assertHitAuthorized(hit, scope, subject));
       const degradation = mergeDegradation(scope, result);
       return {
         content: JSON.stringify({
@@ -145,7 +146,7 @@ export class ContextSearchToolProvider implements ToolProvider {
         scope,
         ...(context.signal ? { signal: context.signal } : {}),
       });
-      if (result.hit) assertHitAuthorized(result.hit, scope);
+      if (result.hit) assertHitAuthorized(result.hit, scope, subject);
       const degradation = mergeDegradation(scope, result);
       return {
         content: JSON.stringify({
@@ -207,12 +208,27 @@ export function resolveContextRecallSubject(context: ToolCallContext): ContextRe
     ?? optionalTrustedString(extended.orgAgent?.id)
     ?? optionalTrustedString(extended.session?.orgAgentId);
 
+  const channel = context.channelContext.orgAgentChannel;
+  if (channel && (!channel.contextEnabled || channel.allowedSourceIds.length === 0)) {
+    throw new ContextRecallAuthorizationError('CONTEXT_RECALL_EMPTY_SCOPE');
+  }
+  if (channel && (channel.agentPrincipal.tenantId !== tenantId
+    || channel.agentPrincipal.agentId !== (orgAgentId ?? channel.agentId)
+    || channel.agentPrincipal.workspaceId !== workspaceId)) {
+    throw new ContextRecallAuthorizationError('CONTEXT_RECALL_SUBJECT_MISMATCH');
+  }
   return {
     tenantId,
     userId: identity.id,
     ...(workspaceId ? { workspaceId } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(orgAgentId ? { orgAgentId } : {}),
+    ...(channel ? { channelScope: {
+      bindingId: channel.bindingId, conversationSpaceId: channel.conversationSpaceId,
+      workConversationId: channel.workConversationId,
+      conversationId: channel.channelPrincipal.conversationId,
+      policyRevision: channel.policyRevision, allowedSourceIds: [...channel.allowedSourceIds],
+    } } : {}),
   };
 }
 
@@ -220,7 +236,7 @@ function optionalTrustedString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function assertHitAuthorized(hit: ContextRecallHit, scope: ContextRecallResolvedScope): void {
+function assertHitAuthorized(hit: ContextRecallHit, scope: ContextRecallResolvedScope, subject: ContextRecallSubject): void {
   const authorized = scope.collections.some(collection => (
     collection.collectionId === hit.collectionId
     && collection.assignmentVersion === hit.assignmentVersion
@@ -228,6 +244,21 @@ function assertHitAuthorized(hit: ContextRecallHit, scope: ContextRecallResolved
   if (!authorized) {
     throw new ContextRecallAuthorizationError('CONTEXT_RECALL_HIT_OUT_OF_SCOPE');
   }
+  if (subject.channelScope && !subject.channelScope.allowedSourceIds.includes(hit.source.sourceId)) {
+    throw new ContextRecallAuthorizationError('CONTEXT_RECALL_HIT_OUT_OF_SCOPE');
+  }
+}
+
+function resolveAuthorizedSources(
+  subject: ContextRecallSubject,
+  requested: readonly string[] | undefined,
+): readonly string[] | undefined {
+  const allowed = subject.channelScope?.allowedSourceIds;
+  if (!allowed) return requested;
+  if (requested?.some(source => !allowed.includes(source))) {
+    throw new ContextRecallAuthorizationError('CONTEXT_RECALL_HIT_OUT_OF_SCOPE');
+  }
+  return requested ?? allowed;
 }
 
 function formatHit(hit: ContextRecallHit): Record<string, unknown> {

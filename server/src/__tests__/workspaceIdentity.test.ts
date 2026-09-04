@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveAgentConnectorWorkspaceId,
   deriveAgentWorkspaceId,
+  parseWorkspacePrincipal,
   deriveStableWorkspaceId,
   parseWorkspaceId,
 } from "../runtime/workspaceIdentity.js";
@@ -40,13 +41,14 @@ describe("deriveStableWorkspaceId", () => {
 describe("deriveAgentWorkspaceId", () => {
   it("uses an explicit agent namespace", () => {
     expect(deriveAgentWorkspaceId("kaiyan", "oa-sales")).toBe("ws_kaiyan__agent_oa-sales");
-    expect(deriveAgentWorkspaceId("../bad", "../legacy-agent")).toMatch(
-      new RegExp(`^ws_${DEFAULT_TENANT_ID}__agent_h[A-Za-z0-9_-]{16}$`),
-    );
+    expect(() => deriveAgentWorkspaceId("../bad", "../legacy-agent")).toThrow('Invalid Agent workspace tenant');
   });
 
   it("does not parse Agent or connector workspaces as real users", () => {
     expect(parseWorkspaceId(deriveAgentWorkspaceId("kaiyan", "oa-sales"))).toBeNull();
+    expect(parseWorkspacePrincipal(deriveAgentWorkspaceId("kaiyan", "oa-sales"))).toEqual({
+      kind: 'org_agent', tenantId: 'kaiyan', principalId: 'oa-sales', agentSegment: 'oa-sales',
+    });
     expect(parseWorkspaceId(deriveAgentConnectorWorkspaceId("kaiyan", "oa-sales", "dws"))).toBeNull();
   });
 

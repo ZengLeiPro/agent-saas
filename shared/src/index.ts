@@ -638,6 +638,63 @@ export type {
   PresentationTone,
 } from './lib/presentation/types';
 
+// Lib - 活动状态语气与耗时格式化（Web/Mobile 同一套语气判定）
+export {
+  PRESENTATION_TONE_TO_ACTIVITY,
+  formatActivityDuration,
+} from './lib/activityStatusTone';
+export type { ActivityStatusTone } from './lib/activityStatusTone';
+
+// Lib - DetailLine 语义判别与排版分组（分型渲染的共同根因，两端必须同源）
+export {
+  DEFAULT_WARN_HEADER,
+  collectDetailKeyValues,
+  groupDetailLines,
+  isEmphasisValue,
+  migrateLegacySectionVerdicts,
+  statVerdict,
+  visibleOutcomeStats,
+} from './lib/detailSemantics';
+export type {
+  DetailGroup,
+  OutcomeStat,
+  StatVerdict,
+  StepDetailPart,
+} from './lib/detailSemantics';
+
+// Lib - Agent 活动分组折叠摘要 / runtime_status 中文标签
+export {
+  getActiveItemIndex,
+  getActivityDurationMs,
+  getCompletedGroupTitle,
+  getRuntimeStatusLabel,
+  getRuntimeStatusMeta,
+  getRuntimeStatusTone,
+  isActiveActivity,
+  isWaitingForUserAction,
+  selectActivityGroupSummary,
+} from './lib/activityGroupSummary';
+export type {
+  GroupSummaryInfo,
+  RuntimeStatus,
+  RuntimeStatusIcon,
+} from './lib/activityGroupSummary';
+
+// Lib - 业务步骤状态语义（步骤流 / 时间线 / 详情面板共用）
+export {
+  businessStepOverallStatus,
+  isEndedWithoutTerminal,
+  outcomeToneMeta,
+  todoAccessibleStatus,
+  todoStatusMeta,
+} from './lib/businessStepStatus';
+export type {
+  BusinessStepIcon,
+  BusinessStepOverallLabel,
+  BusinessStepOverallStatus,
+  BusinessStepStatusMeta,
+} from './lib/businessStepStatus';
+
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）
 export { normalizeSystemPanel, normalizePanelPatches, foldPanel } from './lib/systemPanel';
 export { derivePanelPulse } from './lib/panelDelta';

@@ -1,6 +1,7 @@
 import type { TaskBoard } from "@agent/shared";
 
 export const BOARD_ORDER_STORAGE_KEY = "taskboard:board-order";
+export const SELECTED_BOARD_STORAGE_KEY = "taskboard:selected-board";
 
 export function loadBoardOrder(): string[] {
   if (typeof window === "undefined") return [];
@@ -10,6 +11,24 @@ export function loadBoardOrder(): string[] {
     return [...new Set(parsed.filter((value): value is string => typeof value === "string"))];
   } catch {
     return [];
+  }
+}
+
+export function loadSelectedBoardId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(SELECTED_BOARD_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveSelectedBoardId(boardId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SELECTED_BOARD_STORAGE_KEY, boardId);
+  } catch {
+    // 本地存储不可用时仍允许当前页面内切换看板。
   }
 }
 

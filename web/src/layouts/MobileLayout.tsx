@@ -215,9 +215,10 @@ export function MobileLayout(props: LayoutProps) {
   }, [activeWorkflow, input, sendMessage]);
 
   useEffect(() => {
+    if (orgAgentIdentityLoading) return;
     const fallback = legacyRoleFallbackTab({ activeTab, personalAgentEnabled, isAdmin, isPlatformAdmin });
     if (fallback) setActiveTab(fallback);
-  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
+  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, orgAgentIdentityLoading, activeTab, setActiveTab]);
 
   // iOS 键盘适配
   useEffect(() => {
@@ -408,7 +409,7 @@ export function MobileLayout(props: LayoutProps) {
               onLoadGroupSessions={loadGroupSessions}
               onPreviewTrashSession={(id) => { if (id) closeDrawer(); previewTrashSession(id); }}
               trashPreviewSessionId={trashPreviewSessionId}
-              personalAgentEnabled={personalAgentEnabled}
+              personalAgentEnabled={personalAgentEnabled || orgAgentIdentityLoading}
               renderCronManager={() => <Suspense fallback={SuspenseFallback}><CronManager /></Suspense>}
               renderTenantManager={() => <Suspense fallback={SuspenseFallback}><TenantManager /></Suspense>}
               renderFileBrowser={() => (

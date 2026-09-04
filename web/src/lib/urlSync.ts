@@ -11,6 +11,7 @@ import {
 } from '@/lib/governanceNavigation';
 import { pushAppHistoryState, replaceAppHistoryState } from '@/lib/appHistory';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
+import { preferredTaskCenterPath } from '@/lib/taskCenterRoute';
 import {
   getSettingsSection,
   isSettingsSectionId,
@@ -311,7 +312,7 @@ function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | '
   };
 }
 
-/** 解析 pathname → URL state；search 只由 platform-admin 路由读取，常规 buildUrl 仍只管理 pathname */
+/** 解析 pathname → URL state；search 同时用于管理路由与旧任务中心深链的 canonical。 */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
   // 旧管理设置 URL 也统一交给 Governance parser，canonical 到唯一管理路由。
   const governance = parseGovernanceUrl(`${pathname}${search}`);
@@ -386,7 +387,17 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
     const id = decodeURIComponent(pathname.slice(6));
     return parsed({ tab: 'chat', sessionId: id || null, settingsSection: null, adminSettings: null });
   }
-  if (pathname === '/cron') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
+  if (pathname === '/taskboard') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
+  if (pathname === '/cron') {
+    const query = new URLSearchParams(search);
+    let canonicalPath: string | null = null;
+    if (query.get('view') === 'board') {
+      query.delete('view');
+      const canonicalSearch = query.toString();
+      canonicalPath = `/taskboard${canonicalSearch ? `?${canonicalSearch}` : ''}`;
+    }
+    return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath });
+  }
   if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files-storage', adminSettings: null, canonicalPath: '/settings/files-storage' });
   if (pathname === '/profile') return parsed({ tab: 'profile', sessionId: null, settingsSection: null, adminSettings: null });
   if (pathname === '/capabilities' || pathname === '/capabilities/templates' || pathname === '/capabilities/experts' || pathname === '/capabilities/skills' || pathname === '/capabilities/connectors') {
@@ -409,7 +420,7 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
 
 /** 构建 URL pathname */
 export function buildUrl(tab: AppTab, sessionId: string | null): string {
-  if (tab === 'cron') return '/cron';
+  if (tab === 'cron') return preferredTaskCenterPath();
   if (tab === 'tenants') return '/tenants';
   if (tab === 'tenant-admin') return '/tenant-admin';
   if (tab === 'platform-admin') return '/platform-admin';

@@ -330,9 +330,10 @@ export function DesktopLayout(props: LayoutProps) {
   // Legacy tabs retain role-based fallback. Management workspaces are intentionally
   // excluded: their snapshot gates are the sole entry authority.
   useEffect(() => {
+    if (orgAgentIdentityLoading) return;
     const fallback = legacyRoleFallbackTab({ activeTab, personalAgentEnabled, isAdmin, isPlatformAdmin });
     if (fallback) setActiveTab(fallback);
-  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
+  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, orgAgentIdentityLoading, activeTab, setActiveTab]);
 
   return (
     <div ref={layoutProtection.containerRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -368,7 +369,7 @@ export function DesktopLayout(props: LayoutProps) {
         onPreviewTrashSession={previewTrashSession}
         trashPreviewSessionId={trashPreviewSessionId}
         sidebarLayout={sidebarLayout}
-        personalAgentEnabled={personalAgentEnabled}
+        personalAgentEnabled={personalAgentEnabled || orgAgentIdentityLoading}
         responsiveMode={responsiveSidebarMode}
         className={cn(responsiveSidebarOverlayOpen && "absolute inset-y-0 left-0 z-50 shadow-2xl")}
       />

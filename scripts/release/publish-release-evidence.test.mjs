@@ -6,6 +6,7 @@ import test from 'node:test';
 import { createEvidenceService } from './evidence-service.mjs';
 import { createValidReleaseEvidence } from './release-evidence-fixture.test-helper.mjs';
 import { publishReleaseEvidence } from './publish-release-evidence.mjs';
+import { RELEASE_EVIDENCE_SCHEMA_VERSION } from './release-evidence-schema.mjs';
 
 const READ_TOKEN = 'automatic-evidence-read-token-32-bytes-long';
 const WRITE_TOKEN = 'automatic-evidence-write-token-32-bytes-long';
@@ -17,6 +18,7 @@ test('publishes immutable evidence and verifies it with the separate read identi
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const { port } = server.address();
   const evidence = createValidReleaseEvidence();
+  assert.equal(evidence.schemaVersion, RELEASE_EVIDENCE_SCHEMA_VERSION);
   const actual = await publishReleaseEvidence({
     evidence,
     url: `http://127.0.0.1:${port}/release-evidence`,

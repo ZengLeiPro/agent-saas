@@ -3,7 +3,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
-import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
+import {
+  RELEASE_EVIDENCE_SCHEMA_VERSION,
+  validateReleaseEvidenceDocument,
+} from './release-evidence-schema.mjs';
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
@@ -261,7 +264,7 @@ export async function produceReleaseEvidence(options) {
     sources: [...merge.sources].sort((left, right) => left.number - right.number),
   };
   const body = {
-    schemaVersion: 2,
+    schemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
     ok: true,
     releaseSha,
     productionBaselineStatus: 'known',

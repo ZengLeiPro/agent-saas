@@ -51,7 +51,10 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 
 仓库提供 `scripts/release/evidence-service.mjs` 和
 `daemon-packaging/systemd/agent-saas-release-evidence.service.template`，不是只保留 URL
-消费者。服务提供三个带 Bearer 鉴权的生产/读取端点：
+消费者。服务提供四个带 Bearer 鉴权的能力、生产和读取端点：
+
+- `/capabilities`：返回 Writer 当前及兼容的 Release Evidence Schema 版本；`部署预发 RC` 在
+  checkout、安装依赖和 OSS 基线绑定之前使用只读 Token 校验该能力，不兼容时快速失败。
 
 - `/release-evidence?sha=<full-sha>`：完整 SHA 对应的 GitHub 合并、CI、生产基线和迁移证据；
   同一 SHA 使用不可覆盖写入。
@@ -76,6 +79,10 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 `RELEASE_EVIDENCE_READ_TOKEN_FILE=<0600 read token file>`、
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
 `RELEASE_EVIDENCE_PORT`。
+
+Release Evidence Schema 升级必须先独立发布兼容旧版和新版的 Writer，并读回 `/capabilities`
+确认新版已进入 `supportedReleaseEvidenceSchemaVersions`；随后才能启用对应版本的 Producer 和 RC
+Workflow。候选 RC 不得在证据门禁内自动升级自己的 Evidence Writer，避免未验证代码修改证据权威。
 
 `部署预发 RC` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
 同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS

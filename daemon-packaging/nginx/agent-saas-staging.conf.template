@@ -10,7 +10,7 @@ server {
     ssl_certificate /etc/agent-saas-staging/tls/fullchain.pem;
     ssl_certificate_key /etc/agent-saas-staging/tls/privkey.pem;
 
-    location ~ ^/(release-evidence|staging-isolation|production-observation)$ {
+    location ~ ^/(capabilities|release-evidence|staging-isolation|production-observation)$ {
         proxy_pass http://127.0.0.1:3420;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

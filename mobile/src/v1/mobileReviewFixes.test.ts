@@ -22,10 +22,11 @@ describe('TASK-375 移动端 V1 复核整改', () => {
 
   it('默认不把独立 tool_result raw payload 挂到渲染树', () => {
     const source = readMobile('src/components/chat/MessageItem.tsx');
+    const toolBlock = readMobile('src/components/chat/blocks/ToolBlock.tsx');
 
     expect(source).toContain('<ToolResultBlock message={item} gate={presentationGate} />');
-    expect(source).toContain('expanded && canonical.showRaw ? parseToolResult(message.result) : null');
-    expect(source).toContain('disabled={!canonical.showRaw}');
+    expect(toolBlock).toContain('expanded && canonical.showRaw ? parseToolResult(message.result) : null');
+    expect(toolBlock).toContain('disabled={!canonical.showRaw}');
   });
 
   it('TextSelect WebView 禁止脚本、外部导航和主动远程内容', () => {

@@ -106,7 +106,7 @@ is_publish_path() {
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
       return 0
       ;;
-    server/src/agent/toolRuntime.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
+    server/src/agent/toolRuntime.ts|server/src/agent/toolRuntimePaths.ts|server/src/agent/workspaceRead.ts|server/src/agent/serverLocalSandboxPolicy.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
       return 0
       ;;
     server/src/agent/descriptions/Read.md|server/src/agent/descriptions/Write.md|server/src/agent/descriptions/List.md|server/src/agent/descriptions/Shell.md|server/src/agent/descriptions/WaitForWorkspaceReady.md|server/src/agent/descriptions/Edit.md|server/src/agent/descriptions/Glob.md|server/src/agent/descriptions/Grep.md|server/src/agent/descriptions/CreateArtifact.md|server/src/agent/descriptions/MemorySearch.md|server/src/agent/descriptions/MemoryList.md)

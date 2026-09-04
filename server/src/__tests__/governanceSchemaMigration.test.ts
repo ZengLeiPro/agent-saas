@@ -6,6 +6,8 @@ import { PgGovernanceMigrationRunner } from '../data/governance-schema/migration
 import { governanceV22Statements } from '../data/governance-schema/v22Migration.js';
 import { governanceV23Statements } from '../data/governance-schema/v23Migration.js';
 import { governanceV34Statements } from '../data/governance-schema/v34Migration.js';
+import { governanceV36OrgGroupAgentStatements } from '../data/governance-schema/v36OrgGroupAgentMigration.js';
+import { governanceV37DeliveryAttemptPhaseStatements } from '../data/governance-schema/v37DeliveryAttemptPhaseMigration.js';
 
 describe('Governance schema migration SQL fixtures', () => {
   it('V22 在约束前确定性回填 V18 org_memory 的空名称与状态，且名称不引用正文', () => {
@@ -80,7 +82,7 @@ describe('Governance schema migration SQL fixtures', () => {
       .filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions'))
       .map(item => Number(item.params?.[0]));
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
-    expect(insertedVersions).toEqual(Array.from({ length: 13 }, (_, index) => index + 23));
+    expect(insertedVersions).toEqual(Array.from({ length: 15 }, (_, index) => index + 23));
     expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
@@ -182,7 +184,30 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(createIndex).toBeGreaterThanOrEqual(0);
     expect(alterIndex).toBeGreaterThan(createIndex);
     expect([...applied].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: 35 }, (_, index) => index + 1),
+      Array.from({ length: 37 }, (_, index) => index + 1),
     );
+  });
+
+  it('V36 仅做 expand，并为群绑定、投递、WorkOrder、attempt 与记忆建立租户复合约束', () => {
+    const sql = governanceV36OrgGroupAgentStatements('safe').join('\n');
+
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS safe_org_agent_channel_bindings');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS safe_agent_dws_delivery_intents');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS safe_org_agent_work_orders');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS safe_org_agent_work_attempts');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS safe_org_agent_memories');
+    expect(sql).toContain('FOREIGN KEY (tenant_id,binding_id,agent_id,conversation_space_id,account_id,conversation_id)');
+    expect(sql).toContain('UNIQUE (tenant_id,attempt_id)');
+    expect(sql).toContain('ADD CONSTRAINT safe_dwsd_work_fk');
+    expect(sql).toContain('ADD CONSTRAINT safe_dwsd_attempt_fk');
+    expect(sql).toContain('NOT VALID');
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
+  });
+
+  it('V37 对旧 writer 保持 unknown-safe，并且只做 expand', () => {
+    const sql = governanceV37DeliveryAttemptPhaseStatements('safe').join('\n');
+    expect(sql).toContain("provider_attempt_phase TEXT\n      NOT NULL DEFAULT 'legacy_unknown'");
+    expect(sql).toContain("'legacy_unknown','before_provider','provider_started'");
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
   });
 });

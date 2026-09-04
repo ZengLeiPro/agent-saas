@@ -424,7 +424,8 @@ describe('agentPlanDefense', () => {
       const lines = src.split('\n');
       const offenders: string[] = [];
       lines.forEach((line, i) => {
-        if (/`tool (error|not found):/.test(line) && !line.includes('standardizeToolError')) {
+        if (/`tool (error|not found):/.test(line)
+          && !line.includes('standardizeToolError') && !line.includes('toolExecutionError')) {
           offenders.push(`L${i + 1}: ${line.trim()}`);
         }
       });

@@ -527,8 +527,6 @@ describe('HttpTransport hand lifecycle helpers', () => {
     expect(fetchImpl).toHaveBeenCalledWith('http://h/health');
   });
 
-
-
   it('provisions /provision with Bearer auth and workspace recipe', async () => {
     let captured: { url?: string | URL; init?: RequestInit } = {};
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {

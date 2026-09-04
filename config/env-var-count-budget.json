@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "Ratchet prune: web build-time removed: DEV",
+  "reason": "组织群 Agent v2：Runtime Worker 发布身份标记与 ACS 任务沙箱共享只读挂载路径必须由部署环境显式注入",
   "updatedAt": "2026-09-03",
   "domains": {
     "server": {
-      "budget": 62,
+      "budget": 63,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -20,6 +20,7 @@
         "AGENT_SAAS_PROCESS_ROLE",
         "AGENT_SAAS_READYFILE",
         "AGENT_SAAS_RELEASE_ID",
+        "AGENT_SAAS_RELEASE_SHA",
         "AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS",
         "AGENT_SMS_ACCESS_KEY_SECRET",
         "AGENT_SMS_DEV_CODE",
@@ -71,7 +72,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 42,
+      "budget": 43,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -110,6 +111,7 @@
         "ACS_WORKSPACE_MOUNT_PATH",
         "ACS_WORKSPACE_PATH",
         "ACS_WORKSPACE_PVC_NAME",
+        "AGENT_SHARED_READ_ONLY_PATH",
         "PATH",
         "PIP_CACHE_DIR",
         "PIP_DISABLE_PIP_VERSION_CHECK",
@@ -141,18 +143,11 @@
     },
     "shared/runtime": {
       "budget": 2,
-      "names": [
-        "PATH",
-        "SKILL_DEMO_ALLOW_AUTH_STATE"
-      ]
+      "names": ["PATH", "SKILL_DEMO_ALLOW_AUTH_STATE"]
     },
     "web build-time": {
       "budget": 3,
-      "names": [
-        "BUNDLE_API_ORIGIN",
-        "VITE_API_BASE",
-        "VITE_WEB_ORIGIN"
-      ]
+      "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
       "budget": 38,

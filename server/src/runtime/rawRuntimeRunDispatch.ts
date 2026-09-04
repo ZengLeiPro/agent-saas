@@ -25,8 +25,6 @@ import type { TenantStore } from '../data/tenants/store.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
-import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
 import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
@@ -101,6 +99,7 @@ import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { createLogger } from '../utils/logger.js';
 import { enterSessionContext } from '../utils/requestContext.js';
 import { RawAgentLoop } from './rawAgentLoop.js';
+import { DefaultToolPolicy } from './toolPolicy.js';
 import { resolveEffectiveMcpLoadingMode } from './mcpToolLoading.js';
 import { modelSupportsImage } from './imageAttachments.js';
 import { resolveRuntimeInboundAttachments } from './runtimeAttachmentResolution.js';
@@ -141,6 +140,10 @@ import { createRuntimeSessionRecord, resolveSessionMemoryPolicy, FileSessionCata
 import { resolveSessionSandboxProfile, sandboxResourcesForSessionHand } from './sandboxProfile.js';
 import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
+import { buildOrgAgentChannelSkillFilter, buildOrgAgentSkillFilter } from './orgAgentSkillFilter.js';
+export { buildOrgAgentChannelSkillFilter, buildOrgAgentSkillFilter } from './orgAgentSkillFilter.js';
+import { restoreOrgAgentRunContext, snapshotOrgAgentRunContext } from './orgAgentRunContext.js';
+import { authorizeApprovalResumeWake } from './orgAgentApprovalWakeAuthorization.js';
 import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
 import { claimRuntimeRun } from './runtimeRunClaim.js';
@@ -187,7 +190,9 @@ import {
 } from './interactionProjection.js';
 import { loadPrompt, renderPrompt, type PromptVars } from './promptRenderer.js';
 import { buildRawRuntimeSandboxPolicy } from './rawRuntimeSandboxPolicy.js';
-import { deriveStableWorkspaceId } from './workspaceIdentity.js';
+import { deriveRuntimeWorkspaceId, requestedSessionPrincipal, runtimePrincipalMatches } from './runtimeSessionIdentity.js';
+import { resolveSessionOwnerTenantId, resolveWakeSessionOwner } from './runtimeSessionOwner.js';
+export { resolveSessionOwnerTenantId, resolveWakeSessionOwner } from './runtimeSessionOwner.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
 import { AgentToolProvider } from './subagent/agentToolProvider.js';
@@ -195,6 +200,8 @@ import { orphanUnrecoverableSubagentWake } from './subagent/orphanUnrecoverableS
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
+import { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
+export { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 const logger = createLogger('RawRuntime');
 
@@ -272,14 +279,6 @@ export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: str
   return rel.split(sep).join('/');
 }
 
-function deriveRuntimeWorkspaceId(params: {
-  existingSession?: RuntimeSessionRecord | null;
-  fallbackSessionId: string;
-  identity?: { id?: string; tenantId?: string };
-}): string {
-  return params.existingSession?.workspaceId
-    ?? deriveStableWorkspaceId(params.identity, params.fallbackSessionId);
-}
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
 ): TenantRemoteHandAuthTokenResolver {
@@ -551,14 +550,6 @@ export function mergeOrgAgentBoundRuntimeProfile(
     },
   };
 }
-/** 专职 Agent skill 白名单 filter：固有能力与 MVP knowledge skill 合集（仅按 id 命中，防同名扩权）。 */
-export function buildOrgAgentSkillFilter(
-  agent: Pick<OrgAgentRecord, 'allowedSkills' | 'allowedKnowledge'>,
-): RuntimeSkillFilter {
-  const allowed = new Set(resolveOrgAgentRuntimeSkillIds(agent));
-  return (skill) => allowed.has(skill.id);
-}
-
 export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSkillFilter {
   const hasTenantAcsHand = availableHands.some((hand) => (
     typeof hand.metadata?.tenantRemoteHandId === 'string'
@@ -649,69 +640,6 @@ async function authorizeBillingRunStart(
   if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
 }
 
-function resolveSessionOwnerRole(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-): 'admin' | 'user' {
-  return session.userRole
-    ?? config.resolveUserRole?.({ userId: session.userId, username: session.username })
-    ?? 'user';
-}
-
-/** Rebuild the original account identity for every scheduler wake/resume path. */
-export function resolveWakeSessionOwner(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-  fallbackUserId?: string, fallbackTenantId?: string,
-): NonNullable<ChannelContext['sessionOwner']> {
-  const userId = session.userId || fallbackUserId || '';
-  const realName = config.resolveUserRealName?.({
-    userId: userId || undefined,
-    username: session.username || undefined,
-  });
-  const dwsServiceIdentity = Boolean(session.orgAgentId && userId.startsWith('adws-')
-    && session.username === `agent-dws:${session.orgAgentId}`);
-  return {
-    id: userId,
-    username: session.username || 'unknown',
-    role: resolveSessionOwnerRole(config, session),
-    tenantId: dwsServiceIdentity ? fallbackTenantId : resolveSessionOwnerTenantId(config, session),
-    ...(realName ? { realName } : {}),
-  };
-}
-/**
- * 解析 sessionOwner.tenantId（多组织隔离主防御的 fail-safe baseline）。
- *
- * 设计原则（疑点 3 加固，2026-06-22）：
- *   - resolveUserTenantId 未配置 → 返回 undefined。下游 `isPlatformAdmin` 检查
- *     会因 tenantId !== DEFAULT_TENANT_ID 而 false → Shell gate 把非平台
- *     用户路径拦在 server-local 之外。
- *   - resolveUserTenantId 返回 undefined → 不静默回填默认组织。fail-closed 比
- *     "用户已删 silently fallback to kaiyan = 跨组织读取所有人的工作区" 更安全。
- *   - resolveUserTenantId 抛错 → fail-safe 返回 undefined（同上），并记 warn
- *     日志保留诊断信息。不向上抛 throw，避免一次 UserStore 故障让所有 wake
- *     入口阻塞。
- *
- * 任何对 wake 路径的 tenant 身份补齐改动都应保留这个 fail-safe → undefined
- * 语义，避免与下游 `isPlatformAdmin` 假设解耦。
- */
-export function resolveSessionOwnerTenantId(
-  config: RawRuntimeRunDispatchConfig,
-  session: RuntimeSessionRecord,
-): string | undefined {
-  if (!config.resolveUserTenantId) return undefined;
-  try {
-    return config.resolveUserTenantId({ userId: session.userId, username: session.username });
-  } catch (err) {
-    logger.warn('resolveUserTenantId 抛错（fail-safe 降级为 undefined）', {
-      sessionId: session.sessionId,
-      userId: session.userId,
-      username: session.username,
-      err: err instanceof Error ? err.message : String(err),
-    });
-    return undefined;
-  }
-}
 // 2026-08-29（TASK-256）：批准策略解析移入 approvalPolicyResolution.ts（ratchet 收缩），
 // 此处 re-export 维持既有 import 兼容。
 export { resolveEffectiveApprovalPolicy } from './approvalPolicyResolution.js';
@@ -879,35 +807,6 @@ function loadTenantInstructions(sharedDir: string, tenantId?: string): string {
     return '';
   }
 }
-/**
- * 07-05：给 tenant-remote hand（HttpTransport → acs-orchestrator/hand-server → pod）
- * 现场装配 wire.context.env。envResolver 走 workspace.tenantId + workspace.username
- * 二级查 tokens.json，得到 { AZEROTH_TOKEN, AZEROTH_API_URL } 塞进 wire。
- *
- * 与 dispatch.ts:603 本地 SDK spawn 路径的 AZEROTH_TOKEN 注入并行——两者共用同一份
- * tokens.json 与 resolveAzerothInjection，一份配置同时生效于本地与远端 pod。
- *
- * 未命中（该 (tenantId, username) 没配 PAT）→ 不带 AZEROTH env →
- * pod 内 CLI 报"未授权"，语义与本地 SDK 未配置时一致。
- *
- * wire env **只带 AZEROTH 凭据**：tenantSharedEnv 里的任何变量都不经这条通道下发。
- * 08-03 曾为 dws wrapper 灰度开过一条「平台行为开关」白名单通道，08-04 wrapper 撤销
- * 后一并移除——通道存在本身就是凭据泄漏面（tenantSharedEnv 里有 DASHSCOPE_API_KEY
- * 这类密钥），没有真实使用者时不留。要再开必须重新论证并补白名单与回归。
- */
-export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
-  const tenantId = workspace.tenantId ?? DEFAULT_TENANT_ID;
-  const env: Record<string, string> = {};
-  const username = workspace.username;
-  if (username) {
-    const injection = resolveAzerothInjection(tenantId, username);
-    if (injection) {
-      env.AZEROTH_TOKEN = injection.token;
-      if (injection.apiUrl) env.AZEROTH_API_URL = injection.apiUrl;
-    }
-  }
-  return env;
-}
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -951,6 +850,15 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
     if (existingSession?.deletedAt) return yield deletedSessionResumeError(resumeSessionId!);
     const identitySource = context.sessionOwner || context.user;
+    const requestedPrincipal = requestedSessionPrincipal({
+      agentPrincipal: context.orgAgentChannel?.agentPrincipal,
+      userId: identitySource?.id,
+    });
+    if (existingSession && !runtimePrincipalMatches(existingSession.principal, requestedPrincipal, existingSession)) {
+      yield { type: 'error', error: 'Runtime session principal mismatch' };
+      return;
+    }
+    const sessionPrincipal = existingSession?.principal ?? requestedPrincipal;
     const replayResolution = await resolveMemoryConsolidationReplaySource(
       sessionCatalog,
       options.memoryConsolidationSourceSessionId,
@@ -1134,6 +1042,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         id: identitySource?.id,
         tenantId: effectiveTenantId,
       },
+      ...(orgAgentId ? { orgAgentId } : {}),
     });
     // Collection authorization is pinned exactly once for a new org-Agent session.
     // Existing sessions retain their original pin; legacy sessions without one keep
@@ -1164,6 +1073,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           memoryAutomationEligible: false,
         } : {}),
         ...(orgAgentId ? { orgAgentId } : {}),
+        ...(sessionPrincipal ? { principal: sessionPrincipal } : {}),
         ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       })),
       sessionId,
@@ -1182,6 +1092,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       workspaceId,
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
       ...(orgAgentId ? { orgAgentId } : {}),
+      ...(sessionPrincipal ? { principal: sessionPrincipal } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       memoryPolicyVersion, sandboxWorkloadDescriptor,
       ...(isTaskboardExecution ? {
@@ -1229,6 +1140,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
+        ...snapshotOrgAgentRunContext(context),
         ...(replaySourceSession ? {
           memoryConsolidationSourceSessionId: replaySourceSession.sessionId,
           forceFullContextReplay: true,
@@ -1333,7 +1245,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent ? undefined : identitySource?.username,
       // AND 组合：组织 Agent 的 service identity 跳过用户技能/MCP；其技能仍与 org 白名单取交集
       orgAgent
-        ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent), profileSkillFilter)
+        ? composeSkillFilters(baseSkillFilter, buildOrgAgentSkillFilter(orgAgent),
+            buildOrgAgentChannelSkillFilter(context.orgAgentChannel), profileSkillFilter)
         : composeSkillFilters(baseSkillFilter, profileSkillFilter),
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
       { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
@@ -1396,6 +1309,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       transcriptProjection: projection,
       toolRuntime: effectiveToolRuntime,
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
+      toolPolicy: new DefaultToolPolicy(config.orgAgentChannelPolicyEvaluator),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
@@ -1936,6 +1850,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         ? composeSkillFilters(
             resumeBaseSkillFilter,
             buildOrgAgentSkillFilter(orgAgent),
+            buildOrgAgentChannelSkillFilter(request.context.orgAgentChannel),
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           )
         : composeSkillFilters(
@@ -2019,6 +1934,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
         dispatcherCompletion: request.dispatcherCompletion,
       }),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
+      toolPolicy: new DefaultToolPolicy(config.orgAgentChannelPolicyEvaluator),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
@@ -2418,6 +2334,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         ? composeSkillFilters(
             resumeBaseSkillFilter,
             buildOrgAgentSkillFilter(orgAgent),
+            buildOrgAgentChannelSkillFilter(request.context.orgAgentChannel),
             boundProfile ? (skill) => filterAgentProfileSkills([skill], boundProfile!.version.config).length === 1 : allowAllRuntimeSkills,
           )
         : composeSkillFilters(
@@ -2501,6 +2418,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
         dispatcherCompletion: request.dispatcherCompletion,
       }),
       workspaceProvider: new LocalWorkspaceProvider(executionTarget),
+      toolPolicy: new DefaultToolPolicy(config.orgAgentChannelPolicyEvaluator),
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
@@ -2770,20 +2688,13 @@ export async function wakeRuntimeSession(
   }
 
   if (resumeApproval) {
-    const hasInteractionResolved = events.some((event) => (
-      event.type === 'interaction_resolved'
-      && event.sessionId === run.sessionId
-      && event.interactionId === resumeApproval.approvalId
-    ));
-    const hasApprovalResolved = events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.sessionId === run.sessionId
-      && event.approvalId === resumeApproval.approvalId
-    ));
-    if (!hasInteractionResolved || hasApprovalResolved) {
-      await options.lease?.release(hasApprovalResolved ? 'completed' : 'failed', hasApprovalResolved ? 'approval_already_resolved' : 'missing_interaction_resolved_command');
-      return;
-    }
+    if (!await authorizeApprovalResumeWake({
+      run, approvalId: resumeApproval.approvalId, events, eventStore, eventTenantId,
+      ...(options.lease ? { lease: options.lease } : {}),
+      ...(config.authorizeOrgAgentRequesterLive
+        ? { authorizer: config.authorizeOrgAgentRequesterLive }
+        : {}),
+    })) return;
     await config.runStore?.markStatus(run.runId, 'running', 'approval_resume_wake_started', {
       resumeApprovalConsumedAt: new Date().toISOString(),
       resumeApprovalConsumedId: resumeApproval.approvalId,
@@ -2817,6 +2728,7 @@ export async function wakeRuntimeSession(
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
+          ...restoreOrgAgentRunContext(run.metadata),
         },
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
@@ -2891,6 +2803,7 @@ export async function wakeRuntimeSession(
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
+          ...restoreOrgAgentRunContext(run.metadata),
         },
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
@@ -2933,6 +2846,7 @@ export async function wakeRuntimeSession(
     resumeSessionId: run.sessionId,
     sessionOwner,
     targetCwd: session.cwd,
+    ...restoreOrgAgentRunContext(run.metadata),
   };
   if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return; const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();

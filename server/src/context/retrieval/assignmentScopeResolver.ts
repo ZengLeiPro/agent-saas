@@ -76,7 +76,7 @@ export class AssignmentContextRecallScopeResolver implements ContextRecallScopeR
   ): Promise<ContextRecallResolvedScope> {
     if (this.options.resolveAccess) {
       const access = await this.options.resolveAccess(subject);
-      if (!access.activeMembership) {
+      if (!access.activeMembership && !subject.channelScope) {
         throw new ContextRecallScopeDriftError('CONTEXT_RECALL_MEMBERSHIP_INACTIVE');
       }
       // Policy is deliberately evaluated before session pins and assignments. A live

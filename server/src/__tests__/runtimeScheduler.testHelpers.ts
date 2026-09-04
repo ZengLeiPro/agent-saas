@@ -118,11 +118,14 @@ export class MemoryRunStore implements RunStore {
 
   async listRecoverable(): Promise<RunRecord[]> {
     return [...this.records.values()]
-      .filter((record) => (
-        (record.status === 'pending' || record.status === 'running')
-        && !(record.status === 'pending'
-          && record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED)
-      ))
+      .filter(
+        (record) =>
+          (record.status === 'pending' || record.status === 'running') &&
+          !(
+            record.status === 'pending' &&
+            record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED
+          ),
+      )
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
   }
 
@@ -169,7 +172,9 @@ export class MemoryRunStore implements RunStore {
     const acquirable = record.status === 'pending' || (record.status === 'running' && leaseExpired);
     const stagedPending = record.status === 'pending'
       && record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED;
-    if (!acquirable || stagedPending) return null;
+    const stagedBackgroundTask = record.metadata?.backgroundTaskVersion === 2
+      && record.metadata?.backgroundTaskReady !== true;
+    if (!acquirable || stagedPending || stagedBackgroundTask) return null;
     const expiresAt = new Date(now.getTime() + leaseMs).toISOString();
     const { drainHandoffReady: _drainHandoffReady, ...metadata } = record.metadata;
     const updated: RunRecord = {

@@ -7,6 +7,7 @@ import { UserStore } from '../data/users/store.js';
 import { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { SkillConfigStore } from '../data/skills/index.js';
 import { PgMembershipStore } from '../data/memberships/index.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/index.js';
@@ -88,6 +89,8 @@ import type { SecretVault } from '../security/secretVault.js';
 import { CodexResponsesWebSocketPool } from '../runtime/responses/codexResponsesWebSocketPool.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { shutdownRuntimeEgress } from './runtimeStagingEgressBootstrap.js';
+import { resolveRunScopedConnectorIdentity } from './orgAgentServiceConnectorIdentity.js';
+import { createRuntimeOAuthSubjectAuthorizer } from './runtimeOAuthSubjectAuthorizer.js';
 
 export interface RuntimeGovernanceConnectorDeps {
   processCwd: string;
@@ -99,6 +102,7 @@ export interface RuntimeGovernanceConnectorDeps {
   userStore?: UserStore;
   tenantStore?: TenantStore;
   orgAgentStore?: OrgAgentStore;
+  agentDwsAccountStore?: AgentDwsAccountStore;
   skillConfigStore?: SkillConfigStore;
   pgEventStore?: PgEventStore;
   membershipStore?: PgMembershipStore;
@@ -143,6 +147,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     userStore,
     tenantStore,
     orgAgentStore,
+    agentDwsAccountStore,
     skillConfigStore,
     pgEventStore,
     membershipStore,
@@ -688,24 +693,9 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     governanceCredentialStore: credentialStore,
     onError: (error) => serverLogger.warn(`Aliyun connector runtime env skipped: ${error.message}`),
   });
-  const authorizeOAuthSubject = async (userId: string, tenantId: string): Promise<boolean> => {
-    const user = userStore?.findById(userId);
-    if (!user ||
-      user.disabled ||
-      user.tenantId !== tenantId ||
-      tenantStore?.findById(tenantId)?.disabled
-    )
-      return false;
-    if (!userStore || !membershipStore || !governanceChangeJobStore) return false;
-    const subject = await new SubjectResolver(userStore, membershipStore).resolveHuman(userId).catch(() => null);
-    if (!subject || subject.tenantId !== tenantId || subject.accountStatus !== 'active') return false;
-    return !(await governanceChangeJobStore.findActiveForTarget(
-      tenantId,
-      'user_offboarding',
-      'user',
-      userId,
-    ));
-  };
+  const authorizeOAuthSubject = createRuntimeOAuthSubjectAuthorizer({
+    userStore, tenantStore, membershipStore, governanceChangeJobStore,
+  });
   const authorizeOAuthGrant = async (
     grantId: string,
     userId: string,
@@ -1083,14 +1073,12 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     username: string;
     tenantId: string;
   }): Promise<Record<string, string>> => {
-    const owner = userStore?.findByUsername(context.username);
-    const ownedContext = owner
-      ? !owner.disabled && owner.id === context.userId && owner.tenantId === context.tenantId
-        ? context
-        : undefined
-      : !userStore
-        ? context
-        : undefined;
+    const ownedContext = await resolveRunScopedConnectorIdentity(
+      context,
+      userStore,
+      orgAgentStore,
+      agentDwsAccountStore,
+    );
     if (!ownedContext) return {};
 
     let googleWorkspaceScopes: string[] = [];

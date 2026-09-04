@@ -5,6 +5,7 @@ import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentD
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { AgentDwsAuthFlowService } from '../dws/agentAuthFlow.js';
 import { DwsDeviceLoginRunner, type DwsWorkspacePrincipal } from '../dws/authFlow.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -14,15 +15,19 @@ import {
   type AgentDwsDefaultModelResolution,
 } from '../dws/personalMessageRouter.js';
 import { DwsPersonalMessageSender } from '../dws/personalMessageSender.js';
+import { OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
 import { DwsRequesterIdentityResolver } from '../dws/requesterIdentityResolver.js';
 import type { UserStore } from '../data/users/store.js';
+import type { PgMembershipStore } from '../data/memberships/store.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import { isAssignedToOrgAgent, type OrgAgentStore } from '../data/orgAgents/store.js';
 import type { RunPreflightService } from '../runtime/runPreflight.js';
 import type { PgRunStore } from '../runtime/runStore.js';
+import type { RuntimeScheduler } from '../runtime/scheduler.js';
 import type { UserIdentity } from '../types/index.js';
 import type { Logger } from '../utils/logger.js';
 import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
+import { createOrgAgentRuntimeCapabilityProbe } from './orgAgentRuntimeCapability.js';
 
 export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) => Promise<{
   baseUrl: string;
@@ -34,7 +39,10 @@ export interface AgentDwsRuntimeBundle {
   authFlowService: AgentDwsAuthFlowService;
   messageRouter?: AgentDwsMessageRouter;
   eventGateway: DwsPersonalEventGateway;
+  approvalService?: OrgAgentApprovalService;
+  isOrgAgentRuntimeV2Ready(account: AgentDwsAccountRecord): Promise<boolean>;
   onContextPolicyUpdated(account: AgentDwsAccountRecord): Promise<void>;
+  onGroupBindingUpdated(account: AgentDwsAccountRecord, conversationId: string): Promise<void>;
   onEnabledChanged(account: AgentDwsAccountRecord, enabled: boolean): Promise<void>;
   stop(): Promise<void>;
 }
@@ -93,12 +101,15 @@ export async function createAgentDwsRuntime(options: {
   assignmentStore?: PgAssignmentStore;
   contextStore?: ContextStore;
   messageStore?: AgentDwsMessageStore;
+  orgGroupAgentStore?: OrgGroupAgentStore;
   pgEventStore?: PgEventStore;
   pgRunStore?: PgRunStore;
+  runtimeScheduler?: Pick<RuntimeScheduler, 'activateCreatedRun'>;
   tablePrefix: string;
   dispatch: AgentRunDispatch;
   resolveDefaultModel: (tenantId: string) => AgentDwsDefaultModelResolution | null;
   userStore: UserStore;
+  membershipStore?: Pick<PgMembershipStore, 'getMembership'>;
   orgAgentStore: Pick<OrgAgentStore, 'get'>;
   runPreflightService: Pick<RunPreflightService, 'preflight'>;
   governanceAuditStore: GovernanceAuditStore;
@@ -106,6 +117,7 @@ export async function createAgentDwsRuntime(options: {
   remoteAvailable: boolean;
   enableWorker: boolean;
   isExecutionEnabled?: () => boolean | Promise<boolean>;
+  isRuntimeWorkerV2Ready: () => boolean;
   logger: Logger;
 }): Promise<AgentDwsRuntimeBundle | undefined> {
   if (!options.pgEventStore || !options.remoteAvailable) {
@@ -132,6 +144,7 @@ export async function createAgentDwsRuntime(options: {
         accountStore: options.accountStore,
         contextStore: options.contextStore,
         ...(options.assignmentStore ? { assignmentStore: options.assignmentStore } : {}),
+        ...(options.orgGroupAgentStore ? { orgGroupAgentStore: options.orgGroupAgentStore } : {}),
         resolveServerRemote: options.resolveServerRemote,
         logger: options.logger.child('DwsContextRuntime'),
       })
@@ -143,10 +156,16 @@ export async function createAgentDwsRuntime(options: {
     auditStore: options.governanceAuditStore,
     resolveServerRemote: options.resolveServerRemote,
   });
+  const isOrgAgentRuntimeV2Ready = createOrgAgentRuntimeCapabilityProbe({
+    isRuntimeWorkerV2Ready: options.isRuntimeWorkerV2Ready,
+    resolveServerRemote: options.resolveServerRemote,
+  });
   const messageRouter = options.messageStore
     ? new AgentDwsMessageRouter({
         agentCwd: options.agentCwd,
         messageStore: options.messageStore,
+        ...(options.orgGroupAgentStore ? { orgGroupAgentStore: options.orgGroupAgentStore } : {}),
+        orgAgentStore: options.orgAgentStore,
         accountStore: options.accountStore,
         dispatch: options.dispatch,
         resolveDefaultModel: options.resolveDefaultModel,
@@ -155,6 +174,27 @@ export async function createAgentDwsRuntime(options: {
           senderOpenDingtalkId,
           senderName,
         ),
+        resolveRequesterOutcome: (account, senderOpenDingtalkId, senderName) => requesterIdentityResolver.resolveOutcome(
+          account,
+          senderOpenDingtalkId,
+          senderName,
+        ),
+        resolveRequesterGovernanceRole: async (tenantId, userId) => {
+          const membership = await options.membershipStore?.getMembership(tenantId, userId);
+          return membership?.status === 'active' ? membership.persona : undefined;
+        },
+        isOrgAgentRuntimeV2Ready,
+        authorizeCompletionRequester: async (tenantId, agentId, userId) => {
+          const [membership, user] = await Promise.all([
+            options.membershipStore?.getMembership(tenantId, userId),
+            Promise.resolve(options.userStore.findById(userId)),
+          ]);
+          const agent = options.orgAgentStore.get(agentId);
+          return membership?.status === 'active'
+            && Boolean(user && !user.disabled && user.tenantId === tenantId)
+            && Boolean(agent && agent.enabled && agent.tenantId === tenantId
+              && user && isAssignedToOrgAgent(agent, user.username));
+        },
         authorizeRequester: input => authorizeAgentDwsRequesterAccess({
           ...input,
           orgAgentStore: options.orgAgentStore,
@@ -245,6 +285,21 @@ export async function createAgentDwsRuntime(options: {
     },
     logger: options.logger.child('AgentDwsAuthFlow'),
   });
+  const approvalService = options.messageStore && options.orgGroupAgentStore
+    && options.pgRunStore && options.runtimeScheduler
+    ? new OrgAgentApprovalService({
+        messageStore: options.messageStore,
+        runStore: options.pgRunStore,
+        eventStoreFor: () => options.pgEventStore!,
+        scheduler: options.runtimeScheduler,
+        orgGroupAgentStore: options.orgGroupAgentStore,
+        userStore: options.userStore,
+        resolveRequesterGovernanceRole: async (tenantId, userId) => {
+          const membership = await options.membershipStore?.getMembership(tenantId, userId);
+          return membership?.status === 'active' ? membership.persona : undefined;
+        },
+      })
+    : undefined;
 
   if (options.enableWorker) {
     messageRouter?.start();
@@ -258,8 +313,13 @@ export async function createAgentDwsRuntime(options: {
     authFlowService,
     messageRouter,
     eventGateway,
+    approvalService,
+    isOrgAgentRuntimeV2Ready,
     async onContextPolicyUpdated(account) {
       await contextRuntime?.onContextPolicyUpdated(account);
+    },
+    async onGroupBindingUpdated(account, conversationId) {
+      await contextRuntime?.onGroupBindingUpdated(account, conversationId);
     },
     async onEnabledChanged(account, enabled) {
       await contextRuntime?.onAccountEnabledChanged(account, enabled);

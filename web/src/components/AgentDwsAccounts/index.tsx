@@ -32,6 +32,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { authFetch } from "@/lib/authFetch";
 import { ContextPolicyDialog } from './ContextPolicyDialog';
 import { DelegationAccessPanel } from './DelegationAccessPanel';
+import { GroupAgentWorkspacePanel } from './GroupAgentWorkspacePanel';
 
 interface AgentDwsAccountsPageProps {
   tenantId: string;
@@ -723,6 +724,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
       </Card>
 
       <DelegationAccessPanel tenantId={tenantId} accounts={accounts} />
+      <GroupAgentWorkspacePanel tenantId={tenantId} accounts={accounts} />
 
       <ContextPolicyDialog
         account={contextPolicyAccount}

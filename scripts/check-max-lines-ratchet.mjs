@@ -91,6 +91,7 @@ function baselineFrom(root, staged) {
 export function evaluateMaxLines({ current, baseline, baseBaseline, renames, prune = false }) {
   const errors = [];
   const lowered = [];
+  const stale = [];
   const consumedBaselinePaths = new Set();
 
   for (const [file, value] of current) {
@@ -107,7 +108,7 @@ export function evaluateMaxLines({ current, baseline, baseBaseline, renames, pru
   }
 
   for (const file of baseline.keys()) {
-    if (!consumedBaselinePaths.has(file)) errors.push(`STALE baseline ${file}; use --prune after the file is removed or drops below threshold`);
+    if (!consumedBaselinePaths.has(file)) stale.push(file);
   }
 
   if (baseBaseline) {
@@ -120,8 +121,13 @@ export function evaluateMaxLines({ current, baseline, baseBaseline, renames, pru
     }
   }
 
-  if (!prune) errors.push(...lowered.map((item) => `LOWERED ${item}; run --prune to ratchet down`));
-  return { errors, lowered };
+  // --prune 会用 current 重写 baseline，STALE / LOWERED 正是它要消化的输入，
+  // 因此这两类只在非 prune 模式下才是错误；prune 模式下报错会让 baseline 永远写不下去。
+  if (!prune) {
+    errors.push(...lowered.map((item) => `LOWERED ${item}; run --prune to ratchet down`));
+    errors.push(...stale.map((file) => `STALE baseline ${file}; use --prune after the file is removed or drops below threshold`));
+  }
+  return { errors, lowered, stale };
 }
 
 export function runMaxLines(root = process.cwd(), argv = []) {
@@ -148,8 +154,7 @@ export function runMaxLines(root = process.cwd(), argv = []) {
   const renames = findRenames(root, resolvedBase.sha, SOURCE_ROOTS, { staged });
   const result = evaluateMaxLines({ current, baseline, baseBaseline, renames, prune });
 
-  const blocking = result.errors.filter((error) => prune && error.startsWith('LOWERED ') ? false : true);
-  if (blocking.length) throw new Error(blocking.join('\n'));
+  if (result.errors.length) throw new Error(result.errors.join('\n'));
   if (prune) fs.writeFileSync(baselineFile, formatBaseline(current));
   return {
     message: `${prune ? 'Pruned' : 'Checked'} max-lines ratchet: ${current.size} grandfathered files`,

@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const helper = new URL('./run-with-production-lock-guard.sh', import.meta.url);
 
-test('terminates the active process group when Production lock owner proof is lost', async () => {
+test('terminates an already active process group when Production lock owner proof is lost', async () => {
   const root = await mkdtemp(join(tmpdir(), 'production-lock-guard-'));
   const bin = join(root, 'bin');
   const counter = join(root, 'counter');
@@ -15,7 +15,7 @@ test('terminates the active process group when Production lock owner proof is lo
   await mkdir(bin);
   await writeFile(
     join(bin, 'ssh'),
-    `#!/usr/bin/env bash\nset -eu\ncount=0\n[ ! -f '${counter}' ] || count=$(cat '${counter}')\ncount=$((count + 1))\nprintf '%s' "$count" > '${counter}'\n[ "$count" -eq 1 ]\n`,
+    `#!/usr/bin/env bash\nset -eu\ncount=0\n[ ! -f '${counter}' ] || count=$(cat '${counter}')\ncount=$((count + 1))\nprintf '%s' "$count" > '${counter}'\n[ "$count" -le 2 ]\n`,
   );
   await writeFile(
     join(bin, 'mutation'),

@@ -51,7 +51,7 @@ confirm_process_group_stopped() {
 }
 terminate_guarded() {
   if [ -z "$guarded_pid" ] && [ -n "$launcher_pid" ]; then
-    # The child cannot exec the mutation until arm_file exists. During startup cancellation,
+    # The child cannot exec the mutation until arm_file exists; during startup cancellation,
     # wait for its PGID handshake so cleanup can terminate the correct session, not just setsid.
     for _ in $(seq 1 50); do
       capture_guarded_pid && break
@@ -82,6 +82,8 @@ trap 'exit 130' INT TERM
 
 assert_lock
 rm -f -- "$pid_file" "$arm_file"
+startup_signal=''
+trap 'startup_signal=1' INT TERM
 setsid --wait bash -c '
   pid_file=$1
   arm_file=$2
@@ -91,6 +93,8 @@ setsid --wait bash -c '
   exec "$@"
 ' production-lock-guard "$pid_file" "$arm_file" "$@" &
 launcher_pid=$!
+trap 'exit 130' INT TERM
+[ -z "$startup_signal" ] || exit 130
 for _ in $(seq 1 50); do
   capture_guarded_pid && break
   kill -0 "$launcher_pid" 2>/dev/null || break

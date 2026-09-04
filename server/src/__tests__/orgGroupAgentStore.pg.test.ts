@@ -32,7 +32,9 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       (account_id,tenant_id,agent_id,display_name,login_id,corp_id,dingtalk_user_id,profile_id,
        identity_updated_at,status,event_policy_json,created_by,updated_by)
       VALUES ('account-a','tenant-a','agent-a','群前台','group-frontdesk','corp-a','agent-member-a',
-       'corp-a:agent-member-a',NOW(),'active','{"kinds":["at_me"]}'::jsonb,'admin','admin')`);
+       'corp-a:agent-member-a',$1,'active','{"kinds":["at_me"]}'::jsonb,'admin','admin')`,
+      [accountIdentity.identityUpdatedAt],
+    );
     store = new PgOrgGroupAgentStore(pool, prefix);
   }, 60_000);
 
@@ -96,7 +98,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
   });
 
-  it('pins account/binding/topic/work/attempt identity and keeps unknown delivery from automatic resend', async () => {
+  it('固定账号、binding、topic、work、attempt 身份且 unknown delivery 不自动重发', async () => {
     const shadow = await store.ensureShadowBinding({
       tenantId: 'tenant-a',
       accountId: 'account-a',

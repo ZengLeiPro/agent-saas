@@ -51,7 +51,7 @@ describe('Runtime Worker 生产部署契约', () => {
     });
   });
 
-  it('Web 蓝绿固定 ws-only，独立 worker 固定 runtime-worker 并有 pid/ready 与 retention drain 门禁', async () => {
+  it('Web 蓝绿固定 ws-only，独立 worker 具备 pid/ready、身份刷新 watchdog 与 retention drain 门禁', async () => {
     const webUnit = await readFile(
       join(repoRoot, 'daemon-packaging/systemd/agent-saas-server@.service.template'),
       'utf-8',
@@ -271,9 +271,13 @@ describe('Runtime Worker 生产部署契约', () => {
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',
     );
     expect(serverEntry).toContain('runtime?.getRuntimeAdmissionSnapshot?.(),');
-    expect(serverEntry).toContain('runtime?.getConfigIdentitySummary?.(),');
+    expect(serverEntry).toContain('await runtime.refreshConfigIdentitySummary()');
+    expect(serverEntry).toContain('if (!readyFile || runtimeReadyFileSyncPending) return;');
+    expect(serverEntry).toContain('identityRefreshWatchdog = setTimeout(() => {');
+    expect(serverEntry).toContain('fs.rmSync(readyFile, { force: true })');
+    expect(serverEntry).toContain('await syncRuntimeWorkerReadyFile()');
     expect(serverEntry).toContain(
-      'runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000)',
+      'runtimeReadyFileTimer = setInterval(() => { void syncRuntimeWorkerReadyFile(); }, 1_000)',
     );
     expect(runtimeSource).toContain('createRuntimeEventRetentionAdmissionGuard(');
     expect(runtimeSource).toContain('admissionGuard: runtimeAdmissionGuard');

@@ -608,6 +608,22 @@ describe('health router', () => {
     });
   });
 
+  it('TASK-318：配置身份刷新异常时 readiness 返回 503 而不是暴露内部错误', async () => {
+    const server = await startHealthServer({
+      getConfigIdentitySummary: async () => {
+        throw new Error('private vault failure must not leak');
+      },
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: 'not_ready',
+      error: 'config_identity_unavailable',
+    });
+  });
+
   it('TASK-318：公开 readiness 不暴露 configIdentity 或上游额外字段', async () => {
     const configIdentity = {
       schemaVersion: 1 as const,
@@ -635,7 +651,29 @@ describe('health router', () => {
     expect(JSON.stringify(body)).not.toContain('must-not-leak');
   });
 
-  it('TASK-318：SecretVault 轮换后的首次 readiness 立即 fail closed', async () => {
+  it('TASK-318：配置身份无变化时跨多个刷新周期 readiness 持续 200', async () => {
+    const config = parseAppConfig({ agent: { cwd: '/srv/agent' }, server: {} });
+    const deployTime = await computeObservedConfigIdentity(config, undefined, '/srv/server');
+    let clock = 0;
+    const runtime = createConfigIdentityRuntime({
+      config,
+      environment: 'test',
+      processCwd: '/srv/server',
+      expected: { schemaVersion: 1, digest: deployTime.digest },
+      now: () => new Date(clock),
+    });
+    await runtime.initialize();
+    const server = await startHealthServer({ getConfigIdentitySummary: runtime.refreshSummary }, config);
+    servers.push(server);
+
+    for (const nextClock of [0, 6_000, 12_000, 30_000]) {
+      clock = nextClock;
+      expect((await server.request('/api/healthz/ready')).status).toBe(200);
+      expect(runtime.getSummary().status).toBe('consistent');
+    }
+  });
+
+  it('TASK-318：SecretVault 轮换后的首次 readiness 等待强一致刷新并 fail closed', async () => {
     const vault = new InMemorySecretVault();
     const caller = {
       actor: 'system' as const,
@@ -669,7 +707,7 @@ describe('health router', () => {
       now: () => new Date(clock),
     });
     await runtime.initialize();
-    const server = await startHealthServer({ getConfigIdentitySummary: runtime.getSummary }, config);
+    const server = await startHealthServer({ getConfigIdentitySummary: runtime.refreshSummary }, config);
     servers.push(server);
     expect((await server.request('/api/healthz/ready')).status).toBe(200);
 
@@ -679,8 +717,6 @@ describe('health router', () => {
     });
     clock = 6_000;
     expect((await server.request('/api/healthz/ready')).status).toBe(503);
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(runtime.getSummary().status).toBe('drifted');
   });
 

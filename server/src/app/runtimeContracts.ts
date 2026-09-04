@@ -163,10 +163,12 @@ export interface AppRuntime {
   getMemoryIndexService?: () => MemoryIndexService | null;
   getMemoryConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
   /**
-   * TASK-318：只读脱敏配置身份摘要（health、平台概览与 Worker readiness 消费）。
+   * TASK-318：稳定只读脱敏配置身份摘要。
    * 内容只含 digest/计数/时间戳/四态状态，不含 secret 与 raw config。
    */
   getConfigIdentitySummary?: () => import('@agent/shared').ConfigIdentitySummary;
+  /** readiness、overview 与 Worker 门禁使用的可等待强一致读取。 */
+  refreshConfigIdentitySummary?: () => Promise<import('@agent/shared').ConfigIdentitySummary>;
   /** 当前私有 ConfigIdentity snapshot 必须与内存 summary 逐字一致。 */
   isPrivateConfigIdentitySummaryCurrent: () => boolean;
   /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门及 permit 所有者。 */

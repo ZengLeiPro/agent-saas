@@ -33,6 +33,7 @@ let httpServer: Server | undefined;
 let kbPreviewScheduler: KbPreviewScheduler | undefined;
 let runtimePerformanceSampler: RuntimePerformanceSampler | undefined;
 let runtimeReadyFileTimer: NodeJS.Timeout | undefined;
+let runtimeReadyFileSyncPending = false;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
@@ -103,14 +104,26 @@ function writeAuthorityAckFile(): void {
   fs.renameSync(`${ackFile}.candidate`, ackFile);
 }
 
-function syncRuntimeWorkerReadyFile(): void {
+async function syncRuntimeWorkerReadyFile(): Promise<void> {
   const readyFile = process.env.AGENT_SAAS_READYFILE;
-  if (!readyFile) return;
+  if (!readyFile || runtimeReadyFileSyncPending) return;
+  runtimeReadyFileSyncPending = true;
+  let identityRefreshWatchdog: NodeJS.Timeout | undefined;
   try {
+    if (runtime?.refreshConfigIdentitySummary) {
+      // 快速的无变化轮询不抖 readyfile；Vault 慢或挂起超过 1 秒则有界 fail-closed。
+      identityRefreshWatchdog = setTimeout(() => {
+        try { fs.rmSync(readyFile, { force: true }); } catch {}
+      }, 1_000);
+      identityRefreshWatchdog.unref?.();
+    }
+    const configIdentitySummary = runtime?.refreshConfigIdentitySummary
+      ? await runtime.refreshConfigIdentitySummary()
+      : runtime?.getConfigIdentitySummary?.();
     projectRuntimeWorkerReadyFile(
       readyFile,
       runtime?.getRuntimeAdmissionSnapshot?.(),
-      runtime?.getConfigIdentitySummary?.(),
+      configIdentitySummary,
       runtime?.isPrivateConfigIdentitySummaryCurrent() ?? false,
     );
   } catch (err) {
@@ -121,6 +134,9 @@ function syncRuntimeWorkerReadyFile(): void {
         err instanceof Error ? err.message : String(err)
       }`,
     );
+  } finally {
+    if (identityRefreshWatchdog) clearTimeout(identityRefreshWatchdog);
+    runtimeReadyFileSyncPending = false;
   }
 }
 
@@ -172,8 +188,8 @@ async function startServer(): Promise<void> {
     if (processRole === 'runtime-worker') {
       runtime.startCronCoordinator();
       kbPreviewScheduler = startKbPreviewScheduler(runtime.processCwd);
-      syncRuntimeWorkerReadyFile();
-      runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000);
+      await syncRuntimeWorkerReadyFile();
+      runtimeReadyFileTimer = setInterval(() => { void syncRuntimeWorkerReadyFile(); }, 1_000);
       runtimeReadyFileTimer.unref?.();
     } else {
       writeReadyFile();

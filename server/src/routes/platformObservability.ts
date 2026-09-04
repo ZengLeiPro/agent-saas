@@ -109,7 +109,7 @@ export interface PlatformObservabilityRouterOptions {
   eventStore?: PgEventStore;
   toolInvocationStore?: PgToolInvocationStore;
   systemMetricsStore?: PgSystemMetricsStore;
-  getDispatchMetrics?: () => DispatchMetricsSnapshot; getConfigIdentitySummary?: () => ConfigIdentityPayload;
+  getDispatchMetrics?: () => DispatchMetricsSnapshot; getConfigIdentitySummary?: () => ConfigIdentityPayload | Promise<ConfigIdentityPayload>;
 }
 
 interface SearchMatch {
@@ -409,7 +409,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         dailyCostThresholdYuan: options.config.alerting?.dailyCostThresholdYuan,
         sandboxes,
         handFailures,
-      }); const configIdentity = appendConfigIdentityAttention(options.getConfigIdentitySummary?.(), attention);
+      }); const configIdentity = appendConfigIdentityAttention(await options.getConfigIdentitySummary?.(), attention);
 
       res.json({
         generatedAt: new Date().toISOString(),

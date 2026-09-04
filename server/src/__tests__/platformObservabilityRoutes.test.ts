@@ -366,11 +366,11 @@ describe('platform observability router', () => {
     lastObservedAt: '2026-08-29T12:00:00.000Z',
   };
 
-  it('overview snapshot 透传只读脱敏 configIdentity，一致时不产生待关注项', async () => {
+  it('overview snapshot 等待异步 configIdentity 刷新，一致时不产生待关注项', async () => {
     await withApp(
       PLATFORM_ADMIN,
       {
-        getConfigIdentitySummary: () => consistentIdentity,
+        getConfigIdentitySummary: async () => consistentIdentity,
       },
       async (baseUrl) => {
         const res = await fetch(`${baseUrl}/api/admin/overview/snapshot`);
@@ -473,7 +473,7 @@ describe('platform observability router', () => {
     await withApp(
       notAdmin,
       {
-        getConfigIdentitySummary: () => consistentIdentity,
+        getConfigIdentitySummary: async () => consistentIdentity,
       },
       async (baseUrl) => {
         const res = await fetch(`${baseUrl}/api/admin/overview/snapshot`);

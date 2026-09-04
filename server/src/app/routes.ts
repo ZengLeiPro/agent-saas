@@ -157,7 +157,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getIsDraining: () => channelManager.draining,
       getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
-      getEffectiveConfigStatus, getConfigIdentitySummary: runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
+      getEffectiveConfigStatus, getConfigIdentitySummary: runtime.refreshConfigIdentitySummary ? () => runtime.refreshConfigIdentitySummary!() : runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
       ...(runtime.egressConfigStore
         ? {
             getEnvironmentSafetyAttested: () =>
@@ -649,7 +649,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       eventStore: runtime.runtimePgEventStore,
       toolInvocationStore: runtime.runtimeToolInvocationStore,
       systemMetricsStore: runtime.systemMetricsStore,
-      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(), getConfigIdentitySummary: runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
+      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(), getConfigIdentitySummary: runtime.refreshConfigIdentitySummary ? () => runtime.refreshConfigIdentitySummary!() : runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
     }),
   );
   app.use('/api/admin/system', requireAdmin, createSystemAdminRouter({

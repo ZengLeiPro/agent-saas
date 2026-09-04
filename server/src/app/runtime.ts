@@ -2896,7 +2896,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     uploadsDir, uploadManager, voiceTranscriptionService,
     sessionCatalog, channelManager, dispatchMetricsStore, dingtalkDeps,
     cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary,
-    isPrivateConfigIdentitySummaryCurrent: configIdentityAssembly.isPrivateSummaryCurrent,
+    refreshConfigIdentitySummary: configIdentityAssembly.refreshSummary, isPrivateConfigIdentitySummaryCurrent: configIdentityAssembly.isPrivateSummaryCurrent,
     configRuntimeRecoveryGate: configIdentityAssembly.recoveryGate,
     getMemoryIndexService: () => memoryIndexServiceRef.current,
     getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,

@@ -27,7 +27,7 @@ export interface HealthRouteOptions {
   /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
   getRuntimeIdentity?: () => RuntimeIdentity;
   /** TASK-318：只读脱敏配置身份摘要。 */
-  getConfigIdentitySummary?: () => ConfigIdentitySummary | null;
+  getConfigIdentitySummary?: () => ConfigIdentitySummary | null | Promise<ConfigIdentitySummary | null>;
   getEnvironmentSafetyAttested?: () => boolean;
   /** Non-sensitive effective configuration identity for deployment readback. */
   getEffectiveConfigStatus?: () => EffectiveConfigStatus;
@@ -117,7 +117,7 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     res.status(200).send('ok');
   });
 
-  // ready：可以接流量才 200（draining / runtime admission paused → 503）。
+  // ready：可以接流量才 200（draining / runtime admission paused / identity unavailable → 503）。
   // 蓝绿部署门禁在新色端口上等它变 200 再切流。warmup 进度随载荷暴露但不
   // gate ready——skills 物化未完成时，dispatch 路径的版本化同步兜底正确性，
   // 部署脚本自行决定是否等 warmup.state=done 再切流。
@@ -127,12 +127,25 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     const runtimeReady = runtimeAdmission?.admitting !== false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
-    const configIdentity = options.getConfigIdentitySummary?.() ?? undefined;
+    const safetyAttested =
+      release?.safetyAttested !== false && (options.getEnvironmentSafetyAttested?.() ?? true);
+    let configIdentity: ConfigIdentitySummary | null | undefined;
+    try {
+      configIdentity = await options.getConfigIdentitySummary?.() ?? undefined;
+    } catch {
+      res.status(503).json({
+        status: 'not_ready',
+        draining,
+        warmup,
+        ...(runtimeAdmission ? { runtimeAdmission } : {}),
+        ...(release ? { release: buildPublicReleaseIdentity(release, safetyAttested) } : {}),
+        error: 'config_identity_unavailable',
+      });
+      return;
+    }
     // 新版 release 已绑定 expected 时，readiness 直接把一致性作为门禁；legacy 未绑定
     // expected 仍兼容。摘要本身只走平台管理员 API / 私有运行态快照，不进匿名响应。
     const configIdentityReady = !configIdentity?.expected || configIdentity.status === 'consistent';
-    const safetyAttested =
-      release?.safetyAttested !== false && (options.getEnvironmentSafetyAttested?.() ?? true);
     let integrationV3: IntegrationV3HealthStatus | undefined;
     try {
       integrationV3 = await options.getIntegrationV3Health?.();

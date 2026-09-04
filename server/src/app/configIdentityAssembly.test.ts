@@ -50,7 +50,7 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
     expect(assembly.getSummary().observed?.digest).toBe(expectedDigest);
   });
 
-  it('Production 周期重算先把私有快照同步发布为 not_collected，再发布轮换 drift', async () => {
+  it('Production 强一致读取等待轮换重算，并原子发布 drifted 私有快照', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
     const root = mkdtempSync(join(tmpdir(), 'config-identity-periodic-'));
@@ -97,14 +97,16 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
         scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
       });
       vi.setSystemTime(new Date(6_000));
-      expect(assembly.getSummary().status).toBe('not_collected');
+      expect(assembly.getSummary().status).toBe('consistent');
       expect(JSON.parse(readFileSync(snapshotPath, 'utf8'))).toMatchObject({
-        status: 'not_collected',
+        status: 'consistent',
+      });
+
+      expect((await assembly.refreshSummary()).status).toBe('drifted');
+      expect(JSON.parse(readFileSync(snapshotPath, 'utf8'))).toMatchObject({
+        status: 'drifted',
       });
       expect(assembly.isPrivateSummaryCurrent()).toBe(true);
-
-      for (let index = 0; index < 6; index += 1) await Promise.resolve();
-      expect(assembly.getSummary().status).toBe('drifted');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

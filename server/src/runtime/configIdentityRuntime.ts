@@ -102,7 +102,9 @@ export interface ConfigIdentityRuntime {
   notifyConfigChanged(reason: string): void;
   /** 同步等待一次重算（测试与显式刷新用）。 */
   refresh(reason?: string): Promise<void>;
-  /** 只读脱敏摘要；未初始化或周期重算进行中时返回 not_collected。 */
+  /** 强一致读取：过期时等待重算，失败则撤销旧 observation。 */
+  refreshSummary(reason?: string): Promise<ConfigIdentitySummary>;
+  /** 稳定只读脱敏摘要；不会因读取本身制造瞬时 not_collected。 */
   getSummary(): ConfigIdentitySummary;
 }
 
@@ -121,6 +123,8 @@ export function createConfigIdentityRuntime(
   let computeGeneration = 0;
   let observationInvalidated = false;
   let invalidatedComparisonObservation: ConfigIdentityObservation | undefined;
+  let strongRetryAllowedAfterInvalidation = false;
+  let activeRefresh: { generation: number; promise: Promise<void> } | undefined;
 
   function applyObservation(
     next: ConfigIdentityObservation,
@@ -215,11 +219,13 @@ export function createConfigIdentityRuntime(
         lastComputedAtMs,
         observationInvalidated,
         invalidatedComparisonObservation,
+        strongRetryAllowedAfterInvalidation,
       };
       try {
         logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
         observationInvalidated = false;
         invalidatedComparisonObservation = undefined;
+        strongRetryAllowedAfterInvalidation = false;
         applyObservation(next, comparisonObservation);
         lastComputedAtMs = computedAtMs;
       } catch (error) {
@@ -230,12 +236,13 @@ export function createConfigIdentityRuntime(
         lastComputedAtMs = previousState.lastComputedAtMs;
         observationInvalidated = previousState.observationInvalidated;
         invalidatedComparisonObservation = previousState.invalidatedComparisonObservation;
+        strongRetryAllowedAfterInvalidation = previousState.strongRetryAllowedAfterInvalidation;
         throw error;
       }
     };
   }
 
-  async function refresh(reason: string): Promise<void> {
+  async function runRefresh(reason: string): Promise<void> {
     const commit = await prepareRefresh(reason);
     try {
       commit();
@@ -243,6 +250,18 @@ export function createConfigIdentityRuntime(
       logger?.info(`[ConfigIdentity] discarded stale recompute after ${reason}`);
       if (!(error instanceof Error) || !error.message.includes('became stale')) throw error;
     }
+  }
+
+  function refresh(reason: string): Promise<void> {
+    const generation = computeGeneration + 1;
+    const promise = runRefresh(reason);
+    const running = { generation, promise };
+    activeRefresh = running;
+    void promise.then(
+      () => { if (activeRefresh === running) activeRefresh = undefined; },
+      () => { if (activeRefresh === running) activeRefresh = undefined; },
+    );
+    return promise;
   }
 
   async function prepareConfigChanged(reason: string): Promise<PreparedConfigRecoveryPublication> {
@@ -253,12 +272,18 @@ export function createConfigIdentityRuntime(
     );
   }
 
-  function invalidateObservation(): void {
+  function invalidateObservation(allowStrongRetry = false): void {
     ++computeGeneration;
     if (!observationInvalidated) invalidatedComparisonObservation = observation;
     observationInvalidated = true;
+    strongRetryAllowedAfterInvalidation = allowStrongRetry;
     observation = undefined;
-    lastComputedAtMs = now().getTime();
+    try {
+      lastComputedAtMs = now().getTime();
+    } catch {
+      // 时钟读取异常也不得阻止失效；保留 0 使下一次强一致读取立即重试。
+      lastComputedAtMs = 0;
+    }
     try {
       onSummaryUpdated?.(buildSummary());
     } catch (error) {
@@ -274,13 +299,77 @@ export function createConfigIdentityRuntime(
     // 先纯同步失效，避免异步重算窗口及失败场景保留旧 consistent；成功结果
     // 仍与失效前 observation 比较，以正确推进 lastChangedAt。
     invalidateObservation();
-    void refresh(reason).catch((error) => {
+    const pending = refresh(reason);
+    const generation = activeRefresh?.generation;
+    void pending.catch((error) => {
+      if (generation === computeGeneration && observationInvalidated) {
+        strongRetryAllowedAfterInvalidation = true;
+      }
       logger?.warn(
         `[ConfigIdentity] recompute after ${reason} failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     });
+  }
+
+  function warnStrongRefreshFailure(error: unknown): void {
+    try {
+      logger?.warn(
+        `[ConfigIdentity] strong recompute failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } catch {
+      // 诊断 logger 不得改变 fail-closed 结果。
+    }
+  }
+
+  async function awaitStrongRefresh(
+    running: { generation: number; promise: Promise<void> },
+  ): Promise<boolean> {
+    try {
+      await running.promise;
+      return true;
+    } catch (error) {
+      // 仅当前 generation 的失败能撤销 observation；旧失败不得覆盖更新的成功结果。
+      const failedCurrentGeneration = computeGeneration === running.generation;
+      if (failedCurrentGeneration) invalidateObservation(true);
+      warnStrongRefreshFailure(error);
+      return !failedCurrentGeneration;
+    }
+  }
+
+  async function refreshSummary(reason = 'strong_summary_read'): Promise<ConfigIdentitySummary> {
+    let currentMs: number;
+    try {
+      currentMs = now().getTime();
+    } catch (error) {
+      invalidateObservation(true);
+      warnStrongRefreshFailure(error);
+      return buildSummary();
+    }
+
+    const currentRefresh = activeRefresh?.generation === computeGeneration
+      ? activeRefresh
+      : undefined;
+    if (currentRefresh) {
+      if (!await awaitStrongRefresh(currentRefresh)) return buildSummary();
+      return refreshSummary(reason);
+    }
+    // 管理端候选只完成纯失效、尚未确认胜出时，不得重算可能失选的内存配置。
+    // 已应用配置或 Vault 的瞬时刷新失败则允许下一次强一致读取自动恢复。
+    if (observationInvalidated && !strongRetryAllowedAfterInvalidation) return buildSummary();
+
+    const isFresh =
+      observation !== undefined &&
+      currentMs - lastComputedAtMs < SUMMARY_RECOMPUTE_MIN_INTERVAL_MS;
+    if (isFresh) return buildSummary();
+
+    const promise = refresh(reason);
+    const running = activeRefresh ?? { generation: computeGeneration, promise };
+    if (!await awaitStrongRefresh(running)) return buildSummary();
+    return refreshSummary(reason);
   }
 
   function buildSummary(): ConfigIdentitySummary {
@@ -325,24 +414,7 @@ export function createConfigIdentityRuntime(
     prepareConfigChanged,
     notifyConfigChanged,
     refresh: (reason = 'explicit') => refresh(reason),
-    getSummary(): ConfigIdentitySummary {
-      const currentMs = now().getTime();
-      // 纯失效态必须等显式胜出版本通知；不得由周期读取重算仍在内存中的失选候选。
-      if (!observationInvalidated && currentMs - lastComputedAtMs >= SUMMARY_RECOMPUTE_MIN_INTERVAL_MS) {
-        // 周期重算也必须先同步撤销旧 observation。否则 SecretVault 已轮换时，
-        // 首次 readiness / evidence 读取会继续把旧 consistent 当成当前事实。
-        // refresh 复用既有 comparison observation 与 generation fencing：成功后
-        // 发布新摘要，失败或被更新的热加载抢占时保持 fail closed。
-        invalidateObservation();
-        void refresh('periodic_summary_read').catch((error) => {
-          logger?.warn(
-            `[ConfigIdentity] periodic recompute failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        });
-      }
-      return buildSummary();
-    },
+    refreshSummary,
+    getSummary: buildSummary,
   };
 }

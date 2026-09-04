@@ -48,6 +48,7 @@ export interface RuntimeConfigIdentityAssembly {
   ) => Promise<PreparedConfigRecoveryPublication>;
   invalidate: () => void;
   getSummary: () => ConfigIdentitySummary;
+  refreshSummary: () => Promise<ConfigIdentitySummary>;
   isPrivateSummaryCurrent: () => boolean;
 }
 
@@ -106,6 +107,7 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
     },
     invalidate: () => runtime.invalidateObservation(),
     getSummary: () => runtime.getSummary(),
+    refreshSummary: () => runtime.refreshSummary('readiness_or_overview'),
     isPrivateSummaryCurrent: () => {
       if (!snapshotPath) return false;
       try {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   adaptAgentTargetCatalogResponse,
   parseAgentTarget,
+  resolveLandingAgentTarget,
   resolveNewSessionAgentTarget,
   resolveTargetSessionAction,
   sameAgentTarget,
@@ -78,5 +79,25 @@ describe('AgentTarget canonical contract', () => {
       target: orgTarget,
       explicitMatchingSession: { sessionId: 'org-session', target: orgTarget },
     })).toEqual({ kind: 'reuse', sessionId: 'org-session' });
+  });
+  // 生产事故回归：着陆页空对话不绑定目标时，首条消息会被「缺少可证明的 Agent 目标」门禁挡下。
+  it('binds the landing empty chat to the same default target as a new session', () => {
+    const landing = { catalogLoading: false, hasSession: false, hasPendingTarget: false, hasMessages: false };
+    expect(resolveLandingAgentTarget({ ...landing, catalog: catalog({ personal: true, orgIds: ['oa-1'] }) }))
+      .toEqual({ kind: 'personal', tenantId: 'tenant-a' });
+    expect(resolveLandingAgentTarget({ ...landing, catalog: catalog({ personal: false, orgIds: ['oa-1'] }) }))
+      .toEqual({ kind: 'org-agent', tenantId: 'tenant-a', orgAgentId: 'oa-1' });
+
+    // 目标不唯一或无可用目标时保持由用户显式选择，不自动绑定。
+    expect(resolveLandingAgentTarget({ ...landing, catalog: catalog({ personal: false, orgIds: ['oa-1', 'oa-2'] }) })).toBeNull();
+    expect(resolveLandingAgentTarget({ ...landing, catalog: catalog({ personal: false, orgIds: [] }) })).toBeNull();
+
+    // 目录未就绪、已有会话/已有待绑定目标/已有消息时都不得改写当前绑定。
+    const available = catalog({ personal: true });
+    expect(resolveLandingAgentTarget({ ...landing, catalog: null })).toBeNull();
+    expect(resolveLandingAgentTarget({ ...landing, catalog: available, catalogLoading: true })).toBeNull();
+    expect(resolveLandingAgentTarget({ ...landing, catalog: available, hasSession: true })).toBeNull();
+    expect(resolveLandingAgentTarget({ ...landing, catalog: available, hasPendingTarget: true })).toBeNull();
+    expect(resolveLandingAgentTarget({ ...landing, catalog: available, hasMessages: true })).toBeNull();
   });
 });

@@ -39,6 +39,7 @@ import {
   selectChatClientQueueItems,
   cacheKeyForIdentity,
   adaptAgentTargetCatalogResponse,
+  resolveLandingAgentTarget,
   resolveNewSessionAgentTarget,
 } from "@agent/shared";
 import type {
@@ -2140,6 +2141,18 @@ export function useChatAppStateCore(): ChatAppState {
     else if (selection.kind === 'picker') Alert.alert('请选择 Agent', '请从会话列表的新建入口选择要使用的企业专家。');
     else Alert.alert('无法新建会话', selection.reason.message);
   }, [activeAgentTarget, agentTargetCatalog, agentTargetCatalogReason, startAgentTargetSession]);
+
+  // 着陆页的空对话同样必须先绑定 Agent 目标，否则首条消息会被「缺少可证明的 Agent 目标」门禁挡下。
+  useEffect(() => {
+    const target = resolveLandingAgentTarget({
+      catalog: agentTargetCatalog,
+      catalogLoading: agentTargetCatalogLoading,
+      hasSession: Boolean(session.sessionId),
+      hasPendingTarget: Boolean(pendingAgentTarget),
+      hasMessages: msg.messages.length > 0,
+    });
+    if (target) startAgentTargetSession(target);
+  }, [agentTargetCatalog, agentTargetCatalogLoading, msg.messages.length, pendingAgentTarget, session.sessionId, startAgentTargetSession]);
 
   // ---- Fork from message (从此编辑) ----
   const forkFromMessage = useCallback(

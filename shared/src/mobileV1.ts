@@ -38,6 +38,7 @@ export {
   agentTargetAuditFields,
   isAgentTargetAvailable,
   parseAgentTarget,
+  resolveLandingAgentTarget,
   resolveNewSessionAgentTarget,
   resolveTargetSessionAction,
   sameAgentTarget,

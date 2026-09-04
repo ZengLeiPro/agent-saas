@@ -10,7 +10,7 @@ import {
   type WorkflowLibraryPublicV3,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { CapabilityFilterTabs, CAPABILITY_EMPTY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
+import { CapabilityFilterTabs, CatalogHeader, CAPABILITY_EMPTY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -366,21 +366,18 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
 
   return (
     <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">
-            {roleDetailName ? `${roleDetailName} AI 同事工作流` : "AI 同事能帮你完成什么"}
-          </h1>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            从业务事件到系统终态，不只生成报告。默认目录共 {scenarios.length} 个唯一工作流。
-          </p>
-        </div>
-        {roleDetailName && props.onCloseRoleDetail ? (
-          <Button variant="outline" size="sm" onClick={props.onCloseRoleDetail}>
-            返回目录
-          </Button>
-        ) : null}
-      </div>
+      <CatalogHeader
+        level={1}
+        title={roleDetailName ? `${roleDetailName}的 AI 同事能做的事` : "AI 同事能做的事"}
+        description="按目标或岗位挑一个，先看演示，再实际融入你的工作流"
+        actions={
+          roleDetailName && props.onCloseRoleDetail ? (
+            <Button variant="outline" size="sm" onClick={props.onCloseRoleDetail}>
+              返回目录
+            </Button>
+          ) : null
+        }
+      />
 
       <div className="sticky top-0 z-10 -mx-4 mb-5 border-y border-border/50 bg-card/85 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex items-center gap-3">
@@ -667,21 +664,22 @@ function LegacyScenariosPanel({
           当前显示兼容目录。
         </div>
       ) : null}
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">任务模板</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {fallbackReason
-              ? "兼容目录仍按起手话术运行。"
-              : "按岗位挑一个任务模板，点「试一试」即可预填起手话术，发送前仍可编辑。"}
-          </p>
-        </div>
-        {activeRole !== "all" && onOpenRoleDetail ? (
-          <Button variant="outline" size="sm" onClick={() => onOpenRoleDetail(activeRole)}>
-            查看该岗详情
-          </Button>
-        ) : null}
-      </div>
+      <CatalogHeader
+        level={1}
+        title="任务模板"
+        description={
+          fallbackReason
+            ? "兼容目录仍按起手话术运行。"
+            : "按岗位挑一个任务模板，点「试一试」即可预填起手话术，发送前仍可编辑。"
+        }
+        actions={
+          activeRole !== "all" && onOpenRoleDetail ? (
+            <Button variant="outline" size="sm" onClick={() => onOpenRoleDetail(activeRole)}>
+              查看该岗详情
+            </Button>
+          ) : null
+        }
+      />
       <CapabilityFilterTabs
         ariaLabel="按行业筛选"
         options={[{ value: INDUSTRY_ALL, label: "全部行业" }, ...INDUSTRY_CHIPS]}

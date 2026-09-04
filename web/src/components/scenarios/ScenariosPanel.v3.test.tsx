@@ -226,7 +226,10 @@ describe("ScenariosPanel V3", () => {
   it("默认只渲染28个唯一 catalog 卡片，skin/role view 不复制卡", () => {
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(28);
-    expect(screen.getByText(/默认目录共 28 个唯一工作流/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "AI 同事能做的事" })).toBeTruthy();
+    // 页面说明不再直出，收进标题右侧的信息按钮
+    expect(screen.getByRole("button", { name: "页面说明" })).toBeTruthy();
+    expect(screen.queryByText(/按目标或岗位挑一个/)).toBeNull();
   });
 
   it("结果、岗位、行业三轴按 AND 收窄，并可一键清空", async () => {

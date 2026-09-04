@@ -17,7 +17,7 @@ import {
   CAPABILITY_EMPTY_SURFACE,
   CAPABILITY_SURFACE,
   CAPABILITY_SURFACE_HOVER,
-} from "./CatalogUi";
+ CatalogHeader } from "./CatalogUi";
 import { BuiltInConnectors } from "./BuiltInConnectors";
 import { ScenariosPanel } from "@/components/scenarios/ScenariosPanel";
 
@@ -114,15 +114,15 @@ export function CapabilityCenter({
           )}
 
           <TabsContent value="experts" className="mt-0 px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">我的企业专家</h2>
-                <p className="mt-1 text-sm text-muted-foreground">由组织为你配置，可以直接开始对话。</p>
-              </div>
-              <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-                {experts.length} 位专家
-              </span>
-            </div>
+            <CatalogHeader
+              title="我的企业专家"
+              description="由组织为你配置，可以直接开始对话。"
+              actions={
+                <span className="shrink-0 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+                  {experts.length} 位专家
+                </span>
+              }
+            />
             {experts.length > 0 ? (
               <CatalogToolbar
                 query={expertQuery}

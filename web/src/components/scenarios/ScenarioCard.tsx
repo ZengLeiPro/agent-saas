@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import type { CatalogScenarioPublic, ScenarioItem, ScenarioRequirement } from "@agent/shared";
-import type { WorkflowPrimaryAction } from "./workflowUi";
+import { OUTCOME_ICON } from "./outcomeIcons";
+import type { OutcomeFilterValue, WorkflowPrimaryAction } from "./workflowUi";
 
 // 懒加载：仅点开「看示例结果」时才拉取弹层（内含 markdown 渲染），
 // 不拖累空会话推荐位所在的聊天主 bundle
@@ -220,8 +221,9 @@ export interface WorkflowScenarioCardProps {
 const ROLE_PREVIEW_COUNT = 3;
 
 /**
- * V3 客户目录卡（09-04 曾磊定稿）：标题是主角，其余只有一行标签和一行页脚。
- * 结构 = 标题（两行封顶）→ 目标标签 + 岗位 → hairline 页脚（触发时机 | 演示 / 试试）。
+ * V3 客户目录卡（09-04 曾磊定稿）：标题是主角，其余只有一行岗位和一行页脚。
+ * 结构 = 标题行（左：名称，右：目标图标 + 目标词）→ 岗位 → hairline 页脚（触发时机 | 演示 / 试试）。
+ * 目标放在标题对侧而不是眉题或前缀：首行与末行左右各有锚点，卡片重心不会全压在左侧。
  * 两个动作同级同形，只用色相区分：演示=品牌暖橙，试试=品牌蓝；卡内不出现第三种颜色。
  * 不消费 prompt、tool 或旧 demoShareToken。
  */
@@ -234,6 +236,7 @@ export function WorkflowScenarioCard({
   style,
 }: WorkflowScenarioCardProps) {
   const goal = scenario.goalTags[0];
+  const GoalIcon = goal ? OUTCOME_ICON[goal as Exclude<OutcomeFilterValue, "all">] : undefined;
   const roleNames = scenario.roleIds.map((id) => roleLabels?.[id] ?? id);
   const hiddenRoleCount = roleNames.length - ROLE_PREVIEW_COUNT;
   return (
@@ -259,19 +262,20 @@ export function WorkflowScenarioCard({
         className,
       )}
     >
-      <h3 className="line-clamp-2 text-[15px] font-semibold leading-snug tracking-tight transition-colors group-hover:text-brand-700">
-        {scenario.title}
-      </h3>
-      <div className="mb-3.5 mt-2 flex items-center gap-2 overflow-hidden whitespace-nowrap text-xs text-muted-foreground">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="truncate text-base font-semibold leading-snug tracking-tight transition-colors group-hover:text-brand-700">
+          {scenario.title}
+        </h3>
         {goal ? (
-          <span className="shrink-0 rounded-md bg-brand-50 px-1.5 py-0.5 text-2xs font-medium text-brand-700">
+          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-700">
+            {GoalIcon ? <GoalIcon className="size-3.5" aria-hidden="true" /> : null}
             {goal}
           </span>
         ) : null}
-        <span className="truncate">
-          {roleNames.slice(0, ROLE_PREVIEW_COUNT).join(" · ")}
-          {hiddenRoleCount > 0 ? <span className="text-muted-foreground/60"> +{hiddenRoleCount}</span> : null}
-        </span>
+      </div>
+      <div className="mb-3.5 mt-2 truncate text-xs text-muted-foreground">
+        {roleNames.slice(0, ROLE_PREVIEW_COUNT).join(" · ")}
+        {hiddenRoleCount > 0 ? <span className="text-muted-foreground/60"> +{hiddenRoleCount}</span> : null}
       </div>
       <div
         className="mt-auto flex items-center gap-1.5 border-t border-border/50 pt-3"

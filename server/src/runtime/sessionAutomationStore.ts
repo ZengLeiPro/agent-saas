@@ -379,7 +379,7 @@ export class PgSessionAutomationStore {
 
   private async inFlightSummaryLocked(client:Client,tenantId:string,automationId:string):Promise<AutomationInFlightSummary>{
     const r=await client.query(`SELECT
-      (SELECT count(*) FROM ${this.runsTable} r JOIN ${this.tables.executions} e ON e.tenant_id=r.tenant_id AND e.session_id=r.session_id AND e.run_id=r.run_id WHERE e.tenant_id=$1 AND e.automation_id=$2 AND r.status IN ('pending','running'))::int active_runs,
+      (SELECT count(*) FROM ${this.runsTable} r JOIN ${this.tables.executions} e ON e.tenant_id=r.tenant_id AND e.session_id=r.session_id AND e.run_id=r.run_id WHERE e.tenant_id=$1 AND e.automation_id=$2 AND r.status IN ('pending','running') AND e.state<>'terminal')::int active_runs,
       (SELECT count(*) FROM ${this.tables.wakeups} WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed'))::int wakeups,
       ((SELECT count(*) FROM ${this.tables.outbox} WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','dispatching','dispatched'))+(SELECT count(*) FROM ${this.tables.preparedDispatchAttempts} WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('prepared','dispatched')))::int outbox,
       (SELECT count(*) FROM ${this.tables.executions} WHERE tenant_id=$1 AND automation_id=$2 AND state<>'terminal')::int executions,

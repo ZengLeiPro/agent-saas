@@ -443,7 +443,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       { source_kind: 'automation_run', turns: '2', tokens: '20', credits: '0' },
       { source_kind: 'model', turns: '1', tokens: '10', credits: '1000000' },
     ]);
-    expect(projected.automation).toMatchObject({ status: 'active', phase: 'idle' });
+    expect(projected.automation).toMatchObject({ status: 'active', phase: 'waiting', missingScheduleCount: 1 });
     expect(projected.budgetReason).toBeUndefined();
   });
 
@@ -453,7 +453,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       { source_kind: 'automation_run', turns: '0', tokens: '0', credits: '0' },
       { source_kind: 'model', turns: '3', tokens: '30', credits: '3000000' },
     ]);
-    expect(projected.automation).toMatchObject({ status: 'active', phase: 'idle' });
+    expect(projected.automation).toMatchObject({ status: 'active', phase: 'waiting', missingScheduleCount: 1 });
   });
 
   it.each([

@@ -1,5 +1,5 @@
 import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, Camera, Lock, UserCog } from "lucide-react";
 import { SwipeableRow, type SwipeAction } from "@/components/mobile/SwipeableRow";
 import { PullToRefresh } from "@/components/mobile/PullToRefresh";
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { TOKEN_KEY } from "@/lib/constants";
+import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { useGroupedSessions } from "@/hooks/useGroupedSessions";
 import { useGroups } from "@/hooks/useGroups";
 import { getSortedGroupItems } from "@agent/shared";
@@ -25,7 +26,7 @@ import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel } from "@/t
 import type { SessionGroup } from "@/types/sessionGroup";
 import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
 import { MobileSessionMetadata } from "./MobileSessionMetadata";
-
+const SessionAutomationBadge = lazy(() => import("@/components/SessionAutomationBadge"));
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
@@ -60,7 +61,6 @@ interface MobileSessionListProps {
   trashPreviewSessionId?: string | null;
   personalAgentEnabled?: boolean;
 }
-
 export function MobileSessionList({
   sessions,
   activeSessionId,
@@ -102,14 +102,13 @@ export function MobileSessionList({
   const [showTrash, setShowTrash] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
-
   const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const formData = new FormData();
     formData.append("avatar", file);
     try {
-      const token = localStorage.getItem(TOKEN_KEY);
+      const token = readTabScopedAuth(TOKEN_KEY);
       const res = await fetch(apiUrl("/api/auth/avatar"), {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -133,7 +132,6 @@ export function MobileSessionList({
   const activeSessionIdRef = useRef(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
   const swipeDismissedAt = useRef(0);
-
   // 重命名弹窗状态
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
 
@@ -351,7 +349,10 @@ export function MobileSessionList({
               )}
             </span>
           </div>
-          <MobileSessionMetadata session={s} isAdmin={isAdmin} />
+          <div className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground/60">
+            <Suspense fallback={null}><SessionAutomationBadge session={s} separator /></Suspense>
+            <MobileSessionMetadata session={s} isAdmin={isAdmin} />
+          </div>
         </div>
       );
 

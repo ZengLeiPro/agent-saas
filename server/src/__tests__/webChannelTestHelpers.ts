@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 import type { TenantStore } from '../data/tenants/store.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import type { RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 
+/** Minimal websocket test double. */
 export class FakeWebSocket extends EventEmitter {
   OPEN = 1;
   readyState = 1;
@@ -162,12 +164,21 @@ export class MemoryRunStore implements RunStore {
     return this.records.get(runId) ?? null;
   }
 
-  async findByIdempotencyKey(userId: string | undefined, key: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, key: string): Promise<RunRecord | null> {
     const scope = userId ?? '__anonymous__';
     return [...this.records.values()].find(
       (record) => record.idempotencyKey === key
+        && (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId
         && (record.submitterUserId ?? record.userId ?? '__anonymous__') === scope,
     ) ?? null;
+  }
+
+  async findUniqueByIdempotencyKeyAcrossTenants(userId: string, key: string): Promise<RunRecord | null> {
+    const matches = [...this.records.values()].filter(
+      (record) => record.idempotencyKey === key
+        && (record.submitterUserId ?? record.userId ?? '__anonymous__') === userId,
+    );
+    return matches.length === 1 ? matches[0]! : null;
   }
 
   async listRecoverable(): Promise<RunRecord[]> {
@@ -177,9 +188,10 @@ export class MemoryRunStore implements RunStore {
     ));
   }
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) =>
-      record.sessionId === sessionId
+      (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId
+      && record.sessionId === sessionId
       && ['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(record.status),
     ) ?? null;
   }

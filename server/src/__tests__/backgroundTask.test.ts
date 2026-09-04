@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 import {
   createDefaultExecutionTransportRegistry,
@@ -63,6 +64,7 @@ class MemorySessionCatalog implements SessionCatalog {
   }
 }
 
+/** Tenant-aware in-memory RunStore fixture. */
 class BackgroundRunStore implements RunStore {
   records = new Map<string, RunRecord>();
 
@@ -74,8 +76,7 @@ class BackgroundRunStore implements RunStore {
       runId: input.runId,
       sessionId: input.sessionId,
       userId: input.userId,
-      tenantId: input.tenantId,
-      status: 'pending',
+      tenantId: input.tenantId ?? DEFAULT_TENANT_ID, status: 'pending',
       model: input.model,
       channel: input.channel,
       requestedAt: now,
@@ -96,13 +97,14 @@ class BackgroundRunStore implements RunStore {
     return updated;
   }
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
-    return [...this.records.values()].find((record) => record.userId === userId && record.idempotencyKey === idempotencyKey) ?? null;
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+    return [...this.records.values()].find((record) => (record.tenantId ?? tenantId) === tenantId && record.userId === userId && record.idempotencyKey === idempotencyKey) ?? null;
   }
   async listRecoverable(): Promise<RunRecord[]> { return []; }
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) => (
-      record.sessionId === sessionId && ['pending', 'running'].includes(record.status)
+      (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId
+      && record.sessionId === sessionId && ['pending', 'running'].includes(record.status)
     )) ?? null;
   }
   async listBackgroundTasks(parentSessionId: string, options: ListBackgroundTasksOptions = {}): Promise<RunRecord[]> {
@@ -443,17 +445,19 @@ describe('DurableBackgroundTaskService', () => {
       runSubagentImpl: async (params) => {
         seenConnectorEnv = params.parentContext.env;
         seenParentTools = params.parentProviders.flatMap(provider => provider.list(params.parentContext).map(tool => tool.name));
-        await params.onChildRunCreated?.({
-          childSessionId: outcome.childSessionId,
-          childRunId: outcome.childRunId,
-          model: outcome.model,
-        });
-        return outcome;
+        const identity = params.preparedChildIdentity ?? {
+          childSessionId: outcome.childSessionId, childRunId: outcome.childRunId,
+        };
+        await params.beforeChildSideEffects?.(identity);
+        await params.onChildRunCreated?.({ ...identity, model: outcome.model });
+        return { ...outcome, ...identity };
       },
     });
     const task = completedTask('');
     task.status = 'running';
     task.metadata.wakeState = 'none';
+    task.metadata.executionChildSessionId = outcome.childSessionId;
+    task.metadata.executionChildRunId = outcome.childRunId;
     base.runStore.records.set(task.runId, task);
     base.sessionCatalog.records.set(task.sessionId, {
       ...session(task.sessionId),
@@ -461,9 +465,7 @@ describe('DurableBackgroundTaskService', () => {
       modelRef: 'group/model',
       status: 'running',
     });
-
     await service.execute(task);
-
     expect(connectorEnvRequests).toEqual([{ userId: 'user-1', username: 'alice', tenantId: 'tenant-1' }]);
     expect(seenConnectorEnv).toMatchObject({
       GH_TOKEN: 'connector-token-alice',
@@ -492,8 +494,7 @@ describe('DurableBackgroundTaskService', () => {
   it('defers completion wake while the parent session still has an active run', async () => {
     const { service, runStore } = fixture();
     runStore.records.set('bg-task-1', completedTask('完成'));
-    await runStore.upsertPending({ runId: 'parent-active', sessionId: 'parent-session-1' });
-
+    await runStore.upsertPending({ runId: 'parent-active', tenantId: 'tenant-1', sessionId: 'parent-session-1' });
     await service.reconcileWakeDeliveries();
 
     expect(runStore.records.get('bg-task-1')?.metadata).toMatchObject({
@@ -502,10 +503,10 @@ describe('DurableBackgroundTaskService', () => {
     });
     expect(runStore.records.has('bg-wake-bg-task-1')).toBe(false);
   });
-
-  it('authorizes status/cancel by parent session and freezes cancellation for delivery', async () => {
-    const { service, runStore } = fixture();
+  it('authorizes status/cancel by parent session and durably freezes cancellation for delivery', async () => {
+    const { service, runStore, sessionCatalog } = fixture();
     const task = completedTask('');
+    sessionCatalog.records.set(task.sessionId, { ...session(task.sessionId), kind: 'subagent' });
     task.status = 'pending';
     task.metadata.wakeState = 'none';
     runStore.records.set(task.runId, task);
@@ -537,8 +538,7 @@ describe('DurableBackgroundTaskService', () => {
 
   it('escapes all XML metacharacters', () => {
     expect(escapeXml(`<tag a="b">Tom & Jerry's</tag>`)).toBe(
-      '&lt;tag a=&quot;b&quot;&gt;Tom &amp; Jerry&apos;s&lt;/tag&gt;',
-    );
+      '&lt;tag a=&quot;b&quot;&gt;Tom &amp; Jerry&apos;s&lt;/tag&gt;');
   });
 
   it('restores the parent tenant hand and monitors a durable command after service reconstruction', async () => {
@@ -568,7 +568,7 @@ describe('DurableBackgroundTaskService', () => {
     };
     base.config.executionTransportRegistry!.register('server-remote', transport);
     const parentHand = {
-      handId: 'parent-session-1:agent-saas-acs',
+      handId: 'parent-session-1:agent-saas-acs', tenantId: 'tenant-1',
       sessionId: 'parent-session-1',
       workspaceId: 'parent-session-1',
       type: 'server-remote' as const,
@@ -578,11 +578,11 @@ describe('DurableBackgroundTaskService', () => {
       updatedAt: new Date(0).toISOString(),
       metadata: { tenantRemoteHandId: 'agent-saas-acs' },
     };
-    const listBySession = vi.fn(async (sessionId: string) => sessionId === parentHand.sessionId ? [parentHand] : []);
+    const listBySession = vi.fn(async (sessionId: string, tenantId: string) => sessionId === parentHand.sessionId && tenantId === parentHand.tenantId ? [parentHand] : []);
     base.config.handStore = {
-      get: async (handId: string) => handId === parentHand.handId ? parentHand : null,
+      get: async (handId: string, tenantId: string) => handId === parentHand.handId && tenantId === parentHand.tenantId ? parentHand : null,
       listBySession,
-      listByWorkspace: async () => [parentHand],
+      listByWorkspace: async (_workspaceId: string, tenantId: string) => tenantId === parentHand.tenantId ? [parentHand] : [],
     } as never;
     const context = commandContext();
     const reservation = await base.service.reserveCommand(context, {
@@ -606,8 +606,8 @@ describe('DurableBackgroundTaskService', () => {
       toolName: 'BashOutput',
       sessionId: 'parent-session-1',
     })]);
-    expect(listBySession).toHaveBeenCalledWith('parent-session-1');
-    expect(listBySession).not.toHaveBeenCalledWith(reserved.sessionId);
+    expect(listBySession).toHaveBeenCalledWith('parent-session-1', 'tenant-1');
+    expect(listBySession).not.toHaveBeenCalledWith(reserved.sessionId, 'tenant-1');
     expect(base.runStore.records.get(reservation.taskId)).toMatchObject({
       status: 'completed',
       statusReason: undefined,
@@ -639,7 +639,7 @@ describe('DurableBackgroundTaskService', () => {
       },
     });
     const parentHand = {
-      handId: 'parent-session-1:agent-saas-acs',
+      handId: 'parent-session-1:agent-saas-acs', tenantId: 'tenant-1',
       sessionId: 'parent-session-1',
       workspaceId: 'parent-session-1',
       type: 'server-remote' as const,
@@ -650,9 +650,9 @@ describe('DurableBackgroundTaskService', () => {
       metadata: { tenantRemoteHandId: 'agent-saas-acs' },
     };
     base.config.handStore = {
-      get: async (handId: string) => handId === parentHand.handId ? parentHand : null,
-      listBySession: async (sessionId: string) => sessionId === parentHand.sessionId ? [parentHand] : [],
-      listByWorkspace: async () => [parentHand],
+      get: async (handId: string, tenantId: string) => handId === parentHand.handId && tenantId === parentHand.tenantId ? parentHand : null,
+      listBySession: async (sessionId: string, tenantId: string) => sessionId === parentHand.sessionId && tenantId === parentHand.tenantId ? [parentHand] : [],
+      listByWorkspace: async (_workspaceId: string, tenantId: string) => tenantId === parentHand.tenantId ? [parentHand] : [],
     } as never;
     const context = commandContext();
     const reservation = await base.service.reserveCommand(context, { command: 'sleep 60', timeoutMs: 60_000 });

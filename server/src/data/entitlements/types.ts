@@ -13,6 +13,25 @@ export const ENTITLEMENT_RESOURCE_TYPES = [
 export type EntitlementResourceType = typeof ENTITLEMENT_RESOURCE_TYPES[number];
 export type EntitlementScopeMode = 'all' | 'selected';
 
+/**
+ * `tool` Entitlement 管理的是租户能力开关，不是 Agent runtime descriptor。
+ * 该清单同时约束治理目录、存量投影和运行前授权，避免跨层 ID 漂移。
+ */
+export const TOOL_ENTITLEMENT_RESOURCE_IDS = [
+  'files',
+  'cron',
+  'mcp',
+  'custom_skill',
+  'personal_agent',
+  'org_knowledge',
+  'image_gen',
+  'memory_polling',
+  'memory_consolidation',
+  'memory_write_delegation',
+] as const;
+export type ToolEntitlementResourceId = typeof TOOL_ENTITLEMENT_RESOURCE_IDS[number];
+export const PERSONAL_AGENT_TOOL_ENTITLEMENT_ID: ToolEntitlementResourceId = 'personal_agent';
+
 export interface TenantEntitlementSet {
   tenantId: string;
   source: EntitlementSource;

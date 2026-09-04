@@ -38,16 +38,8 @@ import {
   governanceApiErrorMessage,
 } from "@agent/shared";
 import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpSecretScope, McpSecretStatus, McpServerSummary, McpTemplatesResponse, MyMcpResponse } from "@agent/shared";
-import {
-  CatalogHeader,
-  CapabilityDetailDrawer,
-  CapabilitySourceBadge,
-  ConnectorCatalogCard,
-  CatalogToolbar,
-  CAPABILITY_EMPTY_SURFACE,
-  CAPABILITY_SUBTLE_SURFACE,
-  CAPABILITY_SURFACE,
-} from "@/components/CapabilityCenter/CatalogUi";
+import { CapabilityDetailDrawer, CapabilitySourceBadge, ConnectorCatalogCard, CatalogToolbar, CAPABILITY_EMPTY_SURFACE, CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
+import { CatalogHeader } from "@/components/CapabilityCenter/CatalogHeader";
 import {
   DingtalkConnectorCard,
   DingtalkConnectorDrawer,

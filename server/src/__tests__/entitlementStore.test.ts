@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { ENTITLEMENT_RESOURCE_TYPES, PgEntitlementStore } from '../data/entitlements/index.js';
+import {
+  ENTITLEMENT_RESOURCE_TYPES,
+  PgEntitlementStore,
+  TOOL_ENTITLEMENT_RESOURCE_IDS,
+  normalizeLegacyEntitlementSettings,
+} from '../data/entitlements/index.js';
 import { DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
@@ -39,6 +44,27 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_items');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_tenant_policies');
     expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+  });
+
+  it('legacy tool scope 与治理工具目录使用同一能力 ID 域', () => {
+    const settings = structuredClone(DEFAULT_TENANT_SETTINGS);
+    settings.features.filesEnabled = true;
+    settings.features.cronEnabled = true;
+    settings.features.mcpEnabled = true;
+    settings.features.customSkillsEnabled = true;
+    settings.features.personalAgentEnabled = true;
+    settings.features.kbEnabled = true;
+    settings.features.imageGenEnabled = true;
+    settings.features.memoryPollingEnabled = true;
+    settings.features.memoryConsolidationEnabled = true;
+    settings.features.memoryWriteDelegationEnabled = true;
+
+    const normalized = normalizeLegacyEntitlementSettings(settings) as {
+      scopes: Array<{ resourceType: string; resourceIds: string[] }>;
+    };
+    const toolScope = normalized.scopes.find(scope => scope.resourceType === 'tool');
+
+    expect(toolScope?.resourceIds).toEqual([...TOOL_ENTITLEMENT_RESOURCE_IDS].sort());
   });
 
   it('pantheon 不进入客户 Entitlement/Policy API', async () => {

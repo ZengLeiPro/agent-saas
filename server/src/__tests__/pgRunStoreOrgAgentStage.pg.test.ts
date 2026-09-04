@@ -16,7 +16,11 @@ describePg('组织 Agent staged run PostgreSQL CAS', () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
-    store = new PgRunStore({ pool, tablePrefix: prefix });
+    store = new PgRunStore({
+      pool,
+      tablePrefix: prefix,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
     await store.init();
   });
 

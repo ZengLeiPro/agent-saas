@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedConfigRefresher } from '../app/sharedConfigRefresher.js';
+import { createSessionAutomationFlagSource } from '../app/sessionAutomationFlagSource.js';
 import type { AppConfig } from '../app/config.js';
 
 const BASE_GROUP = {
@@ -18,6 +19,13 @@ const REPLACEMENT_GROUP = {
   id: 'replacement',
   models: [{ id: 'new-model', name: 'new-model', value: 'new-model' }],
 };
+
+function writeConfig(dir: string, groups: unknown[]): void {
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({
+    agent: { cwd: '.' }, server: { port: 3200 },
+    models: { groups, default: 'ark-agents/glm-5.2' },
+  }, null, 2), 'utf-8');
+}
 
 describe('SharedConfigRefresher 删除、缺失与启动对齐语义', () => {
   let dir: string;
@@ -167,5 +175,86 @@ describe('SharedConfigRefresher 删除、缺失与启动对齐语义', () => {
     expect(config.models?.groups).toHaveLength(1);
     expect(refresher.getAppliedStamps().config).toEqual(initialStamp);
     expect(warns.some((message) => message.includes('移除 models 需要重启'))).toBe(true);
+  });
+
+  it('flag source 在无 model resolver 路径也会按 read 刷新 false -> true', () => {
+    const writeWithAutomation = (executionEnabled?: boolean) => {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        agent: { cwd: '.' }, server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        ...(executionEnabled === undefined ? {} : { sessionAutomation: {
+          controlEnabled: true, executionEnabled, fixedLoopEnabled: true,
+          adaptiveLoopEnabled: true, goalEnabled: true, evaluatorEnforced: true,
+        } }),
+      }, null, 2), 'utf-8');
+    };
+    writeWithAutomation(false);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: false },
+    } as unknown as AppConfig;
+    const source = createSessionAutomationFlagSource(config);
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      now: () => clock,
+    });
+    source.attachRefresh(refresher.refreshIfChanged);
+
+    expect(source.executionEnabled()).toBe(false);
+    writeWithAutomation(true);
+    clock += 5_000;
+    expect(source.executionEnabled()).toBe(true);
+    expect(source.read().fixedLoopEnabled).toBe(true);
+
+    writeWithAutomation();
+    clock += 5_000;
+    expect(source.executionEnabled()).toBe(false);
+    expect(source.read().controlEnabled).toBe(false);
+  });
+
+  it('首次 attach 会比对已加载内容，不把启动窗口内的新文件 stamp 当作基线', () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      agent: { cwd: '.' }, server: { port: 3200 },
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: false },
+    }), 'utf-8');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: true },
+    } as unknown as AppConfig;
+    const source = createSessionAutomationFlagSource(config);
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      now: () => 10_000,
+    });
+
+    source.attachRefresh(refresher.refreshIfChanged);
+    expect(source.executionEnabled()).toBe(false);
+    expect(refresher.getAppliedStamps().config).toBeDefined();
+  });
+
+  it('webTools 未变化时不触发执行侧更新', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    let calls = 0;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      prepareWebToolsUpdate: () => () => { calls += 1; },
+      now: () => clock,
+    });
+
+    writeConfig(dir, [BASE_GROUP, REPLACEMENT_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.models!.groups.map((group) => group.id)).toContain('replacement');
+    expect(calls).toBe(0);
   });
 });

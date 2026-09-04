@@ -105,6 +105,9 @@ export async function resumeTerminalPersistedAskUser(input: {
     interactionId, interactionType: 'ask_user', userId: input.userId ?? undefined, response: input.response,
   });
   const canonicalResponse = normalizeInteractionResponse(canonicalResolved.response as Record<string, unknown>);
+  if (sourceRun.metadata?.automationFence) {
+    return { error: 'Automation interaction expired with its terminal execution; response was recorded but cannot resume' };
+  }
   const resumeRunId = `interaction-resume:${sessionId}:${interactionId}`;
   let resumeRun = await input.runStore.get(resumeRunId);
   if (!resumeRun) {

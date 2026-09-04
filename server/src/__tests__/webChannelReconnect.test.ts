@@ -50,7 +50,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-1', {
       controller,
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws: oldWs,
       sessionId: 'session-1',
     });
@@ -65,7 +65,7 @@ describe('WebChannel active stream reconnect', () => {
 
     expect(connectionAbortController.signal.aborted).toBe(true);
     expect((channel as any).activeStreams.has('stream-1')).toBe(true);
-    expect(await channel.getStreamStatus('session-1')).toEqual({
+    expect(await channel.getStreamStatus(DEFAULT_TENANT_ID, 'session-1')).toEqual({
       active: true,
       streamId: 'stream-1',
     });
@@ -79,7 +79,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-2', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws: oldWs,
       sessionId: 'session-2',
     });
@@ -136,7 +136,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-dc', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws: new FakeWebSocket(),
       sessionId: 'session-dc',
       runId: 'run-dc',
@@ -184,7 +184,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-nc', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws: new FakeWebSocket(),
       sessionId: 'session-nc',
       runId: 'run-nc',
@@ -223,7 +223,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-3', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws: { OPEN: 1, readyState: 3 },
       sessionId: 'session-3',
       runId: 'run-3',
@@ -259,7 +259,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-4', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws,
       sessionId: 'session-4',
       runId: 'run-4',
@@ -355,7 +355,7 @@ describe('WebChannel active stream reconnect', () => {
     const ws = new FakeWebSocket();
     (channel as any).activeStreams.set('stream-cursor-live', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws,
       sessionId: 'session-cursor-live',
       runId: 'run-cursor-live',
@@ -745,7 +745,7 @@ describe('WebChannel active stream reconnect', () => {
       { action: 'resume', sessionId: 'session-ghost-2', requestId: 'resume-request-inactive', lastEventId: 0, skipReplay: true },
     );
 
-    expect(getActiveBySession).toHaveBeenCalledWith('session-ghost-2');
+    expect(getActiveBySession).toHaveBeenCalledWith(DEFAULT_TENANT_ID, 'session-ghost-2');
     // 必须回 inactive，且幽灵 buffer 被收口
     expect(ws.sent).toContainEqual({
       data: {
@@ -774,7 +774,7 @@ describe('WebChannel active stream reconnect', () => {
 
     (channel as any).activeStreams.set('stream-live', {
       controller: new AbortController(),
-      userId: 'admin-1',
+      userId: 'admin-1', tenantId: DEFAULT_TENANT_ID,
       ws: new FakeWebSocket(),
       sessionId: 'session-live',
       runId: 'run-live',

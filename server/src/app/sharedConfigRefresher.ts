@@ -7,7 +7,7 @@
  *
  * 同类补丁在 skill/user store（runtime.ts ensureReady）与 memory polling
  * （runtime.ts isExecutionEnabled 直接 loadAppConfig）里已各自存在，本模块把
- * 「模型配置 + 组织白名单」这条同样需要跨进程新鲜度的路径补齐。
+ * 「模型配置 + 组织白名单 + Session Automation flags」这条同样需要跨进程新鲜度的路径补齐。
  *
  * 设计取舍：
  *   - 安全入口以稳定 stat + SHA-256 内容版本判定，避免同尺寸/时间戳覆盖与 TOCTOU；
@@ -62,6 +62,7 @@ type ConfigChanges = {
   toolControls: boolean;
   codexSubscription: boolean;
   stt: boolean;
+  sessionAutomation: boolean;
   webTools: boolean;
 };
 type ConfigChangeKey = keyof ConfigChanges;
@@ -86,6 +87,7 @@ const CHANGE_LABELS: Record<ConfigChangeKey, string> = {
   toolControls: 'toolControls',
   codexSubscription: 'codexSubscription',
   stt: 'STT',
+  sessionAutomation: 'Session Automation',
   webTools: 'WebTools',
 };
 
@@ -234,7 +236,7 @@ export function createSharedConfigRefresher(params: {
   const dirtyConfigChanges = new Set<ConfigChangeKey>();
   let appliedTenantsStamp: FileStamp | undefined;
   let tenantRefreshNeedsRetry = false;
-  let lastCheckedAtMs = 0;
+  let lastCheckedAtMs = Number.NEGATIVE_INFINITY;
 
   function warnConfigReload(error: unknown): void {
     configRefreshNeedsRetry = true;
@@ -267,6 +269,9 @@ export function createSharedConfigRefresher(params: {
         JSON.stringify(config.codexSubscription ?? null) !==
         JSON.stringify(nextConfig.codexSubscription ?? null),
       stt: JSON.stringify(config.stt ?? null) !== JSON.stringify(nextConfig.stt ?? null),
+      sessionAutomation:
+        JSON.stringify(config.sessionAutomation ?? null) !==
+        JSON.stringify(nextConfig.sessionAutomation ?? null),
       webTools:
         JSON.stringify(config.webTools ?? null) !== JSON.stringify(nextConfig.webTools ?? null),
     };
@@ -321,6 +326,10 @@ export function createSharedConfigRefresher(params: {
       if (source.stt) config.stt = source.stt;
       else delete config.stt;
     }
+    if (changes.sessionAutomation) {
+      if (source.sessionAutomation) config.sessionAutomation = source.sessionAutomation;
+      else delete config.sessionAutomation;
+    }
     if (changes.webTools) {
       if (source.webTools) config.webTools = source.webTools;
       else delete config.webTools;
@@ -360,6 +369,11 @@ export function createSharedConfigRefresher(params: {
     if (changes.stt) {
       logger?.info(
         `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
+      );
+    }
+    if (changes.sessionAutomation) {
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新 Session Automation 配置：executionEnabled=${nextConfig.sessionAutomation?.executionEnabled === true}`,
       );
     }
     if (changes.webTools) {

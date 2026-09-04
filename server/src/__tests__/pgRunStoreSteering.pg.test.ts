@@ -9,7 +9,6 @@ import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { cleanupSteeringPgTest, describePg, testPgUrl, waitForBlockedQuery } from './pgRunStoreSteering.pg.testHelpers.js';
 import { assertStagedInteractionRecovery } from './pgRunStoreStagedInteraction.testHelper.js';
 const { Pool } = pg;
-
 describePg('PgRunStore steering PostgreSQL contract', () => {
   const prefix = `steering_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
@@ -21,7 +20,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 8 });
     eventStore = new PgEventStore({ connectionString: testPgUrl!, tablePrefix: prefix, poolMax: 4 });
     await eventStore.init();
-    store = new PgRunStore({ pool, tablePrefix: prefix });
+    store = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await store.init();
     toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await toolInvocationStore.init();
@@ -32,7 +31,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     await cleanupSteeringPgTest(pool, eventStore, prefix);
   }, 30_000);
 
-  it('同一 clientMessageId 并发提交只创建一个 run', async () => {
+  it('同一 tenant/clientMessageId 并发提交只创建一个 run', async () => {
     const base = {
       sessionId: 'session-idempotent',
       userId: 'user-1',
@@ -49,6 +48,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     const rows = await pool.query(`SELECT run_id FROM ${prefix}_runs WHERE idempotency_key = $1`, ['client-message-1']);
     expect(rows.rows).toHaveLength(1);
   });
+
 
   it('staged pending 激活前不可恢复或取得 lease，ready 后可领取', async () => {
     const runId = 'staged-pending-run';
@@ -374,7 +374,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       );
       await waitForBlockedQuery(
         pool,
-        `%SELECT status%FROM ${prefix}_runs%WHERE session_id = $1 AND run_id = $2%FOR UPDATE%`,
+        `%SELECT status%FROM ${prefix}_runs%WHERE tenant_id = $1 AND session_id = $2 AND run_id = $3%FOR UPDATE%`,
       );
 
       await blocker.query('COMMIT');
@@ -403,9 +403,9 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     const duplicate = await store.enqueueUserMessage({ ...base, runId: 'admin-submit-b' }, 'queue');
 
     expect(duplicate.runId).toBe(first.runId);
-    await expect(store.findByIdempotencyKey('admin-submitter', base.idempotencyKey))
+    await expect(store.findByIdempotencyKey(DEFAULT_TENANT_ID, 'admin-submitter', base.idempotencyKey))
       .resolves.toMatchObject({ runId: first.runId, userId: 'session-owner' });
-    await expect(store.findByIdempotencyKey('session-owner', base.idempotencyKey)).resolves.toBeNull();
+    await expect(store.findByIdempotencyKey(DEFAULT_TENANT_ID, 'session-owner', base.idempotencyKey)).resolves.toBeNull();
   });
 
   it('不同管理员代同一 owner 使用相同 clientMessageId 时按提交者域分别受理', async () => {
@@ -422,12 +422,11 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
 
     expect(first.runId).toBe('admin-scope-a');
     expect(second.runId).toBe('admin-scope-b');
-    await expect(store.findByIdempotencyKey('admin-a', base.idempotencyKey))
+    await expect(store.findByIdempotencyKey(DEFAULT_TENANT_ID, 'admin-a', base.idempotencyKey))
       .resolves.toMatchObject({ runId: 'admin-scope-a', userId: base.userId, submitterUserId: 'admin-a' });
-    await expect(store.findByIdempotencyKey('admin-b', base.idempotencyKey))
+    await expect(store.findByIdempotencyKey(DEFAULT_TENANT_ID, 'admin-b', base.idempotencyKey))
       .resolves.toMatchObject({ runId: 'admin-scope-b', userId: base.userId, submitterUserId: 'admin-b' });
   });
-
   it('只有 message_submissions 已受理记录可短路幂等查询', async () => {
     await store.upsertPending({
       runId: 'preaccepted-failed-run',
@@ -437,7 +436,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     });
     await store.markStatus('preaccepted-failed-run', 'failed', 'preflight_failed');
 
-    await expect(store.findByIdempotencyKey('owner-preaccepted', 'preaccepted-key')).resolves.toBeNull();
+    await expect(store.findByIdempotencyKey(DEFAULT_TENANT_ID, 'owner-preaccepted', 'preaccepted-key')).resolves.toBeNull();
   });
 
   it('durable append + apply 重试不会重复事件或 transcript 外部副作用', async () => {

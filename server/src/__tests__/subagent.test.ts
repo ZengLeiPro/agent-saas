@@ -2,7 +2,7 @@
  * 子 agent 工具（Agent tool，2026-07-06）测试面。
  *
  * 覆盖对照施工计划第 6 节 + 外部踩坑清单：
- *   - subagentRunner：限额闸门 / billing cap 拒绝 / 模型白名单拒绝（显式传 tenantId）
+ *   - subagentRunner：限额闸门 / live-switch checkpoint / billing cap 拒绝 / 模型白名单拒绝（显式传 tenantId）
  *     / 超时→timeout / 父 abort→cancelled / API 错误→failed（文本不伪装）
  *     / completed 全链路（usage channel:'subagent' 记账、子事件不进父 store、
  *     kind:'subagent' 落 catalog）
@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { z } from 'zod';
@@ -24,15 +24,12 @@ import {
   createDefaultExecutionTransportRegistry,
   type ToolCallContext,
   type ToolProvider,
-  type WorkspaceRef,
 } from '../agent/toolRuntime.js';
 import type { BillingService } from '../data/billing/service.js';
 import { DEFAULT_ORG_AGENT_RUNTIME_POLICY } from '../data/orgAgents/runtimePolicy.js';
-import type { RecordResultParams, TokenUsageStore } from '../data/usage/store.js';
+
 import { buildContextProjection } from '../runtime/contextProjection.js';
-import { FileEventStore } from '../runtime/fileEventStore.js';
-import type { RawRuntimeRunDispatchConfig } from '../runtime/rawRuntimeRunDispatch.js';
-import { createRuntimeSessionRecord, FileSessionCatalog } from '../runtime/sessionCatalog.js';
+import { createRuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import { AgentToolProvider } from '../runtime/subagent/agentToolProvider.js';
 import { SUBAGENT_TYPES } from '../runtime/subagent/agentTypes.js';
 import {
@@ -44,122 +41,9 @@ import {
 import { runSubagent, type SubagentOutcome } from '../runtime/subagent/subagentRunner.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
 import type { PlatformEvent } from '../runtime/types.js';
-import type { ChannelContext, OutboundEvent } from '../types/index.js';
+import type { OutboundEvent } from '../types/index.js';
 import { FailingAdapter, HangingAdapter, TextOnlyAdapter } from './helpers/subagentModelAdapters.js';
-
-// ────────────────────────── 共用 fixture ──────────────────────────
-
-interface SubagentFixture {
-  tmp: string;
-  config: RawRuntimeRunDispatchConfig;
-  parentContext: ToolCallContext;
-  parentSessionId: string;
-  parentRunId: string;
-  tenantId: string;
-  parentEventStore: FileEventStore;
-  usageRecords: RecordResultParams[];
-  cleanupDirs: Set<string>;
-}
-
-async function makeFixture(options: {
-  cleanupDirs: Set<string>;
-  billingService?: BillingService;
-  modelResolver?: RawRuntimeRunDispatchConfig['modelResolver'];
-  parentMemoryPolicyVersion?: 'v1' | 'v2';
-} = { cleanupDirs: new Set() }): Promise<SubagentFixture> {
-  const tmp = await mkdtemp(join(tmpdir(), 'subagent-'));
-  options.cleanupDirs.add(tmp);
-  const tenantId = `t-sub-${randomUUID().slice(0, 8)}`;
-  const parentSessionId = randomUUID();
-  const parentRunId = `${Date.now()}-${randomUUID()}`;
-  const usageRecords: RecordResultParams[] = [];
-
-  const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
-  const eventStores = new Map<string, FileEventStore>();
-  const eventStoreFor = (sessionId: string): FileEventStore => {
-    let store = eventStores.get(sessionId);
-    if (!store) {
-      store = new FileEventStore(join(tmp, 'events', `${sessionId}.jsonl`), tenantId);
-      eventStores.set(sessionId, store);
-    }
-    return store;
-  };
-
-  const config: RawRuntimeRunDispatchConfig = {
-    agentCwd: tmp,
-    sharedDir: join(tmp, 'shared'),
-    sessionCatalog,
-    eventStoreFactory: (session) => eventStoreFor(session.sessionId),
-    modelResolver: options.modelResolver
-      ?? ((_ref: string, _tenantId?: string) => ({
-        model: 'mock-model',
-        connection: { apiKey: 'test-key', baseUrl: 'http://127.0.0.1:0' },
-      })),
-    ...(options.billingService ? { billingService: () => options.billingService } : {}),
-    tokenUsageStore: () => ({
-      recordResult: (params: RecordResultParams) => { usageRecords.push(params); },
-    } as unknown as TokenUsageStore),
-  };
-
-  const parentRecord = createRuntimeSessionRecord({
-    sessionId: parentSessionId,
-    userId: 'user-1',
-    username: 'alice',
-    userRole: 'user',
-    tenantId,
-    channel: 'web',
-    cwd: tmp,
-    modelRef: 'mock/group-model',
-    executionTarget: 'server-local',
-    status: 'running',
-    ...(options.parentMemoryPolicyVersion ? { memoryPolicyVersion: options.parentMemoryPolicyVersion } : {}),
-  });
-  // transcript 落在真实 legacy-transcripts 根下（getTranscriptPath 行为），tenant 目录随测试清理
-  options.cleanupDirs.add(dirname(dirname(parentRecord.transcriptPath)));
-  await sessionCatalog.upsert(parentRecord);
-
-  const channelContext: ChannelContext = {
-    channel: 'web',
-    user: { id: 'user-1', username: 'alice', role: 'user', tenantId },
-  };
-  const workspace: WorkspaceRef = {
-    id: `ws-${parentSessionId}`,
-    root: tmp,
-    userId: 'user-1',
-    username: 'alice',
-    tenantId,
-    sessionId: parentSessionId,
-    executionTarget: 'server-local',
-  };
-  const parentContext: ToolCallContext = {
-    channelContext,
-    workspace,
-    sessionId: parentSessionId,
-    runId: parentRunId,
-    toolCallId: 'call_agent_1',
-  };
-
-  return {
-    tmp,
-    config,
-    parentContext,
-    parentSessionId,
-    parentRunId,
-    tenantId,
-    parentEventStore: eventStoreFor(parentSessionId),
-    usageRecords,
-    cleanupDirs: options.cleanupDirs,
-  };
-}
-
-function runnerDeps(fixture: SubagentFixture) {
-  return {
-    config: fixture.config,
-    executionTransportRegistry: createDefaultExecutionTransportRegistry(),
-    tenantHandResolver: createTenantRemoteHandAuthTokenResolver({}),
-    parentContext: fixture.parentContext,
-  };
-}
+import { makeFixture, runnerDeps, type SubagentFixture } from './helpers/subagentTestFixture.js';
 
 async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEvent[]> {
   const events: OutboundEvent[] = [];
@@ -177,7 +61,6 @@ describe('SubagentLimiter per-parent capacity', () => {
       await slot.release();
     }
   });
-
   it('并发满时排队等待，release 后放行；等待可被 signal 中断', async () => {
     const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
@@ -196,7 +79,6 @@ describe('SubagentLimiter per-parent capacity', () => {
     await expect(waiting).rejects.toThrow(/取消/);
     await third.release();
   });
-
   it('只限制单父并发，不再持有跨 run 或父槽继承状态', async () => {
     const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
@@ -212,13 +94,12 @@ describe('SubagentLimiter per-parent capacity', () => {
 });
 
 describe('runSubagent', () => {
-  const cleanupDirs = new Set<string>();
+  const cleanupDirs = new Set<string>(); // isolated durable fixtures for real runner races
 
   afterEach(async () => {
     for (const dir of cleanupDirs) await rm(dir, { recursive: true, force: true });
     cleanupDirs.clear();
   });
-
   it('child run 在模型调用前执行治理 preflight，enforce 拒绝时 fail closed', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     const preflight = vi.fn().mockResolvedValue({
@@ -297,6 +178,17 @@ describe('runSubagent', () => {
     expect(childRecord?.kind).toBe('subagent');
     expect(childRecord?.tenantId).toBe(fixture.tenantId);
   });
+
+  it.each(['prepared', 'session', 'run', 'lease', 'hand', 'before_active'] as const)(
+    'recovers the same identity after an injected crash at %s', async (crashAt) => {
+      const fixture = await makeFixture({ cleanupDirs });
+      const identity = { childSessionId: `sub-${randomUUID()}`, childRunId: `${Date.now()}-${randomUUID()}` };
+      const common = { ...runnerDeps(fixture), parentProviders: [createBuiltinTools()], agentType: SUBAGENT_TYPES.general, request: { description: 'crash recovery', prompt: 'resume', includeCompanyInfo: false }, preparedChildIdentity: identity };
+      await expect(runSubagent({ ...common, limiter: new SubagentLimiter(), modelAdapterFactory: () => new TextOnlyAdapter(), lifecycleCheckpoint: checkpoint => { if (checkpoint === crashAt) throw new Error(`injected crash after ${crashAt}`); } })).rejects.toThrow(`injected crash after ${crashAt}`);
+      const recovered = await runSubagent({ ...common, limiter: new SubagentLimiter(), modelAdapterFactory: () => new TextOnlyAdapter() });
+      expect(recovered).toMatchObject({ ...identity, status: 'completed' });
+    },
+  );
 
   it('组织 dispatcher 派生的 child 固化 Worker 角色、治理快照与独立模型', async () => {
     const fixture = await makeFixture({ cleanupDirs });

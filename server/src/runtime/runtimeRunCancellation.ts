@@ -21,8 +21,10 @@ export async function cancelRuntimeRun(
   options: {
     missingIsCancelled?: boolean;
     reserveIfMissing?: Parameters<RunStore['upsertPending']>[0];
+    abort?: (runId: string, reason: string) => unknown;
   } = {},
 ): Promise<RuntimeCancellationOutcome> {
+  const abort = options.abort ?? ((id: string, abortReason: string) => runtimeRunController.abort(id, abortReason));
   let run = await runStore.get(runId);
   if (!run && options.reserveIfMissing) {
     if (!runStore.createPending) throw new Error('RunStore create-only reservation is unavailable');
@@ -33,7 +35,7 @@ export async function cancelRuntimeRun(
     throw new Error(`Runtime Run 尚未落库，取消结果不确定：${runId}`);
   }
   if (run.status === 'cancelled') {
-    runtimeRunController.abort(runId, reason);
+    abort(runId, reason);
     return { kind: 'cancelled', run };
   }
   if (PREEMPTING_TERMINAL_STATUSES.has(run.status as 'completed' | 'failed' | 'orphaned')) {
@@ -53,7 +55,7 @@ export async function cancelRuntimeRun(
   if (!result.targetCancelled) {
     const current = await runStore.get(runId);
     if (current?.status === 'cancelled') {
-      runtimeRunController.abort(runId, reason);
+      abort(runId, reason);
       return { kind: 'cancelled', run: current };
     }
     if (current && PREEMPTING_TERMINAL_STATUSES.has(current.status as 'completed' | 'failed' | 'orphaned')) {
@@ -61,7 +63,7 @@ export async function cancelRuntimeRun(
     }
     throw new Error(`Runtime Run 取消 CAS 未命中：${runId} status=${current?.status ?? 'missing'}`);
   }
-  runtimeRunController.abort(runId, reason);
+  abort(runId, reason);
   return { kind: 'cancelled', run: await runStore.get(runId) };
 }
 

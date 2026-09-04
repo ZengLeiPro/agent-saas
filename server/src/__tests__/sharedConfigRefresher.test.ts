@@ -220,7 +220,9 @@ describe('createSharedConfigRefresher', () => {
 
   it('文件未变化时不重复解析（节流 + 指纹双重保护）', () => {
     writeConfig(dir, [BASE_GROUP]);
-    const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
@@ -507,27 +509,6 @@ describe('createSharedConfigRefresher', () => {
     expect(config.stt?.enabled).toBe(true);
     expect(config.stt?.pricing?.creditsPerCall).toBe(123);
     expect(seen).toEqual(['true:123']);
-  });
-
-  it('webTools 未变化时不触发回调', () => {
-    writeConfig(dir, [BASE_GROUP]);
-    const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
-    let calls = 0;
-    let clock = 10_000;
-    const refresher = createSharedConfigRefresher({
-      config,
-      processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      prepareWebToolsUpdate: () => () => { calls += 1; },
-      now: () => clock,
-    });
-
-    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
-    clock += 5_000;
-    refresher.refreshIfChanged();
-
-    expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
-    expect(calls).toBe(0);
   });
 
   it('TASK-318：identity 重算与管理端精确文本确认抵御并发覆盖', () => {

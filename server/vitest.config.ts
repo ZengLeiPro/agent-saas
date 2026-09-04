@@ -22,9 +22,9 @@ export default defineConfig({
     },
   },
   test: {
-    // 测试文件匹配模式（server + shared source aliases）
+    // 测试文件匹配模式（server + shared 源码 aliases）
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'tests/**/*.{test,spec}.{ts,tsx}'],
-    // 排除的目录
+    // 排除依赖与构建产物
     exclude: ['node_modules', 'dist'],
     // 使用 Node.js 环境
     environment: 'node',

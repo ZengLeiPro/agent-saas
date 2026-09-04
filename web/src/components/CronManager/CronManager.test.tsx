@@ -3,7 +3,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CronManager } from "./index";
+import { CronManager, cronViewFromLocation } from "./index";
 
 const mocks = vi.hoisted(() => ({
   refreshStatus: vi.fn(async () => undefined),
@@ -66,6 +66,7 @@ function ExternalHeaderHarness() {
 
 describe("CronManager 桌面布局", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     window.history.replaceState({}, "", "/cron");
   });
 
@@ -102,13 +103,14 @@ describe("CronManager 桌面布局", () => {
     expect(screen.queryByText("创建定时任务")).toBeNull();
   });
 
-  it("在定时任务与任务看板间同步 query，并响应 URL 返回", async () => {
+  it("在定时任务与任务看板间切换独立路径，并响应 URL 返回", async () => {
     const user = userEvent.setup();
     render(<CronManager />);
 
     await user.click(screen.getByRole("tab", { name: "任务看板" }));
-    expect(window.location.pathname).toBe("/cron");
-    expect(window.location.search).toBe("?view=board");
+    expect(window.location.pathname).toBe("/taskboard");
+    expect(window.location.search).toBe("");
+    expect(window.localStorage.getItem("task-center:last-view")).toBe("board");
     expect(screen.getByText("任务看板视图")).toBeTruthy();
     expect(document.querySelector<HTMLElement>("[data-task-center-tab-indicator]")?.style.transform).toBe("translateX(100%)");
 
@@ -118,6 +120,17 @@ describe("CronManager 桌面布局", () => {
     });
     expect(await screen.findByText("选择左侧任务查看运行历史")).toBeTruthy();
     expect(window.location.search).toBe("");
+    expect(window.localStorage.getItem("task-center:last-view")).toBe("schedule");
+  });
+
+  it("刷新任务看板独立路径时直接恢复任务看板", () => {
+    expect(cronViewFromLocation({ pathname: "/cron", search: "?view=board" })).toBe("board");
+    window.history.replaceState({}, "", "/taskboard");
+    render(<CronManager />);
+
+    expect(screen.getByRole("tab", { name: "任务看板" }).getAttribute("data-state")).toBe("active");
+    expect(screen.getByText("任务看板视图")).toBeTruthy();
+    expect(window.location.pathname).toBe("/taskboard");
   });
 
   it("组织控制台切换任务看板时保留 tenant-admin shell、路径和现有查询", async () => {

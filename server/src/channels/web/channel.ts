@@ -6,7 +6,6 @@
  *
  * WS 消息协议见 wsTypes.ts。
  */
-
 import { randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { resolve as resolvePath } from 'path';
@@ -112,6 +111,7 @@ import {
 } from './channelRuntimeHelpers.js';
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
+import { rejectSessionAutomationChat } from './sessionAutomationSlashGuard.js';
 import {
   adaptWebChatSubmission,
   chatSubmissionIssueReasonCode,
@@ -141,7 +141,6 @@ import { getRuntimeStreamStatus, handleRuntimeStreamSocketClose, WebRuntimeRecov
 export type { ModelResolver, WebChannelConfig } from './channelConfig.js';
 
 export { buildChatMessageActivityDetail } from './channelHelpers.js';
-
 interface ActiveStreamEntry {
   controller: AbortController;
   userId?: string; tenantId?: string;
@@ -150,13 +149,11 @@ interface ActiveStreamEntry {
   runId?: string;
   clientMsgId?: string;
 }
-
 export class WebChannel implements BaseChannel {
   readonly name = 'web' as const;
   private displayConfig: WebMessageDisplayConfig;
   private modelResolver?: ModelResolver;
   private userStore?: UserStore;
-
   /**
    * 活跃流的映射：streamId → { controller, userId, ws }
    * controller 用于用户主动停止时中止 Agent。
@@ -168,12 +165,10 @@ export class WebChannel implements BaseChannel {
   private submissionProcessingTails = new Map<string, Promise<void>>();
   /** Requests that opted into the M20-05 structured ACK protocol. */
   private structuredInteractionRequestIds = new Set<string>();
-
   /** 返回当前活跃流数量（供 ChannelManager 聚合） */
   getActiveStreamCount(): number {
     return this.activeStreams.size;
   }
-
   /** 禁用用户时调用：断开 WS 连接 + 中止活跃流 */
   disconnectUser(userId: string): void {
     for (const [streamId, entry] of this.activeStreams) {
@@ -185,7 +180,6 @@ export class WebChannel implements BaseChannel {
     }
     this.wsServer?.disconnectUser(userId, 'Account disabled');
   }
-
   /** 禁用组织时调用：断开该组织 WS 连接 + 中止活跃流。 */
   disconnectTenant(tenantId: string): void {
     for (const [streamId, entry] of this.activeStreams) {
@@ -198,14 +192,12 @@ export class WebChannel implements BaseChannel {
     }
     this.wsServer?.disconnectTenant(tenantId, 'Tenant disabled');
   }
-
   private tenantAccessErrorForClient(client: WsClient): string | null {
     const user = client.user;
     if (!user) return null;
     const record = this.userStore?.findById(user.sub);
     return tenantAccessErrorMessage(this.config.tenantStore, record?.tenantId || user.tenantId);
   }
-
   private sensitiveActionAccessError(client: WsClient, target: SensitiveActionTarget): string | null { return sensitiveActionAccessError(client, target, this.wsServer, this.userStore); }
   private anonymousBindingAccessError(client: WsClient, boundWebSocket?: WebSocket): string | null {
     return !(this.config.authEnabled ?? Boolean(this.config.jwtSecret)) && !client.user && boundWebSocket === client.ws
@@ -220,9 +212,13 @@ export class WebChannel implements BaseChannel {
     const tenantId = targetTenantId ?? ownerTenantId ?? this.userStore?.findById(client.user.sub)?.tenantId ?? client.user.tenantId;
     return tenantId && !this.sensitiveActionAccessError(client, { tenantId, ownerUserId }) ? tenantId : null;
   }
-  private findActiveStreamIdBySession(sessionId: string): string | undefined {
+  private findActiveStreamIdBySession(sessionId: string): string | undefined;
+  private findActiveStreamIdBySession(tenantId: string, sessionId: string): string | undefined;
+  private findActiveStreamIdBySession(tenantIdOrSessionId: string, maybeSessionId?: string): string | undefined {
+    const tenantId = maybeSessionId ? tenantIdOrSessionId : undefined;
+    const sessionId = maybeSessionId ?? tenantIdOrSessionId;
     for (const [streamId, entry] of this.activeStreams) {
-      if (entry.sessionId === sessionId) return streamId;
+      if ((!tenantId || entry.tenantId === tenantId) && entry.sessionId === sessionId) return streamId;
     }
     return undefined;
   }
@@ -232,28 +228,55 @@ export class WebChannel implements BaseChannel {
     }
     return undefined;
   }
-
-  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }> {
-    return getRuntimeStreamStatus(
-      sessionId,
-      this.config.enqueueRuntime?.runStore,
-      this.eventBufferStore,
-      (id) => this.findActiveStreamIdBySession(id),
-    );
+  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }>;
+  async getStreamStatus(tenantId: string, sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }>;
+  async getStreamStatus(tenantIdOrSessionId: string, maybeSessionId?: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }> {
+    if (!maybeSessionId) {
+      return getRuntimeStreamStatus(
+        tenantIdOrSessionId,
+        this.config.enqueueRuntime?.runStore,
+        this.eventBufferStore,
+        (id) => this.findActiveStreamIdBySession(id),
+      );
+    }
+    const tenantId = tenantIdOrSessionId;
+    const sessionId = maybeSessionId;
+    try {
+      const runStore = this.config.enqueueRuntime?.runStore;
+      if (runStore?.getActiveBySession) {
+        const activeRun = await runStore.getActiveBySession(tenantId, sessionId);
+        if (activeRun) {
+          const streamId = this.findActiveStreamIdBySession(tenantId, sessionId)
+            ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);
+          return {
+            active: true,
+            ...(streamId ? { streamId } : {}),
+            runId: activeRun.runId,
+            status: activeRun.status,
+            liveness: projectRunLiveness(activeRun),
+          };
+        }
+        return { active: false };
+      }
+    } catch (err) {
+      chatLogger.warn(`[stream-status] runStore.getActiveBySession 异常,降级查 buffer: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const streamId = this.findActiveStreamIdBySession(tenantId, sessionId);
+    if (!streamId || !this.eventBufferStore.isActive(sessionId)) return { active: false };
+    return { active: true, streamId };
   }
   private streamIdCounter = 0;
   private eventBufferStore = new EventBufferStore();
-
   /**
    * 消息幂等 LRU：以 `userId|client_msg_id` 为键，记录最近收到的 chat 请求。
    * 防止：1) WS 传输层重试重复 dispatch；2) 用户双击发送按钮。
    *
    * 大小上限 500，单条 TTL 60s；TTL 过后允许用户手动"重试"生成新 client_msg_id。
    */
-  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' }>();
+  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled'; rejection?: { reasonCode: ChatRejectReasonCode; reason: string; correlationId?: string } }>();
   private static readonly IDEMPOTENCY_MAX = 500;
   private static readonly IDEMPOTENCY_TTL_MS = 60_000;
-  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' } | undefined {
+  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled'; rejection?: { reasonCode: ChatRejectReasonCode; reason: string; correlationId?: string } } | undefined {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     const entry = this.idempotencyCache.get(key);
     if (!entry) return undefined;
@@ -272,7 +295,7 @@ export class WebChannel implements BaseChannel {
       ...(entry.deliveryMode ? { deliveryMode: entry.deliveryMode } : {}),
       ...(entry.queuedBehindRunId ? { queuedBehindRunId: entry.queuedBehindRunId } : {}),
       ...(entry.steeringTargetRunId ? { steeringTargetRunId: entry.steeringTargetRunId } : {}),
-      ...(entry.terminalStatus ? { terminalStatus: entry.terminalStatus } : {}),
+      ...(entry.terminalStatus ? { terminalStatus: entry.terminalStatus } : {}), ...(entry.rejection ? { rejection: entry.rejection } : {}),
     };
   }
   private idempotencySet(
@@ -280,7 +303,7 @@ export class WebChannel implements BaseChannel {
     clientMsgId: string,
     status: 'in_flight' | 'done' | 'failed',
     streamId: string,
-    meta: { sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' } = {},
+    meta: { sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled'; rejection?: { reasonCode: ChatRejectReasonCode; reason: string; correlationId?: string } } = {},
   ): void {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     this.idempotencyCache.set(key, {
@@ -292,7 +315,7 @@ export class WebChannel implements BaseChannel {
       ...(meta.deliveryMode ? { deliveryMode: meta.deliveryMode } : {}),
       ...(meta.queuedBehindRunId ? { queuedBehindRunId: meta.queuedBehindRunId } : {}),
       ...(meta.steeringTargetRunId ? { steeringTargetRunId: meta.steeringTargetRunId } : {}),
-      ...(meta.terminalStatus ? { terminalStatus: meta.terminalStatus } : {}),
+      ...(meta.terminalStatus ? { terminalStatus: meta.terminalStatus } : {}), ...(meta.rejection ? { rejection: meta.rejection } : {}),
     });
     // LRU 驱逐
     while (this.idempotencyCache.size > WebChannel.IDEMPOTENCY_MAX) {
@@ -301,7 +324,6 @@ export class WebChannel implements BaseChannel {
       this.idempotencyCache.delete(firstKey);
     }
   }
-
   /** durable enqueue 成功后的接收确认；绝不把“仅通过基础校验”冒充 accepted。 */
   private sendChatAck(
     ws: WebSocket,
@@ -320,11 +342,10 @@ export class WebChannel implements BaseChannel {
     if (this.eventBus) this.eventBus.emitReply(ws, data);
     else this.wsSend(ws, data);
   }
-
   /** 发送结构化消息拒绝（服务端决定不处理），客户端据此将 pending 气泡翻为 failed */
-  private sendChatRejected(ws: WebSocket, clientMsgId: string, reasonCode: ChatRejectReasonCode, reason: string): void {
-    if (ws.readyState !== ws.OPEN) return;
-    const { failure, payload } = buildStructuredError({ source: 'chat_rejected', code: reasonCode });
+  private sendChatRejected(ws: WebSocket, clientMsgId: string, reasonCode: ChatRejectReasonCode, reason: string, correlationId?: string): string | undefined {
+    if (ws.readyState !== ws.OPEN) return undefined;
+    const { failure, payload } = buildStructuredError({ source: 'chat_rejected', code: reasonCode, correlationId });
     // Auditable metadata only: never log reason/body/credential.
     chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'chat_rejected' })));
     const data = {
@@ -342,8 +363,8 @@ export class WebChannel implements BaseChannel {
     } else {
       this.wsSend(ws, data);
     }
+    return payload.correlationId;
   }
-
   /** 企业专家会话的后续动作统一重新鉴权，避免停用/取消指派后从特殊路径继续执行。 */
   private orgAgentActionAccessError(
     client: WsClient,
@@ -364,7 +385,6 @@ export class WebChannel implements BaseChannel {
       ? null
       : '该企业专家当前不可用，请联系组织管理员';
   }
-
   /**
    * 追踪每个 WS 连接当前绑定的 streamId。
    * 用于防止用户切换会话后，旧会话的 handleEvents 继续向同一 WS 直接推送事件。
@@ -388,17 +408,14 @@ export class WebChannel implements BaseChannel {
   ): void {
     handleRuntimeStreamSocketClose(this.activeStreams.get(streamId)?.ws, ws, this.wsActiveStream, connectionAbortController, activeInteractionIds);
   }
-
   /** per-session 串行锁：确保同一 session 的 Agent run 不会并发执行 */
   private sessionLocks = new Map<string, { promise: Promise<void>; createdAt: number }>();
   /** stale lock 清理定时器 */
   private lockCleanupTimer?: ReturnType<typeof setInterval>;
-
   /** stale lock 判定阈值（15 分钟） */
   private static readonly LOCK_STALE_MS = 15 * 60 * 1000;
   /** 清理扫描间隔（5 分钟） */
   private static readonly LOCK_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-
   /** WS server instance（由 start() 创建） */
   private wsServer?: WsServer;
   /** 中央事件总线（由 start() 创建） */
@@ -418,7 +435,6 @@ export class WebChannel implements BaseChannel {
    * 每个 run 只 terminate 一次,Set 长期增长上限 ≈ 历史 run 总数,可接受。
    */
   private readonly crossProcessTerminalRuns = new Set<string>();
-
   constructor(
     private readonly config: WebChannelConfig,
     private dispatch: AgentRunDispatch,
@@ -442,7 +458,7 @@ export class WebChannel implements BaseChannel {
       eventStoreTenantForClient: (client, tenantId, userId) => this.eventStoreTenantForClient(client, tenantId, userId),
       wsSend: (ws, data, eventId, eventCursor) => this.wsSend(ws, data, eventId, eventCursor),
       sendQueueSnapshot: (client, sessionId, recovery) => this.sendQueueSnapshot(client, sessionId, recovery),
-      getStreamStatus: (sessionId) => this.getStreamStatus(sessionId),
+      getStreamStatus: (sessionId, tenantId) => tenantId ? this.getStreamStatus(tenantId, sessionId) : this.getStreamStatus(sessionId),
       getRuntimeEventStoreForSession: (sessionId, tenantId) => this.getRuntimeEventStoreForSession(sessionId, tenantId),
     });
     // 定期清理 stale session locks，防止异常路径导致的 Map 泄漏
@@ -457,7 +473,6 @@ export class WebChannel implements BaseChannel {
     }, WebChannel.LOCK_CLEANUP_INTERVAL_MS);
     this.lockCleanupTimer.unref();
   }
-
   /** 创建 WS server 并注册消息处理器 */
   async start(app: Express): Promise<void> {
     this.wsServer = new WsServer({
@@ -468,7 +483,6 @@ export class WebChannel implements BaseChannel {
       allowedOrigins: this.config.allowedOrigins,
       authEpochAuthority: this.config.authEpochAuthority,
     });
-
     // 创建 EventBus（所有 WS 下行事件的唯一出口及 auth binding gate）
     this.eventBus = new EventBus({
       eventBufferStore: this.eventBufferStore,
@@ -483,7 +497,6 @@ export class WebChannel implements BaseChannel {
       },
       isActiveStream: (ws, streamId) => this.wsActiveStream.get(ws) === streamId,
     });
-
     // 注册 WS 消息路由
     this.wsServer.onMessage((client, msg) => {
       switch (msg.action) {
@@ -533,7 +546,6 @@ export class WebChannel implements BaseChannel {
           this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       }
     });
-
     // WS 断开时清理关联的 pending 交互
     this.wsServer.onClose((client) => {
       // 找到此 WS 连接关联的所有 active streams，abort 连接级 controller
@@ -544,11 +556,9 @@ export class WebChannel implements BaseChannel {
         }
       }
     });
-
     // Express 路由保留：respond / abort / pending interactions 仍走 HTTP（兼容性）
     // 但主要通过 WS 处理，HTTP 端点可在后续版本移除
   }
-
   /** 将 WS server 绑定到 HTTP server（在 app.listen() 之后调用） */
   attachToServer(httpServer: import('http').Server): void {
     if (!this.wsServer) {
@@ -557,17 +567,14 @@ export class WebChannel implements BaseChannel {
     this.wsServer.attach(httpServer);
     chatLogger.info('WebSocket server attached to HTTP server');
   }
-
   /** 获取 WS server 实例（供外部使用） */
   getWsServer(): WsServer | undefined {
     return this.wsServer;
   }
-
   /** 获取 EventBus 实例（供 routes / runtime 等外部模块使用） */
   getEventBus(): EventBus | undefined {
     return this.eventBus;
   }
-
   /**
    * Scheduler/wake 后台执行路径的 Web stream bridge。
    *
@@ -600,7 +607,6 @@ export class WebChannel implements BaseChannel {
       userId: input.userId,
     };
     const emitSession = (data: object) => this.eventBus!.emitSession(sessionCtx, data);
-
     switch (input.event.type) {
       case 'session_init':
         // 接管补发：仅当该连接仍查看此会话（affinity）且未绑定其他流时。
@@ -885,7 +891,6 @@ export class WebChannel implements BaseChannel {
         break;
     }
   }
-
   /**
    * Cross-process runtime event bridge entrypoint.
    *
@@ -1096,7 +1101,6 @@ export class WebChannel implements BaseChannel {
     }
   }
   // ── WS 辅助方法（统一经过 auth binding gate）──────────
-
   private wsSend(ws: WebSocket, data: object, eventId?: number, eventCursor?: string): void {
     const envelope = {
       ...(eventId !== undefined ? { eventId } : {}),
@@ -1110,15 +1114,12 @@ export class WebChannel implements BaseChannel {
       ws.send(JSON.stringify(envelope));
     }
   }
-
   private sendCanonicalWsError(ws: WebSocket, code: string, status?: number): void {
     const { failure, payload } = buildStructuredError({ source: 'ws', code, ...(status ? { status } : {}) });
     chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws', status })));
     this.wsSend(ws, { type: 'error', ...payload });
   }
-
   // ── 消息处理器 ──────────────────────────────────────
-
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
     const previousWs = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
@@ -1149,7 +1150,6 @@ export class WebChannel implements BaseChannel {
       cleanup();
     });
   }
-
   /** 处理 respond 消息（替代 POST /api/chat/respond） */
   private sendRespond(
     client: WsClient,
@@ -1267,14 +1267,12 @@ export class WebChannel implements BaseChannel {
       this.sendRespond(client, interactionId, requestId, 'Interaction response failed; please retry');
     });
   }
-
   private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
     const sessionId = interactionStore.get(interactionId)?.sessionId ?? interactionStore.getSessionId(interactionId) ?? fallbackSessionId;
     const admissionLock = this.config.withSessionAdmissionLock;
     const resolve = (lockHeld: boolean) => this.resolveInteractionAdmitted(client, interactionId, response, sessionId, lockHeld, clientAttemptId);
     return sessionId && admissionLock ? admissionLock(sessionId, () => resolve(true)) : resolve(false);
   }
-
   private async resolveInteractionAdmitted(client: WsClient, interactionId: string, response: Record<string, unknown>, admittedSessionId: string | undefined, admissionLockHeld: boolean, clientAttemptId?: string): Promise<void> {
     // resolve 会删除 entry；锁内重读 sessionId，避免等待期间陈旧。
     const pendingInteraction = interactionStore.get(interactionId);
@@ -1358,7 +1356,8 @@ export class WebChannel implements BaseChannel {
     const meta = transcriptPath ? (await readSessionMeta(transcriptPath) ?? undefined) : undefined;
     const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
     const sessionRecord = enqueueRuntime ? await enqueueRuntime.sessionCatalog.get(sessionId).catch(() => null) : null;
-    const durableRun = enqueueRuntime ? await enqueueRuntime.runStore.getActiveBySession?.(sessionId).catch(() => null) : null;
+    const lookupTenantId = this.eventStoreTenantForClient(client, sessionRecord?.tenantId ?? meta?.tenantId, sessionRecord?.userId ?? meta?.userId);
+    const durableRun = enqueueRuntime && lookupTenantId ? await enqueueRuntime.runStore.getActiveBySession?.(lookupTenantId, sessionId).catch(() => null) : null;
     const persistedTenants = new Set([durableRun?.tenantId, sessionRecord?.tenantId, meta?.tenantId].filter((id): id is string => Boolean(id)));
     const ownerUserId = durableRun?.userId || sessionRecord?.userId || meta?.userId || undefined;
     const tenantId = persistedTenants.size <= 1 ? this.eventStoreTenantForClient(client, persistedTenants.values().next().value, ownerUserId) : null;
@@ -1888,7 +1887,7 @@ export class WebChannel implements BaseChannel {
       return { targetCancelled, eventAppended: Boolean(event), newCancellation: eventCreated };
     }
     if (runStore.cancelSteeringBeforeDispatchBySession) {
-      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId, tenantId);
       // 非 PG/旧实现无法跨 store 原子提交：先落取消事实，再追加事件。事件绝不先行撒谎；
       // 即使 append 失败，run status 仍是可恢复权威事实。
       if (cancelEvent) await this.appendDurableWebCommand(sessionId, cancelEvent, tenantId);
@@ -1914,7 +1913,7 @@ export class WebChannel implements BaseChannel {
     if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) {
       return { targetCancelled: false, eventAppended: false, newCancellation: true };
     }
-    const pending = await runStore.listPendingSteeringBySession(sessionId);
+    const pending = await runStore.listPendingSteeringBySession(sessionId, tenantId);
     for (const input of pending) {
       const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason);
       if (!result.ok) continue;
@@ -2133,7 +2132,7 @@ export class WebChannel implements BaseChannel {
 
     // 永久幂等事实必须先于 drain/载荷校验：重放一个已受理请求只回原权威结果，
     // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
-    const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
+    const replayStore=this.config.enqueueRuntime?.runStore;let durableRun=await replayStore?.findByIdempotencyKey(user?.tenantId??DEFAULT_TENANT_ID,user?.sub,clientMsgId);if(!durableRun&&user&&isPlatformAdminUser(user))durableRun=await replayStore?.findUniqueByIdempotencyKeyAcrossTenants?.(user.sub,clientMsgId)??null;
     if (durableRun) {
       if (durableRun.userId
         ? this.sensitiveActionAccessError(client, { tenantId: durableRun.tenantId, ownerUserId: durableRun.userId })
@@ -2186,15 +2185,12 @@ export class WebChannel implements BaseChannel {
       this.wsSend(ws, { type: 'session', sessionId: durableRun.sessionId, client_msg_id: clientMsgId });
       return;
     }
-
-
     // Canonical V1 is strict after the idempotency replay fence above: malformed new submissions fail closed.
     if (adaptedSubmission.issue) {
       const reasonCode = chatSubmissionIssueReasonCode(adaptedSubmission.issue);
       this.sendChatRejected(ws, clientMsgId, reasonCode, adaptedSubmission.issue.message);
       return;
     }
-
     if (sessionId && await isWebSessionDeleted(this.config, sessionId)) { this.sendChatRejected(ws, clientMsgId, 'access_denied', '会话已删除，请先恢复会话'); return; }
 
     // 1) Drain 拦截（服务端优雅关闭期间）
@@ -2323,7 +2319,7 @@ export class WebChannel implements BaseChannel {
           this.wsSend(ws, { type: 'session', sessionId: dupEntry.sessionId, client_msg_id: clientMsgId });
         }
         return;
-      }
+      } if (dupEntry.rejection) { this.sendChatRejected(ws, clientMsgId, dupEntry.rejection.reasonCode, dupEntry.rejection.reason, dupEntry.rejection.correlationId); return; }
       // done/failed 仍返回原提交的终态关联；传输层重试不是新的业务消息。
       this.sendChatAck(ws, clientMsgId, {
         ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
@@ -2368,6 +2364,10 @@ export class WebChannel implements BaseChannel {
       }
       resolvedMessage = VOICE_STT_TAG + canonicalVoice.transcript.text;
     }
+    if (rejectSessionAutomationChat(resolvedMessage, (rejection) => {
+      const correlationId = this.sendChatRejected(ws, clientMsgId, rejection.reasonCode, rejection.reason);
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '', { rejection: { ...rejection, correlationId } });
+    })) return;
 
     // 构造 ChannelContext
     let userIdentity: ChannelContext['user'];
@@ -3017,10 +3017,10 @@ export class WebChannel implements BaseChannel {
         const steeringTargetRunId = acceptedDeliveryMode === 'steer' ? queuedTargetRunId : undefined;
         const queuedBehindRunId = acceptedDeliveryMode === 'queue' ? queuedTargetRunId : undefined;
         durableAcceptedQueuedTargetRunId = queuedTargetRunId;
-        let queuePosition: number | undefined;
+        let queuePosition: number | undefined; // position is scoped to the accepted run's tenant/session
         if (queuedTargetRunId && enqueueRuntime.runStore.listPendingUserMessagesBySession) {
           try {
-            const pendingMessages = await enqueueRuntime.runStore.listPendingUserMessagesBySession(acceptedSessionId);
+            const pendingMessages = await enqueueRuntime.runStore.listPendingUserMessagesBySession(acceptedSessionId, enqueuedRun.tenantId);
             const pendingIndex = pendingMessages.findIndex((run) => run.runId === acceptedRunId);
             if (pendingIndex >= 0) queuePosition = pendingIndex + 1;
           } catch (queueError) {
@@ -3212,7 +3212,7 @@ export class WebChannel implements BaseChannel {
         if (!durableAccepted) {
           // PostgreSQL 的 COMMIT 可能已生效但连接在回执前中断；先按永久幂等键反查，
           // 绝不能把“提交结果未知”直接改成 failed 并清掉 wakeMessage。
-          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.sub, clientMsgId).catch(() => {
+          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.tenantId ?? DEFAULT_TENANT_ID, user?.sub, clientMsgId).catch(() => {
             durableLookupAvailable = false;
             return null;
           });

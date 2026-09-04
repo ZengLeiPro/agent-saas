@@ -270,6 +270,15 @@ export function computeCacheHitDenominatorTokens(model: string, tokens: TokenAmo
  * @param tokens 4 类 token 用量
  * @param log 可选日志函数（默认 console.warn）
  */
+/** Strict price resolution for admission paths; unlike computeCostMicro it never maps unknown models to zero. */
+export function resolveModelPrice(model: string): ModelPrice | undefined {
+  if (!model || ZERO_COST_MODELS.has(model)) return ZERO_COST_MODELS.has(model)
+    ? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }
+    : undefined;
+  const price = configuredPricing[model] ?? PRICING[model];
+  return price ? { ...price } : undefined;
+}
+
 export function computeCostMicro(
   model: string,
   tokens: TokenAmounts,
@@ -277,7 +286,7 @@ export function computeCostMicro(
 ): number {
   if (!model || ZERO_COST_MODELS.has(model)) return 0;
 
-  const p = configuredPricing[model] ?? PRICING[model];
+  const p = resolveModelPrice(model);
   if (!p) {
     if (!warnedUnknownModels.has(model)) {
       warnedUnknownModels.add(model);

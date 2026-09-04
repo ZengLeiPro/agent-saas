@@ -5,14 +5,13 @@
  * 有意与 ScenariosPanel 拆成独立小模块：推荐位随聊天主视图打包，
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
-import { lazy, Suspense, useState, type CSSProperties } from "react";
-import { Globe, MessageSquareShare, Play, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { lazy, Suspense, useState } from "react";
+import { Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
-import type { CatalogScenarioPublic, ScenarioItem, ScenarioRequirement } from "@agent/shared";
-import type { WorkflowPrimaryAction } from "./workflowUi";
+import type { ScenarioItem, ScenarioRequirement } from "@agent/shared";
 
 // 懒加载：仅点开「看示例结果」时才拉取弹层（内含 markdown 渲染），
 // 不拖累空会话推荐位所在的聊天主 bundle
@@ -202,79 +201,5 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
         </Suspense>
       )}
     </>
-  );
-}
-
-export interface WorkflowScenarioCardProps {
-  scenario: CatalogScenarioPublic;
-  onOpenDetail: (scenario: CatalogScenarioPublic) => void;
-  onPrimaryAction: (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => void;
-  compact?: boolean;
-  className?: string;
-  style?: CSSProperties;
-}
-
-/** V3 客户目录卡；不消费 prompt、tool 或旧 demoShareToken。 */
-export function WorkflowScenarioCard({
-  scenario,
-  onOpenDetail,
-  onPrimaryAction,
-  className,
-  style,
-}: WorkflowScenarioCardProps) {
-  return (
-    <article
-      style={style}
-      // 整卡可点，与技能、连接器、专家目录的卡片保持同一套交互模型
-      role="button"
-      tabIndex={0}
-      aria-label={`查看 ${scenario.title} 详情`}
-      onClick={() => onOpenDetail(scenario)}
-      onKeyDown={(event) => {
-        if ((event.target as HTMLElement).closest("button")) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpenDetail(scenario);
-        }
-      }}
-      className={cn(
-        "group relative flex min-h-32 cursor-pointer flex-col overflow-hidden p-4 text-left text-card-foreground",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
-        CAPABILITY_SURFACE,
-        CAPABILITY_SURFACE_HOVER,
-        className,
-      )}
-    >
-      <h3 className="text-base font-semibold leading-snug transition-colors group-hover:text-brand-600">
-        {scenario.title}
-      </h3>
-      <div className="mt-auto grid w-full grid-cols-2 gap-2 pt-5" data-workflow-actions>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 w-full border-border/80 bg-background px-3 text-xs text-foreground shadow-none hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
-          onClick={(event) => {
-            event.stopPropagation();
-            onPrimaryAction("presentation", scenario);
-          }}
-        >
-          <Play className="h-3.5 w-3.5" aria-hidden="true" />
-          看演示
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 w-full border-brand-200 bg-brand-50 px-3 text-xs text-brand-700 shadow-none hover:border-brand-600 hover:bg-brand-600 hover:text-white hover:shadow-sm focus-visible:border-brand-600 focus-visible:bg-brand-600 focus-visible:text-white active:translate-y-px active:bg-brand-700 active:text-white"
-          onClick={(event) => {
-            event.stopPropagation();
-            onPrimaryAction("chat", scenario);
-          }}
-        >
-          立即试一试
-        </Button>
-      </div>
-    </article>
   );
 }

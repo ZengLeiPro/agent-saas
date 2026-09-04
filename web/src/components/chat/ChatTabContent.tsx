@@ -1,4 +1,4 @@
-import { type Ref, type MutableRefObject, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, type Ref, type MutableRefObject, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
@@ -11,12 +11,17 @@ import type { AskUserAnswers } from "@agent/shared";
 import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
-import { ChatInput } from "@/components/ChatInput";
+import { LazyChatInput } from "@/components/LazyChatInput";
 import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
 import { PermissionBlock } from "@/components/PermissionBlock";
 import { QueuedMessageBar } from "@/components/QueuedMessageBar";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { SandboxProfile } from "@/types/sandboxProfile";
+import type { AutomationControlRequest, AutomationTimelineEvent, SessionAutomationSnapshot } from "@/lib/sessionAutomation";
+
+const SessionAutomationCard = lazy(() => import("@/components/SessionAutomationCard").then((module) => ({
+  default: module.SessionAutomationCard,
+})));
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -84,6 +89,11 @@ interface ChatTabContentProps {
   onEditQueuedInterjection?: (clientMsgId: string) => Promise<void>;
   onResendQueuedInterjection?: (clientMsgId: string) => void;
   onDismissQueuedInterjection?: (clientMsgId: string) => void;
+  automation?: SessionAutomationSnapshot | null;
+  automationTimeline?: AutomationTimelineEvent[];
+  automationPending?: boolean;
+  automationError?: string | null;
+  onAutomationControl?: (request: AutomationControlRequest) => Promise<void> | void;
 }
 
 export function OrgAgentComposerChip({
@@ -224,6 +234,11 @@ export function ChatTabContent({
   onEditQueuedInterjection,
   onResendQueuedInterjection,
   onDismissQueuedInterjection,
+  automation,
+  automationTimeline,
+  automationPending,
+  automationError,
+  onAutomationControl,
 }: ChatTabContentProps) {
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const handleSwitchModel = useCallback(() => setModelSelectorOpen(true), []);
@@ -281,6 +296,17 @@ export function ChatTabContent({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {automation && onAutomationControl && !readOnly && (
+        <Suspense fallback={null}>
+          <SessionAutomationCard
+            snapshot={automation}
+            timeline={automationTimeline}
+            pending={automationPending}
+            error={automationError}
+            onControl={onAutomationControl}
+          />
+        </Suspense>
+      )}
       <div
         className={cn(
           "relative flex min-h-0 basis-0 overflow-hidden transition-[flex-grow,opacity] duration-300 ease-out",
@@ -346,7 +372,7 @@ export function ChatTabContent({
 
       {readOnly && readOnlyInputPlaceholder ? (
         <div className="shrink-0">
-          <ChatInput
+          <LazyChatInput
             input=""
             loading={false}
             uploading={false}
@@ -408,7 +434,7 @@ export function ChatTabContent({
               onRemoveFile={onRemoveFile}
               onDismissError={onDismissUploadError}
             />
-            <ChatInput
+            <LazyChatInput
               input={input}
               loading={loading}
               uploading={uploading}

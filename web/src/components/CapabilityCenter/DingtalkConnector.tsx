@@ -16,13 +16,8 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { cn } from "@/lib/utils";
-import {
-  CapabilityDetailDrawer,
-  CapabilitySourceBadge,
-  CatalogHeader,
-  ConnectorCatalogCard,
-  CAPABILITY_SUBTLE_SURFACE,
-} from "./CatalogUi";
+import { CapabilityDetailDrawer, CapabilitySourceBadge, ConnectorCatalogCard, CAPABILITY_SUBTLE_SURFACE } from "./CatalogUi";
+import { CatalogHeader } from "./CatalogHeader";
 import { writeDingtalkAuthorizingPopup } from "./dingtalkAuthorizingPopup";
 import dingtalkIcon from "@/assets/connector-brands/dingtalk.svg";
 

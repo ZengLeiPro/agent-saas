@@ -242,6 +242,42 @@ describe('WebChannel 持久化提问恢复', () => {
     ]));
   });
 
+  it('终态 automation ask_user 持久化回答后 fail-closed 且不伪造 synthetic authority', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'question-resume-automation-terminal-'));
+    dirs.push(tmp);
+    const { sessionId, eventStore } = await seedQuestion(tmp);
+    const sessionCatalog = new FileSessionCatalog({ agentCwd: tmp });
+    const runStore = new MemoryRunStore();
+    await runStore.upsertPending({
+      runId: 'run-ask-terminal', sessionId, userId: USER.sub, tenantId: TENANT,
+      model: 'm-ask', channel: 'web', executionTarget: 'server-local', workspaceId: 'ws-ask',
+      metadata: { automationFence: { runId: 'run-ask-terminal' } },
+    });
+    await runStore.markStatus('run-ask-terminal', 'completed');
+    const enqueue = vi.fn();
+    const channel = new WebChannel({
+      executionConfig: createExecutionConfig(), agentCwd: tmp,
+      runtimeEventStoreFor: () => eventStore,
+      enqueueRuntime: { scheduler: { enqueue }, runStore, sessionCatalog, enabled: true } as any,
+    }, async function* () { yield { type: 'done' as const }; });
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+
+    (channel as any).handleRespond(wsClient(ws, USER), {
+      action: 'respond', interactionId: 'ask-terminal', sessionId,
+      clientAttemptId: 'attempt-terminal-fenced', answers: { confirm: '继续' },
+    });
+    await vi.waitFor(() => expect(ws.sent).toHaveLength(1), { timeout: 5_000 });
+    expect(ws.sent[0]?.data).toMatchObject({
+      type: 'respond_error', interactionId: 'ask-terminal', clientAttemptId: 'attempt-terminal-fenced',
+      error: 'Automation interaction expired with its terminal execution; response was recorded but cannot resume',
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(await runStore.get(`interaction-resume:${sessionId}:ask-terminal`)).toBeNull();
+    expect((await eventStore.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved'))
+      .toEqual([expect.objectContaining({ interactionId: 'ask-terminal', response: { answers: { confirm: '继续' } } })]);
+  });
+
   it('handleRespond 顶层兜底把异步异常关联回当前 attempt', async () => {
     const channel = new WebChannel({ executionConfig: createExecutionConfig() }, async function* () { yield { type: 'done' as const }; });
     channels.push(channel);

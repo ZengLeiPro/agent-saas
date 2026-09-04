@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_SESSION_KEY } from '@agent/shared';
+import { AUTH_LIFECYCLE_JOURNAL_KEY, AUTH_SESSION_KEY } from '@agent/shared';
 import { TOKEN_KEY } from '@/lib/constants';
 
 // 当前 token 被服务端拒绝时，只能清掉这一个账号并回到登录页；
@@ -65,8 +65,12 @@ describe('AuthContext 当前 token 失效', () => {
 
   beforeEach(() => {
     localStorage.clear();
-    localStorage.setItem(TOKEN_KEY, 'token-me');
-    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 2 }));
+    sessionStorage.clear();
+    // 身份按 tab 隔离：两处都铺，等价于「这个 tab 已登录，且它是新 tab 的默认账号」
+    for (const storage of [localStorage, sessionStorage]) {
+      storage.setItem(TOKEN_KEY, 'token-me');
+      storage.setItem(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 2 }));
+    }
     localStorage.setItem(
       'agentChat.savedAccounts.v1',
       JSON.stringify([
@@ -107,11 +111,15 @@ describe('AuthContext 当前 token 失效', () => {
 
     await waitFor(() => expect(screen.getByTestId('user').textContent).toBe('anonymous'));
     await waitFor(() => expect(screen.getByTestId('accounts').textContent).toBe('pantheon:admin'));
+    expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(sessionStorage.getItem(AUTH_SESSION_KEY)).toBeNull();
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(localStorage.getItem(AUTH_SESSION_KEY)).toBeNull();
     expect(readSavedAccounts().map((account) => account.key)).toEqual(['pantheon:admin']);
     // 另一个账号的凭据原样保留，用户可以主动选择它登录，但不会被替他决定
     expect(getSavedAccountToken('pantheon:admin')).toBe('token-admin');
+    // 退出事务必须跑到提交（日志清空），否则残留步骤会在下个用例里继续回放
+    await waitFor(() => expect(sessionStorage.getItem(AUTH_LIFECYCLE_JOURNAL_KEY)).toBeNull());
   });
 
   it('WS 鉴权失败走同一条路径', async () => {
@@ -128,5 +136,6 @@ describe('AuthContext 当前 token 失效', () => {
 
     await waitFor(() => expect(screen.getByTestId('user').textContent).toBe('anonymous'));
     await waitFor(() => expect(screen.getByTestId('accounts').textContent).toBe('pantheon:admin'));
+    await waitFor(() => expect(sessionStorage.getItem(AUTH_LIFECYCLE_JOURNAL_KEY)).toBeNull());
   });
 });

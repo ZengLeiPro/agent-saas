@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js'; import { createSessionAutomationAttachmentBinding } from './sessionAutomationAttachmentBinding.js';
 import type { Express, Request, Response } from 'express';
-import type { AppRuntime } from './runtime.js';
-import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
+import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { publishAdminCommittedConfigIdentity, registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
@@ -41,7 +41,7 @@ import {
   createDwsRouter,
   createFeishuRouter,
   createContextCitationsRouter,
-  createContextAdminRouter,
+  createContextAdminRouter, createSessionAutomationsRouter,
 } from '../routes/index.js';
 import { registerAuthConnectionRoutes } from './routesAuthConnections.js';
 import { createSignupRouters } from '../routes/signup.js';
@@ -107,6 +107,7 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { initAuditLog, redactLegacyChatPreviewsInFile } from '../data/login-logs/index.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
+import { createTaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面与查询类路由由 app 统一注册
@@ -166,6 +167,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
+  if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
+    app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore,
+      service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog,
+      createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd), compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
+      ...createSessionAutomationAttachmentBinding(runtime), broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload) }));
+  }
   app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download.
   const mobileDir = resolve(processCwd, '../mobile');
@@ -308,7 +315,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
       agentStore: runtime.agentStore,
       orgAgentStore: runtime.orgAgentStore,
-      getStreamStatus: webChannel ? (sid) => webChannel.getStreamStatus(sid) : undefined,
+      getStreamStatus: webChannel ? (tenantId, sid) => webChannel.getStreamStatus(tenantId, sid) : undefined,
       broadcastToUser: webChannel
         ? (userId, data) => webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,
@@ -328,19 +335,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactService,
       ),
       sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      canReadTaskboardSession: createTaskboardSessionReadAuthorizer(runtime.taskboardExecutionStore),
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId, tenantId)
         : undefined,
       listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId, tenantId)
         : undefined,
       listUserMessagesBySession: runtime.runtimeRunStore?.listUserMessagesBySession
         ? (sessionId) => runtime.runtimeRunStore!.listUserMessagesBySession!(sessionId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
-        ? (userId, clientMessageId) =>
-            runtime.runtimeRunStore!.findByIdempotencyKey(userId, clientMessageId)
+        ? (tenantId, userId, clientMessageId) =>
+            runtime.runtimeRunStore!.findByIdempotencyKey(tenantId, userId, clientMessageId)
         : undefined,
     }),
   );
@@ -676,9 +684,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
     }),
   );
-
   let executeUserOffboarding: ExecuteUserOffboarding | undefined;
-
   if (runtime.userStore && config.auth?.enabled) {
     const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
     const avatarsDir = resolve(usersFilePath, '..', 'avatars');

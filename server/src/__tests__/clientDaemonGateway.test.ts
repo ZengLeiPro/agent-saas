@@ -3,13 +3,19 @@ import { describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { ClientDaemonGateway, type ClientDaemonGatewayOptions } from '../runtime/clientDaemonGateway.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
-import { deriveClientDaemonHandId, parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
+import { deriveClientDaemonHandId, deriveTenantQualifiedClientDaemonHandId, parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
 import type { HandRecord, HandStatus, HandStore, RegisterHandInput } from '../runtime/handStore.js';
 import type { ToolInvocationRequest } from '../runtime/handProtocol.js';
 
 class MemoryHandStore implements HandStore {
   records = new Map<string, HandRecord>();
+  tenants = new Map<string, string>();
+  failNextRegistration = false;
   async register(input: RegisterHandInput): Promise<HandRecord> {
+    if (this.failNextRegistration) {
+      this.failNextRegistration = false;
+      throw new Error('injected registration failure');
+    }
     const now = new Date().toISOString();
     const existing = this.records.get(input.handId);
     const record: HandRecord = {
@@ -25,10 +31,23 @@ class MemoryHandStore implements HandStore {
       leaseExpiresAt: input.leaseExpiresAt?.toISOString(),
       metadata: { ...(existing?.metadata ?? {}), ...(input.metadata ?? {}) },
     };
+    if (!input.tenantId) throw new Error('tenant required');
     this.records.set(input.handId, record);
+    this.tenants.set(input.handId, input.tenantId);
     return record;
   }
-  async updateStatus(handId: string, status: HandStatus, metadataPatch: Record<string, unknown> = {}): Promise<HandRecord | null> {
+  async registerClientDaemon(input: RegisterHandInput, legacyHandIds: readonly string[]): Promise<HandRecord> {
+    const legacyId = legacyHandIds.find((id) => this.records.has(id) && !this.tenants.has(id));
+    const legacy = legacyId ? this.records.get(legacyId) : undefined;
+    const registered = await this.register({
+      ...input,
+      metadata: { ...(legacy?.metadata ?? {}), ...(input.metadata ?? {}) },
+    });
+    if (legacyId) this.records.delete(legacyId);
+    return registered;
+  }
+  async updateStatus(handId: string, status: HandStatus, metadataPatch: Record<string, unknown> = {}, tenantId = 'tenant-test'): Promise<HandRecord | null> {
+    if (this.tenants.get(handId) !== tenantId) return null;
     const record = this.records.get(handId);
     if (!record) return null;
     const updated = { ...record, status, updatedAt: new Date().toISOString(), metadata: { ...record.metadata, ...metadataPatch } };
@@ -38,13 +57,20 @@ class MemoryHandStore implements HandStore {
   async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
   async completeProvisionAttempt(): Promise<HandRecord | null> { return null; }
   async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
-  async get(handId: string): Promise<HandRecord | null> { return this.records.get(handId) ?? null; }
-  async listBySession(sessionId: string): Promise<HandRecord[]> { return [...this.records.values()].filter((r) => r.sessionId === sessionId); }
-  async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return [...this.records.values()].filter((r) => r.workspaceId === workspaceId); }
+  async get(handId: string, tenantId = 'tenant-test'): Promise<HandRecord | null> {
+    return this.tenants.get(handId) === tenantId ? this.records.get(handId) ?? null : null;
+  }
+  async listBySession(sessionId: string, tenantId = 'tenant-test'): Promise<HandRecord[]> {
+    return [...this.records.values()].filter((r) => r.sessionId === sessionId && this.tenants.get(r.handId) === tenantId);
+  }
+  async listByWorkspace(workspaceId: string, tenantId = 'tenant-test'): Promise<HandRecord[]> {
+    return [...this.records.values()].filter((r) => r.workspaceId === workspaceId && this.tenants.get(r.handId) === tenantId);
+  }
 }
 
 type GatewayOverrides = Partial<Pick<ClientDaemonGatewayOptions,
-  'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'disconnectGracePeriodMs' | 'logger'>>;
+  'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'disconnectGracePeriodMs' | 'logger'
+  | 'sessionCatalog' | 'resolveDaemonTenantId'>>;
 
 async function withGateway<T>(
   fn: (args: { url: string; transport: ClientDaemonTransport; handStore: MemoryHandStore; gateway: ClientDaemonGateway }) => Promise<T>,
@@ -57,6 +83,7 @@ async function withGateway<T>(
     transport,
     handStore,
     authToken: 'test-token',
+    resolveDaemonTenantId: () => 'tenant-test',
     ...overrides,
   });
   gateway.attach(server);
@@ -78,6 +105,9 @@ function waitOpen(ws: WebSocket): Promise<void> {
   });
 }
 
+const qualifiedHandId = (rawHandId: string, tenantId = 'tenant-test') =>
+  deriveTenantQualifiedClientDaemonHandId(tenantId, rawHandId);
+
 function waitMessage(ws: WebSocket): Promise<ClientDaemonMessage> {
   return new Promise((resolve) => ws.once('message', (raw) => resolve(parseClientDaemonMessage(raw.toString()))));
 }
@@ -90,8 +120,8 @@ async function waitUntil(predicate: () => boolean, { timeoutMs = 2_000, interval
   }
 }
 
-describe('ClientDaemonGateway', () => {
-  it('registers hello as a ready client hand and marks unhealthy on disconnect', async () => {
+describe('ClientDaemonGateway tenant-qualified registration', () => {
+  it('registers under the session catalog tenant and marks unhealthy inside the same fence', async () => {
     await withGateway(async ({ url, transport, handStore }) => {
       const ws = new WebSocket(url);
       await waitOpen(ws);
@@ -104,15 +134,153 @@ describe('ClientDaemonGateway', () => {
         workspaceId: 'workspace-a',
         capabilities: [],
       }));
-      expect(await waitMessage(ws)).toMatchObject({ type: 'daemon_registered', handId: 'hand-a' });
-      expect(transport.has('hand-a')).toBe(true);
-      expect(await handStore.get('hand-a')).toMatchObject({ handId: 'hand-a', status: 'ready', type: 'client' });
+      const handId = qualifiedHandId('hand-a', 'tenant-real');
+      expect(await waitMessage(ws)).toMatchObject({ type: 'daemon_registered', handId });
+      expect(transport.has(handId)).toBe(true);
+      expect(await handStore.get(handId, 'tenant-real')).toMatchObject({
+        handId, status: 'ready', type: 'client', workspaceId: 'workspace-authoritative',
+      });
+      expect(await handStore.get(handId, 'tenant-wrong')).toBeNull();
       ws.close();
       await new Promise((resolve) => ws.once('close', resolve));
-      await waitUntil(() => !transport.has('hand-a'));
-      expect(transport.has('hand-a')).toBe(false);
-      expect(await handStore.get('hand-a')).toMatchObject({ status: 'unhealthy' });
+      await waitUntil(() => !transport.has(handId));
+      expect(transport.has(handId)).toBe(false);
+      expect(await handStore.get(handId, 'tenant-real')).toMatchObject({ status: 'unhealthy' });
+    }, {
+      sessionCatalog: {
+        get: async (sessionId) => sessionId === 'session-a'
+          ? ({ tenantId: 'tenant-real', workspaceId: 'workspace-authoritative' } as any)
+          : null,
+      },
+      resolveDaemonTenantId: async () => undefined,
     });
+  });
+
+  it('writes the authoritative tenant fence and isolates the same session across tenants', async () => {
+    await withGateway(async ({ url, handStore }) => {
+      const connect = async (daemonId: string, handId: string) => {
+        const ws = new WebSocket(url);
+        await waitOpen(ws);
+        ws.send(serializeClientDaemonMessage({
+          type: 'daemon_hello', protocolVersion: 1, daemonId, handId,
+          sessionId: 'shared-session', capabilities: [],
+        }));
+        const registeredHandId = qualifiedHandId(handId, daemonId === 'daemon-tenant-a' ? 'tenant-a' : 'tenant-b');
+        expect(await waitMessage(ws)).toMatchObject({ type: 'daemon_registered', handId: registeredHandId });
+        return ws;
+      };
+      const tenantA = await connect('daemon-tenant-a', 'hand-tenant-a');
+      const tenantB = await connect('daemon-tenant-b', 'hand-tenant-b');
+
+      const handA = qualifiedHandId('hand-tenant-a', 'tenant-a');
+      const handB = qualifiedHandId('hand-tenant-b', 'tenant-b');
+      expect(await handStore.get(handA, 'tenant-a')).toMatchObject({ sessionId: 'shared-session' });
+      expect(await handStore.get(handA, 'tenant-b')).toBeNull();
+      expect((await handStore.listBySession('shared-session', 'tenant-a')).map((hand) => hand.handId)).toEqual([handA]);
+      expect((await handStore.listBySession('shared-session', 'tenant-b')).map((hand) => hand.handId)).toEqual([handB]);
+      tenantA.close();
+      tenantB.close();
+    }, {
+      resolveDaemonTenantId: ({ daemonId }) => daemonId === 'daemon-tenant-a' ? 'tenant-a' : 'tenant-b',
+    });
+  });
+
+  it('isolates concurrent cross-tenant sockets that claim the same raw hand id', async () => {
+    await withGateway(async ({ url, transport }) => {
+      const connect = async (daemonId: string) => {
+        const ws = new WebSocket(url);
+        await waitOpen(ws);
+        ws.send(serializeClientDaemonMessage({
+          type: 'daemon_hello', protocolVersion: 1, daemonId,
+          handId: 'shared-raw-hand', capabilities: [],
+        }));
+        const ack = await waitMessage(ws);
+        if (ack.type !== 'daemon_registered') throw new Error('daemon did not register');
+        return { ws, handId: ack.handId };
+      };
+      const [a, b] = await Promise.all([connect('daemon-race-a'), connect('daemon-race-b')]);
+      expect(a.handId).toBe(qualifiedHandId('shared-raw-hand', 'tenant-a'));
+      expect(b.handId).toBe(qualifiedHandId('shared-raw-hand', 'tenant-b'));
+      expect(a.handId).not.toBe(b.handId);
+      expect(transport.has(a.handId)).toBe(true);
+      expect(transport.has(b.handId)).toBe(true);
+      expect(transport.has('shared-raw-hand')).toBe(false);
+      a.ws.close();
+      b.ws.close();
+    }, {
+      resolveDaemonTenantId: ({ daemonId }) => daemonId.endsWith('-a') ? 'tenant-a' : 'tenant-b',
+    });
+  });
+
+  it('does not replace a live connection when durable registration fails', async () => {
+    await withGateway(async ({ url, transport, handStore }) => {
+      const wsA = new WebSocket(url);
+      await waitOpen(wsA);
+      wsA.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-register-a',
+        handId: 'same-hand', capabilities: [],
+      }));
+      const ackA = await waitMessage(wsA);
+      if (ackA.type !== 'daemon_registered') throw new Error('daemon A did not register');
+
+      handStore.failNextRegistration = true;
+      const wsB = new WebSocket(url);
+      await waitOpen(wsB);
+      const closedB = new Promise<number>((resolve) => wsB.once('close', (code) => resolve(code)));
+      wsB.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-register-b',
+        handId: 'same-hand', capabilities: [],
+      }));
+      expect(await closedB).toBe(1008);
+      expect(transport.has(ackA.handId)).toBe(true);
+      expect(wsA.readyState).toBe(WebSocket.OPEN);
+      wsA.close();
+    });
+  });
+
+  it('migrates a tenant-less legacy hand when a valid session supplies the authority', async () => {
+    await withGateway(async ({ url, handStore }) => {
+      const now = new Date().toISOString();
+      handStore.records.set('legacy-raw', {
+        handId: 'legacy-raw', workspaceId: 'legacy-workspace', type: 'client', status: 'unhealthy',
+        capabilities: [], createdAt: now, updatedAt: now, metadata: { legacyMarker: true },
+      });
+      const ws = new WebSocket(url);
+      await waitOpen(ws);
+      ws.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: 'legacy-daemon',
+        handId: 'legacy-raw', sessionId: 'bound-session', capabilities: [],
+      }));
+      const ack = await waitMessage(ws);
+      if (ack.type !== 'daemon_registered') throw new Error('legacy daemon did not register');
+      expect(ack.handId).toBe(qualifiedHandId('legacy-raw', 'tenant-session'));
+      expect(handStore.records.has('legacy-raw')).toBe(false);
+      expect(await handStore.get(ack.handId, 'tenant-session')).toMatchObject({
+        sessionId: 'bound-session', metadata: { legacyMarker: true, rawHandId: 'legacy-raw' },
+      });
+      ws.close();
+    }, {
+      sessionCatalog: {
+        get: async (sessionId) => sessionId === 'bound-session'
+          ? ({ tenantId: 'tenant-session', workspaceId: 'session-workspace' } as any)
+          : null,
+      },
+      resolveDaemonTenantId: async () => undefined,
+    });
+  });
+
+  it('fails closed with a reconcile path when no authoritative tenant binding can be resolved', async () => {
+    await withGateway(async ({ url, handStore }) => {
+      const ws = new WebSocket(url);
+      await waitOpen(ws);
+      const closed = new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
+      ws.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-unbound',
+        sessionId: 'missing-session', capabilities: [],
+      }));
+      expect(await closed).toBe(1008);
+      expect(await handStore.listBySession('missing-session', 'tenant-test')).toEqual([]);
+    }, { resolveDaemonTenantId: async () => undefined });
   });
 
   it('keeps derived hand and request identities within the wire limit', async () => {
@@ -124,7 +292,10 @@ describe('ClientDaemonGateway', () => {
         type: 'daemon_hello', protocolVersion: 1, daemonId, capabilities: [],
       }));
       const registered = await waitMessage(ws);
-      expect(registered).toMatchObject({ type: 'daemon_registered', handId: deriveClientDaemonHandId(daemonId) });
+      expect(registered).toMatchObject({
+        type: 'daemon_registered',
+        handId: qualifiedHandId(deriveClientDaemonHandId(daemonId)),
+      });
       if (registered.type !== 'daemon_registered') throw new Error('daemon did not register');
       let requestId: string | undefined;
       ws.on('message', (raw) => {
@@ -157,6 +328,7 @@ describe('ClientDaemonGateway', () => {
       await waitOpen(ws);
       ws.send(serializeClientDaemonMessage({ type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-b', handId: 'hand-b', capabilities: [] }));
       await waitMessage(ws);
+      const handId = qualifiedHandId('hand-b');
       const receivedCancels: string[] = [];
       let invokeCount = 0;
       let pendingCorrelationInvoke: Extract<ClientDaemonMessage, { type: 'invoke_request' }> | undefined;
@@ -188,7 +360,7 @@ describe('ClientDaemonGateway', () => {
       for await (const chunk of transport.invokeStream({
         toolName: 'Shell',
         input: { command: 'echo hello', handId: 'hand-b' },
-        context: { handId: 'hand-b', invocationId: 'inv-b', workspace: { id: 'w', root: '/tmp', executionTarget: 'client' } },
+        context: { handId, invocationId: 'inv-b', workspace: { id: 'w', root: '/tmp', executionTarget: 'client' } },
       })) chunks.push(chunk);
       expect(chunks).toEqual([
         { type: 'output', channel: 'stdout', content: 'hello' },
@@ -202,7 +374,7 @@ describe('ClientDaemonGateway', () => {
           toolName: 'Shell', input: { command: 'sleep 10' },
           context: {
             signal: controller.signal,
-            correlation: { version: 1, handId: 'hand-b', invocationId: 'inv-correlation', attemptId: 'attempt-1' },
+            correlation: { version: 1, handId, invocationId: 'inv-correlation', attemptId: 'attempt-1' },
             workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
           },
         })) correlationChunks.push(chunk);
@@ -221,7 +393,7 @@ describe('ClientDaemonGateway', () => {
         toolName: 'Shell', input: { command: 'should-not-run' },
         context: {
           signal: preAborted.signal,
-          correlation: { version: 1, handId: 'hand-b', invocationId: 'inv-pre-aborted', attemptId: 'attempt-pre' },
+          correlation: { version: 1, handId, invocationId: 'inv-pre-aborted', attemptId: 'attempt-pre' },
           workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
         },
       })).toMatchObject({ status: 'error', error: 'client daemon invocation aborted before dispatch' });
@@ -278,8 +450,9 @@ describe('ClientDaemonGateway', () => {
         }
       });
 
-      await transport.cancel('hand-cancel-log', 'invocation-1');
-      await transport.cancel('hand-cancel-log', 'invocation-2');
+      const cancelHandId = qualifiedHandId('hand-cancel-log');
+      await transport.cancel(cancelHandId, 'invocation-1');
+      await transport.cancel(cancelHandId, 'invocation-2');
       expect(warnings).toEqual([
         'Client daemon cancel delivery failed',
         'Client daemon cancel delivery failed',
@@ -341,7 +514,8 @@ describe('ClientDaemonGateway', () => {
           capabilities: [],
         }));
         const registered = await waitMessage(ws);
-        expect(registered).toMatchObject({ type: 'daemon_registered', handId: 'hand-stall' });
+        const handId = qualifiedHandId('hand-stall');
+        expect(registered).toMatchObject({ type: 'daemon_registered', handId });
 
         // daemon never responds to invoke; we start an invocation to verify it gets failed on heartbeat-driven close.
         const streamPromise = (async () => {
@@ -349,7 +523,7 @@ describe('ClientDaemonGateway', () => {
           for await (const chunk of transport.invokeStream({
             toolName: 'Shell',
             input: { command: 'sleep 999', handId: 'hand-stall' },
-            context: { handId: 'hand-stall', invocationId: 'inv-stall', workspace: { id: 'w', root: '/tmp', executionTarget: 'client' } },
+            context: { handId, invocationId: 'inv-stall', workspace: { id: 'w', root: '/tmp', executionTarget: 'client' } },
           })) chunks.push(chunk);
           return chunks;
         })();
@@ -373,9 +547,9 @@ describe('ClientDaemonGateway', () => {
         const chunks = await streamPromise;
         expect(chunks.at(-1)).toMatchObject({ type: 'completed', response: { status: 'error' } });
 
-        await waitUntil(() => !transport.has('hand-stall'));
-        expect(transport.has('hand-stall')).toBe(false);
-        const record = await handStore.get('hand-stall');
+        await waitUntil(() => !transport.has(handId));
+        expect(transport.has(handId)).toBe(false);
+        const record = await handStore.get(handId);
         expect(record).toMatchObject({ status: 'unhealthy' });
         expect(record?.metadata?.disconnectReason).toMatch(/^heartbeat_timeout:/);
       },
@@ -396,18 +570,19 @@ describe('ClientDaemonGateway', () => {
           capabilities: [],
         }));
         await waitMessage(ws);
+        const handId = qualifiedHandId('hand-live');
 
         // Send a heartbeat and immediately scan with a `now` past the timeout but not past `lastSeenAt + timeout`.
         ws.send(serializeClientDaemonMessage({ type: 'daemon_heartbeat', protocolVersion: 1, daemonId: 'daemon-live', handId: 'hand-live' }));
         // Give the server a tick to process the heartbeat.
         await new Promise((resolve) => setTimeout(resolve, 50));
         gateway.scanHeartbeatsOnce(Date.now() + 100); // 100ms after heartbeat: under 200ms timeout
-        expect(transport.has('hand-live')).toBe(true);
+        expect(transport.has(handId)).toBe(true);
 
         // Now jump well past the timeout to confirm scanner does kick when truly stale.
         gateway.scanHeartbeatsOnce(Date.now() + 5_000);
-        await waitUntil(() => !transport.has('hand-live'));
-        expect(transport.has('hand-live')).toBe(false);
+        await waitUntil(() => !transport.has(handId));
+        expect(transport.has(handId)).toBe(false);
       },
       { heartbeatTimeoutMs: 200, heartbeatScanIntervalMs: 50 },
     );

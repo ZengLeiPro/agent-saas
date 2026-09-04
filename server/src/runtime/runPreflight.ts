@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { resolveOrgAgentRuntimeSkillIds } from '../data/orgAgents/runtimePolicy.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { ManagedAgentResource, ManagedAgentVersion } from '../data/agentResources/types.js';
+import { PERSONAL_AGENT_TOOL_ENTITLEMENT_ID } from '../data/entitlements/types.js';
 import type { TenantRecord } from '../data/tenants/types.js';
 import type { AccessDecision, AccessEvaluationRequest } from '../governance/access/types.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
@@ -364,7 +365,7 @@ export class RunPreflightService {
       context: isPlatformAdminPersonalRun
         ? {}
         : {
-          entitlement: { resourceType: 'tool', resourceId: 'personal_agent' },
+          entitlement: { resourceType: 'tool', resourceId: PERSONAL_AGENT_TOOL_ENTITLEMENT_ID },
           tenantPolicyKey: 'agent.personal.enabled',
         },
       evaluatedAt,

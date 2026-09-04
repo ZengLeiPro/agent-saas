@@ -9,7 +9,8 @@ import {
 import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { RunHeartbeatSource } from './runLiveness.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
-import type { EventStore, PlatformEvent } from './types.js';
+import type { EventStore, PlatformEvent, PlatformEventInput } from './types.js';
+import { finalizeTerminalRun } from './runTerminalCoordinator.js';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
@@ -24,6 +25,7 @@ export const SCHEDULER_STATE_READY = 'ready';
 export interface RunLease {
   runId: string;
   workerId: string;
+  leaseToken: string;
   expiresAt: string;
   renew(source?: RunHeartbeatSource): Promise<void>;
   handoff(reason: string, metadataPatch?: Record<string, unknown>): Promise<void>;
@@ -57,7 +59,7 @@ export interface RuntimeSchedulerOptions {
   /** Injectable server clock for deterministic reaper tests. */
   now?: () => Date;
   autoWake?: boolean;
-  /** acquire run lease 前先确认目标 session 当前没有被其他 brain 持有。 */
+  /** acquire run lease 前先确认目标 tenant/session 当前没有被其他 brain 持有。 */
   canWake?: (record: RunRecord) => Promise<boolean>;
   wake?: (record: RunRecord, lease: RunLease) => Promise<void>;
   /** 每轮恢复扫描前执行 durable outbox 等轻量协调工作。 */
@@ -343,58 +345,53 @@ export class RuntimeScheduler {
         this.options.logger?.warn(`Runtime scheduler maintenance refresh failed; keeping current value: ${message}`);
       }
 
-      if (!this.executionEnabled) return;
-
-      if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
-
-      const recoverable = await this.options.runStore.listRecoverable(this.now());
-      const recoverableRunIds = new Set(recoverable.map((record) => record.runId));
-      for (const runId of this.deferredUntilByRun.keys()) {
-        if (!recoverableRunIds.has(runId)) this.deferredUntilByRun.delete(runId);
-      }
+      const now = this.now();
+      const recoverable = await this.options.runStore.listRecoverable(now);
       let backgroundStateChanged = false;
+      // Activation cleanup is maintenance, not execution admission. It must run while
+      // the kill switch is closed or capacity pressure would leak ready=false quota.
       for (const record of recoverable) {
-        if (
-          record.status !== 'pending' ||
-          !isBackgroundTaskRun(record) ||
-          isBackgroundTaskReady(record) ||
-          Date.parse(record.requestedAt) > this.now().getTime() - BACKGROUND_TASK_START_TIMEOUT_MS
-        )
-          continue;
+        if (record.status !== 'pending' || !isBackgroundTaskRun(record) || isBackgroundTaskReady(record)
+          || Date.parse(record.requestedAt) > now.getTime() - BACKGROUND_TASK_START_TIMEOUT_MS) continue;
         const command = isBackgroundCommandTaskRun(record);
         const message = command
           ? '后台命令启动确认超时；已尝试终止可能存在的 ACS 进程'
           : '后台 Agent 启动确认超时；任务尚未开始执行';
         try {
-          if (this.options.failBackgroundTask) {
-            await this.options.failBackgroundTask(record, message);
-          } else {
-            await this.options.runStore.markStatus(
-              record.runId,
-              'failed',
-              command ? 'background_command_start_timeout' : 'background_agent_start_timeout',
-              {
-                wakeState: 'pending',
-              },
-            );
-          }
+          if (this.options.failBackgroundTask) await this.options.failBackgroundTask(record, message);
+          else await this.options.runStore.markStatus(
+            record.runId,
+            'failed',
+            command ? 'background_command_start_timeout' : 'background_agent_start_timeout',
+            { wakeState: 'pending' },
+          );
           backgroundStateChanged = true;
         } catch (err) {
-          this.options.logger?.error(
-            `Failed to freeze stale background command reservation ${record.runId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
+          this.options.logger?.error(`Failed to freeze stale background task reservation ${record.runId}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      // 后台任务一旦进入 running 就可能已经产生外部副作用。lease 过期只冻结失败，
+      if (backgroundStateChanged) this.tickAgainRequested = true;
+      if (!this.executionEnabled) return;
+      if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
+      const recoverableRunIds = new Set(recoverable.map((record) => record.runId));
+      for (const runId of this.deferredUntilByRun.keys()) {
+        if (!recoverableRunIds.has(runId)) this.deferredUntilByRun.delete(runId);
+      }
+      // 后台任务一旦进入 running 就可能已经产生外部副作用；lease 过期只冻结失败，
       // 不允许像普通主会话那样恢复重放；pending 后台任务仍可安全首跑。
       for (const record of recoverable) {
         if (record.status !== 'running' || !isBackgroundAgentTaskRun(record)) continue;
         try {
+          const claimed = this.options.runStore.acquireLease
+            ? await this.options.runStore.acquireLease(record.runId, this.workerId, this.leaseMs, now, undefined, undefined,
+              { tenantId: requireTenantId(record.tenantId), sessionId: record.sessionId })
+            : record;
+          if (!claimed) continue; // The old worker renewed after the recovery snapshot.
           if (this.options.failInterruptedBackgroundTask) {
-            await this.options.failInterruptedBackgroundTask(record);
+            await this.options.failInterruptedBackgroundTask(claimed);
           } else {
             await this.options.runStore.markStatus(
-              record.runId,
+              claimed.runId,
               'failed',
               'background_task_interrupted_no_replay',
               { wakeState: 'pending' },
@@ -410,11 +407,11 @@ export class RuntimeScheduler {
 
       const availableSlots = this.maxConcurrentRuns - this.inFlightRuns.size;
       if (availableSlots <= 0) return;
-      const now = Date.now();
+      const nowMs = Date.now();
       const pendingRecoverable = recoverable.filter((record) => {
         const deferredUntil = this.deferredUntilByRun.get(record.runId);
         if (deferredUntil !== undefined) {
-          if (deferredUntil > now) return false;
+          if (deferredUntil > nowMs) return false;
           this.deferredUntilByRun.delete(record.runId);
         }
         return (
@@ -505,14 +502,15 @@ export class RuntimeScheduler {
       this.deferredUntilByRun.clear();
     }
     for (const record of result.orphaned) {
-      await this.options.eventStore.append({
-        type: 'run_state_changed',
-        runId: record.runId,
-        sessionId: record.sessionId,
-        status: 'orphaned',
-        previousStatus: 'running',
-        reason: record.statusReason ?? record.liveness?.reasonCode ?? 'lease_expired',
-      }, { tenantId: requireTenantId(record.tenantId) });
+      const reason = record.statusReason ?? record.liveness?.reasonCode ?? 'lease_expired';
+      await finalizeTerminalRun({
+        runStore: this.options.runStore, eventStore: this.options.eventStore,
+        runId: record.runId, status: 'orphaned', reason,
+        expectedStatuses: ['orphaned'], stateOnlyRepair: true,
+        events: [{ type: 'run_state_changed', runId: record.runId, sessionId: record.sessionId,
+          status: 'orphaned', previousStatus: 'running', reason }],
+        ctx: { tenantId: requireTenantId(record.tenantId) }, logger: this.options.logger,
+      });
     }
     if (result.stale.length > 0 || result.orphaned.length > 0) {
       this.options.logger?.warn(
@@ -535,37 +533,48 @@ export class RuntimeScheduler {
       });
       const pendingApprovals = buildApprovalRecordsFromEvents(events, record.sessionId)
         .filter((approval) => approval.runId === record.runId && approval.status === 'pending');
-      const cancelled = await cancelStale(record.runId, cutoff, STALE_APPROVAL_REASON, {
-        staleApprovalTimeoutMs: this.approvalTimeoutMs,
-        staleApprovalCancelledAt: new Date().toISOString(),
-      });
-      if (!cancelled) continue;
-
-      for (const approval of pendingApprovals) {
-        await this.options.eventStore.append({
-          type: 'approval_resolved',
-          runId: record.runId,
-          sessionId: record.sessionId,
-          approvalId: approval.id,
-          decision: 'rejected',
-          message: STALE_APPROVAL_REASON,
-        }, { tenantId: requireTenantId(record.tenantId) });
-      }
-      await this.options.eventStore.append({
-        type: 'run_cancel_requested',
-        sessionId: record.sessionId,
+      // Persist the complete terminal batch in the same cutoff-guarded CAS as cancellation.
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
         runId: record.runId,
-        ...(record.userId ? { userId: record.userId } : {}),
-        reason: STALE_APPROVAL_REASON,
-      }, { tenantId: requireTenantId(record.tenantId) });
-      await this.options.eventStore.append({
-        type: 'run_state_changed',
-        runId: record.runId,
-        sessionId: record.sessionId,
         status: 'cancelled',
-        previousStatus: record.status,
         reason: STALE_APPROVAL_REASON,
-      }, { tenantId: requireTenantId(record.tenantId) });
+        expectedStatuses: ['waiting_approval'],
+        events: [
+          ...pendingApprovals.map((approval): PlatformEventInput => ({
+            type: 'approval_resolved',
+            runId: record.runId,
+            sessionId: record.sessionId,
+            approvalId: approval.id,
+            decision: 'rejected',
+            message: STALE_APPROVAL_REASON,
+          })),
+          {
+            type: 'run_cancel_requested',
+            sessionId: record.sessionId,
+            runId: record.runId,
+            ...(record.userId ? { userId: record.userId } : {}),
+            reason: STALE_APPROVAL_REASON,
+          },
+          {
+            type: 'run_state_changed',
+            runId: record.runId,
+            sessionId: record.sessionId,
+            status: 'cancelled',
+            previousStatus: record.status,
+            reason: STALE_APPROVAL_REASON,
+          },
+        ],
+        ctx: { tenantId: requireTenantId(record.tenantId) },
+        logger: this.options.logger,
+        claim: (outboxPatch) => cancelStale(record.runId, cutoff, STALE_APPROVAL_REASON, {
+          staleApprovalTimeoutMs: this.approvalTimeoutMs,
+          staleApprovalCancelledAt: new Date().toISOString(),
+          ...outboxPatch,
+        }),
+      });
+      if (!terminal.won) continue;
       this.options.logger?.warn(`Cancelled stale waiting_approval run ${record.runId}`);
     }
   }
@@ -607,6 +616,7 @@ export class RuntimeScheduler {
       return;
     }
 
+    const leaseToken = randomUUID();
     const acquired = await this.options.runStore.acquireLease?.(
       record.runId,
       this.workerId,
@@ -617,31 +627,77 @@ export class RuntimeScheduler {
         foreground: classifyRun(record) === 'foreground',
         foregroundReservedRuns: this.foregroundReservedRuns,
       },
+      undefined,
+      leaseToken,
     );
     if (!acquired) {
       this.deferRun(record.runId);
       return;
     }
     const lease = this.createLease(acquired);
-    await this.options.eventStore.append({
-      type: 'run_lease_acquired',
-      runId: acquired.runId,
-      sessionId: acquired.sessionId,
-      workerId: this.workerId,
-      leaseExpiresAt: lease.expiresAt,
-    }, { tenantId: requireTenantId(acquired.tenantId) });
-
-    if (!this.options.autoWake || !this.options.wake) {
-      await lease.release('orphaned', 'scheduler_recovery_scan');
+    try {
       await this.options.eventStore.append({
-        type: 'run_state_changed',
+        type: 'run_lease_acquired',
         runId: acquired.runId,
         sessionId: acquired.sessionId,
-        status: 'orphaned',
-        previousStatus: acquired.status,
-        reason: 'scheduler_recovery_scan',
+        workerId: this.workerId,
+        leaseExpiresAt: lease.expiresAt,
       }, { tenantId: requireTenantId(acquired.tenantId) });
-      this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
+    } catch (error) {
+      const message = `scheduler_pre_wake_event_failed: ${error instanceof Error ? error.message : String(error)}`;
+      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
+        await this.options.failBackgroundTask(acquired, message);
+        return;
+      }
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
+        runId: acquired.runId,
+        status: 'failed',
+        reason: message,
+        expectedStatuses: ['running'],
+        events: [{
+          type: 'run_state_changed',
+          runId: acquired.runId,
+          sessionId: acquired.sessionId,
+          status: 'failed',
+          previousStatus: acquired.status,
+          reason: message,
+        }],
+        ctx: { tenantId: requireTenantId(acquired.tenantId) },
+        logger: this.options.logger,
+      });
+      this.options.logger?.error(
+        `Runtime scheduler failed before wake for ${acquired.runId}: ${message}; terminal=${terminal.won ? 'claimed' : terminal.record?.status ?? 'missing'}`,
+      );
+      return;
+    }
+
+    if (!this.options.autoWake || !this.options.wake) {
+      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
+        await this.options.failBackgroundTask(acquired, 'scheduler_recovery_scan');
+        return;
+      }
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
+        runId: acquired.runId,
+        status: 'orphaned',
+        reason: 'scheduler_recovery_scan',
+        expectedStatuses: ['running'],
+        events: [{
+          type: 'run_state_changed',
+          runId: acquired.runId,
+          sessionId: acquired.sessionId,
+          status: 'orphaned',
+          previousStatus: acquired.status,
+          reason: 'scheduler_recovery_scan',
+        }],
+        ctx: { tenantId: requireTenantId(acquired.tenantId) },
+        logger: this.options.logger,
+      });
+      if (terminal.won) this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
+      else this.options.logger?.error(`Runtime scheduler orphan terminal CAS lost for ${acquired.runId}: current=${terminal.record?.status ?? 'missing'}`);
       return;
     }
 
@@ -676,10 +732,27 @@ export class RuntimeScheduler {
           this.options.logger?.error(`Failed to freeze background task ${acquired.runId}: ${freezeMessage}`);
         });
       }
-      await lease.release('failed', message);
-      const terminalized = await this.options.runStore.get(acquired.runId);
-      if (terminalized?.status !== 'failed') {
-        if (terminalized && !['completed', 'cancelled', 'orphaned'].includes(terminalized.status)) {
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
+        runId: acquired.runId,
+        status: 'failed',
+        reason: message,
+        expectedStatuses: ['running'],
+        events: [{
+          type: 'run_state_changed',
+          runId: acquired.runId,
+          sessionId: acquired.sessionId,
+          status: 'failed',
+          previousStatus: acquired.status,
+          reason: message,
+        }],
+        ctx: { tenantId: requireTenantId(acquired.tenantId) },
+        logger: this.options.logger,
+      });
+      if (!terminal.won) {
+        const terminalized = terminal.record;
+        if (terminalized && !['completed', 'cancelled', 'orphaned', 'failed'].includes(terminalized.status)) {
           this.deferRun(acquired.runId, Math.max(30_000, this.pollIntervalMs * 5));
         }
         this.options.logger?.error(
@@ -687,14 +760,6 @@ export class RuntimeScheduler {
         );
         return;
       }
-      await this.options.eventStore.append({
-        type: 'run_state_changed',
-        runId: acquired.runId,
-        sessionId: acquired.sessionId,
-        status: 'failed',
-        previousStatus: acquired.status,
-        reason: message,
-      }, { tenantId: requireTenantId(acquired.tenantId) });
       this.deferredUntilByRun.delete(acquired.runId);
       this.options.logger?.error(`Runtime scheduler wake failed for ${acquired.runId}: ${message}`);
     }
@@ -705,18 +770,21 @@ export class RuntimeScheduler {
   }
 
   private createLease(record: RunRecord): RunLease {
+    const leaseToken = typeof record.metadata.runLeaseToken === 'string' ? record.metadata.runLeaseToken : '';
+    if (!leaseToken) throw new Error(`acquired run lease token missing: ${record.runId}`);
     let expiresAt = record.leaseExpiresAt ?? new Date(Date.now() + this.leaseMs).toISOString();
     let renewInFlight: Promise<void> | undefined;
     return {
       runId: record.runId,
       workerId: this.workerId,
+      leaseToken,
       get expiresAt() {
         return expiresAt;
       },
       renew: (source: RunHeartbeatSource = 'worker') => {
         if (renewInFlight) return renewInFlight;
         renewInFlight = (async () => {
-          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs, this.now(), source);
+          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs, this.now(), source, leaseToken);
           if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
           expiresAt = renewed.leaseExpiresAt ?? expiresAt;
         })().finally(() => {
@@ -749,7 +817,7 @@ export class RuntimeScheduler {
         throw new RunLeaseHandoffRefusedError(record.runId);
       },
       release: async (finalStatus?: RunStatus, reason?: string) => {
-        await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason);
+        await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason, { leaseToken });
       },
     };
   }

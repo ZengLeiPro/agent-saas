@@ -22,7 +22,7 @@ describePg('PgRunStore cancellation crash PostgreSQL contract', () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 8 });
     eventStore = new PgEventStore({ connectionString: testPgUrl!, tablePrefix: prefix, poolMax: 4 });
     await eventStore.init();
-    store = new PgRunStore({ pool, tablePrefix: prefix });
+    store = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await store.init();
     toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await toolInvocationStore.init();
@@ -67,7 +67,7 @@ describePg('PgRunStore cancellation crash PostgreSQL contract', () => {
       notifyOwner.notifyRuntimeEvents = notifyRuntimeEvents;
     }
 
-    const restartedStore = new PgRunStore({ pool, tablePrefix: prefix });
+    const restartedStore = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     const restartedToolStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await Promise.all([restartedStore.init(), restartedToolStore.init()]);
     await expect(restartedStore.get(runId)).resolves.toMatchObject({

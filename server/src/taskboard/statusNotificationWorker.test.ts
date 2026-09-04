@@ -20,7 +20,7 @@ function workerWith(query: ReturnType<typeof vi.fn>, send: ReturnType<typeof vi.
 }
 
 describe('TaskboardStatusNotificationWorker', () => {
-  it('使用状态事件快照向创建者、负责人和关注者发送对应摘要', async () => {
+  it('使用状态事件快照与任务看板独立路由向创建者、负责人和关注者发送对应摘要', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [claimRow()] })
       .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1', owner_user_id: 'board-owner', visibility: 'organization' }] })
@@ -33,7 +33,7 @@ describe('TaskboardStatusNotificationWorker', () => {
     expect(send.mock.calls.map(([message]) => message.userId).sort()).toEqual(['creator', 'owner', 'watcher']);
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', eventKey: 'taskboard:42:done', taskName: 'TASK-86 · 关键通知',
-      status: '已完成：已完成实现', url: '/cron?view=board&boardId=board-1&taskId=task-1',
+      status: '已完成：已完成实现', url: '/taskboard?boardId=board-1&taskId=task-1',
     }));
     expect(query.mock.calls.map(([sql]) => String(sql)).join('\n')).not.toContain('FROM comments');
     expect(query.mock.calls.at(-1)?.[1]?.[2]).toBe('delivered');

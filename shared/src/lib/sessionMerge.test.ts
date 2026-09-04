@@ -140,6 +140,21 @@ describe('mergeServerMessagesWithLocalTail', () => {
     expect(merged).toEqual(local);
   });
 
+  it('服务端已按 clientMsgId 投影用户消息时不追加不同 id 的本地气泡', () => {
+    const server: MessageItem[] = [
+      user('line-1', '上一问'),
+      text('line-2', '上一答'),
+      { id: 'line-3', type: 'user', content: '新问题', status: 'sent', clientMsgId: 'client-new' },
+    ];
+    const local: MessageItem[] = [
+      user('line-1', '上一问'),
+      text('line-2', '上一答'),
+      { id: 'msg-local', type: 'user', content: '新问题', status: 'sent', clientMsgId: 'client-new' },
+    ];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
   it('server 最后一条 text 扩展了本地流式前缀时不重复追加本地 text', () => {
     const server = [user('s0', 'q'), text('line-1', 'abcdef')];
     const local = [user('u0', 'q'), text('msg-1', 'abc')];
@@ -281,6 +296,36 @@ describe('mergeSessionMessageDelta', () => {
       delta[0],
       delta[1],
     ]);
+  });
+
+  it('标签页恢复增量按 clientMsgId 用持久化消息接管 optimistic 气泡', () => {
+    const base: MessageItem[] = [
+      user('line-1', '上一问'),
+      text('line-2', '上一答'),
+      { id: 'msg-local', type: 'user', content: '当前问题', status: 'sent', clientMsgId: 'client-current' },
+    ];
+    const delta: MessageItem[] = [
+      { id: 'line-3', type: 'user', content: '当前问题', status: 'sent', clientMsgId: 'client-current' },
+      text('line-4', '当前回答'),
+    ];
+
+    expect(mergeSessionMessageDelta(base, delta)).toEqual([
+      base[0],
+      base[1],
+      delta[0],
+      delta[1],
+    ]);
+  });
+
+  it('正文相同但 clientMsgId 不同的用户消息仍分别保留', () => {
+    const base: MessageItem[] = [
+      { id: 'msg-local', type: 'user', content: '重复正文', status: 'sent', clientMsgId: 'client-1' },
+    ];
+    const delta: MessageItem[] = [
+      { id: 'line-2', type: 'user', content: '重复正文', status: 'sent', clientMsgId: 'client-2' },
+    ];
+
+    expect(mergeSessionMessageDelta(base, delta)).toEqual([...base, ...delta]);
   });
 });
 

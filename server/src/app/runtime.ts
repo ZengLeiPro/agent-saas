@@ -13,14 +13,17 @@ import { CodexCredentialManager, PgCodexCredentialLock } from '../runtime/respon
 import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import { createCodexCredentialRuntimeStateStore } from '../runtime/responses/codexCredentialRuntimeState.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
-import {
-  DuckDBRuntimeAuditQuery,
-  EventStoreRuntimeAuditQuery,
-  type RuntimeAuditQuery,
-} from '../runtime/auditQuery.js';
+import { DuckDBRuntimeAuditQuery, EventStoreRuntimeAuditQuery, type RuntimeAuditQuery } from '../runtime/auditQuery.js';
 import { createAuditProjection } from '../runtime/auditProjection.js';
 import { closeAuditDuckDb, getAuditDuckDb } from '../runtime/auditDuckDb.js';
 import { PgEventStore } from '../runtime/pgEventStore.js';
+import type { PgSessionAutomationStore } from '../runtime/sessionAutomationStore.js';
+import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js'; import { GovernedSessionAutomationCommandAuthorizer } from '../runtime/sessionAutomationCommandAuthorizer.js';
+import type { SessionAutomationCoordinator } from '../runtime/sessionAutomationCoordinator.js';
+import type { SessionAutomationTerminalProjector } from '../runtime/sessionAutomationTerminalProjector.js';
+import type { SessionAutomationEvaluator } from '../runtime/sessionAutomationEvaluator.js';
+import { createSessionAutomationCancelRun, createSessionAutomationPersistence, createSessionAutomationWorkers, RuntimeSchedulerAutomationDispatcher, SessionAutomationRuntimeGuard } from './sessionAutomationRuntime.js';
+import { createSessionAutomationFlagSource } from './sessionAutomationFlagSource.js';
 import { appendTenantPlatformEvent, createRuntimeEventStoreFactory } from './runtimeEventStore.js';
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
@@ -140,7 +143,7 @@ import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotSt
 import { MemoryIndexService } from '../memory/index/service.js';
 import { createApprovalPreferenceResolvers } from './userPreferenceResolvers.js';
 import type { UserInfo } from '../data/users/types.js';
-import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import { tenantAccessErrorMessage, wrapDispatchWithTenantAccess } from '../data/tenants/access.js';
 import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
@@ -282,7 +285,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const enableSchedulerWorker = processRole !== 'ws-only';
   const enableHttpListeners = processRole === 'all' || processRole === 'ws-only';
   const enableSingletonWorkers = processRole === 'all' || processRole === 'runtime-worker';
-  const config = loadAppConfig(processCwd);
+  const config = loadAppConfig(processCwd); const sessionAutomationFlagSource = createSessionAutomationFlagSource(config);
   const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
   // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
   assertDevDatabaseSafety(config);
@@ -464,7 +467,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (discovered > 0) {
       serverLogger.info(`Skills config: discovered ${discovered} new pool skills`);
     }
-
     // 2. 来源指纹 + 逐用户物化 + prune → 后台任务（listen 后执行）。
     // 指纹扫描和物化都只用 fs/promises；此 deferred task 只 enqueue + 观察，
     // 不再在 HTTP 进程主线程里同步读 NAS、cpSync/rmSync 或递归 chown。
@@ -520,7 +522,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             }
             await new Promise<void>((resolveWait) => setTimeout(resolveWait, 250));
           }
-
           // 3b. 全部 workspace 先按旧注册表完成撤销，再清理幽灵条目，避免首次
           // manifest 迁移时失去“该目录曾是系统技能”的识别依据。
           // 用户目录同时承载物化 Skill 与个人 Skill；清理清单必须按用户隔离，
@@ -546,7 +547,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               throw new Error(finalized.error || '技能 prune 后 manifest 收口失败');
             }
           }
-
           skillsWarmup.state = 'done';
           skillsWarmup.finishedAtMs = Date.now();
           serverLogger.info(`Skills warmup done: ready=${skillsWarmup.syncedUsers ?? 0}/${allUsers.length} users in ${skillsWarmup.finishedAtMs - (skillsWarmup.startedAtMs ?? skillsWarmup.finishedAtMs)}ms`);
@@ -650,8 +650,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       channel: 'memory_embedding',
     });
   };
-  let billingAuditTimer: NodeJS.Timeout | undefined; let sandboxLifecycleService: SandboxLifecycleService | undefined; let runtimeEventRetention: RuntimeEventRetention | undefined; let runtimeScheduler: RuntimeScheduler | undefined;
-  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined; let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined; // singleton worker state
+  let billingAuditTimer: NodeJS.Timeout | undefined;
+  let sandboxLifecycleService: SandboxLifecycleService | undefined;
+  let runtimeEventRetention: RuntimeEventRetention | undefined;
+  let runtimeScheduler: RuntimeScheduler | undefined;
+  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
+  let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  let sessionAutomationStore: PgSessionAutomationStore | undefined, sessionAutomationCommandService: SessionAutomationCommandService | undefined;
+  let sessionAutomationCoordinator: SessionAutomationCoordinator | undefined, sessionAutomationTerminalProjector: SessionAutomationTerminalProjector | undefined, sessionAutomationEvaluator: SessionAutomationEvaluator | undefined;
+  let cancelSessionAutomationRun: ((runId: string, reason: string) => Promise<void>) | undefined;
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );
@@ -843,10 +850,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     }
     pgRunStore = new PgTerminalEventOutboxRunStore({
-      pool: pgEventStore.pool,
-      tablePrefix: config.runtimeEventStore.tablePrefix,
+      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix,
+      ...(config.runtimeEventStore.writerCapability ? { writerCapability: config.runtimeEventStore.writerCapability } : {}),
     });
     await pgRunStore.init();
+    ({ store: sessionAutomationStore, commandService: sessionAutomationCommandService } = await createSessionAutomationPersistence({
+      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix ?? 'runtime', runsTable: pgRunStore.runsTable, flagSource: sessionAutomationFlagSource,
+      cancelRun: cancelSessionAutomationRun = createSessionAutomationCancelRun({ runStore: pgRunStore, eventStore: pgEventStore!, logger: serverLogger.child('SessionAutomationCancel'), abort: (runId, reason) => runtimeRunController.abort(runId, reason) }),
+    }));
     const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
     runtimeSchedulerConfigStore = new PgRuntimeSchedulerConfigStore(pgEventStore.pool, {
       tablePrefix: config.runtimeEventStore.tablePrefix,
@@ -1084,12 +1095,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
     const terminalEventOutboxDispatcher = await startTerminalEventOutboxDispatcher({ runStore: pgRunStore, eventStore: pgEventStore, logger: serverLogger.child('TerminalEventOutbox') });
     runtimeEventStoreShutdown = async () => {
+      // Stop automation claimers before the shared scheduler and PG pool.
       setSessionMetaProjectionSink(undefined);
       clientDaemonGateway?.close();
       handHealthScanner?.stop();
       handLeaseJanitor?.stop();
       systemMetricsCollector?.stop();
       alertNotifier?.stop(); taskboardStatusNotificationWorker?.stop();
+      await sessionAutomationCoordinator?.stop();
+      await sessionAutomationEvaluator?.stop();
+      await sessionAutomationTerminalProjector?.stop();
       await taskboardExecutionCoordinator?.stop();
       terminalEventOutboxDispatcher.stop(); sandboxLifecycleService?.stop();
       await runtimeScheduler?.stop();
@@ -1115,9 +1130,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     handStore: pgHandStore,
     path: config.clientDaemon?.path,
     authToken: resolvedClientDaemonAuthToken,
-    // C1: per-device registry — PG backend only. file/dev backend keeps the
-    // shared bearer flow with no behavior change.
+    // Device auth + session catalog are authoritative for the fail-closed daemon tenant fence.
     ...(pgClientDaemonRegistry ? { deviceRegistry: pgClientDaemonRegistry, deviceSecretVault: secretVault } : {}),
+    sessionCatalog,
     helloTimeoutMs: config.clientDaemon?.helloTimeoutMs,
     heartbeatTimeoutMs: config.clientDaemon?.heartbeatTimeoutMs,
     heartbeatScanIntervalMs: config.clientDaemon?.heartbeatScanIntervalMs,
@@ -1347,7 +1362,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           ...store.getOrgAgentEffectivePoolSkills(tenantId, requiredSkillIds),
         ]);
         const poolResult = all.filter((s) => effective.has(s.id));
-
         try {
           const poolIds = new Set(all.map((s) => s.id));
           const tenantSkillsDir = tenantId ? resolveTenantSkillsDirFromRoot(tenantSkillsRootDir, tenantId) : null;
@@ -1362,7 +1376,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
               .map((s) => ({ id: s.id, name: (s as { name?: string }).name || s.id, description: s.description ?? '' }))
             : [];
           if (!user) return [...poolResult, ...tenantResult];
-
           // 按 selection 暴露用户自建 skill，路径由 resolveSkillDir 优先命中 workspace 副本。
           const userCwd = resolveUserCwd(agentCwd, {
             id: user.id,
@@ -1397,7 +1410,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           const userDir = resolveAgentPath(userCwd, 'skills', skill);
           return existsSync(userDir) ? userDir : null;
         }
-
         // 企业 Agent 使用 service identity，不创建影子成员；直接读取租户或平台授权源。
         const tenantId = contextTenantId;
         if (tenantId) {
@@ -1541,6 +1553,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       return value;
     }), ...configIdentityAssembly.modelResolverHooks,
   });
+  sessionAutomationFlagSource.attachRefresh(sharedConfigRefresher.refreshIfChanged);
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
     userStore,
@@ -1559,7 +1572,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runResolutionSnapshotStore,
     billingService,
     modelResolver,
-  });
+  }); if(sessionAutomationCommandService&&runPreflightService){sessionAutomationCommandService.setAuthorizer(new GovernedSessionAutomationCommandAuthorizer({preflight:runPreflightService,sessionCatalog,agentCwd,billing:billingService}));}
   // 用户活动聚合（2026-07-14 记忆轮询批次）：PG 后端可用；file backend 下
   // available=false，UserActivityList 工具不挂载、memory_poll 预检 fail-closed。
   const userActivityService = new UserActivityService({
@@ -1601,7 +1614,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ),
     });
   };
-
   const codexCredentialManager = new CodexCredentialManager({
     vault: secretVault, getConfig: () => config.codexSubscription,
     ...(pgEventStore ? { lock: new PgCodexCredentialLock(pgEventStore.pool) } : {}),
@@ -1631,7 +1643,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       enabled: memoryEnabled && config.memory?.injectContext?.enabled !== false,
       maxLines: config.memory?.injectContext?.maxLines,
     },
-    memoryIndexService: memoryIndexServiceRef.current,
+    memoryIndexService: memoryIndexServiceRef.current, ...(sessionAutomationStore&&pgEventStore&&pgRunStore?{sessionAutomationRuntimeGuard:new SessionAutomationRuntimeGuard(pgEventStore.pool,sessionAutomationFlagSource.executionEnabled,sessionAutomationStore.tablePrefix,pgRunStore.runsTable)}:{}),
     // 记忆写入职责剥离（2026-07-29）：租户开关决定新会话是否 pin v2。
     // 平台级 memory.consolidation.enabled 未开时全量 v1（后台没人接管写入，
     // 绝不能先剥离主 Agent 的写入能力）。
@@ -1861,7 +1873,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock
         ? async (record) => {
-          const lockHandle = await sessionLock.tryAcquire(record.sessionId);
+          const lockHandle = await sessionLock.tryAcquire(record.tenantId ?? DEFAULT_TENANT_ID, record.sessionId);
           if (!lockHandle) return false;
           await lockHandle.release();
           return true;
@@ -1993,8 +2005,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeSchedulerCapacity = createRuntimeSchedulerCapacityController({
       store: runtimeSchedulerConfigStore!, scheduler: runtimeScheduler, sessionLockMode,
     });
+    if (sessionAutomationStore && defaultModelResolver && cancelSessionAutomationRun) {
+      const workers = createSessionAutomationWorkers({ store: sessionAutomationStore, evaluator: {
+        resolveModel: (tenantId) => defaultModelResolver(tenantId), createAdapter: (connection, providerOptions) => rawRuntimeConfig.modelAdapterFactory!(connection ?? {}, providerOptions), billing: () => billingService,
+        resolveIdentity: (userId) => { const user = userStore?.findById(userId); return user ? { username: user.username } : undefined; },
+      }, dispatcher: new RuntimeSchedulerAutomationDispatcher(runtimeScheduler, sessionCatalog),
+        flagSource: sessionAutomationFlagSource, cancelRun: cancelSessionAutomationRun, onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
+      });
+      ({ evaluator: sessionAutomationEvaluator, coordinator: sessionAutomationCoordinator, terminalProjector: sessionAutomationTerminalProjector } = workers); rawRuntimeConfig.sessionAutomationProvider = workers.provider;
+    }
   }
-
   // Runtime audit 读 API：
   //  - runtimeEventStore.backend='pg'：强制 PgRuntimeAuditQuery（复用 PgEventStore
   //    的 pool + eventsTable）。file/duckdb 两个实现都依赖磁盘 jsonl，事件已经
@@ -2005,7 +2025,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const auditMode = config.audit?.projection ?? 'file';
   let runtimeAuditQuery: RuntimeAuditQuery;
   let auditProjectionShutdown: (() => Promise<void>) | undefined;
-
   if (pgEventStore) {
     runtimeAuditQuery = new PgRuntimeAuditQuery({
       pool: pgEventStore.pool,
@@ -2043,7 +2062,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } else {
     runtimeAuditQuery = new EventStoreRuntimeAuditQuery(findTranscriptPathByTenantAndSessionId);
   }
-
   const dispatchMetricsStore = new DispatchMetricsStore();
   const dispatchPipelineEnabled = config.dispatch?.enabled ?? true;
   const middlewareOpts = {
@@ -2091,11 +2109,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     }
     : tenantGuardedResumeApprovalDispatch;
-
   if (dispatchPipelineEnabled === false) {
     serverLogger.warn('Dispatch middleware pipeline is disabled, using direct run dispatch');
   }
-
   // 旧 memory.maintenance hook 只包裹 Channel 直连 dispatch，PG Scheduler 主链从不经过，
   // 生产配置 enabled=true 反而制造“已启用”的假象。会话增量由 L2 durable consumer 负责，
   // 跨会话维护由 L3 memory_poll 负责；旧键仅保留一版配置兼容并明确告警。
@@ -2103,7 +2119,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.warn('memory.maintenance is deprecated and ignored; use memory.consolidation + memory.polling');
   }
   const finalDispatch = billedRunDispatch;
-
   // Groups store：Web 与 Runtime Worker 共享文件，写操作必须锁内 reload→mutate→publish；
   // 读操作由 GroupStore 每次刷新，避免任一进程永久持有启动时旧快照。
   const groupsFilePath = resolve(processCwd, './data/groups.json');
@@ -2118,7 +2133,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ),
   } : {});
   configureModelPricing(config.models);
-
   // Business SQLite：共享业务 db，当前承载 token 用量统计；
   // 与 per-user memory-index/{username}.sqlite 物理隔离。
   const businessDataDir = resolve(processCwd, './data');
@@ -2136,9 +2150,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } catch (err) {
     serverLogger.warn(`Business DB init failed (token usage disabled): ${err instanceof Error ? err.message : String(err)}`);
   }
-
   runtimeWebPush.warnIfUnavailable();
-
   // Token usage 历史回填：首次启动时扫 ~/.agent-saas/legacy-transcripts 全量重建一次。
   // 异步触发，不阻塞启动；rebuild_state 表已有记录则自动跳过。
   if (businessDbHandle && enableSingletonWorkers) {
@@ -2149,10 +2161,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       serverLogger.warn(`Token usage rebuild error: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
-
   const channelManager = new ChannelManager();
   const dingtalkDeps = createDingtalkDeps(sessionBasePath);
-
   // 保持同一对象引用：平台管理热更新时原地同步，CronService 后续执行即可读到
   // 最新的回看窗口、轮数、超时和模型，不需要重启进程。
   const memoryPollRuntimeConfig: {
@@ -2251,7 +2261,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       resolveChannels: (notifyConfig) => {
         const channels: NotifyChannel[] = [];
         const shouldDingtalk = notifyConfig.channel === 'dingtalk' || notifyConfig.channel === 'both';
-
         if (shouldDingtalk) {
           channels.push(createDingtalkNotifyChannel(
             {
@@ -2332,7 +2341,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: { info: (msg) => consolidationLogger.info(msg), warn: (msg) => consolidationLogger.warn(msg) },
     });
   }
-
   let cronLeadership: CronLeadership | undefined;
   let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
   let memoryPollConfigRefreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -2453,7 +2461,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
     });
   }
-
   const updateMemoryPollingConfig = async (
     polling: NonNullable<NonNullable<AppConfig['memory']>['polling']>,
   ): Promise<void> => {
@@ -2467,8 +2474,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       await runMemoryPollReconcile?.();
     }
   };
-
-  // SIGUSR2 drain 序列
+  // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释；index.ts 调用）
   let runtimeDrainStarted = false;
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
@@ -2513,14 +2519,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     await cronLeadership?.stop();
     // 6. 先停任务看板恢复周期，避免 drain 期间继续 enqueue；再停 scheduler，
     //    不再 claim 新 run 并等 in-flight run 结清（两者 stop 均幂等）。
+    await sessionAutomationCoordinator?.stop(); await sessionAutomationEvaluator?.stop(); await sessionAutomationTerminalProjector?.stop();
     await taskboardExecutionCoordinator?.stop();
     await runtimeScheduler?.stop();
   };
-
   if (enableSingletonWorkers) {
     // Backfill cron groups from historical run logs (one-time migration)
     await migrateCronGroups(groupStore, cronRuntime.service, cronRuntime.cronRunsDir);
-
     // Prune orphaned sessionIds（transcripts 被 API 外删除）。必须先建一次索引：逐个查会
     // 退化成 O(N×M)，实测 2,220 个 id × 17k 文件 ≈ 113s，全程阻塞 scheduler 启动。
     const existingSessionIds = await listExistingTranscriptSessionIds();
@@ -2528,7 +2533,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (pruned > 0) {
       serverLogger.info(`Groups: pruned ${pruned} orphaned sessionIds`);
     }
-
     // Startup data migrations: BUG 2/3/4
     if (userStore) {
       await runStartupMigrations({
@@ -2700,11 +2704,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
   if (runtimeScheduler && enableSchedulerWorker) {
     await runtimeScheduler.start();
-    serverLogger.info(`RuntimeScheduler started: autoWake=${runtimeSchedulerAutoWake ? 'true' : 'false'}`);
+    sessionAutomationTerminalProjector?.start(pgEventStore!, { onError: (error) => serverLogger.error(`Session automation terminal recovery failed: ${error instanceof Error ? error.message : String(error)}`) });
+    sessionAutomationEvaluator?.start(); sessionAutomationCoordinator?.start();
+    serverLogger.info(`RuntimeScheduler started: autoWake=${runtimeSchedulerAutoWake ? 'true' : 'false'}; session automation workers started`);
   } else if (runtimeScheduler) {
     serverLogger.info(`RuntimeScheduler worker disabled for processRole=${processRole}; durable enqueue remains enabled`);
   }
-
   if (notionAuthSessionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
     notionAuthFlowService = new NotionAuthFlowService({
       authSessionStore: notionAuthSessionStore,
@@ -2737,7 +2742,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } else if (userStore) {
     serverLogger.warn('Notion auth flow unavailable: PG auth store or connector execution remote is not configured');
   }
-
   if (dwsConnectionStore && userStore && (resolvedServerRemote || connectorAcsConfigured)) {
     dwsAuthKeepaliveService = new DwsAuthKeepaliveService({
       agentCwd,
@@ -2773,7 +2777,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } else if (userStore) {
     serverLogger.warn('DWS auth keepalive unavailable: PG connection store or DWS execution remote is not configured');
   }
-
   if (agentDwsAccountStore && userStore && orgAgentStore && runPreflightService && governanceAuditStore) agentDwsRuntime = await createAgentDwsRuntime({
     agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, orgGroupAgentStore, pgEventStore, pgRunStore, runtimeScheduler,
     userStore, membershipStore, orgAgentStore, runPreflightService, governanceAuditStore,
@@ -2782,7 +2785,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
     isRuntimeWorkerV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
   });
-
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
     feishuTokenBroker = new FeishuTokenBroker({
       oauth: new FeishuOAuthClient({
@@ -2836,7 +2838,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } else if (userStore) {
     serverLogger.warn('Feishu Token Broker unavailable: PG store, app credentials, or business scopes are not configured');
   }
-
   // Hand lease 老化不能与主动恢复共用开关：事故止血关闭 scanner 时，janitor 仍须运行。
   if (enableSingletonWorkers && pgHandStore) {
     handLeaseJanitor = new HandLeaseJanitor({
@@ -2858,7 +2859,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     handHealthScanner.start();
   }
-
   if (config.dingtalk?.enabled) {
     channelManager.register(new DingtalkChannel({
       mode: config.dingtalk.mode,
@@ -2884,7 +2884,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tenantStore,
     }));
   }
-
   const performanceScheduler = runtimeScheduler;
   const performanceRunStore = pgRunStore;
   const runtimePerformanceSnapshot = performanceScheduler && performanceRunStore
@@ -2950,7 +2949,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     backgroundTasks: rawRuntimeConfig.backgroundTasks,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore, messageFeedbackStore, appealStore,
-    taskboardService, taskboardExecutionService: taskboardExecutionCoordinator,
+    taskboardService, taskboardExecutionStore: taskboardStoreService,
+    taskboardExecutionService: taskboardExecutionCoordinator,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig, tokenUsageStore,
@@ -2973,6 +2973,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeHandStore: pgHandStore,
     systemMetricsStore, systemMetricsCollector, alertStateStore, alertNotifier,
     runtimePgEventStore: pgEventStore,
+    sessionAutomationStore,
+    sessionAutomationCommandService,
     validateToolSettingsConfig,
     updateToolSettingsConfig,
     validateImageGenToolsConfig,

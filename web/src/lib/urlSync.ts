@@ -11,6 +11,7 @@ import {
 } from '@/lib/governanceNavigation';
 import { pushAppHistoryState, replaceAppHistoryState } from '@/lib/appHistory';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
+import { preferredTaskCenterPath } from '@/lib/taskCenterRoute';
 import {
   getSettingsSection,
   isSettingsSectionId,
@@ -386,7 +387,11 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
     const id = decodeURIComponent(pathname.slice(6));
     return parsed({ tab: 'chat', sessionId: id || null, settingsSection: null, adminSettings: null });
   }
-  if (pathname === '/cron') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
+  if (pathname === '/taskboard') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
+  if (pathname === '/cron') {
+    const canonicalPath = new URLSearchParams(search).get('view') === 'board' ? '/taskboard' : null;
+    return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath });
+  }
   if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files-storage', adminSettings: null, canonicalPath: '/settings/files-storage' });
   if (pathname === '/profile') return parsed({ tab: 'profile', sessionId: null, settingsSection: null, adminSettings: null });
   if (pathname === '/capabilities' || pathname === '/capabilities/templates' || pathname === '/capabilities/experts' || pathname === '/capabilities/skills' || pathname === '/capabilities/connectors') {
@@ -409,7 +414,7 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
 
 /** 构建 URL pathname */
 export function buildUrl(tab: AppTab, sessionId: string | null): string {
-  if (tab === 'cron') return '/cron';
+  if (tab === 'cron') return preferredTaskCenterPath();
   if (tab === 'tenants') return '/tenants';
   if (tab === 'tenant-admin') return '/tenant-admin';
   if (tab === 'platform-admin') return '/platform-admin';

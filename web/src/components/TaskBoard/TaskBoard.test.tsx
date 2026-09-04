@@ -181,6 +181,7 @@ describe("TaskBoardView", () => {
     render(<TaskBoardView />);
 
     await waitFor(() => expect(screen.getByRole("combobox", { name: "选择看板" })).toBeTruthy());
+    expect(window.localStorage.getItem("taskboard:selected-board")).toBe("board-1");
     expect(screen.getAllByRole("region", { name: /列$/ }).map((column) => column.getAttribute("aria-label"))).toEqual([
       "需求池列",
       "待推进列",
@@ -207,6 +208,20 @@ describe("TaskBoardView", () => {
     expect(screen.getAllByRole("button", { name: /TASK-1/ }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /TASK-2/ })).toBeNull();
   }, 15_000);
+
+  it("重新进入任务看板时恢复上次显示的看板", async () => {
+    const user = userEvent.setup();
+    const view = render(<TaskBoardView />);
+
+    const trigger = await screen.findByRole("combobox", { name: "选择看板" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "市场事项（个人）" }));
+    expect(window.localStorage.getItem("taskboard:selected-board")).toBe("board-2");
+
+    view.unmount();
+    render(<TaskBoardView />);
+    expect((await screen.findByRole("combobox", { name: "选择看板" })).textContent).toContain("市场事项");
+  });
 
   it("可以将看板下拉选项向上拖动，并将顺序保存在浏览器本地", async () => {
     const user = userEvent.setup();

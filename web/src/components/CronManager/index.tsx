@@ -9,6 +9,12 @@ import {
 } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { navigateToHref } from "@/lib/urlSync";
+import {
+  rememberTaskCenterView,
+  taskCenterPath,
+  taskCenterViewFromPath,
+  type TaskCenterView,
+} from "@/lib/taskCenterRoute";
 import { TaskBoardView } from "@/components/TaskBoard";
 import { CronScheduleView } from "./CronScheduleView";
 
@@ -23,21 +29,23 @@ interface CronManagerProps {
   onTaskDetailOpenChange?: (open: boolean) => void;
 }
 
-type CronView = "schedule" | "board";
-
 function isTenantAdminPath(pathname: string): boolean {
   return pathname === "/tenant-admin" || pathname.startsWith("/tenant-admin/");
 }
 
-export function cronViewFromLocation(location: Pick<Location, "pathname" | "search"> = window.location): CronView {
-  if (location.pathname !== "/cron" && !isTenantAdminPath(location.pathname)) return "schedule";
+export function cronViewFromLocation(location: Pick<Location, "pathname" | "search"> = window.location): TaskCenterView {
+  if (!isTenantAdminPath(location.pathname)) {
+    if (location.pathname === "/cron" && new URLSearchParams(location.search).get("view") === "board") return "board";
+    return taskCenterViewFromPath(location.pathname) ?? "schedule";
+  }
   return new URLSearchParams(location.search).get("view") === "board" ? "board" : "schedule";
 }
 
-function cronViewHref(view: CronView, location: Pick<Location, "pathname" | "search"> = window.location): string {
-  if (!isTenantAdminPath(location.pathname)) {
-    return view === "board" ? "/cron?view=board" : "/cron";
-  }
+function cronViewHref(
+  view: TaskCenterView,
+  location: Pick<Location, "pathname" | "search"> = window.location,
+): string {
+  if (!isTenantAdminPath(location.pathname)) return taskCenterPath(view);
 
   const query = new URLSearchParams(location.search);
   if (view === "board") query.set("view", "board");
@@ -53,11 +61,15 @@ export function CronManager({
   detailPanelTarget,
   onTaskDetailOpenChange,
 }: CronManagerProps) {
-  const [view, setView] = useState<CronView>(() => cronViewFromLocation());
-  const [mountedViews, setMountedViews] = useState<Record<CronView, boolean>>(() => ({
+  const [view, setView] = useState<TaskCenterView>(() => cronViewFromLocation());
+  const [mountedViews, setMountedViews] = useState<Record<TaskCenterView, boolean>>(() => ({
     schedule: cronViewFromLocation() === "schedule",
     board: cronViewFromLocation() === "board",
   }));
+
+  useEffect(() => {
+    rememberTaskCenterView(view);
+  }, [view]);
 
   useEffect(() => {
     const syncFromUrl = () => {
@@ -70,7 +82,7 @@ export function CronManager({
   }, []);
 
   const changeView = (next: string) => {
-    const cronView = next as CronView;
+    const cronView: TaskCenterView = next === "board" ? "board" : "schedule";
     if (cronView === view) return;
     setMountedViews((current) => ({ ...current, [cronView]: true }));
     navigateToHref(cronViewHref(cronView));

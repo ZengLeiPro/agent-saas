@@ -31,7 +31,7 @@ const harness = vi.hoisted(() => {
     },
     session: {
       sessionId: null as string | null, sessions: [],
-      sessionAccessMode: "owner" as "owner" | "read_only" | "unknown", canInteractWithSession: vi.fn(() => harness.session.sessionAccessMode === "owner"),
+      accessRef: { current: "owner" as "owner" | "read_only" | "unknown" },
       isLoadingSessions: false,
       isLoadingMessages: false,
       hasMoreHistory: false,
@@ -161,7 +161,7 @@ const chatPayloads = createChatPayloadReader(harness.sends); const fileA: Upload
   harness.pendingNewSessionGroupIdRef.current = null;
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
-  harness.session.sessionId = null; harness.session.sessionAccessMode = "owner"; harness.session.isNewSession = true;
+  harness.session.sessionId = null; harness.session.accessRef.current = "owner"; harness.session.isNewSession = true;
   Object.values(harness.session).forEach((value) => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
@@ -194,10 +194,10 @@ describe("useChatAppState message delivery lifecycle", () => {
     });
   });
   it("详情权限未确认或为只读时不会发送聊天消息到 Web Channel", async () => {
-    harness.session.sessionId = "taskboard-session"; harness.session.isNewSession = false; harness.session.sessionAccessMode = "unknown";
+    harness.session.sessionId = "taskboard-session"; harness.session.isNewSession = false; harness.session.accessRef.current = "unknown";
     const { result, rerender } = renderHook(() => useChatAppState()); act(() => result.current.setInput("不能回落成新会话"));
     await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()).toHaveLength(0); expect(result.current.input).toBe("不能回落成新会话");
-    harness.session.sessionAccessMode = "read_only"; rerender(); await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()).toHaveLength(0);
+    harness.session.accessRef.current = "read_only"; rerender(); await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()).toHaveLength(0);
   });
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {
     const { result } = renderHook(() => useChatAppState());

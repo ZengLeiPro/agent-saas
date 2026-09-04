@@ -84,8 +84,7 @@ export interface SessionState {
   loadDetailPromiseRef: React.RefObject<Promise<void> | null>;
   /** 当前加载的会话 owner 信息 */
   sessionOwner: SessionOwnerInfo | null;
-  sessionAccessMode: SessionDetailAccessMode | "unknown";
-  canInteractWithSession: () => boolean;
+  accessRef: React.RefObject<SessionDetailAccessMode | "unknown">;
   setSessionId: (id: string | null) => void;
   loadSessions: (opts?: { fresh?: boolean; silent?: boolean; skipMerge?: boolean }) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
@@ -164,15 +163,9 @@ export function useSession(
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
-  const initialAccessMode = options?.initialSessionId ? "unknown" : "owner";
-  const [sessionAccessMode, setSessionAccessMode] = useState<SessionDetailAccessMode | "unknown">(initialAccessMode);
-  const sessionAccessModeRef = useRef<SessionDetailAccessMode | "unknown">(initialAccessMode);
-  const updateSessionAccessMode = useCallback((mode: SessionDetailAccessMode | "unknown") => {
-    sessionAccessModeRef.current = mode;
-    setSessionAccessMode(mode);
-  }, []);
-  const canInteractWithSession = useCallback(() => sessionAccessModeRef.current === "owner", []);
-
+  const sessionAccessModeRef = useRef<SessionDetailAccessMode | "unknown">(
+    options?.initialSessionId ? "unknown" : "owner",
+  );
   const isNewSessionRef = useRef(false);
   const hasInitialLoadRef = useRef(false);
   const loadDetailPromiseRef = useRef<Promise<void> | null>(null);
@@ -320,7 +313,7 @@ export function useSession(
       loadSessionDetailRequest(id, opts, {
         callbacksRef: cbRef, sessionsRef, sessionIdRef, detailCursorRef,
         loadNonceRef, detailAbortRef, setIsLoadingMessages, setSessionLoadError,
-        setHasMoreHistory, setSessionId, setSessionOwner, setSessionAccessMode: updateSessionAccessMode, setTokenUsage,
+        setHasMoreHistory, setSessionId, setSessionOwner, setSessionAccessMode: (mode) => { sessionAccessModeRef.current = mode; }, setTokenUsage,
         setContextUsage, fetchTokenUsage, removeSession,
       }),
     [],
@@ -398,7 +391,7 @@ export function useSession(
       if (id === sessionId) return;
       cbRef.current.cancelActiveStream();
       cbRef.current.resetMessages();
-      updateSessionAccessMode("unknown");
+      sessionAccessModeRef.current = "unknown";
       setSessionId(sessionIdRef.current = id);
       setSessionOwner(null);
       setTokenUsage(null);
@@ -409,7 +402,7 @@ export function useSession(
       cbRef.current.onSandboxProfile?.(id, undefined, true);
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [loadSessionDetail, sessionId, updateSessionAccessMode],
+    [loadSessionDetail, sessionId],
   );
 
   const confirmDeleteSessions = useCallback((ids: string[]) => {
@@ -695,7 +688,7 @@ export function useSession(
     isNewSessionRef.current = true;
     setSessionId(sessionIdRef.current = null);
     setSessionOwner(null);
-    updateSessionAccessMode("owner");
+    sessionAccessModeRef.current = "owner";
     setTokenUsage(null);
     setContextUsage(null);
     setIsLoadingMessages(false);
@@ -703,7 +696,7 @@ export function useSession(
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
     removeTabScopedAuth(SESSION_STORAGE_KEY);
-  }, [updateSessionAccessMode]);
+  }, []);
 
   const retrySessionLoad = useCallback(() => {
     const id = sessionIdRef.current;
@@ -888,8 +881,7 @@ export function useSession(
     isLoadingMore,
     loadDetailPromiseRef,
     sessionOwner,
-    sessionAccessMode,
-    canInteractWithSession,
+    accessRef: sessionAccessModeRef,
     setSessionId,
     loadSessions,
     loadMoreSessions,

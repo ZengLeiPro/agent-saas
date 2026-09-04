@@ -2543,7 +2543,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [dispatchConnection]);
 
   const submitCurrentMessage = useCallback(async () => {
-    if (sessionRef.current.canInteractWithSession?.() === false) return; const trimmedInput = inputRef.current.trim();
+    if ((sessionRef.current.accessRef?.current ?? "owner") !== "owner") return; const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
     if (stoppingRef.current) return;
     const releaseSubmissionSlot = acquireMessageSubmissionSlot(messageSubmissionGateRef);
@@ -2963,7 +2963,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     input,
     loading: effectiveLoading, sandboxProfile, setSandboxProfile,
     sessionId: session.sessionId,
-    sessions: session.sessions, sessionAccessMode: session.sessionAccessMode,
+    sessions: session.sessions,
     activeTab,
     governanceRoute: governanceRouteState,
     platformAdminSection,

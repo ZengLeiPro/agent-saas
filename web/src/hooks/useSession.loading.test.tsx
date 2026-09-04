@@ -87,16 +87,14 @@ describe('useSession 会话详情加载韧性', () => {
     const { result } = renderHook(() => useSession(callbacks()));
 
     act(() => result.current.selectSession('taskboard-session'));
-    expect(result.current.sessionAccessMode).toBe('unknown');
-    expect(result.current.canInteractWithSession()).toBe(false);
+    expect(result.current.accessRef.current).toBe('unknown');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
       resolveDetail(detailResponse('只读历史', 'read_only'));
       await result.current.loadDetailPromiseRef.current;
     });
-    expect(result.current.sessionAccessMode).toBe('read_only');
-    expect(result.current.canInteractWithSession()).toBe(false);
+    expect(result.current.accessRef.current).toBe('read_only');
   });
 
   it('IndexedDB 永久挂起时在缓存预算后直接请求网络', async () => {

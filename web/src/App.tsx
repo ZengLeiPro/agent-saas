@@ -79,7 +79,7 @@ function App() {
   );
 
   const {
-    messages, input, sandboxProfile, setSandboxProfile, loading, sessionId, sessions, sessionAccessMode, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
+    messages, input, sandboxProfile, setSandboxProfile, loading, sessionId, sessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
     uploadedFiles, uploading, uploadError, dismissUploadError, isDragging, isLoadingSessions, isLoadingMessages,
     sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -171,10 +171,13 @@ function App() {
     : activeAgentTarget?.kind === 'personal'
       ? '个人 Agent'
       : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家' : undefined;
-  const activeOrgAgentReadOnly = Boolean(activeAgentTargetUnavailableReason);
-  const sessionReadOnly = Boolean(sessionId && sessionAccessMode !== "owner");
+  const activeOrgAgentReadOnly = !!activeAgentTargetUnavailableReason;
+  const sessionReadOnly = !!(sessionId && (
+    isLoadingMessages || !sessionParticipants
+    || sessionParticipants.owner.userId !== authUser?.id
+  ));
   const orgAgentIdentityLoading = !agentTargetCatalog && !compatibilityReason && (orgAgentsLoading || isLoadingSessions);
-  const adminOwnerView = Boolean(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
+  const adminOwnerView = !!(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
   const pendingPickerGroupIdRef = useRef<string | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<{

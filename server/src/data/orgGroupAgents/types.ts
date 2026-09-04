@@ -107,11 +107,18 @@ export interface OrgAgentWorkConversation {
 }
 
 export type DwsDeliveryState = 'pending' | 'sending' | 'sent' | 'unknown' | 'dead_letter';
+export interface DwsDeliveryAccountIdentity {
+  profileId: string;
+  corpId: string;
+  dingtalkUserId: string;
+  identityUpdatedAt: string;
+}
 export interface DwsDeliveryIntent {
   deliveryId: string;
   tenantId: string;
   inboxId?: string;
   accountId: string;
+  accountIdentity?: DwsDeliveryAccountIdentity;
   conversationId: string;
   agentId?: string;
   bindingId?: string;
@@ -147,8 +154,8 @@ export interface DwsDeliveryIntent {
 export type DwsDeliveryIntentCreate = Omit<
   DwsDeliveryIntent,
   'deliveryId' | 'deliveryState' | 'attempt' | 'leaseFence' | 'providerAttemptPhase'
-    | 'createdAt' | 'updatedAt'
->;
+    | 'createdAt' | 'updatedAt' | 'accountIdentity'
+> & { accountIdentity: DwsDeliveryAccountIdentity };
 
 export type OrgAgentWorkOrderState =
   'queued' | 'running' | 'waiting_input' | 'paused' | 'completed' | 'failed' | 'cancelled';

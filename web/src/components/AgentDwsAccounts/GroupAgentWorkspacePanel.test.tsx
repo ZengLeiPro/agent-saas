@@ -336,7 +336,7 @@ describe('GroupAgentWorkspacePanel', () => {
     );
   });
 
-  it('保存完整群配置：身份、上下文、可见范围与角色', async () => {
+  it('保存完整群配置：身份、上下文、可见范围、角色与 doc 资源', async () => {
     const user = userEvent.setup();
     render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
 
@@ -383,6 +383,19 @@ describe('GroupAgentWorkspacePanel', () => {
       },
     });
     expect(screen.getByText('当前仅支持群内 @ 前台账号触发；必须 @，不支持主动发言。')).toBeTruthy();
+  });
+
+  it('激活配置中的非 doc DWS 资源在前端即拒绝且不会提交 PATCH', async () => {
+    const user = userEvent.setup();
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    const resourceInput = await screen.findByLabelText('钉钉资源范围');
+    await user.click(screen.getByRole('switch', { name: '立即阻断' }));
+    await user.type(resourceInput, 'drive:folder-a');
+    await user.click(screen.getByRole('button', { name: '保存群配置' }));
+
+    expect(await screen.findByText('共享群 DWS 资源目前仅支持 doc:<nodeId>')).toBeTruthy();
+    expect(vi.mocked(authFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
   });
 
   it('非候选能力不可新增，既有越界值只能显式移除', async () => {

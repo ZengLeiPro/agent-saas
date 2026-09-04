@@ -52,6 +52,8 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       _id: string, _owner: string, _fence: number, rejectionReasonCode: string,
     ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
     blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter' }),
+    markReplyUnknown: vi.fn().mockResolvedValue({
+      ...claimed, state: 'dead_letter', disposition: 'delivery_unknown' }),
     fail: vi.fn().mockResolvedValue(undefined),
     defer: vi.fn().mockResolvedValue(undefined),
     releaseClaim: vi.fn(),

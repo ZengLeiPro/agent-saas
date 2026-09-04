@@ -157,9 +157,10 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           WHERE (
             item.state='pending'
             OR (item.state='retry_wait' AND item.next_attempt_at <= NOW())
-            OR (item.state='reply_pending' AND (
-              item.lease_expires_at IS NULL OR item.lease_expires_at <= NOW()
-            ))
+            OR (item.state='reply_pending'
+              AND (item.next_attempt_at IS NULL OR item.next_attempt_at <= NOW())
+              AND (item.lease_expires_at IS NULL OR item.lease_expires_at <= NOW())
+            )
             OR (item.state='processing' AND item.lease_expires_at <= NOW())
           )
           AND NOT EXISTS (
@@ -546,6 +547,24 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence, reasonCode]);
   }
 
+  async markReplyUnknown(
+    inboxId: string,
+    owner: string,
+    fence: number,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+          payload_json=payload_json || jsonb_build_object('disposition','delivery_unknown'),
+          last_error='AGENT_DWS_REPLY_DELIVERY_UNKNOWN',completed_at=NOW(),updated_at=NOW()
+      WHERE inbox_id=$1 AND state='reply_pending'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence]);
+  }
+
   async fail(
     inboxId: string,
     owner: string,
@@ -562,7 +581,11 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     }
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
-      SET state=CASE WHEN attempt>=max_attempts THEN 'dead_letter' ELSE 'retry_wait' END,
+      SET state=CASE
+            WHEN attempt>=max_attempts THEN 'dead_letter'
+            WHEN response_text IS NOT NULL THEN 'reply_pending'
+            ELSE 'retry_wait'
+          END,
           lease_owner=NULL,lease_expires_at=NULL,
           next_attempt_at=CASE
             WHEN attempt>=max_attempts THEN NULL
@@ -619,7 +642,9 @@ function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
   const replyKind = payload.replyKind === 'normal' || payload.replyKind === 'access_rejection'
     ? payload.replyKind
     : undefined;
-  const disposition = payload.disposition === 'rejected' || payload.disposition === 'reply_blocked'
+  const disposition = payload.disposition === 'rejected'
+    || payload.disposition === 'reply_blocked'
+    || payload.disposition === 'delivery_unknown'
     ? payload.disposition
     : undefined;
   const rejectionReasonCode = optionalText(payload.rejectionReasonCode);

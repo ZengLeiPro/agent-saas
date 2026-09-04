@@ -153,6 +153,7 @@ function setup(input: {
     ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
     blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter',
       disposition: 'reply_blocked' }),
+    markReplyUnknown: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter', disposition: 'delivery_unknown' }),
     fail: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     deleteForTenant: vi.fn(),
   } satisfies AgentDwsMessageStore;
@@ -203,10 +204,8 @@ function setup(input: {
     ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
     ...(input.logger ? { logger: input.logger } : {}),
   });
-  return {
-    router, messageStore, accountStore, dispatch, sender,
-    authorizeRequester, auditRequesterRejection, auditToolPolicyRejection,
-  };
+  return { router, messageStore, accountStore, dispatch, sender, authorizeRequester,
+    auditRequesterRejection, auditToolPolicyRejection };
 }
 
 describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () => {
@@ -341,7 +340,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     await router.stop();
   });
 
-  it('binds a stable Session, dispatches the org Agent, and sends one identity-fenced durable reply', async () => {
+  it('binds a stable Session, dispatches the org Agent, and successfully sends one identity-fenced durable reply', async () => {
     const { router, messageStore, dispatch, sender, authorizeRequester } = setup();
 
     await expect(router.runOnce()).resolves.toBe(true);

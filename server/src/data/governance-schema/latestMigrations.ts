@@ -2,6 +2,7 @@ import { governanceV36OrgGroupAgentStatements } from './v36OrgGroupAgentMigratio
 import { governanceV37DeliveryAttemptPhaseStatements } from './v37DeliveryAttemptPhaseMigration.js';
 import { governanceV38SkillPresentationStatements } from './v38SkillPresentationMigration.js';
 import { governanceV39OrgGroupBindingIdentityStatements } from './v39OrgGroupBindingIdentityMigration.js';
+import { governanceV40DwsDeliveryAccountIdentityStatements } from './v40DwsDeliveryAccountIdentityMigration.js';
 
 export function governanceLatestMigrations(prefix: string) {
   return [
@@ -9,5 +10,6 @@ export function governanceLatestMigrations(prefix: string) {
     { version: 37, statements: governanceV37DeliveryAttemptPhaseStatements(prefix) },
     { version: 38, statements: governanceV38SkillPresentationStatements(prefix) },
     { version: 39, statements: governanceV39OrgGroupBindingIdentityStatements(prefix) },
+    { version: 40, statements: governanceV40DwsDeliveryAccountIdentityStatements(prefix) },
   ];
 }

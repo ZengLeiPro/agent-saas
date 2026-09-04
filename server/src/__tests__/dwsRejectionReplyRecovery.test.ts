@@ -52,8 +52,12 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
       ...claimed.at(-1)!, state: 'dead_letter', disposition: 'reply_blocked',
       rejectionReasonCode: reasonCode,
     })),
+    markReplyUnknown: vi.fn().mockResolvedValue({
+      ...claimed[0], state: 'dead_letter', disposition: 'delivery_unknown',
+    }),
     fail: vi.fn().mockResolvedValue({ ...claimed[0], state: 'retry_wait' }),
-    complete: vi.fn(), getOrCreateBinding: vi.fn(), markDispatchStarted: vi.fn(),
+    complete: vi.fn(), getOrCreateBinding: vi.fn(),
+    markDispatchStarted: vi.fn(),
     saveDispatchResult: vi.fn(), defer: vi.fn(), releaseClaim: vi.fn(), init: vi.fn(), ingest: vi.fn(),
     listForAccount: vi.fn(), hasObservedGroup: vi.fn(), listActiveForAccount: vi.fn(),
     deleteForTenant: vi.fn(),

@@ -54,7 +54,9 @@ import {
 } from './personalMessageRouterHelpers.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import { deliverNextOrgAgentIntent } from './orgAgentDeliveryWorker.js';
-import { OrgAgentVisibleReplyService, settleFrontReply } from './orgAgentVisibleReply.js';
+import {
+  finalizeReplyDelivery, OrgAgentVisibleReplyService, settleFrontReply,
+} from './orgAgentVisibleReply.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
@@ -564,14 +566,10 @@ export class AgentDwsMessageRouter {
         this.workerId,
         item.leaseFence,
       );
-      await this.visibleReply.send(
-        account,
-        item,
-        shared.routingClarification,
-        shared,
-        'front_reply',
-        'replied',
+      const clarificationDelivery = await this.visibleReply.send(
+        account, item, shared.routingClarification, shared, 'front_reply', 'replied',
       );
+      if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, clarificationDelivery))) return;
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
     }
@@ -667,7 +665,7 @@ export class AgentDwsMessageRouter {
     ) {
       throw new Error('Agent DWS account identity changed before reply');
     }
-    await settleFrontReply(
+    const replyDelivery = await settleFrontReply(
       frontReplyDeadline,
       () =>
         this.visibleReply.send(
@@ -690,6 +688,7 @@ export class AgentDwsMessageRouter {
           'final',
         ),
     );
+    if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, replyDelivery))) return;
     await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
     this.options.logger?.info(
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,
@@ -708,7 +707,7 @@ export class AgentDwsMessageRouter {
       ...(requester ? { requester } : {}),
       reason,
     });
-    // 普通 reply_pending 的正文可能来自旧授权上下文，当前拒绝时必须隔离并转人工核对。
+    // 普通 reply_pending 的已持久化正文可能来自旧授权上下文，当前拒绝时必须隔离并转人工核对。
     if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
       await this.options.messageStore.blockReply(
         item.inboxId, this.workerId, item.leaseFence, reason,
@@ -734,7 +733,7 @@ export class AgentDwsMessageRouter {
       item.leaseFence,
     );
     assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply');
-    await this.visibleReply.send(
+    const rejectionDelivery = await this.visibleReply.send(
       account,
       item,
       responseText,
@@ -742,6 +741,7 @@ export class AgentDwsMessageRouter {
       'access_rejection',
       'rejected',
     );
+    if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, rejectionDelivery))) return;
     await this.options.messageStore.reject(
       item.inboxId,
       this.workerId,

@@ -265,6 +265,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     })).rejects.toThrow('ORG_AGENT_PARENT_ATTEMPT_SCOPE_INVALID');
 
     const intent = await store.createDelivery({
+      accountIdentity,
       tenantId: 'tenant-a',
       accountId: 'account-a',
       conversationId: 'group-a',
@@ -288,6 +289,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       content: '任务完成',
       idempotencyKey: 'delivery-a',
     });
+    expect(intent.accountIdentity).toEqual(accountIdentity);
     const claimed = await store.claimDelivery(intent.deliveryId, 'worker-a', 60_000);
     await store.markDeliveryProviderStarted(intent.deliveryId, 'worker-a', claimed.leaseFence);
     await store.markDeliveryUnknown(
@@ -428,6 +430,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       expectedVersion: retryRunning!.version, state: 'completed', resultEnvelope: terminalEnvelope });
     expect(attempt2.attemptNo).toBe(reopened.currentAttemptNo + 1);
     const staleIntent = await store.createDelivery({
+      accountIdentity,
       tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'group-a',
       agentId: 'agent-a', bindingId: binding.bindingId,
       conversationSpaceId: binding.conversationSpaceId,
@@ -447,12 +450,14 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     });
 
     const expiring = await store.createDelivery({
+      accountIdentity,
       tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'direct-expiring',
       source: 'system', deliveryKind: 'system_notice', disposition: 'replied',
       destination: { provider: 'dingtalk', accountId: 'account-a',
         conversationId: 'direct-expiring', kind: 'direct', peerOpenId: 'member-a' },
       content: '租约测试', idempotencyKey: 'delivery-expiring',
     });
+    expect(expiring.accountIdentity).toEqual(accountIdentity);
     const expiringClaim = await store.claimDelivery(expiring.deliveryId, 'worker-expired', 60_000);
     await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
       SET lease_expires_at=NOW()-INTERVAL '1 second' WHERE delivery_id=$1`, [expiring.deliveryId]);
@@ -465,6 +470,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     });
 
     const legacyWriter = await store.createDelivery({
+      accountIdentity,
       tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'direct-legacy-writer',
       source: 'system', deliveryKind: 'system_notice', disposition: 'replied',
       destination: { provider: 'dingtalk', accountId: 'account-a',
@@ -482,6 +488,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     });
 
     const providerExpiring = await store.createDelivery({
+      accountIdentity,
       tenantId: 'tenant-a',
       accountId: 'account-a',
       conversationId: 'direct-provider-expiring',
@@ -525,6 +532,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
   it('uses SKIP LOCKED claims so concurrent delivery workers never own the same intent', async () => {
     for (const suffix of ['b', 'c'])
       await store.createDelivery({
+        accountIdentity,
         tenantId: 'tenant-a',
         accountId: 'account-a',
         conversationId: 'direct-a',
@@ -615,12 +623,82 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     expect(blocked).toBeNull();
   });
 
-  it('treats an unpinned row as a group FIFO barrier against an already pinned topic', async () => {
+  it('真实 store 在普通与拒绝回复发送失败后按退避重领 reply_pending', async () => {
+    const inbox = new PgAgentDwsMessageStore(pool, prefix);
+    for (const replyKind of ['normal', 'access_rejection'] as const) {
+      const eventId = `reply-retry-${replyKind}`;
+      const ingested = await inbox.ingest({
+        tenantId: 'tenant-a', accountId: 'account-a', eventId,
+        eventType: 'user_im_message_receive_o2o_all', conversationId: eventId,
+        messageId: `message-${eventId}`, senderOpenDingtalkId: 'member-a', content: 'hi',
+      }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
+        profileId: accountIdentity.profileId, corpId: accountIdentity.corpId,
+        dingtalkUserId: accountIdentity.dingtalkUserId,
+      } });
+      const firstOwner = `worker-${replyKind}-1`;
+      const first = await inbox.claimNext(firstOwner, 60_000);
+      expect(first?.inboxId).toBe(ingested.record.inboxId);
+      if (replyKind === 'normal') {
+        await inbox.saveDispatchResult(first!.inboxId, firstOwner, first!.leaseFence, '正常回复');
+      } else {
+        await inbox.saveRejectionResult(
+          first!.inboxId, firstOwner, first!.leaseFence, '拒绝回复', 'ASSIGNMENT_DENIED',
+        );
+      }
+      await inbox.markReplyAttemptStarted(first!.inboxId, firstOwner, first!.leaseFence);
+      await expect(inbox.fail(
+        first!.inboxId, firstOwner, first!.leaseFence, new Error('provider unavailable'), 60_000,
+      )).resolves.toMatchObject({ state: 'reply_pending', nextAttemptAt: expect.any(String) });
+      await expect(inbox.claimNext(`worker-${replyKind}-early`, 60_000)).resolves.toBeNull();
+      await pool.query(`UPDATE ${prefix}_agent_dws_event_inbox
+        SET next_attempt_at=NOW() WHERE inbox_id=$1`, [first!.inboxId]);
+      const retryOwner = `worker-${replyKind}-2`;
+      const retry = await inbox.claimNext(retryOwner, 60_000);
+      expect(retry).toMatchObject({
+        inboxId: first!.inboxId,
+        state: 'reply_pending',
+        responseText: replyKind === 'normal' ? '正常回复' : '拒绝回复',
+        replyKind,
+      });
+      await expect(inbox.markReplyAttemptStarted(
+        retry!.inboxId, retryOwner, retry!.leaseFence,
+      )).resolves.toMatchObject({ state: 'reply_pending' });
+      if (replyKind === 'normal') {
+        await inbox.complete(retry!.inboxId, retryOwner, retry!.leaseFence);
+      } else {
+        await inbox.reject(retry!.inboxId, retryOwner, retry!.leaseFence, 'ASSIGNMENT_DENIED');
+      }
+    }
+  });
+
+  it('真实 store 在已持久化回复达到 maxAttempts 后转 dead_letter', async () => {
+    const inbox = new PgAgentDwsMessageStore(pool, prefix);
+    const ingested = await inbox.ingest({
+      tenantId: 'tenant-a', accountId: 'account-a', eventId: 'reply-max-attempts',
+      eventType: 'user_im_message_receive_o2o_all', conversationId: 'reply-max-attempts',
+      messageId: 'message-reply-max-attempts', senderOpenDingtalkId: 'member-a', content: 'hi',
+    }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
+      profileId: accountIdentity.profileId, corpId: accountIdentity.corpId,
+      dingtalkUserId: accountIdentity.dingtalkUserId,
+    } });
+    const claimed = await inbox.claimNext('worker-max-attempts', 60_000);
+    expect(claimed?.inboxId).toBe(ingested.record.inboxId);
+    await inbox.saveDispatchResult(
+      claimed!.inboxId, 'worker-max-attempts', claimed!.leaseFence, '最终回复',
+    );
+    await pool.query(`UPDATE ${prefix}_agent_dws_event_inbox
+      SET attempt=max_attempts WHERE inbox_id=$1`, [claimed!.inboxId]);
+    await expect(inbox.fail(
+      claimed!.inboxId, 'worker-max-attempts', claimed!.leaseFence, new Error('provider unavailable'),
+    )).resolves.toMatchObject({ state: 'dead_letter', responseText: '最终回复' });
+  });
+
+  it('未固定 topic 的旧消息会阻塞同群已固定 topic 的后续消息', async () => {
     const inbox = new PgAgentDwsMessageStore(pool, prefix);
     const first = await inbox.ingest({
       tenantId: 'tenant-a', accountId: 'account-a', eventId: 'mixed-unpinned-first',
       eventType: 'user_im_message_receive_at', conversationId: 'group-mixed',
-      messageId: 'mixed-message-1', senderOpenDingtalkId: 'member-a', content: 'first',
+      messageId: 'mixed-message-1', senderOpenDingtalkId: 'member-a', content: '第一条',
     }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
       profileId: 'corp-a:agent-member-a', corpId: 'corp-a', dingtalkUserId: 'agent-member-a',
     } });

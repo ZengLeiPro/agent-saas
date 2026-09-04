@@ -12,6 +12,7 @@ import { governanceV34Statements } from '../data/governance-schema/v34Migration.
 import { governanceV36OrgGroupAgentStatements } from '../data/governance-schema/v36OrgGroupAgentMigration.js';
 import { governanceV37DeliveryAttemptPhaseStatements } from '../data/governance-schema/v37DeliveryAttemptPhaseMigration.js';
 import { governanceV39OrgGroupBindingIdentityStatements } from '../data/governance-schema/v39OrgGroupBindingIdentityMigration.js';
+import { governanceV40DwsDeliveryAccountIdentityStatements } from '../data/governance-schema/v40DwsDeliveryAccountIdentityMigration.js';
 
 describe('Governance schema migration SQL fixtures', () => {
   it('V22 在约束前确定性回填 V18 org_memory 的空名称与状态，且名称不引用正文', () => {
@@ -222,6 +223,15 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_profile_id TEXT');
     expect(sql).toContain('binding.created_at >= account.identity_updated_at');
     expect(sql).toContain("account.profile_id=account.corp_id || ':' || account.dingtalk_user_id");
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
+  });
+
+  it('V40 仅 expand durable delivery 的账号身份纪元且不回填 legacy', () => {
+    const sql = governanceV40DwsDeliveryAccountIdentityStatements('safe').join('\n');
+    expect(sql).toContain('ALTER TABLE safe_dws_delivery_intents');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_profile_id TEXT');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_identity_updated_at TIMESTAMPTZ');
+    expect(sql).not.toContain('UPDATE safe_dws_delivery_intents');
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
   });
 });

@@ -31,6 +31,10 @@ const delivery: DwsDeliveryIntent = {
   deliveryId: 'delivery-1',
   tenantId: 'tenant-1',
   accountId: 'account-1',
+  accountIdentity: {
+    profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+    identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+  },
   conversationId: 'group-1',
   agentId: 'agent-1',
   bindingId: 'binding-1',
@@ -338,6 +342,31 @@ describe('deliverNextOrgAgentIntent', () => {
     expect(test.sender.send).not.toHaveBeenCalled();
     expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
     expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+  });
+
+  it('Direct delivery 固定于身份 A 后，账号换绑 B 会 dead-letter 且不发送旧正文', async () => {
+    const direct = {
+      ...delivery,
+      agentId: undefined,
+      bindingId: undefined,
+      conversationId: 'direct-1',
+      destination: {
+        provider: 'dingtalk' as const, accountId: 'account-1',
+        conversationId: 'direct-1', kind: 'direct' as const, peerOpenId: 'open-a',
+      },
+      accountIdentity: {
+        profileId: 'corp-old:user-old', corpId: 'corp-old', dingtalkUserId: 'user-old',
+        identityUpdatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    };
+    const test = harness({ claimedDelivery: direct });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
+    );
   });
 
   it('账号身份切换后不会用旧 binding 投递，而是 dead-letter', async () => {

@@ -12,7 +12,10 @@ import {
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
-import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
+import {
+  bindingMatchesCurrentAccountIdentity,
+  deliveryMatchesCurrentAccountIdentity,
+} from './agentDwsAccountIdentity.js';
 
 export interface OrgAgentDeliveryWorkerOptions {
   store: OrgGroupAgentStore;
@@ -29,7 +32,7 @@ export interface OrgAgentDeliveryWorkerOptions {
 }
 
 /**
- * Drains durable outbound intents independently from the inbound event that created them.
+ * Drains identity-pinned durable outbound intents independently from their inbound event.
  * Unknown deliveries are deliberately excluded: only an administrator can prove that an
  * unknown provider attempt was not sent and move it back to pending.
  */
@@ -54,6 +57,15 @@ export async function deliverNextOrgAgentIntent(
         options.workerId,
         delivery.leaseFence,
         'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
+      );
+      return true;
+    }
+    if (!deliveryMatchesCurrentAccountIdentity(delivery.accountIdentity, account)) {
+      await options.store.markClaimedDeliveryDeadLetter(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
       );
       return true;
     }
@@ -215,10 +227,12 @@ export async function createRedactedTerminalNotice(
   store: OrgGroupAgentStore,
   delivery: DwsDeliveryIntent,
 ): Promise<void> {
+  if (!delivery.accountIdentity) return;
   await store.createDelivery({
     tenantId: delivery.tenantId,
     ...(delivery.inboxId ? { inboxId: delivery.inboxId } : {}),
     accountId: delivery.accountId,
+    accountIdentity: delivery.accountIdentity,
     conversationId: delivery.conversationId,
     source: 'system',
     deliveryKind: 'system_notice',

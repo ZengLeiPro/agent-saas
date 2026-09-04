@@ -106,6 +106,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain('FOR UPDATE OF item SKIP LOCKED');
     expect(sql).toContain("item.state='retry_wait' AND item.next_attempt_at <= NOW()");
     expect(sql).toContain("item.state='reply_pending'");
+    expect(sql).toContain('item.next_attempt_at IS NULL OR item.next_attempt_at <= NOW()');
     expect(sql).toContain("item.state='processing' AND item.lease_expires_at <= NOW()");
     expect(sql).toContain('active.account_id=item.account_id');
     expect(sql).toContain('active.conversation_id=item.conversation_id');
@@ -372,7 +373,7 @@ describe('PgAgentDwsMessageStore', () => {
     ]);
   });
 
-  it('普通待发送回复在授权变化时进入可诊断人工核对终态', async () => {
+  it('普通 reply_pending 在授权变化时进入可诊断人工核对终态', async () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
       state: 'dead_letter', payload_json: {
         replyKind: 'normal', disposition: 'reply_blocked',
@@ -388,6 +389,22 @@ describe('PgAgentDwsMessageStore', () => {
     const [sql] = query.mock.calls[0]!;
     expect(String(sql)).toContain("COALESCE(payload_json->>'replyKind','normal')<>'access_rejection'");
     expect(String(sql)).toContain("'disposition','reply_blocked','rejectionReasonCode',$4::text");
+  });
+
+  it('provider 已开始后的发送歧义进入 delivery_unknown 人工核对终态', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'dead_letter', payload_json: {
+        replyKind: 'normal', disposition: 'delivery_unknown',
+      }, last_error: 'AGENT_DWS_REPLY_DELIVERY_UNKNOWN', completed_at: new Date(NOW),
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.markReplyUnknown('adwsi-1', 'worker-1', 7)).resolves.toMatchObject({
+      state: 'dead_letter', disposition: 'delivery_unknown',
+    });
+    const [sql] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("'disposition','delivery_unknown'");
+    expect(String(sql)).toContain("WHERE inbox_id=$1 AND state='reply_pending'");
   });
 
   it('拒绝终态在兼容 payload 中记录 disposition 与稳定 reasonCode', async () => {
@@ -486,6 +503,7 @@ describe('PgAgentDwsMessageStore', () => {
     });
     const sql = String(query.mock.calls[0]?.[0]);
     expect(sql).toContain("attempt>=max_attempts THEN 'dead_letter'");
+    expect(sql).toContain("WHEN response_text IS NOT NULL THEN 'reply_pending'");
     expect(sql).toContain("ELSE 'retry_wait'");
     expect(sql).toContain('POWER(2,LEAST(attempt-1,8))');
     expect(sql).not.toContain('response_text=NULL');

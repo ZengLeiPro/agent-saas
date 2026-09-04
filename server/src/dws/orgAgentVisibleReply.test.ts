@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
 import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
-import { OrgAgentVisibleReplyService, settleFrontReply } from './orgAgentVisibleReply.js';
+import {
+  finalizeReplyDelivery, OrgAgentVisibleReplyService, settleFrontReply,
+} from './orgAgentVisibleReply.js';
 
 const account = {
   accountId: 'account-a',
@@ -12,6 +14,7 @@ const account = {
   corpId: 'corp-a',
   dingtalkUserId: 'front-a',
   profileId: 'corp-a:front-a',
+  identityUpdatedAt: '2026-09-03T00:00:00.000Z',
   status: 'active',
 } as AgentDwsAccountRecord;
 const item = {
@@ -22,12 +25,21 @@ const item = {
   eventType: 'user_im_message_receive_at',
   conversationId: 'group-a',
   content: '处理',
-  payload: {},
-} as AgentDwsInboxRecord;
+  payload: { accountIdentity: {
+    profileId: 'corp-a:front-a', corpId: 'corp-a', dingtalkUserId: 'front-a',
+  } },
+  state: 'processing', attempt: 1, maxAttempts: 8, leaseFence: 1,
+  createdAt: '2026-09-04T00:00:00.000Z',
+  updatedAt: '2026-09-04T00:00:00.000Z',
+} satisfies AgentDwsInboxRecord;
 const delivery = {
   deliveryId: 'delivery-a',
   tenantId: 'tenant-a',
   accountId: 'account-a',
+  accountIdentity: {
+    profileId: 'corp-a:front-a', corpId: 'corp-a', dingtalkUserId: 'front-a',
+    identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+  },
   conversationId: 'group-a',
   source: 'command',
   deliveryKind: 'front_reply',
@@ -56,20 +68,36 @@ function harness() {
     markDeliveryProviderStarted: vi.fn().mockResolvedValue(delivery),
     markDeliverySent: vi.fn().mockResolvedValue(delivery),
     markDeliveryUnknown: vi.fn().mockResolvedValue(delivery),
+    markClaimedDeliveryDeadLetter: vi.fn().mockResolvedValue({
+      ...delivery, deliveryState: 'dead_letter',
+    }),
     releaseClaimedDeliveryForRetry: vi.fn().mockResolvedValue(delivery),
   } as unknown as OrgGroupAgentStore;
+  const accountStore = { getForTenant: vi.fn().mockResolvedValue(account) };
   const sender = { send: vi.fn().mockResolvedValue({ status: 'accepted' }) };
   const service = new OrgAgentVisibleReplyService(
-    { accountStore: {} as never, orgGroupAgentStore: store, sender },
+    { accountStore: accountStore as never, orgGroupAgentStore: store, sender },
     'worker-a',
     60_000,
     5,
   );
-  return { store, sender, service };
+  return { accountStore, store, sender, service };
 }
 
 describe('OrgAgentVisibleReplyService', () => {
-  it('persists provider phase before sending and then records receipt', async () => {
+  it('统一把 unknown/dead-letter 转成人工核对，并拒绝把 pending 当成功', async () => {
+    const messageStore = { markReplyUnknown: vi.fn().mockResolvedValue(undefined) } as never;
+    await expect(finalizeReplyDelivery(
+      messageStore, 'worker-a', item, { ...delivery, deliveryState: 'unknown' },
+    )).resolves.toBe(false);
+    expect((messageStore as { markReplyUnknown: ReturnType<typeof vi.fn> }).markReplyUnknown)
+      .toHaveBeenCalledWith(item.inboxId, 'worker-a', item.leaseFence);
+    await expect(finalizeReplyDelivery(
+      messageStore, 'worker-a', item, delivery,
+    )).rejects.toThrow('AGENT_DWS_REPLY_DELIVERY_NOT_SENT:pending');
+  });
+
+  it('发送前持久化 provider phase 并在成功后记录 receipt', async () => {
     const test = harness();
     await test.service.send(account, item, '完成', undefined, 'front_reply', 'replied');
     expect(test.store.markDeliveryProviderStarted).toHaveBeenCalledWith(
@@ -84,10 +112,29 @@ describe('OrgAgentVisibleReplyService', () => {
     expect(test.store.markDeliverySent).toHaveBeenCalledOnce();
   });
 
+  it('direct intent 创建后账号切换为 B 时在 provider start 前 fail-closed', async () => {
+    const test = harness();
+    test.accountStore.getForTenant.mockResolvedValueOnce({
+      ...account, profileId: 'corp-b:front-b', corpId: 'corp-b', dingtalkUserId: 'front-b',
+      identityUpdatedAt: '2026-09-05T00:00:00.000Z',
+    });
+
+    await expect(
+      test.service.send(account, item, '旧身份正文', undefined, 'front_reply', 'replied'),
+    ).resolves.toMatchObject({ deliveryState: 'dead_letter' });
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-a', 'worker-a', 1, 'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
+    );
+    expect(test.store.markDeliveryProviderStarted).not.toHaveBeenCalled();
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
   it('releases before-provider failures without calling the channel', async () => {
     const test = harness();
     vi.mocked(test.store.markDeliveryProviderStarted).mockRejectedValueOnce(new Error('db down'));
-    await test.service.send(account, item, '完成', undefined, 'front_reply', 'replied');
+    await expect(
+      test.service.send(account, item, '完成', undefined, 'front_reply', 'replied'),
+    ).rejects.toThrow('db down');
     expect(test.sender.send).not.toHaveBeenCalled();
     expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledWith(
       'delivery-a',
@@ -99,13 +146,38 @@ describe('OrgAgentVisibleReplyService', () => {
     );
   });
 
+  it('provider 已开始后的歧义返回 unknown durable intent 供人工核对', async () => {
+    const test = harness();
+    vi.mocked(test.sender.send).mockRejectedValueOnce(new Error('provider unavailable'));
+    vi.mocked(test.store.markDeliveryUnknown).mockResolvedValueOnce({
+      ...delivery, deliveryState: 'unknown', providerAttemptPhase: 'provider_started',
+    });
+
+    await expect(
+      test.service.send(account, item, '完成', undefined, 'front_reply', 'replied'),
+    ).resolves.toMatchObject({ deliveryState: 'unknown' });
+    expect(test.store.markDeliveryUnknown).toHaveBeenCalledOnce();
+    expect(test.store.releaseClaimedDeliveryForRetry).not.toHaveBeenCalled();
+  });
+
   it('sends a final reply only when the deadline fallback won the first intent', async () => {
-    const fallback = { ...delivery, source: 'system' as const };
+    const fallback = { ...delivery, source: 'system' as const, deliveryState: 'sent' as const };
     const sendNatural = vi.fn().mockResolvedValue(undefined);
     const sendFinal = vi.fn().mockResolvedValue(delivery);
     await settleFrontReply({ cancel: vi.fn().mockResolvedValue(fallback) }, sendNatural, sendFinal);
     expect(sendNatural).toHaveBeenCalledOnce();
     expect(sendFinal).toHaveBeenCalledOnce();
+  });
+
+  it('unknown fallback 不发送另一幂等键的 final reply', async () => {
+    const fallback = { ...delivery, source: 'system' as const, deliveryState: 'unknown' as const };
+    const sendFinal = vi.fn();
+    await expect(settleFrontReply(
+      { cancel: vi.fn().mockResolvedValue(fallback) },
+      vi.fn().mockResolvedValue(fallback),
+      sendFinal,
+    )).resolves.toMatchObject({ deliveryState: 'unknown' });
+    expect(sendFinal).not.toHaveBeenCalled();
   });
 
   it('does not send a second reply when the natural response owns the first intent', async () => {

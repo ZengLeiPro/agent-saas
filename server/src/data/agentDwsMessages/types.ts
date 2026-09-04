@@ -56,7 +56,7 @@ export interface AgentDwsInboxRecord {
   responseText?: string;
   replyStartedAt?: string;
   replyKind?: 'normal' | 'access_rejection';
-  disposition?: 'rejected' | 'reply_blocked';
+  disposition?: 'rejected' | 'reply_blocked' | 'delivery_unknown';
   rejectionReasonCode?: string;
   attempt: number;
   maxAttempts: number;
@@ -169,6 +169,11 @@ export interface AgentDwsMessageStore {
     owner: string,
     fence: number,
     reasonCode: string,
+  ): Promise<AgentDwsInboxRecord>;
+  markReplyUnknown(
+    inboxId: string,
+    owner: string,
+    fence: number,
   ): Promise<AgentDwsInboxRecord>;
   fail(
     inboxId: string,

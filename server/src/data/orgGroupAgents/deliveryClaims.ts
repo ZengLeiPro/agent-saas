@@ -41,15 +41,28 @@ export function sanitizeDeliveryReceipt(value: Record<string, unknown>): Record<
   return result;
 }
 
+/** Linearizes the millisecond-normalized account identity fence with provider start. */
 export async function startDeliveryProviderAttempt(
-  pool: pg.Pool, deliveriesTable: string, deliveryId: string, owner: string, fence: number,
+  pool: pg.Pool, deliveriesTable: string, accountsTable: string,
+  deliveryId: string, owner: string, fence: number,
 ): Promise<DwsDeliveryIntent> {
   const result = await pool.query(
-    `UPDATE ${deliveriesTable}
+    `UPDATE ${deliveriesTable} AS delivery
     SET provider_started_at=NOW(),provider_attempt_phase='provider_started',updated_at=NOW()
     WHERE delivery_id=$1 AND delivery_state='sending' AND lease_owner=$2 AND lease_fence=$3
       AND lease_expires_at>NOW() AND provider_attempt_phase='before_provider'
-      AND provider_started_at IS NULL RETURNING *`,
+      AND provider_started_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM ${accountsTable} AS account
+        WHERE account.tenant_id=delivery.tenant_id AND account.account_id=delivery.account_id
+          AND account.status='active'
+          AND account.profile_id=delivery.account_profile_id
+          AND account.corp_id=delivery.account_corp_id
+          AND account.dingtalk_user_id=delivery.account_dingtalk_user_id
+          AND date_trunc('milliseconds', account.identity_updated_at)
+            =date_trunc('milliseconds', delivery.account_identity_updated_at)
+      )
+    RETURNING delivery.*`,
     [deliveryId, owner, fence],
   );
   if (!result.rows[0]) throw new Error('DWS_DELIVERY_LEASE_LOST');

@@ -63,6 +63,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   private readonly bindingsTable: string;
   private readonly conversationsTable: string;
   private readonly inboxTable: string;
+  private readonly accountsTable: string;
   private readonly deliveriesTable: string;
   private readonly workOrdersTable: string;
   private readonly attemptsTable: string;
@@ -76,6 +77,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     this.bindingsTable = `${this.prefix}_org_agent_channel_bindings`;
     this.conversationsTable = `${this.prefix}_org_agent_work_conversations`;
     this.inboxTable = `${this.prefix}_agent_dws_event_inbox`;
+    this.accountsTable = `${this.prefix}_agent_dws_accounts`;
     this.deliveriesTable = `${this.prefix}_agent_dws_delivery_intents`;
     this.workOrdersTable = `${this.prefix}_org_agent_work_orders`;
     this.attemptsTable = `${this.prefix}_org_agent_work_attempts`;
@@ -282,16 +284,22 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       input.tenantId,
       input.accountId,
       input.conversationId,
+      input.accountIdentity.profileId,
+      input.accountIdentity.corpId,
+      input.accountIdentity.dingtalkUserId,
+      input.accountIdentity.identityUpdatedAt,
       input.content,
       input.idempotencyKey,
     );
+    // 所有新 delivery 都固定账号身份纪元；NULL 仅代表迁移前 legacy 记录。
     const result = await this.pool.query(
       `INSERT INTO ${this.deliveriesTable} AS delivery (
       delivery_id,tenant_id,inbox_id,account_id,conversation_id,work_conversation_id,source,
       agent_id,binding_id,conversation_space_id,policy_revision,visibility,source_work_order_id,source_attempt_id,
       delivery_kind,disposition,delivery_state,destination_json,content,idempotency_key,
-      provider_receipt_json,attempt,lease_fence,created_at,updated_at,completed_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending',$17::jsonb,$18,$19,$20::jsonb,0,0,NOW(),NOW(),$21)
+      provider_receipt_json,attempt,lease_fence,created_at,updated_at,completed_at,
+      account_profile_id,account_corp_id,account_dingtalk_user_id,account_identity_updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending',$17::jsonb,$18,$19,$20::jsonb,0,0,NOW(),NOW(),$21,$22,$23,$24,$25::timestamptz)
     ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key=delivery.idempotency_key
     RETURNING delivery.*`,
       [
@@ -318,6 +326,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         input.idempotencyKey,
         input.providerReceipt ? JSON.stringify(sanitizeDeliveryReceipt(input.providerReceipt)) : null,
         input.completedAt ?? null,
+        input.accountIdentity.profileId,
+        input.accountIdentity.corpId,
+        input.accountIdentity.dingtalkUserId,
+        input.accountIdentity.identityUpdatedAt,
       ],
     );
     return mapDelivery(requiredRow(result.rows[0]));
@@ -354,7 +366,9 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     fence: number,
   ): Promise<DwsDeliveryIntent> {
     assertTexts(deliveryId, owner);
-    return startDeliveryProviderAttempt(this.pool, this.deliveriesTable, deliveryId, owner, fence);
+    return startDeliveryProviderAttempt(
+      this.pool, this.deliveriesTable, this.accountsTable, deliveryId, owner, fence,
+    );
   }
 
   async releaseClaimedDeliveryForRetry(

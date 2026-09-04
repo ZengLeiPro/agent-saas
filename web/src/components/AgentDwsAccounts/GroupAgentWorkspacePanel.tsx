@@ -179,6 +179,8 @@ export type WorkspaceMutation = (
   method?: 'POST' | 'PATCH',
 ) => Promise<void>;
 
+const GROUP_DWS_RESOURCE_ID = /^doc:[^\s,]+$/;
+
 function csv(value: string): string[] {
   return [
     ...new Set(
@@ -531,6 +533,10 @@ function BindingEditor({
     onBusy(`binding:${binding.bindingId}`);
     onError('');
     try {
+      const parsedDwsResources = csv(dwsResources);
+      if (enabled && !liveDeny
+        && parsedDwsResources.some((resourceId) => !GROUP_DWS_RESOURCE_ID.test(resourceId)))
+        throw new Error('共享群 DWS 资源目前仅支持 doc:<nodeId>');
       const response = await authFetch(
         `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace?tenantId=${encodeURIComponent(tenantId)}`,
         {
@@ -560,7 +566,7 @@ function BindingEditor({
               capabilities: {
                 skillIds: skills,
                 toolNames: tools,
-                dwsResourceIds: csv(dwsResources),
+                dwsResourceIds: parsedDwsResources,
               },
               memory: memoryPolicy,
               access: { triggerRoles, approvalRoles },
@@ -646,6 +652,8 @@ function BindingEditor({
             id={`dws-resources-${binding.bindingId}`}
             value={dwsResources}
             placeholder="例如 doc:节点ID"
+            pattern="(?:doc:[^\\s,]+)(?:\\s*,\\s*doc:[^\\s,]+)*"
+            title="仅支持 doc:<nodeId>，多个资源用逗号分隔"
             onChange={(event) => setDwsResources(event.target.value)}
           />
           <p className="mt-1 text-xs text-muted-foreground">

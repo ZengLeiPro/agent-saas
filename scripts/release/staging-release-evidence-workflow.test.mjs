@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { RELEASE_EVIDENCE_SCHEMA_VERSION } from './release-evidence-schema.mjs';
 
 const removedWorkflowPath = new URL(
   '../../.github/workflows/prepare-release-evidence.yml',
   import.meta.url,
 );
 const stagingWorkflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
+const stagingNginxPaths = [
+  new URL('../../daemon-packaging/nginx/agent-saas-staging.conf.template', import.meta.url),
+  new URL('../../daemon-packaging/nginx/agent-saas-staging.conf.example', import.meta.url),
+];
 const promotionWorkflowPath = new URL(
   '../../.github/workflows/promote-release.yml',
   import.meta.url,
@@ -31,6 +36,32 @@ test('Release Evidence is the first isolated stage of manual Staging RC deployme
   assert.match(workflow, /merge_commit_sha == \$sha/u);
 });
 
+test('Staging fails fast when the deployed Evidence Writer cannot accept the producer schema', async () => {
+  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  const version = workflow.match(/RELEASE_EVIDENCE_SCHEMA_VERSION: '(\d+)'/u);
+  assert.ok(version);
+  assert.equal(Number(version[1]), RELEASE_EVIDENCE_SCHEMA_VERSION);
+  assert.match(workflow, /Verify Evidence Writer schema compatibility/u);
+  assert.match(workflow, /\/capabilities/u);
+  assert.match(workflow, /supportedReleaseEvidenceSchemaVersions/u);
+  assert.match(workflow, /index\(\$required\) != null/u);
+  assert.ok(
+    workflow.indexOf('Verify Evidence Writer schema compatibility') <
+      workflow.indexOf('Checkout immutable dispatch revision for evidence'),
+  );
+});
+
+test('Staging Nginx exposes the authenticated Evidence Writer capability endpoint', async () => {
+  for (const path of stagingNginxPaths) {
+    const nginx = await readFile(path, 'utf8');
+    assert.match(
+      nginx,
+      /location ~ \^\/\(capabilities\|release-evidence\|staging-isolation\|production-observation\)\$/u,
+    );
+    assert.match(nginx, /proxy_set_header Authorization \$http_authorization;/u);
+  }
+});
+
 test('Staging evidence stage safely reuses or creates one immutable same-SHA record', async () => {
   const workflow = await readFile(stagingWorkflowPath, 'utf8');
   assert.match(workflow, /Reuse immutable Release Evidence when present/u);
@@ -53,7 +84,7 @@ test('Staging evidence stage safely reuses or creates one immutable same-SHA rec
   assert.match(workflow, /publish-release-evidence\.mjs/u);
   assert.match(workflow, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.match(workflow, /RELEASE_EVIDENCE_READ_TOKEN/u);
-  assert.doesNotMatch(workflow, /compatibility|N\/N\+1/u);
+  assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
 });
 
 test('Staging and Promotion verify component-scoped selected runtime identities', async () => {

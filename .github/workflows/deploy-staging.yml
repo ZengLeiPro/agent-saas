@@ -47,6 +47,7 @@ jobs:
       RELEASE_RECORD_OSS_REGION: ${{ vars.RELEASE_RECORD_OSS_REGION }}
       ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      RELEASE_EVIDENCE_SCHEMA_VERSION: '2'
       RELEASE_SHA: ${{ github.sha }}
 
     steps:
@@ -65,6 +66,34 @@ jobs:
             https://*/production-observation) ;;
             *) echo 'PRODUCTION_OBSERVATION_URL must be HTTPS and end with /production-observation' >&2; exit 1 ;;
           esac
+
+      - name: Verify Evidence Writer schema compatibility
+        env:
+          PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
+          RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
+        run: |
+          set -euo pipefail
+          capability_url="${PRODUCTION_OBSERVATION_URL%/production-observation}/capabilities"
+          status="$(curl -sS --retry 3 --connect-timeout 10 --max-time 30 \
+            -o "$RUNNER_TEMP/evidence-writer-capabilities.json" -w '%{http_code}' \
+            -H "authorization: Bearer $RELEASE_EVIDENCE_READ_TOKEN" \
+            "$capability_url")"
+          if [ "$status" != 200 ]; then
+            cat "$RUNNER_TEMP/evidence-writer-capabilities.json" >&2
+            echo "Evidence Writer capability check failed with HTTP $status" >&2
+            exit 1
+          fi
+          if ! jq -e --argjson required "$RELEASE_EVIDENCE_SCHEMA_VERSION" '
+            .schemaVersion == 1 and
+            .service == "agent-saas-release-evidence" and
+            (.currentReleaseEvidenceSchemaVersion | type == "number") and
+            (.supportedReleaseEvidenceSchemaVersions | type == "array") and
+            (.supportedReleaseEvidenceSchemaVersions | index($required) != null)
+          ' "$RUNNER_TEMP/evidence-writer-capabilities.json" >/dev/null; then
+            cat "$RUNNER_TEMP/evidence-writer-capabilities.json" >&2
+            echo "Evidence Writer does not support required Release Evidence schema v$RELEASE_EVIDENCE_SCHEMA_VERSION" >&2
+            exit 1
+          fi
 
       - name: Checkout immutable dispatch revision for evidence
         uses: actions/checkout@v5

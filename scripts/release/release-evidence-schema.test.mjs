@@ -2,11 +2,25 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+  createValidLegacyReleaseEvidence,
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
 import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
-import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
+import {
+  RELEASE_EVIDENCE_SCHEMA_VERSION,
+  SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS,
+  validateReleaseEvidenceDocument,
+} from './release-evidence-schema.mjs';
+
+test('keeps a monotonic N and N-1 Release Evidence compatibility matrix', () => {
+  assert.deepEqual(SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS, [1, 2]);
+  assert.equal(RELEASE_EVIDENCE_SCHEMA_VERSION, 2);
+  assert.equal(
+    new Set(SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS).size,
+    SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS.length,
+  );
+});
 
 test('accepts a complete Release Evidence v2 document with kept-component Runtime and OCI identities', () => {
   assert.deepEqual(
@@ -18,15 +32,11 @@ test('accepts a complete Release Evidence v2 document with kept-component Runtim
 });
 
 test('strictly accepts historical v1 evidence without v2 runtime fields', () => {
-  const legacy = structuredClone(createValidReleaseEvidence());
-  legacy.schemaVersion = 1;
-  const runtimeDependencies = legacy.baselineArtifacts.runtimeDependencies;
-  delete legacy.baselineArtifacts.runtimeDependencies;
-  const { evidenceDigest: _previousDigest, ...body } = legacy;
-  legacy.evidenceDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+  const legacy = createValidLegacyReleaseEvidence();
   assert.equal(validateReleaseEvidenceDocument(legacy).schemaVersion, 1);
 
-  legacy.baselineArtifacts.runtimeDependencies = runtimeDependencies;
+  legacy.baselineArtifacts.runtimeDependencies =
+    createValidReleaseEvidence().baselineArtifacts.runtimeDependencies;
   assert.throws(() => validateReleaseEvidenceDocument(legacy), /v1 excludes/u);
 });
 

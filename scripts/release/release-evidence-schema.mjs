@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 
+export const SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS = Object.freeze([1, 2]);
+export const RELEASE_EVIDENCE_SCHEMA_VERSION = SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS.at(-1);
+
+const releaseEvidenceSchemaVersion = z
+  .number()
+  .int()
+  .refine((value) => SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS.includes(value), {
+    message: `Expected one of ${SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS.join(', ')}`,
+  });
+
 const releaseComponentSchema = z.enum(['web', 'api', 'runtimeWorker', 'acs']);
 const fullShaSchema = z
   .string()
@@ -289,7 +299,7 @@ const acsImpactSchema = z
 
 export const releaseEvidenceSchema = z
   .object({
-    schemaVersion: z.union([z.literal(1), z.literal(2)]),
+    schemaVersion: releaseEvidenceSchemaVersion,
     ok: z.literal(true),
     releaseSha: fullShaSchema,
     evidenceDigest: sha256DigestSchema,

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 import {
   configIdentitySummarySchema,
+  RELEASE_EVIDENCE_SCHEMA_VERSION,
   validateReleaseEvidenceDocument,
 } from './release-evidence-schema.mjs';
 
@@ -265,7 +266,7 @@ export async function produceReleaseEvidence(options) {
     sources: [...merge.sources].sort((left, right) => left.number - right.number),
   };
   const body = {
-    schemaVersion: 2,
+    schemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
     ok: true,
     releaseSha,
     productionBaselineStatus: 'known',
@@ -297,7 +298,7 @@ export async function produceReleaseEvidence(options) {
       },
     },
     productionBaseline,
-    // TASK-318：Release Evidence 只透传脱敏摘要，不包含配置值或 secret ref。
+    // TASK-318：Release Evidence 仅透传脱敏摘要，不包含配置值或 secret ref。
     ...(production.configIdentity !== undefined
       ? { configIdentity: production.configIdentity }
       : {}),

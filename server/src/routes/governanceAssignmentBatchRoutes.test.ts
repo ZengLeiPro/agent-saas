@@ -16,7 +16,10 @@ function body(method: string, value: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) };
 }
 
-async function rig(options: { projectionFailureAt?: number } = {}) {
+async function rig(options: {
+  projectionFailureAt?: number;
+  persona?: 'platform_admin' | 'org_admin';
+} = {}) {
   const current = (resourceId: string) => ({
     tenantId: 'tenant-a', resourceType: 'org_knowledge', resourceId, source: 'governance',
     version: 1, assignments: [], createdAt: NOW, createdBy: 'admin-1', updatedAt: NOW, updatedBy: 'admin-1',
@@ -47,7 +50,7 @@ async function rig(options: { projectionFailureAt?: number } = {}) {
     secret: SECRET,
     previewTtlMs: 300_000,
     now: () => new Date(NOW),
-    personaFor: () => 'org_admin',
+    personaFor: () => options.persona ?? 'org_admin',
     tenantFor: () => 'tenant-a',
     validateSubjects: async () => null,
     validateResource: async () => null,
@@ -107,6 +110,30 @@ describe('Assignment batch routes', () => {
     const receipt = await committed.json() as Record<string, unknown>;
     expect(receipt).toMatchObject({ changed: true, requiresNewSession: true });
     expect((receipt.sets as Array<Record<string, unknown>>)[0]).toMatchObject({ version: 2 });
+  });
+
+  it('平台管理员可使用相同签名合同批量管理显式目标组织 Assignment', async () => {
+    const test = await rig({ persona: 'platform_admin' });
+    const change = {
+      reason: 'platform organization assignment update',
+      changes: [{
+        resourceType: 'org_knowledge', resourceId: 'taskboard-projects', expectedVersion: 1,
+        assignments: [{ assigneeType: 'everyone', effect: 'allow' }],
+      }],
+    };
+    const previewResponse = await test.request(
+      '/api/governance/access/assignments/batch/preview?tenantId=tenant-a',
+      body('POST', change),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json() as Record<string, unknown>;
+    const committed = await test.request(
+      '/api/governance/access/assignments/batch?tenantId=tenant-a',
+      body('PUT', { ...change, previewId: preview.previewId,
+        baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }),
+    );
+    expect(committed.status).toBe(200);
+    expect(test.replaceAssignmentSetsAtomically).toHaveBeenCalled();
   });
 
   it('批量规则总数超过 500 时在进入目录与事务前拒绝', async () => {

@@ -107,6 +107,14 @@ export function createContextAdminConsumerStore(
   );
 }
 
+export function createContextAdminTargetOrganizationAccess(runtime: AppRuntime) {
+  if (!runtime.membershipStore) return undefined;
+  return {
+    memberships: runtime.membershipStore,
+    tenantExists: (tenantId: string) => Boolean(runtime.tenantStore?.findByIdStrict(tenantId)),
+  };
+}
+
 export function createContextProductService(
   runtime: AppRuntime,
   config: AppConfig,
@@ -121,7 +129,12 @@ export function createContextProductService(
   if (!pool || !assignments || !registry || !derived || !memberships || !entitlements || !secret) return undefined;
   const tablePrefix = config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined;
   const roleGate = {
-    mayCorrectOrganization: async ({ tenantId, actorId }: { tenantId: string; actorId: string }) => {
+    mayCorrectOrganization: async ({ tenantId, actorId, accessMode }: {
+      tenantId: string;
+      actorId: string;
+      accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
+    }) => {
+      if (accessMode === 'platform_manage') return true;
       const membership = await memberships.getMembership(tenantId, actorId);
       return membership?.status === 'active' && membership.persona === 'org_admin';
     },
@@ -130,13 +143,21 @@ export function createContextProductService(
     store: new PgContextProductStore(pool, tablePrefix),
     scopes: new AssignmentContextRecallScopeResolver(assignments, {
       resourceTypes: ['org_knowledge'],
+      listOrganizationResourceIds: async (tenantId, resourceType) => (
+        await assignments.listResourceSets(tenantId, resourceType)
+      ).filter(set => set.status !== 'disabled').map(set => ({
+        resourceId: set.resourceId,
+        assignmentVersion: set.version,
+      })),
       resolveAccess: async subject => {
         const [membership, policies] = await Promise.all([
-          memberships.getMembership(subject.tenantId, subject.userId),
+          subject.accessMode === 'platform_manage'
+            ? Promise.resolve(null)
+            : memberships.getMembership(subject.tenantId, subject.userId),
           entitlements.getPolicies(subject.tenantId),
         ]);
         return {
-          activeMembership: membership?.status === 'active',
+          activeMembership: subject.accessMode === 'platform_manage' || membership?.status === 'active',
           organizationKnowledgeEnabled: policies.some(policy => (
             policy.policyKey === 'knowledge.org.enabled' && policy.value === true
           )),

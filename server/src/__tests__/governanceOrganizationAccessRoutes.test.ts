@@ -31,10 +31,12 @@ async function rig(input: {
   getAssignmentSet?: ReturnType<typeof vi.fn>;
   replaceAssignments?: ReturnType<typeof vi.fn>;
   listEffectiveResourceIds?: ReturnType<typeof vi.fn>;
-  actorPersona?: 'org_admin' | 'member';
+  actorPersona?: 'platform_admin' | 'org_admin' | 'member';
 } = {}) {
+  const platform = input.actorPersona === 'platform_admin';
   const actor: TenantMembership = {
-    tenantId: 'tenant-a', userId: 'admin-1', persona: input.actorPersona ?? 'org_admin', isOwner: input.actorPersona === 'member' ? false : true,
+    tenantId: 'tenant-a', userId: platform ? 'platform-1' : 'admin-1',
+    persona: input.actorPersona === 'member' ? 'member' : 'org_admin', isOwner: input.actorPersona === 'member' ? false : true,
     status: 'active', source: 'governance', version: 1,
     createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system',
   };
@@ -42,12 +44,16 @@ async function rig(input: {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.user = { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' };
+    req.user = platform
+      ? { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' }
+      : { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' };
     next();
   });
   app.use('/api/governance/access', createGovernanceAccessRouter({
     memberships: {
-      getPlatformAdmin: vi.fn().mockResolvedValue(null),
+      getPlatformAdmin: vi.fn().mockResolvedValue(platform
+        ? { userId: 'platform-1', status: 'active', version: 1 }
+        : null),
       getMembership: vi.fn().mockImplementation(async (tenantId: string, userId: string) =>
         tenantId === actor.tenantId && userId === actor.userId ? actor : null),
       listMemberships: vi.fn().mockResolvedValue([actor]),
@@ -70,6 +76,7 @@ async function rig(input: {
       })),
     } as never,
     membershipPreviewSecret: PREVIEW_SECRET,
+    tenantExists: tenantId => tenantId === 'tenant-a',
     now: () => new Date(NOW),
   }));
   const server: Server = await new Promise(resolve => {
@@ -98,6 +105,34 @@ describe('governance organization access routes', () => {
 
     const crossTenant = await test.request('/api/governance/access/policies/knowledge.org.enabled/preview?tenantId=tenant-b', json('POST', change));
     expect(crossTenant.status).toBe(403);
+  });
+
+  it('平台管理员无需目标 Membership 即可提交组织策略和组织记忆', async () => {
+    const policy = { tenantId: 'tenant-a', policyKey: 'knowledge.org.enabled', value: true, source: 'governance', version: 1, createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
+    const updatePolicy = vi.fn().mockResolvedValue({ ...policy, value: false, version: 2 });
+    const memory = { tenantId: 'tenant-a', resourceType: 'org_memory', resourceId: 'mem-1', resourceName: '组织记忆', status: 'enabled', source: 'governance', version: 1, assignments: [], createdAt: NOW, createdBy: 'system', updatedAt: NOW, updatedBy: 'system' };
+    const replaceAssignments = vi.fn().mockResolvedValue({ ...memory, status: 'disabled', version: 2 });
+    const test = await rig({
+      actorPersona: 'platform_admin', getPolicies: vi.fn().mockResolvedValue([policy]), updatePolicy,
+      getAssignmentSet: vi.fn().mockResolvedValue(memory), replaceAssignments,
+    });
+
+    const policyChange = { expectedVersion: 1, value: false, reason: 'pause organization knowledge' };
+    const policyPreviewResponse = await test.request('/api/governance/access/policies/knowledge.org.enabled/preview?tenantId=tenant-a', json('POST', policyChange));
+    const policyPreview = await policyPreviewResponse.json() as Record<string, unknown>;
+    expect(policyPreviewResponse.status).toBe(200);
+    expect((await test.request('/api/governance/access/policies/knowledge.org.enabled?tenantId=tenant-a', json('PUT', commitBody(policyChange, policyPreview)))).status).toBe(200);
+    expect(updatePolicy).toHaveBeenCalledWith('tenant-a', 'knowledge.org.enabled', false, 1, 'platform-1');
+
+    const memoryChange = { resourceId: 'mem-1', name: '组织记忆', status: 'disabled', assignments: [], expectedVersion: 1, reason: 'pause organization memory' };
+    const memoryPreviewResponse = await test.request('/api/governance/access/organization-resources/memory/preview?tenantId=tenant-a', json('POST', memoryChange));
+    const memoryPreview = await memoryPreviewResponse.json() as Record<string, unknown>;
+    expect(memoryPreviewResponse.status).toBe(200);
+    expect((await test.request('/api/governance/access/organization-resources/memory/mem-1?tenantId=tenant-a', json('PUT', commitBody(memoryChange, memoryPreview)))).status).toBe(200);
+    expect(replaceAssignments).toHaveBeenCalledWith(
+      'tenant-a', 'org_memory', 'mem-1', [], 1, 'platform-1',
+      { resourceName: '组织记忆', status: 'disabled' },
+    );
   });
 
   it('调试模式 Policy 仅兼容读取，不能通过治理接口写入', async () => {

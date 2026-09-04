@@ -73,6 +73,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
   validateDispatcherRuntime?: (tenantId: string, policy: OrgAgentRuntimePolicy) => Promise<string[]>;
   previewSecret: string;
   personaFor(req: Request): Persona | undefined;
+  canManageOrganization?: (req: Request) => boolean;
   resourceTenantFor(req: Request, requested?: string): string | null;
   projectionOutbox?: GovernanceProjectionOutboxStore;
   projectionReconciler?: GovernanceProjectionReconciler;
@@ -80,7 +81,8 @@ export function registerGovernanceAgentResourceRoutes(options: {
 }): void {
   const { router } = options;
   const now = options.now ?? (() => new Date());
-  const canManageOrganization = (req: Request) => options.personaFor(req) === 'org_admin';
+  const canManageOrganization = (req: Request) => options.canManageOrganization?.(req)
+    ?? options.personaFor(req) === 'org_admin';
   const canManageAgent = (req: Request, resource: { kind: string; ownerUserId: string }) => {
     if (resource.kind === 'personal_agent') return resource.ownerUserId === req.user?.sub;
     if (resource.kind === 'agent_template') return options.personaFor(req) === 'platform_admin';
@@ -111,6 +113,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
     version: 1,
     actorUserId: input.req.user!.sub,
     actorTenantId: input.req.user!.tenantId,
+    actorPersona: options.personaFor(input.req),
     tenantId: input.tenantId,
     agentId: input.agentId,
     expectedRevision: input.expectedRevision,
@@ -127,6 +130,7 @@ export function registerGovernanceAgentResourceRoutes(options: {
     operation: 'agent_status',
     actorUserId: input.req.user!.sub,
     actorTenantId: input.req.user!.tenantId,
+    actorPersona: options.personaFor(input.req),
     tenantId: input.tenantId,
     agentId: input.agentId,
     expectedRevision: input.expectedRevision,

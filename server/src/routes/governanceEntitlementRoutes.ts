@@ -128,7 +128,7 @@ export function registerGovernanceEntitlementRoutes(options: {
     const policyActions = policies.map(policy => ({
       ...policy,
       definition: getTenantPolicyDefinition(policy.policyKey),
-      allowedActions: persona === 'org_admin'
+      allowedActions: (persona === 'org_admin' || persona === 'platform_admin')
         && typeof policy.value === 'boolean'
         && isOrganizationEditableTenantPolicyKey(policy.policyKey)
         ? [{ id: 'edit_policy', label: '编辑组织策略', resourceType: 'tenant_policy' }]
@@ -152,7 +152,8 @@ export function registerGovernanceEntitlementRoutes(options: {
     const baselineDigest = governanceDigest(current);
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signature = {
-      version: 1, kind: 'entitlement', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'entitlement', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data),
     };
     return res.json({
@@ -181,7 +182,8 @@ export function registerGovernanceEntitlementRoutes(options: {
       return res.status(409).json({ error: 'Governance preview expired', code: 'GOVERNANCE_PREVIEW_EXPIRED' });
     }
     const expectedPreviewId = `gpv1.${sign(options.secret, {
-      version: 1, kind: 'entitlement', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'entitlement', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     })}`;
     const current = await options.entitlements.getEntitlementSet(tenantId);
@@ -252,7 +254,8 @@ export function registerGovernanceEntitlementRoutes(options: {
     const baselineDigest = governanceDigest({ current, catalog: catalog.items });
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signature = {
-      version: 1, kind: 'scope', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'scope', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       resourceType: req.params.resourceType, baselineDigest, expiresAt,
       changeDigest: governanceDigest(parsed.data),
     };
@@ -289,7 +292,8 @@ export function registerGovernanceEntitlementRoutes(options: {
       return res.status(409).json({ error: 'Governance preview expired', code: 'GOVERNANCE_PREVIEW_EXPIRED' });
     }
     const expectedPreviewId = `gpv1.${sign(options.secret, {
-      version: 1, kind: 'scope', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'scope', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       resourceType: req.params.resourceType, baselineDigest, expiresAt,
       changeDigest: governanceDigest(mutation),
     })}`;

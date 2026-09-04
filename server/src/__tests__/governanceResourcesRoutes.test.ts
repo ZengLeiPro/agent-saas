@@ -373,7 +373,7 @@ describe('typed governance resource routes', () => {
       },
     );
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toMatchObject({ code: 'ORGANIZATION_ADMIN_REQUIRED' });
+    await expect(response.json()).resolves.toMatchObject({ code: 'TARGET_ORGANIZATION_FORBIDDEN' });
     expect(member.skillImport).not.toHaveBeenCalled();
   });
 

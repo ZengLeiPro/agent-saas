@@ -34,7 +34,7 @@ export interface MembershipIdentityPatch {
   expectedVersion: number;
   updatedBy: string;
   authorization: {
-    kind: 'tenant_member' | 'platform_recovery';
+    kind: 'tenant_member' | 'platform_recovery' | 'platform_manage';
     actorTenantId: string;
     reason?: string;
   };

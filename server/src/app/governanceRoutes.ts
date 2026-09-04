@@ -330,6 +330,7 @@ export function registerGovernanceRoutes(
         onTenantLifecycleChanged: applyLifecycleChange,
       } : {}),
       audit: runtime.governanceAuditStore,
+      tenantExists: tenantId => Boolean(runtime.tenantStore?.findByIdStrict(tenantId)),
       contentAccess: runtime.contentAccessGrantStore,
       projectionOutbox: runtime.governanceProjectionOutboxStore,
       projectionReconciler: runtime.governanceProjectionReconciler,

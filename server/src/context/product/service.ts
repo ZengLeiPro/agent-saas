@@ -241,6 +241,9 @@ export class ContextProductService {
   }
 
   async getProfile(subject: ContextProductSubject, entityId: string): Promise<Record<string, unknown>> {
+    if (subject.accessMode === 'platform_manage') {
+      throw new ContextProductError('CONTEXT_PRODUCT_FORBIDDEN');
+    }
     const scope = await this.scope(subject);
     const entity = await this.visibleEntity(subject, scope, entityId);
     if (!entity) throw new ContextProductError('CONTEXT_PRODUCT_NOT_FOUND');
@@ -354,6 +357,9 @@ export class ContextProductService {
     action: 'assert' | 'reject'; scope: 'personal' | 'organization'; expectedRevision: number;
     targetItemId: string; summary?: string; evidenceIds: string[];
   }): Promise<Record<string, unknown>> {
+    if (subject.accessMode === 'platform_manage' && command.scope === 'personal') {
+      throw new ContextProductError('CONTEXT_PRODUCT_FORBIDDEN');
+    }
     const scope = await this.scope(subject);
     if (assigned(scope).length === 0) throw new ContextProductError('CONTEXT_PRODUCT_FORBIDDEN');
     const entity = await this.visibleEntity(subject, scope, entityId);
@@ -369,7 +375,7 @@ export class ContextProductService {
     if (command.action === 'assert' && !command.summary?.trim()) throw new ContextProductError('CONTEXT_PRODUCT_INVALID');
     const evidence = await this.evidenceFromHandles(subject, scope, command.evidenceIds, target.evidence);
     if (command.scope === 'organization' && !await this.options.roleGate.mayCorrectOrganization({
-      tenantId: subject.tenantId, actorId: subject.actorId,
+      tenantId: subject.tenantId, actorId: subject.actorId, accessMode: subject.accessMode,
     })) throw new ContextProductError('CONTEXT_PRODUCT_FORBIDDEN');
     try {
       const review = await this.options.derived.appendReview({
@@ -396,7 +402,9 @@ export class ContextProductService {
     decision: 'confirmed' | 'rejected'; expectedRevision: number;
   }): Promise<Record<string, unknown>> {
     const scope = await this.scope(subject);
-    if (!await this.options.roleGate.mayCorrectOrganization({ tenantId: subject.tenantId, actorId: subject.actorId })) {
+    if (!await this.options.roleGate.mayCorrectOrganization({
+      tenantId: subject.tenantId, actorId: subject.actorId, accessMode: subject.accessMode,
+    })) {
       throw new ContextProductError('CONTEXT_PRODUCT_FORBIDDEN');
     }
     const candidates = await this.options.store.getReviewGroup(subject.tenantId, itemId, CANDIDATE_LIMIT + 1);
@@ -431,6 +439,7 @@ export class ContextProductService {
     if (snapshot.scope.type === 'org' && !await this.options.roleGate.mayCorrectOrganization({
       tenantId: subject.tenantId,
       actorId: subject.actorId,
+      accessMode: subject.accessMode,
     })) return false;
     const current = await this.options.store.getCorrectionAuthorizationSnapshot({
       tenantId: snapshot.tenantId,
@@ -452,6 +461,7 @@ export class ContextProductService {
     if (assigned(scope).length === 0 || !await this.options.roleGate.mayCorrectOrganization({
       tenantId: subject.tenantId,
       actorId: subject.actorId,
+      accessMode: subject.accessMode,
     })) return false;
     const current = await this.options.store.getReviewAuthorizationSnapshot(
       snapshot.tenantId,
@@ -485,7 +495,7 @@ export class ContextProductService {
   private async scope(subject: ContextProductSubject): Promise<ContextRecallResolvedScope> {
     try {
       return await this.options.scopes.resolve(
-        { tenantId: subject.tenantId, userId: subject.actorId },
+        { tenantId: subject.tenantId, userId: subject.actorId, accessMode: subject.accessMode },
         { operation: 'get', recallId: 'context-product' },
       );
     } catch (error) {
@@ -545,7 +555,9 @@ export class ContextProductService {
     const limit = Number(query.limit ?? 25);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ContextProductError('CONTEXT_PRODUCT_INVALID');
     const normalized = { ...query, cursor: undefined, limit };
-    const fingerprint = createHash('sha256').update(JSON.stringify([endpoint, subject.actorId, normalized])).digest('base64url');
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([endpoint, subject.actorId, subject.accessMode ?? null, normalized]))
+      .digest('base64url');
     const offset = typeof query.cursor === 'string'
       ? this.options.authorization.parseCursor(subject, fingerprint, query.cursor) : 0;
     return { limit, offset, fingerprint };
@@ -557,7 +569,8 @@ export class ContextProductService {
     const normalized = { ...query, cursor: undefined, limit };
     const versions = scope.collections.map(item => [item.collectionId, item.assignmentVersion]).sort();
     const fingerprint = createHash('sha256')
-      .update(JSON.stringify(['entities', subject.actorId, normalized, versions])).digest('base64url');
+      .update(JSON.stringify(['entities', subject.actorId, subject.accessMode ?? null, normalized, versions]))
+      .digest('base64url');
     const afterEntityId = typeof query.cursor === 'string'
       ? this.options.authorization.parseEntityCursor(subject, fingerprint, query.cursor) : undefined;
     return { limit, fingerprint, afterEntityId };

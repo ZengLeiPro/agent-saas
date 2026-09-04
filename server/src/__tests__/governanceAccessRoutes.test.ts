@@ -7,6 +7,7 @@ import { MembershipInvariantError, type TenantMembership } from '../data/members
 import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import type { BillingMemberBudgetOverview } from '../data/billing/types.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
+import { commitBody, createAssignmentPreview } from './governanceAccessTestSupport.js';
 
 const PREVIEW_SECRET = 'governance-membership-preview-test-secret-2026';
 const NOW = '2026-08-10T09:00:00.000Z';
@@ -235,20 +236,6 @@ async function createPreview(
   return await response.json() as Record<string, unknown>;
 }
 
-async function createAssignmentPreview(
-  test: Awaited<ReturnType<typeof rig>>,
-  change: Record<string, unknown>,
-  query = '',
-): Promise<Record<string, unknown>> {
-  const response = await test.request(`/api/governance/access/assignments/skill/skill-1/preview${query}`, json('POST', change));
-  expect(response.status).toBe(200);
-  return await response.json() as Record<string, unknown>;
-}
-
-function commitBody(change: Record<string, unknown>, preview: Record<string, unknown>): Record<string, unknown> {
-  return { ...change, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt };
-}
-
 describe('governance access routes', () => {
   it('个人 OAuth Grant 只按当前 tenant/user 查询权威批准记录', async () => {
     const listForSubject = vi.fn().mockResolvedValue([{
@@ -286,7 +273,7 @@ describe('governance access routes', () => {
     expect(response.status).toBe(400); await expect(response.json()).resolves.toMatchObject({ error: '上级未开放调试模式，不能为成员开启' }); expect(validateMemberDebugMode).toHaveBeenCalledWith('tenant-a', true); expect(createMember).not.toHaveBeenCalled();
   });
 
-  it('Owner 与平台恢复动作均由服务端作用域授权生成', async () => {
+  it('Owner 与平台组织管理动作均由服务端作用域授权生成', async () => {
     const target = membership({ userId: 'user-2', persona: 'org_admin' });
     const owner = await rig({
       actor: membership({ userId: 'admin-1', persona: 'org_admin', isOwner: true }),
@@ -302,9 +289,12 @@ describe('governance access routes', () => {
       memberships: [target],
     });
     const platformResponse = await platform.request('/api/governance/access/memberships?tenantId=tenant-a');
-    expect(await platformResponse.json()).toMatchObject({ memberships: [{
-      allowedActions: [{ id: 'recover_owner', requiresReason: true }],
-    }] });
+    const platformBody = await platformResponse.json() as {
+      memberships: Array<{ allowedActions: Array<{ id: string; requiresReason: boolean }> }>;
+    };
+    expect(platformBody.memberships[0]!.allowedActions.map(action => action.id))
+      .toEqual(['recover_owner', 'demote_member', 'disable']);
+    expect(platformBody.memberships[0]!.allowedActions.every(action => action.requiresReason)).toBe(true);
   });
 
   it('成员详情按八类资源（含 DWS 委托）返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
@@ -694,7 +684,7 @@ describe('governance access routes', () => {
     await expect(commit.json()).resolves.toMatchObject({ code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
   });
 
-  it('跨租户被拒；platform admin 仅可在显式客户 tenant scope 带 reason 恢复 Owner', async () => {
+  it('跨租户被拒；platform admin 可在显式客户 tenant scope 带 reason 管理成员', async () => {
     const org = await rig();
     const denied = await org.request(
       '/api/governance/access/memberships/user-2/preview?tenantId=tenant-b',
@@ -716,7 +706,7 @@ describe('governance access routes', () => {
       '/api/governance/access/memberships/user-2/preview?tenantId=tenant-a',
       json('POST', { expectedVersion: 1, status: 'disabled', reason: 'not recovery' }),
     );
-    expect(destructive.status).toBe(403);
+    expect(destructive.status).toBe(200);
 
     const change = { expectedVersion: 1, status: 'active', reason: 'customer owner recovery' };
     const preview = await createPreview(platform, 'user-2', change, '?tenantId=tenant-a');
@@ -749,7 +739,7 @@ describe('governance access routes', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ tenantId: 'tenant-a', resourceType: 'skill', resourceId: 'new-skill', version: 0, assignments: [] });
   });
-  it('Assignment 写入校验同租户成员和目录群组，平台管理员默认禁止代写', async () => {
+  it('Assignment 写入校验同租户成员和目录群组，平台管理员显式选择组织后可代写', async () => {
     const invalidResource = await rig({ resolveAssignmentResource: async () => 'not_found' });
     const resourceResponse = await invalidResource.request(
       '/api/governance/access/assignments/skill/cross-tenant/preview',
@@ -792,9 +782,16 @@ describe('governance access routes', () => {
       user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
       platformAdmin: true,
     });
-    const platformResponse = await platform.request('/api/governance/access/assignments/skill/skill-1?tenantId=tenant-a',
-      json('PUT', { expectedVersion: 1, assignments: [] }));
-    expect(platformResponse.status).toBe(403);
-    expect(await platformResponse.json()).toMatchObject({ code: 'PLATFORM_ASSIGNMENT_WRITE_FORBIDDEN' });
+    const platformChange = { expectedVersion: 1, assignments: [] };
+    const platformPreview = await createAssignmentPreview(platform, platformChange, '?tenantId=tenant-a');
+    const platformResponse = await platform.request(
+      '/api/governance/access/assignments/skill/skill-1?tenantId=tenant-a',
+      json('PUT', commitBody(platformChange, platformPreview)),
+    );
+    expect(platformResponse.status).toBe(200);
+    expect(platform.replaceAssignments).toHaveBeenCalledWith(
+      'tenant-a', 'skill', 'skill-1', [], 1, 'platform-1',
+    );
   });
+
 });

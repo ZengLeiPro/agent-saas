@@ -30,7 +30,7 @@ describePg('runtime drain handoff PostgreSQL contract', () => {
       poolMax: 4,
     });
     await eventStore.init();
-    store = new PgRunStore({ pool, tablePrefix: prefix });
+    store = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await store.init();
     toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await toolInvocationStore.init();

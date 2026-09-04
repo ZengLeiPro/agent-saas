@@ -5,6 +5,7 @@ import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { RUN_STORE_TENANT_SCHEMA_VERSION } from '../runtime/runStoreSchema.js';
+import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 
 const { Pool } = pg;
@@ -41,6 +42,7 @@ describePg('PgRunStore tenant/session identity and durable legacy migration', ()
       capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true,
     } });
     await store.init();
+    await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
     await store.createPending({ runId: 'run-a', tenantId: 'tenant-a', sessionId: 'shared-session', channel: 'web' });
     await store.createPending({ runId: 'run-b', tenantId: 'tenant-b', sessionId: 'shared-session', channel: 'web' });
     await expect(store.getActiveBySession('tenant-a', 'shared-session')).resolves.toMatchObject({ runId: 'run-a', tenantId: 'tenant-a' });

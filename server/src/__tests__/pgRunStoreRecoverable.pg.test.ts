@@ -3,6 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
+import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import {
   cleanupSteeringPgTest,
   describePg,
@@ -27,6 +28,7 @@ describePg('PgRunStore recoverable PostgreSQL contract', () => {
       writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
     });
     await store.init();
+    await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
   }, 30_000);
 
   afterAll(async () => {

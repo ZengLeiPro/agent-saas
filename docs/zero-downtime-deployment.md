@@ -124,24 +124,24 @@ fail-open 继续部署 ECS；`force_ecs=true` 可无条件重发。Server releas
 
 deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与脚本注释一致）：
 
-| 步 | 动作 | 失败时 |
-| --- | --- | --- |
-| 0 | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
-| 1 | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue|green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口 | 直接退出，什么都没动 |
-| 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
-| 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
-| 4 | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停 | 同上 |
-| 5 | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping | 同上 |
-| 6 | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
-| 7 | **warmup 软门禁**：等 ready 载荷 `warmup.state=done`，最长 420s；`failed`/超时降级为警告继续（dispatch 时增量同步兜底，见 §7） | 不失败，仅告警 |
-| 8 | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON | `rollback_idle_and_exit` |
-| 8.5 | 若分类命中 Runtime Worker：解析 worker idle 色、等待上次排水实例退出，只准备 idle worker symlink；切流前不启动、不 claim run | `rollback_idle_and_exit` 还原 worker symlink |
-| 9 | 切流：安装受版本管理的 API 站点配置（`/api/upload` 请求体直通、NAS fallback 临时目录）+ 重写 `/etc/nginx/conf.d/agent-saas-upstream.conf`（新色 primary、旧色 backup）→ `nginx -t` → `systemctl reload nginx` → 经 `https://127.0.0.1`（Host: api.agent.kaiyan.net）验证，最多重试 10 次 | `nginx -t` 失败同时还原站点与 upstream conf；reload 后验证失败把 nginx 翻回旧色再 `rollback_idle_and_exit` |
-| 10 | 更新 `/etc/agent-saas/active-color` 为新色 | — |
-| 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过 | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败 |
-| 11 | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker） | — |
-| 12 | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s） | — |
-| 13 | 收尾：保留 pnpm store 热缓存供下次隔离安装复用，只删除上传包 | — |
+| 步   | 动作                                                                                                                                                                                                                                                                                     | 失败时                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理                                                                                                                                                                                                                      | 上传包自动回收；活动色不动                                                                                                            |
+| 1    | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue                                                                                                                                                                                                                                  | green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口                                 | 直接退出，什么都没动 |
+| 2    | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode                                                                                     | 切流前失败，老色照常服务；上传包自动回收                                                                                              |
+| 3    | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active）                                                      | 同上                                                                                                                                  |
+| 4    | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停                                                                                                                                                                                                   | 同上                                                                                                                                  |
+| 5    | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping                                                                                                                                                                                                    | 同上                                                                                                                                  |
+| 6    | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s                                                                                                                                                                                    | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
+| 7    | **warmup 软门禁**：等 ready 载荷 `warmup.state=done`，最长 420s；`failed`/超时降级为警告继续（dispatch 时增量同步兜底，见 §7）                                                                                                                                                           | 不失败，仅告警                                                                                                                        |
+| 8    | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON                                                                                                                                                                                                                 | `rollback_idle_and_exit`                                                                                                              |
+| 8.5  | 若分类命中 Runtime Worker：解析 worker idle 色、等待上次排水实例退出，只准备 idle worker symlink；切流前不启动、不 claim run                                                                                                                                                             | `rollback_idle_and_exit` 还原 worker symlink                                                                                          |
+| 9    | 切流：安装受版本管理的 API 站点配置（`/api/upload` 请求体直通、NAS fallback 临时目录）+ 重写 `/etc/nginx/conf.d/agent-saas-upstream.conf`（新色 primary、旧色 backup）→ `nginx -t` → `systemctl reload nginx` → 经 `https://127.0.0.1`（Host: api.agent.kaiyan.net）验证，最多重试 10 次 | `nginx -t` 失败同时还原站点与 upstream conf；reload 后验证失败把 nginx 翻回旧色再 `rollback_idle_and_exit`                            |
+| 10   | 更新 `/etc/agent-saas/active-color` 为新色                                                                                                                                                                                                                                               | —                                                                                                                                     |
+| 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过                                                                                                                                                              | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败                                               |
+| 11   | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker）                                                                                                                                                                             | —                                                                                                                                     |
+| 12   | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s）                                                              | —                                                                                                                                     |
+| 13   | 收尾：保留 pnpm store 热缓存供下次隔离安装复用，只删除上传包                                                                                                                                                                                                                             | —                                                                                                                                     |
 
 核心设计：**门禁前移**。步骤 6-8 的所有校验都发生在切流（步骤 9）之前，此时
 公网流量 100% 在老色上；所以「部署失败」对用户是不可见事件，只是这次发版没发出去。
@@ -162,12 +162,12 @@ CI 侧还有两个配套 step（不在远端脚本内）：
 
 路由定义在 `server/src/routes/health.ts`，生产挂载于 `/api` 前缀下：
 
-| 端点 | 谁用 | 返回 | 何时 503 |
-| --- | --- | --- | --- |
-| `/api/healthz` | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining` | draining 时 |
-| `/api/healthz/live` | liveness：systemd/监控判「要不要拉起/告警」 | 200 `ok` | 永不——进程在即 200，不反映可服务状态 |
-| `/api/healthz/ready` | readiness：部署门禁在新色端口上等它 200 才切流 | JSON `{status, draining, warmup}`；`warmup` 含 `state/totalUsers/processedUsers/syncedUsers/...` | draining 时。注意 warmup **不** gate ready（未完成时 dispatch 侧版本化同步兜底正确性），是否等 `warmup.state=done` 由部署脚本自行决定 |
-| `/api/healthz/drain` | 发布脚本判断实例是否排空/可切 release | JSON `{status, draining, activeStreams, activeRuns{pending,running,waitingApproval,waitingUser,waitingHand,blocking,total}, idle}`；`idle = !draining && activeStreams==0 && activeRuns.blocking==0` | draining 时；或 activeRuns 查询失败（此时 `status:"error"`） |
+| 端点                 | 谁用                                               | 返回                                                                                                                                                                                                 | 何时 503                                                                                                                              |
+| -------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/healthz`       | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining`                                                                                                                                                                             | draining 时                                                                                                                           |
+| `/api/healthz/live`  | liveness：systemd/监控判「要不要拉起/告警」        | 200 `ok`                                                                                                                                                                                             | 永不——进程在即 200，不反映可服务状态                                                                                                  |
+| `/api/healthz/ready` | readiness：部署门禁在新色端口上等它 200 才切流     | JSON `{status, draining, warmup}`；`warmup` 含 `state/totalUsers/processedUsers/syncedUsers/...`                                                                                                     | draining 时。注意 warmup **不** gate ready（未完成时 dispatch 侧版本化同步兜底正确性），是否等 `warmup.state=done` 由部署脚本自行决定 |
+| `/api/healthz/drain` | 发布脚本判断实例是否排空/可切 release              | JSON `{status, draining, activeStreams, activeRuns{pending,running,waitingApproval,waitingUser,waitingHand,blocking,total}, idle}`；`idle = !draining && activeStreams==0 && activeRuns.blocking==0` | draining 时；或 activeRuns 查询失败（此时 `status:"error"`）                                                                          |
 
 另有面向人的 `/api/health`：未认证仅回 `{status}`，认证用户附带 uptime、内存、
 activeStreams、dispatch 指标，始终 200，不作机器门禁用。
@@ -200,7 +200,7 @@ kill -USR2 <node 主进程>
   │
   └─ drain deadline（默认 15min，AGENT_SAAS_DRAIN_DEADLINE_MS 可调）:
        到点仍未清空 → 放弃等待，强制走 finishDrain → exit(0)
-       （被打断的 run 由新实例经 lease 过期恢复续跑，见 §10）
+       （只有已完成显式安全交接的 run 会由新实例续跑；意外打断见 §10）
 ```
 
 **退出码约定**：所有 drain 出口都是 `exit(0)`——包括 deadline 强制退出、
@@ -409,10 +409,11 @@ Agent SaaS 进程存活。生产规则 `agent-saas-root-disk-utilization` 只绑
 3. **跨实例 skills sync 竞态**：蓝绿并存期两实例内存态各自为政，可能并发写
    skills-config.json / 并发同步同一用户 workspace；后续任一 dispatch 的版本
    检查会收敛（§7）。
-4. **drain deadline 打断长 run 的 lease 恢复语义**：超过 15min 的 run 被强制
-   退出打断后，其 PG run 记录的 lease 到期，新实例 scheduler 的恢复扫描
-   （`server/src/runtime/runStore.ts` `listRecoverable` 捡起 `lease_expires_at`
-   过期的 running run → `acquireLease` 抢占 → autoWake 续跑）接管执行；
-   WS 客户端自动重连后按 eventId cursor 从 PG 事件流回放，不丢消息。代价是
-   run 有一段「无人执行」的间隙（≈ lease 剩余时长 + 恢复扫描周期），以及
-   续跑从上一个持久化状态继续而非精确断点。
+4. **显式交接与意外 lease expiry 语义不同**：Worker 只在模型轮/工具批次的安全
+   边界执行 owner-fenced handoff；事务会先锁 run、确认没有 running tool invocation，
+   再清空 owner/lease 并写入 `drainHandoffReady`。兼容窗口内交接行使用
+   `liveness_version IS NULL`，确保回滚到 N 版本 Worker 仍可领取；N-1 已写出的
+   `server_drain_handoff` 等精确 stale 标记也可被 N+1 接管。普通 versioned running
+   lease 过期不会自动重放：先进入 stale，宽限后由 reaper 置为 orphaned；若存在
+   已运行工具则标记 `external_tool_outcome_unknown`。因此超过 15min 被强停且尚未
+   到达安全交接点的长 run 仍需显式重试或取消，不能宣称无损续跑。

@@ -5,6 +5,7 @@ import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOp
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
+import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
 
 /** SQL implementation for authoritative Runtime Run state. */
 export class PgRunStoreQueries {
@@ -468,6 +469,7 @@ export class PgRunStoreQueries {
           AND run.liveness_version IS NULL
           AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1)
         )
+        OR ${recoverableRunHandoffSql('run', this.toolInvocationsTable)}
       )
         AND NOT (
           run.status = 'pending'
@@ -643,8 +645,11 @@ export class PgRunStoreQueries {
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
             metadata = CASE
-              WHEN $5::boolean THEN jsonb_set(candidate.metadata, '{subagentCapacityInherited}', 'true'::jsonb, true)
-              ELSE candidate.metadata - 'subagentCapacityInherited'
+              WHEN $5::boolean THEN jsonb_set(
+                candidate.metadata - 'drainHandoffReady',
+                '{subagentCapacityInherited}', 'true'::jsonb, true
+              )
+              ELSE candidate.metadata - 'subagentCapacityInherited' - 'drainHandoffReady'
             END
         WHERE candidate.run_id = $1
           AND (
@@ -654,6 +659,7 @@ export class PgRunStoreQueries {
               AND candidate.liveness_version IS NULL
               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
             )
+            OR ${recoverableRunHandoffSql('candidate', this.toolInvocationsTable)}
           )
           AND NOT (
             candidate.status = 'pending'
@@ -714,6 +720,15 @@ export class PgRunStoreQueries {
     source: RunHeartbeatSource = 'worker',
   ): Promise<RunRecord | null> {
     return renewRunLease(this, runId, workerId, leaseMs, now, source);
+  }
+
+  async releaseLeaseForHandoff(
+    runId: string,
+    workerId: string,
+    reason: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    return releaseRunLeaseForHandoff(this, runId, workerId, reason, metadataPatch);
   }
 
   async markLivenessStale(

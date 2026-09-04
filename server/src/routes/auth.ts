@@ -284,8 +284,8 @@ export interface AuthRouterDeps extends LegacyAuthWriteGateDeps {
   runStore?: Pick<RunStore, "updateApprovalPolicyForActiveByUser">;
   /** M30-01 durable token/session generation authority. */
   authEpochAuthority?: AuthEpochAuthority;
-  /** Disconnects all sockets/active work after a generation is fenced. */
-  onAuthFenced?: (userId: string, reason: 'login' | 'logout' | 'revoke' | 'delete_account') => void | Promise<void>;
+  /** Disconnects sockets after a fence; logout 只带 generation 断开该次登录的连接，其他设备保持在线。 */
+  onAuthFenced?: (userId: string, reason: 'logout' | 'revoke' | 'delete_account', generation?: number) => void | Promise<void>;
 }
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
@@ -679,7 +679,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
 
       const response = buildAuthResponse(user);
-      await deps.onAuthFenced?.(user.id, 'login');
       res.json(response);
     } catch (err) {
       res
@@ -813,7 +812,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
 
       const response = buildAuthResponse(user);
-      await deps.onAuthFenced?.(user.id, 'login');
       res.json(response);
     } catch (err) {
       res
@@ -1193,16 +1191,15 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       res.status(401).json({ error: 'Invalid logout token' });
       return;
     }
-    const current = deps.authEpochAuthority?.current(userId);
-    const duplicate = !!current?.fenced
-      && typeof payload?.authEpoch === 'number'
-      && payload.authEpoch < current.authEpoch;
-    if (deps.authEpochAuthority && !duplicate && !deps.authEpochAuthority.validates(userId, payload)) {
+    // 只撤销本次登录的 generation：同一账号在其他设备/客户端的登录保持有效。
+    const revoked = deps.authEpochAuthority ? deps.authEpochAuthority.revokeGeneration(userId, payload) : null;
+    if (deps.authEpochAuthority && !revoked) {
       res.status(401).json({ error: 'Authentication generation revoked', code: 'AUTH_EPOCH_REVOKED' });
       return;
     }
-    const binding = duplicate ? current : deps.authEpochAuthority?.fence(userId, 'logout');
-    if (!duplicate) await deps.onAuthFenced?.(userId, 'logout');
+    const duplicate = revoked?.duplicate ?? false;
+    const binding = revoked ? { authEpoch: revoked.authEpoch, generation: revoked.generation } : undefined;
+    if (revoked && !duplicate) await deps.onAuthFenced?.(userId, 'logout', revoked.generation);
     apiLogger.info(JSON.stringify({ event: 'auth_lifecycle', operation: 'logout', duplicate, userId, ...binding, at: new Date().toISOString() }));
     res.json({ ok: true, duplicate, ...binding });
   });

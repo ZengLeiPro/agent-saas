@@ -7,6 +7,7 @@ export interface BackgroundTaskLease {
   workerId?: string;
   leaseToken?: string;
   renew(): Promise<void>;
+  handoff?(reason: string, metadataPatch?: Record<string, unknown>): Promise<void>;
   release(finalStatus?: import('../runStore.js').RunStatus, reason?: string): Promise<void>;
 }
 

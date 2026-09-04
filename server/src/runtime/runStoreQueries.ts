@@ -6,6 +6,7 @@ import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 import { getActiveRunBySession, listRecoverableRuns } from './runStoreRecoveryQueries.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
+import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
 
 /** SQL implementation for authoritative Runtime Run state; all steering joins preserve tenant/session identity. */
 export class PgRunStoreQueries {
@@ -460,7 +461,7 @@ export class PgRunStoreQueries {
   }
 
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
-    return listRecoverableRuns(this.pool, this.runsTable, this.steeringInputsTable, now);
+    return listRecoverableRuns(this.pool, this.runsTable, this.steeringInputsTable, this.toolInvocationsTable, now);
   }
 
   async listStaleWaitingApproval(cutoff: Date, limit = 50): Promise<RunRecord[]> {
@@ -617,8 +618,8 @@ export class PgRunStoreQueries {
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
             metadata = (CASE
-              WHEN $5::boolean THEN jsonb_set(candidate.metadata, '{subagentCapacityInherited}', 'true'::jsonb, true)
-              ELSE candidate.metadata - 'subagentCapacityInherited'
+              WHEN $5::boolean THEN jsonb_set(candidate.metadata - 'drainHandoffReady', '{subagentCapacityInherited}', 'true'::jsonb, true)
+              ELSE candidate.metadata - 'subagentCapacityInherited' - 'drainHandoffReady'
             END) || CASE WHEN $6::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runLeaseToken',$6::text) END
         WHERE candidate.run_id = $1
           AND (
@@ -628,6 +629,7 @@ export class PgRunStoreQueries {
               AND (candidate.liveness_version IS NULL OR candidate.metadata->>'backgroundTask' = 'true')
               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
             )
+            OR ${recoverableRunHandoffSql('candidate', this.toolInvocationsTable)}
           )
           AND NOT (
             candidate.status = 'pending'
@@ -696,6 +698,15 @@ export class PgRunStoreQueries {
     leaseToken?: string,
   ): Promise<RunRecord | null> {
     return renewRunLease(this, runId, workerId, leaseMs, now, source, leaseToken);
+  }
+
+  async releaseLeaseForHandoff(
+    runId: string,
+    workerId: string,
+    reason: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    return releaseRunLeaseForHandoff(this, runId, workerId, reason, metadataPatch);
   }
 
   async markLivenessStale(

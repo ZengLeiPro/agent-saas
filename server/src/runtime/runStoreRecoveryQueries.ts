@@ -1,6 +1,7 @@
 import type { RunRecord } from './runStoreTypes.js';
 import type { PgPool } from './runStoreTypes.js';
 import { normalizeRunRecord } from './runStoreRecordHelpers.js';
+import { recoverableRunHandoffSql } from './runLeaseHandoff.js';
 
 export async function getActiveRunBySession(
   pool: PgPool, runsTable: string, steeringInputsTable: string, tenantId: string, sessionId: string,
@@ -32,6 +33,7 @@ export async function listRecoverableRuns(
   pool: PgPool,
   runsTable: string,
   steeringInputsTable: string,
+  toolInvocationsTable: string,
   now = new Date(),
 ): Promise<RunRecord[]> {
   const result = await pool.query<{ row_json: RunRecord }>(`
@@ -44,6 +46,7 @@ export async function listRecoverableRuns(
         AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1)
         AND (run.liveness_version IS NULL OR run.metadata->>'backgroundTask' = 'true')
       )
+      OR ${recoverableRunHandoffSql('run', toolInvocationsTable)}
     )
       AND run.metadata->>'subagent' IS DISTINCT FROM 'true'
       AND NOT (

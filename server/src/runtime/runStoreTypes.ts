@@ -194,15 +194,9 @@ export interface RunLeaseAdmission {
   inheritFromRunId?: string;
 }
 
-export interface RunLeaseIdentity {
-  tenantId: string;
-  sessionId: string;
-}
-
-export interface RunLeaseAuthority {
-  workerId: string;
-  leaseToken: string;
-}
+export interface RunLeaseIdentity { tenantId: string; sessionId: string; }
+export interface RunLeaseAuthority { workerId: string; leaseToken: string; }
+export interface RunLeaseReleaseOptions { leaseToken?: string; handoff?: boolean; metadataPatch?: Record<string, unknown>; }
 
 export interface SandboxCleanupClaimGuard {
   cleanupRunId: string;
@@ -406,7 +400,7 @@ export interface RunStore {
     reason?: string,
     now?: Date,
   ): Promise<RunRecord | null>;
-  releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, leaseToken?: string): Promise<RunRecord | null>;
+  releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, options?: RunLeaseReleaseOptions): Promise<RunRecord | null>;
   /**
    * RFC v1 P0.4：增量更新 Responses API session state。
    * 用 COALESCE 让 null 显式清空，undefined 保留原值；delta 累加到 cumulative_input_tokens。

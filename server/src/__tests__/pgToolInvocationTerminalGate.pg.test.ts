@@ -248,7 +248,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
               AND wait_event_type = 'Lock'
               AND query LIKE $1
           ) AS waiting
-        `, [`%SELECT status FROM ${prefix}_runs%FOR SHARE%`]);
+        `, [`%SELECT status, worker_id, metadata FROM ${prefix}_runs%FOR SHARE%`]);
         waitingOnRunLock = waiting.rows[0]?.waiting ?? false;
         if (!waitingOnRunLock) await new Promise((resolve) => setTimeout(resolve, 5));
       }

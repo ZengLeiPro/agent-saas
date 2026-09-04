@@ -258,7 +258,6 @@ export function createModelAdapterForProtocol(
     baseUrl: connection.baseUrl ?? DEFAULT_BASE_URL,
   }, modelProviderOptions ?? {});
 }
-
 function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean {
   return options?.responsesTransport !== 'codex_subscription';
 }
@@ -268,7 +267,6 @@ function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean
  * 缝进来。
  */
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
-
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
 }
@@ -280,7 +278,6 @@ export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: str
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
   return rel.split(sep).join('/');
 }
-
 function deriveRuntimeWorkspaceId(params: {
   existingSession?: RuntimeSessionRecord | null;
   fallbackSessionId: string;
@@ -299,13 +296,11 @@ function getTenantRemoteHandResolver(
     logger: config.logger,
   });
 }
-
 export function resolveTenantRemoteHandsSource(
   source: TenantRemoteHandsSource | undefined,
 ): TenantRemoteHandDispatchConfig[] | undefined {
   return typeof source === 'function' ? source() : source;
 }
-
 export class RunStateTrackingEventStore implements EventStore {
   constructor(
     private readonly inner: EventStore,
@@ -333,7 +328,6 @@ export class RunStateTrackingEventStore implements EventStore {
     await this.afterAppend(stored);
     return stored;
   }
-
   async appendBatch(
     events: Parameters<NonNullable<EventStore['appendBatch']>>[0],
     ctx: Parameters<NonNullable<EventStore['appendBatch']>>[1],
@@ -370,7 +364,6 @@ export class RunStateTrackingEventStore implements EventStore {
     });
   }
 }
-
 /**
  * 子 agent 工具的装配依赖（2026-07-06）：executionTransportRegistry 与
  * tenantHandResolver 是各 dispatch 工厂的闭包级对象（非 config 字段），
@@ -411,7 +404,6 @@ export async function collectRuntimeTooling(
       preferredSkillIds,
     )));
   }
-
   // 2. BuiltinTools（TodoWrite/AskUserQuestion；workspace 文件工具由 WorkspaceToolProvider 提供）
   // createBuiltinTools 内部对 undefined 已经走默认全开；这里不再做 if/else 分支区分。
   const builtin = createBuiltinTools(config.builtinTools);
@@ -3054,15 +3046,16 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     ? current.metadata.drainHandoffAttempts
     : 0;
   const handoffAttempts = isSteeringRecovery ? previousAttempts + 1 : previousAttempts;
-  const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, {
+  const handoffMetadata = {
     drainHandoffAt: handedOffAt,
     drainHandoffWorkerId: input.lease.workerId,
     ...(isSteeringRecovery ? { drainHandoffAttempts: handoffAttempts } : {}),
-  });
-  if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
-  await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId,
-    'running', current.status, reason, { tenantId: eventTenantId });
+  };
   if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
+    const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, handoffMetadata);
+    if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
+    await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId,
+      'running', current.status, reason, { tenantId: eventTenantId });
     await finalizeTerminalRun({
       runStore: input.config.runStore, eventStore: input.eventStore, runId: input.run.runId,
       status: 'failed', reason: STEERING_RECOVERY_FAILURE_MESSAGE,
@@ -3079,8 +3072,9 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     );
     return true;
   }
+  if (!input.lease.handoff) throw new Error(`run lease handoff is unavailable: ${input.run.runId}`);
   await input.sessionCatalog.markStatus(input.run.sessionId, 'running');
-  await input.lease.release(undefined, reason);
+  await input.lease.handoff(reason, handoffMetadata);
   input.config.logger?.info(
     `Runtime drain handoff released run=${input.run.runId} session=${input.run.sessionId} worker=${input.lease.workerId}`,
   );

@@ -19,7 +19,7 @@ const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseAuthority, RunLeaseIdentity, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 export class PgRunStore implements RunStore {
   readonly pool: PgPool; readonly runsTable: string;
@@ -1304,11 +1304,11 @@ export class PgRunStore implements RunStore {
       encodePgEventNotifyPayload(events),
     ]).catch(() => undefined);
   }
-  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, leaseToken?: string): Promise<RunRecord | null> {
-    return releaseRunLease({
+  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, options: RunLeaseReleaseOptions = {}): Promise<RunRecord | null> {
+    return options.handoff ? this.queries.releaseLeaseForHandoff(runId, workerId, reason ?? 'worker_handoff', options.metadataPatch) : releaseRunLease({
       pool: this.pool,
       runsTable: this.runsTable,
       normalizeRunRecord,
-    }, runId, workerId, finalStatus, reason, leaseToken);
+    }, runId, workerId, finalStatus, reason, options.leaseToken);
   }
 }

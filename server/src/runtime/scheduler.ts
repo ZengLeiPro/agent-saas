@@ -28,7 +28,15 @@ export interface RunLease {
   leaseToken: string;
   expiresAt: string;
   renew(source?: RunHeartbeatSource): Promise<void>;
+  handoff(reason: string, metadataPatch?: Record<string, unknown>): Promise<void>;
   release(finalStatus?: RunStatus, reason?: string): Promise<void>;
+}
+
+class RunLeaseHandoffRefusedError extends Error {
+  constructor(runId: string, cause?: unknown) {
+    super(`run lease handoff refused: ${runId}`, { cause });
+    this.name = 'RunLeaseHandoffRefusedError';
+  }
 }
 
 export interface RuntimeSchedulerOptions {
@@ -688,10 +696,22 @@ export class RuntimeScheduler {
       this.deferredUntilByRun.delete(acquired.runId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof RunLeaseHandoffRefusedError) {
+        this.deferRun(acquired.runId, Math.max(30_000, this.pollIntervalMs * 5));
+        this.options.logger?.warn(`Runtime run handoff refused for ${acquired.runId}; left non-terminal for reconciliation`);
+        return;
+      }
       if (message.includes('已被另一个 brain 持有')) {
         // 蓝绿交接期间旧实例可能仍在收尾同一会话。此时只释放 run lease，
         // 保持 run 可恢复，并在本实例本地退避；不能把正常交接写成永久失败。
-        await lease.release(undefined, 'session_busy');
+        try {
+          await lease.handoff('session_busy');
+        } catch (handoffError) {
+          if (!(handoffError instanceof RunLeaseHandoffRefusedError)) throw handoffError;
+          this.deferRun(acquired.runId, Math.max(30_000, this.pollIntervalMs * 5));
+          this.options.logger?.warn(`Busy-session handoff refused for ${acquired.runId}; left non-terminal for reconciliation`);
+          return;
+        }
         this.deferRun(acquired.runId);
         this.options.logger?.info(`Deferred recoverable run ${acquired.runId}: session became busy`);
         return;
@@ -762,8 +782,32 @@ export class RuntimeScheduler {
         });
         return renewInFlight;
       },
+      handoff: async (reason: string, metadataPatch: Record<string, unknown> = {}) => {
+        let handedOff: RunRecord | null | undefined;
+        try {
+          handedOff = await this.options.runStore.releaseLease?.(
+            record.runId,
+            this.workerId,
+            undefined,
+            reason,
+            { handoff: true, metadataPatch },
+          );
+        } catch (error) {
+          throw new RunLeaseHandoffRefusedError(record.runId, error);
+        }
+        if (handedOff) return;
+        await this.options.runStore.releaseLease?.(
+          record.runId,
+          this.workerId,
+          undefined,
+          'external_tool_outcome_unknown',
+        ).catch((error) => {
+          this.options.logger?.warn(`Run lease fallback release failed for ${record.runId}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        throw new RunLeaseHandoffRefusedError(record.runId);
+      },
       release: async (finalStatus?: RunStatus, reason?: string) => {
-        await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason, leaseToken);
+        await this.options.runStore.releaseLease?.(record.runId, this.workerId, finalStatus, reason, { leaseToken });
       },
     };
   }

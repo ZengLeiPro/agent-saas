@@ -396,7 +396,7 @@ describe('RuntimeScheduler background task recovery', () => {
       wake: async (_record, lease) => {
         wakeEntered.resolve();
         await handedOff.promise;
-        await lease.release(undefined, 'background_command_monitor_handoff');
+        await lease.handoff('background_command_monitor_handoff');
       },
       handoffBackgroundCommand,
     });
@@ -410,6 +410,7 @@ describe('RuntimeScheduler background task recovery', () => {
       status: 'running',
       workerId: undefined,
       leaseExpiresAt: undefined,
+      liveness: { state: 'unknown' },
     });
   });
 

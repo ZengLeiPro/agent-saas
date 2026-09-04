@@ -1,4 +1,4 @@
-import type { RunLeaseAuthority, RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
+import type { RunLeaseAuthority, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, UpsertRunInput } from '../runtime/runStore.js';
 import {
   SCHEDULER_STATE_METADATA_KEY,
   SCHEDULER_STATE_READY,
@@ -206,13 +206,17 @@ export class MemoryRunStore implements RunStore {
     const stagedPending = record.status === 'pending'
       && record.metadata?.[SCHEDULER_STATE_METADATA_KEY] === SCHEDULER_STATE_STAGED;
     if (!acquirable || stagedPending) return null;
+    const expiresAt = new Date(now.getTime() + leaseMs).toISOString();
+    const { drainHandoffReady: _drainHandoffReady, ...metadata } = record.metadata;
     const updated: RunRecord = {
       ...record,
       status: 'running',
       workerId,
-      leaseExpiresAt: new Date(now.getTime() + leaseMs).toISOString(),
+      leaseExpiresAt: expiresAt,
       updatedAt: now.toISOString(),
-      metadata: { ...record.metadata, ...(leaseToken ? { runLeaseToken: leaseToken } : {}) },
+      metadata: { ...metadata, ...(leaseToken ? { runLeaseToken: leaseToken } : {}) },
+      liveness: { state: 'busy', ownerId: workerId, leaseExpiresAt: expiresAt,
+        recoveryActions: ['cancel'], detectedAt: now.toISOString(), version: 1 },
     };
     this.records.set(runId, updated);
     return updated;
@@ -232,16 +236,23 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
-  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, leaseToken?: string): Promise<RunRecord | null> {
+  async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, options: RunLeaseReleaseOptions = {}): Promise<RunRecord | null> {
     const record = this.records.get(runId);
-    if (!record || record.workerId !== workerId || (leaseToken && record.metadata.runLeaseToken !== leaseToken)) return null;
+    if (!record || record.workerId !== workerId || (options.leaseToken && record.metadata.runLeaseToken !== options.leaseToken)) return null;
+    const now = new Date().toISOString();
     const updated: RunRecord = {
       ...record,
       status: finalStatus ?? record.status,
       statusReason: reason,
       workerId: undefined,
       leaseExpiresAt: undefined,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      ...(options.handoff ? {
+        metadata: { ...record.metadata, ...options.metadataPatch, drainHandoffReady: true },
+        liveness: {
+          state: 'unknown', recoveryActions: [], version: 0,
+        },
+      } : {}),
     };
     this.records.set(runId, updated);
     return updated;

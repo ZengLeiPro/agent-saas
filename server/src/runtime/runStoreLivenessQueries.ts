@@ -1,6 +1,7 @@
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { normalizeRunRecord } from './runStoreRecordHelpers.js';
 import type { PgPool, RunRecord } from './runStoreTypes.js';
+import { recoverableRunHandoffSql } from './runLeaseHandoff.js';
 
 export interface RunStoreLivenessQueryContext {
   pool: PgPool;
@@ -76,12 +77,12 @@ export async function reapExpiredRunLiveness(
     const orphaned = await client.query<{ row_json: RunRecord }>(`
       WITH candidates AS MATERIALIZED (
         SELECT run_id
-        FROM ${context.runsTable}
-        WHERE status = 'running'
-          AND metadata->>'backgroundTask' IS DISTINCT FROM 'true'
-          AND liveness_version IS NOT NULL
-          AND liveness_state = 'stale'
-          AND liveness_detected_at <= $1::timestamptz
+        FROM ${context.runsTable} run
+        WHERE run.status = 'running'
+          AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
+          AND run.liveness_version IS NOT NULL AND run.liveness_state = 'stale'
+          AND run.liveness_detected_at <= $1::timestamptz
+          AND NOT ${recoverableRunHandoffSql('run', context.toolInvocationsTable)}
         ORDER BY liveness_detected_at ASC, run_id ASC
         LIMIT $2
         FOR UPDATE SKIP LOCKED
@@ -122,6 +123,7 @@ export async function reapExpiredRunLiveness(
         AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
         AND run.liveness_state = 'stale'
         AND run.liveness_detected_at <= $1::timestamptz
+        AND NOT ${recoverableRunHandoffSql('run', context.toolInvocationsTable)}
       RETURNING row_to_json(run.*) AS row_json
     `, [staleBefore, boundedLimit]);
     const remaining = Math.max(0, boundedLimit - orphaned.rows.length);

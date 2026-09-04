@@ -120,6 +120,7 @@ const taskOne = task("task-1", "TASK-1", "实现任务看板", "backlog", "urgen
 const taskTwo = task("task-2", "TASK-2", "联调接口", "todo", "low");
 
 describe("TaskBoardView", () => {
+  // 选择恢复的存储契约由 boardOrder.test.ts 覆盖。
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -208,20 +209,6 @@ describe("TaskBoardView", () => {
     expect(screen.getAllByRole("button", { name: /TASK-1/ }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /TASK-2/ })).toBeNull();
   }, 15_000);
-
-  it("重新进入任务看板时恢复上次显示的看板", async () => {
-    const user = userEvent.setup();
-    const view = render(<TaskBoardView />);
-
-    const trigger = await screen.findByRole("combobox", { name: "选择看板" });
-    await user.click(trigger);
-    await user.click(screen.getByRole("option", { name: "市场事项（个人）" }));
-    expect(window.localStorage.getItem("taskboard:selected-board")).toBe("board-2");
-
-    view.unmount();
-    render(<TaskBoardView />);
-    expect((await screen.findByRole("combobox", { name: "选择看板" })).textContent).toContain("市场事项");
-  });
 
   it("可以将看板下拉选项向上拖动，并将顺序保存在浏览器本地", async () => {
     const user = userEvent.setup();

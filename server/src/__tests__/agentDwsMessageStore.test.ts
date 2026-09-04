@@ -211,6 +211,18 @@ describe('PgAgentDwsMessageStore', () => {
     expect(query.mock.calls[0]?.[1]).toEqual(['tenant-1', 'account-1', 100]);
   });
 
+  it('审批定位读取账号全部活跃 inbox，不受诊断页 100 条窗口限制', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'retry_wait' })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.listActiveForAccount('tenant-1', 'account-1')).resolves.toHaveLength(1);
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("state IN ('pending','processing','retry_wait','reply_pending')");
+    expect(sql).not.toContain('LIMIT');
+    expect(query.mock.calls[0]?.[1]).toEqual(['tenant-1', 'account-1']);
+  });
+
   it('binding 先与 legacy writer 汇合，再按 requester 隔离后续成员', async () => {
     let requesterBindingCount = 0;
     const query = vi.fn(async (sql: string, values?: readonly unknown[]) => {

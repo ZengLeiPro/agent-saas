@@ -20,7 +20,7 @@ import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { PgSessionProjectionStore, RuntimeSessionProjectionRecord } from '../runtime/sessionProjectionStore.js';
 import type { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
-import { parseWorkspaceId } from '../runtime/workspaceIdentity.js';
+import { parseWorkspacePrincipal } from '../runtime/workspaceIdentity.js';
 import {
   ACTIVE_RUN_STATUSES,
   buildAttentionQueue,
@@ -667,17 +667,17 @@ async function maybePushWorkspaceMatches(
   tenantId?: string,
 ): Promise<void> {
   if (!q.startsWith('ws_')) return;
-  const parsed = parseWorkspaceId(q);
+  const parsed = parseWorkspacePrincipal(q);
   if (!parsed || (tenantId && parsed.tenantId !== tenantId)) return;
   const tenant = options.tenantStore?.findById(parsed.tenantId);
   if (tenant) matches.push(tenantMatch(tenant));
-  const user = options.userStore?.findById(parsed.userId);
+  const user = parsed.kind === 'user' ? options.userStore?.findById(parsed.userId) : undefined;
   if (user && user.tenantId === parsed.tenantId) matches.push(userMatch(user));
   matches.push({
     kind: 'workspace',
     id: q,
     title: q,
-    subtitle: `${parsed.tenantId} · ${parsed.userId}`,
+    subtitle: `${parsed.tenantId} · ${parsed.kind === 'user' ? parsed.userId : `Agent ${parsed.principalId}`}`,
     href: `/platform-admin/sandboxes?workspaceId=${encodeURIComponent(q)}`,
   });
   const sandboxes = await listSandboxes(options);

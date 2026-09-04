@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createRuntimeEventRetentionAdmissionGuard,
   includeRuntimeEventRetentionReadiness,
+  isActiveRuntimeWorkerOrgAgentV2Ready,
   projectRuntimeWorkerReadyFile,
+  removeRuntimeWorkerReadyFiles,
   readActiveRuntimeWorkerAdmissionSnapshot,
   resolveRuntimeAdmissionSnapshotReader,
 } from '../runtime/runtimeWorkerReadiness.js';
@@ -171,6 +173,40 @@ describe('Runtime Worker split-role readiness', () => {
       admitting: true,
       sampledAt: '1970-01-01T00:00:01.000Z',
     });
+  });
+
+  it('gates organization group activation on the active worker protocol sidecar', () => {
+    const paths = fixture();
+    const readyFile = paths.readyFileForColor('blue');
+    writeFileSync(paths.activeColorFile, 'blue\n');
+    writeFileSync(readyFile, '1234\n');
+    const options = { ...paths, isProcessAlive: (pid: number) => pid === 1234 };
+    expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(false);
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
+    expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(true);
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
+    expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(false);
+  });
+
+  it('rejects a stale protocol sidecar after a legacy worker rewrites the readyfile', () => {
+    const paths = fixture();
+    const readyFile = paths.readyFileForColor('blue');
+    writeFileSync(paths.activeColorFile, 'blue\n');
+    const options = { ...paths, isProcessAlive: (pid: number) => pid === 1234 || pid === 5678 };
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
+    expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(true);
+
+    writeFileSync(readyFile, '5678\n');
+    expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(false);
+  });
+
+  it('removes both readiness files during normal worker shutdown', () => {
+    const paths = fixture();
+    const readyFile = paths.readyFileForColor('blue');
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
+    removeRuntimeWorkerReadyFiles(readyFile);
+    expect(existsSync(readyFile)).toBe(false);
+    expect(existsSync(`${readyFile}.org-group-agent-background-v2`)).toBe(false);
   });
 
   it('reads an explicitly configured active worker readyfile without production blue-green state', () => {

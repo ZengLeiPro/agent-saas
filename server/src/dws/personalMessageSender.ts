@@ -39,7 +39,7 @@ export interface DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
-  ): Promise<void>;
+  ): Promise<Record<string, unknown> | undefined>;
 }
 
 /**
@@ -55,7 +55,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
-  ): Promise<void> {
+  ): Promise<Record<string, unknown> | undefined> {
     // Build and validate before resolving credentials or touching the transport.
     const command = buildDwsPersonalMessageCommand(account, event, text, idempotencyKey);
     const principal = principalFor(account);
@@ -102,7 +102,48 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     this.options.logger?.info?.(
       `Agent DWS message sent account=${account.accountId} event=${event.eventId}`,
     );
+    return extractDwsMessageReceipt(response.content);
   }
+}
+
+export function extractDwsMessageReceipt(content: string): Record<string, unknown> {
+  const receipt: Record<string, unknown> = {
+    status: 'accepted',
+    acceptedAt: new Date().toISOString(),
+  };
+  const stdout = content.includes('[stdout]\n')
+    ? content.split('[stdout]\n', 2)[1]?.split('\n[stderr]\n', 1)[0]?.trim()
+    : content.trim();
+  if (!stdout) return receipt;
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    const candidates = providerReceiptObjects(parsed);
+    for (const candidate of candidates) {
+      const messageId = firstText(candidate, ['messageId', 'msgId', 'message_id']);
+      const processQueryKey = firstText(candidate, ['processQueryKey', 'process_query_key']);
+      if (messageId && !receipt.messageId) receipt.messageId = messageId;
+      if (processQueryKey && !receipt.processQueryKey) receipt.processQueryKey = processQueryKey;
+    }
+  } catch {
+    // Provider receipt is optional; accepted without an outbound message reference remains valid.
+  }
+  return receipt;
+}
+
+function providerReceiptObjects(value: unknown): Record<string, unknown>[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const root = value as Record<string, unknown>;
+  return [root, root.result, root.data, root.response]
+    .filter((candidate): candidate is Record<string, unknown> =>
+      Boolean(candidate) && typeof candidate === 'object' && !Array.isArray(candidate));
+}
+
+function firstText(value: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim().slice(0, 512);
+  }
+  return undefined;
 }
 
 /** Pure command builder: validates all required fields and quotes every dynamic argument. */

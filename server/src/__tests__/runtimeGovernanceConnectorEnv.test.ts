@@ -10,6 +10,7 @@ import {
 import type { FeishuTokenBroker } from '../feishu/tokenBroker.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 import type { AppConfig } from '../types/index.js';
+import { resolveRunScopedConnectorIdentity } from '../app/orgAgentServiceConnectorIdentity.js';
 
 const roots: string[] = [];
 
@@ -30,6 +31,41 @@ afterEach(() => {
 });
 
 describe('runtime governance connector env', () => {
+  it('accepts only the exact active DWS account bound to the live same-tenant Agent', async () => {
+    const userStore = { findByUsername: vi.fn().mockReturnValue(undefined) } as never;
+    const orgAgentStore = { get: vi.fn((id: string) => id === 'agent-a'
+      ? { id, tenantId: 'tenant-a', enabled: true } : undefined) } as never;
+    const getForTenant = vi.fn(async (tenantId: string, accountId: string) =>
+      tenantId === 'tenant-a' && accountId === 'account-a'
+        ? { accountId, tenantId, agentId: 'agent-a', status: 'active',
+            corpId: 'corp-a', dingtalkUserId: 'agent-user', profileId: 'corp-a:agent-user' }
+        : undefined);
+    const accountStore = { getForTenant } as never;
+    const service = { userId: 'adws-account-a', username: 'agent-dws:agent-a', tenantId: 'tenant-a' };
+    await expect(resolveRunScopedConnectorIdentity(service, userStore, orgAgentStore, accountStore))
+      .resolves.toEqual(service);
+    await expect(resolveRunScopedConnectorIdentity(
+      { ...service, username: 'agent-dws:agent-unknown' }, userStore, orgAgentStore, accountStore,
+    )).resolves.toBeUndefined();
+    await expect(resolveRunScopedConnectorIdentity(
+      { ...service, userId: 'adws-account-other' }, userStore, orgAgentStore, accountStore,
+    )).resolves.toBeUndefined();
+    await expect(resolveRunScopedConnectorIdentity(
+      { ...service, userId: 'user-a' }, userStore, orgAgentStore, accountStore,
+    )).resolves.toBeUndefined();
+    await expect(resolveRunScopedConnectorIdentity(
+      { ...service, tenantId: 'tenant-b' }, userStore, orgAgentStore, accountStore,
+    )).resolves.toBeUndefined();
+    getForTenant.mockResolvedValueOnce({
+      accountId: 'account-a', tenantId: 'tenant-a', agentId: 'agent-a', status: 'active',
+      corpId: 'corp-a', dingtalkUserId: 'agent-user', profileId: 'stale:profile',
+    });
+    await expect(resolveRunScopedConnectorIdentity(service, userStore, orgAgentStore, accountStore))
+      .resolves.toBeUndefined();
+    await expect(resolveRunScopedConnectorIdentity(service, undefined, orgAgentStore, accountStore))
+      .resolves.toBeUndefined();
+  });
+
   it('limits brokered MCP warmup to enabled MCP servers and excludes native Aliyun', () => {
     const getEffectiveServers = vi.fn(() => [
       { id: 'mcp-salesforce' },

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "TASK-318 增加 Runtime 私有 ConfigIdentity 快照；TASK-331 增加移动端 V1 配置；TASK-341 增加 Sandbox lifecycle 策略配置；同步裁剪 web build-time 的 DEV",
+  "reason": "TASK-318 ConfigIdentity 私有快照；移动端 V1 与 Sandbox lifecycle；组织群 Agent v2 Worker 标记及 ACS 共享只读挂载",
   "updatedAt": "2026-09-03",
   "domains": {
     "server": {
-      "budget": 63,
+      "budget": 64,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -21,14 +21,15 @@
         "AGENT_SAAS_PROCESS_ROLE",
         "AGENT_SAAS_READYFILE",
         "AGENT_SAAS_RELEASE_ID",
+        "AGENT_SAAS_RELEASE_SHA",
         "AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS",
         "AGENT_SMS_ACCESS_KEY_SECRET",
         "AGENT_SMS_DEV_CODE",
         "AGENT_TRANSCRIPTS_ROOT",
         "AZEROTH_API_URL",
         "AZEROTH_PROXY_BASE_URL",
-        "AZEROTH_TOKENS_FILE",
         "AZEROTH_TOKEN_METADATA_VERIFY",
+        "AZEROTH_TOKENS_FILE",
         "CONFIG_JSON_PATH",
         "CONNECTOR_OAUTH_CALLBACK_URL",
         "FEISHU_CONNECTOR_APP_ID",
@@ -72,7 +73,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 42,
+      "budget": 43,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -111,6 +112,7 @@
         "ACS_WORKSPACE_MOUNT_PATH",
         "ACS_WORKSPACE_PATH",
         "ACS_WORKSPACE_PVC_NAME",
+        "AGENT_SHARED_READ_ONLY_PATH",
         "PATH",
         "PIP_CACHE_DIR",
         "PIP_DISABLE_PIP_VERSION_CHECK",

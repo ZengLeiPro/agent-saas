@@ -444,10 +444,14 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   );
   const restoreOldNginx = apiCommit.indexOf('cp -a "$old_nginx_backup" "$upstream"');
   const commitOldApiMarker = apiCommit.indexOf('commit_api_active_color "$active_color"');
+  const validateOldRouting = apiCommit.indexOf(
+    'validate_api_routing_boundary "$active_color" "$old_release_id"',
+  );
   assert.ok(apiPrecommitCheck > -1);
-  assert.ok(stopCandidateApi > apiPrecommitCheck);
-  assert.ok(restoreOldNginx > stopCandidateApi);
-  assert.ok(commitOldApiMarker > restoreOldNginx);
+  assert.ok(restoreOldNginx > apiPrecommitCheck);
+  assert.ok(validateOldRouting > restoreOldNginx);
+  assert.ok(stopCandidateApi > validateOldRouting);
+  assert.ok(commitOldApiMarker > stopCandidateApi);
   assert.match(
     apiCommit,
     /\[ "\$disable_status" -ne 0 \] \|\| \[ "\$candidate_stopped_ref" != true \]/u,

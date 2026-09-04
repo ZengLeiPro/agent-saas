@@ -6,6 +6,7 @@ import {
   DWS_PERSONAL_MESSAGE_MAX_CHARACTERS,
   DWS_PERSONAL_MESSAGE_TRUNCATION_MARKER,
   DwsPersonalMessageSender,
+  extractDwsMessageReceipt,
   truncateDwsPersonalMessageText,
 } from '../dws/personalMessageSender.js';
 import type { DwsPersonalEvent } from '../dws/personalEventGateway.js';
@@ -131,6 +132,16 @@ describe('DwsPersonalMessageSender command builder', () => {
 });
 
 describe('DwsPersonalMessageSender transport', () => {
+  it('从 Shell stdout 固化 outbound message reference 供引用续话关联', () => {
+    expect(extractDwsMessageReceipt(
+      'Exit code: 0\n\n[stdout]\n{"result":{"message_id":"outbound-1","processQueryKey":"query-1"}}',
+    )).toMatchObject({
+      status: 'accepted',
+      messageId: 'outbound-1',
+      processQueryKey: 'query-1',
+    });
+  });
+
   it('用 Agent principal 解析远端，并在 Agent 独立交互式 workspace 调用 Shell', async () => {
     const invoke = successfulInvoke();
     const resolveServerRemote = vi.fn(async () => ({

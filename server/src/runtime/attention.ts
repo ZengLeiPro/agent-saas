@@ -1,7 +1,7 @@
 import type { AppConfig } from '../app/config.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { SecretVault } from '../security/secretVault.js';
-import { parseWorkspaceId } from './workspaceIdentity.js';
+import { parseWorkspacePrincipal } from './workspaceIdentity.js';
 import type { PgEventStore } from './pgEventStore.js';
 import type { PgRunStore, RunStatus } from './runStore.js';
 import type { PgSystemMetricsStore } from './systemMetricsStore.js';
@@ -35,7 +35,9 @@ export interface SandboxSummary {
   ttlRemainingMs?: number;
   effectiveTtlMs?: number;
   brokenReason?: string;
-  owner?: { kind: 'user'; tenantId: string; userId: string } | { kind: 'system'; tenantId: null; userId: null };
+  owner?: { kind: 'user'; tenantId: string; userId: string }
+    | { kind: 'org_agent'; tenantId: string; agentId: string }
+    | { kind: 'system'; tenantId: null; userId: null };
   raw: Record<string, unknown>;
 }
 
@@ -262,7 +264,7 @@ export async function fetchSandboxSummaries(options: {
     .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
     .map((item) => {
       const workspaceId = typeof item.workspaceId === 'string' ? item.workspaceId : undefined;
-      const owner = parseWorkspaceId(workspaceId);
+      const owner = parseWorkspacePrincipal(workspaceId);
       return {
         name: typeof item.name === 'string' ? item.name : '',
         workspaceId,
@@ -279,7 +281,9 @@ export async function fetchSandboxSummaries(options: {
         effectiveTtlMs: typeof item.effectiveTtlMs === 'number' ? item.effectiveTtlMs : undefined,
         brokenReason: typeof item.brokenReason === 'string' ? item.brokenReason : undefined,
         owner: owner
-          ? { kind: 'user' as const, tenantId: owner.tenantId, userId: owner.userId }
+          ? owner.kind === 'user'
+            ? { kind: 'user' as const, tenantId: owner.tenantId, userId: owner.userId }
+            : { kind: 'org_agent' as const, tenantId: owner.tenantId, agentId: owner.principalId }
           : { kind: 'system' as const, tenantId: null, userId: null },
         raw: item,
       };

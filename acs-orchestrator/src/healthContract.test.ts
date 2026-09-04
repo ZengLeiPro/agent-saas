@@ -18,6 +18,12 @@ describe('ACS health and drain contract', () => {
     expect(source).toMatch(/\.\.\.lifecyclePolicyHealth\(config\)/u);
   });
 
+  it('advertises the organization task shared read-only mount protocol', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8');
+    expect(source).toContain('sharedReadOnlyMount: {');
+    expect(source).toContain('protocolVersion: 1');
+  });
+
   it('uses HTTP plus background recovery as effective inflight for health, SNAT, and drain', async () => {
     const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8');
     expect(source).toContain(

@@ -1,22 +1,22 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
 
-import { PlatformToolRuntime, type ToolCallContext, type ToolProvider } from '../../agent/toolRuntime.js';
+import { type ToolCallContext, type ToolProvider } from '../../agent/toolRuntime.js';
 import { readSessionMeta } from '../../data/transcripts/meta.js';
 import {
   mergeOrgAgentWorkerRuntimePolicy,
   resolveOrgAgentRuntimeSkillIds,
 } from '../../data/orgAgents/runtimePolicy.js';
-import type { ChannelContext, UserIdentity } from '../../types/index.js';
+import type { ChannelContext } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import { buildConnectorRunEnv } from '../connectorRunEnv.js';
 import { runtimeRunController } from '../runController.js';
+import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
 import { customerSafeRuntimeError } from '../runtimeFailure.js';
 import { resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
 import {
   buildOrgAgentSkillFilter,
+  buildOrgAgentChannelSkillFilter,
   collectRuntimeTooling,
   composeSkillFilters,
   createEventStoreForSession,
@@ -24,23 +24,37 @@ import {
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
 import { createRuntimeSessionRecord, type RuntimeSessionRecord } from '../sessionCatalog.js';
+import { withOrgAgentArtifactContract } from '../orgAgentArtifactPublisher.js';
 import { getSubagentType } from '../subagent/agentTypes.js';
 import {
   SUBAGENT_PER_RUN_MAX_CONCURRENCY,
   SUBAGENT_PER_TENANT_MAX_ACTIVE,
-  SUBAGENT_RESULT_MAX_CHARS,
 } from '../subagent/subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from '../subagent/subagentRunner.js';
 import { BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON } from './backgroundTaskRuntime.js';
+import { invokeBackgroundCommandControl } from './backgroundTaskCommandControl.js';
+import { readBackgroundCommandOutput } from './backgroundCommandOutput.js';
+import { cancelBackgroundTask } from './backgroundTaskCancellation.js';
+import { reconcileBackgroundWakeDeliveries } from './backgroundWakeDeliveryReconciler.js';
 import {
-  deriveBackgroundRuntimeIsolationRequirement, metadataString,
+  controlOrgAgentWorkOrder,
+} from './backgroundWorkOrderControl.js';
+import {
+  deriveBackgroundRuntimeIsolationRequirement,
   parseBackgroundTaskMetadata,
   type BackgroundCommandTaskMetadata,
 } from './backgroundTaskMetadata.js';
-import { deliverDwsBackgroundCompletion, resolveDwsCompletionRoute } from './backgroundTaskDwsCompletion.js';
+import { resolveDwsCompletionRoute } from './backgroundTaskDwsCompletion.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
+import { isBackgroundAgentIdempotentReplay } from './backgroundAgentIdempotency.js';
 import { findBackgroundTasksByIdentifier } from './backgroundTaskLookup.js';
 import { sleepAbortable } from './backgroundTaskTiming.js';
+import { reconcileStagedOrgWork as reconcileOrgAgentStage } from './orgAgentStageReconciler.js';
+import {
+  isOrgTaskVisible,
+  OrgAgentBackgroundWorkCoordinator,
+  prepareOrgAgentBackgroundWork,
+} from './orgAgentBackgroundWork.js';
 import {
   assertAgentProfileExecutionTarget,
   profileRunMetadata,
@@ -53,23 +67,27 @@ import type {
   BackgroundTaskLease,
   BackgroundTaskRuntime,
   BackgroundTaskStartResult,
+  OrgAgentWorkOrderControlRequest,
 } from './backgroundTaskRuntime.js';
 import {
-  buildTaskNotification,
   compactCommandPreview,
   formatBackgroundShellResult,
   parseBackgroundShellView,
-  parseStoredResult,
-  truncateResult,
   type BackgroundShellView,
   type StoredBackgroundResult,
 } from './backgroundTaskFormatting.js';
+import {
+  failureResult,
+  isTerminal,
+  outcomeToRunStatus,
+  persistResultText,
+  requireBackgroundRunStore,
+  sessionIdentity,
+} from './backgroundTaskServiceSupport.js';
 export type { BackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 // 结果模型与格式化函数已迁至 ./backgroundTaskFormatting.ts，这里按既有 import 路径继续对外转发。
 export { escapeXml } from './backgroundTaskFormatting.js';
 const logger = createLogger('BackgroundTaskService');
-const WAKE_CLAIM_STALE_MS = 60_000;
-const WAKE_BATCH_SIZE = 50;
 const CANCEL_POLL_MS = 2_000;
 export function resolveBackgroundSkillUsername(session: Pick<RuntimeSessionRecord, 'username' | 'orgAgentSnapshot'>): string | undefined {
   return session.orgAgentSnapshot ? undefined : session.username;
@@ -77,12 +95,14 @@ export function resolveBackgroundSkillUsername(session: Pick<RuntimeSessionRecor
 
 export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   private readonly runSubagentImpl: typeof runSubagent;
+  private readonly orgWork: OrgAgentBackgroundWorkCoordinator;
 
   constructor(
     private readonly config: RawRuntimeRunDispatchConfig,
     options: { runSubagentImpl?: typeof runSubagent } = {},
   ) {
     this.runSubagentImpl = options.runSubagentImpl ?? runSubagent;
+    this.orgWork = new OrgAgentBackgroundWorkCoordinator(config);
   }
 
   async enqueue(context: ToolCallContext, request: BackgroundAgentRequest): Promise<BackgroundTaskStartResult> {
@@ -104,7 +124,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
 
     // 真正执行模型的是后续 child run；由 runSubagent 在拿到 childRunId 后原子预占。
     // 此处不能用旧余额快照门禁，否则父 run 自己的 reservation 会误拒绝派生。
-    const executionTarget = context.workspace.executionTarget;
+    const executionTarget = context.channelContext.orgAgentChannel
+      ? 'server-remote' as const : context.workspace.executionTarget;
     let boundProfile: BoundAgentRuntimeProfile | undefined;
     if (this.config.agentRuntimeProfileResolver) {
       boundProfile = await this.config.agentRuntimeProfileResolver.resolveForSession({
@@ -143,11 +164,31 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     model ??= modelRef ?? parentRun?.model;
     if (!model || !modelRef) throw new Error('无法确定后台 Agent 模型。');
 
-    const taskUuid = randomUUID();
-    const taskId = `bg-${Date.now()}-${taskUuid}`;
-    const shortTaskId = `T-${taskUuid.replaceAll('-', '').slice(0, 24).toUpperCase()}`;
-    const taskSessionId = `sub-${randomUUID()}`;
     const toolCallId = context.toolCallId ?? `agent-${randomUUID()}`;
+    const taskDigest = createHash('sha256').update(`${parentRunId}:${toolCallId}`).digest('hex');
+    const taskId = `bg-${taskDigest.slice(0, 32)}`;
+    const shortTaskId = `T-${taskDigest.slice(0, 24).toUpperCase()}`;
+    const taskSessionId = `sub-bg-${taskDigest.slice(0, 32)}`;
+    const existingTask = await runStore.get(taskId);
+    if (existingTask) {
+      if (!isBackgroundAgentIdempotentReplay(existingTask, {
+        parentRunId, parentSessionId, toolCallId, taskSessionId, tenantId, model, request,
+        ...(context.channelContext.orgAgentChannel
+          ? { orgChannel: context.channelContext.orgAgentChannel } : {}),
+      })) throw new Error('BACKGROUND_AGENT_IDEMPOTENCY_CONFLICT');
+      return { taskId, shortTaskId, status: 'pending', description: request.description, model };
+    }
+    const { taskLayout, workOrder } = await prepareOrgAgentBackgroundWork({
+      config: this.config, context, request, parentRunId, toolCallId, taskId,
+    });
+    const runtimeIsolationRequirement = taskLayout && workOrder ? {
+      tenantId: workOrder.tenantId,
+      taskId: workOrder.workOrderId,
+      runId: taskId,
+      sessionId: taskSessionId,
+      workspaceId: taskLayout.taskWorkspaceId,
+      policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST,
+    } : context.runtimeIsolationRequirement;
     let taskSession = createRuntimeSessionRecord({
       sessionId: taskSessionId,
       userId,
@@ -155,46 +196,65 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       userRole: parentSession.userRole ?? identity?.role,
       tenantId,
       channel: context.channelContext.channel,
-      cwd: context.workspace.root,
+      cwd: taskLayout?.taskRoot ?? context.workspace.root,
       modelRef,
       sandboxProfile: parentSession.sandboxProfile,
       executionTarget,
-      workspaceId: context.workspace.id ?? taskSessionId,
+      workspaceId: taskLayout?.taskWorkspaceId ?? context.workspace.id ?? taskSessionId,
       status: 'idle',
       kind: 'subagent',
       executionRole: 'worker', sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
       ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
       ...(parentSession.orgAgentSnapshot ? { orgAgentSnapshot: parentSession.orgAgentSnapshot } : {}),
+      ...(parentSession.principal ? { principal: parentSession.principal } : {}),
     });
     if (boundProfile && this.config.agentRuntimeProfileResolver) {
       taskSession = this.config.agentRuntimeProfileResolver.bindSessionRecord(taskSession, boundProfile);
     }
     await sessionCatalog.upsert(taskSession);
-
-    const taskRun = await runStore.enqueueBackgroundTask!({
+    let taskRun: RunRecord;
+    try {
+      if (workOrder && taskLayout) {
+        await this.config.orgGroupAgentStore!.createWorkAttempt({
+          tenantId: workOrder.tenantId,
+          workOrderId: workOrder.workOrderId,
+          runtimeRunId: taskId,
+          attemptId: taskLayout.attemptId,
+          taskWorkspaceId: taskLayout.taskWorkspaceId,
+          sandboxScopeId: taskLayout.sandboxScopeId,
+          mountSubPath: taskLayout.mountSubPath,
+          sharedReadOnlySubPath: taskLayout.sharedReadOnlySubPath,
+        });
+      }
+      taskRun = await runStore.enqueueBackgroundTask!({
       runId: taskId,
       sessionId: taskSessionId,
       userId,
       tenantId,
       model,
       channel: 'background_task',
-      idempotencyKey: `background-task:${taskId}`,
+      idempotencyKey: `background-task:${parentRunId}:${toolCallId}`,
       executionTarget,
-      workspaceId: context.workspace.id ?? taskSessionId,
-      sandboxScopeId: context.workspace.sandboxScopeId,
+      workspaceId: taskLayout?.taskWorkspaceId ?? context.workspace.id ?? taskSessionId,
+      sandboxScopeId: taskLayout?.sandboxScopeId ?? context.workspace.sandboxScopeId,
       metadata: {
         subagent: true,
         backgroundTask: true,
         backgroundTaskType: 'agent',
-        backgroundTaskReady: true,
-        backgroundTaskVersion: 1,
+        backgroundTaskReady: false,
+        backgroundTaskVersion: 2,
         outputTransactionMode: 'terminal_buffered',
         parentRunId,
         parentSessionId,
         topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
         parentToolCallId: toolCallId,
         shortTaskId,
+        ...(workOrder ? { workOrderId: workOrder.workOrderId } : {}),
+        ...(workOrder ? { workOrderShortId: workOrder.shortId, workOrderControlRevision: workOrder.control.revision } : {}),
+        ...(taskLayout ? { attemptId: taskLayout.attemptId, attemptNo: 1,
+          sharedReadOnlySubPath: taskLayout.sharedReadOnlySubPath } : {}),
         description: request.description,
+        basePrompt: request.prompt,
         prompt: request.prompt,
         executionRole: 'worker',
         ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
@@ -208,22 +268,54 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         includeCompanyInfo: request.includeCompanyInfo
           || boundProfile?.version.config.context.modules?.includes('company_info') === true,
         ...(boundProfile ? profileRunMetadata(boundProfile) : {}),
-        cwd: context.workspace.root,
-        workspaceId: context.workspace.id ?? taskSessionId,
-        ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
-        ...(context.workspace.sandboxScopeId ? { sandboxScopeId: context.workspace.sandboxScopeId } : {}),
+        cwd: taskLayout?.taskRoot ?? context.workspace.root,
+        workspaceId: taskLayout?.taskWorkspaceId ?? context.workspace.id ?? taskSessionId,
+        ...(taskLayout?.mountSubPath ?? context.workspace.mountSubPath
+          ? { mountSubPath: taskLayout?.mountSubPath ?? context.workspace.mountSubPath } : {}),
+        ...(taskLayout?.sandboxScopeId ?? context.workspace.sandboxScopeId
+          ? { sandboxScopeId: taskLayout?.sandboxScopeId ?? context.workspace.sandboxScopeId } : {}),
         ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}), ...(context.workspace.workload ? { workload: context.workspace.workload } : {}),
         ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
-        ...(context.runtimeIsolationRequirement ? { runtimeIsolationRequirement: context.runtimeIsolationRequirement } : {}),
+        ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
         ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
         parentChannel: context.channelContext.channel,
         parentOutputTransactionMode: resolveModelOutputTransactionMode(context.channelContext),
+        ...(context.channelContext.orgAgentChannel ? { orgAgentChannel: context.channelContext.orgAgentChannel } : {}),
         wakeState: 'none',
       },
     }, {
       perParentActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
       perTenantActive: SUBAGENT_PER_TENANT_MAX_ACTIVE,
     });
+      const activationPatch = {
+        backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
+      };
+      const activated = workOrder
+        ? runStore.activateStagedOrgAgentBackgroundTask
+          ? await runStore.activateStagedOrgAgentBackgroundTask(
+              taskId, 'background_agent_started', activationPatch,
+            )
+          : (() => { throw new Error('组织群后台任务不支持原子激活。'); })()
+        : await runStore.markStatus(taskId, 'pending', 'background_agent_started', activationPatch);
+      if (!activated || activated.metadata.backgroundTaskReady !== true) {
+        throw new Error('后台 Agent 激活状态未持久化。');
+      }
+    } catch (error) {
+      const concurrentTask = await runStore.get(taskId).catch(() => null);
+      if (isBackgroundAgentIdempotentReplay(concurrentTask, {
+        parentRunId, parentSessionId, toolCallId, taskSessionId, tenantId, model, request,
+        ...(context.channelContext.orgAgentChannel
+          ? { orgChannel: context.channelContext.orgAgentChannel } : {}),
+      })) {
+        return { taskId, shortTaskId, status: 'pending', description: request.description, model };
+      }
+      await sessionCatalog.markStatus(taskSessionId, 'error').catch(() => undefined);
+      if (workOrder && taskLayout) {
+        await this.orgWork.failSetup(workOrder.tenantId, workOrder.workOrderId,
+          taskId, taskLayout.taskRoot, error, 1).catch(() => undefined);
+      }
+      throw error;
+    }
     await this.appendParentLifecycleEvent(parentSession, tenantId, {
       type: 'background_task_started',
       runId: parentRunId,
@@ -254,9 +346,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const parentRun = await runStore.get(parentRunId);
     const modelRef = parentSession.modelRef ?? parentRun?.model;
     if (!modelRef) throw new Error('无法确定后台命令的父会话模型。');
-    const taskId = `shell-bg-${Date.now()}-${randomUUID()}`;
-    const taskSessionId = `sub-${randomUUID()}`;
     const toolCallId = context.toolCallId ?? `shell-${randomUUID()}`;
+    const taskDigest = createHash('sha256').update(`${parentRunId}:${toolCallId}`).digest('hex');
+    const taskId = `shell-bg-${taskDigest.slice(0, 32)}`;
+    const taskSessionId = `sub-shell-${taskDigest.slice(0, 32)}`;
     const executionTarget = context.workspace.executionTarget;
     const commandPreview = compactCommandPreview(request.command);
     const taskSession = createRuntimeSessionRecord({
@@ -283,7 +376,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         tenantId,
         model: parentRun?.model ?? modelRef,
         channel: 'background_task',
-        idempotencyKey: `background-task:${taskId}`,
+        idempotencyKey: `background-task:${parentRunId}:${toolCallId}`,
         executionTarget,
         workspaceId: context.workspace.id ?? taskSessionId,
         sandboxScopeId: context.workspace.sandboxScopeId,
@@ -310,6 +403,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
           parentChannel: context.channelContext.channel,
           parentOutputTransactionMode: resolveModelOutputTransactionMode(context.channelContext),
+          ...(context.channelContext.orgAgentChannel ? { orgAgentChannel: context.channelContext.orgAgentChannel } : {}),
           wakeState: 'none',
         },
       }, {
@@ -370,6 +464,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   async execute(record: RunRecord, lease?: BackgroundTaskLease): Promise<void> {
     const metadata = parseBackgroundTaskMetadata(record);
     if (!metadata) throw new Error(`后台任务 metadata 不完整：${record.runId}`);
+    await this.orgWork.markRunning(record);
     const sessionCatalog = resolveSessionCatalog(this.config);
     const taskSession = await sessionCatalog.get(record.sessionId);
     if (!taskSession) throw new Error(`后台任务 session 不存在：${record.sessionId}`);
@@ -418,7 +513,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         this.config,
         resolveBackgroundSkillUsername(taskSession),
         orgAgentSnapshot
-          ? composeSkillFilters(buildOrgAgentSkillFilter(orgAgentSnapshot))
+          ? composeSkillFilters(buildOrgAgentSkillFilter(orgAgentSnapshot),
+              buildOrgAgentChannelSkillFilter(metadata.orgAgentChannel))
           : () => true,
         orgAgentSnapshot ? resolveOrgAgentRuntimeSkillIds(orgAgentSnapshot) : [],
         undefined,
@@ -434,6 +530,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         sessionOwner: identity,
         targetCwd: metadata.cwd,
         ...(metadata.timezone ? { timezone: metadata.timezone } : {}),
+        ...(metadata.orgAgentChannel ? { orgAgentChannel: metadata.orgAgentChannel } : {}),
       };
       const runtimeIsolationRequirement = deriveBackgroundRuntimeIsolationRequirement(
         metadata, { runId: record.runId, sessionId: record.sessionId, workspaceId: metadata.workspaceId },
@@ -454,6 +551,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           topLevelSessionId: metadata.topLevelSessionId ?? metadata.parentSessionId,
           executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-container',
           ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
+          ...(metadata.sharedReadOnlySubPath ? { sharedReadOnlySubPath: metadata.sharedReadOnlySubPath } : {}),
           ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
           ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}), ...(metadata.workload ? { workload: metadata.workload } : {}),
           ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
@@ -476,7 +574,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         profileSourceSession: taskSession,
         request: {
           description: metadata.description,
-          prompt: metadata.prompt,
+          prompt: withOrgAgentArtifactContract(metadata.prompt, Boolean(metadata.orgAgentChannel)),
           model: metadata.modelRef,
           includeCompanyInfo: metadata.includeCompanyInfo,
         },
@@ -516,7 +614,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   async failInterrupted(record: RunRecord): Promise<void> {
     const metadata = parseBackgroundTaskMetadata(record);
     if (metadata?.taskType === 'command') {
-      await this.invokeCommandControl(record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
+      await invokeBackgroundCommandControl(this.config, record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
     }
     await this.freezeFailure(
       record,
@@ -529,128 +627,55 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   async fail(record: RunRecord, message: string, reason = 'background_task_start_failed'): Promise<void> {
     const metadata = parseBackgroundTaskMetadata(record);
     if (metadata?.taskType === 'command') {
-      await this.invokeCommandControl(record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
+      await invokeBackgroundCommandControl(this.config, record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
     }
     await this.freezeFailure(record, message, 'failed', reason);
   }
 
-  async reconcileWakeDeliveries(): Promise<void> {
-    const runStore = this.config.runStore;
-    if (!runStore?.listPendingBackgroundTaskWakes
-      || !runStore.claimBackgroundTaskWake
-      || !runStore.finishBackgroundTaskWake) return;
-    const staleBefore = new Date(Date.now() - WAKE_CLAIM_STALE_MS);
-    const pending = await runStore.listPendingBackgroundTaskWakes(staleBefore, WAKE_BATCH_SIZE);
-    for (const candidate of pending) {
-      const claimToken = randomUUID();
-      const task = await runStore.claimBackgroundTaskWake(candidate.runId, claimToken, staleBefore);
-      if (!task) continue;
-      const metadata = parseBackgroundTaskMetadata(task);
-      if (!metadata) {
-        await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'discarded', {
-          wakeDiscardReason: 'invalid_background_metadata',
-        });
-        continue;
-      }
-      const parentSession = await resolveSessionCatalog(this.config).get(metadata.parentSessionId);
-      const parentMeta = parentSession ? await readSessionMeta(parentSession.transcriptPath) : null;
-      if (!parentSession || parentMeta?.deletedAt) {
-        await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'discarded', {
-          wakeDiscardReason: parentMeta?.deletedAt ? 'parent_session_deleted' : 'parent_session_missing',
-        });
-        continue;
-      }
-      const activeParentRun = await runStore.getActiveBySession?.(metadata.parentSessionId);
-      if (activeParentRun) {
-        await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'pending', {
-          wakeDeferredReason: 'parent_session_active',
-        });
-        continue;
-      }
-
-      const storedResult = parseStoredResult(task.metadata.backgroundResult);
-      const fallbackStatus = task.status === 'cancelled'
-        ? 'cancelled'
-        : task.status === 'completed'
-          ? 'completed'
-          : 'failed';
-      if (typeof task.metadata.lifecycleFinishedAt !== 'string') {
-        await this.appendParentLifecycleEvent(parentSession, task.tenantId, {
-          type: 'background_task_finished',
-          runId: metadata.parentRunId,
-          sessionId: metadata.parentSessionId,
-          taskId: task.runId,
-          taskSessionId: task.sessionId,
-          toolCallId: metadata.parentToolCallId,
-          agentType: metadata.taskType === 'agent' ? metadata.agentType : 'command',
-          description: metadata.description,
-          status: storedResult?.status ?? fallbackStatus,
-          totalTokens: storedResult?.totalTokens ?? 0,
-          durationMs: storedResult?.durationMs ?? 0,
-          ...(storedResult?.errorMessage ? { errorMessage: storedResult.errorMessage } : {}), ...(storedResult?.failureKind ? { failureKind: storedResult.failureKind } : {}), ...(storedResult?.recoveryAction ? { recoveryAction: storedResult.recoveryAction } : {}),
-          ...(storedResult?.text ? { resultPreview: storedResult.text.slice(0, 2_000) } : {}),
-        });
-        await runStore.markStatus(task.runId, task.status, task.statusReason, { lifecycleFinishedAt: new Date().toISOString() });
-      }
-
-      if (await deliverDwsBackgroundCompletion({
-        config: this.config, runStore, task, metadata, claimToken,
-      })) continue;
-
-      const wakeRunId = `bg-wake-${task.runId}`; const sandboxScopeId = metadata.sandboxScopeId ?? task.sandboxScopeId;
-      const topLevelSessionId = metadata.topLevelSessionId ?? metadata.parentSessionId; const wake = await runStore.upsertPending({
-        runId: wakeRunId,
-        sessionId: metadata.parentSessionId,
-        userId: task.userId,
-        tenantId: task.tenantId,
-        model: parentSession.modelRef,
-        channel: 'background_task',
-        idempotencyKey: `background-task-wake:${task.runId}`,
-        executionTarget: parentSession.executionTarget,
-        workspaceId: parentSession.workspaceId,
-        sandboxScopeId,
-        metadata: {
-          backgroundTaskWake: true, topLevelSessionId,
-          ...(sandboxScopeId ? { sandboxScopeId } : {}),
-          dispatcherCompletion: metadata.executionMode === 'dispatcher',
-          outputTransactionMode: metadata.parentOutputTransactionMode,
-          backgroundTaskId: task.runId,
-          wakeMessage: {
-            channel: 'web',
-            chatId: metadata.parentSessionId,
-            content: buildTaskNotification(task, metadata),
-            senderId: parentSession.userId,
-            senderName: parentSession.username,
-            metadata: { backgroundTaskWake: true, backgroundTaskId: task.runId, topLevelSessionId },
-          },
-        },
-      });
-      await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'queued', {
-        wakeRunId: wake.runId,
-        wakeDeferredReason: null,
-        lifecycleFinishedAt: new Date().toISOString(),
-      });
-    }
+  async reconcileStagedOrgWork(): Promise<void> {
+    await reconcileOrgAgentStage(this.config, this.orgWork);
   }
 
+  async reconcileWakeDeliveries(): Promise<void> {
+    await reconcileBackgroundWakeDeliveries(
+      this.config,
+      this.orgWork,
+      (parentSession, tenantId, event) => this.appendParentLifecycleEvent(parentSession, tenantId, event),
+    );
+  }
   async list(context: ToolCallContext, limit = 20): Promise<RunRecord[]> {
     const runStore = requireBackgroundRunStore(this.config.runStore);
     const parentSessionId = context.sessionId ?? context.workspace.sessionId;
     if (!parentSessionId) throw new Error('缺少当前 sessionId。');
     const identity = context.channelContext.sessionOwner ?? context.channelContext.user;
-    return runStore.listBackgroundTasks!(parentSessionId, {
+    const tasks = await runStore.listBackgroundTasks!(parentSessionId, {
       userId: identity?.id ?? context.workspace.userId,
       tenantId: identity?.tenantId ?? context.workspace.tenantId,
       limit,
     });
+    return tasks.filter(task => isOrgTaskVisible(task, context));
   }
 
   async get(context: ToolCallContext, taskId: string): Promise<RunRecord | null> {
-    const matches = await findBackgroundTasksByIdentifier(
+    let matches = await findBackgroundTasksByIdentifier(
       requireBackgroundRunStore(this.config.runStore), context, taskId,
     );
+    if (matches.length === 0 && /^W-[A-F0-9]{12}$/i.test(taskId)) {
+      const caller = context.channelContext.orgAgentChannel;
+      const work = caller && this.config.orgGroupAgentStore
+        ? await this.config.orgGroupAgentStore.getWorkOrderByShortId(
+            caller.agentPrincipal.tenantId, caller.agentId, taskId,
+          ) : null;
+      if (work && work.bindingId === caller?.bindingId
+        && work.workConversationId === caller.workConversationId) {
+        const attempt = (await this.config.orgGroupAgentStore!.listWorkAttempts(work.tenantId, work.workOrderId)).at(-1);
+        const run = attempt ? await this.config.runStore!.get(attempt.runtimeRunId) : null;
+        matches = run ? [run] : [];
+      }
+    }
     if (matches.length > 1) throw new Error(`后台任务 ID ${taskId} 存在歧义，拒绝操作。`);
-    return matches[0] ?? null;
+    const task = matches[0] ?? null;
+    return task && isOrgTaskVisible(task, context) ? task : null;
   }
 
   async readCommandOutput(
@@ -659,44 +684,47 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   ): Promise<{ content: string }> {
     const task = await this.get(context, request.taskId);
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');
-    const metadata = parseBackgroundTaskMetadata(task);
-    if (metadata?.taskType !== 'command') {
-      throw new Error('该任务不是后台命令任务；后台 Agent 任务请用 BackgroundTask(action="status") 查看结果。');
-    }
-    if (isTerminal(task.status)) {
-      throw new Error(`后台命令已进入终态（${task.status}）；用 BackgroundTask(action="status") 查看结果摘要与完整输出文件位置。`);
-    }
-    return await this.invokeCommandControl(task, metadata, 'BashOutput', {
-      task_id: request.taskId,
-      stdout_offset: request.stdoutOffset ?? 0,
-      stderr_offset: request.stderrOffset ?? 0,
-      limit_bytes: request.limitBytes ?? 20_000,
-      wait_ms: request.waitMs ?? 0,
-    });
+    return await readBackgroundCommandOutput(this.config, task, request);
   }
 
   async cancel(context: ToolCallContext, taskId: string): Promise<RunRecord> {
     const task = await this.get(context, taskId);
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');
-    if (isTerminal(task.status)) return task;
-    const metadata = parseBackgroundTaskMetadata(task);
-    const message = '后台任务由父会话请求取消';
-    const updated = await markBackgroundTaskTerminal(this.config.runStore!, task.runId, 'cancelled', message, {
-      backgroundResult: failureResult('cancelled', message),
-      wakeState: 'pending',
-      backgroundFinishedAt: new Date().toISOString(),
-    });
-    if (!updated) {
-      const current = await this.config.runStore!.get(task.runId);
-      if (current && isTerminal(current.status)) return current;
-      throw new Error('后台任务取消失败。');
-    }
-    if (metadata?.taskType === 'command') {
-      await this.invokeCommandControl(task, metadata, 'KillBash', { task_id: task.runId }).catch(() => undefined);
-    }
-    runtimeRunController.abort(task.runId);
-    await resolveSessionCatalog(this.config).markStatus(task.sessionId, 'error').catch(() => undefined);
-    return updated;
+    return await cancelBackgroundTask(this.config, this.orgWork, context, task);
+  }
+
+  async controlWorkOrder(
+    context: ToolCallContext,
+    request: OrgAgentWorkOrderControlRequest,
+  ): Promise<{ task: RunRecord | null; workOrder: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrder }> {
+    const task = await this.get(context, request.taskId);
+    return await controlOrgAgentWorkOrder(this.config, this.orgWork, context, request, task);
+  }
+
+  async cancelWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null> {
+    return await this.orgWork.cancel(tenantId, workOrderId, expectedVersion);
+  }
+
+  async pauseWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null> {
+    return await this.orgWork.pause(tenantId, workOrderId, expectedVersion);
+  }
+
+  async retryWorkOrder(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+    options?: {
+      allowPendingArtifacts?: boolean;
+      control?: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrderControl;
+      supersedePendingCompletion?: boolean;
+    },
+  ): Promise<RunRecord> {
+    return await this.orgWork.retry(tenantId, workOrderId, expectedVersion, options);
+  }
+
+  async publishWorkOrderArtifacts(tenantId: string, workOrderId: string, expectedVersion: number):
+  Promise<import('../../data/orgGroupAgents/index.js').OrgAgentWorkAttempt> {
+    return await this.orgWork.publish(tenantId, workOrderId, expectedVersion);
   }
 
   private async executeCommand(
@@ -729,7 +757,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         if (abortController.signal.aborted) throw abortController.signal.reason ?? new Error('background command monitor aborted');
         let view: BackgroundShellView;
         try {
-          const result = await this.invokeCommandControl(record, metadata, 'BashOutput', {
+          const result = await invokeBackgroundCommandControl(this.config, record, metadata, 'BashOutput', {
             task_id: record.runId,
             stdout_offset: 0,
             stderr_offset: 0,
@@ -777,7 +805,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           wakeState: 'pending',
           backgroundFinishedAt: new Date().toISOString(),
         });
-        if (updated) await sessionCatalog.markStatus(record.sessionId, runStatus === 'completed' ? 'finished' : 'error').catch(() => undefined);
+        if (updated) {
+          await sessionCatalog.markStatus(record.sessionId, runStatus === 'completed' ? 'finished' : 'error').catch(() => undefined);
+          await this.orgWork.syncTerminal(updated, runStatus === 'completed' ? 'completed' : runStatus === 'cancelled' ? 'cancelled' : 'failed', result, statusReason)
+            .catch(error => logger.error(`组织群命令任务状态同步失败 task=${record.runId}: ${String(error)}`));
+        }
         const finalStatus = updated?.status ?? (await this.config.runStore?.get(record.runId))?.status;
         await lease?.release(finalStatus, updated?.statusReason ?? statusReason);
         return;
@@ -790,7 +822,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       }
       const current = await this.config.runStore?.get(record.runId);
       if (current?.status !== 'cancelled') {
-        await this.invokeCommandControl(record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
+        await invokeBackgroundCommandControl(this.config, record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
         await this.freezeFailure(record, message, 'failed', 'background_command_monitor_failed');
         await lease?.release('failed', message);
       } else {
@@ -802,60 +834,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
   }
 
-  private async invokeCommandControl(
-    record: RunRecord,
-    metadata: BackgroundCommandTaskMetadata,
-    toolId: 'BashOutput' | 'KillBash',
-    input: Record<string, unknown>,
-    signal?: AbortSignal,
-  ): Promise<{ content: string }> {
-    const executionRegistry = this.config.executionTransportRegistry;
-    const tenantHandResolver = this.config.tenantRemoteHandResolver;
-    if (!executionRegistry || !tenantHandResolver) throw new Error(
-      '后台命令缺少 executionTransportRegistry/tenantHandResolver 装配。',
-    );
-    const sessionCatalog = resolveSessionCatalog(this.config);
-    const taskSession = await sessionCatalog.get(record.sessionId);
-    const parentSession = await sessionCatalog.get(metadata.parentSessionId); // durable 子任务无 hand，恢复父 hand
-    if (!taskSession) throw new Error(`后台命令 session 不存在：${record.sessionId}`);
-    if (!parentSession) throw new Error(`后台命令父 session 不存在：${metadata.parentSessionId}`);
-    const identity = sessionIdentity(parentSession);
-    const runtime = new PlatformToolRuntime({
-      executionTransportRegistry: executionRegistry,
-      handStore: this.config.handStore,
-      resolveHandAuthToken: (hand) => tenantHandResolver.resolveForHand(hand),
-    });
-    return await runtime.invoke({
-      toolId,
-      input,
-      authorization: { approved: true, source: 'legacy_adapter' },
-    }, {
-      channelContext: {
-        channel: metadata.parentChannel,
-        resumeSessionId: metadata.parentSessionId,
-        sessionOwner: identity,
-        targetCwd: metadata.cwd,
-        ...(metadata.timezone ? { timezone: metadata.timezone } : {}),
-      },
-      workspace: {
-        id: metadata.workspaceId,
-        root: metadata.cwd,
-        userId: parentSession.userId,
-        username: parentSession.username,
-        tenantId: parentSession.tenantId,
-        sessionId: metadata.parentSessionId,
-        topLevelSessionId: metadata.topLevelSessionId ?? metadata.parentSessionId,
-        executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-remote',
-        ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
-        ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
-        ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}), ...(metadata.workload ? { workload: metadata.workload } : {}),
-        ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
-      },
-      sessionId: metadata.parentSessionId, runId: record.runId,
-      toolCallId: `${toolId}-${record.runId}`,
-      signal,
-    });
-  }
   private async requireOwnedTask(context: ToolCallContext, taskId: string): Promise<RunRecord> {
     const task = await this.get(context, taskId);
     if (!task) throw new Error('后台任务不存在，或不属于当前会话/用户。');
@@ -896,6 +874,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     if (updated) await resolveSessionCatalog(this.config)
       .markStatus(record.sessionId, status === 'completed' ? 'finished' : 'error')
       .catch(() => undefined);
+    if (updated) await this.orgWork.syncTerminal(updated, status === 'completed' ? 'completed'
+      : status === 'cancelled' ? 'cancelled' : 'failed', result, statusReason)
+      .catch(error => logger.error(`组织群后台任务状态同步失败 task=${record.runId}: ${String(error)}`));
   }
 
   private async freezeFailure(
@@ -909,7 +890,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       wakeState: 'pending',
       backgroundFinishedAt: new Date().toISOString(),
     });
-    if (updated) await resolveSessionCatalog(this.config).markStatus(record.sessionId, 'error').catch(() => undefined);
+    if (updated) {
+      await resolveSessionCatalog(this.config).markStatus(record.sessionId, 'error').catch(() => undefined);
+      await this.orgWork.syncTerminal(updated, status, failureResult(status, message), reason)
+        .catch(error => logger.error(`组织群后台失败状态同步失败 task=${record.runId}: ${String(error)}`));
+    }
   }
 
   private async appendParentLifecycleEvent(
@@ -930,70 +915,5 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     } catch (err) {
       logger.warn(`后台任务生命周期事件写入失败: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
-}
-
-function requireBackgroundRunStore(runStore: RunStore | undefined): RunStore {
-  if (!runStore?.enqueueBackgroundTask || !runStore.listBackgroundTasks) {
-    throw new Error('后台 Agent/命令需要 PG durable runtime，当前后端不支持。');
-  }
-  return runStore;
-}
-
-function sessionIdentity(session: {
-  userId: string;
-  username: string;
-  userRole?: 'admin' | 'user';
-  tenantId?: string;
-}): UserIdentity {
-  return {
-    id: session.userId,
-    username: session.username,
-    role: session.userRole ?? 'user',
-    ...(session.tenantId ? { tenantId: session.tenantId } : {}),
-  };
-}
-
-function outcomeToRunStatus(
-  status: SubagentOutcome['status'],
-): Extract<RunStatus, 'completed' | 'failed' | 'cancelled'> {
-  if (status === 'completed') return 'completed';
-  if (status === 'cancelled') return 'cancelled';
-  return 'failed';
-}
-
-function isTerminal(status: RunStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'orphaned';
-}
-
-function failureResult(status: 'failed' | 'cancelled', message: string): StoredBackgroundResult {
-  return {
-    status,
-    text: '',
-    errorMessage: message,
-    totalTokens: 0,
-    toolUseCount: 0,
-    turnCount: 0,
-    durationMs: 0,
-  };
-}
-
-async function persistResultText(
-  record: RunRecord,
-  text: string,
-  childRunId: string,
-): Promise<{ text: string; spillPath?: string }> {
-  if (text.length <= SUBAGENT_RESULT_MAX_CHARS) return { text };
-  const cwd = metadataString(record.metadata, 'cwd');
-  if (!cwd) return { text: truncateResult(text) };
-  const spillPath = join('assets', 'background-tasks', `${childRunId}.md`);
-  try {
-    const fullPath = join(cwd, spillPath);
-    await mkdir(dirname(fullPath), { recursive: true });
-    await writeFile(fullPath, text, 'utf-8');
-    return { text: truncateResult(text), spillPath };
-  } catch (err) {
-    logger.warn(`后台任务结果 spill 失败 task=${record.runId}: ${err instanceof Error ? err.message : String(err)}`);
-    return { text: truncateResult(text) };
   }
 }

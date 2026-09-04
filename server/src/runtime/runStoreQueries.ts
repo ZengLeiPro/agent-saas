@@ -6,6 +6,8 @@ import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
+import { UNREADY_BACKGROUND_TASK_SQL } from './background/backgroundTaskRuntime.js';
+import { listRecoverableRuns } from './runRecoveryQueries.js';
 
 /** SQL implementation for authoritative Runtime Run state. */
 export class PgRunStoreQueries {
@@ -457,44 +459,14 @@ export class PgRunStoreQueries {
     }
   }
 
-  /** Legacy expired rows remain recoverable; versioned M40 rows are owned exclusively by the two-phase reaper. */
+  /**
+   * Staged background rows stay visible to the scheduler's timeout reaper, while
+   * acquireLease keeps them unclaimable until their durable setup is complete.
+   */
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE (
-        run.status = 'pending'
-        OR (
-          run.status = 'running'
-          AND run.liveness_version IS NULL
-          AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1)
-        )
-        OR ${recoverableRunHandoffSql('run', this.toolInvocationsTable)}
-      )
-        AND NOT (
-          run.status = 'pending'
-          AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
-            AND (
-              (
-                input.state = 'reserved'
-                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
-              )
-              OR (
-                input.state = 'pending'
-                AND target.status IN ('pending','running','waiting_hand')
-                AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
-              )
-            )
-        )
-      ORDER BY run.enqueue_seq ASC
-    `, [now.toISOString()]);
-    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+    return await listRecoverableRuns({ pool: this.pool, runsTable: this.runsTable,
+      steeringInputsTable: this.steeringInputsTable,
+      toolInvocationsTable: this.toolInvocationsTable, now });
   }
 
   async listStaleWaitingApproval(cutoff: Date, limit = 50): Promise<RunRecord[]> {
@@ -665,6 +637,7 @@ export class PgRunStoreQueries {
             candidate.status = 'pending'
             AND COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'
           )
+          AND NOT (${UNREADY_BACKGROUND_TASK_SQL})
           AND (
             candidate.status <> 'pending'
             OR NOT EXISTS (

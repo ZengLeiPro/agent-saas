@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { MemoryIndexService } from '../memory/index/service.js';
@@ -7,6 +7,13 @@ import type { AppConfig } from '../types/index.js';
 import { serverLogger } from '../utils/logger.js';
 
 export const SAFE_SKILL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+
+export function ensureDirectory(path: string, label: string): void {
+  if (!existsSync(path)) {
+    mkdirSync(path, { recursive: true });
+    serverLogger.info(`Created ${label}: ${path}`);
+  }
+}
 
 export function loadSettingsEnv(path: string): Record<string, string> | undefined {
   try {

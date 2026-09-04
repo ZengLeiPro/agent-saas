@@ -40,6 +40,24 @@ export function workspaceRelativeInputPath(cwd: string, inputPath: string): stri
   return relativeWorkspacePath(cwd, resolveWorkspacePath(cwd, inputPath));
 }
 
+export function resolveWorkspaceReadTarget(
+  workspace: WorkspaceRef,
+  inputPath: string,
+): { root: string; fullPath: string; sharedReadOnly: boolean } {
+  if (workspace.sharedReadOnlyRoot && isAbsolute(inputPath)) {
+    const sharedRoot = resolve(workspace.sharedReadOnlyRoot);
+    const candidate = resolve(inputPath);
+    if (isInside(sharedRoot, candidate)) {
+      return { root: sharedRoot, fullPath: candidate, sharedReadOnly: true };
+    }
+  }
+  return {
+    root: workspace.root,
+    fullPath: resolveWorkspacePath(workspace.root, inputPath),
+    sharedReadOnly: false,
+  };
+}
+
 export function memoryPathFromSuccessfulTool(
   toolId: string,
   input: unknown,

@@ -1253,6 +1253,7 @@ jobs:
           install -m 0444 "$RELEASE_TGZ" "$RELEASE_DIR/.release/server-bundle.tgz"
           install -m 0444 /dev/null "$RELEASE_DIR/.release/runtime-worker-authority-refresh-v1"
           install -m 0444 /dev/null "$RELEASE_DIR/.release/runtime-worker-execution-fencing-v1"
+          install -m 0444 /dev/null "$RELEASE_DIR/.release/org-group-agent-background-v2"
           mkdir -p "$RELEASE_DIR/server/data" "$RELEASE_DIR/workspace-shared"
           node "$RELEASE_DIR/scripts/release/seal-compatibility-release.mjs" \
             --root "$RELEASE_DIR" --component server \
@@ -1466,6 +1467,10 @@ jobs:
             local bootstrap_target bootstrap_all_pid bootstrap_all_ready_pid bootstrap_all_main_pid
             local bootstrap_all_ack bootstrap_all_ack_pid
             bootstrap_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+            if [ ! -f "$bootstrap_target/.release/org-group-agent-background-v2" ]; then
+              log "bootstrap all is below org group Agent protocol floor; preserving v2 candidate"
+              preserve_candidate_authority_and_exit
+            fi
             if [ ! -f "$bootstrap_target/.release/runtime-worker-authority-refresh-v1" ]; then
               log "bootstrap all cannot reclaim runtime retention authority; preserving candidate"
               preserve_candidate_authority_and_exit
@@ -1535,13 +1540,24 @@ jobs:
 
           restore_pre_drained_legacy_runtime() {
             local restored_pid restored_ready_pid restored_main_pid legacy_worker_target legacy_bootstrap_target
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              legacy_worker_target=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+            else
+              legacy_worker_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+            fi
+            if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] \
+              && [ ! -f "$legacy_worker_target/.release/org-group-agent-background-v2" ]; then
+              log "rollback target is below org group Agent protocol floor; preserving v2 candidate"
+              preserve_candidate_authority_and_exit
+            fi
             if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
               log "stop runtime worker candidate before legacy rollback: ${WORKER_SERVICE}@${WORKER_IDLE}"
               if ! systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"; then
                 log "ERROR: failed to stop candidate before restoring legacy runtime source"
                 exit 1
               fi
-              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority" \
+                "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.org-group-agent-background-v2"
               WORKER_CANDIDATE_STARTED=0
               WORKER_CANDIDATE_PROCESS_STARTED=0
               WORKER_PROCESS_READY=0
@@ -1568,6 +1584,7 @@ jobs:
               systemctl daemon-reload
               rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" \
                 "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready.org-group-agent-background-v2" \
                 "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
               systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
               systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
@@ -1657,9 +1674,15 @@ jobs:
               preserve_candidate_authority_and_exit
             fi
             if [ "$WORKER_ACTIVE_DRAIN_COMPLETED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              WORKER_ACTIVE_TARGET=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+              if [ ! -f "$WORKER_ACTIVE_TARGET/.release/org-group-agent-background-v2" ]; then
+                log "drained rollback target is below org group Agent protocol floor; preserving v2 candidate"
+                preserve_candidate_authority_and_exit
+              fi
               log "restart drained runtime worker after pre-Web failure: ${WORKER_SERVICE}@${WORKER_ACTIVE}"
               rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" \
                 "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready.org-group-agent-background-v2" \
                 "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
               systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
               systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
@@ -1741,7 +1764,8 @@ jobs:
                 log "ERROR: failed to stop runtime worker candidate during rollback"
                 exit 70
               fi
-              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority" \
+                "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.org-group-agent-background-v2"
             fi
             log "Web idle diagnostics: ${SERVICE_NAME}@${IDLE}"
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
@@ -1819,7 +1843,9 @@ jobs:
               fi
               log "recover interrupted runtime worker drain before rollout: ${WORKER_SERVICE}@${color}"
               if ! rm -f "/run/agent-saas-runtime-worker-${color}.pid" \
-                "/run/agent-saas-runtime-worker-${color}.ready" "$guard"; then
+                "/run/agent-saas-runtime-worker-${color}.ready" \
+                "/run/agent-saas-runtime-worker-${color}.ready.org-group-agent-background-v2" \
+                "$guard"; then
                 log "ERROR: failed to clear interrupted runtime worker guard: color=$color"
                 return 1
               fi
@@ -2155,6 +2181,7 @@ jobs:
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
             if ! rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
               "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.org-group-agent-background-v2" \
               "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority" \
               "/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"; then
               log "ERROR: failed to clear candidate runtime markers"

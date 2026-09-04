@@ -742,6 +742,17 @@ commit_rollback_api_authority() {
   old_release_id="$(read_release_id_from_env "$active_env")" || return 1
   validate_api_release_boundary_from_env "$active_color" "$active_env" \
     'Rollback old API pre-commit ConfigIdentity' || return 1
+  if [ "$nginx_changed" = true ]; then
+    if [ "$had_nginx" = true ]; then
+      cp -a "$old_nginx_backup" "$upstream" || return 1
+    else
+      rm -f "$upstream" || return 1
+    fi
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || return 1
+  fi
+  validate_api_routing_boundary "$active_color" "$old_release_id" || return 1
+  validate_api_release_boundary_from_env "$active_color" "$active_env" \
+    'Rollback old API final ConfigIdentity' || return 1
   systemctl disable --now "agent-saas-server@$candidate_color" >/dev/null 2>&1 \
     || disable_status=$?
   if ! systemctl is-active --quiet "agent-saas-server@$candidate_color"; then
@@ -751,20 +762,9 @@ commit_rollback_api_authority() {
     || systemctl is-enabled --quiet "agent-saas-server@$candidate_color"; then
     return 1
   fi
-  if [ "$nginx_changed" = true ]; then
-    if [ "$had_nginx" = true ]; then
-      cp -a "$old_nginx_backup" "$upstream" || return 1
-    else
-      rm -f "$upstream" || return 1
-    fi
-    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || return 1
-  fi
-  validate_api_release_boundary_from_env "$active_color" "$active_env" \
-    'Rollback old API final ConfigIdentity' || return 1
   if systemctl is-active --quiet "agent-saas-server@$candidate_color"; then
     return 1
   fi
-  validate_api_routing_boundary "$active_color" "$old_release_id" || return 1
   if [ "$commit_marker" = true ]; then
     commit_api_active_color "$active_color" || return 1
   fi
@@ -802,7 +802,6 @@ restore_old_api_authority() {
     fi
   fi
   [ "$old_ready" = true ] || return 1
-  revoke_systemd_authority "agent-saas-server@$candidate_color" || return 1
   if [ "$nginx_changed" = true ]; then
     if [ "$had_nginx" = true ]; then
       cp -a "$old_nginx_backup" "$upstream" || return 1
@@ -814,6 +813,7 @@ restore_old_api_authority() {
   validate_api_routing_boundary "$active_color" "$old_release_id" || return 1
   validate_api_release_boundary_from_env "$active_color" "$active_env" \
     'Rollback old API final ConfigIdentity' || return 1
+  revoke_systemd_authority "agent-saas-server@$candidate_color" || return 1
   if [ "$commit_marker" = true ]; then
     commit_api_active_color "$active_color" || return 1
   fi
@@ -864,7 +864,7 @@ restore_candidate_api_authority() {
     return
   fi
   if ! revoke_systemd_authority "agent-saas-server@$active_color"; then
-    revoke_systemd_authority "agent-saas-server@$candidate_color" || true
+    # Keep the verified candidate online until the old API and route are proven restored.
     restore_old_api_authority "$active_color" "$candidate_color" \
       "$old_nginx_backup" "$had_nginx" "$nginx_changed" "$active_env" \
       "$commit_marker" || true

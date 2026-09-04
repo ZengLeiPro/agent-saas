@@ -422,6 +422,11 @@ async function handleHealth(res: ServerResponse): Promise<void> {
           ? 'workspace runtime venv installs acs-orchestrator/requirements/base.txt'
           : 'base Python package installation disabled for this runtime',
       },
+      sharedReadOnlyMount: {
+        available: true,
+        protocolVersion: 1,
+        reason: 'organization task workspaces support a separate read-only shared mount',
+      },
     },
     networkPolicy: sandboxManager.networkPolicyStatus(),
     snat,

@@ -17,6 +17,7 @@ RUN_DIR="${RUN_DIR:-/run}"
 ROLLBACK_STATE_LINK="${ROLLBACK_STATE_LINK:-$ROOT/rollback-state}"
 READY_ATTEMPTS="${READY_ATTEMPTS:-180}"
 WORKER_READY_ATTEMPTS="${WORKER_READY_ATTEMPTS:-180}"
+ORG_GROUP_AGENT_V2_MARKER='.release/org-group-agent-background-v2'
 
 log() { printf '[rollback %s] %s\n' "$(date -Is)" "$*"; }
 write_marker() {
@@ -324,6 +325,19 @@ case "$WORKER_WAS_ACTIVE" in
   false) ;;
   *) log "invalid worker-was-active marker: $WORKER_WAS_ACTIVE"; exit 1 ;;
 esac
+
+if [ -f "$CURRENT_TARGET/$ORG_GROUP_AGENT_V2_MARKER" ]; then
+  [ -f "$API_TARGET/$ORG_GROUP_AGENT_V2_MARKER" ] || {
+    log 'rollback refused: API target is below the organization group Agent v2 protocol floor'
+    exit 1
+  }
+  if [ "$WORKER_WAS_ACTIVE" = true ]; then
+    [ -f "$WORKER_TARGET/$ORG_GROUP_AGENT_V2_MARKER" ] || {
+      log 'rollback refused: Runtime Worker target is below the organization group Agent v2 protocol floor'
+      exit 1
+    }
+  fi
+fi
 
 CURRENT_WORKER_ACTIVE="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_FILE" 2>/dev/null || true)"
 case "$CURRENT_WORKER_ACTIVE" in

@@ -7,9 +7,8 @@ import type {
   ModelUsage,
   ModelWireMode,
 } from './modelRequestTypes.js';
-import type { ExecutionInvocationAudit } from '../agent/toolRuntime.js';
 import type { ToolPresentation } from '../agent/toolPresentationBuilder.js';
-import type { ToolAuthorization, ToolRisk, ExecutionTargetKind, WorkspaceRef } from '../agent/toolRuntime.js';
+import type { ExecutionInvocationAudit, ToolAuthorization, ToolRisk, ExecutionTargetKind, WorkspaceRef } from '../agent/toolRuntime.js';
 import type {
   AgentRunHooks,
   RuntimeDrainHandoffState,
@@ -20,6 +19,7 @@ import type { ChannelContext, InboundMessage, OutboundEvent } from '../types/ind
 import type { RunStatus } from './runStore.js';
 import type { HandStatus } from './handStore.js';
 import type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
+import type { OrgAgentWorkerRunContext } from './orgAgentWorkerCapability.js';
 export type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
 export type {
   ModelRequestDiagnostic,
@@ -43,7 +43,7 @@ export interface QueuedInterjection {
   visionAnalysis?: ModelVisionAnalysis;
 }
 
-export interface RunContext {
+export interface RunContext extends OrgAgentWorkerRunContext {
   runId: string;
   sessionId: string;
   /** models.groups 下的稳定配置身份（group/model），用于隔离同名 provider 模型配置。 */
@@ -57,7 +57,7 @@ export interface RunContext {
    */
   topLevelSessionId?: string;
   sandboxScopeId?: string; workload?: WorkspaceRef['workload'];
-  mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+  mountSubPath?: string; sharedReadOnlySubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
   /** 当前任务从能力中心已启用连接器解析出的运行态凭据环境变量。 */

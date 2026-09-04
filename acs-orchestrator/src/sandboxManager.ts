@@ -18,9 +18,10 @@ import {
   APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
   NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL,
   SANDBOX_SCOPE_ANNOTATION, SANDBOX_SCOPE_LABEL, SESSION_ANNOTATION, SESSION_LABEL,
-  WORKSPACE_ANNOTATION, WORKSPACE_LABEL, readManagedSandboxes,
+  SHARED_READ_ONLY_SUBPATH_ANNOTATION, WORKSPACE_ANNOTATION, WORKSPACE_LABEL, readManagedSandboxes,
 } from './sandboxInventoryReader.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
+import { buildWorkspaceVolumeMounts, readSandboxMountPaths } from './sandboxWorkspaceMounts.js';
 import { deleteSandboxWhenIdle } from './sandboxSafeDeletion.js';
 import { pauseSandboxWhenIdle } from './sandboxSafePause.js';
 import { readSandboxMutationGate, SandboxDestructiveMutationBlockedError } from './sandboxMutationGate.js';
@@ -145,6 +146,7 @@ export class SandboxManager {
     sessionId: string;
     sandboxScopeId?: string;
     mountSubPath?: string;
+    sharedReadOnlySubPath?: string;
     resources?: SandboxResourceOverride;
     workload?: SandboxWorkloadDescriptor;
   }): SandboxRef {
@@ -152,12 +154,15 @@ export class SandboxManager {
     const sessionId = validateSessionId(input.sessionId);
     const sandboxScopeId = validateWorkspaceId(input.sandboxScopeId ?? workspaceId);
     const mountSubPath = normalizeMountSubPath(input.mountSubPath ?? workspaceId);
+    const sharedReadOnlySubPath = input.sharedReadOnlySubPath
+      ? normalizeMountSubPath(input.sharedReadOnlySubPath) : undefined;
     return {
       name: sandboxNameFor({ workspaceId, sessionId, sandboxScopeId }),
       workspaceId,
       sessionId,
       sandboxScopeId,
       mountSubPath,
+      ...(sharedReadOnlySubPath ? { sharedReadOnlySubPath } : {}),
       ...(input.resources && Object.keys(input.resources).length ? { resources: input.resources } : {}),
       ...(input.workload ? { workload: input.workload } : {}),
     };
@@ -167,6 +172,7 @@ export class SandboxManager {
       sessionId: string;
       sandboxScopeId?: string;
       mountSubPath?: string;
+      sharedReadOnlySubPath?: string;
       resources?: SandboxResourceOverride;
       workload?: SandboxWorkloadDescriptor;
     },
@@ -221,11 +227,13 @@ export class SandboxManager {
         await timing.step('deleteBrokenState', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
         existing = null;
       }
-      if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
+      const existingMounts = existing ? readSandboxMountPaths(existing, ref.workspaceId) : undefined;
+      if (existing && (existingMounts?.mountSubPath !== ref.mountSubPath
+        || existingMounts.sharedReadOnlySubPath !== ref.sharedReadOnlySubPath)) {
         path = 'recreate_mount_subpath_changed';
         this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'mountSubPath changed', options.activeKey);
         this.logger.warn(
-          `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingMountSubPath(existing, ref)} new=${ref.mountSubPath}`,
+          `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${existingMounts?.mountSubPath} new=${ref.mountSubPath}`,
         );
         await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
         existing = null;
@@ -925,10 +933,11 @@ export class SandboxManager {
     const sessionId = stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]);
     const sandboxScopeId = stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]);
     const mountSubPath = stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]) ?? workspaceId;
+    const sharedReadOnlySubPath = stringValue(annotations[SHARED_READ_ONLY_SUBPATH_ANNOTATION]);
     if (!workspaceId || !sessionId || !mountSubPath) {
       throw new SandboxInvalidStateError(`ACS Sandbox ${name} missing workspace/session annotations`);
     }
-    const ref = this.ref({ workspaceId, sessionId, sandboxScopeId, mountSubPath });
+    const ref = this.ref({ workspaceId, sessionId, sandboxScopeId, mountSubPath, sharedReadOnlySubPath });
     if (ref.name !== name) {
       throw new SandboxInvalidStateError(`ACS Sandbox ${name} annotations resolve to ${ref.name}`);
     }
@@ -963,6 +972,7 @@ export class SandboxManager {
       [SANDBOX_SCOPE_ANNOTATION]: ref.sandboxScopeId,
       [SESSION_ANNOTATION]: ref.sessionId,
       [MOUNT_SUBPATH_ANNOTATION]: ref.mountSubPath,
+      ...(ref.sharedReadOnlySubPath ? { [SHARED_READ_ONLY_SUBPATH_ANNOTATION]: ref.sharedReadOnlySubPath } : {}),
       [CREATED_AT_ANNOTATION]: now,
       [LAST_ACTIVE_AT_ANNOTATION]: now,
       [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(ref.workload ?? { class: 'unknown' }),
@@ -984,6 +994,7 @@ export class SandboxManager {
       command: ['/bin/sh', '-c', 'mkdir -p "$ACS_WORKSPACE_PATH" "$DOWNLOAD_DIR" && cd "$ACS_WORKSPACE_PATH" && sleep infinity'],
       env: [
         { name: 'ACS_WORKSPACE_PATH', value: this.config.workspaceMountPath },
+        ...(ref.sharedReadOnlySubPath ? [{ name: 'AGENT_SHARED_READ_ONLY_PATH', value: '/agent-shared' }] : []),
         { name: 'ACS_SANDBOX_IMAGE', value: this.config.sandboxImage },
         { name: 'DOWNLOAD_DIR', value: `${this.config.workspaceMountPath}/downloads` },
         { name: 'XDG_DOWNLOAD_DIR', value: `${this.config.workspaceMountPath}/downloads` },
@@ -1028,11 +1039,7 @@ export class SandboxManager {
         ...(effectiveResources.cpuLimit || effectiveResources.memoryLimit ? { limits: { ...(effectiveResources.cpuLimit ? { cpu: effectiveResources.cpuLimit } : {}), ...(effectiveResources.memoryLimit ? { memory: effectiveResources.memoryLimit } : {}) } } : {}),
       },
       ...(this.config.pvcName ? {
-        volumeMounts: [{
-          name: 'workspace',
-          mountPath: this.config.workspaceMountPath,
-          subPath: ref.mountSubPath,
-        }],
+        volumeMounts: buildWorkspaceVolumeMounts(ref, this.config.workspaceMountPath),
       } : {}),
     };
     return {
@@ -1126,13 +1133,6 @@ export class SandboxManager {
 
   private resourceName(name: string): string {
     return `${this.config.sandboxKind.toLowerCase()}/${name}`;
-  }
-
-  private existingMountSubPath(status: SandboxStatus, ref: SandboxRef): string {
-    const raw = status.raw ?? {};
-    const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
-    const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
-    return stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]) ?? ref.workspaceId;
   }
 
   private existingImage(status: SandboxStatus): string | undefined {

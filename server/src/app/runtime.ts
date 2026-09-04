@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
@@ -69,7 +69,11 @@ import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import { RuntimeOutboundStreamRelay } from '../runtime/runtimeOutboundStreamRelay.js';
 import { MemoryPressureGuard, type RuntimeAdmissionGuard } from '../runtime/memoryPressureGuard.js';
-import { createRuntimeEventRetentionAdmissionGuard } from '../runtime/runtimeWorkerReadiness.js';
+import {
+  createRuntimeEventRetentionAdmissionGuard,
+  isActiveRuntimeWorkerOrgAgentV2Ready,
+} from '../runtime/runtimeWorkerReadiness.js';
+import { runDeferredStartupTasks } from './runtimeDeferredStartup.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import {
   effectiveMaxConcurrentRuns,
@@ -192,6 +196,9 @@ import { createAgentDwsRuntime, type AgentDwsRuntimeBundle } from './agentDwsRun
 import { createConnectorServerRemoteResolver, hasAcsConnector } from './connectorServerRemote.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { PgOrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import { createOrgAgentChannelPolicyRuntimeOptions } from './orgAgentChannelPolicyEvaluator.js';
+import { createRuntimeUserResolvers } from './runtimeUserResolvers.js';
 import { NotionAuthFlowService, NotionDeviceLoginRunner } from '../notion/authFlow.js';
 import { PgFeishuConnectionStore } from '../feishu/store.js';
 import { FeishuAuthKeepaliveService } from '../feishu/keepalive.js';
@@ -252,6 +259,7 @@ import { VoiceTranscriptionService } from '../services/voiceTranscriptionService
 import {
   SAFE_SKILL_NAME_RE,
   createMemoryIndexService,
+  ensureDirectory,
   loadSettingsEnv,
 } from './runtimeSetupHelpers.js';
 import { createMemoryConsolidationScannerStatusHandler } from './runtimeMemoryConsolidationStatus.js';
@@ -268,12 +276,6 @@ import type {
   CreateRuntimeOptions,
   SkillsWarmupStatus,
 } from './runtimeContracts.js';
-function ensureDirectory(path: string, label: string): void {
-  if (!existsSync(path)) {
-    mkdirSync(path, { recursive: true });
-    serverLogger.info(`Created ${label}: ${path}`);
-  }
-}
 export async function createRuntime(options: CreateRuntimeOptions = {}): Promise<AppRuntime> {
   const processCwd = options.processCwd ?? process.cwd(); // ConfigIdentity 也必须复用这个真实 cwd。
   const processRole = options.processRole ?? 'all';
@@ -592,7 +594,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let dwsAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let dwsAuthKeepaliveService: DwsAuthKeepaliveService | undefined;
   let dwsAuthFlowService: DwsAuthFlowService | undefined;
-  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined; let agentDwsRuntime: AgentDwsRuntimeBundle | undefined;
+  let agentDwsMessageStore: PgAgentDwsMessageStore | undefined; let orgGroupAgentStore: PgOrgGroupAgentStore | undefined; let agentDwsRuntime: AgentDwsRuntimeBundle | undefined;
   let notionAuthSessionStore: PgDwsAuthSessionStore | undefined;
   let notionAuthFlowService: NotionAuthFlowService | undefined;
   let googleWorkspaceOAuthService: GoogleWorkspaceOAuthService | undefined;
@@ -721,6 +723,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       agentResourceStore,
       agentDwsAccountStore,
       agentDwsMessageStore,
+      orgGroupAgentStore,
       skillGovernanceStore,
       resolveLegacySkillResourceId,
       governanceChangeJobStore,
@@ -1437,7 +1440,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getFeishuTokenBroker: () => feishuTokenBroker,
     tenantRunEnvByTenant: resolvedSttRuntimeConfig.audioTranscribeEnvByTenant,
     userStore,
-    tenantStore, orgAgentStore,
+    tenantStore, orgAgentStore, agentDwsAccountStore,
     skillConfigStore,
     pgEventStore,
     membershipStore, oauthGrantStore, governanceChangeJobStore,
@@ -1610,7 +1613,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
-    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
+    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, membershipStore, orgAgentStore, orgGroupAgentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
       isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
@@ -1636,6 +1639,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
+    ...createOrgAgentChannelPolicyRuntimeOptions(orgGroupAgentStore, agentDwsAccountStore, orgAgentStore, userStore, membershipStore, assignmentStore),
     environmentStore,
     taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
@@ -1646,26 +1650,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       );
       return bindings.some(binding => binding.resourceId === templateId);
     },
-    resolveUserRole: ({ userId, username }: { userId?: string; username?: string }) => {
-      const user = userId
-        ? userStore?.findById(userId)
-        : username
-          ? userStore?.findByUsername(username)
-          : undefined;
-      return user?.role as 'admin' | 'user' | undefined;
-    },
+    ...createRuntimeUserResolvers(userStore),
     // 账户级授权偏好 resolver（TASK-256 抽出为 userPreferenceResolvers 工厂）：
     // 「全部授权」默认开启；「低风险常开」仅在全部授权关闭时生效，dangerous 仍人工批准。
     ...createApprovalPreferenceResolvers(userStore),
-    // scheduler wake 不经过 Web channel，需要从账户资料恢复系统提示语使用的全名。
-    resolveUserRealName: ({ userId, username }: { userId?: string; username?: string }) => {
-      const user = userId
-        ? userStore?.findById(userId)
-        : username
-          ? userStore?.findByUsername(username)
-          : undefined;
-      return user?.realName;
-    },
     // B1: 把 UserStore.tenantId 暴露给 dispatch，让 tenant remote hand
     // tenantIds allow-list 可在 attach 时按用户身份自动决策。
     resolveUserTenantId: ({ userId, username }: { userId?: string; username?: string }) => {
@@ -1694,7 +1682,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     executionConfig, modelResolver,
     defaultModelResolver,
     ...(agentDwsAccountStore ? { resolveLegacyDwsCompletionAccount: (tenantId: string, accountId: string) => agentDwsAccountStore.getForTenant(tenantId, accountId) } : {}),
-    ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore) } : {}),
+    ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(
+      agentDwsMessageStore, orgGroupAgentStore,
+    ) } : {}),
     getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(config.models),
     getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,
     toolControls: config.toolControls,
@@ -1880,6 +1870,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       beforeTick: async () => {
         taskboardExecutionCoordinator?.wakeReconciliation();
         await sessionStatusReconciler?.runIfDue();
+        await rawRuntimeConfig.backgroundTasks!.reconcileStagedOrgWork();
         await rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries();
         await governanceProjectionReconciler?.reconcileBatch();
       },
@@ -2784,11 +2775,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   if (agentDwsAccountStore && userStore && orgAgentStore && runPreflightService && governanceAuditStore) agentDwsRuntime = await createAgentDwsRuntime({
-    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, pgEventStore, pgRunStore,
-    userStore, orgAgentStore, runPreflightService, governanceAuditStore,
+    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, orgGroupAgentStore, pgEventStore, pgRunStore, runtimeScheduler,
+    userStore, membershipStore, orgAgentStore, runPreflightService, governanceAuditStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
     enableWorker: enableSchedulerWorker, isExecutionEnabled: isRuntimeExecutionEnabled, logger: serverLogger,
+    isRuntimeWorkerV2Ready: isActiveRuntimeWorkerOrgAgentV2Ready,
   });
 
   if (feishuConnectionStore && userStore && resolvedFeishuConnector && feishuConnectorScopes) {
@@ -2920,10 +2912,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     codexWebSocketShutdown: () => codexWebSocketPool.close(),
     codexWebSocketCredentialShutdown: refs => codexWebSocketPool.closeCredentialRefs(refs),
     userStore, authEpochAuthority,
-    dwsConnectionStore, dwsAuthFlowService, agentDwsAccountStore, agentDwsMessageStore,
+    dwsConnectionStore, dwsAuthFlowService,
+    agentDwsAccountStore, agentDwsMessageStore,
+    orgGroupAgentStore, orgAgentApprovalService: agentDwsRuntime?.approvalService,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
     dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
+    agentDwsGroupBindingUpdated: agentDwsRuntime?.onGroupBindingUpdated,
     agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
+    isOrgAgentRuntimeV2Ready: agentDwsRuntime?.isOrgAgentRuntimeV2Ready,
     getNotionConnection, disconnectNotionConnection, googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
     contextPlaneShutdown,
@@ -2951,6 +2947,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...(configIdentityAssembly.modelResolverHooks.validateConfigReload ? { validateSharedConfigCandidate: configIdentityAssembly.modelResolverHooks.validateConfigReload } : {}),
     invalidateSharedConfigIdentity: configIdentityAssembly.invalidate, notifySharedConfigChanged: configIdentityAssembly.modelResolverHooks.onConfigReloaded, acknowledgeSharedConfigApplied: sharedConfigRefresher.acknowledgeConfigApplied, acknowledgeRecoveryConfigApplied: sharedConfigRefresher.acknowledgeRecoveryConfigApplied, prepareSharedConfigIdentityPublication: configIdentityAssembly.prepareRecoveryPublication,
     orgAgentStore,
+    backgroundTasks: rawRuntimeConfig.backgroundTasks,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore, messageFeedbackStore, appealStore,
     taskboardService, taskboardExecutionService: taskboardExecutionCoordinator,
@@ -2994,15 +2991,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     clientDaemonGateway,
     runtimeEventStoreFor,
     skillMaterialization: skillMaterializationService,
-    runDeferredStartupTasks: async () => {
-      for (const task of deferredStartupTasks) {
-        try {
-          await task.run();
-        } catch (err) {
-          serverLogger.error(`Deferred startup task "${task.name}" failed:`, err);
-        }
-      }
-    },
+    runDeferredStartupTasks: () => runDeferredStartupTasks(deferredStartupTasks, serverLogger),
     getSkillsWarmupStatus: () => ({ ...skillsWarmup }),
     startSkillMaterializationCoordinator: () => {
       skillMaterializationLeadership?.start();

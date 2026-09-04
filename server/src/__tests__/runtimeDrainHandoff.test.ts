@@ -183,7 +183,6 @@ describe('runtime drain handoff', () => {
     });
     expect(innerEventStore.events.map((event) => event.type)).toEqual([
       'run_state_changed',
-      'run_finished',
       'run_state_changed',
     ]);
     expect(innerEventStore.events.at(-1)).toMatchObject({
@@ -195,7 +194,7 @@ describe('runtime drain handoff', () => {
     expect(outbound).toEqual(['error']);
     expect(releases).toEqual([
       {
-        status: 'failed',
+        status: undefined,
         reason: '会话恢复连续失败，本次运行已结束，请重试。',
       },
     ]);

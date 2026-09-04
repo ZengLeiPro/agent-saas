@@ -16,6 +16,7 @@ export async function renewRunLease(
   leaseMs: number,
   now = new Date(),
   source: RunHeartbeatSource = 'worker',
+  leaseToken?: string,
 ): Promise<RunRecord | null> {
   const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
   const result = await context.pool.query<{ row_json: RunRecord }>(`
@@ -29,10 +30,11 @@ export async function renewRunLease(
         updated_at = GREATEST(updated_at, $4::timestamptz)
     WHERE run_id = $1
       AND worker_id = $2
+      AND ($6::text IS NULL OR metadata->>'runLeaseToken' = $6)
       AND status = 'running'
       AND liveness_state IS DISTINCT FROM 'stale'
     RETURNING row_to_json(${context.runsTable}.*) AS row_json
-  `, [runId, workerId, leaseExpiresAt, now.toISOString(), `heartbeat_${source}`]);
+  `, [runId, workerId, leaseExpiresAt, now.toISOString(), `heartbeat_${source}`, leaseToken ?? null]);
   return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
 }
 
@@ -71,14 +73,27 @@ export async function reapExpiredRunLiveness(
   const client = await context.pool.connect();
   try {
     await client.query('BEGIN');
-    // Orphan first so a row made stale in this transaction cannot skip the grace phase.
-    const orphaned = await client.query<{ row_json: RunRecord }>(`
+    // Repair previously committed reaper terminals first. If the scheduler crashed after
+    // the orphan CAS but before claiming its terminal outbox, the next process must see it.
+    const repairable = await client.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${context.runsTable} run
+      WHERE run.status = 'orphaned'
+        AND run.metadata->>'livenessTerminalizedBy' = 'reaper'
+        AND NOT (run.metadata ? 'terminalEventOutbox')
+      ORDER BY run.updated_at ASC, run.run_id ASC
+      LIMIT $1
+      FOR UPDATE SKIP LOCKED
+    `, [boundedLimit]);
+    const orphanLimit = Math.max(0, boundedLimit - repairable.rows.length);
+    // Orphan before stale marking so a row made stale in this transaction cannot skip the grace phase.
+    const orphaned = orphanLimit === 0 ? { rows: [] as Array<{ row_json: RunRecord }> } : await client.query<{ row_json: RunRecord }>(`
       WITH candidates AS MATERIALIZED (
         SELECT run_id
         FROM ${context.runsTable} run
         WHERE run.status = 'running'
-          AND run.liveness_version IS NOT NULL
-          AND run.liveness_state = 'stale'
+          AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
+          AND run.liveness_version IS NOT NULL AND run.liveness_state = 'stale'
           AND run.liveness_detected_at <= $1::timestamptz
           AND NOT ${recoverableRunHandoffSql('run', context.toolInvocationsTable)}
         ORDER BY liveness_detected_at ASC, run_id ASC
@@ -118,17 +133,19 @@ export async function reapExpiredRunLiveness(
       FROM candidates, transition_time
       WHERE run.run_id = candidates.run_id
         AND run.status = 'running'
+        AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
         AND run.liveness_state = 'stale'
         AND run.liveness_detected_at <= $1::timestamptz
         AND NOT ${recoverableRunHandoffSql('run', context.toolInvocationsTable)}
       RETURNING row_to_json(run.*) AS row_json
-    `, [staleBefore, boundedLimit]);
-    const remaining = Math.max(0, boundedLimit - orphaned.rows.length);
+    `, [staleBefore, orphanLimit]);
+    const remaining = Math.max(0, boundedLimit - repairable.rows.length - orphaned.rows.length);
     const stale = remaining === 0 ? { rows: [] as Array<{ row_json: RunRecord }> } : await client.query<{ row_json: RunRecord }>(`
       WITH candidates AS (
         SELECT run_id
         FROM ${context.runsTable}
         WHERE status = 'running'
+          AND metadata->>'backgroundTask' IS DISTINCT FROM 'true'
           AND liveness_version IS NOT NULL
           AND liveness_state = 'busy'
           AND lease_expires_at <= $1::timestamptz
@@ -145,6 +162,7 @@ export async function reapExpiredRunLiveness(
       FROM candidates
       WHERE run.run_id = candidates.run_id
         AND run.status = 'running'
+        AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
         AND run.liveness_state = 'busy'
         AND run.lease_expires_at <= $1::timestamptz
       RETURNING row_to_json(run.*) AS row_json
@@ -152,7 +170,7 @@ export async function reapExpiredRunLiveness(
     await client.query('COMMIT');
     return {
       stale: stale.rows.map((row) => normalizeRunRecord(row.row_json)),
-      orphaned: orphaned.rows.map((row) => normalizeRunRecord(row.row_json)),
+      orphaned: [...repairable.rows, ...orphaned.rows].map((row) => normalizeRunRecord(row.row_json)),
     };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);

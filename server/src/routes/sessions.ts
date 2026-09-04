@@ -82,6 +82,7 @@ import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } fro
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
 import { requireSandboxPhysicalDeletion, type SandboxSessionDeletionResult } from './sandboxSessionDeletion.js'; export type { SandboxSessionDeletionResult } from './sandboxSessionDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
+import { resolveSessionDetailAccess, type TaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
@@ -92,6 +93,7 @@ import {
   type AgentTarget,
   type AgentTargetIdentitySnapshot,
   type AgentTargetUnavailableReason,
+  type SessionDetailAccessMode,
   type SessionListActiveInteraction,
 } from '@agent/shared';
 import { parseCanonicalChatSubmission } from '@agent/shared';
@@ -127,7 +129,6 @@ import {
   isSessionAfterCursor,
   type CronSessionInfo,
 } from "./sessionListHelpers.js";
-
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
 const SESSIONS_LIST_CACHE_TTL_MS = 5 * 60_000;
@@ -352,7 +353,7 @@ export interface SessionsRouterOptions {
   /** OrgAgentStore：会话列表按 meta.orgAgentId join 出专职 Agent 名称（徽标展示） */
   orgAgentStore?: OrgAgentStore;
   /** 查询会话流状态（由 WebChannel 提供） */
-  getStreamStatus?: (sessionId: string) => Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }>;
+  getStreamStatus?: (tenantId: string, sessionId: string) => Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }>;
   /** 广播事件到指定用户的所有 WS 连接 */
   broadcastToUser?: (userId: string, data: object) => void;
   /** 中央事件总线（优先于 broadcastToUser），延迟求值避免初始化时序问题 */
@@ -395,6 +396,8 @@ export interface SessionsRouterOptions {
   };
   /** 用户维度会话未读状态真源。 */
   sessionReadStateStore?: SessionReadStateStore;
+  /** 任务看板成员只读打开 owner 的执行会话；不得用于写入、分享或预热授权。 */
+  canReadTaskboardSession?: TaskboardSessionReadAuthorizer;
   /**
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
@@ -405,14 +408,14 @@ export interface SessionsRouterOptions {
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
    */
-  listPendingSteeringBySession?: (sessionId: string) => Promise<Array<{
+  listPendingSteeringBySession?: (sessionId: string, tenantId?: string) => Promise<Array<{
     sourceRunId: string;
     targetRunId: string;
     sourceRun: { metadata?: Record<string, unknown> };
     acceptedAt: string;
   }>>;
   /** 普通 queue + 显式 steer 的统一权威 pending 快照。 */
-  listPendingUserMessagesBySession?: (sessionId: string) => Promise<Array<{
+  listPendingUserMessagesBySession?: (sessionId: string, tenantId?: string) => Promise<Array<{
     runId: string;
     sessionId: string;
     status: string;
@@ -422,9 +425,10 @@ export interface SessionsRouterOptions {
   /** M20-02：所有 durable V1 用户提交，供 lifecycle snapshot 投影。 */
   listUserMessagesBySession?: (sessionId: string) => Promise<RunRecord[]>;
   /** clientMessageId 权威状态核验（ACK 超时/断线重连）。 */
-  findRunByClientMessageId?: (userId: string | undefined, clientMessageId: string) => Promise<{
+  findRunByClientMessageId?: (tenantId: string, userId: string | undefined, clientMessageId: string) => Promise<{
     runId: string;
     sessionId: string;
+    tenantId?: string;
     status: string;
     statusReason?: string;
     metadata: Record<string, unknown>;
@@ -436,7 +440,6 @@ const sessionsListCache = new TTLCache<SessionsListResponse>(
   SESSIONS_LIST_CACHE_TTL_MS,
   SESSIONS_LIST_CACHE_TTL_MS,
 );
-
 /** 清除会话列表缓存，供 Agent 完成时调用以确保其他端轮询获取最新数据 */
 export function clearSessionsListCache(): void {
   sessionsListCache.clear();
@@ -658,7 +661,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           indexDurationMs: number;
           readParseDurationMs: number;
         };
-        detail: SessionShareSnapshot;
+        detail: SessionShareSnapshot & { accessMode: SessionDetailAccessMode };
       }
     | { ok: false; status: number; error: string }
   > {
@@ -679,12 +682,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const { transcriptPath, hasTranscript } = resolvedPath;
 
     const meta = await readSessionMeta(transcriptPath);
-    if (!canAccessSession(req.user, meta, options.userStore)) {
-      return { ok: false, status: 403, error: "Access denied" };
-    }
-    if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
-      return { ok: false, status: 404, error: "Session not found" };
-    }
+    const accessMode = await resolveSessionDetailAccess(req.user, meta, sessionId, options.userStore, options.canReadTaskboardSession); if (!accessMode) return { ok: false, status: 403, error: "Access denied" };
+    if (meta?.deletedAt && (accessMode !== "owner" || !optionsForBuild.includeDeleted)) return { ok: false, status: 404, error: "Session not found" };
     if (hidesSystemSessionFrom(req.user, meta)) {
       return { ok: false, status: 404, error: "Session not found" };
     }
@@ -768,7 +767,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
     if (options.listPendingUserMessagesBySession) {
       try {
-        const queriedPending = await options.listPendingUserMessagesBySession(sessionId);
+        const queriedPending = await options.listPendingUserMessagesBySession(sessionId, tenantId);
         // 普通 queue 与 steer 共用本分支：transcript 窗口 + durable user_message 双对账，
         // 过滤「已投影但 source run 尚未转出 pending」的消息，防止刷新/切回时复活（TASK-70）。
         const projectedRunIds = new Set(await listDurablyProjectedQueuedRunIds(detailEventStore, tenantId, sessionId, queriedPending, parsed.blocks));
@@ -802,7 +801,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
     } else if (options.listPendingSteeringBySession) {
       try {
-        const queriedPending = await options.listPendingSteeringBySession(sessionId);
+        const queriedPending = await options.listPendingSteeringBySession(sessionId, tenantId);
         const durableProjectedSourceRunIds = await listDurablyProjectedQueuedRunIds(
           detailEventStore, tenantId, sessionId, queriedPending, parsed.blocks,
         );
@@ -874,6 +873,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         },
       } : {}),
       detail: {
+        accessMode,
         sessionId: parsed.sessionId ?? sessionId,
         stats: parsed.stats,
         blocks: parsed.blocks,
@@ -2158,7 +2158,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       return;
     }
     try {
-      const run = await options.findRunByClientMessageId(req.user?.sub, clientMessageId);
+      const run = await options.findRunByClientMessageId(req.user?.tenantId ?? DEFAULT_TENANT_ID, req.user?.sub, clientMessageId);
       if (!run) {
         res.status(404).json({ error: "Message not found" });
         return;
@@ -2173,9 +2173,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             : run.status === 'cancelled'
               ? 'cancelled'
               : 'failed';
-      let queuePosition: number | undefined;
+      let queuePosition: number | undefined; // resolved within the acknowledged run's tenant/session
       if (status === 'queued' && options.listPendingUserMessagesBySession) {
-        const pending = await options.listPendingUserMessagesBySession(run.sessionId);
+        const pending = await options.listPendingUserMessagesBySession(run.sessionId, run.tenantId ?? req.user?.tenantId);
         const index = pending.findIndex((candidate) => candidate.runId === run.runId);
         if (index >= 0) queuePosition = index + 1;
       }
@@ -2812,7 +2812,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
 
     return options.getStreamStatus
-      ? options.getStreamStatus(sessionId)
+      ? options.getStreamStatus(req.user?.tenantId ?? DEFAULT_TENANT_ID, sessionId)
       : { active: false };
   };
 

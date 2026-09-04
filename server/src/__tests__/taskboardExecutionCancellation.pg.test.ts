@@ -30,7 +30,7 @@ describePg('Taskboard execution cancellation PostgreSQL races', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: connectionString!, connectionTimeoutMillis: 5_000, max: 8 });
     store = new PgTaskboardStore({ pool, tablePrefix: prefix });
-    runStore = new PgRunStore({ pool, tablePrefix: prefix });
+    runStore = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     eventStore = new PgEventStore({ connectionString: connectionString!, tablePrefix: prefix, poolMax: 4 });
     toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await eventStore.init();

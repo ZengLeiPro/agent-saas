@@ -1,14 +1,15 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-
+// Fixed identities and durable attempt owners make provisioning/scanner races repeatable after a crash.
 import type {
   HandRecord,
   HandStatus,
   HandStore,
   RegisterHandInput,
 } from '../runtime/handStore.js';
-import { ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
+import { HandHealthScanner } from '../runtime/handHealthScanner.js';
+import { deriveTenantHandId, ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
 
+// Single-record store covers default-hand CAS; the map fixture covers tenant dispatch claims.
 class CasMemoryHandStore implements HandStore {
   record: HandRecord | null = null;
 
@@ -16,6 +17,7 @@ class CasMemoryHandStore implements HandStore {
     const now = new Date().toISOString();
     this.record = {
       handId: input.handId,
+      tenantId: input.tenantId,
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       type: input.type,
@@ -35,9 +37,14 @@ class CasMemoryHandStore implements HandStore {
     generation: string,
     status: HandStatus,
     metadata: Record<string, unknown> = {},
+    _tenantId?: string,
+    owner?: string,
   ): Promise<HandRecord | null> {
+    const leaseExpiry = this.record?.metadata.provisionAttemptLeaseExpiresAtMs;
     if (this.record?.handId !== handId || this.record.status !== 'provisioning'
-      || this.record.metadata.provisionGeneration !== generation) return null;
+      || this.record.metadata.provisionGeneration !== generation
+      || (owner && (this.record.metadata.provisionAttemptOwner !== owner
+        || typeof leaseExpiry !== 'number' || leaseExpiry <= Date.now()))) return null;
     return await this.updateStatus(handId, status, metadata);
   }
 
@@ -63,263 +70,112 @@ class CasMemoryHandStore implements HandStore {
   async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return this.record?.workspaceId === workspaceId ? [this.record] : []; }
 }
 
-describe('runtime Hand provision contracts and generation CAS', () => {
-  it('persists the serverRemote credential reference without persisting its plaintext token', async () => {
-    const handStore = new CasMemoryHandStore();
-    const common = {
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: { has: () => false, get: () => undefined } as never,
-      executionTarget: 'server-remote' as const,
-      sessionId: 'session-credential', workspaceId: 'workspace-credential', tenantId: 'tenant-credential',
+class MapMemoryHandStore implements HandStore {
+  records = new Map<string, HandRecord>();
+  async register(input: RegisterHandInput): Promise<HandRecord> {
+    const previous = this.records.get(input.handId);
+    const now = new Date().toISOString();
+    const record: HandRecord = {
+      handId: input.handId, tenantId: input.tenantId, sessionId: input.sessionId, workspaceId: input.workspaceId, type: input.type,
+      status: input.status ?? 'ready', endpoint: input.endpoint, capabilities: input.capabilities ?? [],
+      recipeDigest: input.recipeDigest, createdAt: previous?.createdAt ?? now, updatedAt: now,
+      metadata: { ...(previous?.metadata ?? {}), ...(input.metadata ?? {}) },
     };
-
-    await ensureRuntimeHandRegistered({
-      ...common, serverRemoteAuthTokenRef: 'secret://server-remote/original',
+    this.records.set(input.handId, record); return record;
+  }
+  async claimProvisionDispatch(handId: string, generation: string, dispatchToken: string, expectedUpdatedAt: string) {
+    const record = this.records.get(handId);
+    if (!record || record.status !== 'provisioning' || record.metadata.provisionGeneration !== generation
+      || record.metadata.reconcileRequired === true || record.metadata.provisionDispatchClaim
+      || record.updatedAt !== expectedUpdatedAt) return null;
+    return this.updateStatus(handId, 'unhealthy', {
+      provisionDispatchClaim: dispatchToken,
+      provisionDispatchClaimedAt: new Date().toISOString(),
+      provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
     });
-    expect(handStore.record?.metadata).toMatchObject({
-      serverRemoteAuthTokenRef: 'secret://server-remote/original',
+  }
+  async completeProvisionDispatch(handId: string, generation: string, dispatchToken: string, status: 'ready' | 'unhealthy', metadata: Record<string, unknown> = {}) {
+    const record = this.records.get(handId);
+    if (!record || !['provisioning', 'unhealthy'].includes(record.status)
+      || record.metadata.provisionGeneration !== generation
+      || record.metadata.provisionDispatchClaim !== dispatchToken
+      || record.metadata.dispatchAuthorized !== true) return null;
+    return this.updateStatus(handId, status, {
+      ...metadata,
+      provisionDispatchClaim: null,
+      dispatchAuthorized: false,
+      provisionResult: status === 'ready' ? 'ok' : (metadata.provisionResult ?? 'error'),
+      reconcileRequired: metadata.reconcileRequired ?? status !== 'ready',
     });
-    expect(JSON.stringify(handStore.record?.metadata)).not.toContain('plaintext-token');
-
-    await ensureRuntimeHandRegistered(common);
-    expect(handStore.record?.metadata.serverRemoteAuthTokenRef).toBeNull();
-  });
-
-  it('maps the persisted sandbox profile into server-remote recipe resources', async () => {
-    const handStore = new CasMemoryHandStore();
-    const provision = vi.fn(async () => ({ status: 'ok' as const }));
-
-    await ensureRuntimeHandRegistered({
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: {
-        has: () => true,
-        get: () => ({ listInternalTools: () => [], provision }),
-      } as never,
-      executionTarget: 'server-remote',
-      sessionId: 'session-profile',
-      workspaceId: 'workspace-profile',
-      runId: 'run-profile',
-      tenantId: 'tenant-profile',
-      sandboxProfile: 'daily',
-      serverRemoteRecipe: { resources: { diskMb: 8192 } },
+  }
+  async completeProvisionAttempt(handId: string, generation: string, status: HandStatus,
+    metadata: Record<string, unknown> = {}, _tenantId?: string, provisionAttemptOwner?: string) {
+    const record = this.records.get(handId);
+    if (!record || record.status !== 'provisioning' || record.metadata.provisionGeneration !== generation
+      || (provisionAttemptOwner
+        ? record.metadata.provisionAttemptOwner !== provisionAttemptOwner
+          || typeof record.metadata.provisionAttemptLeaseExpiresAtMs !== 'number'
+          || record.metadata.provisionAttemptLeaseExpiresAtMs <= Date.now()
+        : typeof record.metadata.provisionAttemptOwner === 'string')) return null;
+    return this.updateStatus(handId, status, {
+      ...metadata, provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null,
+      provisionAttemptLeaseExpiresAtMs: null,
     });
-
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      resources: { cpu: '1', memoryMb: 2048, diskMb: 8192 },
-    }));
-  });
-
-  it('lets a child hand inherit the parent effective resources over its profile recipe', async () => {
-    const handStore = new CasMemoryHandStore();
-    const provision = vi.fn(async () => ({ status: 'ok' as const }));
-    await ensureRuntimeHandRegistered({
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
-      executionTarget: 'server-remote',
-      sessionId: 'child-session',
-      workspaceId: 'parent-workspace',
-      tenantId: 'tenant-child',
-      sandboxProfile: 'daily',
-      sandboxResources: { cpu: '4', memoryMb: 8192 },
-      serverRemoteRecipe: { resources: { diskMb: 16384 } },
-    });
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
-    }));
-  });
-
-  it('tenant provision overrides static workload with taskboard/cron/memory while preserving static recipe fields', async () => {
-    const cases = [
-      [
-        { kind: 'taskboard' as const, taskKind: 'delivery' as const, purpose: 'review' as const },
-        { class: 'taskboard', taskKind: 'delivery', purpose: 'review' },
-      ],
-      [{ kind: 'cron' as const }, { class: 'cron' }],
-      [{ kind: 'memory' as const }, { class: 'memory' }],
-    ] as const;
-    const digests = new Set<string>(); // Distinct values prove workload participates in the effective digest.
-
-    for (const [sandboxWorkloadDescriptor, expectedWorkload] of cases) {
-      const handStore = new CasMemoryHandStore();
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({ status: 'ok' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      );
-      try {
-        await ensureRuntimeHandRegistered({
-          handStore,
-          eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-          executionTransportRegistry: {
-            has: () => false,
-            get: () => { throw new Error('no default execution transport expected'); },
-          } as never,
-          executionTarget: 'server-local',
-          sessionId: `tenant-${sandboxWorkloadDescriptor.kind}`,
-          workspaceId: 'workspace-tenant',
-          workspaceMountSubPath: 'dynamic/mount-must-not-win',
-          topLevelSessionId: 'top-session',
-          tenantId: 'tenant-1',
-          userTenantId: 'tenant-1',
-          userId: 'user-1',
-          sandboxWorkloadDescriptor,
-          tenantRemoteHands: [{
-            id: 'tenant-acs',
-            baseUrl: 'https://tenant-hand.example',
-            authToken: 'static-config-token',
-            recipe: {
-              mountSubPath: 'static/mount',
-              repo: { url: 'https://git.example/repo.git', ref: 'main', remote: 'origin' },
-              resources: { cpu: '2', memoryMb: 4096 },
-              packages: ['git'],
-              setupCommands: ['pnpm install --frozen-lockfile'],
-              workload: { class: 'interactive' },
-            },
-          }],
-          tenantRemoteHandResolver: {
-            resolveForRegister: vi.fn(async () => ({
-              id: 'tenant-acs',
-              baseUrl: 'https://tenant-hand.example',
-              authToken: 'resolved-token',
-              source: 'inline' as const,
-            })),
-            resolveForHand: vi.fn(async () => 'resolved-token'),
-          },
-        });
-
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
-        const [url, init] = fetchSpy.mock.calls[0]!;
-        expect(url).toBe('https://tenant-hand.example/provision');
-        expect((init as RequestInit).method).toBe('POST');
-        expect((init as { headers: Record<string, string> }).headers.authorization).toBe('Bearer resolved-token');
-        const request = JSON.parse(String((init as RequestInit).body));
-        const expectedRecipe = {
-          mountSubPath: 'static/mount',
-          repo: { url: 'https://git.example/repo.git', ref: 'main', remote: 'origin' },
-          resources: { cpu: '2', memoryMb: 4096 },
-          packages: ['git'],
-          setupCommands: ['pnpm install --frozen-lockfile'],
-          workload: expectedWorkload,
-          workspaceId: 'workspace-tenant',
-          sandboxScopeId: 'workspace-tenant__static_mount__s_top-session',
-          sessionId: `tenant-${sandboxWorkloadDescriptor.kind}`,
-        };
-        expect(request).toEqual({ workspaceId: 'workspace-tenant', recipe: expectedRecipe });
-        const expectedDigest = createHash('sha256').update(JSON.stringify(expectedRecipe)).digest('hex');
-        expect(handStore.record).toMatchObject({
-          handId: `tenant-${sandboxWorkloadDescriptor.kind}:tenant-acs`,
-          recipeDigest: expectedDigest,
-          metadata: { recipe: expectedRecipe },
-        });
-        digests.add(handStore.record!.recipeDigest!);
-      } finally {
-        fetchSpy.mockRestore();
-      }
+  }
+  async updateStatus(handId: string, status: HandStatus, metadata: Record<string, unknown> = {}) {
+    const record = this.records.get(handId); if (!record) return null;
+    const updated = { ...record, status, updatedAt: new Date().toISOString(), metadata: { ...record.metadata, ...metadata } };
+    this.records.set(handId, updated); return updated;
+  }
+  async claimProvisionRecovery(handId: string, recoveryToken: string, metadata: Record<string, unknown> = {},
+    expectedUpdatedAt?: string, expectedGeneration?: string): Promise<HandRecord | null> {
+    const record = this.records.get(handId);
+    if (!record || !['provisioning', 'ready', 'unhealthy'].includes(record.status)
+      || record.metadata.reconcileRequired === true
+      || (expectedUpdatedAt && record.updatedAt !== expectedUpdatedAt)
+      || (expectedGeneration && record.metadata.provisionGeneration !== expectedGeneration)) return null;
+    if (record.status === 'provisioning') {
+      const owner = record.metadata.provisionAttemptOwner;
+      const leaseExpiresAt = record.metadata.provisionAttemptLeaseExpiresAtMs;
+      if (typeof owner === 'string' && (typeof leaseExpiresAt !== 'number'
+        || leaseExpiresAt >= Date.now())) return null;
     }
-
-    expect(digests.size).toBe(3);
-  });
-
-  it('keeps environment-template resources authoritative over the session profile', async () => {
-    const handStore = new CasMemoryHandStore();
-    const provision = vi.fn(async () => ({ status: 'ok' as const }));
-    const environmentStore = {
-      getInstance: vi.fn(async () => null),
-      getTemplateVersion: vi.fn(async () => ({
-        versionId: 'version-1',
-        templateId: 'template-1',
-        digest: 'template-digest',
-        recipe: {
-          packages: [],
-          envKeys: [],
-          setupCommands: [],
-          resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
-        },
-      })),
-      getProvider: vi.fn(async () => ({ status: 'enabled' })),
-      getTemplate: vi.fn(async () => ({ status: 'published' })),
-      upsert: vi.fn(async () => undefined),
-      create: vi.fn(async (input) => input),
-      transition: vi.fn(async () => undefined),
-    };
-
-    await ensureRuntimeHandRegistered({
-      handStore,
-      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-      executionTransportRegistry: {
-        has: () => true,
-        get: () => ({ listInternalTools: () => [], provision }),
-      } as never,
-      executionTarget: 'server-remote',
-      sessionId: 'session-template',
-      workspaceId: 'workspace-template',
-      runId: 'run-template',
-      tenantId: 'tenant-template',
-      userTenantId: 'tenant-template',
-      userId: 'user-template',
-      sandboxProfile: 'daily',
-      environmentStore: environmentStore as never,
-      environmentTemplateVersionId: 'version-1',
-      authorizeEnvironmentTemplate: vi.fn(async () => true),
+    return this.updateStatus(handId, 'unhealthy', {
+      ...metadata, provisionRecoveryToken: recoveryToken, provisionRecoveryClaimedAtMs: Date.now(),
+      provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null, provisionAttemptLeaseExpiresAtMs: null,
     });
+  }
+  async completeProvisionRecovery(handId: string, recoveryToken: string, status: HandStatus,
+    metadata: Record<string, unknown> = {}): Promise<HandRecord | null> {
+    const record = this.records.get(handId);
+    if (!record || record.status !== 'unhealthy'
+      || record.metadata.provisionRecoveryToken !== recoveryToken) return null;
+    return this.updateStatus(handId, status, {
+      ...metadata, provisionRecoveryToken: null, provisionRecoveryClaimedAtMs: null,
+    });
+  }
+  async get(handId: string) { return this.records.get(handId) ?? null; }
+  async listBySession(sessionId: string) { return [...this.records.values()].filter(record => record.sessionId === sessionId); }
+  async listByWorkspace(workspaceId: string) { return [...this.records.values()].filter(record => record.workspaceId === workspaceId); }
+  async listByType(type: HandRecord['type'], options?: { status?: HandStatus }) {
+    return [...this.records.values()].filter(record => record.type === type
+      && (!options?.status || record.status === options.status));
+  }
+}
 
-    expect(provision).toHaveBeenCalledWith(expect.objectContaining({
-      resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
-    }));
-  });
-
-  it('merges partial environment resources over the profile and digests the effective recipe', async () => {
-    const cases = [
-      [{ diskMb: 8192 }, { cpu: '1', memoryMb: 2048, diskMb: 8192 }],
-      [{ timeoutMs: 60_000 }, { cpu: '1', memoryMb: 2048, timeoutMs: 60_000 }],
-      [{ cpu: '4' }, { cpu: '4', memoryMb: 2048 }],
-      [{ memoryMb: 8192 }, { cpu: '1', memoryMb: 8192 }],
-    ] as const;
-    for (const [templateResources, expectedResources] of cases) {
-      const handStore = new CasMemoryHandStore();
-      const provision = vi.fn(async () => ({ status: 'ok' as const }));
-      const environmentStore = {
-        getInstance: vi.fn(async () => null),
-        getTemplateVersion: vi.fn(async () => ({
-          versionId: 'version-partial', templateId: 'template-partial', digest: 'template-only-digest',
-          recipe: { packages: [], envKeys: [], setupCommands: [], resources: templateResources },
-        })),
-        getProvider: vi.fn(async () => ({ status: 'enabled' })),
-        getTemplate: vi.fn(async () => ({ status: 'published' })),
-        upsert: vi.fn(async () => undefined), create: vi.fn(async (input) => input), transition: vi.fn(async () => undefined),
-      };
-      await ensureRuntimeHandRegistered({
-        handStore,
-        eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
-        executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision }) } as never,
-        executionTarget: 'server-remote', sessionId: `session-${Object.keys(templateResources)[0]}`,
-        workspaceId: 'workspace-partial', tenantId: 'tenant-partial', userTenantId: 'tenant-partial', userId: 'user-partial',
-        sandboxProfile: 'daily', environmentStore: environmentStore as never, environmentTemplateVersionId: 'version-partial',
-        authorizeEnvironmentTemplate: vi.fn(async () => true),
-      });
-      const recipe = handStore.record?.metadata.recipe;
-      expect(recipe).toMatchObject({ resources: expectedResources });
-      expect(handStore.record?.recipeDigest).toBe(createHash('sha256').update(JSON.stringify(recipe)).digest('hex'));
-      expect(environmentStore.create).toHaveBeenCalledWith(expect.objectContaining({ recipeDigest: 'template-only-digest' }));
-    }
-  });
-
-  it('does not let an older slow failure overwrite a newer successful attempt', async () => {
+describe('runtime Hand provision contracts and atomic authority', () => {
+  it('fails the older transport closed without overwriting a newer successful attempt', async () => {
     const handStore = new CasMemoryHandStore();
     let releaseFirst!: () => void;
     let markFirstStarted!: () => void;
     const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    const firstProvision = vi.fn(async () => {
+    const firstProvision = vi.fn(async (_recipe: { provisionKey?: string }) => {
       markFirstStarted();
       await firstGate;
       return { status: 'error' as const, error: 'older failure' };
     });
-    const secondProvision = vi.fn(async () => ({ status: 'ok' as const }));
+    const secondProvision = vi.fn(async (_recipe: { provisionKey?: string }) => ({ status: 'ok' as const }));
     const base = {
       handStore,
       eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
@@ -340,11 +196,432 @@ describe('runtime Hand provision contracts and generation CAS', () => {
       executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [], provision: secondProvision }) } as never,
     });
     releaseFirst();
-    await expect(first).resolves.toBeUndefined();
+    await expect(first).rejects.toThrow('HAND_PROVISION_AUTHORITY_LOST:completion rejected');
 
     expect(handStore.record).toMatchObject({
       status: 'ready',
-      metadata: { provisionFailure: null, provision: { lastStatus: 'ok' } },
+      metadata: {
+        provisionKey: expect.any(String),
+        provisionFailure: null,
+        provision: { lastStatus: 'ok' },
+      },
+    });
+    expect(firstProvision.mock.calls[0]![0].provisionKey)
+      .toBe(secondProvision.mock.calls[0]![0].provisionKey);
+  });
+
+  it('does not let shared health complete ready while the owned provision transport is in flight', async () => {
+    const handStore = new MapMemoryHandStore();
+    let markStarted!: () => void;
+    let releaseFailure!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const failureGate = new Promise<void>((resolve) => { releaseFailure = resolve; });
+    const provision = vi.fn(async () => {
+      markStarted();
+      await failureGate;
+      throw new Error('injected transport failure');
+    });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const scanner = new HandHealthScanner({ handStore, fetchImpl, defaultServerRemoteAuthToken: 'token' });
+    const registration = ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: {
+        has: () => true, get: () => ({ listInternalTools: () => [], provision }),
+      } as never,
+      executionTarget: 'server-remote', sessionId: 'scanner-transport-race',
+      workspaceId: 'workspace-race', tenantId: 'tenant-race',
+    });
+    await started;
+    const inFlight = [...handStore.records.values()][0]!;
+    expect(inFlight).toMatchObject({ status: 'provisioning', metadata: {
+      provisionAttemptOwner: expect.any(String), provisionAttemptClaimedAtMs: expect.any(Number),
+    } });
+
+    expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 0 });
+    expect(handStore.records.get(inFlight.handId)?.status).toBe('provisioning');
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    releaseFailure();
+    await expect(registration).rejects.toThrow('HAND_PROVISION_FAILED:injected transport failure');
+    expect(handStore.records.get(inFlight.handId)).toMatchObject({
+      status: 'unhealthy', metadata: { provisionFailure: 'injected transport failure',
+        provisionAttemptOwner: null, provisionAttemptClaimedAtMs: null },
+    });
+  });
+
+  it('keeps claimed dispatch authority stable when scanner runs before the original request', async () => {
+    const handStore = new MapMemoryHandStore();
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => new Response(
+      JSON.stringify({ status: 'ok' }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchImpl);
+    const scanner = new HandHealthScanner({
+      handStore,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      resolveHandAuthToken: () => 'token',
+    });
+    let claimedToken: unknown;
+    const beforeDispatch = vi.fn(async () => {
+      const claimed = handStore.records.get(deriveTenantHandId('tenant-a', 'scanner-race-session', 'tenant-ecs'))!;
+      claimedToken = claimed.metadata.provisionDispatchClaim;
+      expect(claimed).toMatchObject({ status: 'unhealthy', metadata: {
+        provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
+      } });
+      expect(await scanner.scanOnce()).toEqual({ scanned: 1, flipped: 0 });
+      expect(handStore.records.get(claimed.handId)?.metadata.provisionDispatchClaim).toBe(claimedToken);
+    });
+
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local', sessionId: 'scanner-race-session', runId: 'scanner-race-run',
+      workspaceId: 'scanner-race-workspace', tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+      beforeTenantRemoteProvision: beforeDispatch,
+    });
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'scanner-race-session', 'tenant-ecs'))).toMatchObject({
+      status: 'ready', metadata: { reconcileRequired: false, dispatchAuthorized: false, provisionResult: 'ok' },
+    }));
+
+    expect(beforeDispatch).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).includes('/provision'))).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves an accepted in-flight tenant provision as result_unknown and never replays it', async () => {
+    const handStore = new MapMemoryHandStore();
+    let release!: () => void;
+    let accepted!: () => void;
+    const acceptedPromise = new Promise<void>(resolve => { accepted = resolve; });
+    const responseGate = new Promise<void>(resolve => { release = resolve; });
+    const fetchImpl = vi.fn(async () => {
+      accepted(); await responseGate;
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    const beforeDispatch = vi.fn(async () => undefined);
+    const params = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'tenant-child-session', runId: 'tenant-fixed-child-run', workspaceId: 'workspace-tenant',
+      tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+      beforeTenantRemoteProvision: beforeDispatch,
+    };
+    await ensureRuntimeHandRegistered(params);
+    await acceptedPromise;
+    const first = handStore.records.get(deriveTenantHandId('tenant-a', 'tenant-child-session', 'tenant-ecs'))!;
+    expect(first).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionKey: expect.any(String), provisionGeneration: expect.any(String),
+      provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
+      provisionDispatchClaim: expect.any(String),
+    } });
+    expect(first.metadata.provisionKey).toBe(first.metadata.provisionGeneration);
+
+    await ensureRuntimeHandRegistered(params);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(beforeDispatch).toHaveBeenCalledOnce();
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'tenant-child-session', 'tenant-ecs'))).toMatchObject({
+      status: 'unhealthy', metadata: { provisionResult: 'result_unknown', reconcileRequired: true,
+        provisionGeneration: first.metadata.provisionGeneration,
+        provisionDispatchClaim: first.metadata.provisionDispatchClaim },
+    });
+    await ensureRuntimeHandRegistered(params);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    release();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    vi.unstubAllGlobals();
+  });
+
+  it('replaces an unknown G1 dispatch fence when a recipe change installs G2', async () => {
+    const handStore = new MapMemoryHandStore();
+    let releaseG1!: () => void;
+    let releaseG2!: () => void;
+    let acceptedG1!: () => void;
+    let acceptedG2!: () => void;
+    const acceptedG1Promise = new Promise<void>(resolve => { acceptedG1 = resolve; });
+    const acceptedG2Promise = new Promise<void>(resolve => { acceptedG2 = resolve; });
+    const g1ResponseGate = new Promise<void>(resolve => { releaseG1 = resolve; });
+    const g2ResponseGate = new Promise<void>(resolve => { releaseG2 = resolve; });
+    const fetchImpl = vi.fn()
+      .mockImplementationOnce(async () => {
+        acceptedG1();
+        await g1ResponseGate;
+        throw new Error('G1 response lost');
+      })
+      .mockImplementationOnce(async () => {
+        acceptedG2();
+        await g2ResponseGate;
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      });
+    vi.stubGlobal('fetch', fetchImpl);
+    const baseParams = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'cross-generation-session', runId: 'cross-generation-run', workspaceId: 'cross-generation-workspace',
+      tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    };
+    const g1Params = {
+      ...baseParams,
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'],
+        recipe: { setupCommands: ['echo G1'] } }],
+    };
+    await ensureRuntimeHandRegistered(g1Params);
+    await acceptedG1Promise;
+    const g1 = handStore.records.get(deriveTenantHandId('tenant-a', 'cross-generation-session', 'tenant-ecs'))!;
+    expect(g1).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
+      provisionDispatchClaim: expect.any(String),
+    } });
+
+    const g2Params = {
+      ...baseParams,
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'],
+        recipe: { setupCommands: ['echo G2'] } }],
+    };
+    await ensureRuntimeHandRegistered(g2Params);
+    await acceptedG2Promise;
+    const g2 = handStore.records.get(deriveTenantHandId('tenant-a', 'cross-generation-session', 'tenant-ecs'))!;
+    expect(g2.metadata.provisionGeneration).not.toBe(g1.metadata.provisionGeneration);
+    expect(g2).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
+      provisionDispatchClaim: expect.any(String),
+    } });
+    expect(g2.metadata.provisionDispatchClaim).not.toBe(g1.metadata.provisionDispatchClaim);
+
+    // A normal repeat registration for G2 must preserve its live fence rather than roll it back.
+    await ensureRuntimeHandRegistered(g2Params);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(handStore.records.get(g2.handId)?.metadata.provisionDispatchClaim)
+      .toBe(g2.metadata.provisionDispatchClaim);
+
+    releaseG2();
+    await vi.waitFor(() => expect(handStore.records.get(g2.handId)).toMatchObject({
+      status: 'ready', metadata: { provisionGeneration: g2.metadata.provisionGeneration,
+        provisionResult: 'ok', reconcileRequired: false, dispatchAuthorized: false,
+        provisionDispatchClaim: null },
+    }));
+    releaseG1();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(handStore.records.get(g2.handId)).toMatchObject({
+      status: 'ready', metadata: { provisionGeneration: g2.metadata.provisionGeneration, provisionResult: 'ok' },
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('completes a rejected final live barrier as not_dispatched and can recover with the same key', async () => {
+    const handStore = new MapMemoryHandStore();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+    let live = false;
+    const params = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const, sessionId: 'claim-barrier-session', runId: 'claim-barrier-run',
+      workspaceId: 'claim-barrier-workspace', tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+      beforeTenantRemoteProvision: async () => { if (!live) throw new Error('dispatch disabled'); },
+    };
+
+    await ensureRuntimeHandRegistered(params);
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))).toMatchObject({
+      status: 'unhealthy', metadata: {
+        provisionResult: 'not_dispatched', reconcileRequired: false,
+        dispatchAuthorized: false, provisionDispatchClaim: null,
+      },
+    }));
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const stableKey = handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))!.metadata.provisionKey;
+
+    live = true;
+    await ensureRuntimeHandRegistered(params);
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))).toMatchObject({
+      status: 'ready', metadata: { provisionResult: 'ok', reconcileRequired: false },
+    }));
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))!.metadata.provisionKey).toBe(stableKey);
+    vi.unstubAllGlobals();
+  });
+
+  it('treats an explicit provider error as known and retryable without reconciliation', async () => {
+    const handStore = new MapMemoryHandStore();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'error', error: 'provider rejected' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local', sessionId: 'known-error-session', runId: 'known-error-run',
+      workspaceId: 'known-error-workspace', tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    });
+
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))).toMatchObject({
+      status: 'unhealthy', metadata: {
+        provisionFailure: 'provider rejected', provisionResult: 'error', reconcileRequired: false,
+        dispatchAuthorized: false, provisionDispatchClaim: null,
+      },
+    }));
+    const stableKey = handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))!.metadata.provisionKey;
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local', sessionId: 'known-error-session', runId: 'known-error-run',
+      workspaceId: 'known-error-workspace', tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    });
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))).toMatchObject({
+      status: 'ready', metadata: { provisionResult: 'ok', reconcileRequired: false },
+    }));
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))!.metadata.provisionKey).toBe(stableKey);
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps reconciliation required when transport starts and then loses the response', async () => {
+    const handStore = new MapMemoryHandStore();
+    const fetchImpl = vi.fn(async () => ({
+      json: async () => ({ status: 'ok' }),
+      get ok() { throw new Error('response lost'); },
+    }) as unknown as Response);
+    vi.stubGlobal('fetch', fetchImpl);
+
+    await ensureRuntimeHandRegistered({
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local', sessionId: 'unknown-result-session', runId: 'unknown-result-run',
+      workspaceId: 'unknown-result-workspace', tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    });
+
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'unknown-result-session', 'tenant-ecs'))).toMatchObject({
+      status: 'unhealthy', metadata: {
+        provisionFailure: 'response lost', provisionResult: 'result_unknown', reconcileRequired: true,
+      },
+    }));
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'unknown-result-session', 'tenant-ecs'))?.metadata.dispatchAuthorized).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('authorizes at most one remote request across concurrent registrations', async () => {
+    const handStore = new MapMemoryHandStore();
+    let release!: () => void;
+    let claimed!: () => void;
+    const claimedPromise = new Promise<void>(resolve => { claimed = resolve; });
+    const dispatchGate = new Promise<void>(resolve => { release = resolve; });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+    const beforeTenantRemoteProvision = vi.fn(async () => { claimed(); await dispatchGate; });
+    const params = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'concurrent-claim-session', runId: 'concurrent-claim-run', workspaceId: 'concurrent-claim-workspace',
+      tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+      beforeTenantRemoteProvision,
+    };
+    const first = ensureRuntimeHandRegistered(params);
+    await claimedPromise;
+    await ensureRuntimeHandRegistered(params);
+    release();
+    await first;
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+
+    expect(beforeTenantRemoteProvision).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the same session/provider isolated across concurrent tenants', async () => {
+    const handStore = new MapMemoryHandStore();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+    const base = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'shared-session', runId: 'shared-run', workspaceId: 'shared-workspace',
+      userId: 'shared-user',
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    };
+    await Promise.all([
+      ensureRuntimeHandRegistered({
+        ...base, tenantId: 'tenant-a', userTenantId: 'tenant-a',
+        tenantRemoteHands: [{ id: 'shared-provider', baseUrl: 'https://a.example', tenantIds: ['tenant-a'] }],
+      }),
+      ensureRuntimeHandRegistered({
+        ...base, tenantId: 'tenant-b', userTenantId: 'tenant-b',
+        tenantRemoteHands: [{ id: 'shared-provider', baseUrl: 'https://b.example', tenantIds: ['tenant-b'] }],
+      }),
+    ]);
+    const handA = deriveTenantHandId('tenant-a', 'shared-session', 'shared-provider');
+    const handB = deriveTenantHandId('tenant-b', 'shared-session', 'shared-provider');
+    expect(handA).not.toBe(handB);
+    await vi.waitFor(() => expect(handStore.records.get(handA)?.status).toBe('ready'));
+    await vi.waitFor(() => expect(handStore.records.get(handB)?.status).toBe('ready'));
+    expect(handStore.records.get(handA)?.endpoint).toBe('https://a.example');
+    expect(handStore.records.get(handB)?.endpoint).toBe('https://b.example');
+    vi.unstubAllGlobals();
+  });
+
+  it('skips provisioning when the fixed identity already has the same ready hand', async () => {
+    const handStore = new CasMemoryHandStore();
+    const provision = vi.fn(async () => ({ status: 'ok' as const }));
+    const params = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: {
+        has: () => true,
+        get: () => ({ listInternalTools: () => [], provision }),
+      } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'fixed-child-session', workspaceId: 'workspace-1', runId: 'fixed-child-run',
+      tenantId: 'tenant-runtime-hand-ready',
+    };
+    await ensureRuntimeHandRegistered(params);
+    await ensureRuntimeHandRegistered(params);
+    expect(provision).toHaveBeenCalledOnce();
+    expect(handStore.record).toMatchObject({
+      status: 'ready', metadata: { provisionKey: expect.any(String), provisionFailure: null },
     });
   });
 });

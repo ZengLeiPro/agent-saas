@@ -3,13 +3,16 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { deriveTenantQualifiedClientDaemonHandId } from '../runtime/clientDaemonProtocol.js';
 import { PgHandStore, SERVER_REMOTE_HAND_LEASE_MS } from '../runtime/handStore.js';
+import { deriveTenantHandId } from '../runtime/runtimeHandRegistration.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () => {
+describePg('PgHandStore lease 与 provision authority 治理', () => {
+  const TENANT_ID = 't';
   const prefix = `handsweep_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgHandStore;
@@ -18,7 +21,7 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     store = new PgHandStore({ pool, tablePrefix: prefix });
     await store.init();
-    await pool.query(`CREATE TABLE ${prefix}_runs (run_id TEXT PRIMARY KEY, session_id TEXT, status TEXT, updated_at TIMESTAMPTZ)`);
+    await pool.query(`CREATE TABLE ${prefix}_runs (run_id TEXT PRIMARY KEY, tenant_id TEXT, session_id TEXT, status TEXT, updated_at TIMESTAMPTZ)`);
   }, 30_000);
 
   afterAll(async () => {
@@ -37,10 +40,11 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     updatedAt?: string;
     type?: string;
     sessionId?: string;
+    tenantId?: string;
   } = {}): Promise<void> {
     await pool.query(
-      `INSERT INTO ${prefix}_hands (hand_id, session_id, workspace_id, type, status, endpoint, lease_expires_at, created_at, updated_at)
-       VALUES ($1, $6, 'ws_t__u', $2, $3, 'http://127.0.0.1:3400', $4, $5, $5)
+      `INSERT INTO ${prefix}_hands (hand_id, session_id, workspace_id, tenant_id, type, status, endpoint, lease_expires_at, created_at, updated_at)
+       VALUES ($1, $6, 'ws_t__u', $7, $2, $3, 'http://127.0.0.1:3400', $4, $5, $5)
        ON CONFLICT (hand_id) DO UPDATE SET status = EXCLUDED.status, lease_expires_at = EXCLUDED.lease_expires_at, updated_at = EXCLUDED.updated_at`,
       [
         handId,
@@ -49,9 +53,25 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
         opts.leaseExpiresAt === undefined ? null : opts.leaseExpiresAt,
         opts.updatedAt ?? new Date().toISOString(),
         opts.sessionId ?? null,
+        opts.tenantId ?? TENANT_ID,
       ],
     );
   }
+
+
+  const getHand = (handId: string, tenantId = TENANT_ID) => store.get(handId, tenantId);
+  const claimProvisionRecovery = (handId: string, token: string, patch?: Record<string, unknown>, updatedAt?: string, generation?: string, tenantId = TENANT_ID) =>
+    store.claimProvisionRecovery(handId, token, patch, updatedAt, generation, tenantId);
+  const completeProvisionRecovery = (handId: string, token: string, status: 'provisioning' | 'ready' | 'unhealthy' | 'destroyed', patch?: Record<string, unknown>, tenantId = TENANT_ID) =>
+    store.completeProvisionRecovery(handId, token, status, patch, tenantId);
+  const completeProvisionAttempt = (handId: string, generation: string, status: 'provisioning' | 'ready' | 'unhealthy' | 'destroyed', patch?: Record<string, unknown>, tenantId = TENANT_ID, owner?: string) =>
+    store.completeProvisionAttempt(handId, generation, status, patch, tenantId, owner);
+  const renewProvisionAttemptLease = (handId: string, generation: string, owner: string, tenantId = TENANT_ID) =>
+    store.renewProvisionAttemptLease(handId, generation, owner, tenantId);
+  const claimProvisionDispatch = (handId: string, generation: string, token: string, updatedAt: string, tenantId = TENANT_ID) =>
+    store.claimProvisionDispatch(handId, generation, token, updatedAt, tenantId);
+  const completeProvisionDispatch = (handId: string, generation: string, token: string, status: 'ready' | 'unhealthy', patch?: Record<string, unknown>, tenantId = TENANT_ID) =>
+    store.completeProvisionDispatch(handId, generation, token, status, patch, tenantId);
 
   it('backfill：无租约存量按 GREATEST(created,updated)+lease 补齐；老僵尸随后过期 destroyed', async () => {
     const fortyDaysAgo = new Date(Date.now() - 40 * 24 * 60 * 60_000).toISOString();
@@ -63,10 +83,10 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     expect(first.destroyed).toBe(1);
     expect(first.purged).toBe(0);
 
-    const zombie = await store.get('zombie-old');
+    const zombie = await getHand('zombie-old');
     expect(zombie?.status).toBe('destroyed');
     expect(zombie?.metadata.destroyReason).toBe('lease_expired');
-    const active = await store.get('active-new');
+    const active = await getHand('active-new');
     expect(active?.status).toBe('ready');
     expect(active?.leaseExpiresAt).toBeTruthy();
   });
@@ -77,7 +97,7 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
 
     const result = await store.sweepLeases();
     expect(result.purged).toBeGreaterThanOrEqual(1);
-    expect(await store.get('purge-me')).toBeNull();
+    expect(await getHand('purge-me')).toBeNull();
 
     const again = await store.sweepLeases();
     expect(again).toEqual({ backfilled: 0, destroyed: 0, purged: 0 });
@@ -91,27 +111,27 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
 
     await store.sweepLeases();
 
-    expect((await store.get('container-hand'))?.status).toBe('ready');
-    expect((await store.get('container-hand'))?.leaseExpiresAt).toBeUndefined();
-    expect((await store.get('leased-hand'))?.status).toBe('ready');
+    expect((await getHand('container-hand'))?.status).toBe('ready');
+    expect((await getHand('container-hand'))?.leaseExpiresAt).toBeUndefined();
+    expect((await getHand('leased-hand'))?.status).toBe('ready');
   });
 
-  it('provision recovery claim/complete 只允许当前 token 原子更新', async () => {
+  it('provision recovery claim/complete 只允许当前 token 且排除 reconcileRequired', async () => {
     await seed('recover-race', { status: 'unhealthy' });
     await pool.query(
       `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
       ['recover-race', JSON.stringify({ provisionFailure: 'old failure' })],
     );
 
-    expect(await store.claimProvisionRecovery('recover-race', 'token-1')).not.toBeNull();
-    expect(await store.claimProvisionRecovery('recover-race', 'token-2')).toBeNull();
-    expect(await store.completeProvisionRecovery('recover-race', 'wrong-token', 'ready')).toBeNull();
-    expect(await store.completeProvisionRecovery('recover-race', 'token-1', 'ready', {
+    expect(await claimProvisionRecovery('recover-race', 'token-1')).not.toBeNull();
+    expect(await claimProvisionRecovery('recover-race', 'token-2')).toBeNull();
+    expect(await completeProvisionRecovery('recover-race', 'wrong-token', 'ready')).toBeNull();
+    expect(await completeProvisionRecovery('recover-race', 'token-1', 'ready', {
       provisionFailure: null,
       provision: { lastStatus: 'ok' },
     })).not.toBeNull();
 
-    const recovered = await store.get('recover-race');
+    const recovered = await getHand('recover-race');
     expect(recovered?.status).toBe('ready');
     expect(recovered?.metadata.provisionRecoveryToken).toBeNull();
     expect(recovered?.metadata.provisionFailure).toBeNull();
@@ -121,15 +141,113 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
       `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
       ['recover-destroyed', JSON.stringify({ provisionFailure: 'stale failure' })],
     );
-    expect(await store.claimProvisionRecovery('recover-destroyed', 'token-destroyed')).toBeNull();
+    expect(await claimProvisionRecovery('recover-destroyed', 'token-destroyed')).toBeNull();
+
+    await seed('recover-reconcile-required', { status: 'unhealthy' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['recover-reconcile-required', JSON.stringify({
+        provisionFailure: 'result unknown', provisionResult: 'result_unknown', reconcileRequired: true,
+      })],
+    );
+    expect(await claimProvisionRecovery('recover-reconcile-required', 'scanner-token')).toBeNull();
+    expect((await getHand('recover-reconcile-required'))?.metadata.reconcileRequired).toBe(true);
 
     await seed('normal-generation', { status: 'ready' });
     await pool.query(
       `UPDATE ${prefix}_hands SET status = 'provisioning', metadata = $2::jsonb WHERE hand_id = $1`,
       ['normal-generation', JSON.stringify({ provisionGeneration: 'generation-2' })],
     );
-    expect(await store.completeProvisionAttempt('normal-generation', 'generation-1', 'unhealthy')).toBeNull();
-    expect(await store.completeProvisionAttempt('normal-generation', 'generation-2', 'ready')).not.toBeNull();
+    expect(await completeProvisionAttempt('normal-generation', 'generation-1', 'unhealthy')).toBeNull();
+    expect(await completeProvisionAttempt('normal-generation', 'generation-2', 'ready')).not.toBeNull();
+
+    await seed('owned-attempt', { status: 'provisioning' });
+    const owner = 'live-transport-owner';
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['owned-attempt', JSON.stringify({
+        provisionGeneration: 'owned-generation', provisionAttemptOwner: owner,
+        provisionAttemptClaimedAtMs: Date.now(), provisionAttemptLeaseExpiresAtMs: Date.now() + 60_000,
+      })],
+    );
+    const owned = await getHand('owned-attempt');
+    expect(await renewProvisionAttemptLease('owned-attempt', 'owned-generation', owner)).toMatchObject({
+      status: 'provisioning', metadata: { provisionAttemptOwner: owner },
+    });
+    expect(await claimProvisionRecovery(
+      'owned-attempt', 'scanner-too-early', undefined, owned!.updatedAt, 'owned-generation',
+    )).toBeNull();
+    expect(await completeProvisionAttempt(
+      'owned-attempt', 'owned-generation', 'unhealthy', { provisionFailure: 'transport failed' }, TENANT_ID, owner,
+    )).toMatchObject({ status: 'unhealthy', metadata: { provisionFailure: 'transport failed' } });
+
+    await seed('expired-attempt', { status: 'provisioning' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['expired-attempt', JSON.stringify({
+        provisionGeneration: 'expired-generation', provisionAttemptOwner: 'dead-owner',
+        provisionAttemptClaimedAtMs: Date.now() - 10 * 60_000,
+        provisionAttemptLeaseExpiresAtMs: Date.now() - 1,
+      })],
+    );
+    const expired = await getHand('expired-attempt');
+    expect(await claimProvisionRecovery(
+      'expired-attempt', 'scanner-takeover', undefined, expired!.updatedAt, 'expired-generation',
+    )).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionRecoveryToken: 'scanner-takeover', provisionAttemptOwner: null,
+    } });
+    expect(await completeProvisionAttempt(
+      'expired-attempt', 'expired-generation', 'ready', {}, TENANT_ID, 'dead-owner',
+    )).toBeNull();
+  });
+
+  it('dispatch claim 原子持久化未知结果且只有同 generation/token 可按结果确定性完成', async () => {
+    await seed('dispatch-authority', { status: 'provisioning' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['dispatch-authority', JSON.stringify({ provisionGeneration: 'generation-1' })],
+    );
+    const before = await getHand('dispatch-authority');
+    const claimed = await claimProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'dispatch-token-1', before!.updatedAt,
+    );
+    expect(claimed).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionDispatchClaim: 'dispatch-token-1', provisionResult: 'result_unknown',
+      reconcileRequired: true, dispatchAuthorized: true,
+    } });
+    expect(await claimProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'dispatch-token-2', claimed!.updatedAt,
+    )).toBeNull();
+    expect(await completeProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'wrong-token', 'ready',
+    )).toBeNull();
+    expect(await completeProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'dispatch-token-1', 'ready', {
+        provisionDispatchClaim: null, dispatchAuthorized: false,
+        provisionResult: 'ok', reconcileRequired: false,
+      },
+    )).toMatchObject({ status: 'ready', metadata: {
+      provisionDispatchClaim: null, dispatchAuthorized: false,
+      provisionResult: 'ok', reconcileRequired: false,
+    } });
+
+    await seed('dispatch-known-error', { status: 'provisioning' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['dispatch-known-error', JSON.stringify({ provisionGeneration: 'generation-error' })],
+    );
+    const errorBefore = await getHand('dispatch-known-error');
+    await claimProvisionDispatch(
+      'dispatch-known-error', 'generation-error', 'dispatch-token-error', errorBefore!.updatedAt,
+    );
+    expect(await completeProvisionDispatch(
+      'dispatch-known-error', 'generation-error', 'dispatch-token-error', 'unhealthy', {
+        provisionFailure: 'provider rejected', provisionResult: 'error', reconcileRequired: false,
+      },
+    )).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionDispatchClaim: null, dispatchAuthorized: false,
+      provisionFailure: 'provider rejected', provisionResult: 'error', reconcileRequired: false,
+    } });
   });
 
   it('register upsert 可复活 destroyed 记录（lease 治理无永久误杀）', async () => {
@@ -137,6 +255,7 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
 
     await store.register({
       handId: 'revive-me',
+      tenantId: TENANT_ID,
       workspaceId: 'ws_t__u',
       type: 'server-remote',
       status: 'ready',
@@ -144,9 +263,133 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
       leaseExpiresAt: new Date(Date.now() + SERVER_REMOTE_HAND_LEASE_MS),
     });
 
-    const revived = await store.get('revive-me');
+    const revived = await getHand('revive-me');
     expect(revived?.status).toBe('ready');
     expect(Date.parse(revived!.leaseExpiresAt!)).toBeGreaterThan(Date.now());
+  });
+
+  it('相同 session/provider 跨租户并发注册互不覆盖且错误 tenant fence 无法读写', async () => {
+    const sessionId = 'shared-session';
+    const providerId = 'shared-provider';
+    const tenantA = 'tenant-a';
+    const tenantB = 'tenant-b';
+    const handA = deriveTenantHandId(tenantA, sessionId, providerId);
+    const handB = deriveTenantHandId(tenantB, sessionId, providerId);
+
+    await Promise.all([
+      store.register({
+        handId: handA, tenantId: tenantA, sessionId, workspaceId: 'ws_tenant-a__user',
+        providerId, type: 'server-remote', endpoint: 'https://a.example', metadata: { owner: 'a' },
+      }),
+      store.register({
+        handId: handB, tenantId: tenantB, sessionId, workspaceId: 'ws_tenant-b__user',
+        providerId, type: 'server-remote', endpoint: 'https://b.example', metadata: { owner: 'b' },
+      }),
+    ]);
+
+    expect(handA).not.toBe(handB);
+    expect(await store.get(handA, tenantA)).toMatchObject({ tenantId: tenantA, endpoint: 'https://a.example' });
+    expect(await store.get(handB, tenantB)).toMatchObject({ tenantId: tenantB, endpoint: 'https://b.example' });
+    expect(await store.get(handA, tenantB)).toBeNull();
+    await expect(store.register({
+      handId: handA, tenantId: tenantB, sessionId, workspaceId: 'ws_tenant-b__user',
+      providerId, type: 'server-remote', endpoint: 'https://overwrite.example',
+    })).rejects.toThrow('Hand tenant fence rejected registration');
+    expect(await store.updateStatus(handA, 'destroyed', { attacker: true }, tenantB)).toBeNull();
+    expect(await store.get(handA, tenantA)).toMatchObject({ status: 'ready', metadata: { owner: 'a' } });
+    expect(await store.listBySession(sessionId, tenantA)).toEqual([
+      expect.objectContaining({ handId: handA, tenantId: tenantA }),
+    ]);
+  });
+
+  it('不可证明归属的 tenant-less legacy Client metadata 在并发跨租户注册时零泄漏并保留隔离', async () => {
+    const rawHandId = 'shared-legacy-client';
+    const tenantA = 'legacy-tenant-a';
+    const tenantB = 'legacy-tenant-b';
+    const handA = deriveTenantQualifiedClientDaemonHandId(tenantA, rawHandId);
+    const handB = deriveTenantQualifiedClientDaemonHandId(tenantB, rawHandId);
+    const legacyMetadata = {
+      secret: 'must-have-a-single-owner',
+      metadata: { migrated: true },
+    };
+
+    await pool.query(
+      `INSERT INTO ${prefix}_hands
+         (hand_id, workspace_id, tenant_id, type, status, capabilities, metadata)
+       VALUES ($1, 'client:legacy-daemon', NULL, 'client', 'unhealthy', '[]'::jsonb, $2::jsonb)`,
+      [rawHandId, JSON.stringify(legacyMetadata)],
+    );
+
+    const [registeredA, registeredB] = await Promise.all([
+      store.registerClientDaemon({
+        handId: handA, tenantId: tenantA, workspaceId: 'ws_legacy-tenant-a__user',
+        type: 'client', metadata: { rawHandId, registrant: 'a' },
+      }, [rawHandId]),
+      store.registerClientDaemon({
+        handId: handB, tenantId: tenantB, workspaceId: 'ws_legacy-tenant-b__user',
+        type: 'client', metadata: { rawHandId, registrant: 'b' },
+      }, [rawHandId]),
+    ]);
+
+    expect(registeredA.metadata).toEqual({ rawHandId, registrant: 'a' });
+    expect(registeredB.metadata).toEqual({ rawHandId, registrant: 'b' });
+    expect(JSON.stringify([registeredA.metadata, registeredB.metadata])).not.toContain(legacyMetadata.secret);
+    expect(await store.get(handA, tenantA)).toEqual(registeredA);
+    expect(await store.get(handB, tenantB)).toEqual(registeredB);
+    expect((await pool.query(
+      `SELECT hand_id FROM ${prefix}_hands WHERE hand_id = $1 AND tenant_id IS NULL`,
+      [rawHandId],
+    )).rows).toEqual([{ hand_id: rawHandId }]);
+  });
+
+  it('即使 runs 快照与 workspace 看似唯一归属也绝不迁移 tenant-less Client metadata', async () => {
+    const rawHandId = 'provable-legacy-client';
+    const tenantId = 'legacy-proven-tenant';
+    const sessionId = 'legacy-proven-session';
+    const handId = deriveTenantQualifiedClientDaemonHandId(tenantId, rawHandId);
+    const legacyMetadata = { secret: 'owned-secret', token: 'owned-token' };
+    await pool.query(
+      `INSERT INTO ${prefix}_runs (run_id, tenant_id, session_id, status, updated_at)
+       VALUES ('legacy-proof-run', $1, $2, 'running', now())`,
+      [tenantId, sessionId],
+    );
+    await pool.query(
+      `INSERT INTO ${prefix}_hands
+         (hand_id, session_id, workspace_id, tenant_id, type, status, capabilities, metadata)
+       VALUES ($1, $2, 'client:legacy-daemon', NULL, 'client', 'unhealthy', '[]'::jsonb, $3::jsonb)`,
+      [rawHandId, sessionId, JSON.stringify(legacyMetadata)],
+    );
+
+    const registered = await store.registerClientDaemon({
+      handId, tenantId, sessionId, workspaceId: `ws_${tenantId}__user`,
+      type: 'client', metadata: { rawHandId, connected: true },
+    }, [rawHandId]);
+
+    expect(registered.metadata).toEqual({ rawHandId, connected: true });
+    expect(JSON.stringify(registered.metadata)).not.toContain(legacyMetadata.secret);
+    expect(JSON.stringify(registered.metadata)).not.toContain(legacyMetadata.token);
+    expect((await pool.query(
+      `SELECT hand_id, metadata FROM ${prefix}_hands WHERE hand_id = $1 AND tenant_id IS NULL`,
+      [rawHandId],
+    )).rows).toEqual([{ hand_id: rawHandId, metadata: legacyMetadata }]);
+  });
+
+  it('init backfill 不从伪装成 qualified workspace 的 tenant-less Client 行推导租户', async () => {
+    const handId = 'client-init-backfill-quarantine';
+    const metadata = { secret: 'never-backfill-client-secret' };
+    await pool.query(
+      `INSERT INTO ${prefix}_hands
+         (hand_id, workspace_id, tenant_id, type, status, capabilities, metadata)
+       VALUES ($1, 'ws_forged-tenant__user', NULL, 'client', 'unhealthy', '[]'::jsonb, $2::jsonb)`,
+      [handId, JSON.stringify(metadata)],
+    );
+
+    await store.init();
+
+    expect((await pool.query(
+      `SELECT tenant_id, user_id, metadata FROM ${prefix}_hands WHERE hand_id = $1`,
+      [handId],
+    )).rows).toEqual([{ tenant_id: null, user_id: null, metadata }]);
   });
 
   it('unhealthy 恢复队列只包含活跃会话并排除历史与 waiting_user', async () => {
@@ -154,9 +397,9 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     await seed('active-old', { status: 'unhealthy', sessionId: 'session-active', updatedAt: '2026-01-01T00:00:00.000Z' });
     await seed('waiting-new', { status: 'unhealthy', sessionId: 'session-waiting' });
     await pool.query(
-      `INSERT INTO ${prefix}_runs (run_id, session_id, status, updated_at) VALUES
-       ('run-active', 'session-active', 'running', now()),
-       ('run-waiting', 'session-waiting', 'waiting_user', now())`,
+      `INSERT INTO ${prefix}_runs (run_id, tenant_id, session_id, status, updated_at) VALUES
+       ('run-active', 't', 'session-active', 'running', now()),
+       ('run-waiting', 't', 'session-waiting', 'waiting_user', now())`,
     );
 
     const ids = (await store.listByType('server-remote', { status: 'unhealthy' })).map((hand) => hand.handId);

@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
       usernames: [],
     }],
   })),
+  updatePlatformSettings: vi.fn(async () => undefined),
+  platformExposure: { value: 'deny_tenants' as 'all' | 'allow_tenants' | 'deny_tenants' },
 }));
 
 vi.mock('@agent/shared', async (importOriginal) => ({
@@ -41,7 +43,7 @@ vi.mock('./hooks', () => ({
       name: '平台检索技能',
       description: '平台技能',
       enabled: false,
-      exposure: 'deny_tenants',
+      exposure: mocks.platformExposure.value,
       tenantIds: [],
     }],
     customData: {
@@ -52,7 +54,7 @@ vi.mock('./hooks', () => ({
     loading: false,
     error: null,
     refresh: vi.fn(async () => undefined),
-    updatePlatformSettings: vi.fn(async () => undefined),
+    updatePlatformSettings: mocks.updatePlatformSettings,
     promoteSkill: vi.fn(async () => undefined),
     deleteCustomSkill: vi.fn(async () => undefined),
     fetchCustomSkillDocument: vi.fn(async () => ({ content: '' })),
@@ -80,7 +82,11 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ isPlatformAdmin: true, canPlatform: () => true }),
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mocks.updatePlatformSettings.mockClear();
+  mocks.platformExposure.value = 'deny_tenants';
+});
 
 describe('SkillManager 技能操作可访问名称', () => {
   it('平台技能与用户技能操作名称包含技能名', async () => {
@@ -98,12 +104,30 @@ describe('SkillManager 技能操作可访问名称', () => {
     expect(screen.getByRole('button', { name: '删除技能 用户写作技能' })).toBeTruthy();
   });
 
+  it('从全平台切换为仅指定组织时先保留现有全部组织，避免空白 allow list', async () => {
+    const user = userEvent.setup();
+    mocks.platformExposure.value = 'all';
+    render(<SkillManager />);
+
+    await user.click(screen.getByRole('combobox', { name: '设置技能 平台检索技能 的组织开放范围' }));
+    await user.click(screen.getByRole('option', { name: '仅指定租户开放' }));
+
+    expect(mocks.updatePlatformSettings).toHaveBeenCalledWith({
+      'platform-skill': {
+        enabled: false,
+        exposure: 'allow_tenants',
+        tenantIds: ['tenant-a'],
+      },
+    });
+  });
+
   it('组织自有与平台下发技能只展示治理权威授权入口', async () => {
     render(<SkillManager mode="tenant" tenantIdScope="tenant-a" tenantName="甲组织" />);
 
     expect(await screen.findByRole('combobox', { name: '组织自有技能成员与群组授权资源' })).toBeTruthy();
     expect(screen.getByRole('option', { name: /组织自有技能/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '编辑技能 组织自有技能' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '编辑 组织自有技能 的展示信息' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '编辑技能文档 组织自有技能' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '提升技能 组织自有技能 到平台技能池' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '删除技能 组织自有技能' })).toBeTruthy();
     expect(screen.getByText('Assignment 权威授权')).toBeTruthy();

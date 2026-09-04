@@ -1,0 +1,310 @@
+import { randomUUID } from 'node:crypto';
+import { Router, type Request, type Response } from 'express'; // command creation is a durable receipt saga
+import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
+import {
+  SessionAutomationConflictError,
+  type AutomationIdentity,
+  type PgSessionAutomationStore,
+  commandDigest,
+} from '../runtime/sessionAutomationStore.js';
+import type { SessionCatalog } from '../runtime/sessionCatalog.js';
+import type { SessionAutomationAttachment } from '@agent/shared';
+
+export interface SessionAutomationsRouterOptions {
+  store: PgSessionAutomationStore;
+  service: SessionAutomationCommandService;
+  sessionCatalog: Pick<SessionCatalog, 'get'>;
+  createSession?: (req: Request, sessionId: string) => Promise<AutomationIdentity>;
+  compensateSession?: (req: Request, sessionId: string) => Promise<boolean>;
+  broadcastToUser?: (userId: string, payload: Record<string, unknown>) => void;
+  resolveAttachments?: (sessionId: string, clientMessageId: string, attachmentIds: string[]) => Promise<SessionAutomationAttachment[]>;
+  releaseAttachments?: (sessionId: string, clientMessageId: string, attachments: SessionAutomationAttachment[]) => Promise<void>;
+}
+
+async function authorizeSession(
+  req: Request,
+  sessionId: string,
+  sessionCatalog: Pick<SessionCatalog, 'get'>,
+): Promise<AutomationIdentity> {
+  if (!req.user?.sub || !req.user.tenantId) {
+    throw new SessionAutomationConflictError('FORBIDDEN', 'Authentication required');
+  }
+  const session = await sessionCatalog.get(sessionId);
+  // Owner and tenant mismatches deliberately share NOT_FOUND to prevent session enumeration.
+  if (!session || session.userId !== req.user.sub || session.tenantId !== req.user.tenantId) {
+    throw new SessionAutomationConflictError('NOT_FOUND', 'session 不存在');
+  }
+  return { tenantId: req.user.tenantId, ownerUserId: req.user.sub, sessionId };
+}
+
+function sendError(res: Response, error: unknown): void {
+  if (error instanceof SessionAutomationConflictError) {
+    const status = error.code === 'NOT_FOUND'
+      ? 404
+      : error.code === 'FORBIDDEN' || error.code === 'GOVERNANCE_DENIED'
+        ? 403
+        : error.code === 'INVALID_COMMAND' || error.code === 'ATTACHMENTS_UNSUPPORTED'
+          ? 400
+          : error.code === 'FEATURE_DISABLED' || error.code === 'EXECUTION_DISABLED' || error.code === 'GOVERNANCE_UNAVAILABLE'
+            ? 503
+            : 409;
+    res.status(status).json({ code: error.code, message: error.message, current: error.current });
+    return;
+  }
+  res.status(500).json({
+    code: 'INTERNAL_ERROR',
+    message: error instanceof Error ? error.message : 'unknown error',
+  });
+}
+
+function parseCommandBody(body: Record<string, unknown>): {
+  clientMessageId: string;
+  command: string;
+  expectedControlVersion?: number;
+  expectedIncarnationId?: string;
+  attachmentIds?: string[];
+} {
+  const clientMessageId = typeof body.clientMessageId === 'string'
+    ? body.clientMessageId
+    : typeof body.clientMsgId === 'string'
+      ? body.clientMsgId
+      : undefined;
+  const command = typeof body.command === 'string'
+    ? body.command
+    : typeof body.rawCommand === 'string'
+      ? body.rawCommand
+      : undefined;
+  const attachmentIds=Array.isArray(body.attachments)?body.attachments.map(item=>
+    item&&typeof item==='object'&&typeof (item as Record<string,unknown>).attachmentId==='string'
+      ? String((item as Record<string,unknown>).attachmentId) : '').filter(Boolean):[];
+  if(Array.isArray(body.attachments)&&(attachmentIds.length!==body.attachments.length||attachmentIds.length>20))
+    throw new SessionAutomationConflictError('INVALID_COMMAND','attachments 必须包含 1..20 个有效 attachmentId');
+  if(attachmentIds.length>0&&!body.attachments)throw new SessionAutomationConflictError('INVALID_COMMAND','attachments 无效');
+  if (!clientMessageId || !command) {
+    throw new SessionAutomationConflictError('INVALID_COMMAND', 'clientMessageId/command required');
+  }
+  return {
+    clientMessageId,
+    command,
+    ...(typeof body.expectedControlVersion === 'number'
+      ? { expectedControlVersion: body.expectedControlVersion }
+      : {}),
+    ...(typeof body.expectedIncarnationId === 'string'
+      ? { expectedIncarnationId: body.expectedIncarnationId }
+      : {}),
+    ...(attachmentIds.length?{attachmentIds}:{}),
+  };
+}
+
+export function createSessionAutomationsRouter(options: SessionAutomationsRouterOptions): Router {
+  const router = Router({ mergeParams: true });
+  if (options.broadcastToUser) options.store.setNotifier(options.broadcastToUser);
+
+  router.post('/session-automations/commands', async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const commandInput = parseCommandBody(body);
+      const requestedSessionId = typeof body.sessionId === 'string' && body.sessionId.trim()
+        ? body.sessionId.trim()
+        : null;
+      const canonicalRequest={command:commandInput.command.trim(),sessionId:requestedSessionId,expectedControlVersion:commandInput.expectedControlVersion??null,expectedIncarnationId:commandInput.expectedIncarnationId??null,attachments:commandInput.attachmentIds??[]};
+      const requestDigest=commandDigest(canonicalRequest);
+      if(req.user?.sub&&req.user.tenantId){
+        const receipt=await options.store.getCommandReceipt(req.user.tenantId,req.user.sub,commandInput.clientMessageId);
+        if(receipt){
+          if(receipt.commandDigest!==requestDigest)throw new SessionAutomationConflictError('CONFLICT','clientMessageId 已用于不同命令');
+          if(receipt.state==='committed'&&receipt.response){const replay=receipt.response as {snapshot?:unknown};res.json({status:'idempotent_replay',replayed:true,sessionId:receipt.sessionId,automation:replay.snapshot??null,cursor:receipt.cursor??null});return;}
+        }
+      }
+      let id: AutomationIdentity;
+      let creationSaga:{tenantId:string;ownerUserId:string;clientMessageId:string;commandDigest:string;sessionId:string}|undefined;
+      if (requestedSessionId) {
+        id = await authorizeSession(req, requestedSessionId, options.sessionCatalog);
+      } else {
+        if (!req.user?.sub || !req.user.tenantId) throw new SessionAutomationConflictError('FORBIDDEN', 'Authentication required');
+        if (!options.createSession) throw new SessionAutomationConflictError('FEATURE_DISABLED', 'new-session automation unavailable');
+        const sessionId = await options.store.prepareCommandSession({
+          tenantId: req.user.tenantId,
+          ownerUserId: req.user.sub,
+          clientMessageId: commandInput.clientMessageId,
+          commandDigest: requestDigest,
+          canonicalRequest,
+          sessionId: randomUUID(),
+        });
+        creationSaga={tenantId:req.user.tenantId,ownerUserId:req.user.sub,clientMessageId:commandInput.clientMessageId,commandDigest:requestDigest,sessionId};
+        try{
+          id = await options.createSession(req, sessionId);
+          await options.store.markCommandFileReady({...creationSaga,sessionMetaCreated:id.sessionMetaCreated===true});
+        }catch(error){
+          await options.store.compensateCommand({...creationSaga,error});
+          // Exact canonical-meta matching makes this safe even when markCommandFileReady
+          // failed before session_meta_created could be durably recorded.
+          await options.compensateSession?.(req,sessionId).catch(()=>false);
+          throw error;
+        }
+      }
+      let result;let attachments:SessionAutomationAttachment[]|undefined;
+      try{
+        if(commandInput.attachmentIds?.length){
+          if(!options.resolveAttachments)throw new SessionAutomationConflictError('FEATURE_DISABLED','automation attachments unavailable');
+          try{attachments=await options.resolveAttachments(id.sessionId,commandInput.clientMessageId,commandInput.attachmentIds);}
+          catch{throw new SessionAutomationConflictError('NOT_FOUND','attachment 不存在');}
+          if(attachments.length!==commandInput.attachmentIds.length)throw new SessionAutomationConflictError('NOT_FOUND','attachment 不存在');
+        }
+        result=await options.service.command(id, {...commandInput,...(attachments?{attachments}:{}),requestDigest,canonicalRequest});
+      }
+      catch(error){
+        if(attachments?.length)await options.releaseAttachments?.(id.sessionId,commandInput.clientMessageId,attachments).catch(()=>undefined);
+        if(creationSaga){await options.store.compensateCommand({...creationSaga,error});await options.compensateSession?.(req,creationSaga.sessionId).catch(()=>false);}
+        throw error;
+      }
+      const cursor = result.cursor ?? null;
+      res.json({
+        status: result.result,
+        replayed: result.result === 'idempotent_replay',
+        sessionId: id.sessionId,
+        automation: result.snapshot ?? null,
+        cursor,
+      });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/session-automations/commands/:clientMessageId', async (req,res)=>{
+    try{
+      if(!req.user?.sub||!req.user.tenantId)throw new SessionAutomationConflictError('FORBIDDEN','Authentication required');
+      const receipt=await options.store.getCommandReceipt(req.user.tenantId,req.user.sub,req.params.clientMessageId!);
+      if(!receipt)throw new SessionAutomationConflictError('NOT_FOUND','command receipt 不存在');
+      res.json(receipt);
+    }catch(error){sendError(res,error);}
+  });
+
+  router.get('/sessions/:sessionId/automation', async (req, res) => {
+    try {
+      const id = await authorizeSession(req, req.params.sessionId!, options.sessionCatalog);
+      const view=await options.store.getSessionAutomationView(id.tenantId,id.sessionId,id.ownerUserId);
+      res.json({ automation: view.snapshot, cursor: view.cursor });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/session-automations/:automationId/events', async (req, res) => {
+    try {
+      if (!req.user?.sub || !req.user.tenantId) {
+        throw new SessionAutomationConflictError('FORBIDDEN', 'Authentication required');
+      }
+      const snapshot = await options.store.getByAutomationId(req.user.tenantId, req.params.automationId!);
+      if (!snapshot || snapshot.ownerUserId !== req.user.sub) {
+        throw new SessionAutomationConflictError('NOT_FOUND', 'automation 不存在');
+      }
+      await authorizeSession(req, snapshot.sessionId, options.sessionCatalog);
+      const page = await options.store.listEvents(
+        snapshot.tenantId,
+        snapshot.sessionId,
+        snapshot.automationId,
+        typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
+      );
+      res.json({ events: page.events, nextCursor: page.nextCursor });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post('/session-automations/:automationId/control', async (req, res) => {
+    try {
+      if (!req.user?.sub || !req.user.tenantId) {
+        throw new SessionAutomationConflictError('FORBIDDEN', 'Authentication required');
+      }
+      const snapshot = await options.store.getByAutomationId(req.user.tenantId, req.params.automationId!);
+      if (!snapshot || snapshot.ownerUserId !== req.user.sub) {
+        throw new SessionAutomationConflictError('NOT_FOUND', 'automation 不存在');
+      }
+      const id = await authorizeSession(req, snapshot.sessionId, options.sessionCatalog);
+      const body = req.body as Record<string, unknown>;
+      const clientMessageId = typeof body.clientMessageId === 'string'
+        ? body.clientMessageId
+        : typeof body.clientMsgId === 'string'
+          ? body.clientMsgId
+          : req.get('Idempotency-Key');
+      if (!clientMessageId || typeof body.action !== 'string'
+        || typeof body.expectedControlVersion !== 'number'
+        || typeof body.expectedIncarnationId !== 'string') {
+        throw new SessionAutomationConflictError('INVALID_COMMAND', 'control fence required');
+      }
+      const action = body.action === 'run_now' ? 'run' : body.action;
+      if(!['pause','resume','run','clear','edit'].includes(action))throw new SessionAutomationConflictError('INVALID_COMMAND','invalid public control action');
+      const result = action === 'edit'
+        ? await options.service.edit(id, snapshot.automationId, {
+          clientMessageId,
+          payload: body.payload && typeof body.payload === 'object' ? body.payload as Record<string, unknown> : {},
+          expectedControlVersion: body.expectedControlVersion,
+          expectedIncarnationId: body.expectedIncarnationId,
+        })
+        : await options.service.control(id, snapshot.automationId, {
+          clientMessageId,
+          action: action as 'pause' | 'resume' | 'run' | 'clear',
+          expectedControlVersion: body.expectedControlVersion,
+          expectedIncarnationId: body.expectedIncarnationId,
+        });
+      res.json({ automation: result.snapshot });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/sessions/:sessionId/automations', async (req, res) => {
+    try {
+      const id = await authorizeSession(req, req.params.sessionId!, options.sessionCatalog);
+      res.json({
+        items: (await options.store.list(id.tenantId, id.sessionId))
+          .filter(item => item.ownerUserId === id.ownerUserId),
+      });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/sessions/:sessionId/automations/:automationId', async (req, res) => {
+    try {
+      const id = await authorizeSession(req, req.params.sessionId!, options.sessionCatalog);
+      const item = await options.store.get(id.tenantId, id.sessionId, req.params.automationId!);
+      if (!item || item.ownerUserId !== id.ownerUserId) {
+        throw new SessionAutomationConflictError('NOT_FOUND', 'automation 不存在');
+      }
+      res.json(item);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post('/sessions/:sessionId/automations/commands', async (req, res) => {
+    try {
+      const id = await authorizeSession(req, req.params.sessionId!, options.sessionCatalog);
+      res.json(await options.service.command(id, parseCommandBody(req.body as Record<string, unknown>)));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post('/sessions/:sessionId/automations/:automationId/control', async (req, res) => {
+    try {
+      const id = await authorizeSession(req, req.params.sessionId!, options.sessionCatalog);
+      const body = req.body as Record<string, unknown>;
+      if (typeof body.clientMessageId !== 'string' || typeof body.action !== 'string'
+        || typeof body.expectedControlVersion !== 'number'
+        || typeof body.expectedIncarnationId !== 'string') {
+        throw new SessionAutomationConflictError('INVALID_COMMAND', 'control fence required');
+      }
+      if (!['pause', 'resume', 'run', 'clear'].includes(body.action)) {
+        throw new SessionAutomationConflictError('INVALID_COMMAND', 'invalid public control action');
+      }
+      res.json(await options.service.control(id, req.params.automationId!, body as never));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  return router;
+}

@@ -1,4 +1,4 @@
-export function governanceV38OrgGroupBindingIdentityStatements(prefix: string): string[] {
+export function governanceV39OrgGroupBindingIdentityStatements(prefix: string): string[] {
   const bindings = `${prefix}_org_agent_channel_bindings`;
   const accounts = `${prefix}_agent_dws_accounts`;
   return [

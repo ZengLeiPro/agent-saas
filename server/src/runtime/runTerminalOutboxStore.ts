@@ -13,6 +13,12 @@ export interface TerminalEventOutboxRunStore extends RunStore {
     now: Date,
     staleBefore: Date,
   ): Promise<ClaimedTerminalEventOutboxRun | null>;
+  renewTerminalEventOutboxClaim(
+    runId: string,
+    deliveryId: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<boolean>;
   finishTerminalEventOutbox(
     runId: string,
     deliveryId: string,
@@ -157,6 +163,35 @@ export class PgTerminalEventOutboxRunStore extends PgRunStore implements Termina
           )
         )
     `, [runId, deliveryId, timestamp]);
+  }
+
+  async renewTerminalEventOutboxClaim(
+    runId: string,
+    deliveryId: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<boolean> {
+    const timestamp = now.toISOString();
+    const result = await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(
+            metadata,
+            '{terminalEventOutbox}',
+            metadata->'terminalEventOutbox' || jsonb_build_object(
+              'claimedAt', $4::text,
+              'updatedAt', $4::text
+            ),
+            true
+          ),
+          updated_at = $4::timestamptz
+      WHERE run_id = $1
+        AND metadata->'terminalEventOutbox'->>'deliveryId' = $2
+        AND metadata->'terminalEventOutbox'->>'state' = 'delivering'
+        AND metadata->'terminalEventOutbox'->>'claimToken' = $3
+        AND status = metadata->'terminalEventOutbox'->>'terminalStatus'
+      RETURNING 1
+    `, [runId, deliveryId, claimToken, timestamp]);
+    return Boolean(result.rowCount);
   }
 
   async finishTerminalEventOutbox(

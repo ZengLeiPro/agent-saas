@@ -615,6 +615,12 @@ export class UploadManager {
     });
   }
 
+  async releaseReference(userCwd:string,attachments:ReadonlyArray<Pick<UploadedFileInfo,'attachmentId'>>,refs:{sessionId:string;clientMessageId:string}):Promise<void>{
+    this.knownUserCwds.add(userCwd);await this.withUserMutation(userCwd,async()=>{for(const attachment of attachments){const attachmentId=attachment.attachmentId;if(!attachmentId||!ATTACHMENT_ID_RE.test(attachmentId))continue;let state:AttachmentState;
+      try{state=JSON.parse(await readTrustedFile(userCwd,`uploads/.state/${attachmentId}.json`,'utf8') as string) as AttachmentState;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
+      validateAttachmentStatePath(userCwd,state);if(!state.sessionIds?.includes(refs.sessionId)||!state.clientMessageIds?.includes(refs.clientMessageId))continue;state.clientMessageIds=state.clientMessageIds.filter(id=>id!==refs.clientMessageId);
+      if(state.clientMessageIds.length===0){state.sessionIds=state.sessionIds.filter(id=>id!==refs.sessionId);state.status='staged';delete state.referencedAt;}await writeAttachmentState(userCwd,state,'uploads/.state');}});
+  }
   async getUsage(userCwd: string): Promise<UploadUsageSnapshot> {
     this.knownUserCwds.add(userCwd);
     const states = await readAttachmentStates(userCwd);

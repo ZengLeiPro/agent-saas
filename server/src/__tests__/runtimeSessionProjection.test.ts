@@ -117,9 +117,16 @@ describe('runtime session projection hook', () => {
     const dir = await makeProjectionDir('runtime-session-bulk-');
     cleanupDirs.add(dir);
 
-    for (let i = 0; i < 1000; i++) {
-      const sessionId = randomUUID();
-      await writeSessionMeta(join(dir, `${sessionId}.jsonl`), baseMeta({ tenantId: 'kaiyan', userId: `kybulk${i}` }));
+    const writes = Array.from({ length: 1000 }, (_, i) => ({
+      transcriptPath: join(dir, `${randomUUID()}.jsonl`),
+      meta: baseMeta({ tenantId: 'kaiyan', userId: `kybulk${i}` }),
+    }));
+    // Different session ids have independent locks; bound concurrency so this
+    // correctness test does not depend on 1000 sequential filesystem round trips.
+    for (let offset = 0; offset < writes.length; offset += 32) {
+      await Promise.all(writes.slice(offset, offset + 32).map(({ transcriptPath, meta }) => (
+        writeSessionMeta(transcriptPath, meta)
+      )));
     }
     await flushSessionMetaProjectionForTests();
 

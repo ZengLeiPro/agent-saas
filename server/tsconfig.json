@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "@agent/shared": ["../shared/src/index"],
+      "@agent/shared": ["../shared/src/index.ts"],
       "@agent/shared/*": ["../shared/src/*"]
     },
     "esModuleInterop": true,

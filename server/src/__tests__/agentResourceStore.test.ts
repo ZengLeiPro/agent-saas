@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PgAgentResourceStore, assertManagedAgentDefinitionSafe } from '../data/agentResources/index.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -97,7 +98,7 @@ describe('Typed Agent Resource', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_managed_agent_versions');
     expect(sql).toContain("kind IN ('org_agent', 'personal_agent', 'agent_template')");
     expect(sql).toContain("status IN ('draft', 'enabled', 'disabled', 'archived')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
   });
 
   it.each(['org_agent', 'personal_agent', 'agent_template'] as const)('%s 创建时保存 immutable owner', async kind => {

@@ -3,9 +3,11 @@ import { createLogger } from '../../utils/logger.js';
 import type { RawRuntimeRunDispatchConfig } from '../rawRuntimeRunDispatch.js';
 import { runtimeRunController } from '../runController.js';
 import type { RunRecord } from '../runStore.js';
-import { resolveSessionCatalog } from '../rawRuntimeRunDispatch.js';
+import { createEventStoreForSession, resolveSessionCatalog } from '../rawRuntimeRunDispatch.js';
 import { invokeBackgroundCommandControl } from './backgroundTaskCommandControl.js';
+import { buildBackgroundTaskAutomationContext } from './backgroundTaskAutomationContext.js';
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
+import { SessionAutomationBackgroundResource } from './sessionAutomationBackgroundResource.js';
 import { failureResult, isTerminal } from './backgroundTaskServiceSupport.js';
 import { markBackgroundTaskTerminal } from './backgroundTaskTerminal.js';
 import { authorizeOrgAgentWorkOrderMutation } from './backgroundWorkOrderControl.js';
@@ -27,9 +29,12 @@ export async function cancelBackgroundTask(
     return cancelled ?? task;
   }
   const message = '后台任务由父会话请求取消';
+  const taskSession = await resolveSessionCatalog(config).get(task.sessionId);
+  if (!taskSession) throw new Error(`后台任务 session 不存在：${task.sessionId}`);
   const updated = await markBackgroundTaskTerminal(
     config.runStore!,
-    task.runId,
+    createEventStoreForSession(config, taskSession),
+    task,
     'cancelled',
     message,
     {
@@ -52,6 +57,21 @@ export async function cancelBackgroundTask(
   await resolveSessionCatalog(config)
     .markStatus(task.sessionId, 'error')
     .catch(() => undefined);
+  if (metadata?.taskType === 'agent' && metadata.executionChildSessionId
+    && metadata.executionChildRunId && config.sessionAutomationRuntimeGuard) {
+    const automationContext = buildBackgroundTaskAutomationContext(task, metadata);
+    if (automationContext) {
+      await new SessionAutomationBackgroundResource(
+        config.sessionAutomationRuntimeGuard,
+        automationContext,
+        task.runId,
+        {
+          childSessionId: metadata.executionChildSessionId,
+          childRunId: metadata.executionChildRunId,
+        },
+      ).resolveFromAuthoritativeChild(true).catch(() => undefined);
+    }
+  }
   await orgWork
     .syncTerminal(updated, 'cancelled', failureResult('cancelled', message), message)
     .catch((error) =>

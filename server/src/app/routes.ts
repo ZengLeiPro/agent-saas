@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js'; import { createSessionAutomationAttachmentBinding } from './sessionAutomationAttachmentBinding.js';
 import type { Express, Request, Response } from 'express';
-import type { AppRuntime } from './runtime.js';
-import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
+import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
 import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
@@ -41,7 +41,7 @@ import {
   createDwsRouter,
   createFeishuRouter,
   createContextCitationsRouter,
-  createContextAdminRouter,
+  createContextAdminRouter, createSessionAutomationsRouter,
 } from '../routes/index.js';
 import { registerAuthConnectionRoutes } from './routesAuthConnections.js';
 import { createSignupRouters } from '../routes/signup.js';
@@ -61,6 +61,7 @@ import { createSystemAdminRouter } from '../routes/systemAdmin.js';
 import { createInternalAcsAlertsRouter } from '../routes/internalAcsAlerts.js';
 import { RuntimeEfficiencyQuery } from '../runtime/efficiencyQuery.js';
 import { createSkillsRouter } from '../routes/skills.js';
+import { buildSkillsRouterDeps } from './skillRouteAssembly.js';
 import { createGovernanceMigrationRouter } from '../routes/governanceMigration.js';
 import { createMcpRouter } from '../routes/mcp.js';
 import { createConnectorsRouter } from '../routes/connectors.js';
@@ -107,6 +108,7 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { initAuditLog, redactLegacyChatPreviewsInFile } from '../data/login-logs/index.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
+import { createTaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面与查询类路由由 app 统一注册
@@ -168,6 +170,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
+  if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService && runtime.sessionCatalog) {
+    app.use('/api', createSessionAutomationsRouter({ store: runtime.sessionAutomationStore,
+      service: runtime.sessionAutomationCommandService, sessionCatalog: runtime.sessionCatalog,
+      createSession: (req, sessionId) => ensureAutomationSession(req, sessionId, agentCwd), compensateSession: (req, sessionId) => compensateAutomationSession(req, sessionId, agentCwd),
+      ...createSessionAutomationAttachmentBinding(runtime), broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload) }));
+  }
   app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
@@ -310,7 +318,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
       agentStore: runtime.agentStore,
       orgAgentStore: runtime.orgAgentStore,
-      getStreamStatus: webChannel ? (sid) => webChannel.getStreamStatus(sid) : undefined,
+      getStreamStatus: webChannel ? (tenantId, sid) => webChannel.getStreamStatus(tenantId, sid) : undefined,
       broadcastToUser: webChannel
         ? (userId, data) => webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,
@@ -330,19 +338,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactService,
       ),
       sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      canReadTaskboardSession: createTaskboardSessionReadAuthorizer(runtime.taskboardExecutionStore),
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId, tenantId)
         : undefined,
       listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId, tenantId)
         : undefined,
       listUserMessagesBySession: runtime.runtimeRunStore?.listUserMessagesBySession
         ? (sessionId) => runtime.runtimeRunStore!.listUserMessagesBySession!(sessionId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
-        ? (userId, clientMessageId) =>
-            runtime.runtimeRunStore!.findByIdempotencyKey(userId, clientMessageId)
+        ? (tenantId, userId, clientMessageId) =>
+            runtime.runtimeRunStore!.findByIdempotencyKey(tenantId, userId, clientMessageId)
         : undefined,
     }),
   );
@@ -534,7 +543,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   if (runtime.billingService) {
     app.use('/api/billing', createBillingRouter({ billingService: runtime.billingService }));
     app.use(
@@ -547,7 +555,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // Runtime audit 读 API（admin-only）：按 sessionId/runId 查 tool_audit 投影，
   // 不引 DB，直接读 *.runtime-events.jsonl。
   if (runtime.runtimeAuditQuery) {
@@ -557,7 +564,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createRuntimeAuditRouter({ auditQuery: runtime.runtimeAuditQuery }),
     );
   }
-
   // Agent 运行监测读 API（admin-only，router 内 resolveTenant 隔离：平台 admin 全量、
   // 组织 admin 锁本租户 + ¥ 成本按 policy.showCost 脱敏）：
   // run trace drill-down + 最近 run 列表 + 效率聚合。仅 PG runtime backend 可用
@@ -582,7 +588,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // 组织对话质检台（会话记录/门禁日志/反馈标注；2026-07 唯恩批次）。
   // 须挂在 /api/admin 观测路由之前，避免前缀匹配先落进 observability router。
   app.use(
@@ -631,7 +636,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
     }),
   );
-
   app.use(
     '/api/admin',
     requireAdmin,
@@ -649,7 +653,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
     }),
   );
-
   app.use('/api/admin/system', requireAdmin, createSystemAdminRouter({
       agentCwd,
       systemMetricsStore: runtime.systemMetricsStore,
@@ -683,9 +686,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
     }),
   );
-
   let executeUserOffboarding: ExecuteUserOffboarding | undefined;
-
   if (runtime.userStore && config.auth?.enabled) {
     const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
     const avatarsDir = resolve(usersFilePath, '..', 'avatars');
@@ -988,16 +989,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       );
       app.use(
         '/api/skills',
-        createSkillsRouter({
-          skillConfigStore: runtime.skillConfigStore,
-          userStore: runtime.userStore!,
+        createSkillsRouter(buildSkillsRouterDeps({
+          runtime,
           agentCwd,
           sharedDir,
-          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
-          skillMaterialization: runtime.skillMaterialization,
-          skillGovernanceStore: runtime.skillGovernanceStore,
           legacyWriteGate,
-        }),
+        })),
       );
     }
     // 原生连接器账号与凭据；独立于 MCP feature gate。

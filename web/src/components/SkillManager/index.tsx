@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw, ArrowUpCircle, Pencil, Trash2, Upload, Zap } from "lucide-react";
+import { Loader2, RefreshCw, ArrowUpCircle, Languages, Pencil, Trash2, Upload, Zap } from "lucide-react";
 import {
   fetchTenantSkillPool,
   importPoolSkill,
@@ -41,6 +41,8 @@ import { useUsers } from "@/components/UserManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_TENANT_ID } from "@/components/TenantManager/types";
 import { useSkillAdmin } from "./hooks";
+import { SkillPresentationDialog, type SkillPresentationTarget } from "./SkillPresentationDialog";
+import { skillDisplayName, skillDisplaySummary } from "@/lib/skillPresentation";
 
 export interface SkillManagerProps {
   mode?: "platform" | "tenant";
@@ -77,6 +79,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const [editBaselineContent, setEditBaselineContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
+  const [presentationTarget, setPresentationTarget] = useState<SkillPresentationTarget | null>(null);
   const [tenantSkills, setTenantSkills] = useState<TenantSkillInfo[]>([]);
   const [tenantLoading, setTenantLoading] = useState(false);
   const [tenantError, setTenantError] = useState<string | null>(null);
@@ -281,7 +284,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
         kind: "pool",
         username: "",
         skillId: skill.id,
-        name: skill.name,
+        name: skillDisplayName(skill),
         impact: `当前有 ${impact.usersSelected} 名用户选择、${impact.tenantsConfigured} 个组织配置引用，删除会清理引用并异步收敛工作区副本。`,
       });
     } catch (err) {
@@ -424,7 +427,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                     tenantId={tenantIdScope}
                     resourceType="skill"
                     title="组织自有技能成员与群组授权"
-                    items={ownSkills.map(skill => ({ resourceId: skill.governance?.resourceId ?? skill.id, label: skill.name }))}
+                    items={ownSkills.map(skill => ({ resourceId: skill.governance?.resourceId ?? skill.id, label: skillDisplayName(skill) }))}
                   />
                 </div>
               ) : null}
@@ -433,12 +436,13 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                   <div className="mb-1 mt-1 text-xs font-medium text-muted-foreground">组织自有技能（上传/沉淀）</div>
                   {ownSkills.map(skill => (
                     <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
-                      <div className="flex items-start gap-3">
+                      <div className="flex flex-col items-start gap-3 sm:flex-row">
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium">{skill.name}</div>
-                          {skill.description && (
-                            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                          <div className="text-sm font-medium">{skillDisplayName(skill)}</div>
+                          {skillDisplaySummary(skill) && (
+                            <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skillDisplaySummary(skill)}</p>
                           )}
+                          <p className="mt-1 text-[11px] text-muted-foreground">技术标识：{skill.id}</p>
                           {skill.governance && (
                             <p className="mt-1 text-[11px] text-muted-foreground">
                               {skill.governance.status === "published" ? "已发布" : skill.governance.status === "draft" ? "草稿" : "已退役"}
@@ -448,13 +452,25 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             </p>
                           )}
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 sm:w-auto">
                           <Button
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs"
-                            aria-label={`编辑技能 ${skill.name}`}
-                            onClick={() => { void openEditor({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name }); }}
+                            title="编辑展示信息"
+                            aria-label={`编辑 ${skillDisplayName(skill)} 的展示信息`}
+                            disabled={writeDisabled}
+                            onClick={() => setPresentationTarget({ kind: "tenant-own", tenantId: tenantIdScope, skill })}
+                          >
+                            <Languages className="size-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            aria-label={`编辑技能文档 ${skillDisplayName(skill)}`}
+                            title="编辑 SKILL.md"
+                            onClick={() => { void openEditor({ kind: "tenantOwn", username: "", skillId: skill.id, name: skillDisplayName(skill) }); }}
                           >
                             <Pencil className="size-3.5" />
                           </Button>
@@ -464,7 +480,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                               size="sm"
                               className="h-7 px-2 text-xs"
                               title="提升到平台技能池"
-                              aria-label={`提升技能 ${skill.name} 到平台技能池`}
+                              aria-label={`提升技能 ${skillDisplayName(skill)} 到平台技能池`}
                               disabled={writeDisabled}
                               onClick={() => { void handlePromoteOwnToPool(skill.id); }}
                             >
@@ -475,9 +491,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                             variant="ghost"
                             size="sm"
                             className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                            aria-label={`删除技能 ${skill.name}`}
+                            aria-label={`删除技能 ${skillDisplayName(skill)}`}
                             disabled={destructiveDisabled || writeDisabled}
-                            onClick={() => setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skill.name })}
+                            onClick={() => setDeleteTarget({ kind: "tenantOwn", username: "", skillId: skill.id, name: skillDisplayName(skill) })}
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
@@ -493,14 +509,29 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               )}
               {tenantSkills.map(skill => (
                 <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
-                  <div className="flex items-start gap-3">
+                  <div className="flex flex-col items-start gap-3 sm:flex-row">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">{skill.name}</div>
-                      {skill.description && (
-                        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                      <div className="text-sm font-medium">{skillDisplayName(skill)}</div>
+                      {skillDisplaySummary(skill) && (
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skillDisplaySummary(skill)}</p>
                       )}
+                      <p className="mt-1 text-[11px] text-muted-foreground">技术标识：{skill.id}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {skill.presentation?.source === "organization_override" ? "组织自定义展示" : "继承平台默认展示"}
+                      </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        title="设置组织内展示信息"
+                        aria-label={`设置 ${skillDisplayName(skill)} 的组织内展示信息`}
+                        disabled={writeDisabled}
+                        onClick={() => setPresentationTarget({ kind: "tenant-platform", tenantId: tenantIdScope, skill })}
+                      >
+                        <Languages className="size-3.5" />
+                      </Button>
                       <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Entitlement + Assignment 权威授权</span>
                     </div>
                   </div>
@@ -510,33 +541,51 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             ) : (
               poolSkills.map(skill => (
                 <div key={skill.id} className="rounded-lg p-2.5 transition-colors hover:bg-muted/50">
-                  <div className="flex items-start gap-3">
+                  <div className="flex flex-col items-start gap-3 sm:flex-row">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">{skill.name}</div>
-                      {skill.description && (
-                        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skill.description}</p>
+                      <div className="text-sm font-medium">{skillDisplayName(skill)}</div>
+                      {skillDisplaySummary(skill) && (
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{skillDisplaySummary(skill)}</p>
                       )}
+                      <p className="mt-1 text-[11px] text-muted-foreground">技术标识：{skill.id}</p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        title="编辑展示信息"
+                        aria-label={`编辑 ${skillDisplayName(skill)} 的展示信息`}
+                        disabled={writeDisabled}
+                        onClick={() => setPresentationTarget({ kind: "platform", skill })}
+                      >
+                        <Languages className="size-3.5" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-7 px-2 text-xs text-destructive hover:text-destructive"
                         disabled={writeDisabled || skill.enabled}
                         title={skill.enabled ? "先关闭技能后才能删除" : "删除已退役的平台技能"}
-                        aria-label={`删除技能 ${skill.name}`}
+                        aria-label={`删除技能 ${skillDisplayName(skill)}`}
                         onClick={() => { void openPoolDelete(skill); }}
                       >
                         <Trash2 className="size-3.5" />
                       </Button>
                       <Select
                         value={skill.exposure}
-                        disabled={writeDisabled}
+                        disabled={writeDisabled || tenantsLoading}
                         onValueChange={(value) => {
-                          void handleUpdatePlatformSkill(skill, { exposure: value as PoolSkillInfo["exposure"] });
+                          const exposure = value as PoolSkillInfo["exposure"];
+                          void handleUpdatePlatformSkill(skill, {
+                            exposure,
+                            tenantIds: exposure === "allow_tenants" && skill.exposure === "all"
+                              ? platformTenantOptions.map((tenant) => tenant.id)
+                              : skill.tenantIds,
+                          });
                         }}
                       >
-                        <SelectTrigger className="h-8 w-40" aria-label={`设置技能 ${skill.name} 的组织开放范围`}>
+                        <SelectTrigger className="h-8 w-40" aria-label={`设置技能 ${skillDisplayName(skill)} 的组织开放范围`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -548,7 +597,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       {/* 平台技能启停是即时写，必须 disabled 而非仅忽略回调 */}
                       <Switch
                         checked={skill.enabled}
-                        aria-label={`启用技能 ${skill.name}`}
+                        aria-label={`启用技能 ${skillDisplayName(skill)}`}
                         disabled={writeDisabled}
                         onCheckedChange={(checked) => { void handleUpdatePlatformSkill(skill, { enabled: checked }); }}
                         className="shrink-0"
@@ -561,8 +610,8 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                         <label key={tenant.id} className="flex min-w-0 items-center gap-2 text-xs">
                           <Checkbox
                             checked={skill.tenantIds.includes(tenant.id)}
-                            aria-label={`设置技能 ${skill.name} 对组织 ${tenant.name} 的开放范围`}
-                            disabled={writeDisabled}
+                            aria-label={`设置技能 ${skillDisplayName(skill)} 对组织 ${tenant.name} 的开放范围`}
+                            disabled={writeDisabled || tenantsLoading}
                             onCheckedChange={(checked) => {
                               const tenantIds = checked === true
                                 ? Array.from(new Set([...skill.tenantIds, tenant.id]))
@@ -684,6 +733,13 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SkillPresentationDialog
+        target={presentationTarget}
+        disabled={writeDisabled}
+        onClose={() => setPresentationTarget(null)}
+        onSaved={refreshAll}
+      />
 
       {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>

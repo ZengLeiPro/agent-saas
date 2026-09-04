@@ -2037,18 +2037,18 @@ export class PgBillingStore {
   }
 }
 
-function computeRevenueYuanMicro(actualCostYuanMicro: number, policy: TenantBillingPolicy): number {
+export function computeRevenueYuanMicro(actualCostYuanMicro: number, policy: Pick<TenantBillingPolicy, 'defaultTargetMarginBps' | 'organizationMultiplierBps'>): number {
   if (actualCostYuanMicro <= 0) return 0;
   const margin = Math.max(0, Math.min(policy.defaultTargetMarginBps, 9500)) / 10_000;
   const required = Math.ceil(actualCostYuanMicro / Math.max(0.01, 1 - margin));
   return Math.ceil(required * (policy.organizationMultiplierBps / 10_000));
 }
-
-function roundUpCreditsMicro(value: number): number {
+export function roundUpCreditsMicro(value: number): number {
   const step = 10_000; // 0.01 credit
   return Math.ceil(value / step) * step;
-}
-
+} export function costUsdMicroToCreditsMicro(input: { costUsdMicro: number; fxRateToCny: number; creditValueYuanMicro: number; defaultTargetMarginBps: number; organizationMultiplierBps: number }): number {
+  const actualCostYuanMicro = Math.ceil(Math.max(0, input.costUsdMicro) * input.fxRateToCny); const revenueYuanMicro = computeRevenueYuanMicro(actualCostYuanMicro, input);
+  return roundUpCreditsMicro(Math.ceil((revenueYuanMicro * CREDIT_MICRO) / Math.max(1, input.creditValueYuanMicro)));}
 function usageEventIdHash(ids: string[]): string {
   return createHash('sha1').update([...ids].sort().join('\n')).digest('hex').slice(0, 16);
 }

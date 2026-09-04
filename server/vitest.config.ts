@@ -19,7 +19,7 @@ export default defineConfig({
     },
   },
   test: {
-    // 测试文件匹配模式（server + shared source alias）
+    // 测试文件匹配模式（server + shared 源码 alias）
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'tests/**/*.{test,spec}.{ts,tsx}'],
     // 排除的目录
     exclude: ['node_modules', 'dist'],

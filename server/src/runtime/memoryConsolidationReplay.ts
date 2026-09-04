@@ -36,7 +36,7 @@ export async function rejectMemoryConsolidationWake(options: {
   const { run } = options;
   if (typeof run.metadata?.memoryConsolidationSourceSessionId !== 'string') return false;
   const reason = 'memory_consolidation_run_not_recoverable';
-  await options.lease?.release('failed', reason);
+  let coordinated = false;
   await markRunState(
     options.runStore,
     options.eventStore,
@@ -44,7 +44,8 @@ export async function rejectMemoryConsolidationWake(options: {
     run.runId,
     'failed',
     reason,
-  ).catch(() => undefined);
+  ).then(() => { coordinated = true; }).catch(() => undefined);
+  await options.lease?.release(coordinated ? undefined : 'failed', reason);
   await options.sessionCatalog.markStatus(run.sessionId, 'error').catch(() => undefined);
   return true;
 }

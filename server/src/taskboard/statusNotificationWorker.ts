@@ -155,7 +155,8 @@ export class TaskboardStatusNotificationWorker {
     this.options.userStore?.reload();
     const recipients = claimed.recipientUserIds.filter((userId) => this.canReadCurrentTask(userId, access));
     const status = buildTaskboardStatusBody(claimed.toStatus, claimed.summary);
-    const url = `/cron?view=board&boardId=${encodeURIComponent(claimed.boardId)}&taskId=${encodeURIComponent(claimed.taskId)}`;
+    // 新通知直接使用任务看板独立路由；Web 仍兼容已发送的旧 /cron?view=board 深链。
+    const url = `/taskboard?boardId=${encodeURIComponent(claimed.boardId)}&taskId=${encodeURIComponent(claimed.taskId)}`;
 
     const failures: string[] = [];
     let deferredCount = 0;

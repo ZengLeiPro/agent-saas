@@ -1,0 +1,127 @@
+[
+  {
+    "skillId": "archify",
+    "displayName": "架构与流程图",
+    "summary": "制作系统架构图、流程图、时序图和数据链路图"
+  },
+  {
+    "skillId": "audio-transcribe",
+    "displayName": "语音转文字",
+    "summary": "把会议录音、访谈或语音备忘录转换成文字"
+  },
+  {
+    "skillId": "bird",
+    "displayName": "X 社交平台",
+    "summary": "搜索、阅读和管理 X（Twitter）内容"
+  },
+  {
+    "skillId": "browser",
+    "displayName": "浏览器操作",
+    "summary": "打开网页、填写表单、下载文件并完成网页操作"
+  },
+  {
+    "skillId": "cron",
+    "displayName": "定时任务",
+    "summary": "创建、查看和管理提醒或周期性自动任务"
+  },
+  { "skillId": "docx", "displayName": "Word 文档", "summary": "创建、读取、修改和整理 Word 文档" },
+  {
+    "skillId": "dws",
+    "displayName": "钉钉办公",
+    "summary": "操作钉钉文档、表格、日历、审批、群聊和知识库"
+  },
+  {
+    "skillId": "feishu",
+    "displayName": "飞书办公",
+    "summary": "操作飞书文档、表格、日历、任务和知识库"
+  },
+  {
+    "skillId": "frpc-tunnel",
+    "displayName": "内网穿透",
+    "summary": "为本地服务建立临时、安全的外网访问通道"
+  },
+  {
+    "skillId": "gmail",
+    "displayName": "Gmail 邮件",
+    "summary": "搜索、阅读、发送和回复 Gmail 邮件"
+  },
+  {
+    "skillId": "hyperframes",
+    "displayName": "精确视频制作",
+    "summary": "用代码制作可复现、可批量生成的数据与产品视频"
+  },
+  {
+    "skillId": "image-gen",
+    "displayName": "AI 图片生成",
+    "summary": "根据文字或参考图片生成配图、封面和信息图"
+  },
+  { "skillId": "imsg", "displayName": "iMessage 消息", "summary": "通过 iMessage 查询和发送消息" },
+  {
+    "skillId": "job-req-optimizer",
+    "displayName": "招聘需求优化",
+    "summary": "整理和优化岗位招聘需求与职位说明"
+  },
+  {
+    "skillId": "ky-data-query",
+    "displayName": "业务数据查询",
+    "summary": "查询 CRM、钉钉、项目、官网和运营数据"
+  },
+  {
+    "skillId": "media-download",
+    "displayName": "媒体下载",
+    "summary": "从常见视频和音频平台下载媒体文件"
+  },
+  { "skillId": "oil-price", "displayName": "油价查询", "summary": "查询国内各地区最新成品油价格" },
+  {
+    "skillId": "pptx",
+    "displayName": "演示文稿",
+    "summary": "创建、读取和修改 PowerPoint 或网页演示文稿"
+  },
+  { "skillId": "reddit", "displayName": "Reddit 社区", "summary": "浏览和搜索 Reddit 帖子与评论" },
+  {
+    "skillId": "skill-creator",
+    "displayName": "技能创建与优化",
+    "summary": "创建、修改、评测和优化 Agent 技能"
+  },
+  {
+    "skillId": "skill-demo",
+    "displayName": "业务系统演示",
+    "summary": "在在线演示系统中操作 CRM、ERP 和业务数据"
+  },
+  {
+    "skillId": "video-gen",
+    "displayName": "AI 视频生成",
+    "summary": "根据文字、图片或参考视频生成短视频"
+  },
+  { "skillId": "video-subtitle", "displayName": "视频字幕", "summary": "生成、翻译并烧录视频字幕" },
+  {
+    "skillId": "weekly-report",
+    "displayName": "周报助手",
+    "summary": "整理工作记录并生成结构清晰的周报"
+  },
+  {
+    "skillId": "wy-invoice",
+    "displayName": "唯恩发票录入",
+    "summary": "处理唯恩电气 T100 对账与客户发票录入"
+  },
+  {
+    "skillId": "xhs-copywriter",
+    "displayName": "小红书文案",
+    "summary": "撰写和优化小红书标题、正文与发布文案"
+  },
+  {
+    "skillId": "xhs-note-analysis",
+    "displayName": "小红书笔记分析",
+    "summary": "分析小红书笔记表现、内容结构与优化方向"
+  },
+  {
+    "skillId": "xlsx",
+    "displayName": "电子表格",
+    "summary": "创建、读取、修改和分析 Excel、CSV 等表格文件"
+  },
+  {
+    "skillId": "youtube-transcript",
+    "displayName": "YouTube 字幕提取",
+    "summary": "提取 YouTube 视频已有的字幕和文字稿"
+  }
+]

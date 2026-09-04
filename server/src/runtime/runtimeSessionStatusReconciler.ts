@@ -70,6 +70,7 @@ export interface RuntimeSessionStatusReconciliationSummary {
 
 interface RuntimeSessionStatusReconcilerOptions {
   store: RuntimeSessionStatusReconciliationStore;
+  /** Tenant-scoped mutual exclusion for status repair. */
   sessionLock: Pick<PgSessionLock, 'tryAcquire'>;
   updateMetaStatus: (
     sessionId: string,
@@ -142,7 +143,7 @@ export class RuntimeSessionStatusReconciler {
   ): Promise<RuntimeSessionStatusReconciliationOutcome> {
     let lock: Awaited<ReturnType<PgSessionLock['tryAcquire']>>;
     try {
-      lock = await this.options.sessionLock.tryAcquire(candidate.sessionId);
+      lock = await this.options.sessionLock.tryAcquire(candidate.tenantId, candidate.sessionId);
     } catch (error) {
       return candidateOutcome(candidate, target, 'failed', error);
     }

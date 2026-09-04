@@ -16,6 +16,7 @@ vi.mock('../../security/trustedFile.js', async (importOriginal) => {
   };
 });
 
+import { MemoryEventStore } from '../../__tests__/runtimeScheduler.testHelpers.js';
 import type { OrgAgentWorkOrder, OrgGroupAgentStore } from '../../data/orgGroupAgents/index.js';
 import type { RunRecord, RunStore } from '../runStore.js';
 import type { RawRuntimeRunDispatchConfig } from '../rawRuntimeRunDispatch.js';
@@ -707,7 +708,15 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     } as unknown as OrgGroupAgentStore;
     const coordinator = new OrgAgentBackgroundWorkCoordinator({
       agentCwd: '/tmp', orgGroupAgentStore: store, runStore,
-      sessionCatalog: { markStatus: vi.fn().mockResolvedValue(undefined) },
+      sessionCatalog: {
+        get: vi.fn().mockResolvedValue({
+          sessionId: task.sessionId, userId: 'user-1', username: 'user-1', channel: 'web',
+          cwd: '/tmp', transcriptPath: '/tmp/org-agent-background-test.jsonl', status: 'running',
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        }),
+        markStatus: vi.fn().mockResolvedValue(undefined),
+      },
+      eventStoreFactory: () => new MemoryEventStore(),
     } as never);
 
     await expect(coordinator.pause('tenant-1', 'work-1', 3)).resolves.toMatchObject({ runId: 'run-1' });
@@ -715,6 +724,7 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     expect(runStore.markStatusIfCurrent).toHaveBeenCalledWith(
       'run-1', ['pending', 'running'], 'cancelled', '组织群任务已暂停',
       expect.objectContaining({ orgAgentAttemptSuperseded: true, orgAgentPauseAttemptNo: 1 }),
+      undefined,
     );
     expect(store.pauseWorkOrder).toHaveBeenCalledWith({
       tenantId: 'tenant-1', workOrderId: 'work-1', expectedVersion: 3,

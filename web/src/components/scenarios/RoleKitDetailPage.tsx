@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronDown, ChevronRight, PlayCircle } from "lucide-react";
+import { CatalogHeader } from "@/components/CapabilityCenter/CatalogHeader";
 import {
   sanitizeRole,
   sanitizeScenario,
@@ -192,23 +193,22 @@ export function RoleKitDetailPage({
 
   return (
     <div className="w-full px-4 pb-4 sm:px-6 sm:pb-6 md:pt-6">
-      <div className="mb-5 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          {onBack && (
-            <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-2 h-8" onClick={onBack}>
-              <ArrowLeft className="size-4" />
-              返回
-            </Button>
-          )}
-          <h1 className="text-xl font-semibold">{safe.name}开箱包</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            {welcomeText(safe, industryHint)}
-          </p>
-        </div>
-        <Badge variant="outline" className="shrink-0">
-          {roleScenarios.length} 个任务模板
-        </Badge>
-      </div>
+      {onBack && (
+        <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-2 h-8" onClick={onBack}>
+          <ArrowLeft className="size-4" />
+          返回
+        </Button>
+      )}
+      <CatalogHeader
+        level={1}
+        title={`${safe.name}开箱包`}
+        description={welcomeText(safe, industryHint)}
+        actions={
+          <Badge variant="outline" className="shrink-0">
+            {roleScenarios.length} 个任务模板
+          </Badge>
+        }
+      />
 
       <div className={cn("px-5", CAPABILITY_SURFACE)}>
         <Section title="岗位画像与差异化" expandable={false}>

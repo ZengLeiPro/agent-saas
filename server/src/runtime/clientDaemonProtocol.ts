@@ -21,6 +21,15 @@ export function deriveClientDaemonHandId(daemonId: string): string {
     : `client-${createHash('sha256').update(daemonId).digest('hex')}`;
 }
 
+/** Server-issued tenant-qualified identity; rawHandId remains a tenant-local hint only. */
+export function deriveTenantQualifiedClientDaemonHandId(tenantId: string, rawHandId: string): string {
+  return `client-tq-${createHash('sha256')
+    .update(tenantId)
+    .update('\0')
+    .update(rawHandId)
+    .digest('hex')}`;
+}
+
 export type ClientDaemonMessage =
   | {
     type: 'daemon_hello';

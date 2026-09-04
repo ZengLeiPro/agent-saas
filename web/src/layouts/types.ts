@@ -16,6 +16,7 @@ import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import type { SandboxProfile } from "@/types/sandboxProfile";
 import type { ArtifactPreviewTarget } from "@/contexts/FilePreviewContext";
+import type { AutomationControlRequest, AutomationTimelineEvent, SessionAutomationSnapshot } from "@/lib/sessionAutomation";
 
 export interface LayoutProps {
   // 会话导航
@@ -31,6 +32,8 @@ export interface LayoutProps {
   activeOrgAgent: OrgAgentSummary | null;
   /** 当前会话 target 不可用时输入区只读。 */
   activeOrgAgentReadOnly: boolean;
+  /** 当前登录人仅有会话查看权，不得在该会话中交互。 */
+  sessionReadOnly: boolean;
   /** 服务端投影的结构化只读原因。 */
   activeAgentTargetUnavailableReason?: AgentTargetUnavailableReason;
   /** Header label derived only from persisted/pending canonical target. */
@@ -128,6 +131,14 @@ export interface LayoutProps {
   tokenUsage: TokenUsage | null;
   contextUsage: ContextUsageData | null;
 
+  // Session automation control plane
+  automation: SessionAutomationSnapshot | null;
+  automationTimeline: AutomationTimelineEvent[];
+  automationPending: boolean;
+  automationError: string | null;
+  controlAutomation: (request: AutomationControlRequest) => Promise<void>;
+  refreshAutomation: (sessionId?: string | null) => Promise<void>;
+
   // 会话分页
   hasMoreSessions: boolean;
   isLoadingMoreSessions: boolean;
@@ -137,7 +148,7 @@ export interface LayoutProps {
   // Agent profile
   agentProfile?: AgentProfile | null;
 
-  // Session participants
+  // Session participants（用于展示跨用户只读会话的实际 owner）
   sessionParticipants?: SessionParticipants | null;
 
   // File preview

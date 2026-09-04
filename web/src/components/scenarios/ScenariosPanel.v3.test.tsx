@@ -89,9 +89,9 @@ describe("ScenariosPanel V3", () => {
     expect(screen.queryByTestId("guided-presentations")).toBeNull();
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
     const catalog = screen.getByTestId("workflow-catalog");
-    expect(within(catalog).getAllByRole("button", { name: "立即试一试" })).toHaveLength(2);
+    expect(within(catalog).getAllByRole("button", { name: "试试" })).toHaveLength(2);
 
-    fireEvent.click(within(catalog).getAllByRole("button", { name: "看演示" })[0]!);
+    fireEvent.click(within(catalog).getAllByRole("button", { name: "演示" })[0]!);
     expect(await screen.findByRole("heading", { name: guided.title }, { timeout: 5_000 })).toBeTruthy();
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(true);
     expect(screen.getByText("回放 · 完整闭环")).toBeTruthy();
@@ -140,7 +140,7 @@ describe("ScenariosPanel V3", () => {
     mocked.workflowLibrary = makeWorkflowLibrary([target]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "看演示" }));
+    fireEvent.click(screen.getByRole("button", { name: "演示" }));
     expect(await screen.findByText("0 / 8", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText("旧回放占位")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
@@ -183,7 +183,7 @@ describe("ScenariosPanel V3", () => {
     mocked.workflowLibrary = makeWorkflowLibrary([target, ordinary]);
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
 
-    const buttons = screen.getAllByRole("button", { name: "看演示" });
+    const buttons = screen.getAllByRole("button", { name: "演示" });
     fireEvent.click(buttons[0]!);
     fireEvent.click(buttons[1]!);
     expect(await screen.findByRole("heading", { name: ordinary.title }, { timeout: 5_000 })).toBeTruthy();
@@ -226,7 +226,10 @@ describe("ScenariosPanel V3", () => {
   it("默认只渲染28个唯一 catalog 卡片，skin/role view 不复制卡", () => {
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(28);
-    expect(screen.getByText(/默认目录共 28 个唯一工作流/)).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "AI 同事能做的事" })).toBeTruthy();
+    // 页面说明不再直出，收进标题右侧的信息按钮
+    expect(screen.getByRole("button", { name: "页面说明" })).toBeTruthy();
+    expect(screen.queryByText(/按目标或岗位挑一个/)).toBeNull();
   });
 
   it("结果、岗位、行业三轴按 AND 收窄，并可一键清空", async () => {
@@ -258,22 +261,23 @@ describe("ScenariosPanel V3", () => {
     const onStartWorkflow = vi.fn();
     render(<ScenariosPanel onTryScenario={vi.fn()} onStartWorkflow={onStartWorkflow} />);
     const catalog = screen.getByTestId("workflow-catalog");
-    expect(within(catalog).getByRole("button", { name: "看演示" })).toBeTruthy();
-    expect(within(catalog).getByRole("button", { name: "立即试一试" })).toBeTruthy();
+    expect(within(catalog).getByRole("button", { name: "演示" })).toBeTruthy();
+    expect(within(catalog).getByRole("button", { name: "试试" })).toBeTruthy();
     expect(within(catalog).queryByRole("button", { name: "接入我的系统" })).toBeNull();
     expect(within(catalog).queryByRole("button", { name: "查看工作流" })).toBeNull();
 
-    fireEvent.click(within(catalog).getByRole("button", { name: "立即试一试" }));
+    fireEvent.click(within(catalog).getByRole("button", { name: "试试" }));
     expect(onStartWorkflow).toHaveBeenCalledWith(expect.stringContaining("不要连接或写入任何真实业务系统"), d1);
 
-    fireEvent.click(within(catalog).getByRole("button", { name: "看演示" }));
+    fireEvent.click(within(catalog).getByRole("button", { name: "演示" }));
     expect(await screen.findByText("0 / 6", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getByText("接收业务事件")).toBeTruthy();
   });
 
-  it("目录卡只保留场景标题和统一动作", () => {
+  it("目录卡只保留标题、目标与岗位标签、触发时机和两个同级动作", () => {
     const scenario = makeWorkflowScenario("compact-card", {
       goalTags: ["保交付"],
+      roleIds: ["sales", "finance", "boss", "hr"],
       value: "提前发现风险并同步处理结果",
       shortChain: ["读取状态", "判断异常", "执行动作"],
       triggerBadge: "订单进入交付窗口时",
@@ -284,22 +288,29 @@ describe("ScenariosPanel V3", () => {
     render(<ScenariosPanel onTryScenario={vi.fn()} />);
     const catalog = screen.getByTestId("workflow-catalog");
     expect(within(catalog).getByRole("heading", { name: scenario.title })).toBeTruthy();
-    expect(catalog.textContent).not.toContain("保交付");
+    expect(within(catalog).getByText("保交付")).toBeTruthy();
+    // 岗位：已知 id 用库里的名字，未知 id 回退 id，超过 3 个折成 +N
+    expect(catalog.textContent).toContain("销售 · 财务 · boss");
+    expect(catalog.textContent).toContain("+1");
+    expect(within(catalog).getByText(scenario.triggerBadge)).toBeTruthy();
     expect(catalog.textContent).not.toContain(scenario.value);
-    expect(catalog.textContent).not.toContain(scenario.triggerBadge);
     expect(catalog.textContent).not.toContain(scenario.humanApprovalSummary);
+    expect(catalog.textContent).not.toContain(scenario.actionBadge);
     expect(catalog.textContent).not.toContain("读取状态");
     expect(catalog.textContent).not.toContain("判断异常");
     expect(catalog.textContent).not.toContain("执行动作");
-    expect(within(catalog).getByRole("button", { name: "看演示" })).toBeTruthy();
-    expect(within(catalog).getByRole("button", { name: "立即试一试" })).toBeTruthy();
-    const actions = catalog.querySelector("[data-workflow-actions]");
-    expect(actions?.className).toContain("grid-cols-2");
-    expect(within(catalog).getByRole("button", { name: "看演示" }).querySelector("svg")).toBeTruthy();
-    const tryButton = within(catalog).getByRole("button", { name: "立即试一试" });
+    const demoButton = within(catalog).getByRole("button", { name: "演示" });
+    const tryButton = within(catalog).getByRole("button", { name: "试试" });
+    expect(demoButton.querySelector("svg")).toBeTruthy();
+    // 两个动作同级同形：同高、同圆角；只用色相区分（演示=暖橙，试试=品牌蓝）
+    expect(demoButton.className).toContain("h-7");
+    expect(tryButton.className).toContain("h-7");
+    expect(demoButton.className).toContain("rounded-full");
+    expect(tryButton.className).toContain("rounded-full");
+    expect(demoButton.className).toContain("bg-brand-accent-soft");
     expect(tryButton.className).toContain("bg-brand-50");
     expect(tryButton.className).toContain("hover:bg-brand-600");
-    expect(catalog.firstElementChild?.className).toContain("min-h-32");
+    expect(catalog.firstElementChild?.className).not.toContain("min-h-32");
     expect(catalog.firstElementChild?.className).not.toContain("before:bg-gradient-to-b");
   });
 
@@ -315,7 +326,7 @@ describe("ScenariosPanel V3", () => {
     expect(titles).toEqual([heroFirst.title, heroSecond.title, ordinary.title]);
     expect(screen.queryByText("重点工作流")).toBeNull();
     const actions = within(screen.getByTestId("workflow-catalog"))
-      .getAllByRole("button", { name: "立即试一试" });
+      .getAllByRole("button", { name: "试试" });
     expect(actions).toHaveLength(3);
     expect(new Set(actions.map((button) => button.className)).size).toBe(1);
     expect(document.body.textContent).not.toContain("82");

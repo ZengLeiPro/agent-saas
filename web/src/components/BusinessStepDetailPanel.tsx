@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, X } from "lucide-react";
 import type { RenderItem } from "@agent/shared";
 
@@ -115,13 +115,22 @@ function CollapsibleDetail({
   title,
   children,
   dataAttribute,
+  defaultOpen = false,
 }: {
   title: string;
   children: ReactNode;
   dataAttribute: "process" | "evidence";
+  defaultOpen?: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+
   return (
-    <details className="group rounded-xl border border-border/70 bg-muted/15" data-business-step-collapsible={dataAttribute}>
+    <details
+      className="group rounded-xl border border-border/70 bg-muted/15"
+      data-business-step-collapsible={dataAttribute}
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm font-medium outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         <span>{title}</span>
         <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
@@ -179,7 +188,12 @@ function BusinessStepDetailBody({
             )}
           </section>
           {hasProcess ? (
-            <CollapsibleDetail title="过程" dataAttribute="process">
+            <CollapsibleDetail
+              key={`${detail.todoKey}:${detail.todo.status}:process`}
+              title="过程"
+              dataAttribute="process"
+              defaultOpen={detail.todo.status === "in_progress"}
+            >
               <div className="flex flex-col gap-2.5" aria-label="步骤过程" data-business-step-process>
                 {items.process.map((item) => <div key={item.id}>{renderItem(item)}</div>)}
               </div>

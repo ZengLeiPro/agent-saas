@@ -43,6 +43,7 @@ class MemoryHandStore implements HandStore {
     const now = new Date().toISOString();
     const record: HandRecord = {
       handId: input.handId,
+      tenantId: input.tenantId,
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       type: input.type,
@@ -66,12 +67,15 @@ class MemoryHandStore implements HandStore {
   async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
   async completeProvisionAttempt(): Promise<HandRecord | null> { return null; }
   async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
-  async get(handId: string): Promise<HandRecord | null> { return this.hands.get(handId) ?? null; }
-  async listBySession(sessionId: string): Promise<HandRecord[]> {
-    return [...this.hands.values()].filter((hand) => hand.sessionId === sessionId);
+  async get(handId: string, tenantId: string): Promise<HandRecord | null> {
+    const hand = this.hands.get(handId);
+    return hand?.tenantId === tenantId ? hand : null;
   }
-  async listByWorkspace(workspaceId: string): Promise<HandRecord[]> {
-    return [...this.hands.values()].filter((hand) => hand.workspaceId === workspaceId);
+  async listBySession(sessionId: string, tenantId: string): Promise<HandRecord[]> {
+    return [...this.hands.values()].filter((hand) => hand.sessionId === sessionId && hand.tenantId === tenantId);
+  }
+  async listByWorkspace(workspaceId: string, tenantId: string): Promise<HandRecord[]> {
+    return [...this.hands.values()].filter((hand) => hand.workspaceId === workspaceId && hand.tenantId === tenantId);
   }
 }
 
@@ -80,6 +84,7 @@ function run(status: RunStatus, workerId?: string): RunRecord {
   return {
     runId: 'run-1',
     sessionId: 'session-1',
+    tenantId: 'tenant-1',
     status,
     requestedAt: now,
     updatedAt: now,
@@ -367,6 +372,7 @@ describe('tool invocation cancel delivery', () => {
     const hands = new MemoryHandStore();
     await hands.register({
       handId: 'tenant-hand-1',
+      tenantId: 'tenant-1',
       sessionId: 'session-1',
       workspaceId: 'workspace-1',
       type: 'server-remote',
@@ -374,11 +380,14 @@ describe('tool invocation cancel delivery', () => {
       metadata: { tenantRemoteHandId: 'tenant-1', authToken: 'stale-platform-token' },
     });
     const fetchImpl = vi.fn();
+    const runStore = new MemoryRunStore();
+    runStore.set(run('running'));
 
     const result = await deliverToolInvocationCancel({
       event: cancelEvent(),
       toolInvocationStore: store,
       handStore: hands,
+      runStore,
       resolveHandAuthToken: async () => undefined,
       serverRemoteAuthToken: 'global-token',
       fetchImpl,
@@ -409,6 +418,7 @@ describe('tool invocation cancel delivery', () => {
     const hands = new MemoryHandStore();
     await hands.register({
       handId: 'hand-1',
+      tenantId: 'tenant-1',
       sessionId: 'session-1',
       workspaceId: 'workspace-1',
       type: 'server-remote',
@@ -416,11 +426,14 @@ describe('tool invocation cancel delivery', () => {
       metadata: { authToken: 'hand-token' },
     });
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok', cancelled: true }), { status: 200 }));
+    const runStore = new MemoryRunStore();
+    runStore.set(run('running'));
 
     await deliverToolInvocationCancel({
       event: cancelEvent(),
       toolInvocationStore: store,
       handStore: hands,
+      runStore,
       serverRemoteAuthToken: 'global-token',
       fetchImpl,
     });

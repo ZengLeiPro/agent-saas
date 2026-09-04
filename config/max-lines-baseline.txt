@@ -26,7 +26,7 @@ server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1477	production
 server/src/app/config.ts	1426	production
-server/src/app/routes.ts	1152	production
+server/src/app/routes.ts	1150	production
 server/src/app/runtime.ts	3037	production
 server/src/app/runtimeGovernanceConnectors.ts	1246	production
 server/src/channels/web/channel.ts	4341	production

@@ -39,7 +39,9 @@ export function registerGovernanceAssignmentBatchRoutes(options: {
   const { router } = options;
 
   router.post('/assignments/batch/preview', async (req, res) => {
-    if (options.personaFor(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(options.personaFor(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const parsed = assignmentBatchPreviewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -63,6 +65,7 @@ export function registerGovernanceAssignmentBatchRoutes(options: {
     }
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signatureInput = { version: 1, actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req),
       tenantId, baselineDigest: prepared.baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data) };
     const memberships = await options.memberships.listMemberships(tenantId);
     const activeUserIds = memberships.filter(member => member.status === 'active').map(member => member.userId);
@@ -102,7 +105,9 @@ export function registerGovernanceAssignmentBatchRoutes(options: {
   });
 
   router.put('/assignments/batch', async (req, res) => {
-    if (options.personaFor(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(options.personaFor(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const parsed = assignmentBatchPatchSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -113,6 +118,7 @@ export function registerGovernanceAssignmentBatchRoutes(options: {
     }
     const expectedPreviewId = `abpv1.${previewSignature(options.secret, {
       version: 1, actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req),
       tenantId, baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     })}`;
     if (!previewMatches(previewId, expectedPreviewId)) {

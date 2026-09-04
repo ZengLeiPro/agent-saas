@@ -214,7 +214,8 @@ export function registerGovernanceCredentialRoutes(options: {
     const idempotencyKey = randomUUID();
     const nonce = randomUUID();
     const previewId = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_create', actorUserId: req.user!.sub, tenantId,
+      version: 2, kind: 'credential_create', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     }, { idempotencyKey, nonce });
     return res.json({
@@ -254,7 +255,8 @@ export function registerGovernanceCredentialRoutes(options: {
       const { previewId, baselineDigest: signedBaseline, expiresAt, ...mutation } = commitParsed.data;
       const { idempotencyKey, nonce } = previewBinding(previewId);
       const expected = signedPreviewId(options.previewSecret, {
-        version: 2, kind: 'credential_create', actorUserId: req.user!.sub, tenantId,
+        version: 2, kind: 'credential_create', actorUserId: req.user!.sub,
+        actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId,
         baselineDigest: signedBaseline, expiresAt, changeDigest: governanceDigest(mutation),
       }, { idempotencyKey, nonce });
       if (!previewMatches(previewId, expected)) {
@@ -529,7 +531,8 @@ export function registerGovernanceCredentialRoutes(options: {
     const idempotencyKey = randomUUID();
     const nonce = randomUUID();
     const previewId = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_revoke', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      version: 2, kind: 'credential_revoke', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId: target.tenantId,
       credentialId: target.credential.credentialId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data),
     }, { idempotencyKey, nonce });
@@ -558,7 +561,8 @@ export function registerGovernanceCredentialRoutes(options: {
     }
     const { idempotencyKey, nonce } = previewBinding(previewId);
     const expected = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_revoke', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      version: 2, kind: 'credential_revoke', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId: target.tenantId,
       credentialId: target.credential.credentialId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     }, { idempotencyKey, nonce });
@@ -641,7 +645,8 @@ export function registerGovernanceCredentialRoutes(options: {
     const idempotencyKey = randomUUID();
     const nonce = randomUUID();
     const previewId = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_rotate', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      version: 2, kind: 'credential_rotate', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId: target.tenantId,
       credentialId: target.credential.credentialId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data),
     }, { idempotencyKey, nonce });
@@ -660,7 +665,8 @@ export function registerGovernanceCredentialRoutes(options: {
     const { previewId, baselineDigest, expiresAt, ...mutation } = parsed.data;
     const { idempotencyKey, nonce } = previewBinding(previewId);
     const expected = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_rotate', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      version: 2, kind: 'credential_rotate', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId: target.tenantId,
       credentialId: target.credential.credentialId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     }, { idempotencyKey, nonce });
@@ -858,7 +864,8 @@ export function registerGovernanceCredentialRoutes(options: {
     const idempotencyKey = randomUUID();
     const nonce = randomUUID();
     const previewId = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_transfer', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      version: 2, kind: 'credential_transfer', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId: target.tenantId,
       credentialId: target.credential.credentialId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data),
     }, { idempotencyKey, nonce });
@@ -877,7 +884,8 @@ export function registerGovernanceCredentialRoutes(options: {
     const { previewId, baselineDigest, expiresAt, ...mutation } = parsed.data;
     const { idempotencyKey, nonce } = previewBinding(previewId);
     const expected = signedPreviewId(options.previewSecret, {
-      version: 2, kind: 'credential_transfer', actorUserId: req.user!.sub, tenantId: target.tenantId,
+      version: 2, kind: 'credential_transfer', actorUserId: req.user!.sub,
+      actorTenantId: req.user!.tenantId, actorPersona: options.personaFor(req), tenantId: target.tenantId,
       credentialId: target.credential.credentialId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     }, { idempotencyKey, nonce });

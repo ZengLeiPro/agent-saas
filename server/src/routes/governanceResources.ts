@@ -13,6 +13,7 @@ import type { PgEnvironmentStore } from '../data/environments/index.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 import type { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import type { PgMembershipStore } from '../data/memberships/index.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import {
   MAX_SKILL_FILES,
@@ -32,6 +33,11 @@ import { registerGovernanceEnvironmentRoutes } from './governanceEnvironmentRout
 import { registerGovernanceResourceCatalogRoutes } from './governanceResourceCatalogRoutes.js';
 import type { EntitlementResourceType } from '../data/entitlements/types.js';
 import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
+import {
+  createTargetOrganizationAccessGuard,
+  governedTenantFor,
+  requestedTenantId,
+} from '../governance/auth/targetOrganizationAccess.js';
 import {
   connectorPublishSchema, connectorStatusSchema, createCandidateSchema, createSkillSchema,
   expectedRevisionSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
@@ -175,11 +181,19 @@ export function createGovernanceResourcesRouter(deps: {
   });
   const now = deps.now ?? (() => new Date());
   const personas = new WeakMap<Request, 'platform_admin' | 'org_admin' | 'member'>();
+  const targetAccess = createTargetOrganizationAccessGuard(
+    { memberships: deps.memberships, ...(deps.tenantExists ? { tenantExists: deps.tenantExists } : {}) },
+    req => {
+      const requested = requestedTenantId(req);
+      return requested && requested !== DEFAULT_TENANT_ID ? requested : undefined;
+    },
+  );
   const canManageTenant = (req: Request) => {
     const persona = personas.get(req);
     return persona === 'platform_admin' || persona === 'org_admin';
   };
-  const canManageOrganization = (req: Request) => personas.get(req) === 'org_admin';
+  const canManageOrganization = (req: Request) => personas.get(req) === 'org_admin'
+    || targetAccess.get(req)?.accessMode === 'platform_manage';
   const hasActiveOffboarding = async (tenantId: string, userId: string): Promise<boolean> => Boolean(
     await deps.changeJobs.findActiveForTarget(tenantId, 'user_offboarding', 'user', userId),
   );
@@ -197,8 +211,7 @@ export function createGovernanceResourcesRouter(deps: {
     return req.user.tenantId;
   };
   const resourceTenantFor = (req: Request, requested?: string): string | null => {
-    if (!req.user?.tenantId || (requested && requested !== req.user.tenantId)) return null;
-    return req.user.tenantId;
+    return governedTenantFor(req, personas.get(req), targetAccess.get(req), requested, deps.tenantExists, true);
   };
   const candidateTarget = async (tenantId: string, candidateId: string) => {
     const candidate = await deps.skills.getCandidate(tenantId, candidateId);
@@ -334,6 +347,7 @@ export function createGovernanceResourcesRouter(deps: {
     personas.set(req, membership.persona);
     next();
   });
+  router.use(targetAccess.middleware);
 
   router.use(async (req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
@@ -344,6 +358,8 @@ export function createGovernanceResourcesRouter(deps: {
           : typeof req.body?.tenantId === 'string' ? req.body.tenantId : user.tenantId)
       : user.tenantId;
     const correlationId = `governance-resource:${randomUUID()}`;
+    const accessMode = targetAccess.get(req)?.accessMode
+      ?? (personas.get(req) === 'org_admin' ? 'organization_manage' : 'effective_only');
     let intentAuditId: string;
     try {
       const intent = await deps.audit.append({
@@ -354,7 +370,7 @@ export function createGovernanceResourcesRouter(deps: {
         action: `governance.resource.${req.method.toLowerCase()}`,
         targetType: 'governance_resource_api', targetId: req.path,
         targetTenantId: requestedTenantId, purpose: 'typed resource mutation',
-        result: 'intent', metadata: {},
+        result: 'intent', metadata: { accessMode },
       });
       intentAuditId = intent.auditId;
       res.locals.governanceChangeId = intent.auditId;
@@ -372,7 +388,7 @@ export function createGovernanceResourcesRouter(deps: {
         targetType: 'governance_resource_api', targetId: req.path,
         targetTenantId: requestedTenantId, purpose: 'typed resource mutation', changeId: intentAuditId,
         result: res.statusCode < 400 ? 'succeeded' : 'failed',
-        metadata: { statusCode: res.statusCode },
+        metadata: { statusCode: res.statusCode, accessMode },
       }).then(event => {
         const payload = body && typeof body === 'object' && !Array.isArray(body)
           ? { effectiveAt: event.occurredAt, ...(body as Record<string, unknown>), changeId: intentAuditId, auditId: event.auditId }
@@ -399,7 +415,7 @@ export function createGovernanceResourcesRouter(deps: {
               purpose: 'typed resource mutation',
               changeId: intentAuditId,
               result: res.statusCode < 400 ? 'succeeded' : 'failed',
-              metadata: { statusCode: res.statusCode },
+              metadata: { statusCode: res.statusCode, accessMode },
             },
           });
           auditProjectionId = projection.outboxId;
@@ -436,6 +452,7 @@ export function createGovernanceResourcesRouter(deps: {
       : {}),
     previewSecret: deps.offboardingPreviewSecret,
     personaFor: req => personas.get(req),
+    canManageOrganization,
     resourceTenantFor,
     ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
     ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),

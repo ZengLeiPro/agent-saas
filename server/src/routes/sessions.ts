@@ -82,7 +82,7 @@ import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } fro
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
 import { requireSandboxPhysicalDeletion, type SandboxSessionDeletionResult } from './sandboxSessionDeletion.js'; export type { SandboxSessionDeletionResult } from './sandboxSessionDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
-import { canReadSessionDetail, type TaskboardSessionReadAuthorizer } from "./taskboardSessionReadAccess.js";
+import { resolveSessionDetailAccess, type TaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
@@ -93,6 +93,7 @@ import {
   type AgentTarget,
   type AgentTargetIdentitySnapshot,
   type AgentTargetUnavailableReason,
+  type SessionDetailAccessMode,
   type SessionListActiveInteraction,
 } from '@agent/shared';
 import { parseCanonicalChatSubmission } from '@agent/shared';
@@ -660,7 +661,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           indexDurationMs: number;
           readParseDurationMs: number;
         };
-        detail: SessionShareSnapshot;
+        detail: SessionShareSnapshot & { accessMode: SessionDetailAccessMode };
       }
     | { ok: false; status: number; error: string }
   > {
@@ -681,10 +682,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const { transcriptPath, hasTranscript } = resolvedPath;
 
     const meta = await readSessionMeta(transcriptPath);
-    if (!await canReadSessionDetail(req.user, meta, sessionId, options.userStore, options.canReadTaskboardSession)) return { ok: false, status: 403, error: "Access denied" };
-    if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
-      return { ok: false, status: 404, error: "Session not found" };
-    }
+    const accessMode = await resolveSessionDetailAccess(req.user, meta, sessionId, options.userStore, options.canReadTaskboardSession); if (!accessMode) return { ok: false, status: 403, error: "Access denied" };
+    if (meta?.deletedAt && (accessMode !== "owner" || !optionsForBuild.includeDeleted)) return { ok: false, status: 404, error: "Session not found" };
     if (hidesSystemSessionFrom(req.user, meta)) {
       return { ok: false, status: 404, error: "Session not found" };
     }
@@ -874,6 +873,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         },
       } : {}),
       detail: {
+        accessMode,
         sessionId: parsed.sessionId ?? sessionId,
         stats: parsed.stats,
         blocks: parsed.blocks,

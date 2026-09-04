@@ -6,7 +6,7 @@ import type {
 } from "@/lib/sessionsApi";
 import type { MessageItem } from "@/components/types";
 import type { SessionCallbacks } from "./useSession";
-import type { ContextUsageData, SessionOwnerInfo } from "@agent/shared";
+import type { ContextUsageData, SessionDetailAccessMode, SessionOwnerInfo } from "@agent/shared";
 import {
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
@@ -52,6 +52,7 @@ interface SessionDetailLoaderDependencies {
   setHasMoreHistory: React.Dispatch<React.SetStateAction<boolean>>;
   setSessionId: React.Dispatch<React.SetStateAction<string | null>>;
   setSessionOwner: React.Dispatch<React.SetStateAction<SessionOwnerInfo | null>>;
+  setSessionAccessMode: (mode: SessionDetailAccessMode | "unknown") => void;
   setTokenUsage: React.Dispatch<React.SetStateAction<TokenUsage | null>>;
   setContextUsage: React.Dispatch<React.SetStateAction<ContextUsageData | null>>;
   fetchTokenUsage: (id: string) => Promise<void>;
@@ -193,6 +194,7 @@ export async function loadSessionDetailRequest(
     if (!response.ok) {
       if (response.status === 404 || response.status === 403) {
         if (isCurrent()) deps.setSessionLoadError(null);
+        deps.setSessionAccessMode("unknown");
         deps.callbacksRef.current.onSessionInvalidated?.(id, response.status);
         deps.removeSession(id);
         deps.setSessionOwner(null);
@@ -278,6 +280,7 @@ export async function loadSessionDetailRequest(
     deps.callbacksRef.current.setMessages(finalMsgs, opts);
     deps.setSessionId(deps.sessionIdRef.current = id);
     deps.setSessionOwner(data.owner ?? null);
+    deps.setSessionAccessMode(data.accessMode ?? "owner");
     deps.setHasMoreHistory(!historyComplete);
     void deps.fetchTokenUsage(id);
     deps.detailCursorRef.current.set(id, {

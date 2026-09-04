@@ -30,8 +30,8 @@ const harness = vi.hoisted(() => {
       cancelActiveStream?: () => void;
     },
     session: {
-      sessionId: null as string | null,
-      sessions: [],
+      sessionId: null as string | null, sessions: [],
+      sessionAccessMode: "owner" as "owner" | "read_only" | "unknown", canInteractWithSession: vi.fn(() => harness.session.sessionAccessMode === "owner"),
       isLoadingSessions: false,
       isLoadingMessages: false,
       hasMoreHistory: false,
@@ -134,8 +134,7 @@ vi.mock("@/lib/wsClient", () => ({
 }));
 function response(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
 function emit(data: unknown): void { for (const handler of [...harness.messageHandlers]) handler({ data }); }
-const chatPayloads = createChatPayloadReader(harness.sends);
-const fileA: UploadedFile = {
+const chatPayloads = createChatPayloadReader(harness.sends); const fileA: UploadedFile = {
   attachmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   originalName: "a.png",
   savedPath: "/uploads/a.png",
@@ -143,8 +142,7 @@ const fileA: UploadedFile = {
   size: 123,
   mimeType: "image/png",
   isImage: true,
-};
-const fileB: UploadedFile = {
+}; const fileB: UploadedFile = {
   attachmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   originalName: "b.pdf",
   savedPath: "/uploads/b.pdf",
@@ -152,8 +150,7 @@ const fileB: UploadedFile = {
   size: 456,
   mimeType: "application/pdf",
   isImage: false,
-};
-beforeEach(() => {
+}; beforeEach(() => {
   window.history.replaceState(null, "", "/chat");
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
@@ -164,8 +161,7 @@ beforeEach(() => {
   harness.pendingNewSessionGroupIdRef.current = null;
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
-  harness.session.sessionId = null;
-  harness.session.isNewSession = true;
+  harness.session.sessionId = null; harness.session.sessionAccessMode = "owner"; harness.session.isNewSession = true;
   Object.values(harness.session).forEach((value) => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
@@ -196,6 +192,12 @@ describe("useChatAppState message delivery lifecycle", () => {
     expect(chatPayloads()[0]).toMatchObject({
       submission: { text: "compile this", deliveryMode: "steer", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
     });
+  });
+  it("详情权限未确认或为只读时不会发送聊天消息到 Web Channel", async () => {
+    harness.session.sessionId = "taskboard-session"; harness.session.isNewSession = false; harness.session.sessionAccessMode = "unknown";
+    const { result, rerender } = renderHook(() => useChatAppState()); act(() => result.current.setInput("不能回落成新会话"));
+    await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()).toHaveLength(0); expect(result.current.input).toBe("不能回落成新会话");
+    harness.session.sessionAccessMode = "read_only"; rerender(); await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()).toHaveLength(0);
   });
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {
     const { result } = renderHook(() => useChatAppState());

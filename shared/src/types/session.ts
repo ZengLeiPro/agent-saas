@@ -103,6 +103,8 @@ export interface ApiLastRunState {
   liveness?: RunLiveness;
 }
 
+export type SessionDetailAccessMode = "owner" | "read_only";
+
 /** API session detail */
 export interface ApiSessionDetail {
   sessionId: string;
@@ -133,6 +135,8 @@ export interface ApiSessionDetail {
   after?: string;
   /** before 响应所基于的客户端最早游标。 */
   before?: string;
+  /** owner 可交互；read_only 仅允许查看 TaskBoard execution 历史。 */
+  accessMode?: SessionDetailAccessMode;
   owner?: SessionOwnerInfo;
   source?: { type: string; label: string };
   sandboxProfile?: SandboxProfile;

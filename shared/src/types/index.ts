@@ -22,13 +22,14 @@ export type {
   BusinessStepSection,
   RenderItem,
 } from "./message";
-// Message render/runtime exports.
+// Message 与会话 render/runtime exports.
 export { ACTIVITY_TYPES } from "./message";
 
 export type {
   SandboxProfile,
   SessionOwnerInfo,
   SessionParticipants,
+  SessionDetailAccessMode,
   ApiSessionListItem,
   SessionListActiveInteraction,
   SessionListPage,

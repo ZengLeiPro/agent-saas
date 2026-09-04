@@ -29,9 +29,10 @@ function jsonResponse(body: unknown): Response {
   } as unknown as Response;
 }
 
-function detailResponse(content: string): Response {
+function detailResponse(content: string, accessMode: 'owner' | 'read_only' = 'owner'): Response {
   return jsonResponse({
     mode: 'full',
+    accessMode,
     blocks: [{ id: `line-${content}`, kind: 'text', content }],
     historyComplete: true,
   });
@@ -71,6 +72,31 @@ describe('useSession 会话详情加载韧性', () => {
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
+  });
+
+  it('选择会话后立即锁定交互，并沿用详情返回的只读权限', async () => {
+    let resolveDetail!: (response: Response) => void;
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/sessions/taskboard-session?')) {
+        return new Promise<Response>((resolve) => { resolveDetail = resolve; });
+      }
+      if (url.startsWith('/api/chat/interactions/pending')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/stats')) return Promise.resolve(jsonResponse({}));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks()));
+
+    act(() => result.current.selectSession('taskboard-session'));
+    expect(result.current.sessionAccessMode).toBe('unknown');
+    expect(result.current.canInteractWithSession()).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+      resolveDetail(detailResponse('只读历史', 'read_only'));
+      await result.current.loadDetailPromiseRef.current;
+    });
+    expect(result.current.sessionAccessMode).toBe('read_only');
+    expect(result.current.canInteractWithSession()).toBe(false);
   });
 
   it('IndexedDB 永久挂起时在缓存预算后直接请求网络', async () => {

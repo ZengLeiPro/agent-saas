@@ -53,7 +53,7 @@ describe("TaskBoard execution session 只读访问", () => {
     await rm(agentCwd, { recursive: true, force: true });
   });
 
-  async function writeOwnerSession(sessionSource?: "taskboard_execution"): Promise<string> {
+  async function writeOwnerSession(sessionSource?: "taskboard_execution", deletedAt?: string): Promise<string> {
     const sessionId = randomUUID();
     const ownerCwd = resolveUserCwd(agentCwd, OWNER);
     const transcriptPath = getTranscriptPath(ownerCwd, sessionId, {
@@ -69,6 +69,7 @@ describe("TaskBoard execution session 只读访问", () => {
       cwd: ownerCwd,
       runtimeStatus: "running",
       ...(sessionSource ? { sessionSource } : {}),
+      ...(deletedAt ? { deletedAt } : {}),
     });
     return sessionId;
   }
@@ -82,6 +83,7 @@ describe("TaskBoard execution session 只读访问", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({
         sessionId,
+        accessMode: "read_only",
         owner: { userId: OWNER.id, username: OWNER.username },
       });
       expect(canReadTaskboardSession).toHaveBeenCalledWith({
@@ -90,6 +92,18 @@ describe("TaskBoard execution session 只读访问", () => {
         role: COLLABORATOR.role,
         tenantId: COLLABORATOR.tenantId,
       }, sessionId);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it("协作人不能通过 includeDeleted 读取 owner 已删除的执行会话", async () => {
+    const sessionId = await writeOwnerSession("taskboard_execution", new Date().toISOString());
+    const canReadTaskboardSession = vi.fn(async () => true);
+    const { server, baseUrl } = await startServer(agentCwd, canReadTaskboardSession);
+    try {
+      expect((await fetch(`${baseUrl}/api/sessions/${sessionId}?silent=1&includeDeleted=1`)).status).toBe(403);
+      expect(canReadTaskboardSession).not.toHaveBeenCalled();
     } finally {
       await stopServer(server);
     }

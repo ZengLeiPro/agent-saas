@@ -4,7 +4,7 @@ import type {
   ApiSessionDetail,
   TokenUsage,
 } from "@/lib/sessionsApi";
-import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
+import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionDetailAccessMode, SessionOwnerInfo } from "@agent/shared";
 import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
@@ -83,6 +83,8 @@ export interface SessionState {
   loadDetailPromiseRef: React.RefObject<Promise<void> | null>;
   /** 当前加载的会话 owner 信息 */
   sessionOwner: SessionOwnerInfo | null;
+  sessionAccessMode: SessionDetailAccessMode | "unknown";
+  canInteractWithSession: () => boolean;
   setSessionId: (id: string | null) => void;
   loadSessions: (opts?: { fresh?: boolean; silent?: boolean; skipMerge?: boolean }) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
@@ -161,6 +163,14 @@ export function useSession(
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
+  const initialAccessMode = options?.initialSessionId ? "unknown" : "owner";
+  const [sessionAccessMode, setSessionAccessMode] = useState<SessionDetailAccessMode | "unknown">(initialAccessMode);
+  const sessionAccessModeRef = useRef<SessionDetailAccessMode | "unknown">(initialAccessMode);
+  const updateSessionAccessMode = useCallback((mode: SessionDetailAccessMode | "unknown") => {
+    sessionAccessModeRef.current = mode;
+    setSessionAccessMode(mode);
+  }, []);
+  const canInteractWithSession = useCallback(() => sessionAccessModeRef.current === "owner", []);
 
   const isNewSessionRef = useRef(false);
   const hasInitialLoadRef = useRef(false);
@@ -309,7 +319,7 @@ export function useSession(
       loadSessionDetailRequest(id, opts, {
         callbacksRef: cbRef, sessionsRef, sessionIdRef, detailCursorRef,
         loadNonceRef, detailAbortRef, setIsLoadingMessages, setSessionLoadError,
-        setHasMoreHistory, setSessionId, setSessionOwner, setTokenUsage,
+        setHasMoreHistory, setSessionId, setSessionOwner, setSessionAccessMode: updateSessionAccessMode, setTokenUsage,
         setContextUsage, fetchTokenUsage, removeSession,
       }),
     [],
@@ -387,6 +397,7 @@ export function useSession(
       if (id === sessionId) return;
       cbRef.current.cancelActiveStream();
       cbRef.current.resetMessages();
+      updateSessionAccessMode("unknown");
       setSessionId(sessionIdRef.current = id);
       setSessionOwner(null);
       setTokenUsage(null);
@@ -397,7 +408,7 @@ export function useSession(
       cbRef.current.onSandboxProfile?.(id, undefined, true);
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [loadSessionDetail, sessionId],
+    [loadSessionDetail, sessionId, updateSessionAccessMode],
   );
 
   const confirmDeleteSessions = useCallback((ids: string[]) => {
@@ -683,6 +694,7 @@ export function useSession(
     isNewSessionRef.current = true;
     setSessionId(sessionIdRef.current = null);
     setSessionOwner(null);
+    updateSessionAccessMode("owner");
     setTokenUsage(null);
     setContextUsage(null);
     setIsLoadingMessages(false);
@@ -690,7 +702,7 @@ export function useSession(
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
     localStorage.removeItem(SESSION_STORAGE_KEY);
-  }, []);
+  }, [updateSessionAccessMode]);
 
   const retrySessionLoad = useCallback(() => {
     const id = sessionIdRef.current;
@@ -875,6 +887,8 @@ export function useSession(
     isLoadingMore,
     loadDetailPromiseRef,
     sessionOwner,
+    sessionAccessMode,
+    canInteractWithSession,
     setSessionId,
     loadSessions,
     loadMoreSessions,

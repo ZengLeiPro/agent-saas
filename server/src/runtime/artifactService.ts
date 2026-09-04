@@ -53,7 +53,7 @@ export interface CreateArtifactFromWorkspaceFileInput {
 }
 
 export interface ArtifactReadUrl extends ArtifactReadGrant {
-  /** Compatibility aliases; clients must consume descriptor + readUrl only. */
+  /** 兼容字段；客户端只能消费 descriptor + readUrl。 */
   url: string;
   expiresAt: string;
   direct: false;
@@ -305,12 +305,11 @@ export class ArtifactService {
     token: string,
     requestUser?: RuntimeArtifactUser,
   ): Promise<ArtifactContent> {
+    // 浏览器原生预览/下载请求使用最长 5 分钟的签名 bearer capability。
     const payload = this.verifyReadToken(artifactId, token, requestUser);
     const record = await this.options.artifactStore.get(artifactId);
     if (!record) throw new ArtifactServiceError(410, 'Artifact deleted');
     this.assertArtifactAvailable(record);
-    if (!requestUser) throw new ArtifactServiceError(401, 'Authentication required');
-    await this.ensureCanAccessSession(record.sessionId, requestUser);
     const data = await this.options.blobStore.get(record.uri);
     this.assertDigest(record, data);
     if ((record.sha256 ?? '') !== payload.digest) throw new ArtifactServiceError(410, 'Artifact changed');
@@ -494,9 +493,10 @@ export class ArtifactService {
     } catch {
       throw new ArtifactServiceError(401, 'Invalid artifact token');
     }
+    const expiresAtMs = Date.parse(parsed.exp);
     if (
       parsed.version !== READ_TOKEN_VERSION || parsed.artifactId !== artifactId
-      || !parsed.exp || Date.parse(parsed.exp) <= Date.now()
+      || !parsed.exp || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()
       || !parsed.tenantId || !parsed.sub || !parsed.nonce
       || (parsed.disposition !== 'inline' && parsed.disposition !== 'attachment')
     ) throw new ArtifactServiceError(401, 'Expired or invalid artifact token');

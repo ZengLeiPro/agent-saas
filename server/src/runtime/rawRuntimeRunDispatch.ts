@@ -143,6 +143,7 @@ import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgA
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
+import { claimRuntimeRun } from './runtimeRunClaim.js';
 import {
   acquireDirectRuntimeRunLease,
   DirectRuntimeLeaseContendedError,
@@ -173,7 +174,6 @@ import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
 import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
-
 export {
   failRunningRunForWallClock,
   markRunState,
@@ -987,7 +987,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const toolProfile = normalizeToolProfile(options.toolProfile);
 
     const isResume = !!resumeSessionId;
-    const sessionId = resumeSessionId ?? randomUUID();
+    const sessionId = resumeSessionId ?? options.runtimeSessionId ?? randomUUID();
     const runId = options.runtimeRunId ?? `${Date.now()}-${randomUUID()}`;
     const abortController = options.abortController ?? new AbortController();
     enterSessionContext(sessionId, runId);
@@ -1193,7 +1193,6 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     if (boundProfile && config.agentRuntimeProfileResolver) {
       sessionRecord = config.agentRuntimeProfileResolver.bindSessionRecord(sessionRecord, boundProfile);
     }
-    await sessionCatalog.upsert(sessionRecord);
     const workspaceMountSubPath = deriveWorkspaceMountSubPath({ agentCwd: config.agentCwd, cwd });
     // per-session Sandbox：本路径是已分类的顶层 workload（交互/cron/taskboard/memory），
     // 故顶层组键＝自身 sessionId。子 Agent 与后台任务不走这里，它们继承父值。
@@ -1209,12 +1208,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // 而 per-session Sandbox 下**每个新会话组都是一次冷启动**，
     // 实测新 pod 的 WaitForWorkspaceReady 7 次全部打满 30s——正是要消除的首屏等待。
     // fire-and-forget：内部自带 per-scope 节流与失败静默，不阻塞、不影响本次 run。
-    if (typeof message.metadata?.environmentTemplateVersionId !== 'string') config.sandboxWarmup?.(sessionId);
-    await hooks?.onSessionStart?.(sessionId, transcriptPath);
-    yield { type: 'session_init', sessionId, runId };
-
     const baseEventStore = createEventStoreForSession(config, sessionRecord);
-    await config.runStore?.upsertPending({
+    const pendingRunInput = {
       runId,
       sessionId,
       userId: identitySource?.id ?? existingSession?.userId,
@@ -1249,7 +1244,12 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
           metadata: message.metadata ?? {},
         },
       },
-    });
+    };
+    if (!await claimRuntimeRun(config.runStore, pendingRunInput, options.runtimeRunCreateOnly === true)) return;
+    await sessionCatalog.upsert(sessionRecord);
+    if (typeof message.metadata?.environmentTemplateVersionId !== 'string') config.sandboxWarmup?.(sessionId);
+    await hooks?.onSessionStart?.(sessionId, transcriptPath);
+    yield { type: 'session_init', sessionId, runId };
     const tenantIdForRun = resolveEventTenantId(config, sessionRecord.tenantId, undefined, `run ${runId}`);
     eventTenantId = tenantIdForRun;
     eventStore = new RunStateTrackingEventStore(
@@ -2615,7 +2615,7 @@ export async function loadRawRuntimeWakeState(
   const eventStore = createEventStoreForSession(config, session);
   const eventTenantId = resolveEventTenantId(config, session.tenantId, undefined, `wake state ${sessionId}`);
   const approvalStore = createApprovalStoreForSession(config, session, eventStore);
-  const events = await eventStore.list(eventTenantId, sessionId, { replayMode: 'bounded' });
+  const events = await eventStore.list(eventTenantId, sessionId, { replayMode: 'checkpoint' });
   const approvals = await approvalStore.list(sessionId);
   const replayState = buildRuntimeReplayState(events, approvals, sessionId);
   return { session, events, approvals, replayState };
@@ -3042,23 +3042,16 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     ? current.metadata.drainHandoffAttempts
     : 0;
   const handoffAttempts = isSteeringRecovery ? previousAttempts + 1 : previousAttempts;
-  const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, {
+  const handoffMetadata = {
     drainHandoffAt: handedOffAt,
     drainHandoffWorkerId: input.lease.workerId,
     ...(isSteeringRecovery ? { drainHandoffAttempts: handoffAttempts } : {}),
-  });
-  if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
-  await appendRunStateChanged(
-    input.eventStore,
-    input.run.sessionId,
-    input.run.runId,
-    'running',
-    current.status,
-    reason,
-    { tenantId: eventTenantId },
-  );
+  };
 
   if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
+    const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, handoffMetadata);
+    if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
+    await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId, 'running', current.status, reason, { tenantId: eventTenantId });
     await input.eventStore.append({
       type: 'run_finished',
       runId: input.run.runId,
@@ -3079,8 +3072,9 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     return true;
   }
 
+  if (!input.lease.handoff) throw new Error(`run lease handoff is unavailable: ${input.run.runId}`);
   await input.sessionCatalog.markStatus(input.run.sessionId, 'running');
-  await input.lease.release(undefined, reason);
+  await input.lease.handoff(reason, handoffMetadata);
   input.config.logger?.info(
     `Runtime drain handoff released run=${input.run.runId} session=${input.run.sessionId} worker=${input.lease.workerId}`,
   );

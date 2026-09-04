@@ -36,7 +36,8 @@ try {
       }
     });
   const paths = [...shards, ...nested];
-  if (paths.length !== 3) fail(`expected three profile shards, found ${paths.length}`);
+  if (paths.length < 1 || paths.length > PROFILES.length)
+    fail(`expected between one and three profile shards, found ${paths.length}`);
   const values = paths.map(json);
   const source = values[0].source;
   for (const value of values) {
@@ -53,7 +54,11 @@ try {
   }
   const profiles = values
     .map(({ profile }) => profile)
-    .sort((a, b) => PROFILES.indexOf(a.profile) - PROFILES.indexOf(b.profile));
+    .sort((a, b) => PROFILES.indexOf(a) - PROFILES.indexOf(b));
+  if (profiles.some((profile) => !PROFILES.includes(profile)))
+    fail('unsupported release profile shard');
+  if (new Set(profiles).size !== profiles.length)
+    fail('duplicate release profile shard');
   const approvals = values.map(({ approval }) => approval);
   if (
     !approvals.every(

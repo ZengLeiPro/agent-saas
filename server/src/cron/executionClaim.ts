@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import os from "os";
 import type { CronExecutionRecord, CronJob, CronRunTrigger } from "./types.js";
-import { cloneJob } from "./serviceUtils.js";
+import { cloneJob, scheduleFenceUpdatedAtMs } from "./serviceUtils.js";
 
 export interface CronRunLease {
   release(): Promise<void>;
@@ -28,7 +28,6 @@ export interface ClaimedJob {
   claimedUpdatedAtMs: number;
   forced: boolean;
   runLease?: CronRunLease;
-  releaseLeaseAfterSettlement?: boolean;
   trigger: CronRunTrigger;
   scheduledAtMs?: number;
   requestId?: string;
@@ -36,6 +35,10 @@ export interface ClaimedJob {
   parentRunId?: string;
   retryOf?: string;
   idempotencyKey: string;
+  sessionId?: string;
+  runtimeRunId?: string;
+  runtimeTenantId?: string;
+  recovered: boolean;
 }
 
 interface MutationOutcome<T> { changed: boolean; value: T }
@@ -52,6 +55,7 @@ interface ClaimMutationOptions {
   getTimeoutSeconds: (job: CronJob) => number;
   watchdogFallbackTimeoutMs: number;
   watchdogOvertimeMs: number;
+  resolveOwnerTenantId?: (ownerId: string) => string | undefined;
 }
 
 export interface ClaimCronJobOptions extends ClaimMutationOptions {
@@ -76,6 +80,7 @@ function claimSnapshot(
   execution: CronExecutionRecord,
   claimedUpdatedAtMs: number,
   runLease?: CronRunLease,
+  recovered = false,
 ): ClaimedJob {
   return {
     job: cloneJob(job),
@@ -83,7 +88,7 @@ function claimSnapshot(
     leaseId: execution.leaseId,
     ownerId: execution.ownerId,
     startedAtMs: execution.startedAtMs,
-    claimedUpdatedAtMs,
+    claimedUpdatedAtMs: scheduleFenceUpdatedAtMs(execution, claimedUpdatedAtMs),
     forced: execution.trigger !== "schedule",
     runLease,
     trigger: execution.trigger,
@@ -93,6 +98,10 @@ function claimSnapshot(
     parentRunId: execution.parentRunId,
     retryOf: execution.retryOf,
     idempotencyKey: execution.idempotencyKey,
+    sessionId: execution.sessionId,
+    runtimeRunId: execution.runtimeRunId,
+    runtimeTenantId: execution.runtimeTenantId,
+    recovered,
   };
 }
 
@@ -101,6 +110,7 @@ function assignLease(
   execution: CronExecutionRecord,
   options: ClaimMutationOptions,
   claimedAtMs: number,
+  recovered = false,
 ): void {
   const leaseId = randomUUID();
   execution.status = "claimed";
@@ -108,17 +118,27 @@ function assignLease(
   execution.leaseId = leaseId;
   execution.claimedAtMs = claimedAtMs;
   execution.leaseVersion = Math.max(0, execution.leaseVersion ?? 0) + 1;
-  delete execution.runningAtMs;
+  if (recovered) {
+    execution.recoveryCount = Math.max(0, execution.recoveryCount ?? 0) + 1;
+    execution.lastRecoveredAtMs = claimedAtMs;
+  } else {
+    delete execution.runningAtMs;
+    delete job.state.runningTimedOutAtMs;
+  }
   delete execution.terminalStatus;
   delete execution.endedAtMs;
-  job.state.runningAtMs = claimedAtMs;
+  const logicalStartedAtMs = recovered
+    ? execution.runningAtMs ?? execution.startedAtMs
+    : claimedAtMs;
+  job.state.runningAtMs = logicalStartedAtMs;
   job.state.runningRunId = execution.runId;
   job.state.runningLeaseId = leaseId;
   job.state.runningOwnerPid = process.pid;
   job.state.runningOwnerHostname = os.hostname();
-  delete job.state.runningTimedOutAtMs;
-  const timeoutMs = options.getTimeoutSeconds(job) * 1000 || options.watchdogFallbackTimeoutMs;
-  job.state.runningDeadlineAtMs = claimedAtMs + timeoutMs + options.watchdogOvertimeMs;
+  if (!recovered || job.state.runningDeadlineAtMs == null) {
+    const timeoutMs = options.getTimeoutSeconds(job) * 1000 || options.watchdogFallbackTimeoutMs;
+    job.state.runningDeadlineAtMs = execution.startedAtMs + timeoutMs + options.watchdogOvertimeMs;
+  }
 }
 
 export async function claimCronJob(options: ClaimCronJobOptions): Promise<{
@@ -180,11 +200,13 @@ export async function claimCronJob(options: ClaimCronJobOptions): Promise<{
         attempt = Math.max(attempt, maxLineageAttempt + 1);
       }
 
+      const cronRunId = `${claimedAtMs}-${randomUUID()}`;
       const execution: CronExecutionRecord = {
         idempotencyKey,
-        runId: `${claimedAtMs}-${randomUUID()}`,
+        runId: cronRunId,
         startedAtMs: claimedAtMs,
         claimedAtMs,
+        scheduleUpdatedAtMs: job.updatedAtMs,
         status: "claimed",
         ownerId: options.ownerId,
         leaseId: "",
@@ -195,6 +217,11 @@ export async function claimCronJob(options: ClaimCronJobOptions): Promise<{
         attempt,
         parentRunId,
         retryOf: invocation.retryOf,
+        ...(job.payload.kind === "agentTurn" ? {
+          sessionId: randomUUID(),
+          runtimeRunId: `cron:${cronRunId}`,
+          runtimeTenantId: job.owner ? options.resolveOwnerTenantId?.(job.owner) : undefined,
+        } : {}),
       };
       ledger.push(execution);
       const claimedUpdatedAtMs = job.updatedAtMs;
@@ -225,7 +252,7 @@ export async function markCronClaimRunning(
       return { changed: false, value: false };
     }
     execution.status = "running";
-    execution.runningAtMs = options.nowMs();
+    execution.runningAtMs ??= options.nowMs();
     return { changed: true, value: true };
   });
   return outcome.value;
@@ -255,11 +282,11 @@ export async function recoverCronClaim(options: RecoverCronClaimOptions): Promis
       return { changed: true, value: { cleared: true } };
     }
     const claimedUpdatedAtMs = job.updatedAtMs;
-    assignLease(job, execution, options, recoveredAtMs);
+    assignLease(job, execution, options, recoveredAtMs, true);
     return {
       changed: true,
       value: {
-        claim: claimSnapshot(job, execution, claimedUpdatedAtMs, options.runLease),
+        claim: claimSnapshot(job, execution, claimedUpdatedAtMs, options.runLease, true),
         cleared: false,
       },
     };

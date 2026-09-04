@@ -25,6 +25,7 @@ import {
   wsClient,
   authFetch,
   processWsEvent,
+  projectInteractionResolution,
   finalizeRunningSubagents,
   getPlatform,
   useConnectionState,
@@ -32,10 +33,13 @@ import {
   INPUT_DRAFT_KEY,
   createChatClientState,
   createInteractionRequestId,
+  isRememberedResolvedInteraction,
+  rememberResolvedInteraction,
   reduceChatClientState,
   selectChatClientQueueItems,
   cacheKeyForIdentity,
   adaptAgentTargetCatalogResponse,
+  resolveLandingAgentTarget,
   resolveNewSessionAgentTarget,
 } from "@agent/shared";
 import type {
@@ -349,6 +353,7 @@ export function useChatAppStateCore(): ChatAppState {
   const lastEventCursorRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
   const handledTerminalKeysRef = useRef(new Set<string>());
+  const resolvedInteractionIdsRef = useRef(new Set<string>());
 
   interface SessionRuntimeState {
     streamId: string | null;
@@ -676,6 +681,7 @@ export function useChatAppStateCore(): ChatAppState {
       resetMessages: msg.resetMessages,
       setMessages: msg.setMessages,
       getMessages: () => msg.messagesRef.current,
+      getResolvedInteractionIds: () => resolvedInteractionIdsRef.current,
       triggerScroll: msg.triggerScroll,
       cancelActiveStream: detachFromStream,
       clearComposer,
@@ -1134,10 +1140,17 @@ export function useChatAppStateCore(): ChatAppState {
     if (data.version !== undefined && data.version !== pending.version) return;
 
     if (pending.ackTimer) clearTimeout(pending.ackTimer);
-    if (data.type === 'respond_ok' && data.status === 'accepted') return; // accepted is non-terminal; wait for canonical outcome
+    if (data.type === 'respond_ok' && data.status === 'accepted') {
+      // accepted 只确认服务端接管了请求，仍需等待 canonical terminal；丢帧时释放提交锁供重试。
+      pending.ackTimer = setTimeout(() => {
+        releaseInteractionResponse(key, pending.generation, "等待服务端完成超时");
+      }, INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
+      return;
+    }
     pendingInteractionResponsesRef.current.delete(key);
 
     if (data.type === "respond_ok") {
+      rememberResolvedInteraction(resolvedInteractionIdsRef.current, pending.sessionId, pending.interactionId);
       sessionRef.current.applySessionInteractionEvent?.({
         type: 'resolved',
         sessionId: pending.sessionId,
@@ -1147,21 +1160,20 @@ export function useChatAppStateCore(): ChatAppState {
     // ACK 归属原会话；用户已切到其他会话时不得修改当前消息投影。
     if (sessionIdRef.current !== pending.sessionId) return;
 
+    if (data.type === "respond_ok") {
+      const canonicalResponse = acknowledgedInteractionResponse(data, pending.response);
+      msgRef.current.setMessages(projectInteractionResolution(
+        msgRef.current.messagesRef.current,
+        pending.interactionId,
+        canonicalResponse,
+      ));
+      return;
+    }
+
     const idx = msgRef.current.messagesRef.current.findIndex((m) =>
       m.type === pending.type && m.interactionId === pending.interactionId,
     );
     if (idx < 0) return;
-
-    if (data.type === "respond_ok") {
-      const canonicalResponse = acknowledgedInteractionResponse(data, pending.response);
-      msgRef.current.updateMessageAt(idx, (m) => {
-        if (m.type !== pending.type || m.interactionId !== pending.interactionId || m.status !== "pending") return m;
-        return m.type === "permission_request"
-          ? { ...m, status: canonicalResponse.allow ? "allowed" as const : "denied" as const }
-          : { ...m, status: "answered" as const, answers: canonicalResponse.answers as AskUserAnswers };
-      });
-      return;
-    }
 
     // 失败时卡片始终保持 pending，用户可直接重试；错误另以系统消息可见地呈现。
     msgRef.current.updateMessageAt(idx, (m) =>
@@ -1177,7 +1189,7 @@ export function useChatAppStateCore(): ChatAppState {
       content: `回复未提交：${reason}。请重试。`,
       timestamp: Date.now(),
     });
-  }, []);
+  }, [releaseInteractionResponse]);
 
   // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
@@ -1190,6 +1202,11 @@ export function useChatAppStateCore(): ChatAppState {
         const authoritativeSessionId = event.sessionId;
         sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: authoritativeSessionId });
         event.interactions.forEach((interaction, index) => {
+          if (isRememberedResolvedInteraction(
+            resolvedInteractionIdsRef.current,
+            authoritativeSessionId,
+            interaction.interactionId,
+          )) return;
           sessionRef.current.applySessionInteractionEvent?.({
             type: 'requested', sessionId: authoritativeSessionId,
             interaction: {
@@ -1201,11 +1218,16 @@ export function useChatAppStateCore(): ChatAppState {
           });
         });
       } else if ((event.type === 'permission_request' || event.type === 'ask_user') && fallbackSessionId) {
+        if (isRememberedResolvedInteraction(
+          resolvedInteractionIdsRef.current,
+          fallbackSessionId,
+          event.interactionId,
+        )) return;
         sessionRef.current.applySessionInteractionEvent?.({
           type: 'requested', sessionId: fallbackSessionId,
           interaction: { interactionId: event.interactionId, type: event.type, version: event.version ?? 0, order: event.order ?? event.version ?? 0 },
         });
-      } else if (event.type === 'interaction_resolved') {
+      } else if (event.type === 'interaction_resolved' && Boolean(event.response || event.status)) {
         settleInteractionResponse(event.sessionId, event.interactionId);
         sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: event.sessionId, interactionId: event.interactionId });
       } else if (event.type === 'session_status' && ['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(event.status)) {
@@ -1214,8 +1236,15 @@ export function useChatAppStateCore(): ChatAppState {
     };
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
       const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      const canonicalResolution = event.type === 'interaction_resolved'
+        && Boolean(event.response || event.status);
       // Test harnesses and teardown may expose an empty stream ref; keep the fence fail closed.
-      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current?.value)) return;
+      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current?.value)) {
+        if (canonicalResolution) {
+          rememberResolvedInteraction(resolvedInteractionIdsRef.current, event.sessionId, event.interactionId);
+        }
+        return;
+      }
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
         session: sessionRef.current,
@@ -1224,6 +1253,7 @@ export function useChatAppStateCore(): ChatAppState {
         streamIdRef,
         runIdRef,
         handledTerminalKeysRef,
+        resolvedInteractionIdsRef,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
@@ -1235,13 +1265,16 @@ export function useChatAppStateCore(): ChatAppState {
         wsLatestSessionIdRef.current,
         immediateSessionIdRef.current ?? sessionIdRef.current,
       );
+      if (canonicalResolution) {
+        rememberResolvedInteraction(resolvedInteractionIdsRef.current, event.sessionId, event.interactionId);
+      }
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
       observeChatEvent(data, selectedSessionId ?? undefined);
       if (!data || !data.type) return;
-      projectSessionListInteraction(data);
+      if (data.type !== 'interaction_resolved') projectSessionListInteraction(data);
       if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
         || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
         || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result') {
@@ -1275,7 +1308,7 @@ export function useChatAppStateCore(): ChatAppState {
         wsClient.setLastSeq((data as any).seq);
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
-          projectSessionListInteraction(e);
+          if (e.type !== 'interaction_resolved') projectSessionListInteraction(e);
           applyAuthoritativeWsEvent(e, selectedSessionId ?? undefined);
           if (e.type === "session_status" && e.sessionId === selectedSessionId) {
             runIdRef.current = e.runId ?? null;
@@ -1287,6 +1320,7 @@ export function useChatAppStateCore(): ChatAppState {
           if (e.type === "pending_interactions" || e.type === "permission_request"
             || e.type === "ask_user" || e.type === "interaction_resolved") {
             projectRecoveredInteraction(e);
+            if (e.type === 'interaction_resolved') projectSessionListInteraction(e);
           }
           if (e.type === "title_updated")
             sessionRef.current.updateSessionTitle(e.sessionId, e.title);
@@ -1498,6 +1532,7 @@ export function useChatAppStateCore(): ChatAppState {
         streamIdRef,
         runIdRef,
         handledTerminalKeysRef,
+        resolvedInteractionIdsRef,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
@@ -1565,6 +1600,10 @@ export function useChatAppStateCore(): ChatAppState {
           wsLatestSessionIdRef.current?.value,
         )
       ) {
+        if (data.type === 'interaction_resolved' && Boolean(data.response || data.status)) {
+          projectSessionListInteraction(data);
+          rememberResolvedInteraction(resolvedInteractionIdsRef.current, data.sessionId, data.interactionId);
+        }
         return;
       }
 
@@ -1575,6 +1614,11 @@ export function useChatAppStateCore(): ChatAppState {
         wsLatestSessionIdRef.current,
         immediateSessionIdRef.current ?? sessionIdRef.current,
       );
+      if (data.type === 'interaction_resolved') projectSessionListInteraction(data);
+
+      if (data.type === 'interaction_resolved' && Boolean(data.response || data.status)) {
+        rememberResolvedInteraction(resolvedInteractionIdsRef.current, data.sessionId, data.interactionId);
+      }
 
       if (data.type === "session" && "sessionId" in data) {
         immediateSessionIdRef.current = data.sessionId;
@@ -2097,6 +2141,18 @@ export function useChatAppStateCore(): ChatAppState {
     else if (selection.kind === 'picker') Alert.alert('请选择 Agent', '请从会话列表的新建入口选择要使用的企业专家。');
     else Alert.alert('无法新建会话', selection.reason.message);
   }, [activeAgentTarget, agentTargetCatalog, agentTargetCatalogReason, startAgentTargetSession]);
+
+  // 着陆页的空对话同样必须先绑定 Agent 目标，否则首条消息会被「缺少可证明的 Agent 目标」门禁挡下。
+  useEffect(() => {
+    const target = resolveLandingAgentTarget({
+      catalog: agentTargetCatalog,
+      catalogLoading: agentTargetCatalogLoading,
+      hasSession: Boolean(session.sessionId),
+      hasPendingTarget: Boolean(pendingAgentTarget),
+      hasMessages: msg.messages.length > 0,
+    });
+    if (target) startAgentTargetSession(target);
+  }, [agentTargetCatalog, agentTargetCatalogLoading, msg.messages.length, pendingAgentTarget, session.sessionId, startAgentTargetSession]);
 
   // ---- Fork from message (从此编辑) ----
   const forkFromMessage = useCallback(

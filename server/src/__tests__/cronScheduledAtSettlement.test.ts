@@ -1,0 +1,195 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CronService, type CronServiceDeps } from '../cron/service.js';
+import type { CronJob, CronRunLogEntry } from '../cron/types.js';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function harness(timeoutSeconds = 1, cancel?: NonNullable<CronServiceDeps['cancelRuntimeRun']>) {
+  let now = 1_000_000;
+  const logs: CronRunLogEntry[] = [];
+  const cancels: Parameters<NonNullable<CronServiceDeps['cancelRuntimeRun']>>[0][] = [];
+  const service = new CronService({
+    nowMs: () => now, loadJobs: async () => [], saveJobs: async () => {},
+    executeJob: async () => new Promise(() => {}), appendRunLog: async (entry) => { logs.push(entry); },
+    cancelRuntimeRun: async (input) => {
+      cancels.push(input);
+      return cancel ? cancel(input)
+        : { runId: input.runtimeRunId, sessionId: input.sessionId, status: 'cancelled', statusReason: input.reason };
+    },
+    defaultTimeoutSeconds: timeoutSeconds,
+  });
+  return { service, logs, cancels, setNow: (value: number) => { now = value; } };
+}
+
+async function scheduledClaim(h: ReturnType<typeof harness>, timeoutSeconds = 1) {
+  const { service } = h;
+  const job = await service.add({ name: 'one-shot', schedule: { kind: 'at', atMs: 1_000_001 },
+    payload: { kind: 'agentTurn', message: 'run', timeoutSeconds } });
+  h.setNow(1_000_001);
+  (service as any).started = true;
+  const result = await (service as any).claimJob(job.id, { trigger: 'schedule', scheduledAtMs: job.state.nextRunAtMs });
+  (service as any).started = false;
+  return { job, claim: result.value } as { job: CronJob; claim: any };
+}
+
+afterEach(() => vi.useRealTimers());
+
+describe('cron terminal settlement schedule fencing', () => {
+  it('hard timeout 消费一次性计划后清除过期 nextRunAtMs', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const { job, claim } = await scheduledClaim(h);
+    const execution = (h.service as any).executeClaimedJob(claim);
+    await vi.advanceTimersByTimeAsync(61_000);
+    h.setNow(1_061_001);
+    await execution;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBeUndefined();
+    expect(h.cancels).toHaveLength(1);
+  });
+
+  it('watchdog 收口一次性计划后清除过期 nextRunAtMs', async () => {
+    const h = harness(600);
+    const { job, claim } = await scheduledClaim(h, 600);
+    void (h.service as any).executeClaimedJob(claim);
+    await Promise.resolve();
+    h.setNow(1_780_002);
+    await (h.service as any).checkStaleJobs();
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBeUndefined();
+    expect(h.cancels).toHaveLength(1);
+  });
+
+  it('explicit cancel 不覆盖并发编辑出的 recurring 下一计划，未编辑时仍正常重排', async () => {
+    const entered = deferred<void>();
+    const terminal = deferred<{ runId: string; sessionId: string; status: 'cancelled' }>();
+    const h = harness(1, async () => { entered.resolve(); return terminal.promise; });
+    const job = await h.service.add({ name: 'recurring', schedule: { kind: 'every', everyMs: 60_000 },
+      payload: { kind: 'agentTurn', message: 'run' } });
+    const started = await h.service.runNow(job.id, { requestId: 'recurring-edit-cancel' });
+    const cancelling = h.service.cancelRun(job.id, started.runId!);
+    await entered.promise;
+    h.setNow(1_001_000);
+    await h.service.update(job.id, { schedule: { kind: 'every', everyMs: 10_000, anchorMs: 1_001_000 } });
+    const editedNext = (await h.service.get(job.id))!.state.nextRunAtMs;
+    h.setNow(1_025_000);
+    terminal.resolve({ runId: h.cancels[0].runtimeRunId, sessionId: h.cancels[0].sessionId, status: 'cancelled' });
+    await cancelling;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBe(editedNext);
+
+    const unchanged = harness();
+    const unchangedJob = await unchanged.service.add({ name: 'unchanged', schedule: { kind: 'every', everyMs: 60_000 },
+      payload: { kind: 'agentTurn', message: 'run' } });
+    const unchangedRun = await unchanged.service.runNow(unchangedJob.id, { requestId: 'recurring-normal-cancel' });
+    unchanged.setNow(1_025_000);
+    await unchanged.service.cancelRun(unchangedJob.id, unchangedRun.runId!);
+    expect((await unchanged.service.get(unchangedJob.id))?.state.nextRunAtMs).toBe(1_060_000);
+  });
+
+  it('watchdog 不覆盖并发编辑出的 recurring 下一计划', async () => {
+    const entered = deferred<void>();
+    const terminal = deferred<{ runId: string; sessionId: string; status: 'cancelled' }>();
+    const h = harness(1, async () => { entered.resolve(); return terminal.promise; });
+    const job = await h.service.add({ name: 'recurring-watchdog', schedule: { kind: 'every', everyMs: 60_000 },
+      payload: { kind: 'agentTurn', message: 'run', timeoutSeconds: 1 } });
+    await h.service.runNow(job.id, { requestId: 'recurring-edit-watchdog' });
+    await Promise.resolve();
+    h.setNow(1_181_001);
+    const checking = (h.service as any).checkStaleJobs();
+    await entered.promise;
+    await h.service.update(job.id, { schedule: { kind: 'every', everyMs: 10_000, anchorMs: 1_181_001 } });
+    const editedNext = (await h.service.get(job.id))!.state.nextRunAtMs;
+    h.setNow(1_205_000);
+    terminal.resolve({ runId: h.cancels[0].runtimeRunId, sessionId: h.cancels[0].sessionId, status: 'cancelled' });
+    await checking;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBe(editedNext);
+  });
+
+  it('首次 claim fence 在编辑先发生时保护 timeout/cancel/watchdog 的 recurring 下一计划', async () => {
+    vi.useFakeTimers();
+    const timedOut = harness();
+    const timeoutJob = await timedOut.service.add({ name: 'timeout-after-edit',
+      schedule: { kind: 'every', everyMs: 60_000 },
+      payload: { kind: 'agentTurn', message: 'run', timeoutSeconds: 1 } });
+    await timedOut.service.runNow(timeoutJob.id, { requestId: 'timeout-after-edit' });
+    await Promise.resolve();
+    timedOut.setNow(1_001_000);
+    await timedOut.service.update(timeoutJob.id, { schedule: { kind: 'every', everyMs: 10_000, anchorMs: 1_001_000 } });
+    const timeoutNext = (await timedOut.service.get(timeoutJob.id))!.state.nextRunAtMs;
+    timedOut.setNow(1_062_000);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect((await timedOut.service.get(timeoutJob.id))?.state.nextRunAtMs).toBe(timeoutNext);
+
+    vi.useRealTimers();
+    const explicitlyCancelled = harness();
+    const cancelJob = await explicitlyCancelled.service.add({ name: 'cancel-after-edit',
+      schedule: { kind: 'every', everyMs: 60_000 }, payload: { kind: 'agentTurn', message: 'run' } });
+    const cancelRun = await explicitlyCancelled.service.runNow(cancelJob.id, { requestId: 'cancel-after-edit' });
+    explicitlyCancelled.setNow(1_001_000);
+    await explicitlyCancelled.service.update(cancelJob.id,
+      { schedule: { kind: 'every', everyMs: 10_000, anchorMs: 1_001_000 } });
+    const cancelNext = (await explicitlyCancelled.service.get(cancelJob.id))!.state.nextRunAtMs;
+    await explicitlyCancelled.service.cancelRun(cancelJob.id, cancelRun.runId!);
+    expect((await explicitlyCancelled.service.get(cancelJob.id))?.state.nextRunAtMs).toBe(cancelNext);
+
+    const watched = harness(1);
+    const watchdogJob = await watched.service.add({ name: 'watchdog-after-edit',
+      schedule: { kind: 'every', everyMs: 60_000 },
+      payload: { kind: 'agentTurn', message: 'run', timeoutSeconds: 1 } });
+    await watched.service.runNow(watchdogJob.id, { requestId: 'watchdog-after-edit' });
+    await Promise.resolve();
+    watched.setNow(1_001_000);
+    await watched.service.update(watchdogJob.id,
+      { schedule: { kind: 'every', everyMs: 10_000, anchorMs: 1_001_000 } });
+    const watchdogNext = (await watched.service.get(watchdogJob.id))!.state.nextRunAtMs;
+    watched.setNow(1_181_001);
+    await (watched.service as any).checkStaleJobs();
+    expect((await watched.service.get(watchdogJob.id))?.state.nextRunAtMs).toBe(watchdogNext);
+  });
+
+  it('explicit cancel 等待 Runtime 时不删除并发编辑出的未来 at', async () => {
+    const entered = deferred<void>();
+    const terminal = deferred<{ runId: string; sessionId: string; status: 'cancelled' }>();
+    const h = harness(1, async () => { entered.resolve(); return terminal.promise; });
+    const { job, claim } = await scheduledClaim(h);
+    const cancelling = h.service.cancelRun(job.id, claim.runId);
+    await entered.promise;
+    h.setNow(1_000_002);
+    await h.service.update(job.id, { schedule: { kind: 'at', atMs: 9_999_999 } });
+    terminal.resolve({ runId: claim.runtimeRunId, sessionId: claim.sessionId, status: 'cancelled' });
+    await cancelling;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBe(9_999_999);
+  });
+
+  it('watchdog 等待 Runtime 时不删除并发编辑出的未来 at', async () => {
+    const entered = deferred<void>();
+    const terminal = deferred<{ runId: string; sessionId: string; status: 'cancelled' }>();
+    const h = harness(600, async () => { entered.resolve(); return terminal.promise; });
+    const { job, claim } = await scheduledClaim(h, 600);
+    void (h.service as any).executeClaimedJob(claim);
+    await Promise.resolve();
+    h.setNow(1_780_002);
+    const checking = (h.service as any).checkStaleJobs();
+    await entered.promise;
+    await h.service.update(job.id, { schedule: { kind: 'at', atMs: 9_999_999 } });
+    terminal.resolve({ runId: claim.runtimeRunId, sessionId: claim.sessionId, status: 'cancelled' });
+    await checking;
+    expect((await h.service.get(job.id))?.state.nextRunAtMs).toBe(9_999_999);
+  });
+
+  it('显式 cancel 清除已消费 at，但手工运行不误吞未来 at', async () => {
+    const scheduled = harness();
+    const { job, claim } = await scheduledClaim(scheduled);
+    await scheduled.service.cancelRun(job.id, claim.runId);
+    expect((await scheduled.service.get(job.id))?.state.nextRunAtMs).toBeUndefined();
+
+    const manual = harness();
+    const future = await manual.service.add({ name: 'future', schedule: { kind: 'at', atMs: 9_999_999 },
+      payload: { kind: 'agentTurn', message: 'run' } });
+    const started = await manual.service.runNow(future.id, { requestId: 'manual-1' });
+    await manual.service.cancelRun(future.id, started.runId!);
+    expect((await manual.service.get(future.id))?.state.nextRunAtMs).toBe(9_999_999);
+  });
+});

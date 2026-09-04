@@ -7,6 +7,7 @@ import {
   relativeToTrustedRoot,
 } from '../security/trustedFile.js';
 import { boundReplayToolResultEvents } from './replayEventBounds.js';
+import { selectCheckpointReplayWindow } from './replayEventWindow.js';
 import type { EventAppendContext, EventListOptions, EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 
 function projectUsageEvent(event: PlatformEvent): PlatformEvent {
@@ -103,7 +104,24 @@ export class FileEventStore implements EventStore {
     const included = options.includeTypes?.length ? new Set(options.includeTypes) : null;
     const selected = events.filter((event) => !excluded.has(event.type) && (!included || included.has(event.type)));
     if (options.projection === 'usage') return selected.map(projectUsageEvent);
-    return options.replayMode === 'bounded' ? boundReplayToolResultEvents(selected) : selected;
+    if (!options.replayMode) return selected;
+    const bounded = boundReplayToolResultEvents(selected);
+    if (options.replayMode === 'bounded') return bounded;
+    const window = selectCheckpointReplayWindow(bounded);
+    options.replayStats?.({
+      strategy: window.checkpointEventId ? 'checkpoint' : 'full',
+      totalEventCount: bounded.length,
+      selectedEventCount: window.events.length,
+      selectedProjectedBytes: window.events.reduce(
+        (total, event) => total + Buffer.byteLength(JSON.stringify(event), 'utf8'),
+        0,
+      ),
+      prefixEventCount: window.prefixEventCount,
+      tailEventCount: window.tailEventCount,
+      ...(window.checkpointEventId ? { checkpointEventId: window.checkpointEventId } : {}),
+      ...(window.cutoffSequence ? { cutoffSequence: window.cutoffSequence } : {}),
+    });
+    return window.events;
   }
 
   async listPage(tenantId: string, _sessionId: string, options: {
@@ -113,6 +131,7 @@ export class FileEventStore implements EventStore {
     type?: PlatformEvent['type'];
     excludeTypes?: PlatformEvent['type'][];
     projection?: 'usage';
+    replayMode?: 'bounded';
   } = {}) {
     this.assertTenant(tenantId);
     const excluded = new Set(options.excludeTypes ?? []);
@@ -133,7 +152,9 @@ export class FileEventStore implements EventStore {
     } as PlatformEvent & { sequence: number }));
     const nextOffset = offset + page.length;
     return {
-      events: options.projection === 'usage' ? page.map(projectUsageEvent) : page,
+      events: options.projection === 'usage'
+        ? page.map(projectUsageEvent)
+        : options.replayMode === 'bounded' ? boundReplayToolResultEvents(page) : page,
       ...(nextOffset < all.length ? { nextCursor: String(nextOffset) } : {}),
       hasMore: nextOffset < all.length,
     };

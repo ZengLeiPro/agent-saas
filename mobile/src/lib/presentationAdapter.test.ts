@@ -32,7 +32,7 @@ describe('M40-04 / TASK-375 Mobile shared presentation adapter', () => {
     expect(JSON.stringify(surface)).not.toContain('MOBILE_RAW_RESULT');
   });
 
-  it('keeps standalone tool_result raw data behind all three disclosure gates', () => {
+  it('keeps standalone tool_result raw data behind the effective session debug gate', () => {
     const item = selectRenderModel({
       messages: [{
         id: 'orphan-result',
@@ -47,11 +47,7 @@ describe('M40-04 / TASK-375 Mobile shared presentation adapter', () => {
     expect(closed.presentation.showRaw).toBe(false);
     expect(JSON.stringify(closed)).not.toContain('MOBILE_STANDALONE_RAW_RESULT');
 
-    const opened = adaptToolPresentationForMobile(item, {
-      debugBuild: true,
-      authenticatedAdmin: true,
-      explicitSessionToggle: true,
-    });
+    const opened = adaptToolPresentationForMobile(item, { explicitSessionToggle: true });
     expect(opened.presentation.showRaw).toBe(true);
   });
 

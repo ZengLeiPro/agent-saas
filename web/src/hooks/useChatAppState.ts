@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
-import type { AgentTarget, AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
+import type { AgentTarget, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
@@ -18,7 +18,7 @@ import {
   toWebChatWireMessage,
   validateWebUploadedFiles,
 } from "@/lib/chatSubmissionAdapter";
-import { canonicalChatAttachmentToDisplay, createChatClientState, createInteractionRequestId, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay, createChatClientState, interactionKey, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
@@ -91,10 +91,7 @@ import {
   resendQueuedEntry, restoreQueuedEntryForEdit,
 } from "./useChatAppStateQueueConsistency";
 import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRuntimeState";
-
-/** A response write is not an ACK; expire it so the interaction remains retryable. */
-const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
-type PendingInteractionResponse = { type: "permission_request" | "ask_user"; response: Record<string, unknown>; version: number; generation: number; attemptId: string; ackTimer?: ReturnType<typeof setTimeout> };
+import { useInteractionResponseController, webPendingInteractionsEvent } from './useInteractionResponseController';
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user, identity } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
@@ -197,6 +194,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const streamIdRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
   const handledTerminalKeysRef = useRef(new Set<string>());
+  const resolvedInteractionIdsRef = useRef(new Set<string>());
+  const interactionRuntimeSyncRef = useRef<(sessionId: string) => void>(() => {});
   const lastEventIdRef = useRef<number | null>(null);
   const lastEventCursorRef = useRef<string | null>(null);
 
@@ -362,13 +361,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const approvalTierRef = useRef(approvalTier); approvalTierRef.current = approvalTier;
   const msgRef = useRef(msg); msgRef.current = msg;
-  const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
-  const interactionResponseGenerationRef = useRef(new Map<string, number>());
   const sessionIdRef = useRef<string | null>(null);
-  const releaseInteractionResponse = useCallback((id: string, generation: number, error: string) => { const pending = pendingInteractionResponsesRef.current.get(id); if (!pending || pending.generation !== generation) return; if (pending.ackTimer) clearTimeout(pending.ackTimer); pendingInteractionResponsesRef.current.delete(id); msgRef.current.addMessage({ type: "system-error", severity: "error", content: `回复未确认：${error}。请重试。`, timestamp: Date.now() }); }, []);
-  const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
+  const getCurrentSessionId = useCallback(() => immediateSessionIdRef.current ?? sessionIdRef.current, []);
   const currentRuntimeSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
   const effectiveLoading = loading || Boolean(currentRuntimeSessionId && runningSessionIds.has(currentRuntimeSessionId)); loadingRef.current = effectiveLoading;
   const effectiveRunningSessionIds = effectiveLoading && currentRuntimeSessionId && !runningSessionIds.has(currentRuntimeSessionId) ? new Set(runningSessionIds).add(currentRuntimeSessionId) : runningSessionIds;
@@ -688,6 +684,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     resetMessages: msg.resetMessages,
     setMessages: msg.setMessages,
     getMessages: () => msg.messagesRef.current,
+    getResolvedInteractionIds: () => resolvedInteractionIdsRef.current,
+    onInteractionsChanged: (sessionId: string) => interactionRuntimeSyncRef.current(sessionId),
     onSessionsLoaded: hydrateSessionRuntimeSnapshot,
     triggerScroll: msg.triggerScroll,
     cancelActiveStream: detachFromStream,
@@ -720,6 +718,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     trashPreviewSessionIdRef,
   });
   const sessionRef = useRef(session); sessionRef.current = session;
+  const {
+    releaseAllResponses: releaseAllInteractionResponses,
+    resolveInteractionResponse, syncInteractionRuntime, finalizeInteractionProjection,
+    handlePermissionResponse, handleAskUserResponse,
+  } = useInteractionResponseController({
+    messages: msg,
+    currentSessionId: getCurrentSessionId,
+    activeRunsBySession, patchSessionRuntime, handledTerminalKeysRef, resolvedInteractionIdsRef,
+    interactionRuntimeSyncRef,
+    loadSessions: () => { void sessionRef.current.loadSessions({ fresh: true, silent: true }); },
+    markSessionRead,
+  });
   const {
     streamBindingGenerationRef, advanceStreamBindingGenerationIfChanged,
     sendCorrelatedResume, invalidateResumeRequests, shouldApplyActiveStreamResponse,
@@ -1440,32 +1450,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       wsClient.disconnect();
     };
   }, [dispatchConnection, releaseAllInteractionResponses]);
-  useEffect(() => () => { for (const { ackTimer } of pendingInteractionResponsesRef.current.values()) if (ackTimer) clearTimeout(ackTimer); pendingInteractionResponsesRef.current.clear(); }, []);
-  const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: 'respond_ok' | 'respond_error' }>) => {
-    const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
-    if (!pending) return;
-    // ACKs without a token are only valid for the initial submission; tokens fence stale retries.
-    const ackAttemptId = (data as { clientAttemptId?: unknown }).clientAttemptId;
-    if ((typeof ackAttemptId === 'string' && ackAttemptId !== pending.attemptId) || (ackAttemptId === undefined && pending.generation > 1)
-      || (data.version !== undefined && data.version !== pending.version)) return;
-    if (pending.ackTimer) clearTimeout(pending.ackTimer);
-    if (data.type === 'respond_ok' && data.status === 'accepted') return; // accepted is non-terminal; wait for canonical outcome
-    pendingInteractionResponsesRef.current.delete(data.interactionId);
-    const idx = msgRef.current.messagesRef.current.findIndex((m) => m.type === pending.type && m.interactionId === data.interactionId);
-    if (idx < 0) return;
-    if (data.type === 'respond_ok') { const canonicalResponse = data.response && typeof data.response === 'object' ? data.response : pending.response;
-      msgRef.current.updateMessageAt(idx, (m) => {
-        if (m.type !== pending.type || m.interactionId !== data.interactionId || m.status !== 'pending') return m;
-        return m.type === 'permission_request' ? { ...m, status: canonicalResponse.allow ? 'allowed' as const : 'denied' as const } : { ...m, status: 'answered' as const, answers: canonicalResponse.answers as AskUserAnswers };
-      });
-      if (pending.type === 'permission_request') upsertRuntimeStatusMessage(msgRef.current, 'queued');
-      markSessionRead(sessionIdRef.current);
-      return;
-    }
-    msgRef.current.updateMessageAt(idx, (m) => m.type === pending.type && m.interactionId === data.interactionId ? { ...m, status: 'pending' as const } : m);
-    msgRef.current.addMessage({ type: 'system-error', severity: 'error', content: `回复未提交：${data.error || '服务端拒绝了该回复'}。请重试。`, timestamp: Date.now() });
-  }, [markSessionRead]);
-
   // ---- WS 消息处理（wsClient 已完成 epoch/seq 接受边界） ----
   useEffect(() => {
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
@@ -1477,6 +1461,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         streamIdRef,
         runIdRef,
         handledTerminalKeysRef,
+        resolvedInteractionIdsRef, onInteractionResolved: finalizeInteractionProjection, onInteractionsChanged: syncInteractionRuntime,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
@@ -1674,7 +1659,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           });
         }
         if (inline?.pendingInteractions) {
-          projectRecoveredInteraction({ type: 'pending_interactions', sessionId: inline.sessionId, interactions: inline.pendingInteractions });
+          projectRecoveredInteraction(webPendingInteractionsEvent(inline));
         }
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
@@ -1967,6 +1952,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         streamIdRef,
         runIdRef,
         handledTerminalKeysRef,
+        resolvedInteractionIdsRef, onInteractionResolved: finalizeInteractionProjection, onInteractionsChanged: syncInteractionRuntime,
         lastEventIdRef,
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
@@ -1994,7 +1980,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         if (!currentDoneBelongsToRuntime) { if (data.error && data.client_msg_id) ctx.onChatRejected?.(data.client_msg_id, 'enqueue_failed', data.error); else ctx.onChatDone?.(data.client_msg_id, data.error); return; }
       }
 
-      if ((data.type === 'permission_request' || data.type === 'ask_user') && sessionIdRef.current) {
+      if ((data.type === 'permission_request' || data.type === 'ask_user') && sessionIdRef.current
+        && !resolvedInteractionIdsRef.current.has(interactionKey(sessionIdRef.current, data.interactionId))) {
         patchSessionRuntime(sessionIdRef.current, {
           status: data.type === 'permission_request' ? 'waiting_approval' : 'waiting_user', source: 'ws',
           attached: true,
@@ -2923,23 +2910,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       console.error('Fork failed:', err);
     }
   }, [setInput, selectSessionWithUrl]);
-
-  // ---- Interaction responses (via WS) ----
-  const respondToInteraction = useCallback(async (interactionId: string, type: 'permission_request' | 'ask_user', response: Record<string, unknown>) => {
-    if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-    const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1; const currentSessionId = sessionIdRef.current; if (!currentSessionId) return;
-    const interactionMessage = msgRef.current.messagesRef.current.find((message) => (message.type === 'permission_request' || message.type === 'ask_user') && message.interactionId === interactionId) as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }> | undefined;
-    const version = interactionMessage?.interactionVersion;
-    if (!Number.isSafeInteger(version)) return; // fail closed until authoritative interaction detail is hydrated
-    const attemptId = createInteractionRequestId(currentSessionId, interactionId, response); interactionResponseGenerationRef.current.set(interactionId, generation);
-    const pending: PendingInteractionResponse = { type, response, version: version!, generation, attemptId };
-    pendingInteractionResponsesRef.current.set(interactionId, pending);
-    if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: currentSessionId, version, requestId: attemptId, clientAttemptId: attemptId, response, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');
-    if (pendingInteractionResponsesRef.current.get(interactionId) !== pending) return;
-    pending.ackTimer = setTimeout(() => releaseInteractionResponse(interactionId, generation, '等待服务端确认超时'), INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
-  }, [releaseInteractionResponse]);
-  const handlePermissionResponse = useCallback((interactionId: string, allow: boolean) => respondToInteraction(interactionId, 'permission_request', { allow, message: allow ? undefined : 'User denied' }), [respondToInteraction]);
-  const handleAskUserResponse = useCallback((interactionId: string, answers: AskUserAnswers) => respondToInteraction(interactionId, 'ask_user', { answers }), [respondToInteraction]);
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、

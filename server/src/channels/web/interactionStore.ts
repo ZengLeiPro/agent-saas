@@ -240,9 +240,10 @@ export class InteractionStore {
   }
 
   /**
-   * 获取指定会话所有 pending 的可重连交互
+   * 获取指定会话的 pending 交互。恢复连接默认只返回可跨断线存活的交互；
+   * 权威快照在连接仍存活时必须包含普通 permission_request，避免刷新覆盖掉唯一审批卡片。
    */
-  getPendingInteractions(sessionId: string): Array<{
+  getPendingInteractions(sessionId: string, options?: { includeTransient?: boolean }): Array<{
     interactionId: string;
     type: 'ask_user' | 'permission_request' | 'approval';
     version: number;
@@ -274,7 +275,7 @@ export class InteractionStore {
     }> = [];
     for (const [id, entry] of this.pending) {
       if (entry.sessionId !== sessionId) continue;
-      if (!shouldSurviveDisconnect(entry)) continue;
+      if (!options?.includeTransient && !shouldSurviveDisconnect(entry)) continue;
       result.push({
         interactionId: id,
         type: entry.type,

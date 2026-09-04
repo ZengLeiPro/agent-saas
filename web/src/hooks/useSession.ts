@@ -35,6 +35,10 @@ export interface SessionCallbacks {
   ) => void;
   /** 返回当前本地消息列表引用（用于 refresh 时保留本地流式尾部，见 mergeServerMessagesWithLocalTail） */
   getMessages?: () => MessageItem[];
+  /** 已确认终态的 interaction key；阻止迟到的 pending HTTP 快照复活卡片。 */
+  getResolvedInteractionIds?: () => ReadonlySet<string>;
+  /** pending HTTP 对账完成后同步消息投影对应的运行态。 */
+  onInteractionsChanged?: (sessionId: string) => void;
   /** 会话列表加载后，用服务端权威快照恢复所有可见会话的运行态。 */
   onSessionsLoaded?: (sessions: ApiSessionListItem[]) => void;
   triggerScroll: () => void;
@@ -308,7 +312,7 @@ export function useSession(
         setHasMoreHistory, setSessionId, setSessionOwner, setTokenUsage,
         setContextUsage, fetchTokenUsage, removeSession,
       }),
-    [], // eslint-disable-line react-hooks/exhaustive-deps
+    [],
   );
 
   const loadEarlierMessages = useCallback(async () => {
@@ -732,7 +736,7 @@ export function useSession(
         options.initialSessionId,
       );
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Persist current session ID (only write when non-null to avoid clearing stored value during init)
   useEffect(() => {
@@ -781,7 +785,7 @@ export function useSession(
     return () => {
       cancelled = true;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Initial load guard
   useEffect(() => {

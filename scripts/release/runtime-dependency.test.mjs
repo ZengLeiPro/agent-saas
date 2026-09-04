@@ -242,15 +242,15 @@ test('exact Node version, architecture, and required tool versions are enforced'
   );
   for (const misleadingVersion of [
     'git version 0.0.0',
-    'git version 2.49.1+',
-    'git version 12.49.10',
-    'git version 2.49.1.1',
-    'git version 2.49.1-custom',
-    'git version 2.49.1rc1',
-    'git version 2.49.1-',
-    'git version v2.49.1',
-    'git version 99.0.0 (compatibility 2.49.1)',
-    'git version v99.0.0 (compatibility 2.49.1)',
+    'git version 2.52.0+',
+    'git version 12.52.10',
+    'git version 2.52.0.1',
+    'git version 2.52.0-custom',
+    'git version 2.52.0rc1',
+    'git version 2.52.0-',
+    'git version v2.52.0',
+    'git version 99.0.0 (compatibility 2.52.0)',
+    'git version v99.0.0 (compatibility 2.52.0)',
   ]) {
     assert.throws(
       () =>
@@ -293,6 +293,29 @@ test('ACS Sandbox verifies the git version installed by the base image build', a
           command === 'git' ? 'git version 2.39.4' : execFileSync(command, args),
       }),
     /tool git version mismatch/u,
+  );
+});
+
+test('ACS Sandbox accepts the dws CLI v-prefixed semantic version', async () => {
+  const contract = await fixture();
+  const identity = createRuntimeDependencyIdentity(contract, SHA);
+  const runtime = { version: contract.node.version, arch: 'x64', platform: 'linux' };
+  const execFileSync = (command) => {
+    const tool = contract.tools.find(
+      (entry) => entry.probe[0] === command && entry.components.includes('acsSandbox'),
+    );
+    return command === 'dws'
+      ? `dws version v${tool.version} (build metadata)\n`
+      : `${command} version ${tool.version}\n`;
+  };
+
+  assert.doesNotThrow(() =>
+    verifyRuntimeEnvironment({
+      identity,
+      component: 'acsSandbox',
+      runtime,
+      execFileSync,
+    }),
   );
 });
 
@@ -400,7 +423,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
         runtime,
         environment: { ACS_SNAT_MODE: 'disabled' },
         execFileSync: (command) =>
-          command === 'git' ? 'git version 2.49.1' : 'Client Version: v1.36.9',
+          command === 'git' ? 'git version 2.52.0' : 'Client Version: v1.36.9',
       }),
     /tool kubectl version mismatch/u,
   );
@@ -416,7 +439,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
       ),
       execFileSync: (command, args) => {
         disabledCalls.push([command, args]);
-        return command === 'git' ? 'git version 2.49.1' : 'Client Version: v1.37.0';
+        return command === 'git' ? 'git version 2.52.0' : 'Client Version: v1.37.0';
       },
     }),
   );
@@ -436,7 +459,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
       ),
       execFileSync: (command, args) => {
         enabledCalls.push([command, args]);
-        if (command === 'git') return 'git version 2.49.1';
+        if (command === 'git') return 'git version 2.52.0';
         return command.endsWith('kubectl') ? 'Client Version: v1.37.0' : '3.4.4';
       },
     }),
@@ -465,7 +488,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
             'ACS_SNAT_MODE=shared-cidr\nACS_KUBECTL_PATH=/managed/kubectl\nACS_ALIYUN_CLI_PATH=/managed/aliyun\n',
           ),
           execFileSync: (command) => {
-            if (command === 'git') return 'git version 2.49.1';
+            if (command === 'git') return 'git version 2.52.0';
             if (command === '/managed/kubectl') return 'Client Version: v1.37.0';
             return aliyunProbe();
           },
@@ -481,7 +504,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
         runtime,
         environment: { ACS_SNAT_MODE: 'probe-only' },
         execFileSync: (command) => {
-          if (command === 'git') return 'git version 2.49.1';
+          if (command === 'git') return 'git version 2.52.0';
           if (command === 'kubectl') return 'Client Version: v1.37.0';
           throw new Error('missing');
         },

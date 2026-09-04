@@ -37,6 +37,7 @@ import { configureTaskboardGithubRepositoryProvider } from '../taskboard/reposit
 import { retentionWorkerOptions } from './runtimeEventRetentionConfig.js';
 import type { TaskboardService } from '../taskboard/types.js';
 import { createTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
+import { createCronRuntimeRunAdapters } from '../runtime/runtimeRunCancellation.js';
 import { PgMemoryConsolidationStore } from '../memory/consolidation/store.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS, withMemoryConsolidationLeaseBuffer, type MemoryConsolidationResolvedConfig } from '../memory/consolidation/types.js';
 import { resolveTenantMemoryFeatureStatus } from '../memory/effectiveStatus.js';
@@ -2167,7 +2168,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     else delete memoryPollRuntimeConfig.model;
   };
   syncMemoryPollRuntimeConfig();
-
   const cronRuntime = createCronRuntime({
     config: {
       cron: config.cron,
@@ -2178,6 +2178,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
     processCwd,
     runAgent: billedCronRunDispatch,
+    resolveOwnerTenantId: (userId: string) => userStore?.findById(userId)?.tenantId, ...(pgRunStore ? createCronRuntimeRunAdapters(pgRunStore, (userId) => userStore?.findById(userId)?.tenantId) : {}),
     defaultMaxTurns: config.agent.maxTurns || 10,
     defaultTimeoutSeconds: 1800,
     defaultModel: config.models?.default,
@@ -2272,7 +2273,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       clearSessionsListCache();
     },
   });
-
   // CronList/CronManage 内置工具接线：dispatch 构造早于 cronRuntime，
   // config 传的是惰性 getter（与 updateToolSettingsConfig 热改同模式）。
   rawRuntimeConfig.cronService = () => cronRuntime.service ?? undefined;

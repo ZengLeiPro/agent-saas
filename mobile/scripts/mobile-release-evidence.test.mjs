@@ -110,6 +110,13 @@ for (const profile of ['ios-store', 'android-store', 'android-enterprise']) {
   });
 }
 
+test('M60-04 iOS-first evidence can contain only the reviewed iOS Store artifact', () => {
+  const fixture = buildFixture();
+  fixture.profiles = fixture.profiles.filter(({ profile }) => profile === 'ios-store');
+  const sealed = sealEnvelope(fixture, { privateKey, keyId: 'fixture-2026' });
+  assert.doesNotThrow(() => validateBuildEvidence(sealed, options));
+});
+
 const mutations = [
   [
     'tampered digest',

@@ -39,9 +39,10 @@ describe('Automated session grouping', () => {
       agentCwd: join(root, 'workspaces'),
       sharedDir: join(root, 'shared'),
       processCwd: root,
-      runAgent: ((_message: unknown, _context: unknown, _options: unknown, hooks: any) => (
+      runAgent: ((_message: unknown, _context: unknown, runOptions: { runtimeSessionId?: string }, hooks: any) => (
         async function* () {
-          await hooks?.onSessionStart?.('session-1', join(root, 'session-1.jsonl'));
+          const sessionId = runOptions.runtimeSessionId ?? 'session-1';
+          await hooks?.onSessionStart?.(sessionId, join(root, `${sessionId}.jsonl`));
           await executionGate;
           yield { type: 'text_delta', content: '完成' };
           yield { type: 'done' };
@@ -74,7 +75,7 @@ describe('Automated session grouping', () => {
     await vi.waitFor(() => expect(groupedEvents).toHaveLength(1));
 
     expect(groupedEvents[0]).toMatchObject({
-      sessionId: 'session-1',
+      sessionId: expect.any(String),
       groupId: `cron:${job.id}`,
       userId: 'user-1',
     });

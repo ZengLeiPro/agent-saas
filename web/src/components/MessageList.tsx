@@ -241,14 +241,14 @@ export const MessageList = memo(function MessageList({
   // A historical clip is scoped to the visible conversation; switching sessions releases it.
   useEffect(() => voicePlayer.stop, [sessionId, voicePlayer.stop]);
   const { user } = useAuth();
-  const debugModeRequested = debugModeOverride
-    ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
+  const effectiveUserDebugMode = user?.debugMode === true
+    && isDebugModeAvailable(user.tenantId, user.tenantFeatures);
+  const debugMode = debugModeOverride ?? effectiveUserDebugMode;
+  // 只读分享/回放可覆盖执行过程是否展示，但不能借此获得原始入参和结果。
+  // raw 仅由当前登录用户已生效的平台、组织与个人调试权限开放。
   const presentationGate = useMemo(() => ({
-    debugBuild: import.meta.env.DEV,
-    authenticatedAdmin: user?.role === 'admin',
-    explicitSessionToggle: debugModeRequested,
-  }), [debugModeRequested, user?.role]);
-  const debugMode = debugModeRequested;
+    explicitSessionToggle: debugModeOverride === undefined && effectiveUserDebugMode,
+  }), [debugModeOverride, effectiveUserDebugMode]);
   const rawPresentationMode = canShowRawPresentation(presentationGate);
   const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
   const renderModel = useMemo(() => {

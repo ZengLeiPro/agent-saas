@@ -5,7 +5,18 @@ import { describe, expect, it } from 'vitest';
 
 const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
 
-describe('主会话大字体排版契约', () => {
+describe('主会话排版契约', () => {
+  it('消息、输入框与上传区共用 16–32px 自适应水平留白', () => {
+    const start = css.indexOf('\n  .content-container {');
+    const end = css.indexOf('\n  }', start);
+    const definition = css.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(definition).toContain('@apply mx-auto max-w-3xl md:max-w-4xl;');
+    expect(definition).toContain('padding-inline: clamp(1rem, 4%, 2rem);');
+    expect(definition).not.toContain('px-3');
+  });
+
   it('只在 MessageList 内容树内把三档字号整体升一级', () => {
     expect(css).toContain('.chat-font-large .chat-message-content .text-sm');
     expect(css).toContain('.chat-font-large .chat-message-content .text-xs');

@@ -195,6 +195,10 @@ export interface AgentRunOptions {
    * 避免恢复执行时再创建一个新的 run record。
    */
   runtimeRunId?: string;
+  /** Cron 等内部调度器预分配的新会话 ID；不同于 resume，不读取历史上下文。 */
+  runtimeSessionId?: string;
+  /** Cron 首次派发：预分配 runId 必须 create-only，禁止复活既有 Run。 */
+  runtimeRunCreateOnly?: boolean;
   /** 内部入口：dispatcher 仅播报 durable Worker 终态，硬禁再次派发。 */
   dispatcherCompletion?: boolean;
   /** Server-only persisted run metadata used to re-derive Integration isolation on wake/resume. */

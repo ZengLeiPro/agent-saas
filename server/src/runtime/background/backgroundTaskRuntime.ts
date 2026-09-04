@@ -5,6 +5,7 @@ export const BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON = 'background_command_mon
 
 export interface BackgroundTaskLease {
   renew(): Promise<void>;
+  handoff?(reason: string, metadataPatch?: Record<string, unknown>): Promise<void>;
   release(finalStatus?: import('../runStore.js').RunStatus, reason?: string): Promise<void>;
 }
 

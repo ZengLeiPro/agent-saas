@@ -204,7 +204,7 @@ kill -USR2 <node 主进程>
   │
   └─ drain deadline（默认 15min，AGENT_SAAS_DRAIN_DEADLINE_MS 可调）:
        到点仍未清空 → 放弃等待，强制走 finishDrain → exit(0)
-       （被打断的 run 由新实例经 lease 过期恢复续跑，见 §10）
+       （只有已完成显式安全交接的 run 会由新实例续跑；意外打断见 §10）
 ```
 
 **退出码约定**：所有 drain 出口都是 `exit(0)`——包括 deadline 强制退出、
@@ -413,10 +413,11 @@ Agent SaaS 进程存活。生产规则 `agent-saas-root-disk-utilization` 只绑
 3. **跨实例 skills sync 竞态**：蓝绿并存期两实例内存态各自为政，可能并发写
    skills-config.json / 并发同步同一用户 workspace；后续任一 dispatch 的版本
    检查会收敛（§7）。
-4. **drain deadline 打断长 run 的 lease 恢复语义**：超过 15min 的 run 被强制
-   退出打断后，其 PG run 记录的 lease 到期，新实例 scheduler 的恢复扫描
-   （`server/src/runtime/runStore.ts` `listRecoverable` 捡起 `lease_expires_at`
-   过期的 running run → `acquireLease` 抢占 → autoWake 续跑）接管执行；
-   WS 客户端自动重连后按 eventId cursor 从 PG 事件流回放，不丢消息。代价是
-   run 有一段「无人执行」的间隙（≈ lease 剩余时长 + 恢复扫描周期），以及
-   续跑从上一个持久化状态继续而非精确断点。
+4. **显式交接与意外 lease expiry 语义不同**：Worker 只在模型轮/工具批次的安全
+   边界执行 owner-fenced handoff；事务会先锁 run、确认没有 running tool invocation，
+   再清空 owner/lease 并写入 `drainHandoffReady`。兼容窗口内交接行使用
+   `liveness_version IS NULL`，确保回滚到 N 版本 Worker 仍可领取；N-1 已写出的
+   `server_drain_handoff` 等精确 stale 标记也可被 N+1 接管。普通 versioned running
+   lease 过期不会自动重放：先进入 stale，宽限后由 reaper 置为 orphaned；若存在
+   已运行工具则标记 `external_tool_outcome_unknown`。因此超过 15min 被强停且尚未
+   到达安全交接点的长 run 仍需显式重试或取消，不能宣称无损续跑。

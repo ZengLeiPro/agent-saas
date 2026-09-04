@@ -1505,7 +1505,7 @@ export function useChatAppStateCore(): ChatAppState {
                     wsLatestSessionIdRef.current?.value ||
                     sessionIdRef.current ||
                     "live"
-                  }-${c.coveredEventCount}`;
+                  }-${c.coveredEventCount ?? 0}`;
             const exists = msgRef.current.messagesRef.current.some(
               (m) => m.id === stableId,
             );
@@ -1514,7 +1514,7 @@ export function useChatAppStateCore(): ChatAppState {
                 id: stableId,
                 type: "compaction",
                 ...(c.summary ? { summary: c.summary } : {}),
-                coveredEventCount: c.coveredEventCount,
+                coveredEventCount: c.coveredEventCount ?? 0,
                 timestamp: Date.now(),
               } as unknown as MessageItemInput);
               msgRef.current.triggerScroll();

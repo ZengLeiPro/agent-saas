@@ -269,15 +269,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logoutCurrentAccount();
   }, [logoutCurrentAccount]);
 
-  // 401 and WS auth failure enter the same canonical transaction.
+  // 当前 token 被服务端拒绝（401 / WS 鉴权失败）：只清掉这一个账号并回到登录页。
+  // 不能复用 logoutCurrentAccount——它会静默激活列表里的下一个账号，用户会莫名其妙变成另一个身份。
+  const expireCurrentAccount = useCallback(async () => {
+    const invalidToken = localStorage.getItem(TOKEN_KEY);
+    const currentKey = user ? getAccountKey(user) : null;
+    await lifecycle.logout();
+    const remainingAccounts = currentKey
+      ? forgetSavedAccount(currentKey)
+      : invalidToken ? forgetSavedAccountByToken(invalidToken) : readSavedAccounts();
+    setAccounts(remainingAccounts);
+  }, [lifecycle, user]);
+
   useEffect(() => {
     setOnUnauthorized(() => {
-      logout();
+      void expireCurrentAccount();
     });
     wsClient.setOnAuthFailure(() => {
-      logout();
+      void expireCurrentAccount();
     });
-  }, [logout]);
+  }, [expireCurrentAccount]);
 
   // Recover any durable logout/delete journal before accepting cached auth.
   useEffect(() => {

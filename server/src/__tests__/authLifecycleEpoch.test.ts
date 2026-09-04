@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import jwt from 'jsonwebtoken';
@@ -57,23 +57,60 @@ async function authenticate(url: string, signed: string, binding: { authEpoch: n
 }
 
 describe('M30-01 server auth epoch authority', () => {
-  it('persists monotonic login/fence generations and never re-admits an N-1 token after a record exists', async () => {
+  it('keeps concurrent logins valid, revokes one generation on logout, and fences all on revoke', async () => {
     const h = await createHarness();
     const first = h.authority.upgradeLegacy(h.user.id);
     expect(first).toEqual({ authEpoch: 1, generation: 1 });
     expect(h.authority.upgradeLegacy(h.user.id)).toBeNull();
-    const login = h.authority.issueLogin(h.user.id);
-    const fence = h.authority.fence(h.user.id, 'logout');
-    expect(login).toEqual({ authEpoch: 2, generation: 2 });
-    expect(fence).toEqual({ authEpoch: 3, generation: 3 });
-    expect(h.authority.validates(h.user.id, login)).toBe(false);
+    const web = h.authority.issueLogin(h.user.id);
+    const phone = h.authority.issueLogin(h.user.id);
+    expect(web).toEqual({ authEpoch: 1, generation: 2 });
+    expect(phone).toEqual({ authEpoch: 1, generation: 3 });
+    // 新登录不再驱逐同一用户的其他会话
+    expect(h.authority.validates(h.user.id, first)).toBe(true);
+    expect(h.authority.validates(h.user.id, web)).toBe(true);
+    expect(h.authority.validates(h.user.id, phone)).toBe(true);
+
+    // logout 只撤销自己的 generation，且重复调用幂等
+    expect(h.authority.revokeGeneration(h.user.id, web)).toEqual({ ...web, duplicate: false });
+    expect(h.authority.revokeGeneration(h.user.id, web)).toEqual({ ...web, duplicate: true });
+    expect(h.authority.validates(h.user.id, web)).toBe(false);
+    expect(h.authority.validates(h.user.id, phone)).toBe(true);
+    expect(h.authority.revokeGeneration(h.user.id, { authEpoch: 1 })).toBeNull();
+    expect(h.authority.revokeGeneration(h.user.id, { authEpoch: 9, generation: 3 })).toBeNull();
+
+    // 用户级围栏推进 authEpoch，此前所有登录全部失效
+    const fence = h.authority.fence(h.user.id, 'revoke');
+    expect(fence).toEqual({ authEpoch: 2, generation: 4 });
+    expect(h.authority.validates(h.user.id, phone)).toBe(false);
+    expect(h.authority.revokeGeneration(h.user.id, phone)).toEqual({ authEpoch: 2, generation: 3, duplicate: true });
 
     const restarted = new AuthEpochAuthority(join(h.root, 'epochs.json'));
     expect(restarted.current(h.user.id)).toEqual({ ...fence, fenced: true });
-    expect(h.audit.mock.calls.map(([event]) => event.event)).toEqual([
-      'legacy_token_upgraded', 'auth_epoch_issued', 'auth_epoch_fenced',
+    expect(restarted.validates(h.user.id, restarted.issueLogin(h.user.id))).toBe(true);
+    expect(h.audit.mock.calls.map(([event]) => [event.event, event.generation])).toEqual([
+      ['legacy_token_upgraded', 1], ['auth_epoch_issued', 2], ['auth_epoch_issued', 3],
+      ['auth_generation_revoked', 2], ['auth_epoch_fenced', 4],
     ]);
     await h.close();
+  });
+
+  it('migrates single-generation records written before concurrent sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'auth-epoch-legacy-'));
+    roots.push(root);
+    const filePath = join(root, 'epochs.json');
+    await writeFile(filePath, JSON.stringify({ version: 1, users: {
+      live: { authEpoch: 5, generation: 5, updatedAt: 'x', reason: 'login', fenced: false },
+      gone: { authEpoch: 3, generation: 3, updatedAt: 'x', reason: 'logout', fenced: true },
+    } }));
+    const authority = new AuthEpochAuthority(filePath);
+    expect(authority.validates('live', { authEpoch: 5, generation: 5 })).toBe(true);
+    expect(authority.validates('live', { authEpoch: 5, generation: 4 })).toBe(false);
+    expect(authority.validates('gone', { authEpoch: 3, generation: 3 })).toBe(false);
+    expect(authority.issueLogin('live')).toEqual({ authEpoch: 5, generation: 6 });
+    expect(authority.validates('live', { authEpoch: 5, generation: 5 })).toBe(true);
+    expect(authority.issueLogin('gone')).toEqual({ authEpoch: 3, generation: 4 });
+    expect(authority.validates('gone', { authEpoch: 3, generation: 3 })).toBe(false);
   });
 
   it('upgrades one N-1 token, returns its binding, then rejects replay of the epoch-less token', async () => {
@@ -111,7 +148,7 @@ describe('M30-01 server auth epoch authority', () => {
     const oldBinding = h.authority.issueLogin(h.user.id);
     const oldWs = await authenticate(h.url, token(h.user, oldBinding), oldBinding);
     const oldClosed = waitClose(oldWs);
-    h.authority.fence(h.user.id, 'logout');
+    h.authority.revokeGeneration(h.user.id, oldBinding);
     oldWs.send(JSON.stringify({ action: 'sync', lastSeq: 0, ...oldBinding }));
     await expect(oldClosed).resolves.toMatchObject({ code: 4401 });
 
@@ -126,6 +163,30 @@ describe('M30-01 server auth epoch authority', () => {
       data: { type: 'chat_ack', client_msg_id: 'c1' },
     });
     next.close();
+    await h.close();
+  });
+
+  it('logging out one generation closes only that socket and keeps the other login connected', async () => {
+    const h = await createHarness();
+    const web = h.authority.issueLogin(h.user.id);
+    const phone = h.authority.issueLogin(h.user.id);
+    const webWs = await authenticate(h.url, token(h.user, web), web);
+    const phoneWs = await authenticate(h.url, token(h.user, phone), phone);
+    const webClosed = waitClose(webWs);
+    let phoneClosed = false;
+    phoneWs.once('close', () => { phoneClosed = true; });
+
+    h.authority.revokeGeneration(h.user.id, web);
+    h.wsServer.disconnectUser(h.user.id, undefined, web.generation);
+    await expect(webClosed).resolves.toMatchObject({ code: 4401, reason: 'Authentication generation revoked' });
+
+    const downstream = waitMessage(phoneWs);
+    const phoneClient = [...h.wsServer.getClients()].find((client) => client.user?.generation === phone.generation);
+    if (!phoneClient) throw new Error('phone client missing');
+    h.wsServer.sendTo(phoneClient.ws, { data: { type: 'chat_ack', client_msg_id: 'c2', server_recv_ts: Date.now() } });
+    await expect(downstream).resolves.toMatchObject({ ...phone, data: { type: 'chat_ack', client_msg_id: 'c2' } });
+    expect(phoneClosed).toBe(false);
+    phoneWs.close();
     await h.close();
   });
 

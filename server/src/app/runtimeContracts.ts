@@ -40,6 +40,7 @@ import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
+import type { OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
 import type { PgGuardrailEventStore } from '../data/guardrail/pgGuardrailEventStore.js';
 import type { PgMessageFeedbackStore } from '../data/feedback/store.js';
 import type { AppealStore } from '../data/appeals/index.js';
@@ -182,6 +183,8 @@ export interface AppRuntime {
   agentDwsMessageStore?: AgentDwsMessageStore;
   /** 组织 Agent 群空间、工作对话与独立投递真值。 */
   orgGroupAgentStore?: OrgGroupAgentStore;
+  /** 组织群 DWS 写操作的管理员审批与 durable Run 恢复。 */
+  orgAgentApprovalService?: OrgAgentApprovalService;
   /** durable inbox → 组织 Agent Session → current-user DWS 回复 worker。 */
   agentDwsMessageRouter?: AgentDwsMessageRouter;
   /** Agent-owned DWS device flow，token 只进入 Agent connector workspace。 */

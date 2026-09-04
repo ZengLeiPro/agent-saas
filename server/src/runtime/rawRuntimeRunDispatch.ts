@@ -25,8 +25,6 @@ import type { TenantStore } from '../data/tenants/store.js';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { resolveAzerothInjection } from '../integrations/azeroth/tokens.js';
-import type { WorkspaceRef } from '../agent/toolRuntime.js';
 import { readTenantCompanyInfoSync } from '../data/tenants/companyInfo.js';
 import { readTenantInstructionsSync } from '../data/tenants/instructions.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
@@ -144,6 +142,8 @@ import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgA
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 import { buildOrgAgentChannelSkillFilter, buildOrgAgentSkillFilter } from './orgAgentSkillFilter.js';
 export { buildOrgAgentChannelSkillFilter, buildOrgAgentSkillFilter } from './orgAgentSkillFilter.js';
+import { restoreOrgAgentRunContext, snapshotOrgAgentRunContext } from './orgAgentRunContext.js';
+import { authorizeApprovalResumeWake } from './orgAgentApprovalWakeAuthorization.js';
 import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
 import { claimRuntimeRun } from './runtimeRunClaim.js';
@@ -200,6 +200,8 @@ import { orphanUnrecoverableSubagentWake } from './subagent/orphanUnrecoverableS
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
+import { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
+export { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 const logger = createLogger('RawRuntime');
 
@@ -805,35 +807,6 @@ function loadTenantInstructions(sharedDir: string, tenantId?: string): string {
     return '';
   }
 }
-/**
- * 07-05：给 tenant-remote hand（HttpTransport → acs-orchestrator/hand-server → pod）
- * 现场装配 wire.context.env。envResolver 走 workspace.tenantId + workspace.username
- * 二级查 tokens.json，得到 { AZEROTH_TOKEN, AZEROTH_API_URL } 塞进 wire。
- *
- * 与 dispatch.ts:603 本地 SDK spawn 路径的 AZEROTH_TOKEN 注入并行——两者共用同一份
- * tokens.json 与 resolveAzerothInjection，一份配置同时生效于本地与远端 pod。
- *
- * 未命中（该 (tenantId, username) 没配 PAT）→ 不带 AZEROTH env →
- * pod 内 CLI 报"未授权"，语义与本地 SDK 未配置时一致。
- *
- * wire env **只带 AZEROTH 凭据**：tenantSharedEnv 里的任何变量都不经这条通道下发。
- * 08-03 曾为 dws wrapper 灰度开过一条「平台行为开关」白名单通道，08-04 wrapper 撤销
- * 后一并移除——通道存在本身就是凭据泄漏面（tenantSharedEnv 里有 DASHSCOPE_API_KEY
- * 这类密钥），没有真实使用者时不留。要再开必须重新论证并补白名单与回归。
- */
-export function buildTenantRemoteHandWireEnv(workspace: WorkspaceRef): Record<string, string> {
-  const tenantId = workspace.tenantId ?? DEFAULT_TENANT_ID;
-  const env: Record<string, string> = {};
-  const username = workspace.username;
-  if (username) {
-    const injection = resolveAzerothInjection(tenantId, username);
-    if (injection) {
-      env.AZEROTH_TOKEN = injection.token;
-      if (injection.apiUrl) env.AZEROTH_API_URL = injection.apiUrl;
-    }
-  }
-  return env;
-}
 export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig): AgentRunDispatch {
   const logger = config.logger ?? noopLogger;
   const sessionCatalog = resolveSessionCatalog(config);
@@ -1167,6 +1140,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
+        ...snapshotOrgAgentRunContext(context),
         ...(replaySourceSession ? {
           memoryConsolidationSourceSessionId: replaySourceSession.sessionId,
           forceFullContextReplay: true,
@@ -2714,20 +2688,13 @@ export async function wakeRuntimeSession(
   }
 
   if (resumeApproval) {
-    const hasInteractionResolved = events.some((event) => (
-      event.type === 'interaction_resolved'
-      && event.sessionId === run.sessionId
-      && event.interactionId === resumeApproval.approvalId
-    ));
-    const hasApprovalResolved = events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.sessionId === run.sessionId
-      && event.approvalId === resumeApproval.approvalId
-    ));
-    if (!hasInteractionResolved || hasApprovalResolved) {
-      await options.lease?.release(hasApprovalResolved ? 'completed' : 'failed', hasApprovalResolved ? 'approval_already_resolved' : 'missing_interaction_resolved_command');
-      return;
-    }
+    if (!await authorizeApprovalResumeWake({
+      run, approvalId: resumeApproval.approvalId, events, eventStore, eventTenantId,
+      ...(options.lease ? { lease: options.lease } : {}),
+      ...(config.authorizeOrgAgentRequesterLive
+        ? { authorizer: config.authorizeOrgAgentRequesterLive }
+        : {}),
+    })) return;
     await config.runStore?.markStatus(run.runId, 'running', 'approval_resume_wake_started', {
       resumeApprovalConsumedAt: new Date().toISOString(),
       resumeApprovalConsumedId: resumeApproval.approvalId,
@@ -2761,6 +2728,7 @@ export async function wakeRuntimeSession(
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
+          ...restoreOrgAgentRunContext(run.metadata),
         },
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
@@ -2835,6 +2803,7 @@ export async function wakeRuntimeSession(
           resumeSessionId: run.sessionId,
           sessionOwner: resolveWakeSessionOwner(config, session, run.userId, run.tenantId),
           targetCwd: session.cwd,
+          ...restoreOrgAgentRunContext(run.metadata),
         },
         model: resolveWakeModelRef(run, session),
         executionTarget: run.executionTarget ?? session.executionTarget,
@@ -2877,6 +2846,7 @@ export async function wakeRuntimeSession(
     resumeSessionId: run.sessionId,
     sessionOwner,
     targetCwd: session.cwd,
+    ...restoreOrgAgentRunContext(run.metadata),
   };
   if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return; const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();

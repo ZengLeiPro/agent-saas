@@ -104,6 +104,8 @@ import {
   getInvalidPromptRequestBlockedFailure,
   isForcedDrainHandoff,
   isInvalidPromptRequestBlocked,
+  loadedMcpToolNamesFromEvents,
+  loadedMcpToolNamesFromMessages,
   mergeRuntimeFailureResultText,
   mergeUsage,
   parseToolArguments,
@@ -612,13 +614,7 @@ export class RawAgentLoop implements AgentLoop {
     descriptorsByName: Map<string, ToolDescriptor>,
     messages: ModelChatMessage[],
   ): Map<string, ToolDescriptor> {
-    const loadedToolNames = new Set(
-      messages
-        .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
-          message.role === 'additional_tools'
-        ))
-        .flatMap((message) => message.tools.map((tool) => tool.name)),
-    );
+    const loadedToolNames = loadedMcpToolNamesFromMessages(messages);
     return this.restrictDeferredMcpDescriptors(descriptorsByName, loadedToolNames);
   }
 
@@ -626,13 +622,7 @@ export class RawAgentLoop implements AgentLoop {
     descriptorsByName: Map<string, ToolDescriptor>,
     events: PlatformEvent[],
   ): Map<string, ToolDescriptor> {
-    const loadedToolNames = new Set(
-      events
-        .filter((event): event is Extract<PlatformEvent, { type: 'mcp_tools_loaded' }> => (
-          event.type === 'mcp_tools_loaded'
-        ))
-        .flatMap((event) => event.tools.map((tool) => tool.name)),
-    );
+    const loadedToolNames = loadedMcpToolNamesFromEvents(events);
     return this.restrictDeferredMcpDescriptors(descriptorsByName, loadedToolNames);
   }
 
@@ -2594,6 +2584,10 @@ export class RawAgentLoop implements AgentLoop {
           const message = err instanceof Error ? err.message : String(err);
           await this.approvalStore.resolvePending(approval.id, 'rejected', message);
           return toolExecutionError({ call, descriptor, parsedInput: input, message: `tool error: ${message}` });
+        }
+
+        if (response.deferred === true) {
+          throw new ApprovalPendingWithoutInteractionHook(approval.id);
         }
 
         return this.resolveApprovalDecision({

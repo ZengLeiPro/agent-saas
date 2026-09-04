@@ -16,17 +16,30 @@ const NEVER_AUTO_APPROVE_TOOLS = new Set<string>([
 ]);
 
 export class DefaultToolPolicy implements ToolPolicy {
-  constructor(private readonly liveOrgAgentChannelPolicy?: (input: {
-    tenantId: string; bindingId: string; accountId: string; agentId: string;
-    conversationId: string; toolName: string;
-  }) => Promise<{ allowed: boolean; reason?: string }>) {}
+  constructor(
+    private readonly liveOrgAgentChannelPolicy?: (input: {
+      tenantId: string;
+      bindingId: string;
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      toolName: string;
+    }) => Promise<{ allowed: boolean; reason?: string }>,
+  ) {}
 
-  async decide(descriptor: ToolDescriptor, input: unknown, _context: RunContext): Promise<ToolPolicyDecision> {
+  async decide(
+    descriptor: ToolDescriptor,
+    input: unknown,
+    _context: RunContext,
+  ): Promise<ToolPolicyDecision> {
     const channelPolicy = _context.channelContext.orgAgentChannel;
     const attestedWorkerTaskTool = isAttestedOrgAgentWorkerTaskTool(descriptor, _context);
-    if (channelPolicy && !channelPolicy.allowedToolNames.includes(descriptor.name)
-      && !channelPolicy.allowedToolNames.includes(descriptor.id)
-      && !attestedWorkerTaskTool) {
+    if (
+      channelPolicy &&
+      !channelPolicy.allowedToolNames.includes(descriptor.name) &&
+      !channelPolicy.allowedToolNames.includes(descriptor.id) &&
+      !attestedWorkerTaskTool
+    ) {
       return { type: 'deny', reason: 'tool is outside the ChannelBinding effective capability' };
     }
     if (channelPolicy) {
@@ -34,10 +47,19 @@ export class DefaultToolPolicy implements ToolPolicy {
       if (!tenantId || !this.liveOrgAgentChannelPolicy) {
         return { type: 'deny', reason: 'live ChannelBinding policy is unavailable' };
       }
-      const live = await this.liveOrgAgentChannelPolicy({ tenantId, bindingId: channelPolicy.bindingId,
-        accountId: channelPolicy.accountId, agentId: channelPolicy.agentId,
-        conversationId: channelPolicy.channelPrincipal.conversationId, toolName: descriptor.name });
-      if (!live.allowed) return { type: 'deny', reason: live.reason ?? 'live ChannelBinding policy denied the tool' };
+      const live = await this.liveOrgAgentChannelPolicy({
+        tenantId,
+        bindingId: channelPolicy.bindingId,
+        accountId: channelPolicy.accountId,
+        agentId: channelPolicy.agentId,
+        conversationId: channelPolicy.channelPrincipal.conversationId,
+        toolName: descriptor.name,
+      });
+      if (!live.allowed)
+        return {
+          type: 'deny',
+          reason: live.reason ?? 'live ChannelBinding policy denied the tool',
+        };
     }
     if (channelPolicy && (descriptor.id === 'DwsBusiness' || descriptor.name === 'DwsBusiness')) {
       const decision = decideSharedGroupDwsAction({
@@ -46,9 +68,13 @@ export class DefaultToolPolicy implements ToolPolicy {
         resourceAllowlist: channelPolicy.dwsResourceIds,
         ...(_context.executionRole ? { executionRole: _context.executionRole } : {}),
       });
-      return decision.allowed
-        ? { type: 'allow' }
-        : { type: 'deny', reason: decision.reason };
+      if (!decision.allowed) return { type: 'deny', reason: decision.reason };
+      return decision.requiresHumanApproval
+        ? {
+            type: 'requires_approval',
+            reason: 'shared-group DWS write requires durable human approval',
+          }
+        : { type: 'allow' };
     }
     // 授权模式（autoApprove）对所有已认证用户生效（2026-07-02 起）：
     // 它免除的是「人工确认」，不是「安全边界」——Shell 的宿主隔离兜底
@@ -65,38 +91,44 @@ export class DefaultToolPolicy implements ToolPolicy {
       callPolicy = undefined;
     }
     const risk = callPolicy?.risk ?? descriptor.risk;
-    if (channelPolicy && risk !== 'safe' && channelPolicy.approvalRoles.length > 0
-      && (!channelPolicy.actorRole || !channelPolicy.approvalRoles.includes(channelPolicy.actorRole))) {
+    if (
+      channelPolicy &&
+      risk !== 'safe' &&
+      channelPolicy.approvalRoles.length > 0 &&
+      (!channelPolicy.actorRole || !channelPolicy.approvalRoles.includes(channelPolicy.actorRole))
+    ) {
       return { type: 'deny', reason: 'actor role cannot approve this ChannelBinding capability' };
     }
-    const neverAutoApprove = callPolicy?.neverAutoApprove === true
-      || NEVER_AUTO_APPROVE_TOOLS.has(descriptor.id)
-      || NEVER_AUTO_APPROVE_TOOLS.has(descriptor.name);
+    const neverAutoApprove =
+      callPolicy?.neverAutoApprove === true ||
+      NEVER_AUTO_APPROVE_TOOLS.has(descriptor.id) ||
+      NEVER_AUTO_APPROVE_TOOLS.has(descriptor.name);
     const identity = _context.channelContext.user ?? _context.channelContext.sessionOwner;
-    const autoApproveTools = _context.approvalPolicy?.autoApproveTools === true
-      || _context.approvalPolicy?.autoApproveRunShell === true;
+    const autoApproveTools =
+      _context.approvalPolicy?.autoApproveTools === true ||
+      _context.approvalPolicy?.autoApproveRunShell === true;
     // 「低风险常开」档（TASK-256）：自动批准上限到 workspace_write；
     // dangerous 仍走人工批准。neverAutoApprove 恒为人工，不受该档影响。
     const lowRiskOnly = _context.approvalPolicy?.lowRiskOnly === true;
     if (
-      autoApproveTools
-      && identity
-      && risk !== 'safe'
-      && risk !== 'dangerous'
-      && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id)
-      && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name)
-      && !neverAutoApprove
+      autoApproveTools &&
+      identity &&
+      risk !== 'safe' &&
+      risk !== 'dangerous' &&
+      !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id) &&
+      !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name) &&
+      !neverAutoApprove
     ) {
       return { type: 'allow' };
     }
     if (
-      autoApproveTools
-      && !lowRiskOnly
-      && identity
-      && risk === 'dangerous'
-      && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id)
-      && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name)
-      && !neverAutoApprove
+      autoApproveTools &&
+      !lowRiskOnly &&
+      identity &&
+      risk === 'dangerous' &&
+      !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id) &&
+      !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name) &&
+      !neverAutoApprove
     ) {
       return { type: 'allow' };
     }

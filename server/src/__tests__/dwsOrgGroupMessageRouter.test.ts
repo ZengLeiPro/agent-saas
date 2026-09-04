@@ -3,128 +3,22 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRunDispatch } from '../agent/index.js';
-import type {
-  AgentDwsAccountRecord,
-  AgentDwsAccountStore,
-} from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
-import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
-import type { DwsRequesterResolution } from '../dws/requesterIdentityResolver.js';
+import {
+  account,
+  createBinding,
+  deferred,
+  delivery,
+  type DwsOrgGroupRouterHarnessOptions,
+  item,
+  now,
+  workOrder,
+} from './dwsOrgGroupMessageRouterFixtures.js';
 
-const now = '2026-09-04T00:00:00.000Z';
-const account: AgentDwsAccountRecord = {
-  accountId: 'account-a',
-  tenantId: 'tenant-a',
-  agentId: 'agent-a',
-  displayName: '开开',
-  loginId: 'agent',
-  corpId: 'corp-a',
-  dingtalkUserId: 'agent-self',
-  profileId: 'corp-a:agent-self',
-  status: 'active',
-  runtimeStatus: 'ready',
-  eventKinds: ['at_me'],
-  revision: 1,
-  createdAt: now,
-  createdBy: 'admin',
-  updatedAt: now,
-  updatedBy: 'admin',
-};
-const item: AgentDwsInboxRecord = {
-  inboxId: 'inbox-a',
-  tenantId: 'tenant-a',
-  accountId: 'account-a',
-  eventId: 'event-a',
-  eventType: 'user_im_message_receive_at',
-  conversationId: 'cid-a',
-  messageId: 'mid-a',
-  senderOpenDingtalkId: 'sender-a',
-  content: '整理采购异常',
-  state: 'processing',
-  attempt: 1,
-  leaseFence: 1,
-  maxAttempts: 5,
-  createdAt: now,
-  updatedAt: now,
-  payload: {
-    schemaVersion: 2,
-    source: 'dws_personal_stream',
-    routing: {},
-    senderName: '调用人',
-    accountIdentity: {
-      profileId: 'corp-a:agent-self',
-      corpId: 'corp-a',
-      dingtalkUserId: 'agent-self',
-    },
-  },
-};
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  return {
-    promise: new Promise<void>((done) => {
-      resolve = done;
-    }),
-    resolve: () => resolve(),
-  };
-}
-
-function workOrder(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    workOrderId: 'work-route-a',
-    shortId: 'W-ABCDEF123456',
-    tenantId: 'tenant-a',
-    agentId: 'agent-a',
-    bindingId: 'channel-binding-a',
-    workConversationId: 'workconv-route-a',
-    idempotencyKey: 'route-key-a',
-    title: '整理采购异常',
-    state: 'running',
-    visibility: 'conversation',
-    currentAttemptNo: 1,
-    createdByActor: {
-      kind: 'external_user', provider: 'dingtalk', corpId: 'corp-a', openId: 'sender-a',
-      assurance: 'mapped', mappedUserId: 'user-a', role: 'member',
-    },
-    policySnapshot: {},
-    cancelPolicy: {},
-    control: { revision: 1, supplements: [], workerType: 'general' },
-    version: 1,
-    createdAt: now,
-    updatedAt: now,
-    ...overrides,
-  };
-}
-
-function setup(
-  options: {
-    liveDeny?: boolean;
-    guestReadOnly?: boolean;
-    requesterOutcome?: DwsRequesterResolution;
-    senderReceipt?: Record<string, unknown> | null;
-    claimed?: AgentDwsInboxRecord;
-    triggerRoles?: Array<'member' | 'org_admin'>;
-    governanceRole?: 'member' | 'org_admin' | null;
-    workVisibility?: 'conversation' | 'requester_only';
-    content?: string;
-    contextEnabled?: boolean;
-    workOrders?: Array<Record<string, unknown>>;
-    shortWorkOrder?: Record<string, unknown> | null;
-    completionRequesterAuthorized?: boolean;
-    memories?: Array<Record<string, unknown>>;
-    frontReplyDeadlineMs?: number;
-    dispatchGate?: Promise<void>;
-    failFirstDeliveryClaim?: boolean;
-    systemInstructions?: string;
-    existingRun?: Record<string, unknown>;
-    memoryPolicy?: {
-      readAgent: boolean;
-      readConversation: boolean;
-      adminWriteConversation: boolean;
-    };
-  } = {},
-) {
+function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
   const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
   const messageStore = {
     claimNext: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValue(null),
@@ -159,76 +53,7 @@ function setup(
     listForAccount: vi.fn(),
     deleteForTenant: vi.fn(),
   } as unknown as AgentDwsMessageStore;
-  const binding = {
-    bindingId: 'channel-binding-a',
-    tenantId: 'tenant-a',
-    accountId: 'account-a',
-    agentId: 'agent-a',
-    conversationId: 'cid-a',
-    channelKind: 'group' as const,
-    activationState: 'active' as const,
-    enabled: true,
-    conversationSpaceId: 'space-a',
-    serviceSessionId: 'service-session-a',
-    workspaceId: 'ws_tenant-a__agent_agent-a',
-    policy: {
-      enabled: true,
-      membership: options.guestReadOnly ? ('members_and_guests' as const) : ('members' as const),
-      guest: options.guestReadOnly ? ('shared_read_only' as const) : ('deny' as const),
-      taskVisibility: 'conversation' as const,
-      completion: 'reply_to_work_conversation' as const,
-      liveDeny: options.liveDeny === true,
-    },
-    effectiveConfig: {
-      identity: { displayName: '开开' },
-      instructions: { system: options.systemInstructions ?? '' },
-      knowledge: { contextEnabled: options.contextEnabled ?? false, sourceIds: ['source-a'] },
-      capabilities: {
-        skillIds: [],
-        toolNames: ['Agent', 'BackgroundTask', 'ContextSearch', 'ContextGet'],
-        dwsResourceIds: [],
-      },
-      memory: options.memoryPolicy ?? {
-        readAgent: true,
-        readConversation: true,
-        adminWriteConversation: false,
-      },
-      access: { triggerRoles: options.triggerRoles ?? [], approvalRoles: ['org_admin'] },
-      speech: { proactive: false, requireMention: true },
-    },
-    revision: 1,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const delivery: DwsDeliveryIntent = {
-    deliveryId: 'delivery-a',
-    tenantId: 'tenant-a',
-    inboxId: 'inbox-a',
-    accountId: 'account-a',
-    conversationId: 'cid-a',
-    agentId: 'agent-a',
-    bindingId: 'channel-binding-a',
-    conversationSpaceId: 'space-a',
-    workConversationId: 'workconv-a',
-    policyRevision: 1,
-    providerAttemptPhase: 'legacy_unknown',
-    source: 'command' as const,
-    deliveryKind: 'front_reply' as const,
-    disposition: 'replied' as const,
-    deliveryState: 'pending' as const,
-    destination: {
-      provider: 'dingtalk' as const,
-      accountId: 'account-a',
-      conversationId: 'cid-a',
-      kind: 'group' as const,
-    },
-    content: '完成',
-    idempotencyKey: 'delivery-key',
-    attempt: 0,
-    leaseFence: 0,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const binding = createBinding(options);
   const storedDeliveries = new Map<string, typeof delivery>();
   let deliverySequence = 0;
   let deliveryClaimSequence = 0;
@@ -249,40 +74,67 @@ function setup(
       updatedAt: now,
     }),
     findWorkConversationByMessage: vi.fn().mockResolvedValue(null),
-    getWorkConversation: vi.fn().mockImplementation(async (_tenantId: string, workConversationId: string) => {
-      const routed = [options.shortWorkOrder, ...(options.workOrders ?? [])]
-        .find(candidate => candidate?.workConversationId === workConversationId);
-      if (routed) {
-        return {
-          workConversationId,
-          tenantId: 'tenant-a',
-          bindingId: 'channel-binding-a',
-          rootKey: 'routed-message',
-          sessionId: 'session-routed',
-          state: 'active',
-          createdAt: now,
-          updatedAt: now,
-        };
-      }
-      return null;
-    }),
+    getWorkConversation: vi
+      .fn()
+      .mockImplementation(async (_tenantId: string, workConversationId: string) => {
+        if (workConversationId === 'workconv-a') {
+          return {
+            workConversationId,
+            tenantId: 'tenant-a',
+            bindingId: 'channel-binding-a',
+            rootKey: 'mid-a',
+            rootMessageId: 'mid-a',
+            sessionId: 'session-a',
+            state: 'active',
+            createdAt: now,
+            updatedAt: now,
+          };
+        }
+        const routed = [options.shortWorkOrder, ...(options.workOrders ?? [])].find(
+          (candidate) => candidate?.workConversationId === workConversationId,
+        );
+        if (routed) {
+          return {
+            workConversationId,
+            tenantId: 'tenant-a',
+            bindingId: 'channel-binding-a',
+            rootKey: 'routed-message',
+            sessionId: 'session-routed',
+            state: 'active',
+            createdAt: now,
+            updatedAt: now,
+          };
+        }
+        return null;
+      }),
     pinInboxContext: vi.fn(),
     pinInboxRouting: vi.fn(),
     getWorkOrder: vi.fn().mockResolvedValue({
-      workOrderId: 'work-a', tenantId: 'tenant-a', agentId: 'agent-a',
-      bindingId: 'channel-binding-a', workConversationId: 'workconv-a',
-      state: 'completed', currentAttemptNo: 1,
+      workOrderId: 'work-a',
+      tenantId: 'tenant-a',
+      agentId: 'agent-a',
+      bindingId: 'channel-binding-a',
+      workConversationId: 'workconv-a',
+      title: '整理采购异常',
+      resultEnvelope: { summary: '敏感结果' },
+      state: 'completed',
+      currentAttemptNo: 1,
       visibility: options.workVisibility ?? 'conversation',
       createdByActor: {
-        kind: 'external_user', provider: 'dingtalk', corpId: 'corp-a',
-        openId: 'requester-open-id', assurance: 'mapped', mappedUserId: 'user-a', role: 'member',
+        kind: 'external_user',
+        provider: 'dingtalk',
+        corpId: 'corp-a',
+        openId: 'requester-open-id',
+        assurance: 'mapped',
+        mappedUserId: 'user-a',
+        role: 'member',
       },
     }),
-    getWorkOrderByShortId: vi.fn().mockImplementation(async (
-      _tenantId: string,
-      _agentId: string,
-      shortId: string,
-    ) => options.shortWorkOrder?.shortId === shortId ? options.shortWorkOrder : null),
+    getWorkOrderByShortId: vi
+      .fn()
+      .mockImplementation(async (_tenantId: string, _agentId: string, shortId: string) =>
+        options.shortWorkOrder?.shortId === shortId ? options.shortWorkOrder : null,
+      ),
     listWorkOrders: vi.fn().mockResolvedValue(options.workOrders ?? []),
     listWorkAttempts: vi.fn().mockResolvedValue([
       {
@@ -427,14 +279,18 @@ function setup(
     dispatch,
     resolveDefaultModel: () => ({ ref: 'models/test', model: 'test' }),
     resolveRequester,
-    resolveRequesterGovernanceRole: vi.fn().mockResolvedValue(
-      options.governanceRole === null ? undefined : (options.governanceRole ?? 'member'),
-    ),
+    resolveRequesterGovernanceRole: vi
+      .fn()
+      .mockResolvedValue(
+        options.governanceRole === null ? undefined : (options.governanceRole ?? 'member'),
+      ),
     ...(options.requesterOutcome
       ? { resolveRequesterOutcome: vi.fn().mockResolvedValue(options.requesterOutcome) }
       : {}),
     authorizeRequester: vi.fn().mockResolvedValue({ allowed: true }),
-    authorizeCompletionRequester: vi.fn().mockResolvedValue(options.completionRequesterAuthorized ?? true),
+    authorizeCompletionRequester: vi
+      .fn()
+      .mockResolvedValue(options.completionRequesterAuthorized ?? true),
     auditRequesterRejection: vi.fn(),
     auditToolPolicyRejection: vi.fn(),
     sender,
@@ -470,7 +326,9 @@ describe('AgentDwsMessageRouter organization group binding', () => {
         resumeSessionId: 'session-a',
         sessionOwner: expect.objectContaining({ username: 'agent-dws:agent-a' }),
         orgAgentChannel: expect.objectContaining({
-          bindingId: 'channel-binding-a', actorRole: 'member', approvalRoles: ['org_admin'],
+          bindingId: 'channel-binding-a',
+          actorRole: 'member',
+          approvalRoles: ['org_admin'],
           externalActor: expect.objectContaining({ role: 'member' }),
         }),
       }),
@@ -486,12 +344,14 @@ describe('AgentDwsMessageRouter organization group binding', () => {
       expect.objectContaining({ idempotencyKey: legacyProviderKey }),
     );
     expect(test.sender.send).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object), '完成', legacyProviderKey,
+      expect.any(Object),
+      expect.any(Object),
+      '完成',
+      legacyProviderKey,
     );
     expect(test.orgStore.markDeliveryProviderStarted).toHaveBeenCalledOnce();
     expect(test.orgStore.markDeliverySent).toHaveBeenCalledOnce();
   });
-
 
   it('routes an obvious continuation when its native thread has exactly one visible task', async () => {
     const routed = workOrder({ shortId: 'W-123456ABCDEF' });
@@ -502,9 +362,11 @@ describe('AgentDwsMessageRouter organization group binding', () => {
 
     await expect(test.router.runOnce()).resolves.toBe(true);
 
-    expect(test.orgStore.pinInboxContext).toHaveBeenCalledWith(expect.objectContaining({
-      workConversationId: 'workconv-route-a',
-    }));
+    expect(test.orgStore.pinInboxContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workConversationId: 'workconv-route-a',
+      }),
+    );
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ resumeSessionId: 'session-routed' }),
@@ -521,15 +383,19 @@ describe('AgentDwsMessageRouter organization group binding', () => {
 
     expect(test.dispatch).not.toHaveBeenCalled();
     expect(test.sender.send).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object),
-      expect.stringContaining('W-123456ABCDEF'), expect.any(String),
+      expect.any(Object),
+      expect.any(Object),
+      expect.stringContaining('W-123456ABCDEF'),
+      expect.any(String),
     );
   });
 
   it('keeps two active WorkOrders in one native thread ambiguous instead of choosing the latest', async () => {
     const first = workOrder({ shortId: 'W-123456ABCDEF', title: '采购异常核对' });
     const second = workOrder({
-      workOrderId: 'work-route-b', shortId: 'W-987654ABCDEF', title: '采购合同复核',
+      workOrderId: 'work-route-b',
+      shortId: 'W-987654ABCDEF',
+      title: '采购合同复核',
     });
     const test = setup({
       claimed: { ...item, content: '复核这个任务', workConversationId: 'workconv-route-a' },
@@ -540,20 +406,26 @@ describe('AgentDwsMessageRouter organization group binding', () => {
 
     expect(test.dispatch).not.toHaveBeenCalled();
     expect(test.messageStore.saveDispatchResult).toHaveBeenCalledWith(
-      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      'inbox-a',
+      expect.stringMatching(/^agent-dws-router:/),
+      1,
       expect.stringContaining('W-123456ABCDEF'),
     );
     expect(test.sender.send).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object),
-      expect.stringContaining('W-987654ABCDEF'), expect.any(String),
+      expect.any(Object),
+      expect.any(Object),
+      expect.stringContaining('W-987654ABCDEF'),
+      expect.any(String),
     );
   });
 
   it('writes and sends a durable clarification instead of dispatching an ambiguous continuation', async () => {
     const first = workOrder({ shortId: 'W-123456ABCDEF', title: '采购异常核对' });
     const second = workOrder({
-      workOrderId: 'work-route-b', shortId: 'W-987654ABCDEF',
-      workConversationId: 'workconv-route-b', title: '供应商资料补全',
+      workOrderId: 'work-route-b',
+      shortId: 'W-987654ABCDEF',
+      workConversationId: 'workconv-route-b',
+      title: '供应商资料补全',
     });
     const test = setup({ content: '继续这个任务', workOrders: [first, second] });
 
@@ -561,12 +433,16 @@ describe('AgentDwsMessageRouter organization group binding', () => {
 
     expect(test.dispatch).not.toHaveBeenCalled();
     expect(test.messageStore.saveDispatchResult).toHaveBeenCalledWith(
-      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      'inbox-a',
+      expect.stringMatching(/^agent-dws-router:/),
+      1,
       expect.stringContaining('W-123456ABCDEF'),
     );
     expect(test.sender.send).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object),
-      expect.stringContaining('W-987654ABCDEF'), expect.any(String),
+      expect.any(Object),
+      expect.any(Object),
+      expect.stringContaining('W-987654ABCDEF'),
+      expect.any(String),
     );
     expect(test.messageStore.complete).toHaveBeenCalledOnce();
   });
@@ -575,8 +451,13 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     const privateWork = workOrder({
       visibility: 'requester_only',
       createdByActor: {
-        kind: 'external_user', provider: 'dingtalk', corpId: 'corp-a', openId: 'another-user',
-        assurance: 'mapped', mappedUserId: 'user-b', role: 'member',
+        kind: 'external_user',
+        provider: 'dingtalk',
+        corpId: 'corp-a',
+        openId: 'another-user',
+        assurance: 'mapped',
+        mappedUserId: 'user-b',
+        role: 'member',
       },
     });
     const test = setup({ content: '继续 W-ABCDEF123456', shortWorkOrder: privateWork });
@@ -585,8 +466,10 @@ describe('AgentDwsMessageRouter organization group binding', () => {
 
     expect(test.dispatch).not.toHaveBeenCalled();
     expect(test.sender.send).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object),
-      expect.stringContaining('找不到你可访问的任务 W-ABCDEF123456'), expect.any(String),
+      expect.any(Object),
+      expect.any(Object),
+      expect.stringContaining('找不到你可访问的任务 W-ABCDEF123456'),
+      expect.any(String),
     );
   });
 
@@ -658,44 +541,71 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     await expect(enabled.router.runOnce()).resolves.toBe(true);
     expect(enabled.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ orgAgentChannel: expect.objectContaining({ contextEnabled: true }) }),
-      expect.objectContaining({ allowedTools: ['Agent', 'BackgroundTask', 'ContextSearch', 'ContextGet'] }),
+      expect.objectContaining({
+        orgAgentChannel: expect.objectContaining({ contextEnabled: true }),
+      }),
+      expect.objectContaining({
+        allowedTools: ['Agent', 'BackgroundTask', 'ContextSearch', 'ContextGet'],
+      }),
       expect.any(Object),
     );
 
     const disabled = setup();
     await expect(disabled.router.runOnce()).resolves.toBe(true);
     expect(disabled.dispatch).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object),
-      expect.objectContaining({ allowedTools: ['Agent', 'BackgroundTask'] }), expect.any(Object),
+      expect.any(Object),
+      expect.any(Object),
+      expect.objectContaining({ allowedTools: ['Agent', 'BackgroundTask'] }),
+      expect.any(Object),
     );
   });
 
   it('does not inject a revoked AgentMemory derived from another group into the next group turn', async () => {
     const sourceMemoryId = 'conversation-memory-group-a';
     const promoted = {
-      memoryId: 'agent-memory-a', tenantId: 'tenant-a', agentId: 'agent-a',
-      memoryScope: 'agent', status: 'active', content: { fact: 'A 群受限采购底价' },
+      memoryId: 'agent-memory-a',
+      tenantId: 'tenant-a',
+      agentId: 'agent-a',
+      memoryScope: 'agent',
+      status: 'active',
+      content: { fact: 'A 群受限采购底价' },
       provenance: { messageId: 'message-group-a', sourceMemoryId },
-      promotedBy: 'admin-a', promotionReason: '管理员确认', policyRevision: 1, version: 1,
-      createdAt: now, updatedAt: now,
+      promotedBy: 'admin-a',
+      promotionReason: '管理员确认',
+      policyRevision: 1,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
     };
     const beforeRevocation = setup({ memories: [promoted] });
     await expect(beforeRevocation.router.runOnce()).resolves.toBe(true);
     expect(beforeRevocation.dispatch).toHaveBeenCalledWith(
-      expect.any(Object), expect.objectContaining({
+      expect.any(Object),
+      expect.objectContaining({
         systemContext: expect.stringContaining('A 群受限采购底价'),
-      }), expect.any(Object), expect.any(Object),
+      }),
+      expect.any(Object),
+      expect.any(Object),
     );
 
-    const afterRevocation = setup({ memories: [{
-      ...promoted, status: 'revoked', version: 2, revokedAt: now,
-    }] });
+    const afterRevocation = setup({
+      memories: [
+        {
+          ...promoted,
+          status: 'revoked',
+          version: 2,
+          revokedAt: now,
+        },
+      ],
+    });
     await expect(afterRevocation.router.runOnce()).resolves.toBe(true);
     expect(afterRevocation.dispatch).toHaveBeenCalledWith(
-      expect.any(Object), expect.objectContaining({
+      expect.any(Object),
+      expect.objectContaining({
         systemContext: expect.not.stringContaining('A 群受限采购底价'),
-      }), expect.any(Object), expect.any(Object),
+      }),
+      expect.any(Object),
+      expect.any(Object),
     );
   });
 
@@ -716,10 +626,59 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     );
   });
 
+  it('keeps organization DWS write approval durable instead of auto-rejecting it', async () => {
+    let interactionResponse: { deferred?: boolean; message?: string } | undefined;
+    const dispatch = vi.fn((_message, context, _options, hooks) =>
+      (async function* () {
+        interactionResponse = await hooks?.onInteraction?.({
+          type: 'permission_request',
+          interactionId: 'approval-a',
+          sessionId: context.resumeSessionId,
+          runId: 'run-a',
+          toolCallId: 'call-a',
+          toolId: 'DwsBusiness',
+          toolName: 'DwsBusiness',
+          displayName: '钉钉业务操作',
+          toolInput: { args: ['doc', 'update', '--node', 'doc-a'], confirmed: true },
+        });
+        yield { type: 'session_init' as const, sessionId: context.resumeSessionId };
+        yield { type: 'done' as const };
+      })(),
+    ) as unknown as AgentRunDispatch;
+    const test = setup({
+      dwsBusinessEnabled: true,
+      governanceRole: 'org_admin',
+    });
+    vi.mocked(test.dispatch).mockImplementation(dispatch);
+
+    await expect(test.router.runOnce()).resolves.toBe(false);
+
+    expect(interactionResponse).toEqual({
+      deferred: true,
+      message: '等待平台管理员审批组织写操作',
+    });
+    expect(test.messageStore.defer).toHaveBeenCalledWith(
+      'inbox-a',
+      expect.stringMatching(/^agent-dws-router:/),
+      1,
+      30_000,
+      'Agent DWS organization write is waiting for durable approval',
+    );
+    expect(test.messageStore.fail).not.toHaveBeenCalled();
+    expect(test.messageStore.complete).not.toHaveBeenCalled();
+    expect(test.orgStore.createDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: '这项组织写操作已进入审批，管理员批准后我会继续执行并回复结果。',
+        source: 'system',
+      }),
+    );
+  });
+
   it('routes a service completion without resolving or borrowing a requester identity', async () => {
     const completion = {
       ...item,
       senderOpenDingtalkId: undefined,
+      workConversationId: 'workconv-a',
       payload: {
         ...item.payload,
         source: 'background_task_completion',
@@ -727,6 +686,7 @@ describe('AgentDwsMessageRouter organization group binding', () => {
         workOrderId: 'work-a',
         attemptId: 'attempt-a',
         attemptFence: 1,
+        workConversationId: 'workconv-a',
       },
     };
     const test = setup({ claimed: completion });
@@ -750,6 +710,7 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     const completion = {
       ...item,
       senderOpenDingtalkId: undefined,
+      workConversationId: 'workconv-a',
       payload: {
         ...item.payload,
         source: 'background_task_completion',
@@ -757,25 +718,36 @@ describe('AgentDwsMessageRouter organization group binding', () => {
         workOrderId: 'work-a',
         attemptId: 'attempt-a',
         attemptFence: 1,
+        workConversationId: 'workconv-a',
       },
     };
     const test = setup({ claimed: completion, workVisibility: 'requester_only' });
     await expect(test.router.runOnce()).resolves.toBe(true);
 
-    expect(test.orgStore.createDelivery).toHaveBeenCalledWith(expect.objectContaining({
-      visibility: 'requester_only',
-      destination: expect.objectContaining({
-        kind: 'direct',
-        peerOpenId: 'requester-open-id',
+    expect(test.dispatch).not.toHaveBeenCalled();
+    expect(test.messageStore.markDispatchStarted).toHaveBeenCalledWith(
+      'inbox-a',
+      expect.stringMatching(/^agent-dws-router:/),
+      1,
+      expect.stringMatching(/^agent-dws-private-completion-/),
+      expect.any(String),
+    );
+    expect(test.orgStore.createDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visibility: 'requester_only',
+        destination: expect.objectContaining({
+          kind: 'direct',
+          peerOpenId: 'requester-open-id',
+        }),
       }),
-    }));
+    );
     expect(test.sender.send).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
         type: 'user_im_message_receive_o2o_all',
         senderOpenDingtalkId: 'requester-open-id',
       }),
-      '完成',
+      '任务「整理采购异常」已完成：敏感结果',
       expect.any(String),
     );
   });

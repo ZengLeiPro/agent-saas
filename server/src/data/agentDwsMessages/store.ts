@@ -91,6 +91,21 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
   }
 
+  async listActiveForAccount(
+    tenantId: string,
+    accountId: string,
+  ): Promise<AgentDwsInboxRecord[]> {
+    assertTexts(tenantId, accountId);
+    const result = await this.pool.query(`
+      SELECT *
+      FROM ${this.inboxTable}
+      WHERE tenant_id=$1 AND account_id=$2
+        AND state IN ('pending','processing','retry_wait','reply_pending')
+      ORDER BY created_at DESC,inbox_id DESC
+    `, [tenantId, accountId]);
+    return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
+  }
+
   /** Legacy v1 reply rows retain reply_pending so identity reconciliation cannot rerun dispatch. */
   async claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
     assertOwnerFence(owner, 1, false);

@@ -1595,7 +1595,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const memoryContextTools = createRuntimeMemoryContextTools({
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
-    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, orgGroupAgentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
+    additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, membershipStore, orgAgentStore, orgGroupAgentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
       isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
@@ -1621,7 +1621,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
-    ...createOrgAgentChannelPolicyRuntimeOptions(orgGroupAgentStore, agentDwsAccountStore, orgAgentStore),
+    ...createOrgAgentChannelPolicyRuntimeOptions(orgGroupAgentStore, agentDwsAccountStore, orgAgentStore, userStore, membershipStore, assignmentStore),
     environmentStore,
     taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
@@ -2744,7 +2744,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
 
   if (agentDwsAccountStore && userStore && orgAgentStore && runPreflightService && governanceAuditStore) agentDwsRuntime = await createAgentDwsRuntime({
-    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, orgGroupAgentStore, pgEventStore, pgRunStore,
+    agentCwd, accountStore: agentDwsAccountStore, assignmentStore, contextStore, messageStore: agentDwsMessageStore, orgGroupAgentStore, pgEventStore, pgRunStore, runtimeScheduler,
     userStore, membershipStore, orgAgentStore, runPreflightService, governanceAuditStore,
     tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix ?? 'agent_runtime' : 'agent_runtime', dispatch: finalDispatch, resolveDefaultModel: tenantId => defaultModelResolver?.(tenantId) ?? null,
     resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured),
@@ -2894,8 +2894,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     dwsConnectionStore,
     dwsAuthFlowService,
     agentDwsAccountStore,
-    agentDwsMessageStore,
-    orgGroupAgentStore,
+    agentDwsMessageStore, orgGroupAgentStore, orgAgentApprovalService: agentDwsRuntime?.approvalService,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
     dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
     agentDwsGroupBindingUpdated: agentDwsRuntime?.onGroupBindingUpdated,

@@ -100,6 +100,9 @@ export async function resolveSharedGroupContext(
       !work ||
       !attempt ||
       work.bindingId !== binding.bindingId ||
+      work.agentId !== binding.agentId ||
+      work.workConversationId !== item.workConversationId ||
+      attempt.workOrderId !== work.workOrderId ||
       attempt.runtimeRunId !== item.payload.backgroundTaskId ||
       attempt.attemptNo !== fence ||
       work.currentAttemptNo !== fence ||

@@ -11,22 +11,39 @@ import type { RunRecord } from '../runtime/runStore.js';
 function parentRun(metadata: Record<string, unknown>): RunRecord {
   const now = new Date().toISOString();
   return {
-    runId: 'parent-run', sessionId: 'parent-session', userId: 'user-1', tenantId: 'tenant-1',
-    status: 'running', channel: 'dingtalk', requestedAt: now, updatedAt: now, metadata,
+    runId: 'parent-run',
+    sessionId: 'parent-session',
+    userId: 'user-1',
+    tenantId: 'tenant-1',
+    status: 'running',
+    channel: 'dingtalk',
+    requestedAt: now,
+    updatedAt: now,
+    metadata,
   };
 }
 
 function legacyCompletionMetadata() {
   return {
     taskType: 'agent' as const,
-    parentRunId: 'parent-run', parentSessionId: 'parent-session', parentToolCallId: 'call-1',
-    shortTaskId: 'T-1234ABCD', description: '执行任务', modelRef: 'model', cwd: '/workspace',
-    workspaceId: 'ws-1', parentChannel: 'dingtalk' as const, outputTransactionMode: 'terminal_buffered' as const,
+    parentRunId: 'parent-run',
+    parentSessionId: 'parent-session',
+    parentToolCallId: 'call-1',
+    shortTaskId: 'T-1234ABCD',
+    description: '执行任务',
+    modelRef: 'model',
+    cwd: '/workspace',
+    workspaceId: 'ws-1',
+    parentChannel: 'dingtalk' as const,
+    outputTransactionMode: 'terminal_buffered' as const,
     parentOutputTransactionMode: 'terminal_buffered' as const,
-    prompt: '执行', agentType: 'general' as const, includeCompanyInfo: false,
+    prompt: '执行',
+    agentType: 'general' as const,
+    includeCompanyInfo: false,
     dwsCompletionRouteVersion: 'legacy' as const,
     legacyDwsCompletionRoute: {
-      accountId: 'adws-1', conversationId: 'cid-1',
+      accountId: 'adws-1',
+      conversationId: 'cid-1',
       eventType: 'user_im_message_receive_o2o_all' as const,
     },
   };
@@ -34,64 +51,113 @@ function legacyCompletionMetadata() {
 
 describe('background task DWS completion route', () => {
   it('version-parses exact, legacy and invalid durable routes without dropping legacy', () => {
-    expect(parseDwsCompletionRoute({
-      accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
-    })).toMatchObject({ version: 'exact', route: { profileId: 'corp-1:user-1' } });
-    expect(parseDwsCompletionRoute({
-      accountId: 'adws-1', conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
-    })).toEqual({
+    expect(
+      parseDwsCompletionRoute({
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all',
+      }),
+    ).toMatchObject({ version: 'exact', route: { profileId: 'corp-1:user-1' } });
+    expect(
+      parseDwsCompletionRoute({
+        accountId: 'adws-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all',
+      }),
+    ).toEqual({
       version: 'legacy',
-      route: { accountId: 'adws-1', conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all' },
+      route: {
+        accountId: 'adws-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all',
+      },
     });
-    expect(parseDwsCompletionRoute({
-      accountId: 'adws-1', profileId: 'corp-1:user-1', conversationId: 'cid-1',
-      eventType: 'user_im_message_receive_o2o_all',
-    })).toEqual({ version: 'invalid' });
+    expect(
+      parseDwsCompletionRoute({
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all',
+      }),
+    ).toEqual({ version: 'invalid' });
     for (const partialIdentity of [
-      { corpId: '' }, { dingtalkUserId: null }, { profileId: undefined },
+      { corpId: '' },
+      { dingtalkUserId: null },
+      { profileId: undefined },
     ]) {
-      expect(parseDwsCompletionRoute({
-        accountId: 'adws-1', conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
-        ...partialIdentity,
-      })).toEqual({ version: 'invalid' });
+      expect(
+        parseDwsCompletionRoute({
+          accountId: 'adws-1',
+          conversationId: 'cid-1',
+          eventType: 'user_im_message_receive_o2o_all',
+          ...partialIdentity,
+        }),
+      ).toEqual({ version: 'invalid' });
     }
   });
 
   it('pins the original account, conversation and sender from the durable parent Run', () => {
-    const route = resolveDwsCompletionRoute(parentRun({
-      wakeMessage: {
-        channel: 'dingtalk', chatId: 'cid-1', senderId: 'open-user-1',
-        metadata: {
-          source: 'agent_dws_personal_stream', accountId: 'adws-1',
-          profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-          eventType: 'user_im_message_receive_o2o_all', messageId: 'msg-1',
+    const route = resolveDwsCompletionRoute(
+      parentRun({
+        wakeMessage: {
+          channel: 'dingtalk',
+          chatId: 'cid-1',
+          senderId: 'open-user-1',
+          metadata: {
+            source: 'agent_dws_personal_stream',
+            accountId: 'adws-1',
+            profileId: 'corp-1:user-1',
+            corpId: 'corp-1',
+            dingtalkUserId: 'user-1',
+            eventType: 'user_im_message_receive_o2o_all',
+            messageId: 'msg-1',
+          },
         },
-      },
-    }), 'dingtalk');
+      }),
+      'dingtalk',
+    );
     expect(route).toEqual({
       version: 'exact',
       route: {
-        accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-        conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
-        messageId: 'msg-1', senderOpenDingtalkId: 'open-user-1',
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all',
+        messageId: 'msg-1',
+        senderOpenDingtalkId: 'open-user-1',
       },
     });
   });
 
   it('fails closed for non-DWS, incomplete or inconsistent account identity metadata', () => {
     expect(resolveDwsCompletionRoute(parentRun({}), 'dingtalk')).toEqual({ version: 'none' });
-    expect(resolveDwsCompletionRoute(parentRun({ wakeMessage: {} }), 'web')).toEqual({ version: 'none' });
-    expect(resolveDwsCompletionRoute(parentRun({
-      wakeMessage: {
-        channel: 'dingtalk', chatId: 'cid-1',
-        metadata: {
-          source: 'agent_dws_personal_stream', accountId: 'adws-1',
-          profileId: 'corp-1:user-2', corpId: 'corp-1', dingtalkUserId: 'user-1',
-          eventType: 'user_im_message_receive_o2o_all',
-        },
-      },
-    }), 'dingtalk')).toEqual({ version: 'invalid' });
+    expect(resolveDwsCompletionRoute(parentRun({ wakeMessage: {} }), 'web')).toEqual({
+      version: 'none',
+    });
+    expect(
+      resolveDwsCompletionRoute(
+        parentRun({
+          wakeMessage: {
+            channel: 'dingtalk',
+            chatId: 'cid-1',
+            metadata: {
+              source: 'agent_dws_personal_stream',
+              accountId: 'adws-1',
+              profileId: 'corp-1:user-2',
+              corpId: 'corp-1',
+              dingtalkUserId: 'user-1',
+              eventType: 'user_im_message_receive_o2o_all',
+            },
+          },
+        }),
+        'dingtalk',
+      ),
+    ).toEqual({ version: 'invalid' });
   });
 
   it('enqueues background completion with the pinned exact account identity', async () => {
@@ -99,9 +165,15 @@ describe('background task DWS completion route', () => {
     const enqueue = createDwsBackgroundCompletionEnqueuer({ ingest } as never);
 
     await enqueue({
-      tenantId: 'tenant-1', taskId: 'bg-1', accountId: 'adws-1',
-      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all', content: 'done',
+      tenantId: 'tenant-1',
+      taskId: 'bg-1',
+      accountId: 'adws-1',
+      profileId: 'corp-1:user-1',
+      corpId: 'corp-1',
+      dingtalkUserId: 'user-1',
+      conversationId: 'cid-1',
+      eventType: 'user_im_message_receive_o2o_all',
+      content: 'done',
     });
 
     expect(ingest).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'adws-1' }), {
@@ -109,7 +181,9 @@ describe('background task DWS completion route', () => {
       source: 'background_task_completion',
       backgroundTaskId: 'bg-1',
       accountIdentity: {
-        profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
       },
     });
   });
@@ -118,11 +192,132 @@ describe('background task DWS completion route', () => {
     const ingest = vi.fn();
     const enqueue = createDwsBackgroundCompletionEnqueuer({ ingest } as never);
 
-    await expect(enqueue({
-      tenantId: 'tenant-1', taskId: 'bg-1', accountId: 'adws-1',
-      profileId: 'corp-1:user-2', corpId: 'corp-1', dingtalkUserId: 'user-1',
-      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all', content: 'done',
-    })).rejects.toThrow('account identity is invalid');
+    await expect(
+      enqueue({
+        tenantId: 'tenant-1',
+        taskId: 'bg-1',
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-2',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all',
+        content: 'done',
+      }),
+    ).rejects.toThrow('account identity is invalid');
+    expect(ingest).not.toHaveBeenCalled();
+  });
+
+  it('validates the complete WorkOrder relation before organization completion ingest', async () => {
+    const ingest = vi.fn(async () => ({ record: { inboxId: 'inbox-1' } as never, created: true }));
+    const pinInboxRouting = vi.fn(async () => undefined);
+    const orgStore = {
+      getWorkConversation: vi.fn(async () => ({
+        workConversationId: 'wc-1',
+        bindingId: 'binding-1',
+      })),
+      getBinding: vi.fn(async () => ({
+        bindingId: 'binding-1',
+        agentId: 'agent-1',
+        conversationSpaceId: 'space-1',
+        revision: 3,
+      })),
+      getWorkOrder: vi.fn(async () => ({
+        workOrderId: 'work-1',
+        bindingId: 'binding-1',
+        agentId: 'agent-1',
+        workConversationId: 'wc-1',
+        currentAttemptNo: 2,
+        state: 'completed',
+      })),
+      listWorkAttempts: vi.fn(async () => [
+        {
+          attemptId: 'attempt-2',
+          workOrderId: 'work-1',
+          runtimeRunId: 'bg-1',
+          attemptNo: 2,
+          status: 'completed',
+        },
+      ]),
+      pinInboxRouting,
+    };
+    const enqueue = createDwsBackgroundCompletionEnqueuer({ ingest } as never, orgStore as never);
+
+    await enqueue({
+      tenantId: 'tenant-1',
+      taskId: 'bg-1',
+      workOrderId: 'work-1',
+      attemptId: 'attempt-2',
+      attemptFence: 2,
+      workConversationId: 'wc-1',
+      accountId: 'adws-1',
+      profileId: 'corp-1:user-1',
+      corpId: 'corp-1',
+      dingtalkUserId: 'user-1',
+      conversationId: 'cid-1',
+      eventType: 'user_im_message_receive_at',
+      content: 'done',
+    });
+
+    expect(ingest).toHaveBeenCalledOnce();
+    expect(pinInboxRouting).toHaveBeenCalledWith({
+      inboxId: 'inbox-1',
+      conversationSpaceId: 'space-1',
+      workConversationId: 'wc-1',
+      policyRevision: 3,
+    });
+  });
+
+  it('rejects a same-binding cross-WorkConversation completion before inbox ingest', async () => {
+    const ingest = vi.fn();
+    const orgStore = {
+      getWorkConversation: vi.fn(async () => ({
+        workConversationId: 'wc-2',
+        bindingId: 'binding-1',
+      })),
+      getBinding: vi.fn(async () => ({
+        bindingId: 'binding-1',
+        agentId: 'agent-1',
+        conversationSpaceId: 'space-1',
+        revision: 3,
+      })),
+      getWorkOrder: vi.fn(async () => ({
+        workOrderId: 'work-1',
+        bindingId: 'binding-1',
+        agentId: 'agent-1',
+        workConversationId: 'wc-1',
+        currentAttemptNo: 2,
+        state: 'completed',
+      })),
+      listWorkAttempts: vi.fn(async () => [
+        {
+          attemptId: 'attempt-2',
+          workOrderId: 'work-1',
+          runtimeRunId: 'bg-1',
+          attemptNo: 2,
+          status: 'completed',
+        },
+      ]),
+    };
+    const enqueue = createDwsBackgroundCompletionEnqueuer({ ingest } as never, orgStore as never);
+
+    await expect(
+      enqueue({
+        tenantId: 'tenant-1',
+        taskId: 'bg-1',
+        workOrderId: 'work-1',
+        attemptId: 'attempt-2',
+        attemptFence: 2,
+        workConversationId: 'wc-2',
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_at',
+        content: 'done',
+      }),
+    ).rejects.toThrow('work identity is invalid');
     expect(ingest).not.toHaveBeenCalled();
   });
 
@@ -132,28 +327,54 @@ describe('background task DWS completion route', () => {
     const task = { ...parentRun({}), runId: 'bg-1', tenantId: 'tenant-1' };
     const metadata = {
       taskType: 'agent' as const,
-      parentRunId: 'parent-run', parentSessionId: 'parent-session', parentToolCallId: 'call-1',
-      shortTaskId: 'T-1234ABCD', description: '执行任务', modelRef: 'model', cwd: '/workspace',
-      workspaceId: 'ws-1', parentChannel: 'dingtalk' as const, outputTransactionMode: 'terminal_buffered' as const,
+      parentRunId: 'parent-run',
+      parentSessionId: 'parent-session',
+      parentToolCallId: 'call-1',
+      shortTaskId: 'T-1234ABCD',
+      description: '执行任务',
+      modelRef: 'model',
+      cwd: '/workspace',
+      workspaceId: 'ws-1',
+      parentChannel: 'dingtalk' as const,
+      outputTransactionMode: 'terminal_buffered' as const,
       parentOutputTransactionMode: 'terminal_buffered' as const,
-      prompt: '执行', agentType: 'general' as const, includeCompanyInfo: false,
+      prompt: '执行',
+      agentType: 'general' as const,
+      includeCompanyInfo: false,
       dwsCompletionRoute: {
-        accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-        conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all' as const,
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all' as const,
       },
     };
-    await expect(deliverDwsBackgroundCompletion({
-      config: { enqueueDwsBackgroundCompletion } as never,
-      runStore: { finishBackgroundTaskWake } as never,
-      task, metadata, claimToken: 'claim-1',
-    })).resolves.toBe(true);
-    expect(enqueueDwsBackgroundCompletion).toHaveBeenCalledWith(expect.objectContaining({
-      tenantId: 'tenant-1', taskId: 'bg-1', accountId: 'adws-1',
-      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-      content: expect.stringContaining('<task-id>T-1234ABCD</task-id>'),
-    }));
+    await expect(
+      deliverDwsBackgroundCompletion({
+        config: { enqueueDwsBackgroundCompletion } as never,
+        runStore: { finishBackgroundTaskWake } as never,
+        task,
+        metadata,
+        claimToken: 'claim-1',
+      }),
+    ).resolves.toBe(true);
+    expect(enqueueDwsBackgroundCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        taskId: 'bg-1',
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        content: expect.stringContaining('<task-id>T-1234ABCD</task-id>'),
+      }),
+    );
     expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
-      'bg-1', 'claim-1', 'queued', expect.objectContaining({ wakeRunId: 'agent-dws-background-completion:bg-1' }),
+      'bg-1',
+      'claim-1',
+      'queued',
+      expect.objectContaining({ wakeRunId: 'agent-dws-background-completion:bg-1' }),
     );
   });
 
@@ -163,37 +384,65 @@ describe('background task DWS completion route', () => {
     const task = { ...parentRun({}), runId: 'run-attempt-1', tenantId: 'tenant-1' };
     const metadata = {
       taskType: 'agent' as const,
-      parentRunId: 'parent-run', parentSessionId: 'parent-session', parentToolCallId: 'call-1',
-      description: '执行任务', modelRef: 'model', cwd: '/workspace', workspaceId: 'ws-1',
-      parentChannel: 'dingtalk' as const, outputTransactionMode: 'terminal_buffered' as const,
+      parentRunId: 'parent-run',
+      parentSessionId: 'parent-session',
+      parentToolCallId: 'call-1',
+      description: '执行任务',
+      modelRef: 'model',
+      cwd: '/workspace',
+      workspaceId: 'ws-1',
+      parentChannel: 'dingtalk' as const,
+      outputTransactionMode: 'terminal_buffered' as const,
       parentOutputTransactionMode: 'terminal_buffered' as const,
-      prompt: '执行', agentType: 'general' as const, includeCompanyInfo: false,
-      workOrderId: 'work-1', attemptId: 'attempt-1', attemptNo: 1,
+      prompt: '执行',
+      agentType: 'general' as const,
+      includeCompanyInfo: false,
+      workOrderId: 'work-1',
+      attemptId: 'attempt-1',
+      attemptNo: 1,
       dwsCompletionRoute: {
-        accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-        conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all' as const,
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+        conversationId: 'cid-1',
+        eventType: 'user_im_message_receive_o2o_all' as const,
       },
     };
 
-    await expect(deliverDwsBackgroundCompletion({
-      config: {
-        enqueueDwsBackgroundCompletion,
-        orgGroupAgentStore: {
-          getWorkOrder: vi.fn(async () => ({
-            workOrderId: 'work-1', workConversationId: 'wc-1', currentAttemptNo: 2, state: 'completed',
-          })),
-          listWorkAttempts: vi.fn(async () => [{
-            attemptId: 'attempt-1', attemptNo: 1, runtimeRunId: 'run-attempt-1', status: 'completed',
-          }]),
-        },
-      } as never,
-      runStore: { finishBackgroundTaskWake } as never,
-      task, metadata, claimToken: 'claim-stale',
-    })).resolves.toBe(true);
+    await expect(
+      deliverDwsBackgroundCompletion({
+        config: {
+          enqueueDwsBackgroundCompletion,
+          orgGroupAgentStore: {
+            getWorkOrder: vi.fn(async () => ({
+              workOrderId: 'work-1',
+              workConversationId: 'wc-1',
+              currentAttemptNo: 2,
+              state: 'completed',
+            })),
+            listWorkAttempts: vi.fn(async () => [
+              {
+                attemptId: 'attempt-1',
+                attemptNo: 1,
+                runtimeRunId: 'run-attempt-1',
+                status: 'completed',
+              },
+            ]),
+          },
+        } as never,
+        runStore: { finishBackgroundTaskWake } as never,
+        task,
+        metadata,
+        claimToken: 'claim-stale',
+      }),
+    ).resolves.toBe(true);
 
     expect(enqueueDwsBackgroundCompletion).not.toHaveBeenCalled();
     expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
-      'run-attempt-1', 'claim-stale', 'discarded',
+      'run-attempt-1',
+      'claim-stale',
+      'discarded',
       { wakeDiscardReason: 'org_agent_completion_stale_attempt' },
     );
   });
@@ -202,33 +451,57 @@ describe('background task DWS completion route', () => {
     const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
     const finishBackgroundTaskWake = vi.fn(async () => null);
     const task = {
-      ...parentRun({}), runId: 'bg-legacy', tenantId: 'tenant-1',
+      ...parentRun({}),
+      runId: 'bg-legacy',
+      tenantId: 'tenant-1',
       requestedAt: '2026-08-30T00:00:00.000Z',
     };
-    await expect(deliverDwsBackgroundCompletion({
-      config: {
-        enqueueDwsBackgroundCompletion,
-        resolveLegacyDwsCompletionAccount: vi.fn(async () => ({
-          accountId: 'adws-1', status: 'active', profileId: 'corp-1:user-1',
-          corpId: 'corp-1', dingtalkUserId: 'user-1',
-          identityUpdatedAt: '2026-08-29T23:59:59.000Z', updatedAt: '2026-08-30T00:00:01.000Z',
-        })),
-      } as never,
-      runStore: {
-        get: vi.fn(async () => ({
-          ...parentRun({}), requestedAt: '2026-08-29T23:59:59.500Z', updatedAt: '2026-08-29T23:59:59.500Z',
-        })),
-        finishBackgroundTaskWake,
-      } as never,
-      task, metadata: legacyCompletionMetadata(), claimToken: 'claim-legacy',
-    })).resolves.toBe(true);
+    await expect(
+      deliverDwsBackgroundCompletion({
+        config: {
+          enqueueDwsBackgroundCompletion,
+          resolveLegacyDwsCompletionAccount: vi.fn(async () => ({
+            accountId: 'adws-1',
+            status: 'active',
+            profileId: 'corp-1:user-1',
+            corpId: 'corp-1',
+            dingtalkUserId: 'user-1',
+            identityUpdatedAt: '2026-08-29T23:59:59.000Z',
+            updatedAt: '2026-08-30T00:00:01.000Z',
+          })),
+        } as never,
+        runStore: {
+          get: vi.fn(async () => ({
+            ...parentRun({}),
+            requestedAt: '2026-08-29T23:59:59.500Z',
+            updatedAt: '2026-08-29T23:59:59.500Z',
+          })),
+          finishBackgroundTaskWake,
+        } as never,
+        task,
+        metadata: legacyCompletionMetadata(),
+        claimToken: 'claim-legacy',
+      }),
+    ).resolves.toBe(true);
 
-    expect(enqueueDwsBackgroundCompletion).toHaveBeenCalledWith(expect.objectContaining({
-      accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-    }));
+    expect(enqueueDwsBackgroundCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: 'adws-1',
+        profileId: 'corp-1:user-1',
+        corpId: 'corp-1',
+        dingtalkUserId: 'user-1',
+      }),
+    );
     expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
-      'bg-legacy', 'claim-legacy', 'queued', expect.objectContaining({
-        dwsCompletionReconciliation: { status: 'succeeded', routeVersion: 'legacy', reconciledAt: expect.any(String) },
+      'bg-legacy',
+      'claim-legacy',
+      'queued',
+      expect.objectContaining({
+        dwsCompletionReconciliation: {
+          status: 'succeeded',
+          routeVersion: 'legacy',
+          reconciledAt: expect.any(String),
+        },
       }),
     );
   });
@@ -237,76 +510,126 @@ describe('background task DWS completion route', () => {
     const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
     const finishBackgroundTaskWake = vi.fn(async () => null);
     const task = {
-      ...parentRun({}), runId: 'bg-legacy', tenantId: 'tenant-1',
+      ...parentRun({}),
+      runId: 'bg-legacy',
+      tenantId: 'tenant-1',
       requestedAt: '2026-08-30T00:00:02.000Z',
     };
-    await expect(deliverDwsBackgroundCompletion({
-      config: {
-        enqueueDwsBackgroundCompletion,
-        resolveLegacyDwsCompletionAccount: vi.fn(async () => ({
-          accountId: 'adws-1', status: 'active', profileId: 'corp-2:user-2',
-          corpId: 'corp-2', dingtalkUserId: 'user-2',
-          identityUpdatedAt: '2026-08-30T00:00:01.000Z', updatedAt: '2026-08-30T00:00:02.000Z',
-        })),
-      } as never,
-      runStore: {
-        get: vi.fn(async () => ({
-          ...parentRun({}), requestedAt: '2026-08-30T00:00:00.000Z', updatedAt: '2026-08-30T00:00:00.000Z',
-        })),
-        finishBackgroundTaskWake,
-      } as never,
-      task, metadata: legacyCompletionMetadata(), claimToken: 'claim-legacy',
-    })).resolves.toBe(true);
+    await expect(
+      deliverDwsBackgroundCompletion({
+        config: {
+          enqueueDwsBackgroundCompletion,
+          resolveLegacyDwsCompletionAccount: vi.fn(async () => ({
+            accountId: 'adws-1',
+            status: 'active',
+            profileId: 'corp-2:user-2',
+            corpId: 'corp-2',
+            dingtalkUserId: 'user-2',
+            identityUpdatedAt: '2026-08-30T00:00:01.000Z',
+            updatedAt: '2026-08-30T00:00:02.000Z',
+          })),
+        } as never,
+        runStore: {
+          get: vi.fn(async () => ({
+            ...parentRun({}),
+            requestedAt: '2026-08-30T00:00:00.000Z',
+            updatedAt: '2026-08-30T00:00:00.000Z',
+          })),
+          finishBackgroundTaskWake,
+        } as never,
+        task,
+        metadata: legacyCompletionMetadata(),
+        claimToken: 'claim-legacy',
+      }),
+    ).resolves.toBe(true);
 
     expect(enqueueDwsBackgroundCompletion).not.toHaveBeenCalled();
     expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
-      'bg-legacy', 'claim-legacy', 'discarded', expect.objectContaining({
+      'bg-legacy',
+      'claim-legacy',
+      'discarded',
+      expect.objectContaining({
         wakeDiscardReason: 'dws_completion_legacy_identity_changed_since_parent_request',
-        dwsCompletionReconciliation: expect.objectContaining({ status: 'failed', routeVersion: 'legacy' }),
+        dwsCompletionReconciliation: expect.objectContaining({
+          status: 'failed',
+          routeVersion: 'legacy',
+        }),
       }),
     );
   });
 
   it.each([
     ['missing', null, 'dws_completion_legacy_parent_run_missing'],
-    ['unavailable', new Error('database unavailable'), 'dws_completion_legacy_parent_run_unavailable'],
-    ['invalid timestamp', { ...parentRun({}), requestedAt: 'invalid' },
-      'dws_completion_legacy_identity_change_unverifiable'],
-    ['from another tenant', { ...parentRun({}), tenantId: 'tenant-2' },
-      'dws_completion_legacy_parent_run_invalid'],
-    ['from another channel', { ...parentRun({}), channel: 'web' },
-      'dws_completion_legacy_parent_run_invalid'],
-    ['itself a background task', { ...parentRun({ backgroundTask: true }) },
-      'dws_completion_legacy_parent_run_invalid'],
-  ] as const)('discards a legacy route when the parent run is %s', async (_case, resolvedParent, reason) => {
-    const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
-    const finishBackgroundTaskWake = vi.fn(async () => null);
-    const task = {
-      ...parentRun({}), runId: 'bg-legacy', tenantId: 'tenant-1',
-      requestedAt: '2026-08-30T00:00:02.000Z',
-    };
-    await expect(deliverDwsBackgroundCompletion({
-      config: {
-        enqueueDwsBackgroundCompletion,
-        resolveLegacyDwsCompletionAccount: vi.fn(async () => ({
-          accountId: 'adws-1', status: 'active', profileId: 'corp-1:user-1',
-          corpId: 'corp-1', dingtalkUserId: 'user-1',
-          identityUpdatedAt: '2026-08-29T23:59:59.000Z', updatedAt: '2026-08-30T00:00:01.000Z',
-        })),
-      } as never,
-      runStore: {
-        get: vi.fn(async () => {
-          if (resolvedParent instanceof Error) throw resolvedParent;
-          return resolvedParent;
+    [
+      'unavailable',
+      new Error('database unavailable'),
+      'dws_completion_legacy_parent_run_unavailable',
+    ],
+    [
+      'invalid timestamp',
+      { ...parentRun({}), requestedAt: 'invalid' },
+      'dws_completion_legacy_identity_change_unverifiable',
+    ],
+    [
+      'from another tenant',
+      { ...parentRun({}), tenantId: 'tenant-2' },
+      'dws_completion_legacy_parent_run_invalid',
+    ],
+    [
+      'from another channel',
+      { ...parentRun({}), channel: 'web' },
+      'dws_completion_legacy_parent_run_invalid',
+    ],
+    [
+      'itself a background task',
+      { ...parentRun({ backgroundTask: true }) },
+      'dws_completion_legacy_parent_run_invalid',
+    ],
+  ] as const)(
+    'discards a legacy route when the parent run is %s',
+    async (_case, resolvedParent, reason) => {
+      const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
+      const finishBackgroundTaskWake = vi.fn(async () => null);
+      const task = {
+        ...parentRun({}),
+        runId: 'bg-legacy',
+        tenantId: 'tenant-1',
+        requestedAt: '2026-08-30T00:00:02.000Z',
+      };
+      await expect(
+        deliverDwsBackgroundCompletion({
+          config: {
+            enqueueDwsBackgroundCompletion,
+            resolveLegacyDwsCompletionAccount: vi.fn(async () => ({
+              accountId: 'adws-1',
+              status: 'active',
+              profileId: 'corp-1:user-1',
+              corpId: 'corp-1',
+              dingtalkUserId: 'user-1',
+              identityUpdatedAt: '2026-08-29T23:59:59.000Z',
+              updatedAt: '2026-08-30T00:00:01.000Z',
+            })),
+          } as never,
+          runStore: {
+            get: vi.fn(async () => {
+              if (resolvedParent instanceof Error) throw resolvedParent;
+              return resolvedParent;
+            }),
+            finishBackgroundTaskWake,
+          } as never,
+          task,
+          metadata: legacyCompletionMetadata(),
+          claimToken: 'claim-legacy',
         }),
-        finishBackgroundTaskWake,
-      } as never,
-      task, metadata: legacyCompletionMetadata(), claimToken: 'claim-legacy',
-    })).resolves.toBe(true);
+      ).resolves.toBe(true);
 
-    expect(enqueueDwsBackgroundCompletion).not.toHaveBeenCalled();
-    expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
-      'bg-legacy', 'claim-legacy', 'discarded', expect.objectContaining({ wakeDiscardReason: reason }),
-    );
-  });
+      expect(enqueueDwsBackgroundCompletion).not.toHaveBeenCalled();
+      expect(finishBackgroundTaskWake).toHaveBeenCalledWith(
+        'bg-legacy',
+        'claim-legacy',
+        'discarded',
+        expect.objectContaining({ wakeDiscardReason: reason }),
+      );
+    },
+  );
 });

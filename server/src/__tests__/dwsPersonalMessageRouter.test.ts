@@ -94,6 +94,7 @@ function setup(input: {
     init: vi.fn(),
     ingest: vi.fn(),
     listForAccount: vi.fn().mockResolvedValue([]),
+    listActiveForAccount: vi.fn().mockResolvedValue([]),
     claimNext,
     releaseClaim: vi.fn().mockResolvedValue({ ...claimed, state: 'pending', attempt: 0 }),
     renewLease: vi.fn().mockResolvedValue(true),

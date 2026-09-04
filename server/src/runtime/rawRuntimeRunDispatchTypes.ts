@@ -13,7 +13,7 @@ import type { MemoryIndexService } from '../memory/index/service.js';
 import type { UserOverrides } from '../security/extraDirs.js';
 import type { DispatchConfig } from '../app/config.js';
 import type { ArtifactService } from './artifactService.js';
-import type { ChannelContext, ModelProviderOptions, OutboundEvent } from '../types/index.js';
+import type { ChannelContext, ModelProviderOptions, OutboundEvent, UserIdentity } from '../types/index.js';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { SkillEntry } from '../agent/skillToolProvider.js';
 import type { BuiltinToolsConfig } from '../agent/builtinTools.js';
@@ -117,6 +117,10 @@ export interface RawRuntimeRunDispatchConfig {
   orgAgentChannelPolicyEvaluator?: (input: {
     tenantId: string; bindingId: string; accountId: string; agentId: string;
     conversationId: string; toolName: string;
+  }) => Promise<{ allowed: boolean; reason?: string }>;
+  authorizeOrgAgentRequesterLive?: (input: {
+    channel: NonNullable<ChannelContext['orgAgentChannel']>;
+    requester: UserIdentity;
   }) => Promise<{ allowed: boolean; reason?: string }>;
   agentCwd: string;
   uploadManager?: Pick<UploadManager, 'resolveAttachments'>;

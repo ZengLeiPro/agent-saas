@@ -25,6 +25,7 @@ import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
 import { deriveDwsAgentDelegationResourceId } from '../dws/businessToolProvider.js';
+import { OrgAgentApprovalError, type OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
 import { deliveryReconcileSchema, groupWorkspaceQuerySchema, groupWorkspaceUpdateSchema,
   groupDwsCapabilityError,
   memoryCreateSchema, memoryPromoteSchema, memoryStatusSchema,
@@ -83,6 +84,10 @@ const inboxQuerySchema = z.object({
 const delegationResourceSchema = z.object({
   args: z.array(z.string().min(1).max(500)).min(1).max(100),
 }).strict();
+const approvalDecisionSchema = z.object({
+  decision: z.enum(['approved', 'rejected']),
+  message: z.string().trim().min(1).max(500).optional(),
+}).strict();
 export const GROUP_AGENT_FRONTDESK_TOOL_MAX: ReadonlySet<string> = new Set([
   'Agent', 'BackgroundTask',
   'DwsBusiness',
@@ -106,6 +111,7 @@ export interface AgentDwsAccountsRouterOptions {
   accountStore?: AgentDwsAccountStore;
   messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
   orgGroupAgentStore?: OrgGroupAgentStore;
+  approvalService?: OrgAgentApprovalService;
   orgAgentStore?: Pick<OrgAgentStore, 'get'>;
   assignmentStore?: Pick<PgAssignmentStore, 'listEffectiveResourceIds'>;
   contextStore?: Pick<ContextStore, 'listSources' | 'listCollections'>;
@@ -168,17 +174,51 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
     if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
     try {
-      const [bindings, deliveries] = await Promise.all([
+      const [bindings, deliveries, approvals] = await Promise.all([
         options.orgGroupAgentStore.listBindings(tenantId, account.accountId),
         options.orgGroupAgentStore.listDeliveries(tenantId, account.accountId, parsed.data.limit),
+        options.approvalService?.listPending(tenantId, account.accountId, parsed.data.limit)
+          ?? Promise.resolve([]),
       ]);
       const contextCeiling = await resolveGroupContextCeiling(options, account);
-      return res.json(await buildGroupWorkspaceView({ tenantId, account, bindings, deliveries,
-        store: options.orgGroupAgentStore, agentStore: options.orgAgentStore,
-        limit: parsed.data.limit, frontdeskTools: GROUP_AGENT_FRONTDESK_TOOL_MAX, contextCeiling }));
+      return res.json({
+        ...await buildGroupWorkspaceView({ tenantId, account, bindings, deliveries,
+          store: options.orgGroupAgentStore, agentStore: options.orgAgentStore,
+          limit: parsed.data.limit, frontdeskTools: GROUP_AGENT_FRONTDESK_TOOL_MAX, contextCeiling }),
+        approvals,
+      });
     } catch {
       return res.status(503).json({ error: '组织群工作台读取失败' });
     }
+  });
+
+  router.post('/agent-dws-accounts/:accountId/group-workspace/approvals/:approvalId/decision', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.approvalService) {
+      return res.status(503).json({ error: '组织群审批服务暂不可用' });
+    }
+    const parsed = approvalDecisionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    return await runMutation(req, res, options, {
+      action: `org_agent.approval.${parsed.data.decision}`,
+      tenantId,
+      targetId: req.params.approvalId,
+      purpose: `${parsed.data.decision} shared group DWS operation`,
+    }, async () => ({
+      status: 202,
+      body: await options.approvalService!.decide({
+        tenantId,
+        accountId: account.accountId,
+        approvalId: req.params.approvalId,
+        decision: parsed.data.decision,
+        actorUserId: req.user!.sub,
+        ...(parsed.data.message ? { message: parsed.data.message } : {}),
+      }),
+    }));
   });
 
   router.patch('/agent-dws-accounts/:accountId/group-workspace', async (req, res) => {
@@ -917,6 +957,14 @@ function authMessage(status: string, error?: string): string {
 }
 
 function mapError(error: unknown): { status: number; code: string; message: string; changed: boolean } {
+  if (error instanceof OrgAgentApprovalError) {
+    return {
+      status: error.status,
+      code: 'ORG_AGENT_APPROVAL_FAILED',
+      message: error.message,
+      changed: error.changed,
+    };
+  }
   if (error instanceof AgentDwsMutationFailure) {
     return {
       status: 503,

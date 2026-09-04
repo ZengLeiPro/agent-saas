@@ -145,6 +145,9 @@ export function groupDwsCapabilityError(
     config.capabilities.dwsResourceIds.length === 0
   )
     return '启用群聊 DwsBusiness 必须显式配置可访问的 DWS 资源';
+  if (config.capabilities.toolNames.includes('DwsBusiness')
+    && !config.access.approvalRoles.includes('org_admin'))
+    return '启用 DwsBusiness 时必须允许组织管理员审批';
   if (
     !config.capabilities.toolNames.includes('DwsBusiness') &&
     config.capabilities.dwsResourceIds.length > 0

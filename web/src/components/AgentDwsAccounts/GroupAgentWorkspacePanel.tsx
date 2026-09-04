@@ -18,6 +18,10 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/authFetch';
 import { WorkspaceHierarchy } from './GroupAgentWorkspaceHierarchy';
+import {
+  GroupAgentApprovalQueue,
+  type GroupAgentApproval,
+} from './GroupAgentApprovalQueue';
 
 export interface Binding {
   bindingId: string;
@@ -141,6 +145,7 @@ interface WorkspaceResponse {
   bindings: Binding[];
   workspaces: WorkspaceGroup[];
   deliveries: Delivery[];
+  approvals: GroupAgentApproval[];
 }
 
 export type WorkspaceMutation = (
@@ -297,6 +302,20 @@ export function GroupAgentWorkspacePanel({
             尚未发现群绑定；群内首次 @ 后会生成 shadow 绑定，再由管理员激活。
           </p>
         ) : null}
+        <GroupAgentApprovalQueue
+          approvals={data?.approvals ?? []}
+          busy={busy}
+          onDecision={(approval, decision) => {
+            void mutate(
+              `approval:${approval.approvalId}:${decision}`,
+              `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/approvals/${encodeURIComponent(approval.approvalId)}/decision`,
+              {
+                decision,
+                message: decision === 'approved' ? '组织管理员批准执行' : '组织管理员拒绝执行',
+              },
+            );
+          }}
+        />
         {data?.workspaces.map((workspace) => (
           <WorkspaceHierarchy
             key={workspace.bindingId}

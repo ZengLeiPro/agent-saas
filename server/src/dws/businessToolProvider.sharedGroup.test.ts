@@ -64,7 +64,17 @@ function setup(sharedGroup: SharedGroupInput) {
     content: '{"ok":true}',
     metadata: { exitCode: 0, command: 'dws --profile agent-corp:agent-user' },
   });
-  const listEffectiveResourceIds = vi.fn().mockResolvedValue([]);
+  const listEffectiveResourceIds = vi.fn().mockImplementation(
+    async (_tenantId: string, _userId: string, resourceType: string) => (
+      resourceType === 'org_agent' ? [{ resourceId: 'agent-a' }] : []
+    ),
+  );
+  const getMembership = vi.fn().mockResolvedValue({
+    tenantId: 'tenant-a', userId: 'user-a', persona: sharedGroup.actorRole ?? 'member',
+    isOwner: false, status: 'active', source: 'governance', version: 1,
+    createdAt: '2026-09-04T00:00:00.000Z', createdBy: 'admin-a',
+    updatedAt: '2026-09-04T00:00:00.000Z', updatedBy: 'admin-a',
+  });
   const sharedBinding = {
     bindingId: 'binding-a',
     tenantId: 'tenant-a',
@@ -104,6 +114,11 @@ function setup(sharedGroup: SharedGroupInput) {
     agentCwd: '/workspace',
     accountStore: { listForTenant: vi.fn().mockResolvedValue([account]) } as never,
     assignmentStore: { listEffectiveResourceIds } as never,
+    membershipStore: { getMembership } as never,
+    orgAgentStore: { get: vi.fn().mockReturnValue({
+      id: 'agent-a', tenantId: 'tenant-a', enabled: true,
+      audience: { exposure: 'all', usernames: [] },
+    }) } as never,
     orgGroupAgentStore: { getBindingById: vi.fn().mockResolvedValue(sharedBinding) } as never,
     connectionStore: { listForUser: vi.fn().mockResolvedValue([]) } as never,
     userStore: { findById: vi.fn().mockReturnValue(user) } as never,
@@ -197,7 +212,7 @@ function setup(sharedGroup: SharedGroupInput) {
     invocationId: 'invocation-a',
     executionAudit,
   };
-  return { provider, invoke, context, listEffectiveResourceIds };
+  return { provider, invoke, context, listEffectiveResourceIds, getMembership };
 }
 
 describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
@@ -219,7 +234,9 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
         ),
       ).resolves.toMatchObject({ content: '{"ok":true}' });
       expect(test.invoke).toHaveBeenCalledOnce();
-      expect(test.listEffectiveResourceIds).not.toHaveBeenCalled();
+      expect(test.listEffectiveResourceIds).toHaveBeenCalledTimes(
+        assurance === 'mapped' ? 1 : 0,
+      );
       expect(test.invoke.mock.calls[0]![0].context.workspace).toMatchObject({
         userId: 'account-a',
         tenantId: 'tenant-a',
@@ -306,8 +323,8 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
     expect(missingScope.invoke).not.toHaveBeenCalled();
   });
 
-  it('低风险写只允许 mapped、approvalRoles 命中且 confirmed=true', async () => {
-    const allowed = setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['member'] });
+  it('低风险写只允许 mapped、配置组织管理员审批且持有平台人工审批', async () => {
+    const allowed = setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['org_admin'] });
     await expect(
       allowed.provider.invoke(
         {
@@ -321,12 +338,28 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
         },
         allowed.context,
       ),
+    ).rejects.toThrow('缺少平台持久化人工审批');
+    expect(allowed.invoke).not.toHaveBeenCalled();
+
+    await expect(
+      allowed.provider.invoke(
+        {
+          toolId: 'DwsBusiness',
+          input: {
+            args: ['doc', 'update', '--node', 'doc-a', '--content', '正文', '--mode', 'append'],
+            credentialMode: 'agent',
+            confirmed: true,
+          },
+          authorization: { approved: true, source: 'human_approval', approvalId: 'approval-a' },
+        },
+        allowed.context,
+      ),
     ).resolves.toMatchObject({ content: '{"ok":true}' });
     expect(allowed.invoke.mock.calls[0]![0].input.command).toContain("'--yes'");
 
     for (const test of [
-      setup({ assurance: 'unmapped', approvalRoles: ['member'] }),
-      setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['org_admin'] }),
+      setup({ assurance: 'unmapped', approvalRoles: ['org_admin'] }),
+      setup({ assurance: 'mapped', actorRole: 'member', approvalRoles: ['member'] }),
     ]) {
       await expect(
         test.provider.invoke(
@@ -413,5 +446,40 @@ describe('DwsBusinessToolProvider 组织群动作矩阵', () => {
         { ...test.context, workspace: { ...test.context.workspace, id: 'wrong-workspace' } },
       ),
     ).rejects.toThrow('workspace.id');
+  });
+
+  it('审批后执行前重新校验原请求人的实时成员资格和 Agent Assignment', async () => {
+    const revokedMember = setup({
+      assurance: 'mapped', actorRole: 'member', approvalRoles: ['org_admin'],
+    });
+    revokedMember.getMembership.mockResolvedValueOnce({
+      tenantId: 'tenant-a', userId: 'user-a', persona: 'member', isOwner: false,
+      status: 'disabled', source: 'governance', version: 2,
+      createdAt: '2026-09-04T00:00:00.000Z', createdBy: 'admin-a',
+      updatedAt: '2026-09-04T01:00:00.000Z', updatedBy: 'admin-a',
+    });
+    await expect(revokedMember.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: {
+        args: ['doc', 'update', '--node', 'doc-a', '--content', '正文'],
+        credentialMode: 'agent', confirmed: true,
+      },
+      authorization: { approved: true, source: 'human_approval', approvalId: 'approval-a' },
+    }, revokedMember.context)).rejects.toThrow('原请求者当前已无权');
+    expect(revokedMember.invoke).not.toHaveBeenCalled();
+
+    const revokedAssignment = setup({
+      assurance: 'mapped', actorRole: 'member', approvalRoles: ['org_admin'],
+    });
+    revokedAssignment.listEffectiveResourceIds.mockResolvedValueOnce([]);
+    await expect(revokedAssignment.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: {
+        args: ['doc', 'update', '--node', 'doc-a', '--content', '正文'],
+        credentialMode: 'agent', confirmed: true,
+      },
+      authorization: { approved: true, source: 'human_approval', approvalId: 'approval-a' },
+    }, revokedAssignment.context)).rejects.toThrow('原请求者当前已无权');
+    expect(revokedAssignment.invoke).not.toHaveBeenCalled();
   });
 });

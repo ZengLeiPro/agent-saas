@@ -265,7 +265,7 @@ function isSandboxPolicy(value: unknown): value is { denyRead: string[] } {
     && (value as { denyRead: unknown[] }).denyRead.every((item) => typeof item === 'string');
 }
 
-function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAgentChannel']> | undefined {
+export function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAgentChannel']> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
   const bindingId = metadataString(raw, 'bindingId');

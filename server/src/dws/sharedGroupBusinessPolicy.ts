@@ -49,7 +49,7 @@ const SHARED_RESOURCE_SELECTOR_FLAGS = new Set(['--node', '--folder', '--workspa
 type OrgAgentChannel = NonNullable<ChannelContext['orgAgentChannel']>;
 
 export type SharedGroupDwsDecision =
-  | { allowed: true; command: ClassifiedDwsCommand }
+  | { allowed: true; command: ClassifiedDwsCommand; requiresHumanApproval: boolean }
   | { allowed: false; reason: string; command?: ClassifiedDwsCommand };
 
 export function decideSharedGroupDwsAction(input: {
@@ -118,13 +118,13 @@ export function decideSharedGroupDwsAction(input: {
         command,
       };
     }
-    return { allowed: true, command };
+    return { allowed: true, command, requiresHumanApproval: false };
   }
   if (
     input.channel.externalActorAssurance !== 'mapped' ||
     input.channel.externalActor.assurance !== 'mapped' ||
     !input.channel.actorRole ||
-    !input.channel.approvalRoles.includes(input.channel.actorRole) ||
+    !input.channel.approvalRoles.includes('org_admin') ||
     parsed.data.confirmed !== true
   ) {
     return {
@@ -133,7 +133,7 @@ export function decideSharedGroupDwsAction(input: {
       command,
     };
   }
-  return { allowed: true, command };
+  return { allowed: true, command, requiresHumanApproval: true };
 }
 
 function extractSharedGroupResourceIds(

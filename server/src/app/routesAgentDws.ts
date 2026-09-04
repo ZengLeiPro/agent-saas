@@ -12,6 +12,7 @@ export function registerAgentDwsRoutes(app: Express, runtime: AppRuntime): void 
       accountStore: runtime.agentDwsAccountStore,
       messageStore: runtime.agentDwsMessageStore,
       orgGroupAgentStore: runtime.orgGroupAgentStore,
+      approvalService: runtime.orgAgentApprovalService,
       orgAgentStore: runtime.orgAgentStore,
       assignmentStore: runtime.assignmentStore,
       contextStore: runtime.contextStore,

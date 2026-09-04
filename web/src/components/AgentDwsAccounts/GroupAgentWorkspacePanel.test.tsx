@@ -22,6 +22,18 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 const workspace = {
+  approvals: [
+    {
+      approvalId: 'approval/1',
+      runId: 'run-approval-1',
+      conversationId: 'group-1',
+      workConversationId: 'wc-1',
+      toolName: 'DwsBusiness',
+      displayName: '钉钉业务操作',
+      input: { args: ['doc', 'update', '--node', 'doc-a'], token: '[REDACTED]' },
+      createdAt: '2026-09-04T00:00:00.000Z',
+    },
+  ],
   bindings: [
     {
       bindingId: 'binding-1',
@@ -119,6 +131,8 @@ describe('GroupAgentWorkspacePanel', () => {
           return jsonResponse({ ok: true });
         if (String(path).includes('/reconcile?') && init?.method === 'POST')
           return jsonResponse({ ok: true });
+        if (String(path).includes('/approvals/') && init?.method === 'POST')
+          return jsonResponse({ status: 'queued' }, 202);
         return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
       });
   });
@@ -160,6 +174,22 @@ describe('GroupAgentWorkspacePanel', () => {
     expect(JSON.parse(String(call?.[1]?.body))).toEqual(
       expect.objectContaining({ outcome: 'confirmed_not_sent' }),
     );
+  });
+
+  it('管理员可在群工作台批准持久化 DWS 写操作', async () => {
+    const user = userEvent.setup();
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    await user.click(await screen.findByRole('button', { name: '批准执行' }));
+    const call = vi.mocked(authFetch).mock.calls.find(([path]) =>
+      String(path).includes('/group-workspace/approvals/'));
+    expect(call?.[0]).toBe(
+      '/api/agent-dws-accounts/account%2Fmember/group-workspace/approvals/approval%2F1/decision?tenantId=tenant-a',
+    );
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      decision: 'approved',
+      message: '组织管理员批准执行',
+    });
   });
 
   it('完成任务存在待发布 manifest 时显示显式发布动作', async () => {

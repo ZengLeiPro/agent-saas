@@ -64,5 +64,12 @@ describe('mergeGroupWorkspaceEffectiveConfig', () => {
     expect(groupDwsCapabilityError(legacy, true)).toBe(
       '启用群聊 DwsBusiness 必须显式配置可访问的 DWS 资源',
     );
+    const withResource = {
+      ...legacy,
+      capabilities: { ...legacy.capabilities, dwsResourceIds: ['doc:doc-a'] },
+    };
+    expect(groupDwsCapabilityError(withResource, true)).toBe(
+      '启用 DwsBusiness 时必须允许组织管理员审批',
+    );
   });
 });

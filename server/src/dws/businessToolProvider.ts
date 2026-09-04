@@ -20,6 +20,8 @@ import {
 } from '../data/agentDwsAccounts/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
+import type { PgMembershipStore } from '../data/memberships/index.js';
+import type { OrgAgentStore } from '../data/orgAgents/index.js';
 import type { OrgAgentChannelBinding, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { UserStore } from '../data/users/store.js';
 import type { RunStore } from '../runtime/runStore.js';
@@ -42,10 +44,8 @@ import {
 } from './commandPolicy.js';
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 import { decideSharedGroupDwsAction } from './sharedGroupBusinessPolicy.js';
-import {
-  hasExactDwsConnectionProfile,
-  type DwsConnectionStore,
-} from './store.js';
+import { authorizeSharedGroupDwsRequester } from './sharedGroupDwsLiveAuthorizer.js';
+import { hasExactDwsConnectionProfile, type DwsConnectionStore } from './store.js';
 
 const businessInputSchema = z.object({
   args: z.array(z.string().min(1).max(1_000)).min(2).max(80),
@@ -54,7 +54,6 @@ const businessInputSchema = z.object({
 });
 
 type DwsBusinessInput = z.infer<typeof businessInputSchema>;
-
 
 // Child and background Runs inherit the nearest ancestor's immutable DWS identity pin.
 const DWS_PINNED_RUN_SOURCES = new Set([
@@ -83,16 +82,19 @@ export const dwsBusinessToolDescriptor: ToolDescriptor<DwsBusinessInput> = {
     'args 只填写 dws 后面的参数数组，例如 ["calendar","event","list","--today"]；不要填写 dws、--profile、--format 或任何 token。',
     '不要用 --help/-h 探测命令层级；只调用已知的完整命令路径，未登记或禁止的路径会直接返回工具错误。',
     'credentialMode=agent 表示以当前企业专家自身钉钉账号执行；DWS 入站 Run 还会固定原精确账号身份。requester 表示以当前请求者在能力中心连接的唯一钉钉账号执行，可用于请求者自己的普通 Session 或个人定时任务。',
-    'auth 模块只开放只读的 auth status；写操作必须在用户明确要求或确认后传 confirmed=true；delete/remove/recall/revoke/approve/reject 等破坏性或高影响动作本阶段拒绝。',
+    'auth 模块只开放只读的 auth status；写操作必须同时有 confirmed=true 和平台持久化人工审批；delete/remove/recall/revoke/approve/reject 等破坏性或高影响动作本阶段拒绝。',
   ].join('\n'),
   schema: businessInputSchema,
   risk: 'workspace_write',
   approvalMode: 'web',
-  resolveCallPolicy: input => {
+  resolveCallPolicy: (input) => {
     const parsed = businessInputSchema.safeParse(input);
     if (!parsed.success) return { risk: 'dangerous', neverAutoApprove: true };
     try {
-      return { risk: classifyDwsBusinessCommand(parsed.data.args).risk === 'read' ? 'safe' : 'workspace_write' };
+      return {
+        risk:
+          classifyDwsBusinessCommand(parsed.data.args).risk === 'read' ? 'safe' : 'workspace_write',
+      };
     } catch (error) {
       // 已被 Broker 策略确定拒绝的调用不可能产生外部副作用。让它直接进入 provider
       // 记录治理审计并返回工具错误，避免先弹出无意义的人工审批、Allow 后再拒绝。
@@ -108,6 +110,8 @@ export interface DwsBusinessToolProviderOptions {
   agentCwd: string;
   accountStore: AgentDwsAccountStore;
   assignmentStore?: Pick<PgAssignmentStore, 'listEffectiveResourceIds'>;
+  membershipStore?: Pick<PgMembershipStore, 'getMembership'>;
+  orgAgentStore?: Pick<OrgAgentStore, 'get'>;
   orgGroupAgentStore?: Pick<OrgGroupAgentStore, 'getBindingById'>;
   connectionStore?: DwsConnectionStore;
   userStore: UserStore;
@@ -145,14 +149,20 @@ export class DwsBusinessToolProvider implements ToolProvider {
     const orgChannel = context.channelContext.orgAgentChannel;
     const sharedGroup = orgChannel?.channelPrincipal.kind === 'group';
     const workspaceIdentity = sharedGroup ? identity : operator;
-    const session = context.sessionId ? await this.options.sessionCatalog.get(context.sessionId) : null;
-    const workload = context.workspace.workload
-      ?? (context.memoryMaintenanceMode === 'consolidation'
+    const session = context.sessionId
+      ? await this.options.sessionCatalog.get(context.sessionId)
+      : null;
+    const workload =
+      context.workspace.workload ??
+      (context.memoryMaintenanceMode === 'consolidation'
         ? { class: 'memory' as const }
         : session?.channel === 'cron'
           ? { class: 'cron' as const }
           : { class: 'interactive' as const });
-    const correlationId = context.invocationId ?? context.toolCallId ?? `${context.runId ?? context.sessionId ?? 'unbound'}:dws`;
+    const correlationId =
+      context.invocationId ??
+      context.toolCallId ??
+      `${context.runId ?? context.sessionId ?? 'unbound'}:dws`;
     const auditRejection = async (reason: string, metadata?: Record<string, unknown>) => {
       await this.options.auditStore.append({
         correlationId,
@@ -183,7 +193,13 @@ export class DwsBusinessToolProvider implements ToolProvider {
       throw new Error('DWS Broker 输入格式无效');
     }
     const input = parsed.data;
-    if (!identity?.id || !identity.tenantId || !operator?.id || !operator.tenantId || !context.sessionId) {
+    if (
+      !identity?.id ||
+      !identity.tenantId ||
+      !operator?.id ||
+      !operator.tenantId ||
+      !context.sessionId
+    ) {
       await auditRejection('DWS_BUSINESS_SUBJECT_MISSING');
       throw new Error('DWS Broker 缺少可信请求者或 Session 身份');
     }
@@ -193,15 +209,18 @@ export class DwsBusinessToolProvider implements ToolProvider {
       role: operator.role,
       tenantId: operator.tenantId,
     });
-    const operatorCanActForSessionOwner = operator.id === identity.id
-      || (operator.role === 'admin' && operator.tenantId === identity.tenantId)
-      || operatorIsPlatformAdmin;
+    const operatorCanActForSessionOwner =
+      operator.id === identity.id ||
+      (operator.role === 'admin' && operator.tenantId === identity.tenantId) ||
+      operatorIsPlatformAdmin;
     const orgAgentId = session?.orgAgentId;
     // requester 模式（含个人 Cron）只要求 Session/user/workspace 身份一致，按 Session owner
     // 的个人钉钉连接解析凭据；仅 agent 模式才要求 Session 绑定企业专家。
     const requiresOrgAgent = input.credentialMode === 'agent';
     const mismatchFields = [
-      ...(!sharedGroup && !operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
+      ...(!sharedGroup && !operatorCanActForSessionOwner
+        ? ['operator.sessionOwnerTenantScope']
+        : []),
       ...(requiresOrgAgent && !orgAgentId ? ['session.orgAgentId'] : []),
       ...(session?.userId !== identity.id ? ['session.userId'] : []),
       ...(session?.tenantId !== identity.tenantId ? ['session.tenantId'] : []),
@@ -209,13 +228,15 @@ export class DwsBusinessToolProvider implements ToolProvider {
       ...(context.workspace.tenantId && context.workspace.tenantId !== workspaceIdentity?.tenantId
         ? ['workspace.tenantId']
         : []),
-      ...(sharedGroup && orgChannel ? sharedGroupSubjectMismatches({
-        orgChannel,
-        identity,
-        operator: context.channelContext.user,
-        session,
-        workspace: context.workspace,
-      }) : []),
+      ...(sharedGroup && orgChannel
+        ? sharedGroupSubjectMismatches({
+            orgChannel,
+            identity,
+            operator: context.channelContext.user,
+            session,
+            workspace: context.workspace,
+          })
+        : []),
     ];
     let sharedBinding: OrgAgentChannelBinding | null = null;
     if (sharedGroup && orgChannel) {
@@ -241,12 +262,26 @@ export class DwsBusinessToolProvider implements ToolProvider {
       ) {
         mismatchFields.push('channelBinding.livePrincipal');
       }
+      if (sharedBinding && context.channelContext.user) {
+        const liveAccess = await authorizeSharedGroupDwsRequester(this.options, {
+          channel: orgChannel,
+          binding: sharedBinding,
+          requester: context.channelContext.user,
+        });
+        if (!liveAccess.allowed) {
+          await auditRejection('DWS_BUSINESS_SHARED_REQUESTER_REVOKED', {
+            liveAccessReason: liveAccess.reason,
+          });
+          throw new Error('原请求者当前已无权使用该组织 Agent，请在群内重新发起操作');
+        }
+      }
     }
     if (mismatchFields.length > 0) {
-      const cronSessionUnbound = input.credentialMode === 'agent'
-        && mismatchFields.length === 1
-        && mismatchFields[0] === 'session.orgAgentId'
-        && session?.channel === 'cron';
+      const cronSessionUnbound =
+        input.credentialMode === 'agent' &&
+        mismatchFields.length === 1 &&
+        mismatchFields[0] === 'session.orgAgentId' &&
+        session?.channel === 'cron';
       const diagnostic = {
         mismatchFields,
         requesterUserId: identity.id,
@@ -262,19 +297,26 @@ export class DwsBusinessToolProvider implements ToolProvider {
       };
       this.options.logger?.warn(`DWS business subject mismatch ${JSON.stringify(diagnostic)}`);
       await auditRejection('DWS_BUSINESS_SUBJECT_MISMATCH', diagnostic);
-      throw new Error(cronSessionUnbound
-        ? '此定时任务未绑定企业专家，无法使用 DWS Broker；请在目标企业专家会话中重新创建该定时任务'
-        : `DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`);
+      throw new Error(
+        cronSessionUnbound
+          ? '此定时任务未绑定企业专家，无法使用 DWS Broker；请在目标企业专家会话中重新创建该定时任务'
+          : `DWS Broker 会话绑定已失效（不一致项：${mismatchFields.join('、')}），请重新打开当前会话后重试`,
+      );
     }
     let command: ClassifiedDwsCommand;
     try {
       command = classifyDwsBusinessCommand(input.args);
     } catch (error) {
-      await auditRejection('DWS_BUSINESS_ACTION_REJECTED', error instanceof DwsCommandPolicyError ? {
-        ...(error.commandPath ? { commandPath: error.commandPath } : {}),
-        policySource: error.policySource,
-        policyCliVersion: DWS_ACTIVE_CLI_VERSION,
-      } : undefined);
+      await auditRejection(
+        'DWS_BUSINESS_ACTION_REJECTED',
+        error instanceof DwsCommandPolicyError
+          ? {
+              ...(error.commandPath ? { commandPath: error.commandPath } : {}),
+              policySource: error.policySource,
+              policyCliVersion: DWS_ACTIVE_CLI_VERSION,
+            }
+          : undefined,
+      );
       throw error;
     }
     if (sharedGroup && orgChannel) {
@@ -302,43 +344,69 @@ export class DwsBusinessToolProvider implements ToolProvider {
       });
       throw new Error('DWS 写操作缺少用户明确确认');
     }
+    if (
+      sharedGroup &&
+      command.risk === 'write' &&
+      (call.authorization.source !== 'human_approval' || !call.authorization.approvalId)
+    ) {
+      await auditRejection('DWS_BUSINESS_CONFIRMATION_REQUIRED', {
+        commandPath: command.commandPath,
+        policySource: command.policySource,
+        policyCliVersion: DWS_ACTIVE_CLI_VERSION,
+        confirmationSource: call.authorization.source,
+      });
+      throw new Error('共享群 DWS 写操作缺少平台持久化人工审批');
+    }
 
-    const account = input.credentialMode === 'agent' && orgAgentId
-      ? (await this.options.accountStore.listForTenant(identity.tenantId))
-          .find(candidate => candidate.agentId === orgAgentId
-            && (!sharedGroup || candidate.accountId === orgChannel?.accountId)) ?? null
-      : null;
-    if (input.credentialMode === 'agent' && (!account || account.status !== 'active'
-      || account.tenantId !== identity.tenantId
-      || (sharedGroup && orgChannel?.externalActor.kind === 'external_user'
-        && account.corpId !== orgChannel.externalActor.corpId)
-      || !hasExactAgentDwsProfile(account))) {
+    const account =
+      input.credentialMode === 'agent' && orgAgentId
+        ? ((await this.options.accountStore.listForTenant(identity.tenantId)).find(
+            (candidate) =>
+              candidate.agentId === orgAgentId &&
+              (!sharedGroup || candidate.accountId === orgChannel?.accountId),
+          ) ?? null)
+        : null;
+    if (
+      input.credentialMode === 'agent' &&
+      (!account ||
+        account.status !== 'active' ||
+        account.tenantId !== identity.tenantId ||
+        (sharedGroup &&
+          orgChannel?.externalActor.kind === 'external_user' &&
+          account.corpId !== orgChannel.externalActor.corpId) ||
+        !hasExactAgentDwsProfile(account))
+    ) {
       await auditRejection('DWS_BUSINESS_AGENT_ACCOUNT_UNAVAILABLE');
       throw new Error('当前企业专家没有可用的钉钉账号授权');
     }
-    const runAccountPin = input.credentialMode === 'agent'
-      ? await this.resolveRunAccountPin(context.runId)
-      : { kind: 'none' as const };
+    const runAccountPin =
+      input.credentialMode === 'agent'
+        ? await this.resolveRunAccountPin(context.runId)
+        : { kind: 'none' as const };
     if (runAccountPin.kind === 'invalid') {
       await auditRejection('DWS_BUSINESS_RUN_ACCOUNT_IDENTITY_INVALID');
       throw new Error('当前 DWS 入站 Run 缺少可验证的原账号身份');
     }
-    if (runAccountPin.kind === 'exact' && account
-      && (runAccountPin.accountId !== account.accountId
-        || runAccountPin.profileId !== account.profileId
-        || runAccountPin.corpId !== account.corpId
-        || runAccountPin.dingtalkUserId !== account.dingtalkUserId)) {
+    if (
+      runAccountPin.kind === 'exact' &&
+      account &&
+      (runAccountPin.accountId !== account.accountId ||
+        runAccountPin.profileId !== account.profileId ||
+        runAccountPin.corpId !== account.corpId ||
+        runAccountPin.dingtalkUserId !== account.dingtalkUserId)
+    ) {
       await auditRejection('DWS_BUSINESS_RUN_ACCOUNT_IDENTITY_STALE');
       throw new Error('当前 DWS 入站 Run 的钉钉账号已发生变化，已拒绝执行');
     }
-    const delegation = input.credentialMode === 'agent' && account && !sharedGroup
-      ? await this.resolveAgentCredentialDelegation(
-          identity.tenantId,
-          identity.id,
-          account.accountId,
-          input.args,
-        ).catch(() => null)
-      : null;
+    const delegation =
+      input.credentialMode === 'agent' && account && !sharedGroup
+        ? await this.resolveAgentCredentialDelegation(
+            identity.tenantId,
+            identity.id,
+            account.accountId,
+            input.args,
+          ).catch(() => null)
+        : null;
     if (input.credentialMode === 'agent' && !sharedGroup && !delegation) {
       await auditRejection('DWS_BUSINESS_AGENT_DELEGATION_DENIED');
       throw new Error('当前请求者没有此专家钉钉账号的业务动作与资源委托权限');
@@ -367,11 +435,13 @@ export class DwsBusinessToolProvider implements ToolProvider {
         operatorUserId: operator.id,
         operatorTenantId: operator.tenantId,
         operatorRole: operator.role,
-        ...(delegation ? {
-          delegationResourceId: delegation.resourceId,
-          delegationBindingId: delegation.bindingId,
-          delegationAssignmentVersion: delegation.assignmentVersion,
-        } : {}),
+        ...(delegation
+          ? {
+              delegationResourceId: delegation.resourceId,
+              delegationBindingId: delegation.bindingId,
+              delegationAssignmentVersion: delegation.assignmentVersion,
+            }
+          : {}),
       },
     };
     await this.options.auditStore.append({ ...auditBase, result: 'intent' });
@@ -412,11 +482,13 @@ export class DwsBusinessToolProvider implements ToolProvider {
       const message = profileId
         ? redactDwsError(error).split(profileId).join('[DWS_PROFILE_REDACTED]')
         : redactDwsError(error);
-      await this.options.auditStore.append({
-        ...auditBase,
-        result: 'failed',
-        reason: 'DWS_BUSINESS_EXECUTION_FAILED',
-      }).catch(() => undefined);
+      await this.options.auditStore
+        .append({
+          ...auditBase,
+          result: 'failed',
+          reason: 'DWS_BUSINESS_EXECUTION_FAILED',
+        })
+        .catch(() => undefined);
       throw new Error(message);
     }
   }
@@ -433,7 +505,11 @@ export class DwsBusinessToolProvider implements ToolProvider {
       const wakeMessage = run.metadata.wakeMessage;
       if (wakeMessage && typeof wakeMessage === 'object' && !Array.isArray(wakeMessage)) {
         const messageMetadata = (wakeMessage as Record<string, unknown>).metadata;
-        if (messageMetadata && typeof messageMetadata === 'object' && !Array.isArray(messageMetadata)) {
+        if (
+          messageMetadata &&
+          typeof messageMetadata === 'object' &&
+          !Array.isArray(messageMetadata)
+        ) {
           const metadata = messageMetadata as Record<string, unknown>;
           if (typeof metadata.source === 'string' && DWS_PINNED_RUN_SOURCES.has(metadata.source)) {
             return parseDwsRunAccountPin(metadata);
@@ -443,9 +519,8 @@ export class DwsBusinessToolProvider implements ToolProvider {
       const completionRoute = run.metadata.dwsCompletionRoute;
       if (completionRoute !== undefined) return parseDwsRunAccountPin(completionRoute);
       const parentRunId = run.metadata.parentRunId;
-      currentRunId = typeof parentRunId === 'string' && parentRunId.trim()
-        ? parentRunId.trim()
-        : undefined;
+      currentRunId =
+        typeof parentRunId === 'string' && parentRunId.trim() ? parentRunId.trim() : undefined;
     }
     return currentRunId ? { kind: 'invalid' } : { kind: 'none' };
   }
@@ -467,27 +542,39 @@ export class DwsBusinessToolProvider implements ToolProvider {
       requesterUserId,
       'dws_delegation',
     );
-    return effective.find(entry => entry.resourceId === requiredResourceId) ?? null;
+    return effective.find((entry) => entry.resourceId === requiredResourceId) ?? null;
   }
 
-  private async resolveRequesterPrincipal(tenantId: string, userId: string): Promise<{
+  private async resolveRequesterPrincipal(
+    tenantId: string,
+    userId: string,
+  ): Promise<{
     principal: DwsWorkspacePrincipal;
     profileId: string;
   }> {
     const user = this.options.userStore.findById(userId);
-    if (!user || user.disabled || user.tenantId !== tenantId || !this.options.connectionStore
-      || this.options.isRequesterRuntimeEnabled?.(user.username) === false) {
+    if (
+      !user ||
+      user.disabled ||
+      user.tenantId !== tenantId ||
+      !this.options.connectionStore ||
+      this.options.isRequesterRuntimeEnabled?.(user.username) === false
+    ) {
       throw new Error('当前请求者没有可用的钉钉连接');
     }
-    const profiles = (await this.options.connectionStore.listForUser(tenantId, userId))
-      .filter(profile => profile.connectionStatus === 'connected'
-        && profile.authenticated !== false
-        && profile.refreshTokenValid !== false
-        && hasExactDwsConnectionProfile(profile));
+    const profiles = (await this.options.connectionStore.listForUser(tenantId, userId)).filter(
+      (profile) =>
+        profile.connectionStatus === 'connected' &&
+        profile.authenticated !== false &&
+        profile.refreshTokenValid !== false &&
+        hasExactDwsConnectionProfile(profile),
+    );
     if (profiles.length !== 1) {
-      throw new Error(profiles.length === 0
-        ? '当前请求者没有已连接的钉钉账号'
-        : '当前请求者存在多个钉钉账号，请先在个人设置中保留唯一活动账号');
+      throw new Error(
+        profiles.length === 0
+          ? '当前请求者没有已连接的钉钉账号'
+          : '当前请求者存在多个钉钉账号，请先在个人设置中保留唯一活动账号',
+      );
     }
     return {
       principal: {
@@ -512,11 +599,13 @@ export class DwsBusinessToolProvider implements ToolProvider {
     workload: NonNullable<ToolCallContext['workspace']['workload']>,
   ): Promise<ToolResult> {
     const remote = await this.options.resolveServerRemote(principal);
-    const transport = this.options.createTransport?.(remote) ?? new HttpTransport({
-      baseUrl: remote.baseUrl,
-      authToken: remote.authToken,
-      invokeTimeoutMs: Math.max(remote.invokeTimeoutMs ?? 0, 130_000),
-    });
+    const transport =
+      this.options.createTransport?.(remote) ??
+      new HttpTransport({
+        baseUrl: remote.baseUrl,
+        authToken: remote.authToken,
+        invokeTimeoutMs: Math.max(remote.invokeTimeoutMs ?? 0, 130_000),
+      });
     const cwd = resolveDwsPrincipalCwd(this.options.agentCwd, principal);
     const mountSubPath = deriveDwsWorkspaceMountSubPath(this.options.agentCwd, cwd);
     if (!mountSubPath) throw new Error('无法解析 DWS connector workspace');
@@ -548,7 +637,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
         },
       },
     });
-    response.audit?.forEach(record => executionAudit?.record(sanitizeDwsExecutionAudit(record, profileId)));
+    response.audit?.forEach((record) =>
+      executionAudit?.record(sanitizeDwsExecutionAudit(record, profileId)),
+    );
     if (response.status === 'error') throw new Error(response.error);
     const metadata = sanitizeDwsMetadata(response.metadata);
     return {
@@ -573,10 +664,11 @@ function sharedGroupSubjectMismatches(input: {
   const mismatches = [
     ...(orgChannel.accountId !== principal.accountId ? ['channel.accountId'] : []),
     ...(orgChannel.agentId !== principal.agentId ? ['channel.agentId'] : []),
-    ...(orgChannel.channelPrincipal.provider !== 'dingtalk'
-      || orgChannel.channelPrincipal.kind !== 'group'
-      || orgChannel.channelPrincipal.accountId !== principal.accountId
-      ? ['channelPrincipal'] : []),
+    ...(orgChannel.channelPrincipal.provider !== 'dingtalk' ||
+    orgChannel.channelPrincipal.kind !== 'group' ||
+    orgChannel.channelPrincipal.accountId !== principal.accountId
+      ? ['channelPrincipal']
+      : []),
     ...(identity.id !== expectedOwnerId ? ['sessionOwner.id'] : []),
     ...(identity.username !== expectedOwnerUsername ? ['sessionOwner.username'] : []),
     ...(identity.tenantId !== principal.tenantId ? ['sessionOwner.tenantId'] : []),
@@ -584,15 +676,22 @@ function sharedGroupSubjectMismatches(input: {
     ...(session?.username !== expectedOwnerUsername ? ['session.username'] : []),
     ...(session?.tenantId !== principal.tenantId ? ['session.tenantId'] : []),
     ...(session?.orgAgentId !== principal.agentId ? ['session.orgAgentId'] : []),
-    ...(JSON.stringify(session?.principal) !== JSON.stringify(principal) ? ['session.principal'] : []),
+    ...(JSON.stringify(session?.principal) !== JSON.stringify(principal)
+      ? ['session.principal']
+      : []),
     ...(workspace.id !== principal.workspaceId ? ['workspace.id'] : []),
     ...(workspace.userId !== expectedOwnerId ? ['workspace.userId'] : []),
     ...(workspace.tenantId !== principal.tenantId ? ['workspace.tenantId'] : []),
   ];
   if (actor.kind !== 'external_user') return [...mismatches, 'externalActor.kind'];
-  if (actor.assurance !== orgChannel.externalActorAssurance) mismatches.push('externalActor.assurance');
+  if (actor.assurance !== orgChannel.externalActorAssurance)
+    mismatches.push('externalActor.assurance');
   if (actor.assurance === 'mapped') {
-    if (!operator || operator.id !== actor.mappedUserId || operator.tenantId !== principal.tenantId) {
+    if (
+      !operator ||
+      operator.id !== actor.mappedUserId ||
+      operator.tenantId !== principal.tenantId
+    ) {
       mismatches.push('externalActor.mappedUser');
     }
     if (!actor.role || actor.role !== orgChannel.actorRole) mismatches.push('externalActor.role');
@@ -603,7 +702,10 @@ function sharedGroupSubjectMismatches(input: {
 }
 
 export function createDwsBusinessToolProviders(
-  options: Omit<DwsBusinessToolProviderOptions, 'accountStore' | 'connectionStore' | 'userStore' | 'auditStore'> & {
+  options: Omit<
+    DwsBusinessToolProviderOptions,
+    'accountStore' | 'connectionStore' | 'userStore' | 'auditStore'
+  > & {
     accountStore?: AgentDwsAccountStore | undefined;
     connectionStore?: DwsConnectionStore | undefined;
     userStore?: UserStore | undefined;
@@ -611,7 +713,13 @@ export function createDwsBusinessToolProviders(
     remoteAvailable: boolean;
   },
 ): ToolProvider[] {
-  if (!options.accountStore || !options.userStore || !options.auditStore || !options.remoteAvailable) return [];
+  if (
+    !options.accountStore ||
+    !options.userStore ||
+    !options.auditStore ||
+    !options.remoteAvailable
+  )
+    return [];
   const {
     remoteAvailable: _remoteAvailable,
     accountStore,
@@ -620,13 +728,15 @@ export function createDwsBusinessToolProviders(
     auditStore,
     ...providerOptions
   } = options;
-  return [new DwsBusinessToolProvider({
-    ...providerOptions,
-    accountStore,
-    ...(connectionStore ? { connectionStore } : {}),
-    userStore,
-    auditStore,
-  })];
+  return [
+    new DwsBusinessToolProvider({
+      ...providerOptions,
+      accountStore,
+      ...(connectionStore ? { connectionStore } : {}),
+      userStore,
+      auditStore,
+    }),
+  ];
 }
 
 function parseDwsRunAccountPin(value: unknown): DwsRunAccountPin {
@@ -640,8 +750,13 @@ function parseDwsRunAccountPin(value: unknown): DwsRunAccountPin {
   const profileId = text('profileId');
   const corpId = text('corpId');
   const dingtalkUserId = text('dingtalkUserId');
-  if (!accountId || !profileId || !corpId || !dingtalkUserId
-    || profileId !== `${corpId}:${dingtalkUserId}`) {
+  if (
+    !accountId ||
+    !profileId ||
+    !corpId ||
+    !dingtalkUserId ||
+    profileId !== `${corpId}:${dingtalkUserId}`
+  ) {
     return { kind: 'invalid' };
   }
   return { kind: 'exact', accountId, profileId, corpId, dingtalkUserId };
@@ -656,13 +771,22 @@ export function deriveDwsAgentDelegationResourceId(accountId: string, args: stri
 }
 
 function sanitizeDwsBusinessOutput(content: string, profileId: string): string {
-  return redactDwsProfilePaths(content
-    .split(profileId).join('[DWS_PROFILE_REDACTED]')
-    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
-    .replace(/((?:["']?(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|token)["']?)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]'));
+  return redactDwsProfilePaths(
+    content
+      .split(profileId)
+      .join('[DWS_PROFILE_REDACTED]')
+      .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+      .replace(
+        /((?:["']?(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|token)["']?)\s*[=:]\s*["']?)[^\s,"'}]+/gi,
+        '$1[REDACTED]',
+      ),
+  );
 }
 
-function sanitizeDwsExecutionAudit(record: ExecutionInvocationAudit, profileId: string): ExecutionInvocationAudit {
+function sanitizeDwsExecutionAudit(
+  record: ExecutionInvocationAudit,
+  profileId: string,
+): ExecutionInvocationAudit {
   return {
     provider: record.provider,
     operation: record.operation,
@@ -681,11 +805,28 @@ function sanitizeDwsExecutionAudit(record: ExecutionInvocationAudit, profileId: 
   };
 }
 
-function sanitizeDwsMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+function sanitizeDwsMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
   if (!metadata) return undefined;
-  const allowed = new Set(['exitCode', 'signal', 'durationMs', 'stdoutBytes', 'stderrBytes', 'timedOut', 'aborted', 'outputExceeded']);
-  const entries = Object.entries(metadata).filter(([key, value]) => allowed.has(key)
-    && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null));
+  const allowed = new Set([
+    'exitCode',
+    'signal',
+    'durationMs',
+    'stdoutBytes',
+    'stderrBytes',
+    'timedOut',
+    'aborted',
+    'outputExceeded',
+  ]);
+  const entries = Object.entries(metadata).filter(
+    ([key, value]) =>
+      allowed.has(key) &&
+      (typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean' ||
+        value === null),
+  );
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
@@ -695,7 +836,9 @@ function shellQuote(value: string): string {
 
 export function resolveDwsBusinessRisk(input: unknown): ToolRisk {
   try {
-    return classifyDwsBusinessCommand(businessInputSchema.parse(input).args).risk === 'read' ? 'safe' : 'workspace_write';
+    return classifyDwsBusinessCommand(businessInputSchema.parse(input).args).risk === 'read'
+      ? 'safe'
+      : 'workspace_write';
   } catch {
     return 'dangerous';
   }

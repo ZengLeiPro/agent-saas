@@ -67,9 +67,9 @@ function harness(input?: {
 }) {
   const store = {
     reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
-    claimNextDelivery: vi.fn().mockResolvedValue(
-      input?.pending === false ? null : (input?.claimedDelivery ?? delivery),
-    ),
+    claimNextDelivery: vi
+      .fn()
+      .mockResolvedValue(input?.pending === false ? null : (input?.claimedDelivery ?? delivery)),
     getBinding: vi.fn().mockResolvedValue({
       bindingId: 'binding-1',
       agentId: 'agent-1',
@@ -89,13 +89,36 @@ function harness(input?: {
     releaseClaimedDeliveryForRetry: vi.fn().mockResolvedValue(undefined),
     markDeliverySent: vi.fn().mockResolvedValue(undefined),
     markDeliveryUnknown: vi.fn().mockResolvedValue(undefined),
-    createDelivery: vi.fn().mockImplementation(async value => ({ ...delivery, ...value,
-      deliveryId: 'policy-notice', deliveryState: 'pending' })),
+    createDelivery: vi
+      .fn()
+      .mockImplementation(async (value) => ({
+        ...delivery,
+        ...value,
+        deliveryId: 'policy-notice',
+        deliveryState: 'pending',
+      })),
     getWorkOrder: vi.fn().mockResolvedValue({
-      workOrderId: 'work-current', currentAttemptNo: 2, state: 'completed',
+      workOrderId: 'work-current',
+      agentId: 'agent-1',
+      bindingId: 'binding-1',
+      workConversationId: 'wc-1',
+      currentAttemptNo: 2,
+      state: 'completed',
     }),
-    listWorkAttempts: vi.fn().mockResolvedValue([{ attemptId: 'attempt-current',
-      attemptNo: 2, status: 'completed' }]),
+    getWorkConversation: vi.fn().mockResolvedValue({
+      workConversationId: 'wc-1',
+      bindingId: 'binding-1',
+    }),
+    listWorkAttempts: vi
+      .fn()
+      .mockResolvedValue([
+        {
+          attemptId: 'attempt-current',
+          workOrderId: 'work-current',
+          attemptNo: 2,
+          status: 'completed',
+        },
+      ]),
   } as unknown as OrgGroupAgentStore;
   const sender = {
     send: vi.fn().mockResolvedValue(input?.receipt ?? { status: 'accepted', acceptedAt: 'now' }),
@@ -112,8 +135,13 @@ function harness(input?: {
         }),
       } as unknown as AgentDwsAccountStore,
       agentStore: {
-        get: vi.fn().mockReturnValue({ id: 'agent-1', tenantId: 'tenant-1',
-          enabled: input?.agentEnabled ?? true }),
+        get: vi
+          .fn()
+          .mockReturnValue({
+            id: 'agent-1',
+            tenantId: 'tenant-1',
+            enabled: input?.agentEnabled ?? true,
+          }),
       },
       sender,
       workerId: 'worker-1',
@@ -176,7 +204,10 @@ describe('deliverNextOrgAgentIntent', () => {
 
     expect(test.sender.send).toHaveBeenCalledOnce();
     expect(test.store.markDeliveryUnknown).toHaveBeenCalledWith(
-      'delivery-1', 'worker-1', 7, expect.objectContaining({ message: 'database unavailable' }),
+      'delivery-1',
+      'worker-1',
+      7,
+      expect.objectContaining({ message: 'database unavailable' }),
     );
   });
 
@@ -193,7 +224,10 @@ describe('deliverNextOrgAgentIntent', () => {
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
 
     expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
-      'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
+      'delivery-1',
+      'worker-1',
+      7,
+      'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
     );
     expect(test.sender.send).not.toHaveBeenCalled();
   });
@@ -278,6 +312,9 @@ describe('deliverNextOrgAgentIntent', () => {
     const test = harness({ claimedDelivery: completion });
     vi.mocked(test.store.getWorkOrder).mockResolvedValueOnce({
       workOrderId: 'work-current',
+      agentId: 'agent-1',
+      bindingId: 'binding-1',
+      workConversationId: 'wc-1',
       currentAttemptNo: 2,
       state: 'completed',
       createdByActor: { mappedUserId: 'member-1' },
@@ -320,13 +357,18 @@ describe('deliverNextOrgAgentIntent', () => {
     };
     const test = harness({ liveDeny: true, claimedDelivery: completion });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
-    expect(test.store.createDelivery).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'system',
-      deliveryKind: 'system_notice',
-      content: '任务已结束，但当前群策略不允许披露结果，请联系管理员。',
-    }));
+    expect(test.store.createDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'system',
+        deliveryKind: 'system_notice',
+        content: '任务已结束，但当前群策略不允许披露结果，请联系管理员。',
+      }),
+    );
     expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
-      'delivery-1', 'worker-1', 7, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+      'delivery-1',
+      'worker-1',
+      7,
+      'ORG_AGENT_CHANNEL_LIVE_DENY',
     );
     expect(test.sender.send).not.toHaveBeenCalled();
   });
@@ -364,7 +406,10 @@ describe('deliverNextOrgAgentIntent', () => {
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
     expect(test.store.createDelivery).toHaveBeenCalledOnce();
     expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
-      'delivery-1', 'worker-1', 7, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+      'delivery-1',
+      'worker-1',
+      7,
+      'ORG_AGENT_CHANNEL_LIVE_DENY',
     );
     expect(test.sender.send).not.toHaveBeenCalled();
   });
@@ -380,7 +425,39 @@ describe('deliverNextOrgAgentIntent', () => {
     const test = harness({ claimedDelivery: stale });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
     expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
-      'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
+      'delivery-1',
+      'worker-1',
+      7,
+      'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
+    );
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('dead-letters a completion whose WorkOrder belongs to another WorkConversation', async () => {
+    const completion = {
+      ...delivery,
+      deliveryKind: 'task_completion' as const,
+      source: 'background_completion' as const,
+      sourceWorkOrderId: 'work-current',
+      sourceAttemptId: 'attempt-current',
+    };
+    const test = harness({ claimedDelivery: completion });
+    vi.mocked(test.store.getWorkOrder).mockResolvedValueOnce({
+      workOrderId: 'work-current',
+      agentId: 'agent-1',
+      bindingId: 'binding-1',
+      workConversationId: 'wc-2',
+      currentAttemptNo: 2,
+      state: 'completed',
+    } as never);
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1',
+      'worker-1',
+      7,
+      'ORG_AGENT_DELIVERY_STALE_ATTEMPT',
     );
     expect(test.sender.send).not.toHaveBeenCalled();
   });

@@ -67,9 +67,18 @@ export async function deliverNextOrgAgentIntent(
               (candidate) => candidate.attemptId === delivery.sourceAttemptId,
             )
           : undefined;
+      const conversation = work
+        ? await options.store.getWorkConversation(delivery.tenantId, work.workConversationId)
+        : null;
       if (
         !work ||
         !attempt ||
+        !conversation ||
+        work.bindingId !== delivery.bindingId ||
+        work.agentId !== delivery.agentId ||
+        work.workConversationId !== delivery.workConversationId ||
+        conversation.bindingId !== work.bindingId ||
+        attempt.workOrderId !== work.workOrderId ||
         work.currentAttemptNo !== attempt.attemptNo ||
         work.state !== attempt.status ||
         !['completed', 'failed', 'cancelled'].includes(work.state)

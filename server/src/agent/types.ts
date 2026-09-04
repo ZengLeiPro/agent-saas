@@ -25,12 +25,7 @@ export interface SandboxWorkloadWireDescriptor {
 }
 
 export type PermissionMode =
-  | 'default'
-  | 'acceptEdits'
-  | 'bypassPermissions'
-  | 'plan'
-  | 'dontAsk'
-  | 'auto';
+  'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 
 /**
  * 模型 usage 按模型聚合后的字段。
@@ -78,6 +73,8 @@ export interface InteractionEvent {
 
 export interface InteractionResponse {
   allow?: boolean;
+  /** 保持 durable approval 为 pending，由其他可信通道稍后处理。 */
+  deferred?: boolean;
   message?: string;
   answers?: Record<string, string | string[]>;
 }
@@ -93,10 +90,7 @@ export interface SubagentEndInfo {
 }
 
 export interface AgentRunHooks {
-  onSessionStart?: (
-    sessionId: string,
-    transcriptPath?: string,
-  ) => void | Promise<void>;
+  onSessionStart?: (sessionId: string, transcriptPath?: string) => void | Promise<void>;
   onResult?: (meta: AgentRunResultMeta) => void | Promise<void>;
   onInteraction?: (event: InteractionEvent) => Promise<InteractionResponse>;
   onSubagentStart?: (info: SubagentStartInfo) => void | Promise<void>;

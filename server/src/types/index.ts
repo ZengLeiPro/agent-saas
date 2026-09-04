@@ -344,6 +344,33 @@ export interface ChannelContext {
   sessionOwner?: UserIdentity;
   /** Admin 代操作时：覆盖 dispatch 的 cwd（指向会话所有者的 workspace） */
   targetCwd?: string;
+  /** 组织群 Agent 的服务主体、调用者与渠道策略快照；仅可信 channel/runtime 写入。 */
+  orgAgentChannel?: {
+    accountId: string;
+    agentId: string;
+    bindingId: string;
+    conversationSpaceId: string;
+    workConversationId: string;
+    policyRevision: number;
+    agentPrincipal: { kind: 'org_agent'; tenantId: string; agentId: string; accountId: string; workspaceId: string };
+    externalActorAssurance: 'mapped' | 'unmapped' | 'ambiguous' | 'service';
+    allowedToolNames: string[];
+    allowedSkillIds: string[];
+    allowedSourceIds: string[];
+    dwsResourceIds: string[];
+    contextEnabled: boolean;
+    taskVisibility: 'conversation' | 'requester_only';
+    actorRole?: 'member' | 'org_admin';
+    triggerRoles: Array<'member' | 'org_admin'>;
+    approvalRoles: Array<'member' | 'org_admin'>;
+    externalActor: {
+      kind: 'external_user'; provider: 'dingtalk'; corpId: string; openId: string;
+      displayName?: string; mappedUserId?: string; role?: 'member' | 'org_admin'; assurance: 'mapped' | 'unmapped' | 'ambiguous';
+    } | { kind: 'service_event'; issuer: 'runtime'; workOrderId: string; attemptId: string; fence: number };
+    channelPrincipal: {
+      provider: 'dingtalk'; accountId: string; conversationId: string; kind: 'group' | 'direct'; peerOpenId?: string;
+    };
+  };
 }
 
 export interface SendOptions {

@@ -94,6 +94,7 @@ describe('RuntimeScheduler background task recovery', () => {
       metadata: {
         backgroundTask: true,
         backgroundTaskType: 'command',
+        backgroundTaskVersion: 2,
         backgroundTaskReady: false,
       },
     });
@@ -122,6 +123,7 @@ describe('RuntimeScheduler background task recovery', () => {
       metadata: {
         backgroundTask: true,
         backgroundTaskType: 'command',
+        backgroundTaskVersion: 2,
         backgroundTaskReady: false,
       },
     });
@@ -152,6 +154,53 @@ describe('RuntimeScheduler background task recovery', () => {
       expect.stringContaining('启动确认超时'),
     );
     await expect(runStore.get('shell-bg-stale-start')).resolves.toMatchObject({
+      status: 'failed',
+      metadata: { wakeState: 'pending' },
+    });
+  });
+
+  it('fails a stale staged background Agent that crashed before activation', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const record = await runStore.upsertPending({
+      runId: 'agent-bg-stale-start',
+      sessionId: 'sub-agent-stale-start',
+      metadata: {
+        backgroundTask: true,
+        backgroundTaskType: 'agent',
+        backgroundTaskVersion: 2,
+        backgroundTaskReady: false,
+      },
+    });
+    runStore.records.set(record.runId, {
+      ...record,
+      requestedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+    });
+    const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string) => {
+      await runStore.markStatus(candidate.runId, 'failed', 'background_agent_start_timeout', {
+        wakeState: 'pending',
+        error: message,
+      });
+    });
+    const wake = vi.fn();
+    const scheduler = new RuntimeScheduler({
+      runStore,
+      eventStore,
+      workerId: 'worker-1',
+      autoWake: true,
+      wake,
+      failBackgroundTask,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(failBackgroundTask).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'agent-bg-stale-start' }),
+      expect.stringContaining('Agent 启动确认超时'),
+    );
+    expect(wake).not.toHaveBeenCalled();
+    await expect(runStore.get('agent-bg-stale-start')).resolves.toMatchObject({
       status: 'failed',
       metadata: { wakeState: 'pending' },
     });

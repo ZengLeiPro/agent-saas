@@ -8,7 +8,7 @@
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync } from 'fs';
 import { cp, lstat, mkdir } from 'node:fs/promises';
-import { join, resolve } from 'path';
+import { join, relative, resolve, sep } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'node:util';
 import { serverLogger } from '../utils/logger.js';
@@ -76,6 +76,17 @@ export function resolveTenantCwd(globalAgentCwd: string, tenantSlug: string): st
 export function resolveAgentCwd(globalAgentCwd: string, tenantId: string, agentId: string): string {
   const tenantSlug = TENANT_SLUG_PATTERN.test(tenantId) ? tenantId : DEFAULT_TENANT_ID;
   return join(globalAgentCwd, tenantSlug, `.agent-${safeUserPathSegment(agentId)}`);
+}
+
+/** ACS 使用的相对挂载路径；只能由当前 tenant/Agent 身份确定性推导。 */
+export function resolveAgentMountSubPath(
+  globalAgentCwd: string,
+  tenantId: string,
+  agentId: string,
+): string {
+  return relative(globalAgentCwd, resolveAgentCwd(globalAgentCwd, tenantId, agentId))
+    .split(sep)
+    .join('/');
 }
 
 /** Agent 连接器凭据工作区；模型执行 workspace 不挂载此目录。 */

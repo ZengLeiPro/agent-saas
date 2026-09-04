@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   readlink,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -29,11 +30,15 @@ async function fixture({
   nginxDropInPresent = true,
   targetServerWasActive = false,
   targetWorkerWasActive = false,
+  currentV2Marker = false,
+  apiTargetV2Marker = false,
+  workerTargetV2Marker = false,
 }) {
-  const root = await mkdtemp(join(tmpdir(), 'compatibility-rollback-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'compatibility-rollback-')));
   const appRoot = join(root, 'app');
   const releases = join(appRoot, 'releases');
   const oldRelease = join(releases, 'old');
+  const oldWorkerRelease = join(releases, 'old-worker');
   const newRelease = join(releases, 'new');
   const state = join(appRoot, 'rollback-states', 'new');
   const etc = join(root, 'etc');
@@ -41,6 +46,7 @@ async function fixture({
   const bin = join(root, 'bin');
   await Promise.all([
     mkdir(oldRelease, { recursive: true }),
+    mkdir(oldWorkerRelease, { recursive: true }),
     mkdir(newRelease, { recursive: true }),
     mkdir(state, { recursive: true, mode: 0o700 }),
     mkdir(join(appRoot, 'color'), { recursive: true }),
@@ -128,10 +134,23 @@ async function fixture({
         'ExecStart=/usr/bin/node legacy-worker.js\n',
       ),
       writeFile(join(state, 'worker-active-color'), 'green\n'),
-      writeFile(join(state, 'worker-release-target'), `${oldRelease}\n`),
+      writeFile(join(state, 'worker-release-target'), `${oldWorkerRelease}\n`),
       writeFile(join(state, 'worker-env-present'), 'true\n'),
       writeFile(join(state, 'worker.release.env'), 'AGENT_SAAS_RELEASE_SHA=old\n'),
     ]);
+  }
+  const v2Marker = '.release/org-group-agent-background-v2';
+  if (currentV2Marker) {
+    await mkdir(dirname(join(newRelease, v2Marker)), { recursive: true });
+    await writeFile(join(newRelease, v2Marker), 'ready\n');
+  }
+  if (apiTargetV2Marker) {
+    await mkdir(dirname(join(oldRelease, v2Marker)), { recursive: true });
+    await writeFile(join(oldRelease, v2Marker), 'ready\n');
+  }
+  if (workerTargetV2Marker) {
+    await mkdir(dirname(join(oldWorkerRelease, v2Marker)), { recursive: true });
+    await writeFile(join(oldWorkerRelease, v2Marker), 'ready\n');
   }
 
   const systemctl = join(bin, 'systemctl');
@@ -307,12 +326,31 @@ exit 0
   );
   const nginx = join(bin, 'nginx');
   await writeFile(nginx, '#!/usr/bin/env bash\nprintf "nginx %s\\n" "$*" >> "$ROLLBACK_LOG"\n');
-  await Promise.all([chmod(systemctl, 0o755), chmod(curl, 0o755), chmod(nginx, 0o755)]);
+  const date = join(bin, 'date');
+  await writeFile(date, '#!/usr/bin/env bash\nprintf "2026-09-04T00:00:00+00:00\\n"\n');
+  const bash = join(bin, 'bash');
+  await writeFile(
+    bash,
+    `#!/bin/sh
+if [ -x /opt/homebrew/bin/bash ]; then
+  exec /opt/homebrew/bin/bash "$@"
+fi
+exec /bin/bash "$@"
+`,
+  );
+  await Promise.all([
+    chmod(systemctl, 0o755),
+    chmod(curl, 0o755),
+    chmod(nginx, 0o755),
+    chmod(date, 0o755),
+    chmod(bash, 0o755),
+  ]);
 
   return {
     root,
     appRoot,
     oldRelease,
+    oldWorkerRelease,
     newRelease,
     paths,
     environment: {
@@ -378,6 +416,69 @@ test('rollback fails closed before restoring units when the current Worker marke
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /current Runtime Worker color is missing/u);
   assert.match(await readFile(value.paths.serverUnit, 'utf8'), /runtime-dependency/u);
+});
+
+test('organization group Agent v2 floor refuses an API target before topology mutation', async () => {
+  const value = await fixture({
+    workerWasActive: false,
+    currentV2Marker: true,
+    targetServerWasActive: true,
+  });
+  const result = spawnSync('bash', [SCRIPT], { encoding: 'utf8', env: value.environment });
+
+  assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /API target is below the organization group Agent v2 protocol floor/u);
+  assert.equal(await readlink(join(value.appRoot, 'current')), value.newRelease);
+  assert.equal(await readlink(join(value.appRoot, 'previous')), value.oldRelease);
+  assert.equal(await readFile(value.paths.active, 'utf8'), 'blue\n');
+  assert.equal(await readFile(value.paths.workerActive, 'utf8'), 'blue\n');
+  assert.match(await readFile(value.paths.serverUnit, 'utf8'), /runtime-dependency/u);
+  assert.match(await readFile(value.paths.workerUnit, 'utf8'), /runtime-dependency/u);
+  assert.equal(await readFile(value.paths.identity, 'utf8'), '{"release":"new"}\n');
+  const log = await readFile(value.paths.log, 'utf8');
+  assert.doesNotMatch(log, /systemctl (start|stop|restart|enable|disable|daemon-reload)/u);
+});
+
+test('organization group Agent v2 floor refuses a Worker target before topology mutation', async () => {
+  const value = await fixture({
+    workerWasActive: true,
+    currentV2Marker: true,
+    apiTargetV2Marker: true,
+    targetServerWasActive: true,
+  });
+  const result = spawnSync('bash', [SCRIPT], { encoding: 'utf8', env: value.environment });
+
+  assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+  assert.match(
+    result.stdout,
+    /Runtime Worker target is below the organization group Agent v2 protocol floor/u,
+  );
+  assert.equal(await readlink(join(value.appRoot, 'current')), value.newRelease);
+  assert.equal(await readlink(join(value.appRoot, 'previous')), value.oldRelease);
+  assert.equal(await readFile(value.paths.active, 'utf8'), 'blue\n');
+  assert.equal(await readFile(value.paths.workerActive, 'utf8'), 'blue\n');
+  assert.match(await readFile(value.paths.serverUnit, 'utf8'), /runtime-dependency/u);
+  assert.match(await readFile(value.paths.workerUnit, 'utf8'), /runtime-dependency/u);
+  assert.equal(await readFile(value.paths.identity, 'utf8'), '{"release":"new"}\n');
+  const log = await readFile(value.paths.log, 'utf8');
+  assert.doesNotMatch(log, /systemctl (start|stop|restart|enable|disable|daemon-reload)/u);
+});
+
+test('organization group Agent v2 floor allows targets with the required markers', async () => {
+  const value = await fixture({
+    workerWasActive: true,
+    currentV2Marker: true,
+    apiTargetV2Marker: true,
+    workerTargetV2Marker: true,
+    targetServerWasActive: true,
+    targetWorkerWasActive: true,
+  });
+  await writeFile(value.paths.serverEnabledGreen, 'agent-saas-server@green\n');
+  const result = spawnSync('bash', [SCRIPT], { encoding: 'utf8', env: value.environment });
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.doesNotMatch(result.stdout, /organization group Agent v2 protocol floor/u);
+  assert.equal(await readlink(join(value.appRoot, 'current')), value.oldRelease);
 });
 
 for (const failureFlag of ['FAIL_WORKER_IS_ENABLED', 'FAIL_WORKER_IS_ACTIVE']) {

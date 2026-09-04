@@ -8,6 +8,7 @@ import {
   type ModelEvent,
   type ModelToolCall,
   type ModelUsage,
+  type PlatformEvent,
   type RunContext,
 } from './types.js';
 import type { OutboundEvent } from '../types/index.js';
@@ -238,6 +239,26 @@ export function clearProviderContinuations(messages: ModelChatMessage[]): void {
       delete message.provider_continuation;
     }
   }
+}
+
+export function loadedMcpToolNamesFromMessages(messages: ModelChatMessage[]): Set<string> {
+  return new Set(
+    messages
+      .filter((message): message is Extract<ModelChatMessage, { role: 'additional_tools' }> => (
+        message.role === 'additional_tools'
+      ))
+      .flatMap((message) => message.tools.map((tool) => tool.name)),
+  );
+}
+
+export function loadedMcpToolNamesFromEvents(events: PlatformEvent[]): Set<string> {
+  return new Set(
+    events
+      .filter((event): event is Extract<PlatformEvent, { type: 'mcp_tools_loaded' }> => (
+        event.type === 'mcp_tools_loaded'
+      ))
+      .flatMap((event) => event.tools.map((tool) => tool.name)),
+  );
 }
 
 export function mergeUsage(a: ModelUsage | undefined, b: ModelUsage): ModelUsage {

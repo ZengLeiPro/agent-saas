@@ -161,7 +161,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       const items = await options.messageStore.listForAccount(
         tenantId,
         account.accountId,
-        parsed.data.limit,
+        parsed.data.limit, currentAgentDwsAccountIdentity(account),
       );
       res.json({ items: items.map(toPublicInboxRecord) });
     } catch {

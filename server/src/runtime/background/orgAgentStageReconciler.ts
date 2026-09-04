@@ -4,6 +4,7 @@ import type { OrgAgentBackgroundWorkCoordinator } from './orgAgentBackgroundWork
 
 const STAGE_STALE_MS = 120_000;
 const STAGE_BATCH_SIZE = 50;
+const STAGE_RECOVERY_POLICY_TOOL = 'BackgroundTask';
 
 export async function reconcileStagedOrgWork(
   config: RawRuntimeRunDispatchConfig,
@@ -33,7 +34,23 @@ export async function reconcileStagedOrgWork(
         )
           throw new Error('ORG_AGENT_STAGED_METADATA_INVALID');
         let work = await store.getWorkOrder(run.tenantId!, metadata.workOrderId);
-        if (!work) throw new Error('ORG_AGENT_STAGED_WORK_ORDER_MISSING');
+        if (
+          !work
+          || work.bindingId !== metadata.orgAgentChannel.bindingId
+          || work.agentId !== metadata.orgAgentChannel.agentId
+          || work.workConversationId !== metadata.orgAgentChannel.workConversationId
+        ) throw new Error('ORG_AGENT_STAGED_WORK_ORDER_PRINCIPAL_MISMATCH');
+        const evaluateChannel = config.orgAgentChannelPolicyEvaluator;
+        if (!evaluateChannel) throw new Error('ORG_AGENT_STAGED_CHANNEL_POLICY_UNAVAILABLE');
+        const livePolicy = await evaluateChannel({
+          tenantId: run.tenantId!,
+          bindingId: metadata.orgAgentChannel.bindingId,
+          accountId: metadata.orgAgentChannel.accountId,
+          agentId: metadata.orgAgentChannel.agentId,
+          conversationId: metadata.orgAgentChannel.channelPrincipal.conversationId,
+          toolName: STAGE_RECOVERY_POLICY_TOOL,
+        });
+        if (!livePolicy.allowed) throw new Error('ORG_AGENT_STAGED_CHANNEL_PRINCIPAL_STALE');
         let attempt = (await store.listWorkAttempts(run.tenantId!, work.workOrderId)).find(
           (item) => item.runtimeRunId === run.runId,
         );

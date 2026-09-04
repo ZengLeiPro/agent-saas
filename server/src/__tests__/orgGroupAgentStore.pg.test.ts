@@ -36,6 +36,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     store = new PgOrgGroupAgentStore(pool, prefix);
   }, 60_000);
 
+  // 每个用例共享随机前缀，只清理本测试套件创建的对象。
   afterAll(async () => {
     if (!pool) return;
     try {
@@ -59,6 +60,41 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
       await pool.end();
     }
   }, 30_000);
+
+  it('滚动发布仅接管当前身份纪元内由 N 版本创建的全 NULL binding', async () => {
+    const current = await store.ensureShadowBinding({
+      tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-rolling-current', channelKind: 'group',
+      workspaceId: 'agent-workspace-a', accountIdentity,
+    });
+    await pool.query(`UPDATE ${prefix}_org_agent_channel_bindings
+      SET account_profile_id=NULL,account_corp_id=NULL,account_dingtalk_user_id=NULL,
+          account_identity_updated_at=NULL
+      WHERE binding_id=$1`, [current.bindingId]);
+    await expect(store.ensureShadowBinding({
+      tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-rolling-current', channelKind: 'group',
+      workspaceId: 'agent-workspace-a', accountIdentity,
+    })).resolves.toMatchObject({
+      bindingId: current.bindingId,
+      accountIdentity,
+    });
+
+    const old = await store.ensureShadowBinding({
+      tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-rolling-old', channelKind: 'group',
+      workspaceId: 'agent-workspace-a', accountIdentity,
+    });
+    await pool.query(`UPDATE ${prefix}_org_agent_channel_bindings
+      SET account_profile_id=NULL,account_corp_id=NULL,account_dingtalk_user_id=NULL,
+          account_identity_updated_at=NULL,created_at='2026-09-03T00:00:00.000Z'
+      WHERE binding_id=$1`, [old.bindingId]);
+    await expect(store.ensureShadowBinding({
+      tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
+      conversationId: 'group-rolling-old', channelKind: 'group',
+      workspaceId: 'agent-workspace-a', accountIdentity,
+    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
+  });
 
   it('pins account/binding/topic/work/attempt identity and keeps unknown delivery from automatic resend', async () => {
     const shadow = await store.ensureShadowBinding({

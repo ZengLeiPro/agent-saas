@@ -63,10 +63,15 @@ export async function hasStaleIdentityBinding(
   conversationId: string,
 ): Promise<boolean> {
   const existing = await store.getBinding(account.tenantId, account.accountId, conversationId);
-  return Boolean(existing && !bindingMatchesCurrentAccountIdentity(existing, account));
+  if (!existing || bindingMatchesCurrentAccountIdentity(existing, account)) return false;
+  const identity = currentAgentDwsAccountIdentity(account);
+  if (!identity || existing.accountIdentity) return true;
+  // Missing snapshots may only be adopted by the store's atomic all-NULL CAS. Partial snapshots
+  // and bindings predating the current identity epoch remain conflicts there.
+  return Date.parse(existing.createdAt) < Date.parse(identity.identityUpdatedAt);
 }
 
-/** 只有当前精确账号身份观测到的 conversationId 才能创建 shadow binding。 */
+/** 只有当前精确身份观测到的群才能创建，且 legacy 接管由 store 原子判定。 */
 export async function ensureObservedGroupBinding(
   store: OrgGroupAgentStore,
   account: AgentDwsAccountRecord,

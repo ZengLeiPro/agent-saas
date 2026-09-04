@@ -105,6 +105,7 @@ describe('组织 Agent staged run 恢复', () => {
     });
     const listStagedWorkOrders = vi.fn().mockResolvedValue([]);
     const service = new DurableBackgroundTaskService({
+      orgAgentChannelPolicyEvaluator: vi.fn().mockResolvedValue({ allowed: true }),
       runStore: {
         listStagedOrgAgentBackgroundTasks: listStaged,
         activateStagedOrgAgentBackgroundTask: activate,
@@ -115,6 +116,9 @@ describe('组织 Agent staged run 恢复', () => {
         getWorkOrder: vi.fn(async (_tenantId, workOrderId) => ({
           workOrderId,
           tenantId: 'tenant-1',
+          bindingId: 'binding-1',
+          agentId: 'agent-1',
+          workConversationId: 'conversation-1',
           state: created.has(workOrderId) ? 'running' : 'queued',
           currentAttemptNo: created.has(workOrderId) ? 1 : 0,
         })),
@@ -194,12 +198,14 @@ describe('组织 Agent staged run 恢复', () => {
   it('不会复活已经失败的 WorkOrder，也不会让旧 attempt 失败覆盖当前 attempt', async () => {
     const run = stagedRun(9) as any;
     const currentWork = {
-      workOrderId: 'work-9', tenantId: 'tenant-1', state: 'running', currentAttemptNo: 2, version: 8,
+      workOrderId: 'work-9', tenantId: 'tenant-1', bindingId: 'binding-1', agentId: 'agent-1',
+      workConversationId: 'conversation-1', state: 'running', currentAttemptNo: 2, version: 8,
     };
     const transitionWorkOrder = vi.fn();
     const markStatusIfCurrent = vi.fn().mockResolvedValue({ ...run, status: 'failed' });
     const activate = vi.fn();
     const service = new DurableBackgroundTaskService({
+      orgAgentChannelPolicyEvaluator: vi.fn().mockResolvedValue({ allowed: true }),
       runStore: {
         listStagedOrgAgentBackgroundTasks: vi.fn().mockResolvedValue([run]),
         activateStagedOrgAgentBackgroundTask: activate,
@@ -221,5 +227,51 @@ describe('组织 Agent staged run 恢复', () => {
     expect(activate).not.toHaveBeenCalled();
     expect(markStatusIfCurrent).toHaveBeenCalledOnce();
     expect(transitionWorkOrder).not.toHaveBeenCalled();
+  });
+
+  it('账号换绑后把旧身份 staged run 和 attempt 收口为失败而不激活', async () => {
+    const run = stagedRun(10) as any;
+    const work = {
+      workOrderId: 'work-10', tenantId: 'tenant-1', bindingId: 'binding-1', agentId: 'agent-1',
+      workConversationId: 'conversation-1', state: 'queued', currentAttemptNo: 1, version: 2,
+    };
+    const attempt = {
+      workOrderId: 'work-10', attemptId: 'attempt-10', attemptNo: 1,
+      runtimeRunId: 'run-10', mountSubPath: 'workspaces/task/run-10', status: 'queued',
+    };
+    const activate = vi.fn();
+    const markStatusIfCurrent = vi.fn().mockResolvedValue({ ...run, status: 'failed' });
+    const transitionWorkAttempt = vi.fn().mockResolvedValue({ ...attempt, status: 'failed' });
+    const transitionWorkOrder = vi.fn().mockResolvedValue({ ...work, state: 'failed' });
+    const evaluate = vi.fn().mockResolvedValue({ allowed: false, reason: 'stale identity' });
+    const service = new DurableBackgroundTaskService({
+      orgAgentChannelPolicyEvaluator: evaluate,
+      runStore: {
+        listStagedOrgAgentBackgroundTasks: vi.fn().mockResolvedValue([run]),
+        activateStagedOrgAgentBackgroundTask: activate,
+        markStatusIfCurrent,
+        get: vi.fn(),
+      },
+      orgGroupAgentStore: {
+        getWorkOrder: vi.fn().mockResolvedValue(work),
+        listWorkAttempts: vi.fn().mockResolvedValue([attempt]),
+        transitionWorkAttempt,
+        transitionWorkOrder,
+        listStagedWorkOrders: vi.fn().mockResolvedValue([]),
+      },
+    } as never);
+
+    await service.reconcileStagedOrgWork();
+
+    expect(evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      bindingId: 'binding-1', accountId: 'account-1', conversationId: 'group-1',
+    }));
+    expect(activate).not.toHaveBeenCalled();
+    expect(markStatusIfCurrent).toHaveBeenCalledWith(
+      'run-10', ['pending'], 'failed', 'org_agent_stage_recovery_failed',
+      expect.objectContaining({ backgroundStageFailure: 'ORG_AGENT_STAGED_CHANNEL_PRINCIPAL_STALE' }),
+    );
+    expect(transitionWorkAttempt).toHaveBeenCalled();
+    expect(transitionWorkOrder).toHaveBeenCalled();
   });
 });

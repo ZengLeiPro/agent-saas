@@ -120,6 +120,11 @@ describe('Agent DWS recovery routes', () => {
     });
     expect(body.items[0]).not.toHaveProperty('content');
     expect(body.items[0]).not.toHaveProperty('responseText');
+    expect(listForAccount).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 10, expect.objectContaining({
+        profileId: 'corp-a:ding-a', identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+      }),
+    );
   });
 
   it('管理员只能用当前精确身份的群观测创建 shadow binding', async () => {
@@ -165,6 +170,76 @@ describe('Agent DWS recovery routes', () => {
         profileId: 'corp-a:ding-a', identityUpdatedAt: '2026-09-03T00:00:00.000Z',
       }),
     );
+  });
+
+  it('N 版本在当前身份纪元创建的全 NULL binding 可被 N+1 安全接管', async () => {
+    const legacyNullBinding = {
+      ...binding,
+      bindingId: 'binding-null',
+      conversationId: 'group-observed',
+      accountIdentity: undefined,
+      createdAt: '2026-09-04T00:00:00.000Z',
+    };
+    const adopted = {
+      ...legacyNullBinding,
+      accountIdentity: binding.accountIdentity,
+    };
+    const ensureShadowBinding = vi.fn().mockResolvedValue(adopted);
+    const opened = await listen({
+      messageStore: {
+        listForAccount: vi.fn(async () => [observedInbox()]),
+        hasObservedGroup: vi.fn(async () => true),
+      },
+      orgGroupAgentStore: {
+        getBinding: vi.fn(async () => legacyNullBinding),
+        ensureShadowBinding,
+      },
+    });
+    server = opened.server;
+
+    const response = await fetch(
+      `${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace/bindings`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        conversationId: 'group-observed',
+      }) },
+    );
+
+    expect(response.status).toBe(201);
+    expect(ensureShadowBinding).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: 'group-observed',
+      accountIdentity: binding.accountIdentity,
+    }));
+  });
+
+  it('早于当前身份纪元的全 NULL binding 不可被新身份接管', async () => {
+    const reboundAccount: AgentDwsAccountRecord = {
+      ...account,
+      profileId: 'corp-b:ding-b', corpId: 'corp-b', dingtalkUserId: 'ding-b',
+      identityUpdatedAt: '2026-09-05T00:00:00.000Z', revision: 2,
+    };
+    const ensureShadowBinding = vi.fn();
+    const opened = await listen({
+      account: reboundAccount,
+      messageStore: {
+        listForAccount: vi.fn(async () => []),
+        hasObservedGroup: vi.fn(async () => true),
+      },
+      orgGroupAgentStore: {
+        getBinding: vi.fn(async () => ({ ...binding, accountIdentity: undefined })),
+        ensureShadowBinding,
+      },
+    });
+    server = opened.server;
+
+    const response = await fetch(
+      `${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace/bindings`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        conversationId: 'group-a',
+      }) },
+    );
+
+    expect(response.status).toBe(409);
+    expect(ensureShadowBinding).not.toHaveBeenCalled();
   });
 
   it('账号从身份 A 换绑 B 后不展示或授权 A 的群观测与 binding', async () => {

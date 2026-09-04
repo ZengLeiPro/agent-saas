@@ -20,6 +20,7 @@ import {
 
 function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
   const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
+  const replyStartedAt = new Date().toISOString();
   const messageStore = {
     claimNext: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValue(null),
     renewLease: vi.fn().mockResolvedValue(true),
@@ -42,7 +43,7 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       })),
     markReplyAttemptStarted: vi
       .fn()
-      .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
+      .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
     fail: vi.fn().mockResolvedValue(undefined),
     defer: vi.fn().mockResolvedValue(undefined),

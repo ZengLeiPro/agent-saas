@@ -206,6 +206,23 @@ export function resolveNewSessionAgentTarget<T>(input: {
 }
 
 /**
+ * 着陆页的空对话必须与「新建会话」绑定同一个默认目标，否则首条消息会被目标门禁挡下。
+ * 只有目标唯一确定时才自动绑定；picker / unavailable 仍留给用户显式选择。
+ */
+export function resolveLandingAgentTarget<T>(input: {
+  catalog: AgentTargetCatalog<T> | null;
+  catalogLoading: boolean;
+  hasSession: boolean;
+  hasPendingTarget: boolean;
+  hasMessages: boolean;
+}): AgentTarget | null {
+  if (input.catalogLoading || !input.catalog) return null;
+  if (input.hasSession || input.hasPendingTarget || input.hasMessages) return null;
+  const selection = resolveNewSessionAgentTarget({ catalog: input.catalog });
+  return selection.kind === 'selected' ? selection.target : null;
+}
+
+/**
  * Changing target never silently reuses a differently-bound session. A caller may explicitly
  * provide an already-selected matching session; otherwise the only safe action is a new session.
  */

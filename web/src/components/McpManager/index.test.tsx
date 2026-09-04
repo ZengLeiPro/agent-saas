@@ -145,8 +145,26 @@ describe("McpManager 连接器目录", () => {
         id: "new-server",
         name: "新服务",
         tenantId: "tenant-a",
-      }));
+      }), "tenant-a");
     });
+  });
+
+  it("快速切换目标组织时忽略旧组织的慢响应", async () => {
+    authState.isAdmin = true;
+    authState.isPlatformAdmin = true;
+    let resolveA!: (value: unknown) => void;
+    let resolveB!: (value: unknown) => void;
+    fetchMcpAdminServers.mockImplementation((tenantId: string) => new Promise((resolve) => {
+      if (tenantId === "tenant-a") resolveA = resolve;
+      else resolveB = resolve;
+    }));
+    const { rerender } = render(<McpAdminCatalog tenantId="tenant-a" />);
+    rerender(<McpAdminCatalog tenantId="tenant-b" />);
+    resolveB({ configVersion: 2, servers: [{ id: "b-server", name: "B 服务", tenantId: "tenant-b", config: { type: "http", url: "https://b.example.com" } }] });
+    expect(await screen.findByText("B 服务")).toBeTruthy();
+    resolveA({ configVersion: 1, servers: [{ id: "a-server", name: "A 服务", tenantId: "tenant-a", config: { type: "http", url: "https://a.example.com" } }] });
+    await waitFor(() => expect(screen.queryByText("A 服务")).toBeNull());
+    expect(screen.getByText("B 服务")).toBeTruthy();
   });
 
   it("展示平台、组织、个人来源并即时启用", async () => {

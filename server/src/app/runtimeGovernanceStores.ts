@@ -254,6 +254,16 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
           + `scopes=${backfill.scopesProjected} policies=${backfill.policiesProjected} `
           + `issues=${backfill.issuesRecorded}`,
         );
+        const scopeBaseline = await entitlementStore.backfillMissingResourceScopes({
+          tenants: tenantStore.listAll(),
+          createdBy: 'system:governance-scope-baseline-v1',
+          platformTenantId: DEFAULT_TENANT_ID,
+        });
+        serverLogger.info(
+          `Governance Entitlement scope baseline backfill: tenants=${scopeBaseline.tenantsScanned} `
+            + `inserted=${scopeBaseline.scopesInserted} skipped=${scopeBaseline.scopesSkipped} `
+            + `errors=${scopeBaseline.tenantsWithErrors} issues=${scopeBaseline.issuesRecorded}`,
+        );
       } catch (error) {
         serverLogger.warn(
           `Governance Entitlement shadow backfill failed; legacy authority remains active: `

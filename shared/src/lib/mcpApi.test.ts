@@ -183,8 +183,16 @@ describe('mcpApi', () => {
     });
 
     it('失败时抛 body.error', async () => {
-      mockAuthFetch.mockResolvedValue(fail(400, { error: '配置无效' }));
-      await expect(upsertMcpServer({ id: 's' } as never)).rejects.toThrow('配置无效');
+      mockAuthFetch.mockResolvedValue(fail(409, { error: '配置无效', code: 'MCP_SCOPE_CONFLICT', requestId: 'req-mcp' }));
+      await expect(upsertMcpServer({ id: 's' } as never)).rejects.toMatchObject({
+        message: '配置无效', code: 'MCP_SCOPE_CONFLICT', status: 409, requestId: 'req-mcp',
+      });
+    });
+
+    it('组织入口在 URL 中绑定目标组织', async () => {
+      mockAuthFetch.mockResolvedValue(ok());
+      await upsertMcpServer({ id: 'srv' } as never, 'tenant-a');
+      expect(lastCall().url).toBe('/api/mcp/admin/servers/srv?tenantId=tenant-a');
     });
   });
 
@@ -199,6 +207,12 @@ describe('mcpApi', () => {
     it('非 2xx 抛错（无 body 提取）', async () => {
       mockAuthFetch.mockResolvedValue(fail(500));
       await expect(deleteMcpServer('s')).rejects.toThrow('Failed to delete MCP server: 500');
+    });
+
+    it('组织入口在 URL 中绑定目标组织', async () => {
+      mockAuthFetch.mockResolvedValue(ok());
+      await deleteMcpServer('srv', 'tenant-a');
+      expect(lastCall().url).toBe('/api/mcp/admin/servers/srv?tenantId=tenant-a');
     });
   });
 

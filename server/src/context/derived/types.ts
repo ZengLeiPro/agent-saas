@@ -117,7 +117,11 @@ export interface ConsumerLease {
 
 export interface ReviewRoleGate {
   /** Must verify trusted platform authorization; actor-supplied role strings are not accepted. */
-  mayCorrectOrganization(input: { tenantId: string; actorId: string }): Promise<boolean>;
+  mayCorrectOrganization(input: {
+    tenantId: string;
+    actorId: string;
+    accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
+  }): Promise<boolean>;
 }
 
 export interface DerivedReviewAuthorizationSnapshot {

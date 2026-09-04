@@ -10,6 +10,9 @@ import type { ContextJson, ContextObject } from '../store/types.js';
 export interface ContextProductSubject {
   tenantId: string;
   actorId: string;
+  actorTenantId?: string;
+  actorPersona?: 'platform_admin' | 'org_admin' | 'member';
+  accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
 }
 
 export interface ProductRecordLocator {

@@ -11,11 +11,14 @@ afterEach(async () => Promise.all(servers.splice(0).map(server => new Promise<vo
 
 async function start(product: Partial<ContextProductService>, user: Express.Request['user'] = {
   sub: 'actor-a', username: 'admin', role: 'admin', tenantId: 'tenant-a',
-}) {
+}, targetOrganizationAccess?: Parameters<typeof createContextAdminRouter>[0]['targetOrganizationAccess']) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.user = user; next(); });
-  app.use('/api/admin/context-plane', createContextAdminRouter({ product: product as ContextProductService }));
+  app.use('/api/admin/context-plane', createContextAdminRouter({
+    product: product as ContextProductService,
+    ...(targetOrganizationAccess ? { targetOrganizationAccess } : {}),
+  }));
   const server = await new Promise<import('node:http').Server>(resolve => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -50,11 +53,25 @@ describe('Context product admin routes', () => {
     expect((await fetch(`${org}/entities?tenantId=tenant-b`)).status).toBe(403);
     expect(listEntities).not.toHaveBeenCalled();
 
+    const getMembership = vi.fn();
     const platform = await start({ listEntities } as Partial<ContextProductService>, {
       sub: 'platform-actor', username: 'root', role: 'admin', tenantId: 'pantheon',
+    }, {
+      memberships: {
+        getPlatformAdmin: vi.fn().mockResolvedValue({ userId: 'platform-actor', status: 'active' }),
+        getMembership,
+      } as never,
+      tenantExists: tenantId => tenantId === 'tenant-b',
     });
+    const missingTarget = await fetch(`${platform}/entities`);
+    expect(missingTarget.status).toBe(403);
+    await expect(missingTarget.json()).resolves.toMatchObject({ code: 'TARGET_TENANT_REQUIRED' });
     expect((await fetch(`${platform}/entities?tenantId=tenant-b`)).status).toBe(200);
-    expect(listEntities).toHaveBeenLastCalledWith({ tenantId: 'tenant-b', actorId: 'platform-actor' }, {});
+    expect(listEntities).toHaveBeenLastCalledWith({
+      tenantId: 'tenant-b', actorId: 'platform-actor', actorTenantId: 'pantheon',
+      actorPersona: 'platform_admin', accessMode: 'platform_manage',
+    }, {});
+    expect(getMembership).not.toHaveBeenCalled();
   });
 
   it('paginates entity items and correction history with strict server-owned subjects', async () => {

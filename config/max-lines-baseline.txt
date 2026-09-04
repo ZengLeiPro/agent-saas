@@ -1,4 +1,4 @@
-# Source file ratchet baseline. Physical lines are CRLF-normalized; a final newline is not a line.
+# Source file ratchet baseline. Physical source lines are CRLF-normalized; a final newline is not a line.
 # Thresholds: production=1000 (above production p95=821), test=800 (above test p95=667).
 # Generated/build/cache output is excluded because it is not maintained source.
 # Format: repo-relative-path max-lines scope
@@ -26,7 +26,7 @@ server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1404	production
 server/src/app/config.ts	1426	production
-server/src/app/routes.ts	1133	production
+server/src/app/routes.ts	1131	production
 server/src/app/runtime.ts	3017	production
 server/src/app/runtimeGovernanceConnectors.ts	1234	production
 server/src/channels/web/channel.ts	4341	production

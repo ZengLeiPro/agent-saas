@@ -38,6 +38,11 @@ export interface AssignmentContextRecallScopeResolverOptions {
   now?: () => Date;
   /** Trusted, live membership/policy lookup. It must not derive tenant identity from client input. */
   resolveAccess?: (subject: ContextRecallSubject) => Promise<ContextRecallAccessDecision>;
+  /** Trusted organization-wide catalog used only for server-resolved platform management reads. */
+  listOrganizationResourceIds?: (
+    tenantId: string,
+    resourceType: ContextCollectionAssignmentResourceType,
+  ) => Promise<ReadonlyArray<{ resourceId: string; assignmentVersion: number }>>;
   /** Trusted session lookup. When configured, a missing/mismatched session fails closed. */
   resolveSessionPin?: (subject: ContextRecallSubject) => Promise<ContextRecallSessionPin | null>;
 }
@@ -97,12 +102,14 @@ export class AssignmentContextRecallScopeResolver implements ContextRecallScopeR
     }
 
     const groups = await Promise.all(this.resourceTypes.map(async resourceType => {
-      const assignments = await this.assignments.listEffectiveResourceIds(
-        subject.tenantId,
-        subject.userId,
-        resourceType,
-        agentId,
-      );
+      const assignments = subject.accessMode === 'platform_manage'
+        ? await this.organizationAssignments(subject.tenantId, resourceType)
+        : await this.assignments.listEffectiveResourceIds(
+            subject.tenantId,
+            subject.userId,
+            resourceType,
+            agentId,
+          );
       return assignments.map((assignment): ContextRecallCollectionScope => ({
         collectionId: assignment.resourceId,
         assignmentVersion: assignment.assignmentVersion,
@@ -133,6 +140,16 @@ export class AssignmentContextRecallScopeResolver implements ContextRecallScopeR
       degraded: false,
       degradationReasons: [],
     };
+  }
+
+  private async organizationAssignments(
+    tenantId: string,
+    resourceType: ContextCollectionAssignmentResourceType,
+  ): Promise<ReadonlyArray<{ resourceId: string; assignmentVersion: number }>> {
+    if (!this.options.listOrganizationResourceIds) {
+      throw new ContextRecallScopeDriftError('CONTEXT_RECALL_MEMBERSHIP_INACTIVE');
+    }
+    return this.options.listOrganizationResourceIds(tenantId, resourceType);
   }
 }
 

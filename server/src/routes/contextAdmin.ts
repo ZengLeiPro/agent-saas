@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
 import { ContextProductError, type ContextProductService } from '../context/product/index.js';
+import type { ContextProductSubject } from '../context/product/types.js';
+import {
+  resolveTargetOrganizationAccess,
+  targetOrganizationAccessErrorBody,
+  type TargetOrganizationAccessAuthorities,
+} from '../governance/auth/targetOrganizationAccess.js';
 import type {
   ContextRetentionAuditState,
   ContextRetentionReceipt,
@@ -78,6 +84,7 @@ export interface ContextAdminRouterOptions {
   product?: ContextProductService;
   retention?: ContextRetentionWorkerPort;
   now?: () => Date;
+  targetOrganizationAccess?: TargetOrganizationAccessAuthorities;
 }
 
 const tenantQuerySchema = z.object({
@@ -346,7 +353,7 @@ async function productRead<T extends { tenantId?: string }>(
   res: import('express').Response,
   options: ContextAdminRouterOptions,
   schema: z.ZodType<T>,
-  run: (product: ContextProductService, subject: { tenantId: string; actorId: string }, query: Omit<T, 'tenantId'>) => Promise<unknown>,
+  run: (product: ContextProductService, subject: ContextProductSubject, query: Omit<T, 'tenantId'>) => Promise<unknown>,
 ) {
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ code: 'CONTEXT_PRODUCT_INVALID' });
@@ -360,13 +367,41 @@ async function productCall(
   res: import('express').Response,
   options: ContextAdminRouterOptions,
   requestedTenantId: string | undefined,
-  run: (product: ContextProductService, subject: { tenantId: string; actorId: string }) => Promise<unknown>,
+  run: (product: ContextProductService, subject: ContextProductSubject) => Promise<unknown>,
 ) {
   if (!options.product) return res.status(503).json({ code: 'CONTEXT_PRODUCT_UNAVAILABLE' });
-  const tenantId = resolveTenant(req, requestedTenantId);
-  if (!tenantId || !req.user?.sub) return res.status(403).json({ code: 'CONTEXT_PRODUCT_FORBIDDEN' });
+  if (!req.user?.sub) return res.status(403).json({ code: 'CONTEXT_PRODUCT_FORBIDDEN' });
+  let subject: ContextProductSubject;
+  if (options.targetOrganizationAccess) {
+    try {
+      const access = await resolveTargetOrganizationAccess(
+        req,
+        requestedTenantId,
+        req.method === 'GET' ? 'read' : 'manage',
+        options.targetOrganizationAccess,
+      );
+      subject = {
+        tenantId: access.targetTenantId,
+        actorId: access.actorUserId,
+        actorTenantId: access.actorTenantId,
+        actorPersona: access.actorPersona,
+        accessMode: access.accessMode,
+      };
+    } catch (error) {
+      const accessError = targetOrganizationAccessErrorBody(error);
+      if (accessError) return res.status(accessError.status).json(accessError.body);
+      return res.status(503).json({ code: 'CONTEXT_PRODUCT_UNAVAILABLE' });
+    }
+  } else {
+    const tenantId = resolveTenant(req, requestedTenantId);
+    if (!tenantId) return res.status(403).json({ code: 'CONTEXT_PRODUCT_FORBIDDEN' });
+    subject = {
+      tenantId,
+      actorId: req.user.sub,
+    };
+  }
   try {
-    return res.json(await run(options.product, { tenantId, actorId: req.user.sub }));
+    return res.json(await run(options.product, subject));
   } catch (error) {
     if (!(error instanceof ContextProductError)) {
       return res.status(503).json({ code: 'CONTEXT_PRODUCT_UNAVAILABLE' });

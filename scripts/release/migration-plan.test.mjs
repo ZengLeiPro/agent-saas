@@ -199,7 +199,7 @@ test('fails closed when an unchanged authority root directly has a dynamic loade
   );
 });
 
-test('fails closed when a static authority dependency hides a dynamic external provider', () => {
+test('fails closed when a static authority dependency hides an unproven dynamic external provider', () => {
   const root = 'server/src/taskboard/storeSchema.ts';
   const helper = 'server/src/taskboard/schemaLoader.ts';
   const provider = 'config/taskboard-migration-provider.json';
@@ -231,7 +231,29 @@ test('fails closed when a static authority dependency hides a dynamic external p
   );
 });
 
-test('classifies a destructive provider imported by a production startup schema root', () => {
+test('classifies a destructive provider dynamically imported by a production startup schema root', () => {
+  const root = 'server/src/taskboard/storeSchema.ts';
+  const provider = 'server/src/taskboard/dynamicSchema.ts';
+  const providerSource =
+    "export async function runSchema(db) { await db.query('ALTER TABLE tasks DROP COLUMN payload'); }";
+  const rootSource =
+    "export async function initializeTaskboardStore() { return import('./dynamicSchema.js'); }";
+  const result = plan(providerSource, addedSourceDiff(providerSource), {
+    changedPaths: [provider],
+    baselines: {
+      [root]: rootSource,
+      [provider]: 'export async function runSchema() {}',
+    },
+    targets: { [root]: rootSource, [provider]: providerSource },
+    diffs: { [provider]: addedSourceDiff(providerSource) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.migrationPlan.phase, 'expand');
+  assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
+});
+
+test('classifies a destructive provider statically imported by a production startup schema root', () => {
   const root = 'server/src/taskboard/storeSchema.ts';
   const provider = 'server/src/taskboard/v2Schema.ts';
   const providerSource =

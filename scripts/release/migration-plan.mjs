@@ -2584,7 +2584,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     visitAliases(sourceFile);
   }
 
-  // Keep decorator, class, and object member-qualified callable requests intact until import resolution.
+  // Preserve decorator, class, and object member-qualified callable requests until import resolution.
   const callableLocalBindings = new Set(requestedCallableBindings);
   let callableAliasesChanged = true;
   while (callableAliasesChanged) {
@@ -2886,6 +2886,25 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         sideEffect: true,
       });
   }
+  const visitLiteralDynamicImports = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      (ts.isStringLiteral(node.arguments[0]) ||
+        ts.isNoSubstitutionTemplateLiteral(node.arguments[0])) &&
+      RELATIVE_MODULE_SPECIFIER.test(node.arguments[0].text)
+    )
+      dependencies.push({
+        specifier: node.arguments[0].text,
+        bindings: new Set(['*']),
+        callableBindings: new Set(['*']),
+        sideEffect: true,
+      });
+    ts.forEachChild(node, visitLiteralDynamicImports);
+  };
+  visitLiteralDynamicImports(sourceFile);
+
   const unwrapResourceExpression = (node) => {
     let current = node;
     while (true) {

@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const helper = new URL('./run-with-production-lock-guard.sh', import.meta.url);
 
-test('terminates the guarded process group when Production lock owner proof is lost', async () => {
+test('terminates the active process group when Production lock owner proof is lost', async () => {
   const root = await mkdtemp(join(tmpdir(), 'production-lock-guard-'));
   const bin = join(root, 'bin');
   const counter = join(root, 'counter');
@@ -41,5 +41,39 @@ test('terminates the guarded process group when Production lock owner proof is l
   assert.equal(result.status, 70, result.stderr);
   assert.match(result.stderr, /owner proof was lost/u);
   assert.equal(await readFile(terminated, 'utf8'), 'terminated');
+  await rm(root, { recursive: true, force: true });
+});
+
+test('terminates background members before a successful guarded command returns', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'production-lock-guard-background-'));
+  const bin = join(root, 'bin');
+  const childPidFile = join(root, 'child.pid');
+  await mkdir(bin);
+  await writeFile(join(bin, 'ssh'), '#!/usr/bin/env bash\nexit 0\n');
+  await writeFile(
+    join(bin, 'mutation'),
+    `#!/usr/bin/env bash\n( trap '' TERM; while true; do sleep 1; done ) &\nprintf '%s' "$!" > '${childPidFile}'\n`,
+  );
+  await Promise.all([chmod(join(bin, 'ssh'), 0o755), chmod(join(bin, 'mutation'), 0o755)]);
+
+  const result = spawnSync('bash', [helper.pathname, 'mutation'], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 10_000,
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      RUNNER_TEMP: root,
+      ECS_USER: 'deploy',
+      ECS_HOST: 'production.example',
+      PRODUCTION_LOCK_SCRIPT: '/run/lock.sh',
+      PRODUCTION_LOCK_TOKEN: 'run-attempt-web',
+      PRODUCTION_LOCK_SSH_KEY: '/tmp/key',
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const childPid = Number(await readFile(childPidFile, 'utf8'));
+  assert.throws(() => process.kill(childPid, 0), { code: 'ESRCH' });
   await rm(root, { recursive: true, force: true });
 });

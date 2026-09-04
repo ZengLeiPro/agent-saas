@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
+const acrWaitPath = new URL('./wait-for-acr-image.sh', import.meta.url);
 const acceptanceWorkflowPath = new URL(
   '../../.github/workflows/staging-acceptance.yml',
   import.meta.url,
@@ -50,7 +51,10 @@ function runScriptLines(text) {
 }
 
 test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR read identity', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const [workflow, acrWait] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(acrWaitPath, 'utf8'),
+  ]);
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
@@ -73,6 +77,14 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_SECRET/u);
   assert.match(acrResolveStep, /Missing staging secret ACR_READ_ACCESS_KEY_ID/u);
   assert.match(acrResolveStep, /Missing staging secret ACR_READ_ACCESS_KEY_SECRET/u);
+  assert.match(acrWait, /list-acr-build-records\.sh/u);
+  assert.doesNotMatch(acrWait, /--PageNo 1 --PageSize 100/u);
+  assert.match(acrWait, /ListRepoBuildRecordLog/u);
+  assert.match(acrWait, /verify-acr-build-revision\.mjs/u);
+  assert.equal(acrWait.match(/GetRepoTag/gu)?.length, 2);
+  assert.match(acrWait, /acr-build-records-confirmed\.json/u);
+  assert.match(acrWait, /first_digest#sha256:/u);
+  assert.match(acrWait, /confirmed_digest#sha256:/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
   assert.match(workflow, /VITE_API_BASE: https:\/\/api\.agent\.kaiyan\.net/u);

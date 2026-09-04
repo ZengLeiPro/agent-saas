@@ -550,7 +550,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
 });
 
-test('holds one production host lock through compatibility Web commit and compensation', async () => {
+test('holds one remote Production lock through compatibility Web commit and compensation', async () => {
   const [workflow, lease, guard] = await Promise.all([
     readFile('.github/workflows/ci.yml', 'utf8'),
     readFile('scripts/release/production-lock-lease.sh', 'utf8'),
@@ -606,8 +606,10 @@ test('holds one production host lock through compatibility Web commit and compen
   assert.match(guard, /setsid --wait bash -c/u);
   assert.match(guard, /timeout --signal=TERM --kill-after=2 10 ssh/u);
   assert.match(guard, /owner proof was lost; guarded mutation process group was terminated/u);
+  assert.match(guard, /background children in its process group continue mutating/u);
   assert.match(guard, /kill -KILL -- "-\$guarded_pid"/u);
-  assert.match(guard, /ps -o stat= -p "\$guarded_pid"/u);
+  assert.match(guard, /kill -0 -- "-\$guarded_pid"/u);
+  assert.match(guard, /confirm_process_group_stopped/u);
   assert.match(guard, /exec "\$@"/u);
   assert.match(identity, /sudo rm -rf -- '\$remote'/u);
   assert.doesNotMatch(identity, /sudo rm -rf -- '\$remote'[^\n]*\|\| true/u);
@@ -987,4 +989,12 @@ test('rejects conflicting immutable recovery assets before changing current or p
     assert.match(receipt, /state=attempted/u);
     assert.doesNotMatch(receipt, /state=activated/u);
   }
+});
+
+test('disables the legacy direct OSS rollback entrypoint', async () => {
+  const rollback = await readFile('scripts/rollback-web-oss.sh', 'utf8');
+  assert.match(rollback, /Direct OSS rollback is disabled/u);
+  assert.doesNotMatch(rollback, /ossutil\s+(?:cp|rm)/u);
+  const result = spawnSync('bash', ['scripts/rollback-web-oss.sh'], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
 });

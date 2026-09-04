@@ -17,32 +17,40 @@ assert_lock() {
     "$ECS_USER@$ECS_HOST" \
     "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
 }
+process_group_exists() {
+  [ -n "$guarded_pid" ] && kill -0 -- "-$guarded_pid" 2>/dev/null
+}
+terminate_process_group() {
+  process_group_exists || return 0
+  kill -- "-$guarded_pid" 2>/dev/null || true
+  # Give cooperative children a short TERM grace period before forcing the whole group down.
+  for _ in $(seq 1 10); do
+    process_group_exists || break
+    sleep 0.2
+  done
+  process_group_exists && kill -KILL -- "-$guarded_pid" 2>/dev/null || true
+}
+confirm_process_group_stopped() {
+  for _ in $(seq 1 50); do
+    process_group_exists || return 0
+    sleep 0.1
+  done
+  echo 'guarded mutation process group survived TERM/KILL' >&2
+  return 70
+}
 terminate_guarded() {
-  [ -n "$launcher_pid" ] || return 0
-  if [ -n "$guarded_pid" ]; then
-    kill -- "-$guarded_pid" 2>/dev/null || true
-    # Give cooperative children a short TERM grace period before forcing the whole group down.
-    for _ in $(seq 1 10); do
-      kill -0 "$guarded_pid" 2>/dev/null || break
-      state="$(ps -o stat= -p "$guarded_pid" 2>/dev/null || true)"
-      [[ "$state" == Z* ]] && break
-      sleep 0.2
-    done
-    if kill -0 "$guarded_pid" 2>/dev/null; then
-      state="$(ps -o stat= -p "$guarded_pid" 2>/dev/null || true)"
-      if [[ "$state" != Z* ]]; then
-        kill -KILL -- "-$guarded_pid" 2>/dev/null || true
-      fi
-    fi
+  [ -n "$guarded_pid" ] || return 0
+  terminate_process_group
+  if [ -n "$launcher_pid" ]; then
+    wait "$launcher_pid" 2>/dev/null || true
+    launcher_pid=''
   fi
-  wait "$launcher_pid" 2>/dev/null || true
-  guarded_pid=''
-  launcher_pid=''
+  confirm_process_group_stopped
 }
 cleanup() {
   status=$?
   trap - EXIT
-  terminate_guarded
+  if ! terminate_guarded; then status=70; fi
   rm -f -- "$pid_file"
   exit "$status"
 }
@@ -77,7 +85,9 @@ while kill -0 "$launcher_pid" 2>/dev/null; do
 done
 status=0
 wait "$launcher_pid" || status=$?
-guarded_pid=''
 launcher_pid=''
+# A command may exit while background children in its process group continue mutating.
+terminate_guarded
+guarded_pid=''
 [ "$status" -eq 0 ] || exit "$status"
 assert_lock

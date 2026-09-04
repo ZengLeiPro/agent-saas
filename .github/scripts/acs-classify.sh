@@ -120,10 +120,10 @@ is_publish_path() {
 }
 
 # Workload/lifecycle wire, deletion routes, Web/PG admission, config and restore paths must run the ACS contract suite,
-# including files that also require an ACS image publish and all contract tests themselves.
+# including files that also require an ACS image publish, Staging image resolution, and all contract tests.
 is_contract_check_path() {
   case "$1" in
-    .github/workflows/deploy-staging.yml|.github/workflows/promote-release.yml|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/release/staging-workflow.test.mjs|scripts/release/promotion-workflow.test.mjs|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
+    .github/workflows/deploy-staging.yml|.github/workflows/promote-release.yml|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/release/staging-workflow.test.mjs|scripts/release/wait-for-acr-image.sh|scripts/release/promotion-workflow.test.mjs|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
       return 0
       ;;
     shared/src/types/sandboxWorkload.ts|shared/src/types/index.ts|shared/src/index.ts|server/src/agent/types.ts|server/src/__tests__/acsDeployWorkflowContract.test.ts|server/src/__tests__/appConfig.test.ts|server/src/__tests__/appServerRemoteConfig.test.ts|server/src/__tests__/executionDispatchValidation.test.ts|server/src/__tests__/runtimeHandProvisionRace.test.ts|server/src/__tests__/runtimeTombstoneAdmission.test.ts|server/src/__tests__/runtimeWakeSessionRestore.test.ts|server/src/__tests__/sandboxLifecycleService.test.ts|server/src/__tests__/sandboxRunAdmissionFence.test.ts|server/src/__tests__/sandboxScopeActivity.pg.test.ts|server/src/__tests__/sandboxWarmup.test.ts|server/src/__tests__/serverRemoteConfig.test.ts|server/src/__tests__/sessionCatalog.test.ts|server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts)

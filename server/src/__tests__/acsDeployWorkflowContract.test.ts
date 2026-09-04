@@ -124,6 +124,7 @@ const classificationCases = [
   { path: 'shared/src/schemas/workflowScenario.ts', publish: 'true', contractCheck: 'false' },
   { path: 'shared/package.json', publish: 'true', contractCheck: 'false' },
   { path: 'scripts/release/deploy-staging-release.sh', publish: 'true', contractCheck: 'false' },
+  { path: 'scripts/release/wait-for-acr-image.sh', publish: 'false', contractCheck: 'true' },
   { path: 'scripts/release/deploy-production-release.sh', publish: 'true', contractCheck: 'false' },
   { path: '.github/workflows/acs-sandbox.yml', publish: 'true', contractCheck: 'false' },
   { path: '.github/workflows/ci.yml', publish: 'true', contractCheck: 'false' },
@@ -131,7 +132,7 @@ const classificationCases = [
   { path: 'server/src/agent/toolRuntime.ts', publish: 'true', contractCheck: 'false' },
   { path: 'server/src/runtime/httpTransport.ts', publish: 'true', contractCheck: 'false' },
   { path: 'server/src/runtime/handStore.ts', publish: 'true', contractCheck: 'false' },
-  // Web/application admission code and helpers ship in the ACS image; deletion routes remain contract-only.
+  // Web/application admission code and helpers ship in the ACS image; deletion and staging-only paths remain contract-only.
   { path: 'server/src/app/runtime.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/app/serverRemoteConfig.ts', publish: 'true', contractCheck: 'true' },
   { path: 'server/src/channels/web/channel.ts', publish: 'true', contractCheck: 'true' },

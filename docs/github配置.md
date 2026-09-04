@@ -312,7 +312,7 @@ NODE
 要求：
 
 - 通用阿里云凭据必须属于 Staging 专用、最小权限 RAM 身份，不得复用生产身份。
-- `ACR_READ_ACCESS_KEY_ID` / `ACR_READ_ACCESS_KEY_SECRET` 仅允许读取 ACR build record、构建日志和 image metadata，禁止创建、覆盖或删除镜像；必须按上述命令写入 `staging` Environment，不得给 Staging 通用 RAM 身份追加 ACR 权限。
+- `ACR_READ_ACCESS_KEY_ID` / `ACR_READ_ACCESS_KEY_SECRET` 仅允许读取 ACR build record、构建日志和 image metadata，禁止创建、覆盖或删除镜像；必须按上述命令写入 `staging` Environment，不得给 Staging 通用 RAM 身份追加 ACR 权限。Staging 同样依赖 ACR repository 的 tag 写权限仅授予受控自动构建身份。
 - SSH 私钥必须对应 Staging ECS 用户。
 - `RELEASE_EVIDENCE_TOKEN` 必须是 Evidence Service 的只读 Token，不得使用写入 Token。
 - E2E 账号必须是隔离 Staging 专用平台管理员测试账号。
@@ -449,6 +449,7 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 要求：
 
 - 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、`GIT_CLONE` 日志与 image metadata，不得写入或删除镜像。
+- ACR repository 的 tag 写权限只能授予受控自动构建身份，必须移除人工账号及其他自动化的 tag 覆盖权限。build-record API 不返回该 record 的产物 digest；因此全分页、完整 SHA 与稳定 digest 读回不能替代这项现场权限前提，未完成权限审计时禁止触发 ACS Production compatibility。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
   `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供

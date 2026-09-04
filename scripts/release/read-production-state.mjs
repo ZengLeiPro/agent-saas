@@ -82,6 +82,7 @@ function configIdentitySide(value, label, { observed = false } = {}) {
 const CONFIG_IDENTITY_STATUSES = ['consistent', 'drifted', 'unverifiable', 'not_collected'];
 const CONFIG_IDENTITY_REASONS = [
   'expected_not_bound',
+  'expected_credential_version_not_bound',
   'secret_ref_version_unresolved',
   'schema_version_unsupported',
 ];
@@ -111,6 +112,16 @@ function assertConfigIdentityRelationship(summary, expected, observed) {
         observed?.schemaVersion === summary.schemaVersion &&
         expected?.digest === observed?.digest &&
         observed?.versionResolution !== 'resolved') ||
+      (summary.reason === 'expected_credential_version_not_bound' &&
+        Boolean(expected) &&
+        Boolean(observed) &&
+        expected?.schemaVersion === summary.schemaVersion &&
+        observed?.schemaVersion === summary.schemaVersion &&
+        expected?.digest === observed?.digest &&
+        expected?.credentialVersionDigest === undefined &&
+        observed?.versionResolution === 'resolved' &&
+        observed.secretRefCount > 0 &&
+        observed.credentialVersionDigest !== null) ||
       (summary.reason === 'schema_version_unsupported' &&
         Boolean(expected) &&
         Boolean(observed) &&
@@ -129,6 +140,8 @@ function assertConfigIdentityRelationship(summary, expected, observed) {
   ) {
     throw new Error(`Production API ${summary.status} config identity has unsupported side schema`);
   }
+  const credentialBindingMissing =
+    observed.secretRefCount > 0 && expected.credentialVersionDigest === undefined;
   const credentialDiffers =
     expected.credentialVersionDigest !== undefined &&
     expected.credentialVersionDigest !== observed.credentialVersionDigest;
@@ -136,6 +149,7 @@ function assertConfigIdentityRelationship(summary, expected, observed) {
     summary.status === 'consistent' &&
     (expected.digest !== observed.digest ||
       observed.versionResolution !== 'resolved' ||
+      credentialBindingMissing ||
       credentialDiffers)
   ) {
     throw new Error('Production API consistent config identity conflicts with its sides');

@@ -791,7 +791,7 @@ export function evaluateConfigIdentityStatus(
   observed:
     | Pick<
         ConfigIdentityObservation,
-        'schemaVersion' | 'digest' | 'credentialVersionDigest' | 'versionResolution'
+        'schemaVersion' | 'digest' | 'credentialVersionDigest' | 'versionResolution' | 'secretRefCount'
       >
     | undefined,
 ): ConfigIdentityEvaluation {
@@ -808,6 +808,9 @@ export function evaluateConfigIdentityStatus(
   if (expected.digest !== observed.digest) return { status: 'drifted' };
   if (observed.versionResolution !== 'resolved') {
     return { status: 'unverifiable', reason: 'secret_ref_version_unresolved' };
+  }
+  if (observed.secretRefCount > 0 && expected.credentialVersionDigest === undefined) {
+    return { status: 'unverifiable', reason: 'expected_credential_version_not_bound' };
   }
   if (
     expected.credentialVersionDigest !== undefined &&

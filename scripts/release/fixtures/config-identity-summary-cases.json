@@ -48,6 +48,91 @@
       }
     },
     {
+      "name": "unverifiable_expected_credential_version_not_bound",
+      "valid": {
+        "shared": true,
+        "productionState": true,
+        "releaseEvidence": true
+      },
+      "expectedEvaluation": {
+        "status": "unverifiable",
+        "reason": "expected_credential_version_not_bound"
+      },
+      "summary": {
+        "schemaVersion": 1,
+        "status": "unverifiable",
+        "reason": "expected_credential_version_not_bound",
+        "releaseId": "rc-fixture",
+        "expected": {
+          "schemaVersion": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "observed": {
+          "schemaVersion": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "credentialVersionDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "versionResolution": "resolved",
+          "secretRefCount": 1
+        }
+      }
+    },
+    {
+      "name": "drifted_managed_credential_version_rotation",
+      "valid": {
+        "shared": true,
+        "productionState": true,
+        "releaseEvidence": true
+      },
+      "expectedEvaluation": {
+        "status": "drifted"
+      },
+      "summary": {
+        "schemaVersion": 1,
+        "status": "drifted",
+        "releaseId": "rc-fixture",
+        "expected": {
+          "schemaVersion": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "credentialVersionDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "observed": {
+          "schemaVersion": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "credentialVersionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "versionResolution": "resolved",
+          "secretRefCount": 1
+        }
+      }
+    },
+    {
+      "name": "consistent_missing_expected_credential_version",
+      "valid": {
+        "shared": false,
+        "productionState": false,
+        "releaseEvidence": false
+      },
+      "expectedEvaluation": {
+        "status": "unverifiable",
+        "reason": "expected_credential_version_not_bound"
+      },
+      "summary": {
+        "schemaVersion": 1,
+        "status": "consistent",
+        "releaseId": "rc-fixture",
+        "expected": {
+          "schemaVersion": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "observed": {
+          "schemaVersion": 1,
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "credentialVersionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "versionResolution": "resolved",
+          "secretRefCount": 1
+        }
+      }
+    },
+    {
       "name": "drifted_config_even_when_secret_version_is_unresolved",
       "valid": {
         "shared": true,

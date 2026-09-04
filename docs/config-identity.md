@@ -113,7 +113,9 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
    默认 5 秒到期重检，`invalidate` 也会立即失效，因此外部 KMS rotate/revoke 不会永久
    复用旧 version。端点缺失、ref 缺失或版本非法都按不可验证处理，Production
    有受管 ref 时拒启/拒绝发布。resolved 版本变化会改变 observed
-   credentialVersionDigest → 四态转 `drifted`。
+   credentialVersionDigest → 四态转 `drifted`。Release expected 若在 observed 已解析到
+   受管 ref 时缺少 `credentialVersionDigest`，不是通配符，而是缺失发布证据：统一判为
+   `unverifiable: expected_credential_version_not_bound`；只有 `secretRefCount=0` 时才允许省略。
 
 ## 5. 热更新与 drift 语义
 
@@ -129,6 +131,10 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
   产生无副作用 commit，候选文件仍为最新版且前置回调全部成功后，执行侧配置与 AppConfig
   才在同一发布点更新；旧 observed identity 同步失效为 `not_collected`，随后异步重算。
   身份重算若失败则维持保守态并告警，不恢复旧 `consistent` 或发布半成品摘要。
+- Session Automation 的同步执行门禁若触发异步候选校验，会在 Promise pending 或刷新失败时
+  立即把 `executionEnabled` 投影为 false；事务成功后下一次读取才使用新值，避免 kill-switch
+  变更窗口继续按旧 true 放行。Tenant Remote Hands 管理 PUT 也复用同一 Production candidate
+  validator，任何 inline `authToken` 都在写盘和 runtime apply 前被拒绝。
 - overview snapshot 15s 轮询读取摘要；前端用单调 generation 丢弃晚到的旧响应。
   `getSummary` 有 5s 节流，避免每次轮询都解密 vault 文件。
 

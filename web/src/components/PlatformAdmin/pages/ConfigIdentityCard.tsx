@@ -32,6 +32,7 @@ const STATUS_TONE: Record<OverviewConfigIdentity['status'], string> = {
 
 const REASON_HINT: Record<NonNullable<OverviewConfigIdentity['reason']>, string> = {
   expected_not_bound: 'Release 期望配置身份未绑定：本次运行未携带发布期计算的 expected identity。',
+  expected_credential_version_not_bound: 'Release 未绑定受管凭据版本摘要，无法验证运行时轮换是否漂移。',
   secret_ref_version_unresolved: '受管凭据的 SecretVault 版本不可解析，无法完成一致性判定。',
   schema_version_unsupported: '配置身份 schema 版本不受当前页面支持，需要升级后再判断。',
 };

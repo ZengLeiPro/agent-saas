@@ -214,6 +214,61 @@ describe('SharedConfigRefresher 删除、缺失与启动对齐语义', () => {
     expect(source.read().controlEnabled).toBe(false);
   });
 
+  it('异步 Production 候选校验期间停用 execution 时立即 fail closed', async () => {
+    const writeWithAutomation = (executionEnabled: boolean) => {
+      writeFileSync(join(dir, 'config.json'), JSON.stringify({
+        agent: { cwd: '.' }, server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        sessionAutomation: {
+          controlEnabled: true, executionEnabled, fixedLoopEnabled: true,
+          adaptiveLoopEnabled: true, goalEnabled: true, evaluatorEnforced: true,
+        },
+      }, null, 2), 'utf-8');
+    };
+    writeWithAutomation(true);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: true },
+    } as unknown as AppConfig;
+    let releaseValidation!: () => void;
+    let validationPending: Promise<void> | undefined;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      validateConfigReload: () => validationPending,
+      now: () => clock,
+    });
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    const source = createSessionAutomationFlagSource(config);
+    source.attachRefresh(refresher.refreshIfChanged);
+
+    validationPending = new Promise<void>((resolve) => { releaseValidation = resolve; });
+    writeWithAutomation(false);
+    clock += 5_000;
+    expect(source.executionEnabled()).toBe(false);
+    expect(config.sessionAutomation?.executionEnabled).toBe(true);
+
+    const pendingRefresh = refresher.refreshIfChanged();
+    expect(pendingRefresh).toBeInstanceOf(Promise);
+    releaseValidation();
+    expect(await pendingRefresh).toBe(true);
+
+    expect(config.sessionAutomation?.executionEnabled).toBe(false);
+    expect(source.executionEnabled()).toBe(false);
+  });
+
+  it('配置刷新失败时不继续暴露旧 execution=true', () => {
+    const config = {
+      sessionAutomation: { controlEnabled: true, executionEnabled: true },
+    } as unknown as AppConfig;
+    const source = createSessionAutomationFlagSource(config);
+    source.attachRefresh(() => false);
+
+    expect(source.executionEnabled()).toBe(false);
+    expect(source.read().controlEnabled).toBe(true);
+  });
+
   it('首次 attach 会比对已加载内容，不把启动窗口内的新文件 stamp 当作基线', () => {
     writeFileSync(join(dir, 'config.json'), JSON.stringify({
       agent: { cwd: '.' }, server: { port: 3200 },

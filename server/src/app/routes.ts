@@ -409,8 +409,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createTenantRemoteHandsAdminRouter({
       processCwd,
       config,
-      configMutationService,
-      secretVault: runtime.secretVault,
+      configMutationService, secretVault: runtime.secretVault,
+      ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
     }),
   );
   app.use(

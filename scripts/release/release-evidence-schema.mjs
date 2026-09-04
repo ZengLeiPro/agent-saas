@@ -41,7 +41,12 @@ export const configIdentitySummarySchema = z
     schemaVersion: z.literal(1),
     status: z.enum(['consistent', 'drifted', 'unverifiable', 'not_collected']),
     reason: z
-      .enum(['expected_not_bound', 'secret_ref_version_unresolved', 'schema_version_unsupported'])
+      .enum([
+        'expected_not_bound',
+        'expected_credential_version_not_bound',
+        'secret_ref_version_unresolved',
+        'schema_version_unsupported',
+      ])
       .optional(),
     expected: configIdentitySideSchema.optional(),
     observed: z
@@ -112,6 +117,16 @@ export const configIdentitySummarySchema = z
           value.observed?.schemaVersion === value.schemaVersion &&
           value.expected?.digest === value.observed?.digest &&
           value.observed?.versionResolution !== 'resolved') ||
+        (value.reason === 'expected_credential_version_not_bound' &&
+          Boolean(value.expected) &&
+          Boolean(value.observed) &&
+          value.expected?.schemaVersion === value.schemaVersion &&
+          value.observed?.schemaVersion === value.schemaVersion &&
+          value.expected?.digest === value.observed?.digest &&
+          value.expected?.credentialVersionDigest === undefined &&
+          value.observed?.versionResolution === 'resolved' &&
+          value.observed.secretRefCount > 0 &&
+          value.observed.credentialVersionDigest !== null) ||
         (value.reason === 'schema_version_unsupported' &&
           Boolean(value.expected) &&
           Boolean(value.observed) &&
@@ -154,6 +169,9 @@ export const configIdentitySummarySchema = z
       value.expected &&
       value.observed
     ) {
+      const credentialBindingMissing =
+        value.observed.secretRefCount > 0 &&
+        value.expected.credentialVersionDigest === undefined;
       const credentialDiffers =
         value.expected.credentialVersionDigest !== undefined &&
         value.expected.credentialVersionDigest !== value.observed.credentialVersionDigest;
@@ -163,6 +181,7 @@ export const configIdentitySummarySchema = z
         (value.status === 'consistent' &&
           (value.expected.digest !== value.observed.digest ||
             value.observed.versionResolution !== 'resolved' ||
+            credentialBindingMissing ||
             credentialDiffers)) ||
         (value.status === 'drifted' &&
           value.expected.digest === value.observed.digest &&

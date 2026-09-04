@@ -268,6 +268,7 @@ describe('registerRoutes', () => {
       groupStore: {},
       userStore: undefined,
       refreshSharedConfig: vi.fn(async () => true),
+      validateSharedConfigCandidate: vi.fn(async () => undefined),
       refreshVoiceTranscriptionConfig: vi.fn(async () => true),
     };
 
@@ -412,6 +413,9 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api', mocked.groupsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/dingtalk', mocked.requireAdmin, mocked.dingtalkRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/tenant-remote-hands', mocked.tenantRemoteHandsAdminRouter);
+    expect(mocked.createTenantRemoteHandsAdminRouter).toHaveBeenCalledWith(expect.objectContaining({
+      validateConfigReload: runtime.validateSharedConfigCandidate,
+    }));
     expect(app.use).toHaveBeenCalledWith('/api/admin/runtime-operations', mocked.runtimeOperationsAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin', mocked.requireAdmin, mocked.platformObservabilityRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/system', mocked.requireAdmin, mocked.systemAdminRouter);

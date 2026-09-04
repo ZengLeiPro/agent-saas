@@ -19,6 +19,7 @@ export interface CreateTenantRemoteHandsAdminRouterOptions {
   fetchImpl?: typeof fetch;
   healthTimeoutMs?: number;
   onTenantRemoteHandsUpdated?: (tenantRemoteHands: TenantRemoteHandsConfig) => void;
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
   configMutationService?: AdminConfigMutationService;
 }
 
@@ -199,6 +200,7 @@ export function createTenantRemoteHandsAdminRouter(
             formattingOptions: { insertSpaces: true, tabSize: 2 },
           }));
         },
+        ...(options.validateConfigReload ? { validateCandidate: options.validateConfigReload } : {}),
         applyRuntime: (candidate) => {
           const next = candidate.tenantRemoteHands ?? { hands: [] };
           options.config.tenantRemoteHands = next;

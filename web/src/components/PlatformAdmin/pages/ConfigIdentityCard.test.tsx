@@ -144,6 +144,31 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
     expect(screen.getByTestId('config-identity-reason').textContent).toContain('未绑定');
   });
 
+  it('Release 缺凭据版本绑定时显示不可验证而非一致', async () => {
+    setup({
+      ...baseSnapshot,
+      configIdentity: identity({
+        status: 'unverifiable',
+        reason: 'expected_credential_version_not_bound',
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: `sha256:${'c'.repeat(64)}`,
+          versionResolution: 'resolved',
+          secretRefCount: 1,
+        },
+      }),
+    });
+    render(<OverviewPage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('不可验证');
+    });
+    expect(screen.getByTestId('config-identity-reason').textContent).toContain(
+      '未绑定受管凭据版本摘要',
+    );
+  });
+
   it('未采集：configIdentity 为 null 时显式显示未采集，而不是渲染成正常值', async () => {
     setup({ ...baseSnapshot, configIdentity: null });
     render(<OverviewPage />);
@@ -174,6 +199,10 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
     ['partial consistent', identityWithObserved({
       credentialVersionDigest: `sha256:${'c'.repeat(64)}`,
       versionResolution: 'partial',
+      secretRefCount: 1,
+    })],
+    ['缺 expected credential version', identityWithObserved({
+      credentialVersionDigest: `sha256:${'c'.repeat(64)}`,
       secretRefCount: 1,
     })],
     ['关系矛盾', identityWithObserved({ digest: `sha256:${'b'.repeat(64)}` })],

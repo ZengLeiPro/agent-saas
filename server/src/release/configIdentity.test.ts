@@ -599,6 +599,7 @@ describe('四态判定', () => {
     digest,
     credentialVersionDigest: versions as string | null,
     versionResolution: 'resolved' as const,
+    secretRefCount: 1,
   };
 
   it('未采集：observed 缺失', () => {
@@ -617,6 +618,10 @@ describe('四态判定', () => {
     expect(evaluateConfigIdentityStatus({ ...expected, schemaVersion: 2 }, observedBase)).toEqual({
       status: 'unverifiable',
       reason: 'schema_version_unsupported',
+    });
+    expect(evaluateConfigIdentityStatus(expected, observedBase)).toEqual({
+      status: 'unverifiable',
+      reason: 'expected_credential_version_not_bound',
     });
   });
 
@@ -645,8 +650,12 @@ describe('四态判定', () => {
     ).toEqual({ status: 'drifted' });
   });
 
-  it('一致：digest 相同且版本可验证；expected 未固定版本时也判定一致（部署期无 vault 访问）', () => {
-    expect(evaluateConfigIdentityStatus(expected, observedBase)).toEqual({ status: 'consistent' });
+  it('一致：无受管 ref 或 expected 已绑定同一凭据版本摘要', () => {
+    expect(evaluateConfigIdentityStatus(expected, {
+      ...observedBase,
+      credentialVersionDigest: null,
+      secretRefCount: 0,
+    })).toEqual({ status: 'consistent' });
     expect(
       evaluateConfigIdentityStatus(
         { ...expected, credentialVersionDigest: versions },

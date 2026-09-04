@@ -43,6 +43,7 @@ export type ConfigIdentityVersionResolution = z.infer<typeof configIdentityVersi
 /** 不可验证原因（机器可读，供 evidence / 测试断言；文本渲染由前端负责）。 */
 export const configIdentityUnverifiableReasonSchema = z.enum([
   'expected_not_bound',
+  'expected_credential_version_not_bound',
   'secret_ref_version_unresolved',
   'schema_version_unsupported',
 ]);
@@ -133,6 +134,16 @@ export const configIdentitySummarySchema = z
           value.observed?.schemaVersion === value.schemaVersion &&
           value.expected?.digest === value.observed?.digest &&
           value.observed?.versionResolution !== 'resolved') ||
+        (value.reason === 'expected_credential_version_not_bound' &&
+          Boolean(value.expected) &&
+          Boolean(value.observed) &&
+          value.expected?.schemaVersion === value.schemaVersion &&
+          value.observed?.schemaVersion === value.schemaVersion &&
+          value.expected?.digest === value.observed?.digest &&
+          value.expected?.credentialVersionDigest === undefined &&
+          value.observed?.versionResolution === 'resolved' &&
+          value.observed.secretRefCount > 0 &&
+          value.observed.credentialVersionDigest !== null) ||
         (value.reason === 'schema_version_unsupported' &&
           Boolean(value.expected) &&
           Boolean(value.observed) &&
@@ -185,6 +196,9 @@ export const configIdentitySummarySchema = z
           message: `${value.status} requires supported side schema versions`,
         });
       }
+      const credentialBindingMissing =
+        value.observed.secretRefCount > 0 &&
+        value.expected.credentialVersionDigest === undefined;
       const credentialDiffers =
         value.expected.credentialVersionDigest !== undefined &&
         value.expected.credentialVersionDigest !== value.observed.credentialVersionDigest;
@@ -192,6 +206,7 @@ export const configIdentitySummarySchema = z
         value.status === 'consistent' &&
         (value.expected.digest !== value.observed.digest ||
           value.observed.versionResolution !== 'resolved' ||
+          credentialBindingMissing ||
           credentialDiffers)
       ) {
         ctx.addIssue({

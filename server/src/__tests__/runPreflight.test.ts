@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 import { RunPreflightService } from '../runtime/runPreflight.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
 import {
@@ -558,7 +559,13 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }, { version: 27 }, { version: 28 }, { version: 29 }, { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }] };
+      if (sql.includes('SELECT version FROM')) {
+        return {
+          rows: Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1)
+            .filter(version => version !== 5)
+            .map(version => ({ version })),
+        };
+      }
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };

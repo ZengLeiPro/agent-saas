@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PgEnvironmentStore, assertNoSensitiveRecipeFields } from '../data/environments/index.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -164,7 +165,7 @@ describe('Environment Provider/Template/Instance 领域', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_environment_template_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_references');
     expect(sql).toContain('infrastructure_credential_id TEXT');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
   });
 
   it('Provider 新建与更新必须 expectedRevision，保存 credentialId 而非 Secret', async () => {

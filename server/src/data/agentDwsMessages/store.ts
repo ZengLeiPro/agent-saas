@@ -439,6 +439,27 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence]);
   }
 
+  async reject(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId, reasonCode);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='completed',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+          payload_json=payload_json || jsonb_build_object(
+            'disposition','rejected','rejectionReasonCode',$4::text
+          ),
+          last_error=NULL,completed_at=NOW(),updated_at=NOW()
+      WHERE inbox_id=$1 AND state='reply_pending'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence, reasonCode]);
+  }
+
   async fail(
     inboxId: string,
     owner: string,
@@ -508,6 +529,9 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
 }
 
 function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
+  const payload = parsePayload(row.payload_json);
+  const disposition = payload.disposition === 'rejected' ? 'rejected' as const : undefined;
+  const rejectionReasonCode = optionalText(payload.rejectionReasonCode);
   return {
     inboxId: String(row.inbox_id),
     tenantId: String(row.tenant_id),
@@ -521,7 +545,9 @@ function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
       : {}),
     content: String(row.content),
     ...(row.event_timestamp ? { eventTimestamp: iso(row.event_timestamp) } : {}),
-    payload: parsePayload(row.payload_json),
+    payload,
+    ...(disposition ? { disposition } : {}),
+    ...(rejectionReasonCode ? { rejectionReasonCode } : {}),
     ...(optionalText(row.work_conversation_id)
       ? { workConversationId: optionalText(row.work_conversation_id) } : {}),
     state: row.state as AgentDwsInboxRecord['state'],

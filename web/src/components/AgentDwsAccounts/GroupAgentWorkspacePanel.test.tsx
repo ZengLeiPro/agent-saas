@@ -11,6 +11,9 @@ vi.mock('@/lib/authFetch', () => ({ authFetch: vi.fn() }));
 const account = {
   accountId: 'account/member',
   displayName: '群前台账号',
+  profileId: 'corp-a:member-a',
+  corpId: 'corp-a',
+  dingtalkUserId: 'member-a',
   status: 'active',
 } as AgentDwsAccount;
 
@@ -104,6 +107,13 @@ const workspace = {
       memories: [],
     },
   ],
+  observedGroups: [
+    {
+      conversationId: 'group-1',
+      lastEventAt: '2026-09-04T00:00:00.000Z',
+      bindingId: 'binding-1',
+    },
+  ],
   deliveries: [
     {
       deliveryId: 'delivery/1',
@@ -125,6 +135,8 @@ describe('GroupAgentWorkspacePanel', () => {
           return jsonResponse(workspace);
         if (String(path).includes('/group-workspace?') && init?.method === 'PATCH')
           return jsonResponse({ ok: true });
+        if (String(path).includes('/group-workspace/bindings?') && init?.method === 'POST')
+          return jsonResponse({ ok: true }, 201);
         if (String(path).includes('/group-workspace/memories?') && init?.method === 'POST')
           return jsonResponse({ ok: true }, 201);
         if (String(path).includes('/action?') && init?.method === 'POST')
@@ -137,7 +149,36 @@ describe('GroupAgentWorkspacePanel', () => {
       });
   });
 
-  it('展示 attempt 证据并使用编码后的资源路径重试', async () => {
+  it('可从 Personal Stream 已观测群创建 shadow binding', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (String(path).includes('/group-workspace?') && !init?.method)
+        return jsonResponse({
+          ...workspace,
+          observedGroups: [{
+            conversationId: 'group/unbound',
+            lastEventAt: '2026-09-04T01:00:00.000Z',
+            bindingId: null,
+          }],
+        });
+      if (String(path).includes('/group-workspace/bindings?') && init?.method === 'POST')
+        return jsonResponse({ ok: true }, 201);
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    await user.click(await screen.findByRole('combobox', { name: '已观测群' }));
+    await user.click(await screen.findByRole('option', { name: /group\/unbound/ }));
+    await user.click(screen.getByRole('button', { name: '创建群配置' }));
+
+    await waitFor(() => expect(vi.mocked(authFetch).mock.calls.some(([path, init]) => (
+      path === '/api/agent-dws-accounts/account%2Fmember/group-workspace/bindings?tenantId=tenant-a'
+      && init?.method === 'POST'
+      && JSON.parse(String(init.body)).conversationId === 'group/unbound'
+    ))).toBe(true));
+  });
+
+  it('展示 attempt 证据并使用编码后的资源路径重试任务', async () => {
     const user = userEvent.setup();
     render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
 

@@ -145,6 +145,9 @@ function setup(input: {
     }),
     defer: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
+    reject: vi.fn().mockImplementation(async (
+      _inboxId: string, _owner: string, _fence: number, rejectionReasonCode: string,
+    ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
     fail: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     deleteForTenant: vi.fn(),
   } satisfies AgentDwsMessageStore;
@@ -588,7 +591,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'event-a', reason: 'REQUESTER_IDENTITY_MISSING',
     }));
-    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'REQUESTER_IDENTITY_MISSING',
+    );
+    expect(messageStore.complete).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
 
@@ -598,7 +604,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     await expect(router.runOnce()).resolves.toBe(true);
 
     expect(messageStore.getOrCreateBinding).not.toHaveBeenCalled();
-    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS',
+    );
+    expect(messageStore.complete).not.toHaveBeenCalled();
     expect(messageStore.fail).not.toHaveBeenCalled();
     expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'event-a', reason: 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS',
@@ -621,7 +630,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       requester, reason: 'ASSIGNMENT_DENIED',
     }));
     expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
-    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'ASSIGNMENT_DENIED',
+    );
+    expect(messageStore.complete).not.toHaveBeenCalled();
     expect(messageStore.fail).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });

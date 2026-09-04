@@ -708,6 +708,7 @@ export class AgentDwsMessageRouter {
       ...(requester ? { requester } : {}),
       reason,
     });
+    // 只有可见拒绝已被投递后，才写入带 reasonCode 的终态；发送失败沿现有重试链恢复。
     const responseText = rejectionMessage(reason);
     await this.options.messageStore.saveDispatchResult(
       item.inboxId,
@@ -728,7 +729,12 @@ export class AgentDwsMessageRouter {
       'access_rejection',
       'rejected',
     );
-    await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+    await this.options.messageStore.reject(
+      item.inboxId,
+      this.workerId,
+      item.leaseFence,
+      reason,
+    );
     this.options.logger?.warn(
       `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reason}`,
     );

@@ -44,6 +44,9 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       .fn()
       .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
+    reject: vi.fn().mockImplementation(async (
+      _id: string, _owner: string, _fence: number, rejectionReasonCode: string,
+    ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
     fail: vi.fn().mockResolvedValue(undefined),
     defer: vi.fn().mockResolvedValue(undefined),
     releaseClaim: vi.fn(),
@@ -503,7 +506,9 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     expect(test.messageStore.getOrCreateBinding).not.toHaveBeenCalled();
     expect(test.dispatch).not.toHaveBeenCalled();
     expect(test.sender.send).toHaveBeenCalledOnce();
-    expect(test.messageStore.complete).toHaveBeenCalledOnce();
+    expect(test.messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+    );
   });
 
   it('visibly rejects an unavailable identity resolver instead of treating it as a guest', async () => {
@@ -513,7 +518,9 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     await expect(test.router.runOnce()).resolves.toBe(true);
     expect(test.dispatch).not.toHaveBeenCalled();
     expect(test.sender.send).toHaveBeenCalledOnce();
-    expect(test.messageStore.complete).toHaveBeenCalledOnce();
+    expect(test.messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'DWS_IDENTITY_LOOKUP_FAILED',
+    );
   });
 
   it('keeps an allowed guest in the group scope while topic Context is fail-closed', async () => {

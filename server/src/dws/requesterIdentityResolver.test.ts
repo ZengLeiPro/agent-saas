@@ -61,7 +61,7 @@ describe('DwsRequesterIdentityResolver', () => {
     expect(JSON.stringify(auditStore.events)).not.toContain('corp-a:agent-staff');
   });
 
-  it('无匹配、跨 staffId 或平台成员映射重复时 fail closed', async () => {
+  it('staffId 无匹配、跨映射或平台成员重复时 fail closed', async () => {
     const noMatch = resolver([alice], '{"result":[{"userId":"staff-b","openDingTalkId":"open-a"}]}').resolver;
     await expect(noMatch.resolve(account, 'open-a')).resolves.toBeNull();
 
@@ -107,9 +107,52 @@ describe('DwsRequesterIdentityResolver', () => {
     expect(invoke.mock.calls[1]![0].input.command).toContain("'search' '--query' '爱丽丝'");
   });
 
-  it('解析嵌套结果并拒绝无效 JSON', () => {
-    expect(parseDwsRequesterDirectoryEntries('{"result":{"items":[{"staff_id":123,"open_dingtalk_id":"open-a"}]}}'))
-      .toEqual([{ staffId: '123', openDingtalkId: 'open-a' }]);
+  it('tenant 未配置 staffId 时用 DWS openDingTalkId + 已验证手机号精确解析', async () => {
+    const user = {
+      ...alice,
+      dingtalkStaffId: undefined,
+      phone: '13800138000',
+      phoneVerifiedAt: '2026-08-25T00:00:00.000Z',
+    };
+    const invoke = vi.fn().mockResolvedValue({
+      status: 'success',
+      content: '{"result":[{"staffId":"staff-a","openDingTalkId":"open-a","mobile":"+86 138-0013-8000"}]}',
+    });
+    const reload = vi.fn();
+    const subject = new DwsRequesterIdentityResolver({
+      agentCwd: '/workspace',
+      userStore: { listAll: vi.fn().mockReturnValue([user]), reload } as never,
+      auditStore: new InMemoryGovernanceAuditStore(),
+      resolveServerRemote: vi.fn().mockResolvedValue({ baseUrl: 'https://hand.test', authToken: 'token-a' }),
+      createTransport: () => ({ invoke }) as never,
+    });
+
+    await expect(subject.resolve(account, 'open-a', '爱丽丝')).resolves.toMatchObject({
+      id: 'user-a', tenantId: 'tenant-a', dingtalkStaffId: 'staff-a',
+    });
+    expect(reload).toHaveBeenCalledOnce();
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'search' '--query' '爱丽丝'");
+  });
+
+  it('未验证手机号、重复手机号和跨租户手机号都不能建立身份', async () => {
+    const directory = '{"result":[{"staffId":"staff-a","openDingTalkId":"open-a","mobile":"13800138000"}]}';
+    const unverified = { ...alice, dingtalkStaffId: undefined, phone: '13800138000' };
+    await expect(resolver([unverified], directory).resolver.resolve(account, 'open-a', '爱丽丝'))
+      .resolves.toBeNull();
+
+    const verified = { ...unverified, phoneVerifiedAt: '2026-08-25T00:00:00.000Z' };
+    await expect(resolver([
+      verified,
+      { ...verified, id: 'user-b', username: 'bob' },
+    ], directory).resolver.resolve(account, 'open-a', '爱丽丝')).resolves.toBeNull();
+    await expect(resolver([
+      { ...verified, tenantId: 'tenant-b' },
+    ], directory).resolver.resolve(account, 'open-a', '爱丽丝')).resolves.toBeNull();
+  });
+
+  it('解析嵌套结果、手机号并拒绝无效 JSON', () => {
+    expect(parseDwsRequesterDirectoryEntries('{"result":{"items":[{"staff_id":123,"open_dingtalk_id":"open-a","mobile":"13800138000"}]}}'))
+      .toEqual([{ staffId: '123', openDingtalkId: 'open-a', mobile: '13800138000' }]);
     expect(() => parseDwsRequesterDirectoryEntries('not-json')).toThrow('未返回 JSON');
   });
 });

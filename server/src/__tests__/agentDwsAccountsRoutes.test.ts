@@ -144,29 +144,6 @@ describe('Agent DWS accounts routes', () => {
     expect(body.accounts[0]).not.toHaveProperty('loginId');
   });
 
-  it('inbox 诊断只读当前租户账号并不返回消息正文', async () => {
-    const store = new FakeAccountStore();
-    store.records.push(makeAccount());
-    const listForAccount = vi.fn(async () => [{
-      inboxId: 'inbox-1', tenantId: 'tenant-a', accountId: 'adws-1', eventId: 'event-1',
-      eventType: 'user_im_message_receive_o2o_all', conversationId: 'cid-1', messageId: 'msg-1',
-      senderOpenDingtalkId: 'sender-1', content: '敏感消息正文', payload: {}, state: 'retry_wait' as const,
-      sessionId: 'session-1', runId: 'run-1', responseText: '敏感回复正文', attempt: 2, maxAttempts: 8,
-      leaseFence: 2, nextAttemptAt: '2026-08-14T07:10:00.000Z', lastError: 'dispatch failed',
-      createdAt: '2026-08-14T07:06:43.000Z', updatedAt: '2026-08-14T07:06:44.000Z',
-    }]);
-    const opened = await listen({ store, messageStore: { listForAccount } });
-    server = opened.server;
-
-    const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/inbox?limit=10`);
-    expect(response.status).toBe(200);
-    expect(listForAccount).toHaveBeenCalledWith('tenant-a', 'adws-1', 10);
-    const body = await response.json() as { items: Array<Record<string, unknown>> };
-    expect(body.items[0]).toMatchObject({ state: 'retry_wait', attempt: 2, lastError: 'dispatch failed' });
-    expect(body.items[0]).not.toHaveProperty('content');
-    expect(body.items[0]).not.toHaveProperty('responseText');
-  });
-
   it('为已授权账号生成与完整命令参数绑定的委托资源 ID', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({
@@ -367,7 +344,7 @@ describe('Agent DWS accounts routes', () => {
     );
   });
 
-  it('治理审计未装配时拒绝写入', async () => {
+  it('治理审计未装配时拒绝账号写入', async () => {
     const store = new FakeAccountStore();
     const app = express();
     app.use(express.json());
@@ -391,7 +368,7 @@ describe('Agent DWS accounts routes', () => {
     expect(store.create).not.toHaveBeenCalled();
   });
 
-  it('活动 Runtime Worker 未声明群任务协议 v2 时拒绝激活群绑定', async () => {
+  it('活动 Runtime Worker 未声明群任务协议 v2 时安全拒绝激活群绑定', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({
       status: 'active', profileId: 'corp-a:ding-a', corpId: 'corp-a', dingtalkUserId: 'ding-a',
@@ -566,7 +543,15 @@ describe('Agent DWS accounts routes', () => {
     >;
     const cancelWorkOrder = vi.fn(async () => null);
     const publishWorkOrderArtifacts = vi.fn(async () => ({ attemptId: 'attempt-a', publishState: 'published' }));
-    const opened = await listen({ store, orgGroupAgentStore, orgAgentStore: { get: vi.fn(() => ({
+    const messageStore = { listForAccount: vi.fn(async () => [{
+      inboxId: 'inbox-group-b', tenantId: 'tenant-a', accountId: 'adws-1',
+      eventId: 'event-group-b', eventType: 'user_im_message_receive_at',
+      conversationId: 'cid-b', content: '@开开', payload: {}, state: 'completed' as const,
+      attempt: 1, maxAttempts: 8, leaseFence: 1,
+      eventTimestamp: '2026-09-04T01:00:00.000Z',
+      createdAt: '2026-09-04T01:00:00.000Z', updatedAt: '2026-09-04T01:00:00.000Z',
+    }]) };
+    const opened = await listen({ store, messageStore, orgGroupAgentStore, orgAgentStore: { get: vi.fn(() => ({
       id: 'oa-sales', tenantId: 'tenant-a', enabled: true, allowedSkills: [], allowedKnowledge: [],
       runtime: { executionMode: 'dispatcher' },
     })) } as never, backgroundTasks: { cancelWorkOrder, publishWorkOrderArtifacts } as never });
@@ -577,6 +562,9 @@ describe('Agent DWS accounts routes', () => {
     const body = await view.json() as Record<string, unknown>;
     expect(JSON.stringify(body)).toContain('attempt-a');
     expect(JSON.stringify(body)).toContain('delivery-private');
+    expect(body).toMatchObject({ observedGroups: [{
+      conversationId: 'cid-b', lastEventAt: '2026-09-04T01:00:00.000Z', bindingId: null,
+    }] });
     expect(JSON.stringify(body)).not.toContain('never');
     expect(JSON.stringify(body)).not.toContain('private-open-id');
     expect((body as { bindings: Array<{ effectiveConfigComputation: {

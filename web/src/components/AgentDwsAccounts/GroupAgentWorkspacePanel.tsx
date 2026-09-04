@@ -146,6 +146,11 @@ interface WorkspaceResponse {
   workspaces: WorkspaceGroup[];
   deliveries: Delivery[];
   approvals: GroupAgentApproval[];
+  observedGroups?: Array<{
+    conversationId: string;
+    lastEventAt: string;
+    bindingId: string | null;
+  }>;
 }
 
 export type WorkspaceMutation = (
@@ -186,8 +191,13 @@ export function GroupAgentWorkspacePanel({
   const [data, setData] = useState<WorkspaceResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [groupToCreate, setGroupToCreate] = useState('');
   const eligible = useMemo(
-    () => accounts.filter((account) => account.status === 'active'),
+    () => accounts.filter((account) => (
+      Boolean(account.profileId && account.corpId && account.dingtalkUserId)
+      && account.status !== 'draft'
+      && account.status !== 'authorizing'
+    )),
     [accounts],
   );
   useEffect(() => {
@@ -215,8 +225,13 @@ export function GroupAgentWorkspacePanel({
     }
   }, [accountId, tenantId]);
   useEffect(() => {
+    setGroupToCreate('');
     void load();
   }, [load]);
+  const unboundGroups = useMemo(
+    () => (data?.observedGroups ?? []).filter((group) => !group.bindingId),
+    [data?.observedGroups],
+  );
 
   const mutate = async (
     key: string,
@@ -267,7 +282,7 @@ export function GroupAgentWorkspacePanel({
           <SelectContent>
             {eligible.map((account) => (
               <SelectItem key={account.accountId} value={account.accountId}>
-                {account.displayName}
+                {account.displayName}{account.status === 'active' ? '' : `（${account.status}）`}
               </SelectItem>
             ))}
           </SelectContent>
@@ -285,6 +300,50 @@ export function GroupAgentWorkspacePanel({
         {!accountId ? (
           <p className="text-sm text-muted-foreground">先完成一个成员账号的 OAuth 授权。</p>
         ) : null}
+        {data ? (
+          <section className="space-y-3 rounded-lg border p-4">
+            <div>
+              <h3 className="font-medium">从已观测群创建配置</h3>
+              <p className="text-sm text-muted-foreground">
+                选择该成员账号 Personal Stream 已收到过 @ 的群，创建独立 shadow 绑定后再配置并激活。
+              </p>
+            </div>
+            {unboundGroups.length ? (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-72 flex-1 space-y-1">
+                  <Label>已观测群</Label>
+                  <Select value={groupToCreate} onValueChange={setGroupToCreate}>
+                    <SelectTrigger aria-label="已观测群">
+                      <SelectValue placeholder="选择一个尚未绑定的群" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unboundGroups.map((group) => (
+                        <SelectItem key={group.conversationId} value={group.conversationId}>
+                          {group.conversationId} · 最近事件 {group.lastEventAt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  type="button"
+                  disabled={!groupToCreate || Boolean(busy)}
+                  onClick={() => void mutate(
+                    'create-binding',
+                    `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/bindings`,
+                    { conversationId: groupToCreate },
+                  )}
+                >
+                  创建群配置
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                暂无尚未绑定的已观测群。受钉钉 Personal Stream 能力限制，群需先 @ 一次该成员账号才会进入选择列表。
+              </p>
+            )}
+          </section>
+        ) : null}
         {data?.bindings.map((binding) => (
           <BindingEditor
             key={`${binding.bindingId}:${binding.revision}`}
@@ -299,7 +358,7 @@ export function GroupAgentWorkspacePanel({
         ))}
         {data && data.bindings.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            尚未发现群绑定；群内首次 @ 后会生成 shadow 绑定，再由管理员激活。
+            尚未创建群绑定；先从上方已观测群中选择并创建 shadow 绑定。
           </p>
         ) : null}
         <GroupAgentApprovalQueue

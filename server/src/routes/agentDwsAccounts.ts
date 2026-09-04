@@ -15,7 +15,7 @@ import {
   type AgentDwsAccountStore,
   type AgentDwsContextPolicy,
 } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord, AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import type { OrgAgentStore } from '../data/orgAgents/index.js';
@@ -26,11 +26,18 @@ import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
 import type { DwsAuthSessionRecord } from '../dws/authStore.js';
 import { deriveDwsAgentDelegationResourceId } from '../dws/businessToolProvider.js';
 import { OrgAgentApprovalError, type OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
-import { deliveryReconcileSchema, groupWorkspaceQuerySchema, groupWorkspaceUpdateSchema,
-  groupDwsCapabilityError,
+import { deliveryReconcileSchema, groupBindingCreateSchema,
+  groupWorkspaceQuerySchema, groupWorkspaceUpdateSchema, groupDwsCapabilityError,
   memoryCreateSchema, memoryPromoteSchema, memoryStatusSchema,
   mergeGroupWorkspaceEffectiveConfig,
   workOrderActionSchema } from './agentDwsGroupWorkspaceSchemas.js';
+import {
+  ensureObservedGroupBinding,
+  hasObservedGroup,
+  observedGroupOptions,
+  toPublicAccount,
+  toPublicInboxRecord,
+} from './agentDwsAccountDiscovery.js';
 import { buildGroupWorkspaceView } from './agentDwsGroupWorkspaceView.js';
 
 const eventKindSchema = z.enum(['at_me', 'all_direct']);
@@ -174,10 +181,12 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
     if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
     try {
-      const [bindings, deliveries, approvals] = await Promise.all([
+      const [bindings, deliveries, approvals, inbox] = await Promise.all([
         options.orgGroupAgentStore.listBindings(tenantId, account.accountId),
         options.orgGroupAgentStore.listDeliveries(tenantId, account.accountId, parsed.data.limit),
         options.approvalService?.listPending(tenantId, account.accountId, parsed.data.limit)
+          ?? Promise.resolve([]),
+        options.messageStore?.listForAccount(tenantId, account.accountId, 100)
           ?? Promise.resolve([]),
       ]);
       const contextCeiling = await resolveGroupContextCeiling(options, account);
@@ -186,10 +195,38 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
           store: options.orgGroupAgentStore, agentStore: options.orgAgentStore,
           limit: parsed.data.limit, frontdeskTools: GROUP_AGENT_FRONTDESK_TOOL_MAX, contextCeiling }),
         approvals,
+        observedGroups: observedGroupOptions(inbox, bindings),
       });
     } catch {
       return res.status(503).json({ error: '组织群工作台读取失败' });
     }
+  });
+
+  router.post('/agent-dws-accounts/:accountId/group-workspace/bindings', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore || !options.messageStore) {
+      return res.status(503).json({ error: '群发现服务暂不可用' });
+    }
+    const parsed = groupBindingCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account || account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
+      return res.status(409).json({ error: '只能为已授权且已启用的成员账号创建群绑定' });
+    }
+    if (!await hasObservedGroup(
+      options.messageStore, tenantId, account.accountId, parsed.data.conversationId,
+    )) return res.status(404).json({ error: '该群尚未被当前账号的 Personal Stream 观测到' });
+    return await runMutation(req, res, options, {
+      action: 'org_agent.channel_binding.create', tenantId, targetId: account.accountId,
+      purpose: 'create shadow binding from observed DingTalk group',
+    }, async () => ({
+      status: 201,
+      body: { binding: await ensureObservedGroupBinding(
+        options.orgGroupAgentStore!, account, parsed.data.conversationId,
+      ) },
+    }));
   });
 
   router.post('/agent-dws-accounts/:accountId/group-workspace/approvals/:approvalId/decision', async (req, res) => {
@@ -257,32 +294,38 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       effectiveConfig, parsed.data.enabled && !parsed.data.policy.liveDeny,
     );
     if (dwsCapabilityError) return res.status(400).json({ error: dwsCapabilityError });
-    const agent = options.orgAgentStore.get(account.agentId);
-    if (!agent || agent.tenantId !== tenantId || !agent.enabled) return res.status(409).json({ error: '组织智能体当前不可用' });
-    if (parsed.data.enabled && agent.runtime?.executionMode !== 'dispatcher')
-      return res.status(409).json({ error: '启用群聊前，组织智能体必须发布为 dispatcher 模式' });
-    if (parsed.data.enabled && (await options.isOrgAgentRuntimeV2Ready?.(account)) !== true)
-      return res
-        .status(409)
-        .json({ error: '启用群聊前，活动 Runtime Worker 必须支持组织群任务协议 v2' });
-    const invalidSkill = effectiveConfig.capabilities.skillIds.some(
-      (id) => !agent.allowedSkills.includes(id),
-    );
-    const contextCeiling = await resolveGroupContextCeiling(options, account);
-    if (effectiveConfig.knowledge.contextEnabled && !contextCeiling.available)
-      return res.status(503).json({ error: '群聊 Context 能力目录暂不可用' });
-    if (effectiveConfig.knowledge.contextEnabled
-      && !contextPolicyAllowsConversation(account, parsed.data.conversationId)) {
-      return res.status(409).json({ error: '启用群聊 Context 前，必须先在账号 Context 范围中授权当前群' });
+    if (parsed.data.enabled) {
+      const agent = options.orgAgentStore.get(account.agentId);
+      if (!agent || agent.tenantId !== tenantId || !agent.enabled)
+        return res.status(409).json({ error: '组织智能体当前不可用' });
+      if (agent.runtime?.executionMode !== 'dispatcher')
+        return res.status(409).json({ error: '启用群聊前，组织智能体必须发布为 dispatcher 模式' });
+      if ((await options.isOrgAgentRuntimeV2Ready?.(account)) !== true)
+        return res
+          .status(409)
+          .json({ error: '启用群聊前，活动 Runtime Worker 必须支持组织群任务协议 v2' });
+      const invalidSkill = effectiveConfig.capabilities.skillIds.some(
+        (id) => !agent.allowedSkills.includes(id),
+      );
+      const contextCeiling = await resolveGroupContextCeiling(options, account);
+      if (effectiveConfig.knowledge.contextEnabled && !contextCeiling.available)
+        return res.status(503).json({ error: '群聊 Context 能力目录暂不可用' });
+      if (effectiveConfig.knowledge.contextEnabled
+        && !contextPolicyAllowsConversation(account, parsed.data.conversationId)) {
+        return res.status(409).json({ error: '启用群聊 Context 前，必须先在账号 Context 范围中授权当前群' });
+      }
+      const invalidSource = effectiveConfig.knowledge.sourceIds
+        .some(id => !contextCeiling.channelSourceIds.includes(id));
+      const invalidTool = effectiveConfig.capabilities.toolNames
+        .some(name => !GROUP_AGENT_FRONTDESK_TOOL_MAX.has(name));
+      if (invalidSkill || invalidSource || invalidTool)
+        return res.status(400).json({ error: '群配置只能收窄组织智能体已发布的能力' });
     }
-    const invalidSource = effectiveConfig.knowledge.sourceIds
-      .some(id => !contextCeiling.channelSourceIds.includes(id));
-    const invalidTool = effectiveConfig.capabilities.toolNames
-      .some(name => !GROUP_AGENT_FRONTDESK_TOOL_MAX.has(name));
-    if (invalidSkill || invalidSource || invalidTool) return res.status(400).json({ error: '群配置只能收窄组织智能体已发布的能力' });
     await runMutation(req, res, options, {
       action: 'org_agent.channel_binding.update', tenantId, targetId: account.accountId,
-      purpose: 'update group Agent effective configuration',
+      purpose: parsed.data.enabled
+        ? 'activate or update group Agent effective configuration'
+        : 'disable group Agent binding',
     }, async () => {
       try {
         const binding = await options.orgGroupAgentStore!.updateBinding({
@@ -883,55 +926,6 @@ function contextPolicyAllowsConversation(
     selection.mode === 'all'
       || (selection.mode === 'selected' && selection.conversationIds.includes(conversationId));
   return allows(policy.historical) || allows(policy.realtime);
-}
-
-function toPublicAccount(account: AgentDwsAccountRecord): Record<string, unknown> {
-  return {
-    accountId: account.accountId,
-    tenantId: account.tenantId,
-    agentId: account.agentId,
-    displayName: account.displayName,
-    loginIdMasked: maskLoginId(account.loginId),
-    corpId: account.corpId ?? null,
-    corpName: account.corpName ?? null,
-    dingtalkUserId: account.dingtalkUserId ?? null,
-    dingtalkUserName: account.dingtalkUserName ?? null,
-    profileId: account.profileId ?? null,
-    status: account.status,
-    runtimeStatus: account.runtimeStatus,
-    eventKinds: account.eventKinds,
-    contextPolicy: account.contextPolicy ?? failClosedAgentDwsContextPolicy(),
-    lastEventAt: account.lastEventAt ?? null,
-    lastError: account.lastError ?? null,
-    revision: account.revision,
-    createdAt: account.createdAt,
-    updatedAt: account.updatedAt,
-  };
-}
-
-function toPublicInboxRecord(record: AgentDwsInboxRecord): Record<string, unknown> {
-  return {
-    inboxId: record.inboxId,
-    eventId: record.eventId,
-    eventType: record.eventType,
-    conversationId: record.conversationId,
-    messageId: record.messageId ?? null,
-    state: record.state,
-    sessionId: record.sessionId ?? null,
-    runId: record.runId ?? null,
-    attempt: record.attempt,
-    maxAttempts: record.maxAttempts,
-    nextAttemptAt: record.nextAttemptAt ?? null,
-    lastError: record.lastError ?? null,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    completedAt: record.completedAt ?? null,
-  };
-}
-
-function maskLoginId(value: string): string {
-  if (value.length <= 4) return `${value.slice(0, 1)}***`;
-  return `${value.slice(0, 2)}***${value.slice(-2)}`;
 }
 
 function toPublicAuthSession(row: DwsAuthSessionRecord): Record<string, unknown> {

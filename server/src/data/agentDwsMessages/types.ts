@@ -50,6 +50,8 @@ export interface AgentDwsInboxRecord {
   runId?: string;
   responseText?: string;
   replyStartedAt?: string;
+  disposition?: 'rejected';
+  rejectionReasonCode?: string;
   attempt: number;
   maxAttempts: number;
   leaseOwner?: string;
@@ -132,6 +134,12 @@ export interface AgentDwsMessageStore {
     reason: string,
   ): Promise<AgentDwsInboxRecord>;
   complete(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
+  reject(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord>;
   fail(
     inboxId: string,
     owner: string,

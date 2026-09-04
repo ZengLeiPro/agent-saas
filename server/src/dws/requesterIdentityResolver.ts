@@ -25,6 +25,7 @@ const DWS_REQUESTER_LOOKUP_WORKLOAD = { class: 'interactive' } as const;
 export interface DwsRequesterDirectoryEntry {
   staffId: string;
   openDingtalkId: string;
+  mobile?: string;
 }
 
 export type DwsRequesterResolution =
@@ -34,7 +35,7 @@ export type DwsRequesterResolution =
 export class DwsRequesterIdentityResolver {
   constructor(private readonly options: {
     agentCwd: string;
-    userStore: Pick<UserStore, 'listAll'>;
+    userStore: Pick<UserStore, 'listAll'> & Partial<Pick<UserStore, 'reload'>>;
     auditStore: GovernanceAuditStore;
     resolveServerRemote: (principal: DwsWorkspacePrincipal) => Promise<{
       baseUrl: string;
@@ -65,53 +66,69 @@ export class DwsRequesterIdentityResolver {
     if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       return await this.recordDecision(account, null, 'AGENT_DWS_ACCOUNT_UNAVAILABLE');
     }
+    this.options.userStore.reload?.();
     const candidates = this.options.userStore.listAll()
-      .filter(user => user.tenantId === account.tenantId && !user.disabled && user.dingtalkStaffId)
+      .filter(user => user.tenantId === account.tenantId && !user.disabled)
       .filter((user, index, users) => users.findIndex(candidate => candidate.id === user.id) === index);
-    if (candidates.length === 0) {
+    const staffCandidates = candidates.filter(user => user.dingtalkStaffId);
+    const phoneCandidates = candidates.filter(user => user.phone && user.phoneVerifiedAt);
+    if (staffCandidates.length === 0 && phoneCandidates.length === 0) {
       return await this.recordDecision(account, null, 'TENANT_DINGTALK_DIRECTORY_EMPTY');
     }
 
     const byStaffId = new Map<string, typeof candidates>();
-    for (const candidate of candidates) {
+    for (const candidate of staffCandidates) {
       const staffId = candidate.dingtalkStaffId!;
       byStaffId.set(staffId, [...(byStaffId.get(staffId) ?? []), candidate]);
     }
-    const matches = [] as typeof candidates;
+    const byVerifiedPhone = new Map<string, typeof candidates>();
+    for (const candidate of phoneCandidates) {
+      const phone = normalizePhone(candidate.phone!);
+      if (phone) byVerifiedPhone.set(phone, [...(byVerifiedPhone.get(phone) ?? []), candidate]);
+    }
+    const matches: Array<{ user: (typeof candidates)[number]; staffId: string }> = [];
     const observedSenderStaffIds = new Set<string>();
     const collectMatches = (entries: DwsRequesterDirectoryEntry[]) => {
       for (const entry of entries) {
         if (entry.openDingtalkId !== senderOpenDingtalkId) continue;
         observedSenderStaffIds.add(entry.staffId);
-        matches.push(...(byStaffId.get(entry.staffId) ?? []));
+        const direct = byStaffId.get(entry.staffId) ?? [];
+        const phone = entry.mobile ? normalizePhone(entry.mobile) : undefined;
+        const verified = phone ? byVerifiedPhone.get(phone) ?? [] : [];
+        for (const user of [...direct, ...verified]) matches.push({ user, staffId: entry.staffId });
       }
     };
     for (let offset = 0; offset < byStaffId.size; offset += LOOKUP_BATCH_SIZE) {
       const staffIds = [...byStaffId.keys()].slice(offset, offset + LOOKUP_BATCH_SIZE);
       collectMatches(await this.lookup(account, { staffIds }));
     }
-    // user get 与姓名搜索相互校验：前者覆盖平台成员全集，后者验证事件视角下的
-    // openDingTalkId 是否还指向其他 staffId；任一侧发现歧义都 fail closed。
+    // 姓名只用于缩小 DWS 目录查询范围；最终必须同时精确命中事件 openDingTalkId，
+    // 并通过已配置 staffId 或平台已验证手机号建立同租户唯一映射。
     if (senderName?.trim()) collectMatches(await this.lookup(account, { query: senderName.trim() }));
     if (account.dingtalkUserId && observedSenderStaffIds.has(account.dingtalkUserId)) {
       return await this.recordDecision(account, null, 'AGENT_DWS_SELF_ECHO');
     }
-    const unique = matches.filter((user, index) => matches.findIndex(candidate => candidate.id === user.id) === index);
-    if (unique.length !== 1 || observedSenderStaffIds.size !== 1) {
+    const unique = matches.filter((match, index) => matches.findIndex(candidate => (
+      candidate.user.id === match.user.id && candidate.staffId === match.staffId
+    )) === index);
+    const uniqueUsers = [...new Set(unique.map(match => match.user.id))];
+    const uniqueStaffIds = [...new Set(unique.map(match => match.staffId))];
+    if (uniqueUsers.length !== 1 || uniqueStaffIds.length !== 1 || observedSenderStaffIds.size !== 1) {
       return await this.recordDecision(
         account,
         null,
         unique.length === 0 ? 'REQUESTER_IDENTITY_UNMAPPED' : 'REQUESTER_IDENTITY_AMBIGUOUS',
       );
     }
-    const user = unique[0]!;
+    const match = unique[0]!;
+    const user = match.user;
     return await this.recordDecision(account, {
       id: user.id,
       username: user.username,
       role: user.role,
       tenantId: user.tenantId,
       ...(user.realName ? { realName: user.realName } : {}),
-      ...(user.dingtalkStaffId ? { dingtalkStaffId: user.dingtalkStaffId } : {}),
+      dingtalkStaffId: match.staffId,
       ...(user.permissions ? { permissions: user.permissions } : {}),
     }, 'REQUESTER_IDENTITY_RESOLVED');
   }
@@ -248,6 +265,7 @@ export function parseDwsRequesterDirectoryEntries(content: string): DwsRequester
   } catch {
     throw new Error('DWS contact lookup JSON 格式无效');
   }
+  // DWS 响应可能在父子节点重复投影同一联系人，优先保留带手机号的完整记录。
   const entries: DwsRequesterDirectoryEntry[] = [];
   walk(parsed, value => {
     const staffId = stringField(value.staffId)
@@ -257,11 +275,23 @@ export function parseDwsRequesterDirectoryEntries(content: string): DwsRequester
     const openDingtalkId = stringField(value.openDingTalkId)
       ?? stringField(value.openDingtalkId)
       ?? stringField(value.open_dingtalk_id);
-    if (staffId && openDingtalkId) entries.push({ staffId, openDingtalkId });
+    const mobile = stringField(value.mobile)
+      ?? stringField(value.mobileNumber)
+      ?? stringField(value.mobile_number)
+      ?? stringField(value.phone);
+    if (staffId && openDingtalkId) entries.push({
+      staffId,
+      openDingtalkId,
+      ...(mobile ? { mobile } : {}),
+    });
   });
-  return entries.filter((entry, index) => entries.findIndex(candidate => (
-    candidate.staffId === entry.staffId && candidate.openDingtalkId === entry.openDingtalkId
-  )) === index);
+  const unique = new Map<string, DwsRequesterDirectoryEntry>();
+  for (const entry of entries) {
+    const key = `${entry.staffId}\u0000${entry.openDingtalkId}`;
+    const existing = unique.get(key);
+    if (!existing || (!existing.mobile && entry.mobile)) unique.set(key, entry);
+  }
+  return [...unique.values()];
 }
 
 function walk(value: unknown, visit: (record: Record<string, unknown>) => void): void {
@@ -279,6 +309,16 @@ function stringField(value: unknown): string | undefined {
   if (typeof value !== 'string' && typeof value !== 'number') return undefined;
   const text = String(value).trim();
   return text && text.length <= 200 ? text : undefined;
+}
+
+function normalizePhone(value: string): string | undefined {
+  const compact = value.trim().replace(/[\s-]/g, '');
+  const digits = compact.startsWith('+86')
+    ? compact.slice(3)
+    : compact.startsWith('86') && compact.length === 13
+      ? compact.slice(2)
+      : compact;
+  return /^1\d{10}$/.test(digits) ? digits : undefined;
 }
 
 function shellQuote(value: string): string {

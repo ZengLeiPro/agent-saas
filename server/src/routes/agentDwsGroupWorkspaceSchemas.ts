@@ -3,8 +3,12 @@ import { z } from 'zod';
 import type { OrgAgentEffectiveConfig } from '../data/orgGroupAgents/index.js';
 
 export const groupWorkspaceQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+export const groupBindingCreateSchema = z
+  .object({ conversationId: z.string().trim().min(1).max(1024) })
+  .strict();
 
 export const groupWorkspaceUpdateSchema = z
   .object({

@@ -285,7 +285,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {
+  it('常规状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [inboxRow({
         state: 'reply_pending', response_text: '', lease_owner: 'worker-1', lease_fence: 7,
@@ -308,6 +308,33 @@ describe('PgAgentDwsMessageStore', () => {
       .rejects.toEqual(expect.objectContaining<Partial<AgentDwsMessageInvariantError>>({
         code: 'AGENT_DWS_MESSAGE_LEASE_LOST',
       }));
+  });
+
+  it('拒绝终态在兼容 payload 中记录 disposition 与稳定 reasonCode', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'completed',
+      payload_json: {
+        normalized: true,
+        disposition: 'rejected',
+        rejectionReasonCode: 'REQUESTER_IDENTITY_UNMAPPED',
+      },
+      completed_at: new Date(NOW),
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.reject(
+      'adwsi-1', 'worker-1', 7, 'REQUESTER_IDENTITY_UNMAPPED',
+    )).resolves.toMatchObject({
+      state: 'completed',
+      disposition: 'rejected',
+      rejectionReasonCode: 'REQUESTER_IDENTITY_UNMAPPED',
+    });
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("'disposition','rejected','rejectionReasonCode',$4::text");
+    expect(String(sql)).toContain("WHERE inbox_id=$1 AND state='reply_pending'");
+    expect(values).toEqual([
+      'adwsi-1', 'worker-1', 7, 'REQUESTER_IDENTITY_UNMAPPED',
+    ]);
   });
 
   it('续租、首次回复时间与 active run defer 都受同一 fence 保护', async () => {

@@ -138,12 +138,18 @@ describe('M00-01 路由清单完整性', () => {
         const source = readFileSync(file, 'utf8');
         return source.includes('react-native-webview') || source.includes('<WebView');
       });
-    expect(webViewSources.map((file) => relative(join(APP_DIR, '..'), file))).toEqual([
+    // 允许清单：只有「本地文本选择」与「本地 MathML 公式」两处 WebView，
+    // 两者都只吃本地字符串，新增任何 WebView 都必须在这里显式登记。
+    expect(webViewSources.map((file) => relative(join(APP_DIR, '..'), file)).sort()).toEqual([
       'src/components/chat/TextSelectModal.tsx',
-    ]);
-    // The remaining local text-selection WebView must not consume file paths or remote preview URLs.
-    const remaining = readFileSync(webViewSources[0], 'utf8');
-    expect(remaining).not.toMatch(/filePath|preview-token|\/preview\/|authFetch|source=\{\{\s*uri/);
+      'src/components/chat/blocks/MathBlock.tsx',
+    ].sort());
+    // 两处 WebView 都不得消费文件路径或远程 preview URL。
+    for (const file of webViewSources) {
+      const source = readFileSync(file, 'utf8');
+      expect(source, file).not.toMatch(/filePath|preview-token|\/preview\/|authFetch|source=\{\{\s*uri/);
+      expect(source, file).toContain("originWhitelist={['about:blank']}");
+    }
   });
 
   it('生产 allowlist 路由源码中无「正在开发中」占位文案', () => {

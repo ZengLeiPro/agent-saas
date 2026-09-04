@@ -22,6 +22,7 @@ import {
   getFileTypeVisual,
   getPreviewFileType,
   splitByMessageMarkers,
+  splitMathSegments,
   stripPartialCiteMarker,
 } from '@agent/shared';
 import { DropdownMenu, type DropdownSection } from '../../overlays/DropdownMenu';
@@ -36,6 +37,7 @@ import { createMarkdownStyles } from '../markdownStyles';
 import { createMarkdownRules } from '../markdownRules';
 import { MessageCitationCard } from './CitationCard';
 import { GuardrailAppealButton } from './GuardrailAppealButton';
+import { MathBlock } from './MathBlock';
 import { MessageFeedbackButton } from './MessageFeedback';
 import { CATEGORY_ICON, useMessageStyles } from './shared';
 
@@ -215,14 +217,35 @@ export function TextMessage({
    * 标记段渲染：文件卡在流式期间不出现（那时 marker 可能仍不完整，
    * 已闭合的也先按裁剪口径不落卡片），引用角标则在流式中即可点开。
    */
+  /** 文本段：先切出块级公式交给 MathBlock，其余照旧走 Markdown */
+  const renderTextSegment = (content: string, key: string | number) => {
+    const mathParts = splitMathSegments(content);
+    if (mathParts.length === 1 && mathParts[0].type === 'text') {
+      return (
+        <Markdown key={key} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
+          {content}
+        </Markdown>
+      );
+    }
+    return (
+      <View key={key}>
+        {mathParts.map((part, j) =>
+          part.type === 'math' ? (
+            <MathBlock key={j} tex={part.tex} />
+          ) : (
+            <Markdown key={j} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
+              {part.content}
+            </Markdown>
+          ),
+        )}
+      </View>
+    );
+  };
+
   const renderSegments = (allowFileCards: boolean) =>
     segments.map((seg, i) => {
       if (seg.type === 'text') {
-        return (
-          <Markdown key={i} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
-            {seg.content}
-          </Markdown>
-        );
+        return renderTextSegment(seg.content, i);
       }
       if (seg.type === 'citation') {
         return (

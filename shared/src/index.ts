@@ -617,6 +617,10 @@ export {
 } from './lib/markers';
 export type { MarkerSegment, CitationSegment } from './lib/markers';
 
+// Lib - Markdown 正文里的公式切分（代码块 / 行内代码内的 $ 不当公式）
+export { splitMathSegments, hasMathSegments } from './lib/mathSegments';
+export type { MathSegment, SplitMathOptions } from './lib/mathSegments';
+
 // Lib - Token 用量胶囊 / 明细面板展示模型（取值优先级 + 阈值预警 + 文案）
 export {
   selectTokenUsageView,

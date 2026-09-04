@@ -38,6 +38,22 @@ describe('TASK-375 移动端 V1 复核整改', () => {
     expect(source).toContain(".replaceAll('<', '&lt;')");
   });
 
+  it('公式 WebView 只渲染本地 MathML、禁网络与外部导航', () => {
+    const source = readMobile('src/components/chat/blocks/MathBlock.tsx');
+    const katex = readMobile('src/lib/katexMathml.ts');
+
+    expect(source).toContain("originWhitelist={['about:blank']}");
+    expect(source).toContain("default-src 'none'");
+    expect(source).toContain("onShouldStartLoadWithRequest={(request) => request.url === 'about:blank'}");
+    expect(source).toContain('source={{ html }}');
+    // 公式渲染在 RN 侧完成，WebView 里不加载任何第三方脚本
+    expect(source).not.toContain('injectedJavaScript');
+    expect(source).not.toContain('https://');
+    // trust=false 阻断 \href / \url 类外链注入宏
+    expect(katex).toContain('trust: false');
+    expect(katex).toContain("output: 'mathml'");
+  });
+
   it('ACK 未确认 intent 保留幂等键，interaction 生命周期绑定原会话', () => {
     const source = readMobile('src/hooks/useChatAppState.ts');
 

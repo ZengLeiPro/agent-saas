@@ -15,6 +15,7 @@ export { ContextCitationSheet, type ContextCitationSheetProps } from './ContextC
 export { DetailLines, type DetailVariant } from './DetailLines';
 export { FileDownloadCard } from './FileDownloadCard';
 export { GuardrailAppealButton } from './GuardrailAppealButton';
+export { MathBlock } from './MathBlock';
 export { MessageFeedbackButton } from './MessageFeedback';
 export { PermissionBlock } from './PermissionBlock';
 export { CanonicalPresentationBody, EvidenceRefs, ReceiptRow } from './PresentationBlock';

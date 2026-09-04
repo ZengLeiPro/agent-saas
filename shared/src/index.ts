@@ -617,6 +617,15 @@ export {
 } from './lib/markers';
 export type { MarkerSegment, CitationSegment } from './lib/markers';
 
+// Lib - Token 用量胶囊 / 明细面板展示模型（取值优先级 + 阈值预警 + 文案）
+export {
+  selectTokenUsageView,
+  formatUsagePercent,
+  tokenCategoryColor,
+  contextAccuracyLabel,
+} from './lib/tokenUsageView';
+export type { TokenUsageView, TokenUsageTone } from './lib/tokenUsageView';
+
 // Lib - 消息反馈（点踩）与门禁拒答申诉的端点 / 幂等 / 文案契约
 export {
   MESSAGE_FEEDBACK_COMMENT_MAX,

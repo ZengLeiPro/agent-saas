@@ -498,13 +498,13 @@ export default function ChatDetailScreen() {
             return inner;
           },
           headerRight: () => chat.tokenUsage ? (
-            <TokenDetailTrigger tokenUsage={chat.tokenUsage} contextUsage={chat.contextUsage} onPress={() => {
+            <TokenDetailTrigger tokenUsage={chat.tokenUsage} contextUsage={chat.contextUsage} allowDetails={chat.modelList?.allowContextTokenDetails === true} onPress={() => {
               hapticLight();
               setShowTokenDetail(prev => !prev);
             }} />
           ) : undefined,
           unstable_headerRightItems: () => chat.tokenUsage ? [glassFree(
-            <TokenDetailTrigger tokenUsage={chat.tokenUsage} contextUsage={chat.contextUsage} onPress={() => {
+            <TokenDetailTrigger tokenUsage={chat.tokenUsage} contextUsage={chat.contextUsage} allowDetails={chat.modelList?.allowContextTokenDetails === true} onPress={() => {
               hapticLight();
               setShowTokenDetail(prev => !prev);
             }} />

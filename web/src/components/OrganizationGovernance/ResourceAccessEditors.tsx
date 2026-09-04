@@ -37,7 +37,7 @@ interface PreviewToken {
   previewId: string;
   baselineDigest: string;
   expiresAt: string;
-  impact?: { blockers?: string[] };
+  impact?: { blockers?: string[]; currentVersion?: number; nextVersion?: number };
 }
 interface Receipt {
   changeId: string;
@@ -87,8 +87,11 @@ function MutationReceipt({ receipt }: { receipt: Receipt | null }) {
       role="status"
       className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs"
     >
-      已提交 · Change ID：{receipt.changeId} · Audit ID：{receipt.auditId}
-      {receipt.projectionStatus ? ` · 投影 ${receipt.projectionStatus}` : ''}
+      <div>changeId：{receipt.changeId}</div>
+      <div>auditId：{receipt.auditId}</div>
+      {receipt.projectionStatus ? (
+        <div>投影：{receipt.projectionStatus === 'pending' ? '等待中' : receipt.projectionStatus}</div>
+      ) : null}
     </div>
   );
 }
@@ -98,11 +101,15 @@ export function OrganizationEntitlementScopeEditor({
   resourceType,
   title,
   description,
+  previewLabel = '预览范围变更',
+  onChanged,
 }: {
   tenantId: string;
   resourceType: EntitlementResourceType;
   title: string;
   description: string;
+  previewLabel?: string;
+  onChanged?: () => void | Promise<void>;
 }) {
   const [scope, setScope] = useState<ResourceScope | null>(null);
   const [catalog, setCatalog] = useState<ResourceCatalogItem[]>([]);
@@ -201,6 +208,7 @@ export function OrganizationEntitlementScopeEditor({
       setReceipt(result);
       setPreview(null);
       await load();
+      await onChanged?.();
       return true;
     } catch (cause) {
       setError(errorText(cause, '范围变更提交失败'));
@@ -279,17 +287,59 @@ export function OrganizationEntitlementScopeEditor({
             </div>
           ) : null}
           {staleIds.length ? (
-            <div role="alert" className="text-xs text-destructive">
-              已退出目录的旧资源：{staleIds.join('、')}，请取消后再提交。
+            <div
+              role="alert"
+              className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium">已退出目录</div>
+                  <div className="text-xs text-muted-foreground">
+                    历史项保持授权；可以移除，但不能作为新授权添加。
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelected((current) => current.filter((id) => !staleIds.includes(id)));
+                    setPreview(null);
+                    setReceipt(null);
+                  }}
+                >
+                  清理全部旧引用
+                </Button>
+              </div>
+              {staleIds.map((resourceId) => (
+                <div key={resourceId} className="flex items-center justify-between gap-2 text-sm">
+                  <label className="flex min-w-0 items-center gap-2">
+                    <input type="checkbox" checked readOnly aria-label={`历史资源 ${resourceId}`} />
+                    <code className="break-all text-xs">{resourceId}</code>
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`移除旧资源 ${resourceId}`}
+                    onClick={() => {
+                      setSelected((current) => current.filter((id) => id !== resourceId));
+                      setPreview(null);
+                      setReceipt(null);
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    移除
+                  </Button>
+                </div>
+              ))}
             </div>
           ) : null}
           <div className="flex gap-2">
             <Button
               variant="outline"
-              disabled={busy || staleIds.length > 0}
+              disabled={busy}
               onClick={() => void runPreview()}
             >
-              预览范围变更
+              {previewLabel}
             </Button>
             {preview ? (
               <Button
@@ -306,6 +356,9 @@ export function OrganizationEntitlementScopeEditor({
           </div>
           {preview ? (
             <div className="text-xs text-muted-foreground">
+              {preview.impact?.currentVersion !== undefined
+                ? `v${preview.impact.currentVersion} → v${preview.impact.nextVersion} · `
+                : ''}
               签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}
             </div>
           ) : null}

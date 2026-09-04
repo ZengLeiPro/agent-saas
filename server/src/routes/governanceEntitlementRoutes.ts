@@ -4,7 +4,11 @@ import { z } from 'zod';
 
 import type { PgEntitlementStore } from '../data/entitlements/index.js';
 import { getTenantPolicyDefinition } from '../data/entitlements/policyCatalog.js';
-import { isOrganizationEditableTenantPolicyKey, type EntitlementResourceType } from '../data/entitlements/types.js';
+import {
+  ENTITLEMENT_RESOURCE_TYPES,
+  isOrganizationEditableTenantPolicyKey,
+  type EntitlementResourceType,
+} from '../data/entitlements/types.js';
 import { PLATFORM_TENANT_ID } from '../data/tenants/types.js';
 import { governanceDigest } from '../data/governance-audit/index.js';
 import type { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
@@ -48,6 +52,16 @@ function matches(actual: string, expected: string): boolean {
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
+export function containsNewCatalogMissingResource(
+  requestedIds: readonly string[],
+  currentIds: readonly string[],
+  catalogIds: readonly string[],
+): boolean {
+  const baseline = new Set(currentIds);
+  const catalog = new Set(catalogIds);
+  return requestedIds.some(id => !catalog.has(id) && !baseline.has(id));
+}
+
 export function registerGovernanceEntitlementRoutes(options: {
   router: Router;
   entitlements: PgEntitlementStore;
@@ -70,19 +84,35 @@ export function registerGovernanceEntitlementRoutes(options: {
   }>;
 }): void {
   const { router } = options;
-  const catalogSnapshot = async (resourceType: EntitlementResourceType, mode: 'all' | 'selected', resourceIds: string[]) => {
-    if (mode === 'all') {
-      if (!options.listResources) return { status: 'unavailable' as const, items: [] };
+  const catalogSnapshot = async (
+    resourceType: EntitlementResourceType,
+    mode: 'all' | 'selected',
+    resourceIds: string[],
+    currentResourceIds: string[],
+  ) => {
+    const requestedIds = [...new Set(resourceIds)].sort();
+    const baselineIds = new Set(currentResourceIds);
+    if (options.listResources) {
       const catalog = await options.listResources(resourceType);
-      return catalog.status === 'valid'
-        ? { status: 'valid' as const, items: [...catalog.items].sort((a, b) => a.resourceId.localeCompare(b.resourceId)) }
-        : { status: 'unavailable' as const, items: [] };
+      if (catalog.status !== 'valid') return { status: 'unavailable' as const, items: [] };
+      const items = [...catalog.items].sort((a, b) => a.resourceId.localeCompare(b.resourceId));
+      if (mode === 'selected' && containsNewCatalogMissingResource(
+        requestedIds, currentResourceIds, items.map(item => item.resourceId),
+      )) {
+        return { status: 'not_found' as const, items: [] };
+      }
+      return { status: 'valid' as const, items };
     }
+    if (mode === 'all') return { status: 'unavailable' as const, items: [] };
     if (!options.resolveResource) return { status: 'unavailable' as const, items: [] };
     const items: Array<{ resourceId: string; version: number }> = [];
-    for (const resourceId of [...new Set(resourceIds)].sort()) {
+    for (const resourceId of requestedIds) {
       const resolved = await options.resolveResource(resourceType, resourceId);
-      if (resolved.status !== 'valid') return { status: resolved.status, items: [] };
+      if (resolved.status !== 'valid') {
+        if (resolved.status === 'unavailable') return { status: 'unavailable' as const, items: [] };
+        if (baselineIds.has(resourceId)) continue;
+        return { status: 'not_found' as const, items: [] };
+      }
       items.push({ resourceId, version: resolved.version });
     }
     return { status: 'valid' as const, items };
@@ -237,7 +267,7 @@ export function registerGovernanceEntitlementRoutes(options: {
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const resourceType = req.params.resourceType as EntitlementResourceType;
-    if (!['model', 'agent_template', 'skill', 'connector', 'environment_template', 'tool'].includes(resourceType)) {
+    if (!(ENTITLEMENT_RESOURCE_TYPES as readonly string[]).includes(resourceType)) {
       return res.status(400).json({ error: 'Unsupported resourceType' });
     }
     const current = (await options.entitlements.listResourceScopes(tenantId))
@@ -245,8 +275,12 @@ export function registerGovernanceEntitlementRoutes(options: {
     if (!current || current.version !== parsed.data.expectedVersion) {
       return res.status(409).json({ error: 'Scope baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }
-    const catalog = await catalogSnapshot(resourceType, parsed.data.mode, parsed.data.resourceIds);
-    if (catalog.status === 'unavailable') return res.status(503).json({ error: 'Resource catalog authority unavailable' });
+    const catalog = await catalogSnapshot(
+      resourceType, parsed.data.mode, parsed.data.resourceIds, current.resourceIds,
+    );
+    if (catalog.status === 'unavailable') return res.status(503).json({
+      error: 'Resource catalog authority unavailable', code: 'RESOURCE_CATALOG_UNAVAILABLE',
+    });
     if (catalog.status === 'not_found') return res.status(409).json({ error: 'Selected resource is not assignable', code: 'ENTITLEMENT_RESOURCE_NOT_ASSIGNABLE' });
     if (!options.dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
     const dependencyImpact = await options.dependencyImpact({ tenantId, kind: 'scope', resourceType }).catch(() => null);
@@ -284,7 +318,7 @@ export function registerGovernanceEntitlementRoutes(options: {
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     if (!options.dependencyImpact) return res.status(503).json({ error: 'Dependency impact authority unavailable', code: 'DEPENDENCY_IMPACT_AUTHORITY_UNAVAILABLE' });
     const resourceType = req.params.resourceType as EntitlementResourceType;
-    if (!['model', 'agent_template', 'skill', 'connector', 'environment_template', 'tool'].includes(resourceType)) {
+    if (!(ENTITLEMENT_RESOURCE_TYPES as readonly string[]).includes(resourceType)) {
       return res.status(400).json({ error: 'Unsupported resourceType' });
     }
     const { previewId, baselineDigest, expiresAt, ...mutation } = parsed.data;
@@ -299,13 +333,20 @@ export function registerGovernanceEntitlementRoutes(options: {
     })}`;
     const current = (await options.entitlements.listResourceScopes(tenantId))
       .find(scope => scope.resourceType === resourceType);
-    const catalog = await catalogSnapshot(resourceType, mutation.mode, mutation.resourceIds);
-    if (catalog.status === 'unavailable') return res.status(503).json({ error: 'Resource catalog authority unavailable' });
+    if (!current) {
+      return res.status(409).json({ error: 'Scope baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
+    }
+    const catalog = await catalogSnapshot(
+      resourceType, mutation.mode, mutation.resourceIds, current.resourceIds,
+    );
+    if (catalog.status === 'unavailable') return res.status(503).json({
+      error: 'Resource catalog authority unavailable', code: 'RESOURCE_CATALOG_UNAVAILABLE',
+    });
     if (catalog.status === 'not_found') return res.status(409).json({ error: 'Selected resource is not assignable', code: 'ENTITLEMENT_RESOURCE_NOT_ASSIGNABLE' });
     if (!matches(previewId, expectedPreviewId)) {
       return res.status(409).json({ error: 'Governance preview invalid', code: 'GOVERNANCE_PREVIEW_INVALID' });
     }
-    if (!current || current.version !== mutation.expectedVersion
+    if (current.version !== mutation.expectedVersion
       || governanceDigest({ current, catalog: catalog.items }) !== baselineDigest) {
       return res.status(409).json({ error: 'Governance baseline changed', code: 'GOVERNANCE_PREVIEW_BASELINE_CONFLICT' });
     }

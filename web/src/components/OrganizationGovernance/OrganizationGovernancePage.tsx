@@ -10,6 +10,7 @@ import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/M
 import {
   OrganizationAssignmentManager,
   OrganizationCatalogAccessPanel,
+  OrganizationEntitlementScopeEditor,
 } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { UserFormDialog, type UserFormData } from "@/components/UserManager/UserFormDialog";
 import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
@@ -117,16 +118,6 @@ interface MembershipDetailsResponse {
   recentAudit: { events: Array<{ auditId: string; action: string; result: string; occurredAt: string; actorUserId: string; reason?: string }>; coverage: string; limit: number };
   snapshot: { membershipVersion: number; generatedAt: string };
 }
-interface EntitlementRecord {
-  source: string;
-  status: string;
-  effectiveFrom?: string;
-  effectiveTo?: string;
-  limits: Record<string, number>;
-  version: number;
-}
-interface ResourceScope { resourceType: string; mode: "all" | "selected"; resourceIds: string[]; version: number }
-interface EntitlementResponse { entitlement: EntitlementRecord | null; scopes: ResourceScope[]; policies: unknown[] }
 interface GovernancePreview { previewId: string; baselineDigest: string; expiresAt: string; impact: Record<string, unknown>; changeId: string }
 interface GovernanceReceipt { changeId: string; auditId: string; effectiveAt?: string; projectionStatus?: string }
 interface ConnectorRecord { connectorId: string; name: string; status: string; authMethods: string[]; version: number; healthTestSupported?: boolean }
@@ -596,27 +587,10 @@ export function OrganizationMemoryKnowledgePage({ tenantId }: { tenantId: string
 }
 
 export function OrganizationEnvironmentsPage({ tenantId }: { tenantId: string }) {
-  const request = useMemo(() => async () => { const [entitlements, templates] = await Promise.all([governanceAccessApi.getEntitlements<EntitlementResponse>(tenantId), governanceResourcesApi.listEnvironmentTemplates<{ templates: EnvironmentTemplateRecord[] }>()]); return { entitlements, templates: templates.templates.filter(item => item.status === "published") }; }, [tenantId]);
+  const request = useMemo(() => async () => { const templates = await governanceResourcesApi.listEnvironmentTemplates<{ templates: EnvironmentTemplateRecord[] }>(); return { templates: templates.templates.filter(item => item.status === "published") }; }, []);
   const { data, loading, error, retry } = useGovernanceRequest(request, `environments:${tenantId}`);
-  const scope = data?.entitlements.scopes.find(item => item.resourceType === "environment_template");
-  const [mode, setMode] = useState<"all" | "selected">("selected"); const [selected, setSelected] = useState<string[]>([]); const [preview, setPreview] = useState<GovernancePreview | null>(null); const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null); const [formError, setFormError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
-  useEffect(() => { if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); } }, [scope?.version]);
-  const command = scope ? { expectedVersion: scope.version, mode, resourceIds: mode === "all" ? [] : selected } : null;
-  const runPreview = async () => { if (!command) return; setBusy(true); setFormError(null); try { setPreview(await governanceAccessApi.previewEntitlementScope<GovernancePreview>("environment_template", command, tenantId)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
-  const commit = async () => { if (!preview || !command) return false; setBusy(true); setFormError(null); try { const result = await governanceAccessApi.updateEntitlementScope<GovernanceReceipt>("environment_template", { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setPreview(null); await retry(); return true; } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); return false; } finally { setBusy(false); } };
-  const scopeIds = scope?.mode === "selected" ? [...scope.resourceIds].sort() : [];
-  const draftIds = mode === "selected" ? [...selected].sort() : [];
-  useSettingsDirtyEntry({
-    id: `organization-environment-scope:${tenantId}`,
-    label: "环境可用范围",
-    dirty: Boolean(scope && (mode !== scope.mode || JSON.stringify(draftIds) !== JSON.stringify(scopeIds))),
-    save: async () => { if (!preview) { setFormError("请先生成签名预览，再保存并离开。"); throw new Error("Environment preview required"); } if (!await commit()) throw new Error("Environment commit failed"); },
-    discard: () => { if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); } setPreview(null); setFormError(null); },
-    draft: { mode, resourceIds: draftIds },
-  });
   if (loading) return <Loading />; if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
-  if (!scope) return <Empty text="本组织尚无 environment_template entitlement scope，无法安全编辑。" />;
-  return <div><SectionTitle title="环境可用范围" description="展示已发布环境模板权威目录和本组织 effective scope；组织管理员通过 entitlement preview → commit 修改。" /><div className="space-y-4"><div className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between"><span className="font-medium">Effective scope</span><Badge variant="outline">v{scope.version}</Badge></div><select aria-label="环境范围模式" className="mt-3 rounded-md border bg-background px-3 py-2 text-sm" value={mode} onChange={event => { setMode(event.target.value as "all" | "selected"); setPreview(null); }}><option value="all">全部已发布模板</option><option value="selected">仅所选模板</option></select><div className="mt-3 grid gap-2 md:grid-cols-2">{data?.templates.map(item => <label key={item.templateId} className="flex items-center gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" disabled={mode === "all"} checked={mode === "all" || selected.includes(item.templateId)} onChange={event => { setSelected(current => event.target.checked ? [...new Set([...current, item.templateId])] : current.filter(id => id !== item.templateId)); setPreview(null); }} /><span>{item.name}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{item.templateId}</span></label>)}</div>{!data?.templates.length ? <Empty text="权威目录当前没有已发布环境模板。" /> : null}<div className="mt-3 flex gap-2"><Button variant="outline" disabled={busy} onClick={() => void runPreview()}>预览范围变更</Button>{preview ? <Button disabled={busy} onClick={() => void commit()}>确认提交</Button> : null}</div>{preview ? <div className="mt-2 text-xs text-muted-foreground">影响已签名，有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{formError ? <div role="alert" className="mt-2 text-sm text-destructive">{formError}</div> : null}<Receipt receipt={receipt} /></div><OrganizationAssignmentManager tenantId={tenantId} resourceType="environment_template" title="环境模板成员与群组授权" items={(data?.templates ?? []).map(item => ({ resourceId: item.templateId, label: item.name }))} /></div></div>;
+  return <div><SectionTitle title="环境可用范围" description="展示已发布环境模板权威目录和本组织 effective scope；组织管理员通过 entitlement preview → commit 修改。" /><div className="space-y-4"><OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="environment_template" title="环境模板可用范围" description="当前目录资源与已退出目录的历史引用使用统一范围编辑合同。" onChanged={retry} /><OrganizationAssignmentManager tenantId={tenantId} resourceType="environment_template" title="环境模板成员与群组授权" items={(data?.templates ?? []).map(item => ({ resourceId: item.templateId, label: item.name }))} /></div></div>;
 }
 
 export function OrganizationGovernancePlaceholder({ title, detail }: { title: string; detail: string }) {

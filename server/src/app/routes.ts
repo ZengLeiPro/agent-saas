@@ -957,7 +957,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         verifyExternalRuntime: externalTenantRuntime.verify,
       },
     );
-    // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
         '/api/tenants',
@@ -968,6 +967,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           resolveMemoryFeatureStatus: runtime.getTenantMemoryFeatureStatus,
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
           orgAgentStore: runtime.orgAgentStore,
+          entitlementStore: runtime.entitlementStore,
           governanceAuditStore: runtime.governanceAuditStore,
           legacyWriteGate,
           onTenantDisabled: webChannel

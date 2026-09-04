@@ -256,11 +256,13 @@ export function registerGovernanceRoutes(
           tenantStore: runtime.tenantStore!,
           sharedDir: runtime.sharedDir,
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
+          ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
         }, input),
         rollbackTenantCreate: (tenantId: string) => rollbackProvisionedTenant({
           tenantStore: runtime.tenantStore!,
           sharedDir: runtime.sharedDir,
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
+          ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
         }, tenantId),
         getTenantSettings: (tenantId: string) => {
           const tenant = runtime.tenantStore!.findByIdStrict(tenantId);

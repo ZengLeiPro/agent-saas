@@ -27,6 +27,10 @@ export interface DwsRequesterDirectoryEntry {
   openDingtalkId: string;
 }
 
+export type DwsRequesterResolution =
+  | { status: 'resolved'; requester: UserIdentity }
+  | { status: 'unmapped' | 'ambiguous' | 'self_echo' | 'unavailable'; reason: string };
+
 export class DwsRequesterIdentityResolver {
   constructor(private readonly options: {
     agentCwd: string;
@@ -49,6 +53,15 @@ export class DwsRequesterIdentityResolver {
     senderOpenDingtalkId: string,
     senderName?: string,
   ): Promise<UserIdentity | null> {
+    const outcome = await this.resolveOutcome(account, senderOpenDingtalkId, senderName);
+    return outcome.status === 'resolved' ? outcome.requester : null;
+  }
+
+  async resolveOutcome(
+    account: AgentDwsAccountRecord,
+    senderOpenDingtalkId: string,
+    senderName?: string,
+  ): Promise<DwsRequesterResolution> {
     if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       return await this.recordDecision(account, null, 'AGENT_DWS_ACCOUNT_UNAVAILABLE');
     }
@@ -107,7 +120,7 @@ export class DwsRequesterIdentityResolver {
     account: AgentDwsAccountRecord,
     requester: UserIdentity | null,
     reason: string,
-  ): Promise<UserIdentity | null> {
+  ): Promise<DwsRequesterResolution> {
     await this.options.auditStore.append({
       correlationId: `dws-requester-decision-${randomUUID()}`,
       actorType: requester ? 'user' : 'service',
@@ -123,7 +136,11 @@ export class DwsRequesterIdentityResolver {
       result: requester ? 'succeeded' : 'failed',
       metadata: { mapped: Boolean(requester) },
     });
-    return requester;
+    if (requester) return { status: 'resolved', requester };
+    if (reason === 'AGENT_DWS_SELF_ECHO') return { status: 'self_echo', reason };
+    if (reason === 'REQUESTER_IDENTITY_AMBIGUOUS') return { status: 'ambiguous', reason };
+    if (reason === 'REQUESTER_IDENTITY_UNMAPPED') return { status: 'unmapped', reason };
+    return { status: 'unavailable', reason };
   }
 
   private async lookup(

@@ -8,6 +8,7 @@ import {
   type AgentDwsContextPolicy,
   type AgentDwsContextPolicySelection,
 } from '../../data/agentDwsAccounts/index.js';
+import type { OrgGroupAgentStore } from '../../data/orgGroupAgents/index.js';
 import { principalFor } from '../../dws/agentAuthFlow.js';
 import {
   deriveDwsPrincipalWorkspaceId,
@@ -82,6 +83,7 @@ export interface DwsContextRuntimeOptions {
   accountStore: AgentDwsAccountStore;
   contextStore: ContextStore;
   assignmentStore?: ContextCollectionAssignmentStore;
+  orgGroupAgentStore?: Pick<OrgGroupAgentStore, 'getBinding' | 'findWorkConversationByMessage'>;
   resolveServerRemote: DwsContextServerRemoteResolver;
   logger?: DwsContextLogger;
   clock?: () => Date;
@@ -214,6 +216,33 @@ export class DwsContextRuntime {
         throw error;
       }
     }
+  }
+
+  /** Re-materializes one governed group after its binding revision changes. */
+  async onGroupBindingUpdated(account: AgentDwsAccountRecord, conversationId: string): Promise<void> {
+    if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;
+    const policy = contextPolicyFor(account);
+    const historicalAllowed = selectionAllows(policy.historical, conversationId);
+    const realtimeAllowed = selectionAllows(policy.realtime, conversationId);
+    if (!historicalAllowed && !realtimeAllowed) return;
+    await ensureContextResources(this.options.contextStore, this.options.assignmentStore, account, 'chat');
+    const identity = defaultPartitionIdentity({ ...this.scope(account), source: 'chat' });
+    // The same DWS chat collection serves every consented conversation. Resetting its
+    // canonical periodic partitions keeps retry/restart recovery durable and causes
+    // every stored message to be revised with the current binding ownership metadata.
+    await this.options.contextStore.resetPartitionsForPolicyChange(
+      account.tenantId, identity.sourceId, identity.collectionId,
+    );
+    let firstError: unknown;
+    for (const target of periodicTargets(account, ['chat'])) {
+      try {
+        await this.syncTarget(account, target);
+      } catch (error) {
+        firstError ??= error;
+        this.dueAt.set(this.dueKey(account, target), this.clock().getTime() + this.tickMs);
+      }
+    }
+    if (firstError) throw firstError;
   }
 
   private async pauseContextResources(account: AgentDwsAccountRecord): Promise<void> {
@@ -412,7 +441,12 @@ export class DwsContextRuntime {
       resolveServerRemote: this.options.resolveServerRemote,
       ...(this.options.transportFactory ? { transportFactory: this.options.transportFactory } : {}),
     });
-    const syncStore = new ContextStoreSyncAdapter({ store: this.options.contextStore });
+    const syncStore = new ContextStoreSyncAdapter({
+      store: this.options.contextStore,
+      ...(this.options.orgGroupAgentStore ? {
+        resolveRecordMetadata: (key, item) => this.resolveOrgAgentRecordMetadata(key, item),
+      } : {}),
+    });
     return new DwsContextSyncService({
       store: syncStore,
       client: new DwsCliContextClient({
@@ -434,6 +468,43 @@ export class DwsContextRuntime {
       tenantId: account.tenantId,
       accountId: account.accountId,
       profileId: account.profileId!,
+    };
+  }
+
+  private async resolveOrgAgentRecordMetadata(
+    key: ContextSyncKey,
+    item: { source: ContextSyncSource; sourceId: string; conversationId?: string },
+  ): Promise<Record<string, string | number> | undefined> {
+    const store = this.options.orgGroupAgentStore;
+    if (!store || item.source !== 'chat' || !item.conversationId) return undefined;
+    const binding = await store.getBinding(key.tenantId, key.accountId, item.conversationId);
+    if (!binding || binding.channelKind !== 'group' || binding.activationState !== 'active'
+      || !binding.enabled || !binding.policy.enabled || binding.policy.liveDeny
+      || !binding.effectiveConfig.knowledge.contextEnabled) return undefined;
+    const sourceId = defaultPartitionIdentity(key).sourceId;
+    if (!binding.effectiveConfig.knowledge.sourceIds.includes(sourceId)) return undefined;
+    const metadata: Record<string, string | number> = {
+      // Historical messages are safe to backfill at the governed group boundary,
+      // but are never guessed into whichever WorkConversation happens to be active.
+      agentId: binding.agentId,
+      bindingId: binding.bindingId,
+      conversationSpaceId: binding.conversationSpaceId,
+      policyRevision: binding.revision,
+      visibility: 'conversation',
+      orgAgentContextScope: 'group',
+    };
+    const conversation = await store.findWorkConversationByMessage({
+      tenantId: key.tenantId,
+      bindingId: binding.bindingId,
+      accountId: key.accountId,
+      conversationId: item.conversationId,
+      messageIds: [item.sourceId],
+    });
+    if (!conversation) return metadata;
+    return {
+      ...metadata,
+      orgAgentContextScope: 'work_conversation',
+      workConversationId: conversation.workConversationId,
     };
   }
 

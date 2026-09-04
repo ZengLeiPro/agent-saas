@@ -14,11 +14,12 @@ import { openRecoveredWorkspaceReadFile } from './workspacePathRecovery.js';
 export async function readWorkspaceFile(
   workspaceRoot: string,
   path: string,
-  options: { offset?: number; limit?: number },
+  options: { offset?: number; limit?: number; displayPath?: string },
   assertReadAllowed: (fullPath: string) => void,
 ): Promise<{ content: string; metadata: Record<string, unknown> }> {
   const recovered = await openRecoveredWorkspaceReadFile(workspaceRoot, path);
   const { fullPath, relativePath: relPath, trusted } = recovered;
+  const outputPath = options.displayPath ?? relPath;
   try {
     assertReadAllowed(fullPath);
     const fileStat = trusted.stats;
@@ -27,7 +28,7 @@ export async function readWorkspaceFile(
     const recoveredMetadata = recovered.recovered ? { pathRecovered: true } : {};
     const imageResult = await tryReadWorkspaceImage({
       fullPath: stablePath,
-      relPath,
+      relPath: outputPath,
       fileSize: fileStat.size,
       ...options,
     });
@@ -38,14 +39,14 @@ export async function readWorkspaceFile(
       };
     }
     if (options.offset !== undefined || options.limit !== undefined) {
-      const content = await readLineRange(stablePath, relPath, {
+      const content = await readLineRange(stablePath, outputPath, {
         offset: options.offset ?? 1,
         limit: options.limit ?? MAX_READ_LINES,
       });
       return {
         content,
         metadata: {
-          path: relPath,
+          path: outputPath,
           fileBytes: fileStat.size,
           linesRead: countLines(content),
           ranged: true,
@@ -62,7 +63,7 @@ export async function readWorkspaceFile(
         return {
           content,
           metadata: {
-            path: relPath,
+            path: outputPath,
             fileBytes: fileStat.size,
             linesRead: countLines(content),
             ...recoveredMetadata,
@@ -74,9 +75,9 @@ export async function readWorkspaceFile(
     }
     const prefix = await readFilePrefix(stablePath, MAX_FILE_BYTES);
     return {
-      content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
+      content: `${prefix}\n...[truncated: file ${outputPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${outputPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
       metadata: {
-        path: relPath,
+        path: outputPath,
         fileBytes: fileStat.size,
         linesRead: countLines(prefix),
         truncated: true,

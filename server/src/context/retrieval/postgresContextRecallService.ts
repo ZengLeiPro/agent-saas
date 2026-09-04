@@ -180,10 +180,37 @@ export class PgContextRecallService implements ContextRecallService {
           OR LOWER(NORMALIZE(c.external_key, NFKC))=ANY($6::text[]))
         AND ($7::timestamptz IS NULL OR COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) >= $7)
         AND ($8::timestamptz IS NULL OR COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) < $8)
+        AND ($11::text[] IS NULL OR r.source_id=ANY($11::text[]))
+        AND ($12::text IS NULL
+          OR COALESCE(r.metadata_json->>'conversationId',r.metadata_json->>'conversation_id','')=$12)
+        AND ($13::text IS NULL
+          OR COALESCE(r.metadata_json->>'bindingId',r.metadata_json->>'binding_id','')=$13)
+        AND ($14::text IS NULL
+          OR COALESCE(r.metadata_json->>'conversationSpaceId',r.metadata_json->>'conversation_space_id','')=$14)
+        AND ($15::text IS NULL
+          -- A historical group record is deliberately not assigned to a current
+          -- WorkConversation. It may be recalled by any topic in the same fully
+          -- pinned group boundary; a topic-scoped record must match exactly.
+          OR COALESCE(r.metadata_json->>'orgAgentContextScope','')='group'
+          OR (COALESCE(r.metadata_json->>'orgAgentContextScope','')='work_conversation'
+            AND COALESCE(r.metadata_json->>'workConversationId',r.metadata_json->>'work_conversation_id','')=$15))
+        AND ($16::bigint IS NULL
+          OR COALESCE(r.metadata_json->>'policyRevision',r.metadata_json->>'policy_revision','')=$16::text)
+        AND ($17::text IS NULL
+          OR COALESCE(r.metadata_json->>'agentId',r.metadata_json->>'agent_id','')=$17)
+        AND ($18::boolean IS NULL
+          OR COALESCE(r.metadata_json->>'visibility','')='conversation')
       ORDER BY route_rank,COALESCE(r.occurred_at,r.source_updated_at,r.observed_at) DESC,r.record_id
       LIMIT $9
     `, [request.subject.tenantId, collectionIds, request.query, escapedPattern, kinds, sources, from, to,
-      scanLimit + 1, request.subject.userId]);
+      scanLimit + 1, request.subject.userId, request.subject.channelScope?.allowedSourceIds ?? null,
+      request.subject.channelScope?.conversationId ?? null,
+      request.subject.channelScope?.bindingId ?? null,
+      request.subject.channelScope?.conversationSpaceId ?? null,
+      request.subject.channelScope?.workConversationId ?? null,
+      request.subject.channelScope?.policyRevision ?? null,
+      request.subject.channelScope ? request.subject.orgAgentId ?? null : null,
+      request.subject.channelScope ? true : null]);
     throwIfAborted(request.signal);
 
     const fetchedRows = result.rows as Row[];
@@ -210,6 +237,9 @@ export class PgContextRecallService implements ContextRecallService {
     throwIfAborted(request.signal);
     const id = decodeRecallId(request.id, this.idSigningKey);
     if (!id || id.t !== request.subject.tenantId) return { hit: null, degraded: false };
+    if (request.subject.channelScope && !request.subject.channelScope.allowedSourceIds.includes(id.s)) {
+      return { hit: null, degraded: false };
+    }
     const assignmentVersions = scopeVersions(request.scope.collections);
     if (!assignmentVersions.has(id.c)) return { hit: null, degraded: false };
 
@@ -298,7 +328,30 @@ export class PgContextRecallService implements ContextRecallService {
             AND (auth_partition.refused=TRUE OR auth_partition.status='refused')
         )
         ${chatPolicySql('v', 's', 'c', 'a')}
-    `, [id.t, id.s, id.c, id.r, id.v, request.subject.userId]);
+        AND ($7::text IS NULL
+          OR COALESCE(v.metadata_json->>'conversationId',v.metadata_json->>'conversation_id','')=$7)
+        AND ($8::text IS NULL
+          OR COALESCE(v.metadata_json->>'bindingId',v.metadata_json->>'binding_id','')=$8)
+        AND ($9::text IS NULL
+          OR COALESCE(v.metadata_json->>'conversationSpaceId',v.metadata_json->>'conversation_space_id','')=$9)
+        AND ($10::text IS NULL
+          OR COALESCE(v.metadata_json->>'orgAgentContextScope','')='group'
+          OR (COALESCE(v.metadata_json->>'orgAgentContextScope','')='work_conversation'
+            AND COALESCE(v.metadata_json->>'workConversationId',v.metadata_json->>'work_conversation_id','')=$10))
+        AND ($11::bigint IS NULL
+          OR COALESCE(v.metadata_json->>'policyRevision',v.metadata_json->>'policy_revision','')=$11::text)
+        AND ($12::text IS NULL
+          OR COALESCE(v.metadata_json->>'agentId',v.metadata_json->>'agent_id','')=$12)
+        AND ($13::boolean IS NULL
+          OR COALESCE(v.metadata_json->>'visibility','')='conversation')
+    `, [id.t, id.s, id.c, id.r, id.v, request.subject.userId,
+      request.subject.channelScope?.conversationId ?? null,
+      request.subject.channelScope?.bindingId ?? null,
+      request.subject.channelScope?.conversationSpaceId ?? null,
+      request.subject.channelScope?.workConversationId ?? null,
+      request.subject.channelScope?.policyRevision ?? null,
+      request.subject.channelScope ? request.subject.orgAgentId ?? null : null,
+      request.subject.channelScope ? true : null]);
     throwIfAborted(request.signal);
     if (!result.rows[0]) return { hit: null, degraded: false };
     const row = result.rows[0] as Row;

@@ -6,6 +6,7 @@ import {
   UnsafeFilePathError,
   atomicWriteTrustedFile,
   copyTrustedFile,
+  moveTrustedDirectoryIfAbsent,
   openTrustedFile,
   readTrustedFile,
   relativeToTrustedRoot,
@@ -221,6 +222,21 @@ describe('trusted descriptor-relative file operations', () => {
       readSpy.mockRestore();
     }
     await expect(readFile(join(root, 'copy.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('atomically moves a prepared directory and never replaces an existing publication', async () => {
+    const { root } = await fixture();
+    await mkdir(join(root, 'staging', 'ready'), { recursive: true });
+    await writeFile(join(root, 'staging', 'ready', '.manifest.json'), 'ready');
+    await moveTrustedDirectoryIfAbsent(root, 'staging/ready', root, 'published/work-a');
+    await expect(readFile(join(root, 'published', 'work-a', '.manifest.json'), 'utf8'))
+      .resolves.toBe('ready');
+    await mkdir(join(root, 'staging', 'second'), { recursive: true });
+    await writeFile(join(root, 'staging', 'second', '.manifest.json'), 'second');
+    await expect(moveTrustedDirectoryIfAbsent(root, 'staging/second', root, 'published/work-a'))
+      .rejects.toMatchObject({ code: 'EEXIST' });
+    await expect(readFile(join(root, 'published', 'work-a', '.manifest.json'), 'utf8'))
+      .resolves.toBe('ready');
   });
 
   it('lets 64 concurrent writers create a new trusted root without EEXIST failures', async () => {

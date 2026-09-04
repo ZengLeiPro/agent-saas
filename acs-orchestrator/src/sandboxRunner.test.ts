@@ -13,6 +13,7 @@ import {
   pipInstallArgs,
   pruneVenvArchive,
   normalizeShellCommandForCwd,
+  resolveMountedSharedReadOnlyRoot,
   toolNameForLocalProvider,
   venvRebuildReasons,
 } from './sandboxRunner.js';
@@ -83,6 +84,14 @@ describe('toolNameForLocalProvider', () => {
     expect(toolNameForLocalProvider('Read')).toBe('Read');
     expect(toolNameForLocalProvider('Edit')).toBe('Edit');
     expect(toolNameForLocalProvider('Shell')).toBe('Shell');
+  });
+});
+
+describe('组织共享只读挂载', () => {
+  it('只接受 orchestrator 声明后的绝对 pod-local 路径', () => {
+    expect(resolveMountedSharedReadOnlyRoot('/agent-shared/../agent-shared')).toBe('/agent-shared');
+    expect(() => resolveMountedSharedReadOnlyRoot(undefined)).toThrow('AGENT_SHARED_READ_ONLY_PATH');
+    expect(() => resolveMountedSharedReadOnlyRoot('agent-shared')).toThrow('AGENT_SHARED_READ_ONLY_PATH');
   });
 });
 

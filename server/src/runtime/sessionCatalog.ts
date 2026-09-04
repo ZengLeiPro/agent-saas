@@ -92,6 +92,21 @@ function parseOrgAgentCollectionAssignmentPins(value: unknown): OrgAgentCollecti
   return result;
 }
 
+function parseSessionPrincipal(value: unknown): RuntimeSessionRecord['principal'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (raw.kind === 'user' && typeof raw.userId === 'string' && raw.userId) {
+    return { kind: 'user', userId: raw.userId };
+  }
+  if (raw.kind === 'org_agent' && typeof raw.tenantId === 'string' && raw.tenantId
+    && typeof raw.agentId === 'string' && raw.agentId && typeof raw.accountId === 'string' && raw.accountId
+    && typeof raw.workspaceId === 'string' && raw.workspaceId) {
+    return { kind: 'org_agent', tenantId: raw.tenantId, agentId: raw.agentId,
+      accountId: raw.accountId, workspaceId: raw.workspaceId };
+  }
+  return undefined;
+}
+
 export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding> {
   sessionId: string;
   userId: string;
@@ -115,6 +130,9 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   executionRole?: 'dispatcher' | 'worker';
   /** 公司级专职 Agent 绑定（2026-07 唯恩批次）。缺省 = 个人 Agent 会话。 */
   orgAgentId?: string;
+  principal?: { kind: 'user'; userId: string } | {
+    kind: 'org_agent'; tenantId: string; agentId: string; accountId: string; workspaceId: string;
+  };
   /** 当前 in-flight run 的组织 Agent 安全快照；resume 必须复用，不能读取更宽的新配置。 */
   orgAgentSnapshot?: OrgAgentSessionSnapshot;
   /**
@@ -237,6 +255,7 @@ export class FileSessionCatalog implements SessionCatalog {
       executionRole: record.executionRole,
       // orgAgentId 缺省时保留 existing 值（resume 路径 record 可能不带），不清除既有绑定
       ...(record.orgAgentId ? { orgAgentId: record.orgAgentId } : {}),
+      ...(record.principal ? { principal: record.principal } : {}),
       ...(record.orgAgentSnapshot ? { orgAgentSnapshot: record.orgAgentSnapshot } : {}),
       ...(memoryPolicyVersion ? { memoryPolicyVersion } : {}),
       ...(record.sessionSource ? { sessionSource: record.sessionSource } : {}),
@@ -275,6 +294,7 @@ export class FileSessionCatalog implements SessionCatalog {
         ? { executionRole: meta.executionRole }
         : {}),
       ...(meta.orgAgentId ? { orgAgentId: meta.orgAgentId } : {}),
+      ...(parseSessionPrincipal(meta.principal) ? { principal: parseSessionPrincipal(meta.principal) } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
       ...(meta.memoryPolicyVersion === 'v1' || meta.memoryPolicyVersion === 'v2'
         ? { memoryPolicyVersion: meta.memoryPolicyVersion }
@@ -317,6 +337,7 @@ export function createRuntimeSessionRecord(args: {
   kind?: 'subagent';
   executionRole?: 'dispatcher' | 'worker';
   orgAgentId?: string;
+  principal?: RuntimeSessionRecord['principal'];
   orgAgentSnapshot?: OrgAgentSessionSnapshot;
   memoryPolicyVersion?: MemoryPolicyVersion;
   sessionSource?: RuntimeSessionSource;
@@ -347,6 +368,7 @@ export function createRuntimeSessionRecord(args: {
     ...(args.kind ? { kind: args.kind } : {}),
     ...(args.executionRole ? { executionRole: args.executionRole } : {}),
     ...(args.orgAgentId ? { orgAgentId: args.orgAgentId } : {}),
+    ...(args.principal ? { principal: args.principal } : {}),
     ...(args.orgAgentSnapshot ? { orgAgentSnapshot: args.orgAgentSnapshot } : {}),
     ...(args.memoryPolicyVersion ? { memoryPolicyVersion: args.memoryPolicyVersion } : {}),
     ...(sessionSource ? { sessionSource } : {}),

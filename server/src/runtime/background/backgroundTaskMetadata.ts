@@ -53,6 +53,11 @@ interface CommonBackgroundTaskMetadata {
   workspaceId: string;
   mountSubPath?: string;
   sandboxScopeId?: string;
+  workOrderId?: string;
+  attemptId?: string;
+  attemptNo?: number;
+  parentAttemptId?: string;
+  sharedReadOnlySubPath?: string;
   sandboxResources?: SandboxResources;
   workload?: SandboxWorkloadWireDescriptor;
   sandboxPolicy?: { denyRead: string[] };
@@ -60,11 +65,13 @@ interface CommonBackgroundTaskMetadata {
   parentChannel: ChannelContext['channel'];
   parentOutputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
+  orgAgentChannel?: NonNullable<ChannelContext['orgAgentChannel']>;
 }
 
 export interface BackgroundAgentTaskMetadata extends CommonBackgroundTaskMetadata {
   taskType: 'agent';
   outputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
+  basePrompt?: string;
   prompt: string;
   agentType: 'general' | 'explore';
   includeCompanyInfo: boolean;
@@ -101,6 +108,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
   const sandboxResources = parseSandboxResources(value.sandboxResources);
   const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
+  const orgAgentChannel = parseOrgAgentChannel(value.orgAgentChannel);
   // This metadata is durable and may predate the current ACS descriptor schema.
   const workload = parseWorkload(value.workload);
   const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
@@ -133,11 +141,20 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
       : resolveModelOutputTransactionMode(value),
     ...(metadataString(value, 'mountSubPath') ? { mountSubPath: metadataString(value, 'mountSubPath') } : {}),
     ...(metadataString(value, 'sandboxScopeId') ? { sandboxScopeId: metadataString(value, 'sandboxScopeId') } : {}),
+    ...(metadataString(value, 'workOrderId') ? { workOrderId: metadataString(value, 'workOrderId') } : {}),
+    ...(metadataString(value, 'attemptId') ? { attemptId: metadataString(value, 'attemptId') } : {}),
+    ...(typeof value.attemptNo === 'number' && Number.isSafeInteger(value.attemptNo) && value.attemptNo > 0
+      ? { attemptNo: value.attemptNo } : {}),
+    ...(metadataString(value, 'parentAttemptId')
+      ? { parentAttemptId: metadataString(value, 'parentAttemptId') } : {}),
+    ...(metadataString(value, 'sharedReadOnlySubPath')
+      ? { sharedReadOnlySubPath: metadataString(value, 'sharedReadOnlySubPath') } : {}),
     ...(sandboxResources ? { sandboxResources } : {}),
     ...(workload ? { workload } : {}),
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
     ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
+    ...(orgAgentChannel ? { orgAgentChannel } : {}),
   };
 
   if (value.backgroundTaskType === 'command') {
@@ -151,6 +168,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   }
 
   const prompt = metadataString(value, 'prompt');
+  const basePrompt = metadataString(value, 'basePrompt');
   const agentType = value.agentType === 'explore'
     ? 'explore'
     : value.agentType === 'general'
@@ -164,6 +182,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     outputTransactionMode: isModelOutputTransactionMode(value.outputTransactionMode)
       ? value.outputTransactionMode
       : 'terminal_buffered',
+    ...(basePrompt ? { basePrompt } : {}),
     prompt,
     agentType,
     includeCompanyInfo: value.includeCompanyInfo === true,
@@ -244,4 +263,104 @@ function isSandboxPolicy(value: unknown): value is { denyRead: string[] } {
   return !!value && typeof value === 'object'
     && Array.isArray((value as { denyRead?: unknown }).denyRead)
     && (value as { denyRead: unknown[] }).denyRead.every((item) => typeof item === 'string');
+}
+
+export function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext['orgAgentChannel']> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const bindingId = metadataString(raw, 'bindingId');
+  const accountId = metadataString(raw, 'accountId');
+  const agentId = metadataString(raw, 'agentId');
+  const conversationSpaceId = metadataString(raw, 'conversationSpaceId');
+  const workConversationId = metadataString(raw, 'workConversationId');
+  const policyRevision = typeof raw.policyRevision === 'number' && Number.isInteger(raw.policyRevision)
+    && raw.policyRevision >= 1 ? raw.policyRevision : undefined;
+  const assurance = ['mapped', 'unmapped', 'ambiguous'].includes(String(raw.externalActorAssurance))
+    || raw.externalActorAssurance === 'service'
+    ? raw.externalActorAssurance as NonNullable<ChannelContext['orgAgentChannel']>['externalActorAssurance'] : undefined;
+  const allowedToolNames = Array.isArray(raw.allowedToolNames)
+    && raw.allowedToolNames.every(item => typeof item === 'string') ? raw.allowedToolNames as string[] : undefined;
+  const allowedSkillIds = Array.isArray(raw.allowedSkillIds)
+    && raw.allowedSkillIds.every(item => typeof item === 'string') ? raw.allowedSkillIds as string[] : undefined;
+  const allowedSourceIds = Array.isArray(raw.allowedSourceIds)
+    && raw.allowedSourceIds.every(item => typeof item === 'string') ? raw.allowedSourceIds as string[] : undefined;
+  const dwsResourceIds = Array.isArray(raw.dwsResourceIds)
+    && raw.dwsResourceIds.every(item => typeof item === 'string') ? raw.dwsResourceIds as string[] : [];
+  const triggerRoles = parseGovernanceRoles(raw.triggerRoles);
+  const approvalRoles = parseGovernanceRoles(raw.approvalRoles);
+  const taskVisibility = raw.taskVisibility === 'conversation' || raw.taskVisibility === 'requester_only'
+    ? raw.taskVisibility : undefined;
+  const externalActor = parseExternalActor(raw.externalActor);
+  const channelPrincipal = parseChannelPrincipal(raw.channelPrincipal);
+  const agentPrincipal = parseAgentPrincipal(raw.agentPrincipal);
+  if (!accountId || !agentId || !bindingId || !conversationSpaceId || !workConversationId
+    || !policyRevision || !assurance || !allowedToolNames || !allowedSkillIds || !allowedSourceIds
+    || !triggerRoles || !approvalRoles
+    || !taskVisibility || !externalActor || !channelPrincipal
+    || !agentPrincipal) return undefined;
+  const actorRole = raw.actorRole === 'member' || raw.actorRole === 'org_admin'
+    ? raw.actorRole : undefined;
+  if (agentPrincipal.accountId !== accountId || agentPrincipal.agentId !== agentId
+    || channelPrincipal.accountId !== accountId) return undefined;
+  if (externalActor.kind === 'service_event') {
+    if (assurance !== 'service' || actorRole) return undefined;
+  } else if (assurance !== externalActor.assurance
+    || (externalActor.assurance === 'mapped'
+      ? !externalActor.mappedUserId || !externalActor.role || actorRole !== externalActor.role
+      : Boolean(externalActor.mappedUserId || externalActor.role || actorRole))) return undefined;
+  return { accountId, agentId, bindingId, conversationSpaceId, workConversationId, policyRevision,
+    agentPrincipal, externalActorAssurance: assurance, allowedToolNames, allowedSkillIds, allowedSourceIds,
+    dwsResourceIds,
+    contextEnabled: raw.contextEnabled === true,
+    taskVisibility,
+    ...(actorRole ? { actorRole } : {}),
+    triggerRoles,
+    approvalRoles,
+    externalActor, channelPrincipal };
+}
+
+function parseExternalActor(value: unknown): NonNullable<ChannelContext['orgAgentChannel']>['externalActor'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (raw.kind === 'service_event') {
+    const workOrderId = metadataString(raw, 'workOrderId'); const attemptId = metadataString(raw, 'attemptId');
+    const fence = typeof raw.fence === 'number' && Number.isSafeInteger(raw.fence) && raw.fence >= 0 ? raw.fence : undefined;
+    return workOrderId && attemptId && fence !== undefined
+      ? { kind: 'service_event', issuer: 'runtime', workOrderId, attemptId, fence } : undefined;
+  }
+  const kind = raw.kind === 'external_user' ? 'external_user' : undefined;
+  const assurance = ['mapped', 'unmapped', 'ambiguous'].includes(String(raw.assurance))
+    ? raw.assurance as 'mapped' | 'unmapped' | 'ambiguous' : undefined;
+  const corpId = metadataString(raw, 'corpId'); const openId = metadataString(raw, 'openId');
+  if (!kind || raw.provider !== 'dingtalk' || !assurance || !corpId || !openId) return undefined;
+  return { kind, provider: 'dingtalk', corpId, openId, assurance,
+    ...(metadataString(raw, 'displayName') ? { displayName: metadataString(raw, 'displayName') } : {}),
+    ...(metadataString(raw, 'mappedUserId') ? { mappedUserId: metadataString(raw, 'mappedUserId') } : {}),
+    ...(raw.role === 'member' || raw.role === 'org_admin' ? { role: raw.role } : {}) };
+}
+
+function parseGovernanceRoles(value: unknown): Array<'member' | 'org_admin'> | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every(item => item === 'member' || item === 'org_admin'))
+    return undefined;
+  return value;
+}
+
+function parseAgentPrincipal(value: unknown): NonNullable<ChannelContext['orgAgentChannel']>['agentPrincipal'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const tenantId = metadataString(raw, 'tenantId'); const agentId = metadataString(raw, 'agentId');
+  const accountId = metadataString(raw, 'accountId'); const workspaceId = metadataString(raw, 'workspaceId');
+  return raw.kind === 'org_agent' && tenantId && agentId && accountId && workspaceId
+    ? { kind: 'org_agent', tenantId, agentId, accountId, workspaceId } : undefined;
+}
+
+function parseChannelPrincipal(value: unknown): NonNullable<ChannelContext['orgAgentChannel']>['channelPrincipal'] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>; const accountId = metadataString(raw, 'accountId');
+  const conversationId = metadataString(raw, 'conversationId');
+  const kind = raw.kind === 'group' ? 'group' : raw.kind === 'direct' ? 'direct' : undefined;
+  if (raw.provider !== 'dingtalk' || !accountId || !conversationId || !kind) return undefined;
+  return { provider: 'dingtalk', accountId, conversationId, kind,
+    ...(metadataString(raw, 'peerOpenId') ? { peerOpenId: metadataString(raw, 'peerOpenId') } : {}) };
 }

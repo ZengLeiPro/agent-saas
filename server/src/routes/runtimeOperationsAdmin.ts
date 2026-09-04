@@ -12,7 +12,7 @@ import {
   probeTenantRemoteHandHealth,
   sanitizeTenantRemoteHands,
 } from './tenantRemoteHandsAdmin.js';
-import { parseWorkspaceId } from '../runtime/workspaceIdentity.js';
+import { parseWorkspacePrincipal } from '../runtime/workspaceIdentity.js';
 import type { UserStore } from '../data/users/store.js';
 
 const { Client } = pg;
@@ -135,15 +135,16 @@ function attachSandboxOwner(sandbox: unknown, userStore?: UserStore): unknown {
   if (!sandbox || typeof sandbox !== 'object') return sandbox;
   const record = sandbox as Record<string, unknown>;
   const workspaceId = typeof record.workspaceId === 'string' ? record.workspaceId : undefined;
-  const parsed = parseWorkspaceId(workspaceId);
-  const user = parsed ? userStore?.findById(parsed.userId) : undefined;
+  const parsed = parseWorkspacePrincipal(workspaceId);
+  const user = parsed?.kind === 'user' ? userStore?.findById(parsed.userId) : undefined;
   return {
     ...record,
     owner: parsed
       ? {
-        kind: 'user',
+        kind: parsed.kind,
         tenantId: parsed.tenantId,
-        userId: parsed.userId,
+        userId: parsed.kind === 'user' ? parsed.userId : null,
+        agentId: parsed.kind === 'org_agent' ? parsed.agentSegment : null,
         username: user?.tenantId === parsed.tenantId ? user.username : null,
         realName: user?.tenantId === parsed.tenantId ? user.realName ?? null : null,
       }

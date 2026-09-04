@@ -17,6 +17,7 @@ import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { projectManagedOrgAgentVersion } from '../data/agentResources/orgAgentProjection.js';
 import { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
+import { PgOrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
@@ -180,6 +181,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
   let agentResourceStore: PgAgentResourceStore | undefined;
   let agentDwsAccountStore: PgAgentDwsAccountStore | undefined;
   let agentDwsMessageStore: PgAgentDwsMessageStore | undefined;
+  let orgGroupAgentStore: PgOrgGroupAgentStore | undefined;
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
   let resolveLegacySkillResourceId = (_user: { id: string; tenantId: string }, skillId: string) => skillId;
   let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
@@ -576,6 +578,8 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
     await agentDwsAccountStore.init();
     agentDwsMessageStore = new PgAgentDwsMessageStore(pgEventStore.pool, tablePrefix);
     await agentDwsMessageStore.init();
+    orgGroupAgentStore = new PgOrgGroupAgentStore(pgEventStore.pool, tablePrefix);
+    await orgGroupAgentStore.init();
     skillGovernanceStore = new PgSkillGovernanceStore({
       pool: pgEventStore.pool,
       tablePrefix: tablePrefix,
@@ -920,6 +924,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
     agentResourceStore,
     agentDwsAccountStore,
     agentDwsMessageStore,
+    orgGroupAgentStore,
     skillGovernanceStore,
     resolveLegacySkillResourceId,
     governanceChangeJobStore,

@@ -23,6 +23,7 @@ export const WORKSPACE_ANNOTATION = 'agent-saas.kaiyan.net/workspace-id';
 export const SANDBOX_SCOPE_ANNOTATION = 'agent-saas.kaiyan.net/sandbox-scope-id';
 export const SESSION_ANNOTATION = 'agent-saas.kaiyan.net/session-id';
 export const MOUNT_SUBPATH_ANNOTATION = 'agent-saas.kaiyan.net/mount-subpath';
+export const SHARED_READ_ONLY_SUBPATH_ANNOTATION = 'agent-saas.kaiyan.net/shared-read-only-subpath';
 export const CREATED_AT_ANNOTATION = 'agent-saas.kaiyan.net/created-at';
 export const LAST_ACTIVE_AT_ANNOTATION = 'agent-saas.kaiyan.net/last-active-at';
 export const NETWORK_POLICY_MODE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-mode';

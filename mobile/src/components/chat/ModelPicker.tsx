@@ -1,8 +1,13 @@
 import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { ChevronDown } from 'lucide-react-native';
-import type { ModelList } from '@agent/shared';
-import { useColors, typography } from '../../theme';
+import {
+  resolveLockedModelGroupId,
+  resolveSelectedModelName,
+  selectableModelGroups,
+  type ModelList,
+} from '@agent/shared';
+import { useColors, fontScale } from '../../theme';
 import { hapticLight } from '../../lib/haptics';
 import {
   DropdownMenu,
@@ -37,6 +42,9 @@ interface ModelPickerProps {
   onDrillDownSelect?: (parentId: string, childId: string) => void;
   /** Stable native automation identifier for the trigger. */
   testID?: string;
+  /** 只读会话 / 目标不可用时禁用整个选择器（与 Web ChatInput `disabled` 一致）。 */
+  disabled?: boolean;
+  accessibilityLabel?: string;
   /** Custom trigger content — when provided, replaces the default trigger UI */
   children?: (modelLabel: string | null) => React.ReactElement;
 }
@@ -53,6 +61,8 @@ export function ModelPicker({
   drillDowns,
   onDrillDownSelect,
   testID,
+  disabled,
+  accessibilityLabel = 'Agent 与模型选择器',
   children,
 }: ModelPickerProps) {
   const colors = useColors();
@@ -60,26 +70,14 @@ export function ModelPicker({
   const [anchorTop, setAnchorTop] = useState(0);
   const triggerRef = useRef<View>(null);
 
-  // ── Derived data ──
+  // ── Derived data（锁组 / 展示名 / 可选分组均走 shared 纯函数，与 Web ChatInput 同一份语义） ──
 
-  const selectedModelLabel = (() => {
-    if (!selectedModel) return null;
-    const slashIdx = selectedModel.indexOf('/');
-    if (slashIdx < 0) return null;
-    const groupId = selectedModel.slice(0, slashIdx);
-    const modelId = selectedModel.slice(slashIdx + 1);
-    const group = modelList.groups.find(g => g.id === groupId);
-    return group?.models.find(m => m.id === modelId)?.name ?? null;
-  })();
+  const selectedModelLabel = resolveSelectedModelName(modelList, selectedModel);
 
-  // Lock to current group when session has started
-  const lockedGroupId = useMemo(() => {
-    if (!sessionId || sessionId === 'new' || !selectedModel || modelList.allowCrossGroupSwitch) {
-      return null;
-    }
-    const slashIdx = selectedModel.indexOf('/');
-    return slashIdx >= 0 ? selectedModel.slice(0, slashIdx) : null;
-  }, [sessionId, selectedModel, modelList.allowCrossGroupSwitch]);
+  const lockedGroupId = useMemo(
+    () => resolveLockedModelGroupId({ sessionId, selectedModel, modelList }),
+    [sessionId, selectedModel, modelList],
+  );
 
   // ── Build sections for DropdownMenu ──
 
@@ -96,7 +94,7 @@ export function ModelPicker({
       }
     }
 
-    const visibleGroups = modelList.groups.filter(g => !lockedGroupId || g.id === lockedGroupId);
+    const visibleGroups = selectableModelGroups(modelList, lockedGroupId);
 
     if (modelList.showGroupNames) {
       for (const group of visibleGroups) {
@@ -140,12 +138,13 @@ export function ModelPicker({
   // ── Handlers ──
 
   const handleOpen = useCallback(() => {
+    if (disabled) return;
     hapticLight();
     triggerRef.current?.measureInWindow((_x, y, _w, h) => {
       setAnchorTop(y + h);
       setVisible(true);
     });
-  }, []);
+  }, [disabled]);
 
   const handleClose = useCallback(() => {
     setVisible(false);
@@ -164,7 +163,15 @@ export function ModelPicker({
 
   return (
     <>
-      <Pressable ref={triggerRef} onPress={handleOpen} testID={testID} accessibilityLabel="Agent 与模型选择器">
+      <Pressable
+        ref={triggerRef}
+        onPress={handleOpen}
+        disabled={disabled}
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !!disabled }}
+        accessibilityLabel={accessibilityLabel}
+      >
         {children ? children(selectedModelLabel) : (
           <View style={defaultStyles.trigger}>
             <Text style={[defaultStyles.triggerText, { color: colors.mutedForeground }]} numberOfLines={1}>
@@ -200,7 +207,6 @@ const defaultStyles = StyleSheet.create({
     maxWidth: 140,
   },
   triggerText: {
-    ...typography.caption,
-    fontSize: 14,
+    ...fontScale.sm,
   },
 });

@@ -414,6 +414,47 @@ export type {
 
 // Lib - sessions API (mapping functions)
 export { mapSessionDetailToMessages } from './lib/sessionsApi';
+export { warmupSessionSandbox } from './lib/sandboxWarmupApi';
+
+// Lib - 沙箱档位（日常 / 编程）纯语义
+export {
+  SANDBOX_PROFILE_OPTIONS,
+  isSandboxProfileLocked,
+  resolveSessionSandboxProfile,
+  sandboxProfileLabel,
+} from './lib/sandboxProfile';
+export type { SandboxProfileOption } from './lib/sandboxProfile';
+
+// Lib - 模型选择器纯逻辑（锁组 / 展示名 / 可选分组）
+export {
+  parseModelRef,
+  resolveLockedModelGroupId,
+  resolveSelectedModelName,
+  selectableModelGroups,
+} from './lib/modelSelection';
+
+// Lib - 积分徽标纯逻辑
+export {
+  billingAllowanceLabel,
+  billingModeLabel,
+  budgetBarRatio,
+  budgetStatusLabel,
+  formatBillingCredits,
+  formatBillingCreditsDetailed,
+  formatBudgetUsageRatio,
+  isBillingBadgeVisible,
+  resolveBillingAllowance,
+  resolveBillingBadgeTone,
+} from './lib/billingBadge';
+export type {
+  BillingAccountSummary,
+  BillingAllowance,
+  BillingBadgeTone,
+  MemberBudgetStatus,
+  MyMemberBudget,
+  SessionBillingSummary,
+  TenantBillingSummary,
+} from './lib/billingBadge';
 export { searchSessions } from './lib/searchApi';
 export type { SearchSessionsParams } from './lib/searchApi';
 export {

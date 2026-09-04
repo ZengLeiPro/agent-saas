@@ -49,6 +49,7 @@ describe('PgRunStore M40-02 liveness and explicit recovery SQL contract', () => 
       query: vi.fn(async (sql: string) => {
         statements.push(sql);
         if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+        if (sql.includes("status = 'orphaned'") && sql.includes("terminalEventOutbox")) return { rows: [] };
         if (sql.includes("liveness_state = 'orphaned'")) {
           pass += 1;
           return { rows: pass === 1 ? [] : [{ row_json: rawRun({
@@ -68,10 +69,12 @@ describe('PgRunStore M40-02 liveness and explicit recovery SQL contract', () => 
     expect(first).toMatchObject({ stale: [{ runId: 'run-1' }], orphaned: [] });
     expect(second).toMatchObject({ stale: [], orphaned: [{ runId: 'run-1', status: 'orphaned' }] });
     const reaperSql = statements.filter((sql) => sql.includes('FOR UPDATE SKIP LOCKED'));
-    expect(reaperSql[0]).toContain("liveness_state = 'stale'");
-    expect(reaperSql[1]).toContain("liveness_state = 'busy'");
+    expect(reaperSql[0]).toContain("status = 'orphaned'");
+    expect(reaperSql[0]).toContain('terminalEventOutbox');
+    expect(reaperSql[1]).toContain("liveness_state = 'stale'");
+    expect(reaperSql[2]).toContain("liveness_state = 'busy'");
     expect(reaperSql.every((sql) => sql.includes('FOR UPDATE SKIP LOCKED'))).toBe(true);
-    expect(reaperSql.every((sql) => sql.includes("metadata->>'backgroundTask' IS DISTINCT FROM 'true'"))).toBe(true);
+    expect(reaperSql.filter((sql) => sql.includes('liveness_version')).every((sql) => sql.includes("metadata->>'backgroundTask' IS DISTINCT FROM 'true'"))).toBe(true);
   });
 
   it('terminalizes uncertain running tools without making them automatically recoverable', async () => {

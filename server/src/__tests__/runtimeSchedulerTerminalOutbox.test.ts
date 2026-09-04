@@ -43,6 +43,25 @@ describe('RuntimeScheduler terminal outbox', () => {
     });
   });
 
+  it('repairs a reaper terminal after commit-and-crash and publishes it exactly once after restart', async () => {
+    const runStore = new MemoryRunStore(); const eventStore = new MemoryEventStore();
+    const run = await runStore.upsertPending({ runId: 'run-reaper-restart', sessionId: 'session-reaper-restart' });
+    runStore.records.set(run.runId, { ...run, status: 'orphaned', statusReason: 'lease_expired',
+      metadata: { ...run.metadata, livenessTerminalizedBy: 'reaper' } });
+    const reapExpiredLiveness = vi.fn(async () => ({ stale: [], orphaned: [(await runStore.get(run.runId))!] }));
+    Object.assign(runStore, { reapExpiredLiveness });
+
+    // The first process committed the orphan CAS and exited before terminal outbox claim.
+    await reapExpiredLiveness();
+    const restarted = new RuntimeScheduler({ runStore, eventStore, autoWake: false });
+    await restarted.tick(); await restarted.stop();
+    const duplicateScanner = new RuntimeScheduler({ runStore, eventStore, autoWake: false });
+    await duplicateScanner.tick(); await duplicateScanner.stop();
+
+    expect(readTerminalEventOutbox(await runStore.get(run.runId))).toMatchObject({ terminalStatus: 'orphaned', state: 'delivered' });
+    expect(eventStore.events.filter(event => event.type === 'run_state_changed')).toHaveLength(1);
+  });
+
   it('retains a durable terminal outbox when scheduler wake failure event append fails', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

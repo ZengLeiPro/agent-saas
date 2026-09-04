@@ -3,14 +3,14 @@ import type { SessionAutomationAttachment, SessionAutomationCommandResponse, Ses
 import { commandDigest, PgSessionAutomationStore, SessionAutomationConflictError, type AutomationIdentity, type SessionAutomationReconciliationEvidence } from './sessionAutomationStore.js';
 import type { SessionAutomationFeatureFlags, SessionAutomationFlagSource } from './sessionAutomationFlags.js';
 
-export interface SessionAutomationCommandAuthorizer { authorize(id:AutomationIdentity):Promise<{maxCredits?:number}|void>; }
+export interface SessionAutomationCommandAuthorizer { authorize(id:AutomationIdentity, options?:{executionGovernance?:boolean}):Promise<{maxCredits?:number}|void>; }
 type CommandResult=SessionAutomationCommandResponse&{cursor?:string|null}; // cursor is committed with the command receipt
 
 export class SessionAutomationCommandService {
  private authorizer?:SessionAutomationCommandAuthorizer;
  constructor(readonly store:PgSessionAutomationStore,private readonly flagSource:SessionAutomationFlagSource,authorizer?:SessionAutomationCommandAuthorizer){this.authorizer=authorizer;}
  setAuthorizer(authorizer:SessionAutomationCommandAuthorizer):void{this.authorizer=authorizer;}
- private async authorize(id:AutomationIdentity):Promise<{maxCredits?:number}>{if(!this.authorizer)throw new SessionAutomationConflictError('GOVERNANCE_UNAVAILABLE','automation governance unavailable');return (await this.authorizer.authorize(id))??{};}
+ private async authorize(id:AutomationIdentity,executionGovernance=true):Promise<{maxCredits?:number}>{if(!this.authorizer)throw new SessionAutomationConflictError('GOVERNANCE_UNAVAILABLE','automation governance unavailable');return (await this.authorizer.authorize(id,{executionGovernance}))??{};}
  async command(id:AutomationIdentity,input:{clientMessageId:string;command:string;expectedControlVersion?:number;expectedIncarnationId?:string;attachments?:SessionAutomationAttachment[];requestDigest?:string;canonicalRequest?:Record<string,unknown>}):Promise<CommandResult>{
   const parsed = parseSessionAutomationCommand(input.command);if(parsed === null)throw new SessionAutomationConflictError('INVALID_COMMAND','不是 automation 命令');
   const flags=this.flagSource.read();const executionDisabledAction=!['status','pause','clear','reconcile'].includes(parsed.action);
@@ -22,7 +22,7 @@ export class SessionAutomationCommandService {
   if(receipt){if(receipt.commandDigest!==digest||receipt.sessionId!==id.sessionId)throw new SessionAutomationConflictError('CONFLICT','clientMessageId 已用于不同命令');if(receipt.state==='committed'&&receipt.response)return{...receipt.response,result:'idempotent_replay',cursor:receipt.cursor};}
   if(input.attachments?.length&&!('spec' in parsed))throw new SessionAutomationConflictError('INVALID_COMMAND','attachments 仅可用于 create/replace');
   if('spec' in parsed&&input.attachments?.length)parsed.spec.attachments=input.attachments;
-  const authorization=parsed.action!=='status'&&parsed.action!=='list'?await this.authorize(id):{};
+  const authorization=await this.authorize(id,!['status','list','pause','clear'].includes(parsed.action));
   if ('spec' in parsed && authorization.maxCredits !== undefined) {
     parsed.spec.budget.maxCredits = Math.min(parsed.spec.budget.maxCredits ?? authorization.maxCredits, authorization.maxCredits);
   }
@@ -46,7 +46,7 @@ export class SessionAutomationCommandService {
    const spec={...current.spec,...(hasText?(current.spec.kind==='goal'?{condition:(value as string).trim()}:{prompt:(value as string).trim()}):{}),budget:{...current.spec.budget,...patch}};this.assertExecutionEnabled();const response={result:'updated' as const,snapshot:await this.store.replace(c,current,spec)};const cursor=await this.store.recordCommand(c,id,id.sessionId,input.clientMessageId,digest,automationId,response,canonicalRequest);return{...response,cursor};});if(result.snapshot)this.store.publish(result.snapshot);return result;
  }
  async control(id:AutomationIdentity,automationId:string,input:SessionAutomationControlRequest):Promise<CommandResult>{
-  const flags=this.flagSource.read();if(!flags.executionEnabled&&!['pause','clear','reconcile'].includes(input.action))throw new SessionAutomationConflictError('EXECUTION_DISABLED','execution kill switch 已关闭');if(!['pause','clear'].includes(input.action)&&!flags.controlEnabled)throw new SessionAutomationConflictError('FEATURE_DISABLED','Session automation control disabled');await this.authorize(id);const canonicalRequest={type:'control',sessionId:id.sessionId,automationId,...input};const digest=commandDigest(canonicalRequest);
+  const flags=this.flagSource.read();if(!flags.executionEnabled&&!['pause','clear','reconcile'].includes(input.action))throw new SessionAutomationConflictError('EXECUTION_DISABLED','execution kill switch 已关闭');if(!['pause','clear'].includes(input.action)&&!flags.controlEnabled)throw new SessionAutomationConflictError('FEATURE_DISABLED','Session automation control disabled');await this.authorize(id,!['pause','clear'].includes(input.action));const canonicalRequest={type:'control',sessionId:id.sessionId,automationId,...input};const digest=commandDigest(canonicalRequest);
   const result=await this.store.tx(async c=>{const replay=await this.store.findCommand(c,id,input.clientMessageId,digest);if(replay?.response)return{...replay.response as SessionAutomationCommandResponse,result:'idempotent_replay' as const,cursor:replay.cursor};const current=await this.store.getLockedForOwner(c,id,automationId);if(!current||current.ownerUserId!==id.ownerUserId)throw new SessionAutomationConflictError('NOT_FOUND','automation 不存在');this.assertFence(current,input);if(!['pause','clear','reconcile'].includes(input.action))this.assertExecutionEnabled();const response={result:'updated' as const,snapshot:await this.store.control(c,current,input.action)};const cursor=await this.store.recordCommand(c,id,id.sessionId,input.clientMessageId,digest,automationId,response,canonicalRequest);return{...response,cursor};});
   if(result.snapshot)this.store.publish(result.snapshot);return result;
  }

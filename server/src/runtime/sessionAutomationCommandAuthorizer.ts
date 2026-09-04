@@ -16,7 +16,7 @@ export class GovernedSessionAutomationCommandAuthorizer implements SessionAutoma
     billing?:Pick<BillingService,'getAutomationCreditCap'>;
   }){}
 
-  async authorize(id:AutomationIdentity):Promise<{maxCredits?:number}>{
+  async authorize(id:AutomationIdentity,options:{executionGovernance?:boolean}={}):Promise<{maxCredits?:number}>{
     const session=await this.options.sessionCatalog.get(id.sessionId).catch(()=>undefined);
     if(!session||session.tenantId!==id.tenantId||session.userId!==id.ownerUserId){
       throw new SessionAutomationConflictError('NOT_FOUND','session 不存在');
@@ -25,6 +25,7 @@ export class GovernedSessionAutomationCommandAuthorizer implements SessionAutoma
     if(session.cwd!==expectedCwd||session.workspaceId!==id.sessionId){
       throw new SessionAutomationConflictError('GOVERNANCE_DENIED','workspace trust validation failed');
     }
+    if(options.executionGovernance===false)return {};
     let result;
     try{
       result=await this.options.preflight.preflight({phase:'enqueue',runId:randomUUID(),sessionId:id.sessionId,userId:id.ownerUserId,tenantId:id.tenantId,...(session.orgAgentId?{orgAgentId:session.orgAgentId}:{}),...(session.executionRole?{executionRole:session.executionRole}:{})});

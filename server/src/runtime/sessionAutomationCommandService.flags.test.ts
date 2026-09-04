@@ -24,10 +24,11 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
       recordCommand: vi.fn(async () => 'cursor-1'),
       publish: vi.fn(),
     };
+    const authorize = vi.fn(async () => undefined);
     const service = new SessionAutomationCommandService(store as never, staticSource({
       controlEnabled: false, executionEnabled: false, fixedLoopEnabled: false,
       adaptiveLoopEnabled: false, goalEnabled: false, evaluatorEnforced: false,
-    }), { authorize: vi.fn(async () => undefined) });
+    }), { authorize });
 
     const result = await service.control(identity, snapshot.automationId, {
       clientMessageId: 'clear-1', action: 'clear', expectedControlVersion: 1,
@@ -35,6 +36,21 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
     });
     expect(result.snapshot).toMatchObject({ status: 'cancelling', phase: 'draining' });
     expect(store.control).toHaveBeenCalledWith({}, snapshot, 'clear');
+    expect(authorize).toHaveBeenCalledWith(identity, { executionGovernance: false });
+  });
+
+  it('uses trust-only authorization for status while execution governance is unavailable', async () => {
+    const authorize = vi.fn(async (_id, options) => {
+      if (options?.executionGovernance !== false) throw new Error('governance unavailable');
+    });
+    const store = {
+      getCommandReceipt: vi.fn(async () => undefined), tx: vi.fn(async (fn: (c: object) => unknown) => fn({})),
+      findCommand: vi.fn(async () => undefined), getLiveForOwner: vi.fn(async () => snapshot),
+      recordCommand: vi.fn(async () => 'cursor-1'), publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, staticSource({ controlEnabled: false, executionEnabled: false }), { authorize });
+    await expect(service.command(identity, { clientMessageId: 'status-1', command: '/loop status' })).resolves.toMatchObject({ result: 'status' });
+    expect(authorize).toHaveBeenCalledWith(identity, { executionGovernance: false });
   });
 
   it.each(['completing', 'cancelling', 'reconcile_required'] as const)('rejects replace while %s without creating a generation or wakeup', async status => {

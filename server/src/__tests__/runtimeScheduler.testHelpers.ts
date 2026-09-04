@@ -132,6 +132,24 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async claimStateOnlyTerminalOutbox(
+    runId: string,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+    reason: string | undefined,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record || record.status !== status || record.metadata.terminalEventOutbox) return null;
+    const updated: RunRecord = {
+      ...record,
+      statusReason: record.statusReason ?? reason,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch },
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;

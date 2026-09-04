@@ -11,6 +11,15 @@ describe('GovernedSessionAutomationCommandAuthorizer',()=>{
   const authorize=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>session)},preflight:{preflight:vi.fn(async()=>({accessDecision:{verdict:'deny',reasonCode:'ASSIGNMENT_DENIED'},readiness:{ready:false,blockers:[{code:'QUOTA_EXHAUSTED'}]}}))} as never});
   await expect(authorize.authorize(identity)).rejects.toMatchObject({code:'GOVERNANCE_DENIED'});
  });
+ it('keeps safety controls available when quota, readiness, or billing governance is unavailable',async()=>{
+  const preflight=vi.fn(async()=>{throw new Error('quota/readiness unavailable');});
+  const billing={getAutomationCreditCap:vi.fn(async()=>{throw new Error('billing unavailable');})};
+  const authorize=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>session)},preflight:{preflight} as never,billing});
+  await expect(authorize.authorize(identity,{executionGovernance:false})).resolves.toEqual({});
+  expect(preflight).not.toHaveBeenCalled();expect(billing.getAutomationCreditCap).not.toHaveBeenCalled();
+  const untrusted=new GovernedSessionAutomationCommandAuthorizer({agentCwd,sessionCatalog:{get:vi.fn(async()=>({...session,workspaceId:'other'}))},preflight:{preflight} as never,billing});
+  await expect(untrusted.authorize(identity,{executionGovernance:false})).rejects.toMatchObject({code:'GOVERNANCE_DENIED'});
+ });
  it('returns the authoritative tenant credit cap and fails closed when billing policy is unavailable',async()=>{
   const allowed={accessDecision:{verdict:'allow'},readiness:{ready:true,blockers:[]}};
   const billing={getAutomationCreditCap:vi.fn(async()=>12.5)};

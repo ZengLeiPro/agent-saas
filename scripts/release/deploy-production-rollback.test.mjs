@@ -91,6 +91,8 @@ test('App rollback restores all boundaries and restarts both previous services',
   assert.match(value.log, /rm -f \/run\/agent-saas-runtime-worker-blue\.draining/u);
   assert.match(value.log, /systemctl restart agent-saas-server@blue/u);
   assert.match(value.log, /systemctl restart agent-saas-runtime-worker@blue/u);
+  assert.match(value.log, /systemctl disable --now agent-saas-server@green/u);
+  assert.match(value.log, /systemctl disable --now agent-saas-runtime-worker@green/u);
 });
 
 test('EXIT trap preserves deploy failure unless consolidated rollback fails with status 70', async () => {
@@ -151,5 +153,7 @@ for (const [label, failure, requiredLaterActions] of [
     for (const action of requiredLaterActions) {
       assert.ok(value.log.includes(action), `${basename(SCRIPT)} did not continue to ${action}`);
     }
+    assert.doesNotMatch(value.log, /systemctl disable --now agent-saas-server@green/u);
+    assert.doesNotMatch(value.log, /systemctl disable --now agent-saas-runtime-worker@green/u);
   });
 }

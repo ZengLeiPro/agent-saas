@@ -18,6 +18,7 @@ import {
   AUTH_SUBMIT_CLASS,
 } from "@/components/LoginPage";
 import { TOKEN_KEY } from "@/lib/constants";
+import { writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -241,7 +242,7 @@ export function SignupPage({ enabled, onSwitchToLogin }: SignupPageProps) {
       // 与登录同构：写 token 后整页跳转回根路径（顺带清掉 /signup 与 utm 参数），
       // AuthContext 初始化时从 token 恢复登录态，直接进产品。
       // 场景直达：保留 scenario 参数，落地后由 useScenarioDeepLink 预填该场景起手指令。
-      localStorage.setItem(TOKEN_KEY, data.token);
+      writeTabScopedAuth(TOKEN_KEY, data.token);
       window.location.replace(scenario ? `/?scenario=${scenario}` : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");

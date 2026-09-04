@@ -8,6 +8,7 @@ import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionDetailAcc
 import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
+import { removeTabScopedAuth, writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { sessionsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import {
@@ -482,7 +483,7 @@ export function useSession(
         selectSession(remainingSessions[0].sessionId); await loadDetailPromiseRef.current;
       } else {
         setSessionId(null);
-        localStorage.removeItem(SESSION_STORAGE_KEY);
+        removeTabScopedAuth(SESSION_STORAGE_KEY);
         cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       }
     } catch (err) {
@@ -537,7 +538,7 @@ export function useSession(
       setSessionId(null);
       setTokenUsage(null);
       setContextUsage(null);
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      removeTabScopedAuth(SESSION_STORAGE_KEY);
     }
   }, []);
 
@@ -685,7 +686,7 @@ export function useSession(
   const newSession = useCallback(() => {
     // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
     // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
-    // 只有新建会话这条路径原先漏了）。
+    // 只有新建会话路径原先漏了）。
     ++loadNonceRef.current;
     detailAbortRef.current?.abort();
     detailAbortRef.current = null;
@@ -701,7 +702,7 @@ export function useSession(
     setSessionLoadError(null);
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
-    localStorage.removeItem(SESSION_STORAGE_KEY);
+    removeTabScopedAuth(SESSION_STORAGE_KEY);
   }, [updateSessionAccessMode]);
 
   const retrySessionLoad = useCallback(() => {
@@ -753,7 +754,7 @@ export function useSession(
   // Persist current session ID (only write when non-null to avoid clearing stored value during init)
   useEffect(() => {
     if (sessionId) {
-      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      writeTabScopedAuth(SESSION_STORAGE_KEY, sessionId);
     }
   }, [sessionId]);
 

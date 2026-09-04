@@ -42,6 +42,7 @@ import { TrashView } from "@/components/chat/TrashView";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { TOKEN_KEY } from "@/lib/constants";
+import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { cn } from "@/lib/utils";
 import { normalizeSettingsSection } from "@/lib/urlSync";
 import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgentAvatar } from "@agent/shared";
@@ -805,7 +806,7 @@ export function SettingsModalInner({
     formData.append("avatar", file);
     setAvatarUploading(true);
     try {
-      const token = localStorage.getItem(TOKEN_KEY);
+      const token = readTabScopedAuth(TOKEN_KEY);
       const res = await fetch(apiUrl("/api/auth/avatar"), {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},

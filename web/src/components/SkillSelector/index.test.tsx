@@ -12,8 +12,14 @@ vi.mock("./hooks", () => {
     poolSkills: [
       {
         id: "platform-analysis",
-        name: "平台分析",
-        description: "平台统一提供的数据分析能力",
+        name: "platform-analysis",
+        description: "Analyze platform data with reports and charts",
+        presentation: {
+          displayName: "平台分析",
+          summary: "平台统一提供的数据分析能力",
+          locale: "zh-CN",
+          source: "platform_default",
+        },
         selected: false,
         selectionVersion: 0,
         source: "pool",
@@ -80,6 +86,8 @@ describe("SkillSelector 能力目录", () => {
     render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
 
     expect(await screen.findByText("平台分析")).toBeTruthy();
+    expect(screen.getByText("平台统一提供的数据分析能力")).toBeTruthy();
+    expect(screen.queryByText("platform-analysis")).toBeNull();
     expect(screen.getByText("组织 CRM")).toBeTruthy();
     expect(screen.getByText("我的周报")).toBeTruthy();
     expect(screen.getAllByText("平台提供").length).toBeGreaterThan(0);
@@ -231,6 +239,11 @@ describe("SkillSelector 能力目录", () => {
     expect(screen.queryByText("组织 CRM")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "清空搜索" }));
     expect(screen.getByText("组织 CRM")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索技能名称或描述" }), {
+      target: { value: "platform-analysis" },
+    });
+    expect(screen.getByText("平台分析")).toBeTruthy();
   });
 
   it("来源筛选的计数跟随搜索结果，且选不出东西的档位不可点", () => {

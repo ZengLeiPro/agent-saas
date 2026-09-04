@@ -6,6 +6,7 @@ import {
   TOOL_ENTITLEMENT_RESOURCE_IDS,
   normalizeLegacyEntitlementSettings,
 } from '../data/entitlements/index.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 import { DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
@@ -43,7 +44,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_scopes');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_items');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_tenant_policies');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
   });
 
   it('legacy tool scope 与治理工具目录使用同一能力 ID 域', () => {

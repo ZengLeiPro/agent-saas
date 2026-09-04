@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 349887,
-    "startupCssGzipBytes": 34915,
-    "startupJsBrotliBytes": 279125,
-    "startupCssBrotliBytes": 27660,
-    "largestJsGzipBytes": 349887,
-    "largestCssGzipBytes": 34915,
-    "largestJsBrotliBytes": 279125,
-    "largestCssBrotliBytes": 27660,
-    "largestJs": "assets/index-DIl1ipQy.js",
-    "largestCss": "assets/index-BzXS6tIB.css"
+    "startupJsGzipBytes": 349903,
+    "startupCssGzipBytes": 34922,
+    "startupJsBrotliBytes": 279195,
+    "startupCssBrotliBytes": 27657,
+    "largestJsGzipBytes": 349903,
+    "largestCssGzipBytes": 34922,
+    "largestJsBrotliBytes": 279195,
+    "largestCssBrotliBytes": 27657,
+    "largestJs": "assets/index-B1PAmw4B.js",
+    "largestCss": "assets/index-DtnaGgZN.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "TASK-318 与 origin/main@c5230192 组合：ConfigIdentity 只读概览及主线 Session Automation、治理改动共同进入启动图；按 fresh production build 实测重算，仍低于绝对上限",
+  "reason": "TASK-318 与 origin/main@5d479882 组合：ConfigIdentity 只读概览、Session Automation、技能中文展示与 Artifact Markdown 布局共同进入启动图；按 fresh production build 实测重算，仍低于绝对上限",
   "updatedAt": "2026-09-04"
 }

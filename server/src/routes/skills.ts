@@ -2,7 +2,6 @@ import { basename, dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import {
   cp,
-  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -24,6 +23,8 @@ import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SkillConfigStore } from '../data/skills/store.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import type { SkillPresentationStore } from '../data/skillPresentations/index.js';
+import type { GovernanceAuditStore } from '../data/governance-audit/index.js';
 import { archiveDeletedDirectory, deletePersonalSkillWithGovernance, deleteTenantSkillWithGovernance } from '../services/skillGovernanceDeletion.js';
 import { personalSkillResourceId, tenantSkillResourceId } from '../services/tenantSkillGovernanceUpload.js';
 import type { PlatformSkillConfig, TenantSkillRule } from '../data/skills/types.js';
@@ -42,13 +43,17 @@ import type { UserInfo, UserRecord } from '../data/users/types.js';
 type SkillUser = Pick<UserInfo, 'id' | 'username' | 'role' | 'tenantId'>;
 import { serverLogger } from '../utils/logger.js';
 import type { SkillMaterializationCoordinator } from '../workspace/materialization/types.js';
-import { isSkillSelectionPreferenceWrite, registerSkillSelectionRoute, setUserSkillSelected, userSkillSelectionState } from './skillSelection.js';
+import { registerSkillSelectionRoute, setUserSkillSelected, userSkillSelectionState } from './skillSelection.js';
 import {
   isMacOsMetadataZipEntry, safeName,
   safeRelativePath,
   skillIdFromName,
   validateSkillDocument,
+  containsSymlink,
 } from './skillRouteValidation.js';
+import { registerSkillPresentationRoutes } from './skillPresentationRoutes.js';
+import { createSkillLegacyWriteGate } from './skillLegacyWriteGate.js';
+import { fallbackPresentation, withPlatformPresentations, withTenantPresentations } from './skillPresentationView.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -64,6 +69,8 @@ export interface SkillsRouterDeps {
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
+  skillPresentationStore?: SkillPresentationStore;
+  governanceAuditStore?: GovernanceAuditStore;
 }
 
 export function createSkillsRouter(deps: SkillsRouterDeps): Router {
@@ -75,23 +82,12 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     tenantSkillsRootDir,
     skillMaterialization,
     skillGovernanceStore,
+    skillPresentationStore,
+    governanceAuditStore,
   } = deps;
   const router = Router();
 
-  router.use(async (req, res, next) => {
-    const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
-    const isSelectionPreferenceWrite = isSkillSelectionPreferenceWrite(req.method, req.path);
-    if (!isMutation || isSelectionPreferenceWrite || /^(?:PUT \/me\/skills\/[^/]+\/document|DELETE \/me\/skills\/[^/]+)$/.test(`${req.method} ${req.path}`) || req.path === '/sync' || !deps.legacyWriteGate) return next();
-    try {
-      await deps.legacyWriteGate.assertLegacyWriteAllowed({ actor: 'user', compatibilityProjection: false });
-      next();
-    } catch {
-      res.status(409).json({
-        error: '旧版 Skill 写入口已封闭，请使用治理资源 API',
-        code: 'MIGRATION_LEGACY_WRITE_SEALED',
-      });
-    }
-  });
+  router.use(createSkillLegacyWriteGate(deps.legacyWriteGate));
 
   const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
   const skillUpload = multer({
@@ -280,23 +276,6 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
   }
 
 
-  /**
-   * 递归探测目录内是否存在符号链接条目。
-   * safeRelativePath 只校验 zip 条目名，无法拦截 zip 内的符号链接条目
-   * （unix mode 0o120xxx，链接目标写在文件内容里）——unzip 会如实创建活链接，
-   * 随后被 moveSkillIntoPlace 原样搬入 agent 可读的 skills 目录，造成沙箱外文件读取。
-   * 用 lstat（不跟随链接）逐项检查，命中任何 symlink 即判定不安全。
-   */
-  async function containsSymlink(dir: string): Promise<boolean> {
-    for (const entry of await readdir(dir)) {
-      const full = join(dir, entry);
-      const st = await lstat(full);
-      if (st.isSymbolicLink()) return true;
-      if (st.isDirectory() && await containsSymlink(full)) return true;
-    }
-    return false;
-  }
-
   async function findSkillRoot(dir: string): Promise<string | null> {
     const direct = join(dir, 'SKILL.md');
     if ((await stat(direct).catch(() => null))?.isFile()) return dir;
@@ -480,6 +459,16 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     return { fileName: basename(docPath) || 'SKILL.md' };
   }
 
+  registerSkillPresentationRoutes(router, {
+    store: skillPresentationStore,
+    audit: governanceAuditStore,
+    hasPoolSkill: async (skillId) => (await getPoolSkillIds()).has(skillId),
+    canManagePoolSkill: async (tenantId, skillId) => (
+      (await getPoolSkillIds()).has(skillId) && skillConfigStore.isPoolSkillAvailableToTenant(skillId, tenantId)
+    ),
+    hasTenantSkill: async (tenantId, skillId) => (await getTenantOwnSkillIds(tenantId)).has(skillId),
+  });
+
   // ── Admin: Pool management ─────────────────────────────
 
   /** GET /pool — platform admin 列出完整 pool；组织 admin 仅列出可见 skill */
@@ -499,7 +488,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           };
         })
         .filter(s => platform || skillConfigStore.isPoolSkillAvailableToTenant(s.id, req.user?.tenantId));
-      res.json({ skills });
+      res.json({ skills: await withPlatformPresentations(skillPresentationStore, skills, platform ? undefined : req.user?.tenantId) });
     } catch (err) {
       serverLogger.error(`GET /pool error: ${err}`);
       res.status(500).json({ error: '扫描技能池失败' });
@@ -699,7 +688,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           usernames: rule.usernames,
         };
       });
-      res.json({ tenantId, skills });
+      res.json({ tenantId, skills: await withPlatformPresentations(skillPresentationStore, skills, tenantId) });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/pool error: ${err}`);
       res.status(500).json({ error: '获取组织技能失败' });
@@ -1005,7 +994,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
           ...(governance ? { governance } : {}),
         };
       }));
-      res.json({ tenantId, skills });
+      res.json({ tenantId, skills: await withTenantPresentations(skillPresentationStore, skills, tenantId) });
     } catch (err) {
       serverLogger.error(`GET /tenants/${tenantId}/skills error: ${err}`);
       res.status(500).json({ error: '获取组织自有技能失败' });
@@ -1332,17 +1321,17 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
     const managedTenantIds = await getManagedTenantSkillIdsForUser(user);
 
     // Pool skills: 只返回平台授权、租户启用且成员范围允许的
-    const visiblePoolSkills = poolSkills
+    const visiblePoolSkills = await withPlatformPresentations(skillPresentationStore, poolSkills
       .filter(s => skillConfigStore.isTenantSkillAvailableToUser(s.id, user.tenantId, user.username))
       .map(s => ({
         ...s,
         ...selectionState(s.id),
         source: 'pool' as const,
-      }));
+      })), user.tenantId);
 
     // 组织自有 skills: 只返回租户规则允许该成员使用的
     const tenantSkills = user.tenantId
-      ? await Promise.all((await scanUserCustomSkillsAsync(
+      ? await withTenantPresentations(skillPresentationStore, await Promise.all((await scanUserCustomSkillsAsync(
           tenantSkillsDirSafe(user.tenantId),
           await getPoolSkillIds(),
         ))
@@ -1355,7 +1344,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
             source: 'tenant' as const,
             ...(governance ? { governance } : {}),
           };
-        }))
+        })), user.tenantId)
       : [];
 
     // 自建 skills: 走用户 selection（2026-07-03 改）；排除系统层与已证明的组织物化副本。
@@ -1372,6 +1361,7 @@ export function createSkillsRouter(deps: SkillsRouterDeps): Router {
         : undefined;
       return {
         ...s,
+        presentation: fallbackPresentation(s),
         ...selectionState(s.id),
         source: 'custom' as const,
         ...(governance ? { governance } : {}),

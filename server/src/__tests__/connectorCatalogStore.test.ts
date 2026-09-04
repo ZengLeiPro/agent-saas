@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { BUILTIN_CONNECTOR_DEFINITIONS, PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -106,7 +107,7 @@ describe('Connector Catalog', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_connector_definition_versions');
     expect(sql).toContain("status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'disabled', 'retired'))");
     expect(sql).toContain('UNIQUE (connector_id, version_number)');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
   });
 
   it('publish 创建 immutable version、digest 与 currentVersionId', async () => {

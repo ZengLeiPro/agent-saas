@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { PgGovernanceMigrationRunner } from '../data/governance-schema/migrations.js';
+import {
+  GOVERNANCE_SCHEMA_VERSION,
+  PgGovernanceMigrationRunner,
+} from '../data/governance-schema/migrations.js';
 import { governanceV22Statements } from '../data/governance-schema/v22Migration.js';
 import { governanceV23Statements } from '../data/governance-schema/v23Migration.js';
 import { governanceV34Statements } from '../data/governance-schema/v34Migration.js';
@@ -82,7 +85,9 @@ describe('Governance schema migration SQL fixtures', () => {
       .filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions'))
       .map(item => Number(item.params?.[0]));
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
-    expect(insertedVersions).toEqual(Array.from({ length: 15 }, (_, index) => index + 23));
+    expect(insertedVersions).toEqual(
+      Array.from({ length: GOVERNANCE_SCHEMA_VERSION - 22 }, (_, index) => index + 23),
+    );
     expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
@@ -184,7 +189,7 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(createIndex).toBeGreaterThanOrEqual(0);
     expect(alterIndex).toBeGreaterThan(createIndex);
     expect([...applied].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: 37 }, (_, index) => index + 1),
+      Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1),
     );
   });
 

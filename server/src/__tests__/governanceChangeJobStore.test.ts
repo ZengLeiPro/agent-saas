@@ -7,6 +7,7 @@ import {
   type GovernanceChangeJob,
   type GovernanceChangeJobDomain,
 } from '../data/changeJobs/index.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -129,7 +130,7 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('unresolved_items_json');
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS ordinal INTEGER');
     expect(sql).toContain("'deletion_verification',9,'pending'");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
   });
 
   it('按请求顺序持久化并返回分域 ordinal，通用 Job 也不依赖字母排序', async () => {

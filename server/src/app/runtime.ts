@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
-import { basename, join, relative, resolve, sep } from 'path';
+import { basename, join, resolve } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
 import {
@@ -132,6 +132,7 @@ import { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js';
 import { PgEnvironmentStore } from '../data/environments/index.js';
 import { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import type { PgSkillPresentationStore } from '../data/skillPresentations/index.js';
 import { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../data/changeJobs/index.js';
 import { PgContentAccessGrantStore } from '../data/contentAccess/index.js';
 import { GovernanceProjectionReconciler, PgGovernanceProjectionOutboxStore } from '../data/governanceProjection/index.js';
@@ -143,7 +144,7 @@ import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotSt
 import { MemoryIndexService } from '../memory/index/service.js';
 import { createApprovalPreferenceResolvers } from './userPreferenceResolvers.js';
 import type { UserInfo } from '../data/users/types.js';
-import { DEFAULT_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { tenantAccessErrorMessage, wrapDispatchWithTenantAccess } from '../data/tenants/access.js';
 import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
@@ -245,6 +246,7 @@ import { clearSessionsListCache } from '../routes/sessions.js';
 import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
+import { createMemoryEmbeddingBillingRunStarter } from './runtimeMemoryEmbeddingBilling.js';
 import type { ContextStore } from '../context/store/index.js';
 import { createRuntimeContextPlane, createRuntimeMemoryContextTools } from './runtimeMemoryContextTools.js';
 import { createRuntimeContextPlaneShutdown } from './runtimeContextAdmin.js';
@@ -622,6 +624,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let agentResourceStore: PgAgentResourceStore | undefined;
   let agentDwsAccountStore: PgAgentDwsAccountStore | undefined;
   let skillGovernanceStore: PgSkillGovernanceStore | undefined;
+  let skillPresentationStore: PgSkillPresentationStore | undefined;
   let resolveLegacySkillResourceId = (_user: { id: string; tenantId: string }, skillId: string) => skillId;
   let governanceChangeJobStore: PgGovernanceChangeJobStore | undefined;
   let governanceChangePlanner: GovernanceChangePlanner | undefined;
@@ -636,20 +639,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runResolutionSnapshotStore: PgRunResolutionSnapshotStore | undefined;
   let runPreflightService: RunPreflightService | undefined;
   let flushGovernanceShadowProjections: (() => Promise<void>) | undefined;
-  const beginMemoryEmbeddingBillingRun = async (workspaceDir: string) => {
-    if (!billingService) return undefined;
-    const rel = relative(agentCwd, resolve(workspaceDir));
-    if (!rel || rel === '..' || rel.startsWith(`..${sep}`)) return undefined;
-    const [tenantId, userId] = rel.split(sep);
-    if (!tenantId || !userId || !TENANT_SLUG_PATTERN.test(tenantId)) return undefined;
-    const user = userStore?.findById(userId);
-    return await billingService.beginUtilityModelRun({
-      tenantId,
-      userId,
-      username: user?.username ?? userId,
-      channel: 'memory_embedding',
-    });
-  };
+  const beginMemoryEmbeddingBillingRun = createMemoryEmbeddingBillingRunStarter({
+    agentCwd,
+    getBillingService: () => billingService,
+    userStore,
+  });
   let billingAuditTimer: NodeJS.Timeout | undefined;
   let sandboxLifecycleService: SandboxLifecycleService | undefined;
   let runtimeEventRetention: RuntimeEventRetention | undefined;
@@ -732,6 +726,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       agentDwsMessageStore,
       orgGroupAgentStore,
       skillGovernanceStore,
+      skillPresentationStore,
       resolveLegacySkillResourceId,
       governanceChangeJobStore,
       governanceChangePlanner,
@@ -2960,6 +2955,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     environmentStore,
     agentResourceStore,
     skillGovernanceStore,
+    skillPresentationStore,
     governanceChangeJobStore, governanceChangePlanner, governanceMigrationControlStore,
     governanceWriteGate, governanceShadowComparator, contentAccessGrantStore,
     governanceProjectionOutboxStore, governanceProjectionReconciler,

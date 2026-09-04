@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PgMembershipStore } from '../data/memberships/index.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -40,8 +41,8 @@ describe('Membership/Owner 治理事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_platform_admins');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governance_migration_issues');
     expect(sql).toContain("CHECK (NOT is_owner OR persona = 'org_admin')");
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(37);
-    expect(queries.filter(item => item.sql === 'COMMIT')).toHaveLength(37);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
+    expect(queries.filter(item => item.sql === 'COMMIT')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
   });
 
   it('legacy backfill 把 pantheon admin 与客户 Membership 分离；唯一 active admin 确定为 Owner，多 admin 只记问题不猜', async () => {

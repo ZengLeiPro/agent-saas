@@ -116,7 +116,8 @@ class AgentDwsMutationFailure extends Error {
 
 export interface AgentDwsAccountsRouterOptions {
   accountStore?: AgentDwsAccountStore;
-  messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>;
+  messageStore?: Pick<AgentDwsMessageStore, 'listForAccount'>
+    & Partial<Pick<AgentDwsMessageStore, 'hasObservedGroup'>>;
   orgGroupAgentStore?: OrgGroupAgentStore;
   approvalService?: OrgAgentApprovalService;
   orgAgentStore?: Pick<OrgAgentStore, 'get'>;
@@ -202,9 +203,13 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     }
   });
 
+  // 创建权限基于服务端精确存在查询，不能把工作台的展示分页当权限事实。
   router.post('/agent-dws-accounts/:accountId/group-workspace/bindings', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
-    if (!options.accountStore || !options.orgGroupAgentStore || !options.messageStore) {
+    if (
+      !options.accountStore || !options.orgGroupAgentStore
+      || !options.messageStore?.hasObservedGroup
+    ) {
       return res.status(503).json({ error: '群发现服务暂不可用' });
     }
     const parsed = groupBindingCreateSchema.safeParse(req.body);

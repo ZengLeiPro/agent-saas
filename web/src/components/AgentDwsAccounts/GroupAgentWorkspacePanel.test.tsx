@@ -149,7 +149,7 @@ describe('GroupAgentWorkspacePanel', () => {
       });
   });
 
-  it('可从 Personal Stream 已观测群创建 shadow binding', async () => {
+  it('active 账号可从 Personal Stream 已观测群创建 shadow binding', async () => {
     const user = userEvent.setup();
     vi.mocked(authFetch).mockImplementation(async (path, init) => {
       if (String(path).includes('/group-workspace?') && !init?.method)
@@ -178,7 +178,29 @@ describe('GroupAgentWorkspacePanel', () => {
     ))).toBe(true));
   });
 
-  it('展示 attempt 证据并使用编码后的资源路径重试任务', async () => {
+  it('paused 账号保留管理入口，但明确禁用新群配置创建', async () => {
+    vi.mocked(authFetch).mockImplementation(async (path) => {
+      if (String(path).includes('/group-workspace?')) return jsonResponse({
+        ...workspace,
+        observedGroups: [{
+          conversationId: 'group/unbound',
+          lastEventAt: '2026-09-04T01:00:00.000Z',
+          bindingId: null,
+        }],
+      });
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel
+      tenantId="tenant-a"
+      accounts={[{ ...account, status: 'paused' } as AgentDwsAccount]}
+    />);
+
+    expect(await screen.findByText(/可查看并停用已有配置/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建群配置' }).hasAttribute('disabled')).toBe(true);
+    cleanup();
+  });
+
+  it('展示 attempt 证据，并使用编码后的资源路径重试任务', async () => {
     const user = userEvent.setup();
     render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
 

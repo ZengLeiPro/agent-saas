@@ -94,6 +94,7 @@ function setup(input: {
     init: vi.fn(),
     ingest: vi.fn(),
     listForAccount: vi.fn().mockResolvedValue([]),
+    hasObservedGroup: vi.fn().mockResolvedValue(false),
     listActiveForAccount: vi.fn().mockResolvedValue([]),
     claimNext,
     releaseClaim: vi.fn().mockResolvedValue({ ...claimed, state: 'pending', attempt: 0 }),
@@ -135,6 +136,11 @@ function setup(input: {
     saveDispatchResult: vi.fn().mockImplementation(async (
       inboxId: string, _owner: string, _fence: number, responseText: string,
     ) => ({ ...(claimedById.get(inboxId) ?? claimed), state: 'reply_pending', responseText })),
+    saveRejectionResult: vi.fn().mockImplementation(async (
+      inboxId: string, _owner: string, _fence: number, responseText: string,
+      rejectionReasonCode: string,
+    ) => ({ ...(claimedById.get(inboxId) ?? claimed), state: 'reply_pending',
+      responseText, rejectionReasonCode })),
     markReplyAttemptStarted: vi.fn().mockImplementation(async (inboxId: string) => {
       const entry = claimedById.get(inboxId) ?? claimed;
       return {
@@ -760,7 +766,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(messageStore.fail).not.toHaveBeenCalled();
   });
 
-  it('does not blindly resend after the DWS 24-hour idempotency window', async () => {
+  it('does not blindly resend a normal reply after the DWS 24-hour idempotency window', async () => {
     const claimed = {
       ...item,
       attempt: 2,

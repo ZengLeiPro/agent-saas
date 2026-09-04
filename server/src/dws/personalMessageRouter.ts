@@ -708,19 +708,28 @@ export class AgentDwsMessageRouter {
       ...(requester ? { requester } : {}),
       reason,
     });
-    // 只有可见拒绝已被投递后，才写入带 reasonCode 的终态；发送失败沿现有重试链恢复。
-    const responseText = rejectionMessage(reason);
-    await this.options.messageStore.saveDispatchResult(
+    // processing 阶段先持久化拒绝正文与原因；reply_pending 重领时直接恢复，不能再次 dispatch。
+    const saved = item.state === 'reply_pending'
+      ? item
+      : await this.options.messageStore.saveRejectionResult(
+          item.inboxId,
+          this.workerId,
+          item.leaseFence,
+          rejectionMessage(reason),
+          reason,
+        );
+    const responseText = saved.responseText ?? rejectionMessage(reason);
+    const reasonCode = saved.rejectionReasonCode ?? reason;
+    const replyAttempt = await this.options.messageStore.markReplyAttemptStarted(
       item.inboxId,
       this.workerId,
       item.leaseFence,
-      responseText,
     );
-    await this.options.messageStore.markReplyAttemptStarted(
-      item.inboxId,
-      this.workerId,
-      item.leaseFence,
-    );
+    if (!replyAttempt.replyStartedAt)
+      throw new Error('Agent DWS rejection reply attempt timestamp is missing');
+    if (Date.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
+      throw new Error('Agent DWS rejection reply idempotency window expired; manual reconciliation required');
+    }
     await this.visibleReply.send(
       account,
       item,
@@ -733,10 +742,10 @@ export class AgentDwsMessageRouter {
       item.inboxId,
       this.workerId,
       item.leaseFence,
-      reason,
+      reasonCode,
     );
     this.options.logger?.warn(
-      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reason}`,
+      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reasonCode}`,
     );
   }
 

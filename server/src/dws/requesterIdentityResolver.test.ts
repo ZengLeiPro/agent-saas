@@ -107,7 +107,7 @@ describe('DwsRequesterIdentityResolver', () => {
     expect(invoke.mock.calls[1]![0].input.command).toContain("'search' '--query' '爱丽丝'");
   });
 
-  it('tenant 未配置 staffId 时用 DWS openDingTalkId + 已验证手机号精确解析', async () => {
+  it('tenant 用户缺少 staffId 时用 DWS openDingTalkId + 已验证手机号精确解析', async () => {
     const user = {
       ...alice,
       dingtalkStaffId: undefined,
@@ -132,6 +132,24 @@ describe('DwsRequesterIdentityResolver', () => {
     });
     expect(reload).toHaveBeenCalledOnce();
     expect(invoke.mock.calls[0]![0].input.command).toContain("'search' '--query' '爱丽丝'");
+  });
+
+  it('已有 staffId 与同手机号目录结果冲突时始终保持 fail-closed', async () => {
+    const user = {
+      ...alice,
+      dingtalkStaffId: 'staff-old',
+      phone: '13800138000',
+      phoneVerifiedAt: '2026-08-25T00:00:00.000Z',
+    };
+    const directory = '{"result":[{"staffId":"staff-other","openDingTalkId":"open-a","mobile":"13800138000"}]}';
+
+    await expect(resolver([user], directory).resolver.resolveOutcome(account, 'open-a', '爱丽丝'))
+      .resolves.toMatchObject({ status: 'unmapped', reason: 'REQUESTER_IDENTITY_UNMAPPED' });
+    await expect(resolver([
+      user,
+      { ...user, id: 'user-b', username: 'bob', dingtalkStaffId: undefined },
+    ], directory).resolver.resolveOutcome(account, 'open-a', '爱丽丝'))
+      .resolves.toMatchObject({ status: 'unmapped', reason: 'REQUESTER_IDENTITY_UNMAPPED' });
   });
 
   it('未验证手机号、重复手机号和跨租户手机号都不能建立身份', async () => {

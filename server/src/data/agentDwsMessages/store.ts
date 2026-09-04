@@ -91,6 +91,22 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
   }
 
+  async hasObservedGroup(
+    tenantId: string,
+    accountId: string,
+    conversationId: string,
+  ): Promise<boolean> {
+    assertTexts(tenantId, accountId, conversationId);
+    const result = await this.pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM ${this.inboxTable}
+        WHERE tenant_id=$1 AND account_id=$2 AND conversation_id=$3
+          AND event_type='user_im_message_receive_at'
+      ) AS observed
+    `, [tenantId, accountId, conversationId]);
+    return booleanValue((result.rows[0] as Record<string, unknown> | undefined)?.observed);
+  }
+
   async listActiveForAccount(
     tenantId: string,
     accountId: string,
@@ -384,6 +400,29 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
         AND lease_expires_at > NOW()
       RETURNING *
     `, [inboxId, owner, fence, responseText]);
+  }
+
+  async saveRejectionResult(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    responseText: string,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId, reasonCode);
+    if (typeof responseText !== 'string') {
+      throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+    }
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='reply_pending',response_text=$4,
+          payload_json=payload_json || jsonb_build_object('rejectionReasonCode',$5::text),
+          last_error=NULL,updated_at=NOW()
+      WHERE inbox_id=$1 AND state='processing' AND lease_owner=$2 AND lease_fence=$3
+        AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence, responseText, reasonCode]);
   }
 
   async markReplyAttemptStarted(

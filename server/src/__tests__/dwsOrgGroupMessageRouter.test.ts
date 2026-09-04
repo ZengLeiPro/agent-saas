@@ -40,6 +40,12 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
         state: 'reply_pending',
         responseText: text,
       })),
+    saveRejectionResult: vi.fn().mockImplementation(async (
+      _id: string, _owner: string, _fence: number, text: string, reasonCode: string,
+    ) => ({
+      ...claimed, state: 'reply_pending', responseText: text,
+      rejectionReasonCode: reasonCode,
+    })),
     markReplyAttemptStarted: vi
       .fn()
       .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
@@ -52,8 +58,9 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
     releaseClaim: vi.fn(),
     pinLegacyIdentityOrTerminate: vi.fn(),
     init: vi.fn(),
-    ingest: vi.fn(),
+    ingest: vi.fn().mockResolvedValue({ record: claimed, created: true }),
     listForAccount: vi.fn(),
+    hasObservedGroup: vi.fn(),
     deleteForTenant: vi.fn(),
   } as unknown as AgentDwsMessageStore;
   const binding = createBinding(options);
@@ -311,7 +318,7 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
   return { router, messageStore, orgStore, dispatch, sender, resolveRequester, logger };
 }
 
-describe('AgentDwsMessageRouter organization group binding', () => {
+describe('AgentDwsMessageRouter organization group discovery/binding', () => {
   it('uses an Agent-owned WorkConversation and durable delivery', async () => {
     const test = setup();
     await expect(test.router.runOnce()).resolves.toBe(true);
@@ -354,6 +361,25 @@ describe('AgentDwsMessageRouter organization group binding', () => {
     );
     expect(test.orgStore.markDeliveryProviderStarted).toHaveBeenCalledOnce();
     expect(test.orgStore.markDeliverySent).toHaveBeenCalledOnce();
+  });
+
+  it('首条群 @ 只记录观测，不自动创建 shadow binding，并返回可见配置提示', async () => {
+    const test = setup();
+    vi.mocked(test.orgStore.getBinding).mockResolvedValue(null);
+    await expect(test.router.ingest(account, {
+      type: 'user_im_message_receive_at', eventId: 'event-a', conversationId: 'group-a',
+      messageId: 'mid-a', senderOpenDingtalkId: 'requester-open-id', senderName: '成员甲',
+      content: '@开开 请处理', raw: {},
+    })).resolves.toBe(true);
+    await vi.waitFor(() => expect(test.messageStore.reject).toHaveBeenCalled());
+    expect(test.orgStore.ensureShadowBinding).not.toHaveBeenCalled();
+    expect(test.orgStore.pinInboxContext).not.toHaveBeenCalled();
+    expect(test.dispatch).not.toHaveBeenCalled();
+    expect(test.messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'ORG_AGENT_CHANNEL_UNCONFIGURED');
+    expect(test.sender.send).toHaveBeenCalledWith(
+      expect.any(Object), expect.any(Object), expect.stringContaining('群尚未配置'), expect.any(String));
+    await test.router.stop();
   });
 
   it('routes an obvious continuation when its native thread has exactly one visible task', async () => {

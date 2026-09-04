@@ -93,6 +93,10 @@ export function rejectionMessage(reason: string): string {
     case 'ORG_AGENT_AUDIENCE_DENIED':
     case 'ORG_AGENT_TRIGGER_ROLE_DENIED':
       return '你目前不在这个 Agent 的可用范围内，请联系管理员调整成员范围。';
+    case 'ORG_AGENT_CHANNEL_DISABLED':
+      return '本群的 Agent 配置已停用，请联系管理员重新激活。';
+    case 'ORG_AGENT_CHANNEL_UNCONFIGURED':
+      return '本群尚未配置 Agent。请管理员在群工作台选择该群，创建并激活独立配置。';
     case 'ORG_AGENT_UNAVAILABLE':
       return '这个 Agent 当前未启用，请联系管理员检查账号与 Agent 状态。';
     default:

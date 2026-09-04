@@ -35,7 +35,10 @@ const binding = {
 };
 
 async function listen(options: {
-  messageStore: { listForAccount: ReturnType<typeof vi.fn> };
+  messageStore: {
+    listForAccount: ReturnType<typeof vi.fn>;
+    hasObservedGroup?: ReturnType<typeof vi.fn>;
+  };
   orgGroupAgentStore?: Record<string, unknown>;
   orgAgentStore?: Record<string, unknown>;
 }): Promise<{ server: Server; baseUrl: string }> {
@@ -110,12 +113,16 @@ describe('Agent DWS recovery routes', () => {
 
   it('管理员只能从当前账号已观测的群创建 shadow binding', async () => {
     const listForAccount = vi.fn(async () => [observedInbox()]);
+    const hasObservedGroup = vi.fn(async (
+      _tenantId: string, _accountId: string, conversationId: string,
+    ) => conversationId === 'group-observed');
     const ensureShadowBinding = vi.fn(async (input: { conversationId: string }) => ({
       ...binding, bindingId: 'binding-observed', conversationId: input.conversationId,
       activationState: 'shadow' as const, enabled: false,
     }));
     const opened = await listen({
-      messageStore: { listForAccount }, orgGroupAgentStore: { ensureShadowBinding },
+      messageStore: { listForAccount, hasObservedGroup },
+      orgGroupAgentStore: { ensureShadowBinding },
     });
     server = opened.server;
 
@@ -139,6 +146,9 @@ describe('Agent DWS recovery routes', () => {
     );
     expect(unknown.status).toBe(404);
     expect(ensureShadowBinding).toHaveBeenCalledTimes(1);
+    expect(hasObservedGroup).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 'group-not-observed',
+    );
   });
 
   it('组织智能体不可用时仍允许管理员紧急停用群绑定', async () => {

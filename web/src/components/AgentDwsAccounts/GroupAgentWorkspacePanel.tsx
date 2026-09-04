@@ -232,6 +232,8 @@ export function GroupAgentWorkspacePanel({
     () => (data?.observedGroups ?? []).filter((group) => !group.bindingId),
     [data?.observedGroups],
   );
+  const selectedAccount = eligible.find((account) => account.accountId === accountId);
+  const canCreateBinding = selectedAccount?.status === 'active';
 
   const mutate = async (
     key: string,
@@ -308,6 +310,11 @@ export function GroupAgentWorkspacePanel({
                 选择该成员账号 Personal Stream 已收到过 @ 的群，创建独立 shadow 绑定后再配置并激活。
               </p>
             </div>
+            {selectedAccount && !canCreateBinding ? (
+              <p className="text-sm text-warning-foreground">
+                当前账号为 {selectedAccount.status}，可查看并停用已有配置；重新激活账号后才能创建新群配置。
+              </p>
+            ) : null}
             {unboundGroups.length ? (
               <div className="flex flex-wrap items-end gap-2">
                 <div className="min-w-72 flex-1 space-y-1">
@@ -327,7 +334,7 @@ export function GroupAgentWorkspacePanel({
                 </div>
                 <Button
                   type="button"
-                  disabled={!groupToCreate || Boolean(busy)}
+                  disabled={!groupToCreate || !canCreateBinding || Boolean(busy)}
                   onClick={() => void mutate(
                     'create-binding',
                     `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/bindings`,

@@ -30,17 +30,16 @@ export function observedGroupOptions(
 }
 
 export async function hasObservedGroup(
-  messageStore: Pick<AgentDwsMessageStore, 'listForAccount'>,
+  messageStore: Partial<Pick<AgentDwsMessageStore, 'hasObservedGroup'>>,
   tenantId: string,
   accountId: string,
   conversationId: string,
 ): Promise<boolean> {
-  const inbox = await messageStore.listForAccount(tenantId, accountId, 100);
-  return inbox.some(item => (
-    item.eventType === 'user_im_message_receive_at' && item.conversationId === conversationId
-  ));
+  if (!messageStore.hasObservedGroup) return false;
+  return await messageStore.hasObservedGroup(tenantId, accountId, conversationId);
 }
 
+/** 只有服务端按 conversationId 精确确认已观测到的群，才允许管理员创建 shadow binding。 */
 export async function ensureObservedGroupBinding(
   store: OrgGroupAgentStore,
   account: AgentDwsAccountRecord,

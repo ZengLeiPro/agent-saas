@@ -71,7 +71,10 @@ export class DwsRequesterIdentityResolver {
       .filter(user => user.tenantId === account.tenantId && !user.disabled)
       .filter((user, index, users) => users.findIndex(candidate => candidate.id === user.id) === index);
     const staffCandidates = candidates.filter(user => user.dingtalkStaffId);
-    const phoneCandidates = candidates.filter(user => user.phone && user.phoneVerifiedAt);
+    const phoneCandidates = candidates.filter(
+      user => !user.dingtalkStaffId && user.phone && user.phoneVerifiedAt,
+    );
+    // 已配置 staffId 是身份锚；手机号只为缺失 staffId 且在 tenant 内唯一的用户补全映射。
     if (staffCandidates.length === 0 && phoneCandidates.length === 0) {
       return await this.recordDecision(account, null, 'TENANT_DINGTALK_DIRECTORY_EMPTY');
     }
@@ -84,7 +87,11 @@ export class DwsRequesterIdentityResolver {
     const byVerifiedPhone = new Map<string, typeof candidates>();
     for (const candidate of phoneCandidates) {
       const phone = normalizePhone(candidate.phone!);
-      if (phone) byVerifiedPhone.set(phone, [...(byVerifiedPhone.get(phone) ?? []), candidate]);
+      if (!phone) continue;
+      const owners = candidates.filter(user => (
+        user.phone && user.phoneVerifiedAt && normalizePhone(user.phone) === phone
+      ));
+      if (owners.length === 1) byVerifiedPhone.set(phone, [candidate]);
     }
     const matches: Array<{ user: (typeof candidates)[number]; staffId: string }> = [];
     const observedSenderStaffIds = new Set<string>();

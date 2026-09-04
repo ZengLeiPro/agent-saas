@@ -285,6 +285,18 @@ describe('PgAgentDwsMessageStore', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('按 tenant、account、conversation 精确确认已观测群，不受列表窗口限制', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [{ observed: true }] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.hasObservedGroup('tenant-1', 'account-1', 'group-101'))
+      .resolves.toBe(true);
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("event_type='user_im_message_receive_at'");
+    expect(String(sql)).toContain('conversation_id=$3');
+    expect(values).toEqual(['tenant-1', 'account-1', 'group-101']);
+  });
+
   it('常规状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [inboxRow({
@@ -308,6 +320,27 @@ describe('PgAgentDwsMessageStore', () => {
       .rejects.toEqual(expect.objectContaining<Partial<AgentDwsMessageInvariantError>>({
         code: 'AGENT_DWS_MESSAGE_LEASE_LOST',
       }));
+  });
+
+  it('拒绝回复在 processing 阶段持久化正文与原因后进入 reply_pending', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'reply_pending', response_text: '权限不足',
+      payload_json: { rejectionReasonCode: 'ASSIGNMENT_DENIED' },
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.saveRejectionResult(
+      'adwsi-1', 'worker-1', 7, '权限不足', 'ASSIGNMENT_DENIED',
+    )).resolves.toMatchObject({
+      state: 'reply_pending', responseText: '权限不足',
+      rejectionReasonCode: 'ASSIGNMENT_DENIED',
+    });
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("jsonb_build_object('rejectionReasonCode',$5::text)");
+    expect(String(sql)).toContain("WHERE inbox_id=$1 AND state='processing'");
+    expect(values).toEqual([
+      'adwsi-1', 'worker-1', 7, '权限不足', 'ASSIGNMENT_DENIED',
+    ]);
   });
 
   it('拒绝终态在兼容 payload 中记录 disposition 与稳定 reasonCode', async () => {

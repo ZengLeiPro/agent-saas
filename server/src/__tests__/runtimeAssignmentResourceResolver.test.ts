@@ -41,11 +41,30 @@ describe('runtime entitlement model resolver', () => {
     });
   });
 
+  it('向治理 Scope 提供平台工具目录', async () => {
+    const resolveCatalog = createEntitlementResourceCatalogResolver({ config: {} } as AppRuntime);
+
+    await expect(resolveCatalog('tool')).resolves.toMatchObject({
+      status: 'valid',
+      items: expect.arrayContaining([
+        { resourceId: 'Read', version: 1 },
+        { resourceId: 'Shell', version: 1 },
+      ]),
+    });
+  });
+
   it('只接受平台模型配置中存在的完整 ref', async () => {
     const resolveResource = createEntitlementResourceResolver(runtimeWithModels());
 
     await expect(resolveResource('model', 'group-a/model-1')).resolves.toEqual({ status: 'valid', version: 1 });
     await expect(resolveResource('model', 'group-a/missing')).resolves.toEqual({ status: 'not_found' });
+  });
+
+  it('只接受平台工具目录中存在的工具 id', async () => {
+    const resolveResource = createEntitlementResourceResolver({ config: {} } as AppRuntime);
+
+    await expect(resolveResource('tool', 'Read')).resolves.toEqual({ status: 'valid', version: 1 });
+    await expect(resolveResource('tool', 'missing-tool')).resolves.toEqual({ status: 'not_found' });
   });
 
   it('平台未配置模型时 fail closed', async () => {

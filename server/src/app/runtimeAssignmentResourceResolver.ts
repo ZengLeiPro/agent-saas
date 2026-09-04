@@ -1,3 +1,4 @@
+import { PLATFORM_TOOL_CATALOG, PLATFORM_TOOL_CATALOG_BY_ID } from '../agent/toolCatalog.js';
 import type { AssignmentResourceType } from '../data/assignments/index.js';
 import type { EntitlementResourceType } from '../data/entitlements/types.js';
 import type { AppRuntime } from './runtime.js';
@@ -64,6 +65,12 @@ export function createEntitlementResourceCatalogResolver(runtime: AppRuntime) {
         }))),
       };
     }
+    if (resourceType === 'tool') {
+      return {
+        status: 'valid',
+        items: PLATFORM_TOOL_CATALOG.map(tool => ({ resourceId: tool.id, version: 1 })),
+      };
+    }
     if (resourceType === 'agent_template') {
       if (!runtime.agentResourceStore) return { status: 'unavailable' };
       return { status: 'valid', items: (await runtime.agentResourceStore.listByKind('agent_template'))
@@ -101,6 +108,11 @@ export function createEntitlementResourceResolver(runtime: AppRuntime) {
       const exists = runtime.config.models.groups.some(group =>
         group.models.some(model => `${group.id}/${model.id}` === resourceId));
       return exists ? { status: 'valid', version: 1 } : { status: 'not_found' };
+    }
+    if (resourceType === 'tool') {
+      return PLATFORM_TOOL_CATALOG_BY_ID.has(resourceId)
+        ? { status: 'valid', version: 1 }
+        : { status: 'not_found' };
     }
     if (resourceType === 'agent_template') {
       if (!runtime.agentResourceStore) return { status: 'unavailable' };

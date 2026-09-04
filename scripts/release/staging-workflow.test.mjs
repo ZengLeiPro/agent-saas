@@ -49,7 +49,7 @@ function runScriptLines(text) {
   return output;
 }
 
-test('Staging workflow accepts only a reason and locks the dispatch SHA and single slot', async () => {
+test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR read identity', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
@@ -65,6 +65,14 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
     /created_at="\$\(node -e "process\.stdout\.write\(new Date\(process\.argv\[1\]\)\.toISOString\(\)\)" "\$created_at"\)"/u,
   );
   assert.match(workflow, /environment: staging/u);
+  const acrResolveStep = workflow.slice(
+    workflow.indexOf('- name: Resolve exact ACS image when required'),
+    workflow.indexOf('- name: Build immutable artifacts once'),
+  );
+  assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_ID/u);
+  assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_SECRET/u);
+  assert.match(acrResolveStep, /Missing staging secret ACR_READ_ACCESS_KEY_ID/u);
+  assert.match(acrResolveStep, /Missing staging secret ACR_READ_ACCESS_KEY_SECRET/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
   assert.match(workflow, /VITE_API_BASE: https:\/\/api\.agent\.kaiyan\.net/u);

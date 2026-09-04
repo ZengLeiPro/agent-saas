@@ -178,7 +178,7 @@ test('classifies destructive SQL in production startup schema roots regardless o
   }
 });
 
-test('fails closed when an unchanged authority root has a dynamic loader and only its external provider changes', () => {
+test('fails closed when an unchanged authority root directly has a dynamic loader and only its external provider changes', () => {
   const root = 'server/src/taskboard/storeSchema.ts';
   const provider = 'config/taskboard-migration-provider.json';
   const rootSource =
@@ -196,6 +196,38 @@ test('fails closed when an unchanged authority root has a dynamic loader and onl
   assert.match(
     result.blockingReasons.join('\n'),
     new RegExp(`${root} uses dynamic import or require`, 'u'),
+  );
+});
+
+test('fails closed when a static authority dependency hides a dynamic external provider', () => {
+  const root = 'server/src/taskboard/storeSchema.ts';
+  const helper = 'server/src/taskboard/schemaLoader.ts';
+  const provider = 'config/taskboard-migration-provider.json';
+  const rootSource =
+    "import { loadSchema } from './schemaLoader.js'; export async function initializeTaskboardStore() { return loadSchema(); }";
+  const helperSource =
+    'export function loadSchema() { return import(process.env.SCHEMA_PROVIDER); }';
+  const baselineProvider = '{"sql":"CREATE TABLE tasks(id text)"}';
+  const targetProvider = '{"sql":"DROP TABLE tasks"}';
+  const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+    changedPaths: [provider],
+    baselines: {
+      [root]: rootSource,
+      [helper]: helperSource,
+      [provider]: baselineProvider,
+    },
+    targets: {
+      [root]: rootSource,
+      [helper]: helperSource,
+      [provider]: targetProvider,
+    },
+    diffs: { [provider]: addedSourceDiff(targetProvider) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    new RegExp(`${helper} uses dynamic import or require`, 'u'),
   );
 });
 

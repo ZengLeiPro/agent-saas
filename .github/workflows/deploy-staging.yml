@@ -546,10 +546,15 @@ jobs:
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
       - name: Resolve exact ACS image when required
         if: env.REUSE_RC != 'true'
+        env:
+          ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
+          ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
         run: |
           set -euo pipefail
           include_acs=false
           if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/authoritative-evidence.json" >/dev/null; then
+            : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing staging secret ACR_READ_ACCESS_KEY_ID}"
+            : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing staging secret ACR_READ_ACCESS_KEY_SECRET}"
             include_acs=true
             RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
               bash scripts/release/wait-for-acr-image.sh

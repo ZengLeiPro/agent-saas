@@ -493,6 +493,13 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsDeploy, /lock=\/run\/lock\/agent-saas\/promotion\.lock/u);
   assert.match(appWorkflow, /\/run\/lock\/agent-saas\/promotion\.lock/u);
   assert.match(acsDeploy, /flock -n 9/u);
+  assert.match(acsDeploy, /missing GITHUB_RUN_ATTEMPT/u);
+  assert.match(acsDeploy, /TRANSACTION_ID="\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}"/u);
+  assert.match(acsDeploy, /SMOKE_SESSION="ci-acr-\$\{TRANSACTION_ID\}"/u);
+  assert.match(
+    acsDeploy,
+    /IDENTITY_SYNC_DIR="\/tmp\/agent-saas-runtime-identity-acs-\$\{TRANSACTION_ID\}"/u,
+  );
   assert.match(
     acsDeploy,
     /if \[ "\$\{CURRENT_LINK_UPDATED:-false\}" = "true" \]; then[\s\S]*ln -sfn "\$PREVIOUS_APP_DIR" "\$CURRENT_LINK"/u,
@@ -534,7 +541,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   assert.ok(
     acsDeploy.indexOf('--environment-file="$runtime_environment_file" --production=true') <
-      acsDeploy.indexOf('candidate="$APP_DIR.candidate-${GITHUB_RUN_ID}"'),
+      acsDeploy.indexOf('candidate="$APP_DIR.candidate-${TRANSACTION_ID}"'),
   );
   assert.ok(
     acsDeploy.indexOf('flock -n 9') <
@@ -590,6 +597,15 @@ test('holds one production host lock through compatibility Web commit and compen
   );
   assert.doesNotMatch(identity, /production-identity-payload\.sha256/u);
   assert.match(identity, /sudo node '\$remote\/read-live-production-components\.mjs'/u);
+  const uploadMutation = workflow.slice(upload, commit);
+  assert.match(uploadMutation, /run_guarded bash -c upload_web/u);
+  assert.match(uploadMutation, /setsid "\$@"/u);
+  assert.match(uploadMutation, /timeout --signal=TERM --kill-after=2 10 ssh/u);
+  assert.match(
+    uploadMutation,
+    /Production host lock owner proof was lost; guarded Web mutation was terminated/u,
+  );
+  assert.match(uploadMutation, /kill -KILL -- "-\$guarded_pid"/u);
   assert.match(identity, /sudo rm -rf -- '\$remote'/u);
   assert.doesNotMatch(identity, /sudo rm -rf -- '\$remote'[^\n]*\|\| true/u);
   assert.match(lease, /flock -n 9/u);

@@ -444,10 +444,17 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).toContain("data.get('IsSuccess') is not True");
     expect(workflow).toContain('Unable to query ACR build records');
     expect(waitStep).not.toContain('2>/dev/null || true');
-    expect(workflow).toContain("tag.endswith('-' + sha6)");
-    expect(workflow).toContain("r.get('BuildRecordId')");
+    expect(workflow).toContain(".endswith('-' + sha6)");
+    expect(workflow).toContain("record.get('BuildRecordId')");
     expect(workflow).toContain('ListRepoBuildRecordLog');
     expect(workflow).toContain('scripts/release/verify-acr-build-revision.mjs');
+    expect(workflow).toContain('if len(matches) > 1:');
+    expect(workflow).toContain('selected_build_record_id');
+    expect(workflow).toContain('acr-build-records-confirmed.json');
+    expect(workflow).toContain('--PageNo 1 --PageSize 100');
+    expect(workflow).toContain('ACR tag no longer has one selected BuildRecordId');
+    expect(workflow).toContain('test "$confirmed_digest" = "$image_digest"');
+    expect(workflow).toContain("GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT'");
     expect(workflow.indexOf('ListRepoBuildRecordLog')).toBeLessThan(
       workflow.indexOf('echo "image_tag=$btag"'),
     );

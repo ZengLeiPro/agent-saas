@@ -153,6 +153,7 @@ if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" != true ]; then
 : "${ECS_DEPLOY_ROOT:?missing ECS_DEPLOY_ROOT}"
 : "${ACS_SERVICE_NAME:?missing ACS_SERVICE_NAME}"
 : "${GITHUB_RUN_ID:?missing GITHUB_RUN_ID}"
+: "${GITHUB_RUN_ATTEMPT:?missing GITHUB_RUN_ATTEMPT}"
 : "${GITHUB_SHA:?missing GITHUB_SHA}"
 
 printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
@@ -170,6 +171,8 @@ seal_payload_fd_path="/proc/$$/fd/$seal_payload_fd"
 test "$(sha256sum "$seal_payload_fd_path" | cut -d' ' -f1)" = \
   "$SEAL_STAGED_PAYLOAD_SCRIPT_SHA256"
 printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
+printf '%s' "$GITHUB_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*$'
+TRANSACTION_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
 lock=/run/lock/agent-saas/promotion.lock
 mkdir -p "$(dirname "$lock")"
@@ -188,14 +191,14 @@ ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
 IDENTITY_FILE="/etc/agent-saas/acs-release-identity.json"
 IDENTITY_STATE_CAPTURED=false
 RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
-RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
+RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${TRANSACTION_ID}.json"
 RUNTIME_IDENTITY_UPDATED=false
 RUNTIME_PREFLIGHT_ROOT=""
 RUNTIME_PREFLIGHT_DIR=""
 ACS_NODE=/usr/bin/node
 SYSTEMCTL_BIN=/usr/bin/systemctl
 ACS_UNIT_PATH=/etc/systemd/system/agent-saas-acs-orchestrator.service
-ACS_UNIT_BAK="/tmp/agent-saas-acs-unit-before-${GITHUB_RUN_ID}"
+ACS_UNIT_BAK="/tmp/agent-saas-acs-unit-before-${TRANSACTION_ID}"
 ACS_UNIT_HAD_PREVIOUS=false
 ACS_UNIT_UPDATED=false
 PRODUCTION_CLEANUP_ARMED=false
@@ -204,11 +207,11 @@ CURRENT_LINK_UPDATED=false
 # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
 # cleanup 走到、SMOKE_SESSION 还是空 → cleanup 什么也不删 → sandbox 残留普通 TTL。
 # 现在提前赋值，无论后续哪步失败，都能按 annotation 找到并清理 smoke sandbox。
-SMOKE_SESSION="ci-acr-${GITHUB_RUN_ID}"
-SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
+SMOKE_SESSION="ci-acr-${TRANSACTION_ID}"
+SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
 SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
 SMOKE_WORKSPACE_DIR="/mnt/agent-saas/${SMOKE_MOUNT}"
-SMOKE_CLEANUP_ERROR="/tmp/acs-smoke-workspace-cleanup-${GITHUB_RUN_ID}.err"
+SMOKE_CLEANUP_ERROR="/tmp/acs-smoke-workspace-cleanup-${TRANSACTION_ID}.err"
 fi
 
 cleanup() {
@@ -442,7 +445,7 @@ test -s "$RUNTIME_IDENTITY_FILE"
 node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
   "$RUNTIME_IDENTITY_FILE"
 cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
-runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
+runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${TRANSACTION_ID}"
 printf '{}\n' > "$runtime_identity_probe.candidate"
 mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
 rm -f "$runtime_identity_probe"
@@ -451,7 +454,7 @@ if [ -d "$APP_DIR" ]; then
   node "$APP_DIR/scripts/release/verify-installed-release.mjs" \
     --action verify --root "$APP_DIR" --component acs >/dev/null
 else
-  candidate="$APP_DIR.candidate-${GITHUB_RUN_ID}"
+  candidate="$APP_DIR.candidate-${TRANSACTION_ID}"
   rm -rf "$candidate"
   mkdir -p "$candidate/.release"
   install -m 0444 "$RELEASE_TGZ" "$candidate/.release/acs-orchestrator.tgz"
@@ -472,10 +475,10 @@ cd "$APP_DIR"
 
 # ── 2. 备份并更新镜像 env（新进程拉起时生效）──
 test -f "$ENV_FILE"
-ENV_BAK="${ENV_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+ENV_BAK="${ENV_FILE}.bak.${TRANSACTION_ID}-${GITHUB_SHA:0:7}"
 cp "$ENV_FILE" "$ENV_BAK"
 HAD_IDENTITY=false
-IDENTITY_BAK="${IDENTITY_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+IDENTITY_BAK="${IDENTITY_FILE}.bak.${TRANSACTION_ID}-${GITHUB_SHA:0:7}"
 if [ -f "$IDENTITY_FILE" ]; then
   HAD_IDENTITY=true
   cp "$IDENTITY_FILE" "$IDENTITY_BAK"
@@ -487,7 +490,7 @@ case "$RUNTIME_CONFIG_FILE" in
   *) echo "ACS_ORCH_RUNTIME_CONFIG_FILE 缺失或不是绝对路径，拒绝部署: $RUNTIME_CONFIG_FILE" >&2; exit 1 ;;
 esac
 test -f "$RUNTIME_CONFIG_FILE"
-RUNTIME_CONFIG_BAK="${RUNTIME_CONFIG_FILE}.bak.${GITHUB_RUN_ID}-${GITHUB_SHA:0:7}"
+RUNTIME_CONFIG_BAK="${RUNTIME_CONFIG_FILE}.bak.${TRANSACTION_ID}-${GITHUB_SHA:0:7}"
 cp "$RUNTIME_CONFIG_FILE" "$RUNTIME_CONFIG_BAK"
 if grep -q '^ACS_SANDBOX_IMAGE=' "$ENV_FILE"; then
   sed -i "s|^ACS_SANDBOX_IMAGE=.*|ACS_SANDBOX_IMAGE=${IMAGE}|" "$ENV_FILE"
@@ -834,7 +837,7 @@ NODE
 fi
 
 # ── 5.6 从 ACS health 与当前 App/Web 现场原子重建 Production identity ──
-IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-acs-${GITHUB_RUN_ID}"
+IDENTITY_SYNC_DIR="/tmp/agent-saas-runtime-identity-acs-${TRANSACTION_ID}"
 rm -rf "$IDENTITY_SYNC_DIR"
 mkdir -p "$IDENTITY_SYNC_DIR"
 IDENTITY_SYNCED=false

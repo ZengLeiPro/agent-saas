@@ -562,6 +562,7 @@ jobs:
           missing_polls=0
           query_errors=0
           build_record_found=false
+          selected_build_record_id=''
           redelivery_checked=false
           records_file="$RUNNER_TEMP/acr-build-records.json"
           query_error_file="$RUNNER_TEMP/acr-build-records.error"
@@ -599,12 +600,17 @@ jobs:
               code = clean(data.get('Code')) or 'unknown'
               print(f'QUERY_ERROR\t\t\tCLI exit {query_status}, code {code}: {detail}')
               raise SystemExit
-          for r in data.get('BuildRecords', []):
-              tag = (r.get('Image') or {}).get('ImageTag', '')
-              if tag.endswith('-' + sha6):
-                  record_id = clean(r.get('BuildRecordId'))
-                  print(f"{r.get('BuildStatus','')}\t{tag}\t{record_id}")
-                  break
+          matches = [
+              r for r in data.get('BuildRecords', [])
+              if str((r.get('Image') or {}).get('ImageTag', '')).endswith('-' + sha6)
+          ]
+          if len(matches) > 1:
+              print('AMBIGUOUS')
+          elif len(matches) == 1:
+              record = matches[0]
+              tag = (record.get('Image') or {}).get('ImageTag', '')
+              record_id = clean(record.get('BuildRecordId'))
+              print(f"{record.get('BuildStatus','')}\t{tag}\t{record_id}")
           else:
               print('NOT_FOUND')
           PY
@@ -614,12 +620,18 @@ jobs:
             brecord_id=$(echo "$result" | cut -f3 -s)
             bdetail=$(echo "$result" | cut -f4- -s)
             echo "  [$poll_index] $bstatus ${btag:-}"
+            if [ -n "$selected_build_record_id" ] && [ -n "$brecord_id" ] \
+              && [ "$brecord_id" != "$selected_build_record_id" ]; then
+              echo 'The selected ACR build record changed while polling; refusing tag substitution' >&2
+              exit 1
+            fi
             case "$bstatus" in
               SUCCESS)
                 test -n "$brecord_id" || {
                   echo 'Successful ACR build record is missing BuildRecordId' >&2
                   exit 1
                 }
+                selected_build_record_id="${selected_build_record_id:-$brecord_id}"
                 logs_file="$RUNNER_TEMP/acr-build-record-$brecord_id-logs.json"
                 aliyun cr ListRepoBuildRecordLog \
                   --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
@@ -631,6 +643,10 @@ jobs:
                 echo "image_tag=$btag" >> "$GITHUB_OUTPUT"
                 echo "build_record_id=$brecord_id" >> "$GITHUB_OUTPUT"
                 exit 0
+                ;;
+              AMBIGUOUS)
+                echo 'Multiple ACR build records match the six-character tag; refusing an ambiguous image' >&2
+                exit 1
                 ;;
               FAILED|CANCELED)
                 echo "ACR build $bstatus — 构建日志: https://cr.console.aliyun.com/repository/cn-shenzhen/$ACR_INSTANCE_ID/agent-saas/acs-sandbox/build" >&2
@@ -678,6 +694,7 @@ jobs:
                 fi
                 ;;
               PENDING)
+                selected_build_record_id="${selected_build_record_id:-$brecord_id}"
                 # 真实记录已出现后，锁定 exact SHA 构建继续等待；
                 # main 若继续推进，实际部署前的独立门禁会拒绝这个旧 dispatch。
                 build_record_found=true
@@ -690,6 +707,7 @@ jobs:
                 fi
                 ;;
               BUILDING)
+                selected_build_record_id="${selected_build_record_id:-$brecord_id}"
                 build_record_found=true
                 missing_polls=0
                 query_errors=0
@@ -720,6 +738,43 @@ jobs:
           case "$raw_digest" in sha256:*) image_digest="$raw_digest" ;; *) image_digest="sha256:$raw_digest" ;; esac
           printf '%s' "$image_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
           test "$(jq -r .Status "$RUNNER_TEMP/acr-tag.json")" = NORMAL
+
+          # A build can retarget the mutable six-character tag after revision verification.
+          # Re-read the record inventory around a second tag lookup and require the same sole
+          # BuildRecordId plus a stable digest before pinning the digest reference.
+          aliyun cr ListRepoBuildRecord \
+            --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
+            --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
+            --RepoId "$ACR_REPO_ID" --PageNo 1 --PageSize 100 \
+            > "$RUNNER_TEMP/acr-build-records-confirmed.json"
+          python3 - "$image_tag" '${{ steps.wait.outputs.build_record_id }}' \
+            "$RUNNER_TEMP/acr-build-records-confirmed.json" <<'PY'
+          import json, pathlib, sys
+          tag, expected_id, path = sys.argv[1:]
+          body = json.loads(pathlib.Path(path).read_text())
+          if body.get('Code') != 'success' or body.get('IsSuccess') is not True:
+              raise SystemExit('Unable to confirm the selected ACR build record')
+          matches = [
+              record for record in body.get('BuildRecords', [])
+              if str((record.get('Image') or {}).get('ImageTag', '')) == tag
+          ]
+          if len(matches) != 1 or str(matches[0].get('BuildRecordId', '')) != expected_id:
+              raise SystemExit('ACR tag no longer has one selected BuildRecordId')
+          if matches[0].get('BuildStatus') != 'SUCCESS':
+              raise SystemExit('Selected ACR build record is no longer successful')
+          PY
+          aliyun cr GetRepoTag \
+            --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
+            --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
+            --RepoId "$ACR_REPO_ID" --Tag "$image_tag" \
+            > "$RUNNER_TEMP/acr-tag-confirmed.json"
+          test "$(jq -r .Status "$RUNNER_TEMP/acr-tag-confirmed.json")" = NORMAL
+          confirmed_raw_digest="$(jq -r .Digest "$RUNNER_TEMP/acr-tag-confirmed.json")"
+          case "$confirmed_raw_digest" in
+            sha256:*) confirmed_digest="$confirmed_raw_digest" ;;
+            *) confirmed_digest="sha256:$confirmed_raw_digest" ;;
+          esac
+          test "$confirmed_digest" = "$image_digest"
           image="$ACR_REGISTRY/$ACR_REPOSITORY@$image_digest"
           {
             echo "ACS_IMAGE_REFERENCE=$image"
@@ -852,10 +907,11 @@ jobs:
             exit 1
           fi
           remote="$PRODUCTION_STAGING_ROOT/acs-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Keep every remote transaction identity isolated across workflow re-runs.
           ssh -i ~/.ssh/ecs_deploy_key \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "RELEASE_TGZ='$remote/payload.tgz' RELEASE_STAGING_DIR='$remote' SEAL_STAGED_PAYLOAD_SCRIPT='$remote/seal-root-staged-payload.sh' SEAL_STAGED_PAYLOAD_SCRIPT_SHA256='$seal_script_digest' IMAGE='$ACS_IMAGE_REFERENCE' IMAGE_TAG='$ACS_IMAGE_TAG' IMAGE_DIGEST='$ACS_IMAGE_DIGEST' ORCHESTRATOR_ARTIFACT_DIGEST='$ORCHESTRATOR_ARTIFACT_DIGEST' COMPAT_RELEASE_ID='$COMPAT_RELEASE_ID' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_SHA='$GITHUB_SHA' bash -s" < scripts/deploy-acs-orchestrator.sh
+            "RELEASE_TGZ='$remote/payload.tgz' RELEASE_STAGING_DIR='$remote' SEAL_STAGED_PAYLOAD_SCRIPT='$remote/seal-root-staged-payload.sh' SEAL_STAGED_PAYLOAD_SCRIPT_SHA256='$seal_script_digest' IMAGE='$ACS_IMAGE_REFERENCE' IMAGE_TAG='$ACS_IMAGE_TAG' IMAGE_DIGEST='$ACS_IMAGE_DIGEST' ORCHESTRATOR_ARTIFACT_DIGEST='$ORCHESTRATOR_ARTIFACT_DIGEST' COMPAT_RELEASE_ID='$COMPAT_RELEASE_ID' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' GITHUB_SHA='$GITHUB_SHA' bash -s" < scripts/deploy-acs-orchestrator.sh
 
       - name: Clean sealed ACS Production staging
         if: always() && steps.necessity.outputs.deploy_needed == 'true'

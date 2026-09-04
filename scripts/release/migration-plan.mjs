@@ -3281,7 +3281,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   return dependencies;
 }
 
-function hasUnprovenRuntimeModuleLoad(content, path) {
+function hasUnprovenRuntimeModuleLoad(content, path, repositoryPaths) {
   if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
   const sourceFile = ts.createSourceFile(
     path,
@@ -3434,8 +3434,18 @@ function hasUnprovenRuntimeModuleLoad(content, path) {
   let found = false;
   const visit = (node) => {
     if (found) return;
+    const provenLiteralDynamicImport =
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      (ts.isStringLiteral(node.arguments[0]) ||
+        ts.isNoSubstitutionTemplateLiteral(node.arguments[0])) &&
+      RELATIVE_MODULE_SPECIFIER.test(node.arguments[0].text) &&
+      repositoryPaths instanceof Set &&
+      resolveRepositoryModule(path, node.arguments[0].text, repositoryPaths) !== null;
     if (
       ts.isCallExpression(node) &&
+      !provenLiteralDynamicImport &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && loaderNames.has(node.expression.text)) ||
         (ts.isCallExpression(node.expression) &&
@@ -3867,7 +3877,7 @@ function createRepositorySnapshot(execFileSync, cwd, sha) {
   };
 }
 
-// Static imports plus literal loader edges select the authority roots that need deep analysis.
+// Traverse every authority dependency before diff pruning so unresolved runtime loaders fail closed.
 function authorityRootsIntersectingDiff(snapshot, candidatePaths) {
   const candidateSet = new Set(candidatePaths);
   const dependenciesByPath = new Map();
@@ -3975,6 +3985,9 @@ function authorityRootsIntersectingDiff(snapshot, candidatePaths) {
       const path = queue.shift();
       if (!path || visited.has(path)) continue;
       visited.add(path);
+      const content = snapshot.read(path);
+      if (hasUnprovenRuntimeModuleLoad(content, path, snapshot.repositoryPaths))
+        throw new Error(`Migration dependency ${path} uses dynamic import or require`);
       if (candidateSet.has(path)) intersects = true;
       for (const dependency of dependenciesFor(path)) queue.push(dependency);
     }
@@ -4054,7 +4067,7 @@ function buildMigrationDependencyClosure(
     if (processedSignatures.get(path) === signature) continue;
     processedSignatures.set(path, signature);
     const content = snapshot.read(path);
-    if (hasUnprovenRuntimeModuleLoad(content, path))
+    if (hasUnprovenRuntimeModuleLoad(content, path, repositoryPaths))
       throw new Error(`Migration dependency ${path} uses dynamic import or require`);
     const migrationExecutionModule = isMigrationExecutionModule(path, content);
     const requestedCallableExport = hasRequestedCallableExport(
@@ -4180,7 +4193,7 @@ export function createMigrationPlan({
       // external JSON/SQL provider changed.
       for (const root of PRODUCTION_STARTUP_SCHEMA_ROOTS) {
         if (!snapshot.repositoryPaths.has(root)) continue;
-        if (hasUnprovenRuntimeModuleLoad(snapshot.read(root), root))
+        if (hasUnprovenRuntimeModuleLoad(snapshot.read(root), root, snapshot.repositoryPaths))
           throw new Error(`Migration dependency ${root} uses dynamic import or require`);
       }
       const roots = authorityRootsIntersectingDiff(snapshot, candidatePaths);

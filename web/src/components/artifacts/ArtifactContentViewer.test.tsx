@@ -41,10 +41,11 @@ describe("M50-02 Web ArtifactContentViewer", () => {
     expect(onPositionChange).toHaveBeenCalledWith({ scrollTop: 88 });
   });
 
-  it("renders Markdown without raw HTML or remote image loading", async () => {
+  it("renders Markdown at a readable width without raw HTML or remote image loading", async () => {
     authFetchMock.mockResolvedValue(new Response("# 标题\n\n<script>window.pwned=1</script>\n\n![远程图](https://evil.test/a.png)\n\n[链接](https://example.com)"));
     render(<ArtifactContentViewer grant={grant("markdown", { name: "说明.md", safeMime: "text/plain; charset=utf-8", size: 100 })} />);
-    expect(await screen.findByRole("heading", { name: "标题" })).toBeTruthy();
+    const heading = await screen.findByRole("heading", { name: "标题" });
+    expect(heading.closest(`.${"max-w-\\[72ch\\]"}`)).toBeTruthy();
     expect(screen.queryByText("window.pwned=1")).toBeNull();
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByText("[图片已阻止：远程图]")).toBeTruthy();

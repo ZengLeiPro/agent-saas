@@ -40,6 +40,7 @@ describe("preload.authPreload", () => {
   beforeEach(() => {
     vi.resetModules();
     localStorage.clear();
+    sessionStorage.clear(); // 身份按 tab 隔离，每个用例=一个全新 tab
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -83,6 +84,7 @@ describe("preload.sessionsPreload", () => {
   beforeEach(() => {
     vi.resetModules();
     localStorage.clear();
+    sessionStorage.clear(); // 身份按 tab 隔离，每个用例=一个全新 tab
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -111,6 +113,7 @@ describe("preload Cron isolation", () => {
   beforeEach(() => {
     vi.resetModules();
     localStorage.clear();
+    sessionStorage.clear(); // 身份按 tab 隔离，每个用例=一个全新 tab
   });
   afterEach(() => vi.unstubAllGlobals());
 

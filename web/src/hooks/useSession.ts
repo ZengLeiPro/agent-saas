@@ -8,6 +8,7 @@ import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionOwnerInfo
 import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
+import { removeTabScopedAuth, writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { sessionsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import {
@@ -471,7 +472,7 @@ export function useSession(
         selectSession(remainingSessions[0].sessionId); await loadDetailPromiseRef.current;
       } else {
         setSessionId(null);
-        localStorage.removeItem(SESSION_STORAGE_KEY);
+        removeTabScopedAuth(SESSION_STORAGE_KEY);
         cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       }
     } catch (err) {
@@ -526,7 +527,7 @@ export function useSession(
       setSessionId(null);
       setTokenUsage(null);
       setContextUsage(null);
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      removeTabScopedAuth(SESSION_STORAGE_KEY);
     }
   }, []);
 
@@ -689,7 +690,7 @@ export function useSession(
     setSessionLoadError(null);
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
-    localStorage.removeItem(SESSION_STORAGE_KEY);
+    removeTabScopedAuth(SESSION_STORAGE_KEY);
   }, []);
 
   const retrySessionLoad = useCallback(() => {
@@ -741,7 +742,7 @@ export function useSession(
   // Persist current session ID (only write when non-null to avoid clearing stored value during init)
   useEffect(() => {
     if (sessionId) {
-      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      writeTabScopedAuth(SESSION_STORAGE_KEY, sessionId);
     }
   }, [sessionId]);
 

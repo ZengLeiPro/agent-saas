@@ -97,3 +97,12 @@ export function createValidReleaseEvidence(overrides = {}) {
   };
   return { ...body, evidenceDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
 }
+
+export function createValidLegacyReleaseEvidence(overrides = {}) {
+  const current = createValidReleaseEvidence();
+  const { evidenceDigest: _currentDigest, ...body } = current;
+  body.schemaVersion = 1;
+  delete body.baselineArtifacts.runtimeDependencies;
+  Object.assign(body, overrides);
+  return { ...body, evidenceDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
+}

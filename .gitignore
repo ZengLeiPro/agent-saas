@@ -108,3 +108,6 @@ e2e/playwright-report/
 # Chaos 门禁报告产物（CI 上传为 artifact，不入库）
 .chaos-reports/
 server/.chaos-reports/
+
+# Worktree 产物（多 agent 并行开发用，不入库）
+.worktrees/

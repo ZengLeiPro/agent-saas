@@ -631,12 +631,15 @@ describe('Agent DWS accounts routes', () => {
     const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/group-workspace`);
     expect(response.status).toBe(200);
     const body = await response.json() as { bindings: Array<{ effectiveConfigComputation: {
-      publishedAgent: { sourceIds: string[] }; channelCeiling: { contextSourceIds: string[] };
+      publishedAgent: { sourceIds: string[] };
+      channelCeiling: { contextSourceIds: string[]; contextDirectoryAvailable: boolean };
     } }> };
     expect(body.bindings[0]!.effectiveConfigComputation.publishedAgent.sourceIds)
       .toEqual(['source-chat', 'source-wiki']);
     expect(body.bindings[0]!.effectiveConfigComputation.channelCeiling.contextSourceIds)
       .toEqual(['source-chat']);
+    expect(body.bindings[0]!.effectiveConfigComputation.channelCeiling.contextDirectoryAvailable)
+      .toBe(true);
   });
 
   it('review 控制会保留待发布成果，并以新控制版本创建后续 attempt', async () => {

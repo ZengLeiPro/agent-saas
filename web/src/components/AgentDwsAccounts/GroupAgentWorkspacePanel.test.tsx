@@ -67,6 +67,26 @@ const workspace = {
         access: { triggerRoles: ['member'], approvalRoles: ['org_admin'] },
         speech: { proactive: false, requireMention: true },
       },
+      effectiveConfigComputation: {
+        publishedAgent: {
+          skillIds: ['skill-1', 'skill-2'],
+          knowledgeSkillIds: [],
+          sourceIds: ['source-1', 'source-2'],
+          executionMode: 'dispatcher',
+          enabled: true,
+        },
+        channelCeiling: {
+          toolNames: ['ContextGet', 'ContextSearch', 'DwsBusiness'],
+          contextSourceIds: ['source-1', 'source-2'],
+          contextDirectoryAvailable: true,
+        },
+        groupNarrowing: {},
+        liveOverrides: {
+          bindingEnabled: true,
+          liveDeny: true,
+          accountStatus: 'active',
+        },
+      },
     },
   ],
   workspaces: [
@@ -321,6 +341,15 @@ describe('GroupAgentWorkspacePanel', () => {
     render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
 
     const displayName = await screen.findByLabelText('前台显示名');
+    expect((screen.getByRole('switch', { name: '技能：skill-1' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    expect((screen.getByRole('switch', { name: '工具：ContextSearch' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    expect((screen.getByRole('switch', { name: '知识源：source-1' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    await user.click(screen.getByRole('switch', { name: '技能：skill-2' }));
+    await user.click(screen.getByRole('switch', { name: '工具：ContextGet' }));
+    await user.click(screen.getByRole('switch', { name: '知识源：source-2' }));
     await user.clear(displayName);
     await user.type(displayName, '客户资料助手');
     const instructions = screen.getByLabelText('群 Agent 指令');
@@ -328,7 +357,7 @@ describe('GroupAgentWorkspacePanel', () => {
     await user.type(instructions, '只处理报价资料');
     await user.click(screen.getByRole('switch', { name: '启用企业上下文' }));
     await user.click(screen.getByRole('switch', { name: '读取 Agent 级记忆' }));
-    await user.click(screen.getByRole('switch', { name: '启用钉钉业务工具' }));
+    await user.click(screen.getByRole('switch', { name: '工具：DwsBusiness' }));
     await user.type(screen.getByLabelText('钉钉资源范围'), 'doc:doc-a');
     await user.click(screen.getByRole('combobox', { name: '任务可见范围' }));
     await user.click(await screen.findByRole('option', { name: '仅发起人可见' }));
@@ -342,9 +371,10 @@ describe('GroupAgentWorkspacePanel', () => {
       effectiveConfig: {
         identity: { displayName: '客户资料助手' },
         instructions: { system: '只处理报价资料' },
-        knowledge: { contextEnabled: false },
+        knowledge: { contextEnabled: false, sourceIds: ['source-1', 'source-2'] },
         capabilities: {
-          toolNames: ['ContextSearch', 'DwsBusiness'],
+          skillIds: ['skill-1', 'skill-2'],
+          toolNames: ['ContextSearch', 'ContextGet', 'DwsBusiness'],
           dwsResourceIds: ['doc:doc-a'],
         },
         memory: { readAgent: false, readConversation: true, adminWriteConversation: true },
@@ -353,6 +383,43 @@ describe('GroupAgentWorkspacePanel', () => {
       },
     });
     expect(screen.getByText('当前仅支持群内 @ 前台账号触发；必须 @，不支持主动发言。')).toBeTruthy();
+  });
+
+  it('非候选能力不可新增，既有越界值只能显式移除', async () => {
+    const narrowedWorkspace = structuredClone(workspace);
+    narrowedWorkspace.bindings[0].effectiveConfig.capabilities.skillIds.push('skill-legacy');
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (String(path).includes('/group-workspace?') && !init?.method)
+        return jsonResponse(narrowedWorkspace);
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByRole('switch', { name: '技能：skill-1' })).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: '技能：skill-not-published' })).toBeNull();
+    const legacy = screen.getByRole('switch', { name: '技能：移除非目录值 skill-legacy' });
+    expect((legacy as HTMLButtonElement).dataset.state).toBe('checked');
+    expect(screen.getByText('以下既有值不在当前目录中，只能保留或移除，不能新增：')).toBeTruthy();
+  });
+
+  it('空能力目录与不可用知识源目录展示明确限制并保留既有值', async () => {
+    const emptyWorkspace = structuredClone(workspace);
+    emptyWorkspace.bindings[0].effectiveConfigComputation.publishedAgent.skillIds = [];
+    emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.toolNames = [];
+    emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.contextDirectoryAvailable = false;
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (String(path).includes('/group-workspace?') && !init?.method)
+        return jsonResponse(emptyWorkspace);
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByText('当前 Agent 未发布可选技能，无法为该群新增技能。')).toBeTruthy();
+    expect(screen.getByText('当前群入口未开放可选工具。')).toBeTruthy();
+    expect(screen.getByText('知识源目录暂不可用；已保留当前配置，请刷新或检查账号的 Context 授权。')).toBeTruthy();
+    expect(screen.getByText('当前保留：source-1')).toBeTruthy();
+    expect(screen.getByText(/当前接口无法枚举 DWS 资源/)).toBeTruthy();
+    expect(screen.getByText(/<module>:<resourceId>/)).toBeTruthy();
   });
 
   it('任务控制调用 amend、pause、resume、review 与 reassign API', async () => {

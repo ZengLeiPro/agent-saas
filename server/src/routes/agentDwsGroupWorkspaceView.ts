@@ -15,7 +15,11 @@ export async function buildGroupWorkspaceView(input: {
   agentStore: Pick<OrgAgentStore, 'get'>;
   limit: number;
   frontdeskTools: ReadonlySet<string>;
-  contextCeiling: { publishedSourceIds: string[]; channelSourceIds: string[] };
+  contextCeiling: {
+    available: boolean;
+    publishedSourceIds: string[];
+    channelSourceIds: string[];
+  };
 }) {
   const groupBindings = input.bindings.filter((binding) => binding.channelKind === 'group');
   const data = await input.store.loadGroupWorkspace({
@@ -73,6 +77,7 @@ export async function buildGroupWorkspaceView(input: {
           channelCeiling: {
             toolNames: [...input.frontdeskTools].sort(),
             contextSourceIds: input.contextCeiling.channelSourceIds,
+            contextDirectoryAvailable: input.contextCeiling.available,
           },
           groupNarrowing: binding.effectiveConfig,
           liveOverrides: {

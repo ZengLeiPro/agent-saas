@@ -52,7 +52,26 @@ export interface Binding {
     access: { triggerRoles: string[]; approvalRoles: string[] };
     speech: { proactive: boolean; requireMention: boolean };
   };
-  effectiveConfigComputation?: Record<string, unknown>;
+  effectiveConfigComputation?: {
+    publishedAgent: {
+      skillIds: string[];
+      knowledgeSkillIds: string[];
+      sourceIds: string[];
+      executionMode: string;
+      enabled: boolean;
+    };
+    channelCeiling: {
+      toolNames: string[];
+      contextSourceIds: string[];
+      contextDirectoryAvailable: boolean;
+    };
+    groupNarrowing: Binding['effectiveConfig'];
+    liveOverrides: {
+      bindingEnabled: boolean;
+      liveDeny: boolean;
+      accountStatus: string;
+    };
+  };
 }
 
 export interface WorkOrder {
@@ -493,13 +512,21 @@ function BindingEditor({
   const [taskVisibility, setTaskVisibility] = useState(binding.policy.taskVisibility);
   const [triggerRoles, setTriggerRoles] = useState(binding.effectiveConfig.access.triggerRoles);
   const [approvalRoles, setApprovalRoles] = useState(binding.effectiveConfig.access.approvalRoles);
-  const [skills, setSkills] = useState(binding.effectiveConfig.capabilities.skillIds.join(', '));
-  const [tools, setTools] = useState(binding.effectiveConfig.capabilities.toolNames.join(', '));
+  const [skills, setSkills] = useState(binding.effectiveConfig.capabilities.skillIds);
+  const [tools, setTools] = useState(binding.effectiveConfig.capabilities.toolNames);
   const [dwsResources, setDwsResources] = useState(
     binding.effectiveConfig.capabilities.dwsResourceIds.join(', '),
   );
-  const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds.join(', '));
+  const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds);
   const [memoryPolicy, setMemoryPolicy] = useState(binding.effectiveConfig.memory);
+  const computation = binding.effectiveConfigComputation;
+  const skillCatalog = computation?.publishedAgent.skillIds;
+  const toolCatalog = computation?.channelCeiling.toolNames;
+  const sourceCatalog = computation?.channelCeiling.contextDirectoryAvailable
+    ? computation.channelCeiling.contextSourceIds.filter((sourceId) =>
+        computation.publishedAgent.sourceIds.includes(sourceId),
+      )
+    : undefined;
   const save = async () => {
     onBusy(`binding:${binding.bindingId}`);
     onError('');
@@ -528,11 +555,11 @@ function BindingEditor({
               instructions: { system: instructions.trim() },
               knowledge: {
                 contextEnabled,
-                sourceIds: csv(sources),
+                sourceIds: sources,
               },
               capabilities: {
-                skillIds: csv(skills),
-                toolNames: csv(tools),
+                skillIds: skills,
+                toolNames: tools,
                 dwsResourceIds: csv(dwsResources),
               },
               memory: memoryPolicy,
@@ -586,29 +613,33 @@ function BindingEditor({
             onChange={(event) => setDisplayName(event.target.value)}
           />
         </div>
-        <div>
-          <Label>技能 ID</Label>
-          <Input value={skills} onChange={(event) => setSkills(event.target.value)} />
-        </div>
-        <div>
-          <Label>工具名</Label>
-          <Input value={tools} onChange={(event) => setTools(event.target.value)} />
-          <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-            <Switch
-              checked={csv(tools).includes('DwsBusiness')}
-              onCheckedChange={(checked) => {
-                const next = csv(tools).filter((name) => name !== 'DwsBusiness');
-                setTools((checked ? [...next, 'DwsBusiness'] : next).join(', '));
-              }}
-              aria-label="启用钉钉业务工具"
-            />
-            启用钉钉业务工具（共享群受动作矩阵约束）
-          </label>
-        </div>
-        <div>
-          <Label>知识源 ID</Label>
-          <Input value={sources} onChange={(event) => setSources(event.target.value)} />
-        </div>
+        <CapabilityToggles
+          label="技能"
+          options={skillCatalog}
+          selected={skills}
+          onChange={setSkills}
+          emptyMessage="当前 Agent 未发布可选技能，无法为该群新增技能。"
+          unavailableMessage="技能目录暂不可用；已保留当前配置，请刷新后再选择。"
+        />
+        <CapabilityToggles
+          label="工具"
+          options={toolCatalog}
+          selected={tools}
+          onChange={setTools}
+          emptyMessage="当前群入口未开放可选工具。"
+          unavailableMessage="工具目录暂不可用；已保留当前配置，请刷新后再选择。"
+          formatOption={(value) => value === 'DwsBusiness'
+            ? 'DwsBusiness（钉钉业务工具）'
+            : value}
+        />
+        <CapabilityToggles
+          label="知识源"
+          options={sourceCatalog}
+          selected={sources}
+          onChange={setSources}
+          emptyMessage="当前 Agent 与群授权范围没有交集，无法选择知识源。"
+          unavailableMessage="知识源目录暂不可用；已保留当前配置，请刷新或检查账号的 Context 授权。"
+        />
         <div>
           <Label htmlFor={`dws-resources-${binding.bindingId}`}>钉钉资源范围</Label>
           <Input
@@ -618,7 +649,9 @@ function BindingEditor({
             onChange={(event) => setDwsResources(event.target.value)}
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            启用钉钉业务工具时必填；格式为模块:资源ID，多个用逗号分隔。
+            当前接口无法枚举 DWS 资源。请在对应钉钉文档或云盘的资源详情/地址中复制节点或文件夹 ID，
+            再按 &lt;module&gt;:&lt;resourceId&gt; 填写（如 doc:节点ID、drive:文件夹ID），多个用逗号分隔。
+            不确定 ID 时先不要选择 DwsBusiness，避免凭名称猜测。
           </p>
         </div>
       </div>
@@ -632,7 +665,7 @@ function BindingEditor({
           启用企业上下文
         </label>
         <p className="text-xs text-muted-foreground md:col-span-2">
-          启用后须配置知识源，并在工具名中保留 ContextSearch 与 ContextGet；服务端会按当前群绑定再次校验。
+          启用后须从上方目录选择知识源，并保留 ContextSearch 与 ContextGet；服务端会按当前群绑定再次校验。
         </p>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
@@ -735,6 +768,73 @@ function BindingEditor({
         </pre>
       </details>
     </section>
+  );
+}
+
+function CapabilityToggles({
+  label,
+  options,
+  selected,
+  onChange,
+  emptyMessage,
+  unavailableMessage,
+  formatOption = (value) => value,
+}: {
+  label: string;
+  options?: string[];
+  selected: string[];
+  onChange(value: string[]): void;
+  emptyMessage: string;
+  unavailableMessage: string;
+  formatOption?(value: string): string;
+}) {
+  const catalog = options ? [...new Set(options)].sort() : undefined;
+  const staleSelections = catalog
+    ? selected.filter((value) => !catalog.includes(value))
+    : [];
+  const toggle = (value: string, checked: boolean) => {
+    onChange(checked
+      ? [...new Set([...selected, value])]
+      : selected.filter((item) => item !== value));
+  };
+  return (
+    <fieldset className="min-w-0 space-y-2 rounded-md border p-3">
+      <legend className="px-1 text-sm font-medium">{label}</legend>
+      {catalog?.map((value) => (
+        <label key={value} className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={selected.includes(value)}
+            onCheckedChange={(checked) => toggle(value, checked)}
+            aria-label={`${label}：${value}`}
+          />
+          <span className="break-all">{formatOption(value)}</span>
+        </label>
+      ))}
+      {catalog && catalog.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{emptyMessage}</p>
+      ) : null}
+      {!catalog ? (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>{unavailableMessage}</p>
+          {selected.length ? <p className="break-all">当前保留：{selected.join('、')}</p> : null}
+        </div>
+      ) : null}
+      {staleSelections.length ? (
+        <div className="space-y-1 rounded-md bg-muted p-2 text-xs text-muted-foreground">
+          <p>以下既有值不在当前目录中，只能保留或移除，不能新增：</p>
+          {staleSelections.map((value) => (
+            <label key={value} className="flex items-center gap-2">
+              <Switch
+                checked
+                onCheckedChange={(checked) => toggle(value, checked)}
+                aria-label={`${label}：移除非目录值 ${value}`}
+              />
+              <span className="break-all">{value}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </fieldset>
   );
 }
 

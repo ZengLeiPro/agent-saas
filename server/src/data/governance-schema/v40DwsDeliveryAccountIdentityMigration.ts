@@ -1,7 +1,7 @@
 // Legacy N rows stay all-NULL; N+1 rows are required to carry a complete identity tuple.
 export function governanceV40DwsDeliveryAccountIdentityStatements(prefix: string): string[] {
-  const deliveries = `${prefix}_dws_delivery_intents`;
-  const completeIdentity = `${prefix}_ddi_identity_ck`;
+  const deliveries = `${prefix}_agent_dws_delivery_intents`;
+  const completeIdentity = `${prefix}_adws_di_identity_ck`;
   return [
     `ALTER TABLE ${deliveries}
       ADD COLUMN IF NOT EXISTS account_profile_id TEXT,

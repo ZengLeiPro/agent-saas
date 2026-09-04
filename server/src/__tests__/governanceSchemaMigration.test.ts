@@ -228,10 +228,13 @@ describe('Governance schema migration SQL fixtures', () => {
 
   it('V40 仅 expand durable delivery 的账号身份纪元且不回填 legacy', () => {
     const sql = governanceV40DwsDeliveryAccountIdentityStatements('safe').join('\n');
-    expect(sql).toContain('ALTER TABLE safe_dws_delivery_intents');
+    expect(sql).toContain('ALTER TABLE safe_agent_dws_delivery_intents');
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_profile_id TEXT');
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_identity_updated_at TIMESTAMPTZ');
-    expect(sql).not.toContain('UPDATE safe_dws_delivery_intents');
+    expect(sql).toContain('CONSTRAINT safe_adws_di_identity_ck');
+    expect(sql).toContain('account_profile_id IS NULL AND account_corp_id IS NULL');
+    expect(sql).toContain('account_profile_id IS NOT NULL AND account_corp_id IS NOT NULL');
+    expect(sql).not.toContain('UPDATE safe_agent_dws_delivery_intents');
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
   });
 });

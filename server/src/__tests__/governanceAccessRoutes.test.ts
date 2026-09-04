@@ -3,7 +3,10 @@ import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { JwtPayload } from '../auth/types.js';
+import type { AppRuntime } from '../app/runtime.js';
+import { createEntitlementResourceCatalogResolver, createEntitlementResourceResolver } from '../app/runtimeAssignmentResourceResolver.js';
 import { MembershipInvariantError, type TenantMembership } from '../data/memberships/index.js';
+import type { EntitlementResourceType } from '../data/entitlements/types.js';
 import type { OAuthGrant } from '../data/oauthGrants/types.js';
 import type { BillingMemberBudgetOverview } from '../data/billing/types.js';
 import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
@@ -53,8 +56,8 @@ async function rig(input: {
   getAssignmentSet?: ReturnType<typeof vi.fn>;
   listEffectiveResources?: ReturnType<typeof vi.fn>;
   resolveAssignmentResource?: (tenantId: string, resourceType: string, resourceId: string) => Promise<'valid' | 'not_found' | 'unavailable'>;
-  resolveEntitlementResource?: (resourceType: string, resourceId: string) => Promise<{ status: 'valid'; version: number } | { status: 'not_found' | 'unavailable' }>;
-  listEntitlementResources?: (resourceType: string) => Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }>;
+  resolveEntitlementResource?: (resourceType: EntitlementResourceType, resourceId: string) => Promise<{ status: 'valid'; version: number } | { status: 'not_found' | 'unavailable' }>;
+  listEntitlementResources?: (resourceType: EntitlementResourceType) => Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }>;
   oauthGrants?: { listForSubject(tenantId: string, subjectUserId: string): Promise<unknown[]>; getForSubject?: ReturnType<typeof vi.fn>; markRevocationPending?: ReturnType<typeof vi.fn>; markProviderRevoking?: ReturnType<typeof vi.fn>; markProviderRevoked?: ReturnType<typeof vi.fn>; markRevocationRetry?: ReturnType<typeof vi.fn>; recordRevocation?: ReturnType<typeof vi.fn> };
   revokeOAuthGrant?: (grant: OAuthGrant, user: JwtPayload) => Promise<void>;
   createTenant?: (input: { id: string; name: string; createdBy: string }) => Promise<{
@@ -75,6 +78,8 @@ async function rig(input: {
   getMemberBudgetOverview?: (tenantId: string, userId: string) => Promise<BillingMemberBudgetOverview>;
   now?: () => Date;
   scopeResourceIds?: string[];
+  scopeResourceType?: 'skill' | 'tool';
+  statefulScope?: boolean;
 } = {}) {
   const user = input.user ?? { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' };
   const actor = input.actor ?? membership({
@@ -117,13 +122,25 @@ async function rig(input: {
     tenantId: 'tenant-a', source: 'governance', status: 'active', limits: {}, version: 1,
     createdAt: NOW, createdBy: 'platform-1', updatedAt: NOW, updatedBy: 'platform-1',
   };
-  const scope = {
-    tenantId: 'tenant-a', resourceType: 'skill', mode: input.scopeResourceIds ? 'selected' : 'all',
+  let scope = {
+    tenantId: 'tenant-a', resourceType: input.scopeResourceType ?? 'skill', mode: input.scopeResourceIds ? 'selected' : 'all',
     resourceIds: input.scopeResourceIds ?? [], source: 'governance',
     version: 1, createdAt: NOW, createdBy: 'platform-1', updatedAt: NOW, updatedBy: 'platform-1',
   };
   const updateEntitlement = vi.fn().mockResolvedValue({ ...entitlement, status: 'suspended', version: 2 });
-  const replaceScope = vi.fn().mockResolvedValue({ ...scope, mode: 'selected', resourceIds: ['skill-1'], version: 2 });
+  const replaceScope = input.statefulScope
+    ? vi.fn().mockImplementation(async (_tenantId: string, resourceType: 'skill' | 'tool', patch: { mode: 'all' | 'selected'; resourceIds: string[] }) => {
+      scope = {
+        ...scope,
+        resourceType,
+        mode: patch.mode,
+        resourceIds: patch.mode === 'all' ? [] : patch.resourceIds,
+        version: scope.version + 1,
+        updatedAt: '2026-08-10T09:01:00.000Z',
+      };
+      return scope;
+    })
+    : vi.fn().mockResolvedValue({ ...scope, mode: 'selected', resourceIds: ['skill-1'], version: 2 });
   const createTenant = vi.fn(input.createTenant ?? (async (tenantInput: { id: string; name: string; createdBy: string }) => ({
     ...tenantInput,
     createdAt: NOW,
@@ -154,7 +171,7 @@ async function rig(input: {
     } as never,
     entitlements: {
       getEntitlementSet: vi.fn().mockResolvedValue(entitlement),
-      listResourceScopes: vi.fn().mockResolvedValue([scope]),
+      listResourceScopes: vi.fn().mockImplementation(async () => [scope]),
       getPolicies: vi.fn().mockResolvedValue([]),
       updateEntitlementSet: updateEntitlement,
       replaceResourceScope: replaceScope,
@@ -510,6 +527,38 @@ describe('governance access routes', () => {
     );
     expect(scopeCommit.status).toBe(200);
     expect(test.replaceScope).toHaveBeenCalledWith('tenant-a', 'skill', expect.objectContaining({ expectedVersion: 1, mode: 'selected' }));
+  });
+
+  it('tool scope 可从 selected 切 all 后再次恢复 personal_agent', async () => {
+    const runtime = { config: {} } as AppRuntime;
+    const test = await rig({
+      user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
+      platformAdmin: true,
+      scopeResourceType: 'tool',
+      scopeResourceIds: ['personal_agent'],
+      statefulScope: true,
+      listEntitlementResources: createEntitlementResourceCatalogResolver(runtime),
+      resolveEntitlementResource: createEntitlementResourceResolver(runtime),
+    });
+
+    const commitScope = async (change: { expectedVersion: number; mode: 'all' | 'selected'; resourceIds: string[] }) => {
+      const previewResponse = await test.request(
+        '/api/governance/access/entitlement-scopes/tool/preview?tenantId=tenant-a', json('POST', change),
+      );
+      expect(previewResponse.status).toBe(200);
+      const preview = await previewResponse.json() as Record<string, unknown>;
+      const commit = await test.request(
+        '/api/governance/access/entitlement-scopes/tool?tenantId=tenant-a',
+        json('PUT', commitBody(change, preview)),
+      );
+      expect(commit.status).toBe(200);
+      return commit.json() as Promise<{ mode: string; resourceIds: string[]; version: number }>;
+    };
+
+    await expect(commitScope({ expectedVersion: 1, mode: 'all', resourceIds: [] }))
+      .resolves.toMatchObject({ mode: 'all', resourceIds: [], version: 2 });
+    await expect(commitScope({ expectedVersion: 2, mode: 'selected', resourceIds: ['personal_agent'] }))
+      .resolves.toMatchObject({ mode: 'selected', resourceIds: ['personal_agent'], version: 3 });
   });
 
   it('普通 org_admin 不能提升成员或修改同级管理员状态', async () => {

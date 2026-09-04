@@ -1,6 +1,5 @@
-import { PLATFORM_TOOL_CATALOG, PLATFORM_TOOL_CATALOG_BY_ID } from '../agent/toolCatalog.js';
 import type { AssignmentResourceType } from '../data/assignments/index.js';
-import type { EntitlementResourceType } from '../data/entitlements/types.js';
+import { TOOL_ENTITLEMENT_RESOURCE_IDS, type EntitlementResourceType } from '../data/entitlements/types.js';
 import type { AppRuntime } from './runtime.js';
 
 export function createAssignmentResourceResolver(runtime: AppRuntime) {
@@ -68,7 +67,7 @@ export function createEntitlementResourceCatalogResolver(runtime: AppRuntime) {
     if (resourceType === 'tool') {
       return {
         status: 'valid',
-        items: PLATFORM_TOOL_CATALOG.map(tool => ({ resourceId: tool.id, version: 1 })),
+        items: TOOL_ENTITLEMENT_RESOURCE_IDS.map(resourceId => ({ resourceId, version: 1 })),
       };
     }
     if (resourceType === 'agent_template') {
@@ -110,7 +109,7 @@ export function createEntitlementResourceResolver(runtime: AppRuntime) {
       return exists ? { status: 'valid', version: 1 } : { status: 'not_found' };
     }
     if (resourceType === 'tool') {
-      return PLATFORM_TOOL_CATALOG_BY_ID.has(resourceId)
+      return (TOOL_ENTITLEMENT_RESOURCE_IDS as readonly string[]).includes(resourceId)
         ? { status: 'valid', version: 1 }
         : { status: 'not_found' };
     }

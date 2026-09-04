@@ -42,14 +42,14 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 `ACR_READ_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
 `OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、`PRODUCTION_OBSERVATION_TOKEN`、
 `RELEASE_EVIDENCE_WRITE_TOKEN`。ACR 两项只允许读取 build record、构建日志与 image metadata；
-ACS workflow 用短 tag 选候选后，必须从 `GIT_CLONE` 日志绑定完整 40 位 commit SHA；解析 digest 前后还要确认候选 tag 只有一个固定的 `BuildRecordId`，并对 tag 做两次稳定读回。最终部署只使用 digest reference。ACR API 不直接返回 build-record digest，因此代码保证仍依赖现场 ACR 写权限只授予受控构建链，禁止人工或其他身份重定向候选 tag。
+ACS workflow 会遍历 ACR build-record API 的全部分页，用短 tag 筛选全局唯一候选，并从 `GIT_CLONE` 日志绑定完整 40 位 commit SHA；分页总数漂移、记录缺失或重复都会 fail closed。解析 digest 前后还要再次遍历全部分页，确认候选 tag 仍只有一个固定的 `BuildRecordId`，并对 tag 做两次稳定读回。最终部署只使用 digest reference。ACR API 不直接返回 build-record digest，因此代码保证仍依赖现场 ACR 写权限只授予受控构建链，禁止人工或其他身份重定向候选 tag。
 
 可选恢复 Secret：`ACS_WEBHOOK_REDELIVERY_TOKEN`。它只供 ACS compatibility 在当前 SHA 的 ACR
 自动构建记录缺失时补投一次 GitHub webhook；必须配置在 `production` Environment，并限制为仅对
 `ZengLeiPro/agent-saas` 具有 `Webhooks: write` 的 fine-grained token。正常命中当前 SHA 构建记录时
 不需要它；需要补投但未配置时，`build-deploy` fail closed，不会改用个人 broad-scope token。
 
-管理员还必须审计 ACR repository 的写入主体；任何可直接覆盖候选 tag 的非构建身份都会越过仓库内可证明边界。
+管理员还必须审计 ACR repository 的写入主体；全量分页不能证明 record 与 digest 的服务端归属，任何可直接覆盖候选 tag 的非构建身份仍会越过仓库内可证明边界。
 
 App compatibility 的 `deploy_plan`、`deploy-ecs`、`deploy-web-oss` 与 ACS compatibility 的
 `build-deploy` job 均显式绑定 `production` Environment。生产凭据的权威配置位置是该 Environment；

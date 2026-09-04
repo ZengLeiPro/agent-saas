@@ -570,12 +570,8 @@ jobs:
           while true; do
             poll_index=$((poll_index + 1))
             set +e
-            aliyun cr ListRepoBuildRecord \
-              --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
-              --region "$ACR_REGION_ID" \
-              --InstanceId "$ACR_INSTANCE_ID" \
-              --RepoId "$ACR_REPO_ID" \
-              --PageNo 1 --PageSize 20 >"$records_file" 2>"$query_error_file"
+            bash scripts/release/list-acr-build-records.sh \
+              "$records_file" 2>"$query_error_file"
             query_status=$?
             set -e
             result=$(python3 - "$SHA6" "$query_status" "$records_file" "$query_error_file" <<'PY'
@@ -742,11 +738,8 @@ jobs:
           # A build can retarget the mutable six-character tag after revision verification.
           # Re-read the record inventory around a second tag lookup and require the same sole
           # BuildRecordId plus a stable digest before pinning the digest reference.
-          aliyun cr ListRepoBuildRecord \
-            --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
-            --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
-            --RepoId "$ACR_REPO_ID" --PageNo 1 --PageSize 100 \
-            > "$RUNNER_TEMP/acr-build-records-confirmed.json"
+          bash scripts/release/list-acr-build-records.sh \
+            "$RUNNER_TEMP/acr-build-records-confirmed.json"
           python3 - "$image_tag" '${{ steps.wait.outputs.build_record_id }}' \
             "$RUNNER_TEMP/acr-build-records-confirmed.json" <<'PY'
           import json, pathlib, sys

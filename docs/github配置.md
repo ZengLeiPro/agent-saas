@@ -300,6 +300,8 @@ NODE
 
 - `ALIYUN_ACCESS_KEY_ID`
 - `ALIYUN_ACCESS_KEY_SECRET`
+- `ACR_READ_ACCESS_KEY_ID`
+- `ACR_READ_ACCESS_KEY_SECRET`
 - `STAGING_ECS_HOST`
 - `STAGING_ECS_USER`
 - `STAGING_ECS_SSH_KEY`
@@ -309,7 +311,8 @@ NODE
 
 要求：
 
-- 阿里云凭据必须属于 Staging 专用、最小权限 RAM 身份，不得复用生产身份。
+- 通用阿里云凭据必须属于 Staging 专用、最小权限 RAM 身份，不得复用生产身份。
+- `ACR_READ_ACCESS_KEY_ID` / `ACR_READ_ACCESS_KEY_SECRET` 仅允许读取 ACR build record、构建日志和 image metadata，禁止创建、覆盖或删除镜像；必须按上述命令写入 `staging` Environment，不得给 Staging 通用 RAM 身份追加 ACR 权限。
 - SSH 私钥必须对应 Staging ECS 用户。
 - `RELEASE_EVIDENCE_TOKEN` 必须是 Evidence Service 的只读 Token，不得使用写入 Token。
 - E2E 账号必须是隔离 Staging 专用平台管理员测试账号。

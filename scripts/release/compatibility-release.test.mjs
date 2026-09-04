@@ -310,7 +310,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     '      - name: Snapshot trusted Production identity before Web transaction',
   );
   const webEntrySnapshotStart = appWorkflow.indexOf(
-    '      - name: Snapshot all mutable Web keys before transaction',
+    '      - name: Snapshot all mutable Web keys under continuously verified Production lock ownership',
   );
   const recoverySnapshot = appWorkflow.slice(recoverySnapshotStart, webEntrySnapshotStart);
   assert.match(
@@ -551,9 +551,10 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
 });
 
 test('holds one production host lock through compatibility Web commit and compensation', async () => {
-  const [workflow, lease] = await Promise.all([
+  const [workflow, lease, guard] = await Promise.all([
     readFile('.github/workflows/ci.yml', 'utf8'),
     readFile('scripts/release/production-lock-lease.sh', 'utf8'),
+    readFile('scripts/release/run-with-production-lock-guard.sh', 'utf8'),
   ]);
   assert.match(workflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
   const acquire = workflow.indexOf(
@@ -598,14 +599,16 @@ test('holds one production host lock through compatibility Web commit and compen
   assert.doesNotMatch(identity, /production-identity-payload\.sha256/u);
   assert.match(identity, /sudo node '\$remote\/read-live-production-components\.mjs'/u);
   const uploadMutation = workflow.slice(upload, commit);
-  assert.match(uploadMutation, /run_guarded bash -c upload_web/u);
-  assert.match(uploadMutation, /setsid "\$@"/u);
-  assert.match(uploadMutation, /timeout --signal=TERM --kill-after=2 10 ssh/u);
-  assert.match(
-    uploadMutation,
-    /Production host lock owner proof was lost; guarded Web mutation was terminated/u,
-  );
-  assert.match(uploadMutation, /kill -KILL -- "-\$guarded_pid"/u);
+  assert.match(uploadMutation, /run-with-production-lock-guard\.sh bash -c upload_web/u);
+  assert.equal(workflow.match(/run-with-production-lock-guard\.sh bash -c/gu)?.length, 3);
+  assert.match(workflow, /run-with-production-lock-guard\.sh bash -c snapshot_web/u);
+  assert.match(workflow, /run-with-production-lock-guard\.sh bash -c restore_web/u);
+  assert.match(guard, /setsid --wait bash -c/u);
+  assert.match(guard, /timeout --signal=TERM --kill-after=2 10 ssh/u);
+  assert.match(guard, /owner proof was lost; guarded mutation process group was terminated/u);
+  assert.match(guard, /kill -KILL -- "-\$guarded_pid"/u);
+  assert.match(guard, /ps -o stat= -p "\$guarded_pid"/u);
+  assert.match(guard, /exec "\$@"/u);
   assert.match(identity, /sudo rm -rf -- '\$remote'/u);
   assert.doesNotMatch(identity, /sudo rm -rf -- '\$remote'[^\n]*\|\| true/u);
   assert.match(lease, /flock -n 9/u);
@@ -667,7 +670,7 @@ test('pins and probes the real OSS client capabilities used by immutable uploads
 test('snapshots, restores, and proves every mutable Web key class and metadata', async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
   const snapshotStart = workflow.indexOf(
-    '      - name: Snapshot all mutable Web keys before transaction',
+    '      - name: Snapshot all mutable Web keys under continuously verified Production lock ownership',
   );
   const uploadStart = workflow.indexOf('      - name: Upload to OSS', snapshotStart);
   const identityStart = workflow.indexOf(
@@ -675,7 +678,7 @@ test('snapshots, restores, and proves every mutable Web key class and metadata',
     uploadStart,
   );
   const restoreStart = workflow.indexOf(
-    '      - name: Restore all previous mutable Web keys on failure',
+    '      - name: Restore all previous mutable Web keys under continuously verified Production lock ownership',
   );
   const proofStart = workflow.indexOf(
     '      - name: Prove previous Web and trusted identity after compensation',

@@ -79,7 +79,7 @@ is_packaged_runtime_path() {
     "$repo_root/.github/acs-runtime-inputs.txt"
 }
 
-# Keep esbuild source inputs centralized instead of duplicating them in the case list below.
+# Keep esbuild source inputs centralized; workflow-only production helpers stay explicit below.
 is_bundle_input_path() {
   while IFS= read -r pattern; do
     [ -n "$pattern" ] || continue
@@ -100,7 +100,7 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-bundle-inputs.txt|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/manage-acs-systemd-unit.sh|scripts/release/create-component-artifact-index.mjs|scripts/release/seal-root-staged-payload.sh|scripts/release/verify-acr-build-revision.mjs|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-bundle-inputs.txt|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/manage-acs-systemd-unit.sh|scripts/release/create-component-artifact-index.mjs|scripts/release/seal-root-staged-payload.sh|scripts/release/verify-acr-build-revision.mjs|scripts/release/list-acr-build-records.sh|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)

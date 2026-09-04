@@ -11,6 +11,10 @@ const workflowPath = fileURLToPath(
   new URL('../../../.github/workflows/acs-sandbox.yml', import.meta.url),
 );
 const workflow = readFileSync(workflowPath, 'utf8');
+const acrRecordListHelper = readFileSync(
+  fileURLToPath(new URL('../../../scripts/release/list-acr-build-records.sh', import.meta.url)),
+  'utf8',
+);
 const ciWorkflow = readFileSync(
   fileURLToPath(new URL('../../../.github/workflows/ci.yml', import.meta.url)),
   'utf-8',
@@ -108,6 +112,11 @@ const classificationCases = [
   },
   {
     path: 'scripts/release/verify-acr-build-revision.mjs',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  {
+    path: 'scripts/release/list-acr-build-records.sh',
     publish: 'true',
     contractCheck: 'false',
   },
@@ -451,7 +460,10 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).toContain('if len(matches) > 1:');
     expect(workflow).toContain('selected_build_record_id');
     expect(workflow).toContain('acr-build-records-confirmed.json');
-    expect(workflow).toContain('--PageNo 1 --PageSize 100');
+    expect(workflow).toContain('scripts/release/list-acr-build-records.sh');
+    expect(acrRecordListHelper).toContain('page_size=100');
+    expect(acrRecordListHelper).toContain('total changed during pagination');
+    expect(acrRecordListHelper).toContain('records.length !== expectedTotal');
     expect(workflow).toContain('ACR tag no longer has one selected BuildRecordId');
     expect(workflow).toContain('test "$confirmed_digest" = "$image_digest"');
     expect(workflow).toContain("GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT'");

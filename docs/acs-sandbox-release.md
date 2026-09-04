@@ -223,8 +223,8 @@ curl -sf http://127.0.0.1:3400/health
 - `Classify ACS Impact` 通过 `.github/scripts/acs-classify.sh` 读取 changed files，输出 `publish` / `contract_check`；workflow 顶层没有 `paths` 过滤。
 - `main` push 只分类并执行相应测试，不进入生产 `build-deploy`；只有最新 `main` 的 `workflow_dispatch` 才能进入该 job，非 `main` dispatch 也不会进入。
 - `publish=true` 时跑 typecheck、orchestrator tests 与 operational scripts；镜像由 GitHub push webhook 触发 ACR EE 源码构建。
-- `workflow_dispatch` 先用 tag 的 6 位 SHA 后缀筛选唯一 ACR build record，再从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`；解析前后必须维持同一 `BuildRecordId` 且两次 tag digest 读回稳定，最终只部署 digest reference。ACR build-record API 不直接返回产物 digest，因此现场必须把候选 tag 的写权限限制在受控构建链；不能把短 tag 或可被外部改写的 tag 本身当作精确 SHA 证据。读取生产 Secret 的 `build-deploy` job 显式绑定 `production` Environment。
-- 完整 revision 候选构建记录连续两次缺失时，按 `push + refs/heads/main + payload.after=GITHUB_SHA` 精确定位失败的 ACR webhook delivery，最多自动补投一次，然后继续原轮询；找不到或补投失败仍保持 fail-fast。
+- `workflow_dispatch` 遍历 ACR build-record API 全部分页，以 tag 的 6 位 SHA 后缀筛选全局唯一 build record；分页总数漂移、记录缺失或重复都会 fail closed。随后从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`；解析前后必须再次遍历全部分页并维持同一 `BuildRecordId`，且两次 tag digest 读回稳定，最终只部署 digest reference。ACR build-record API 不直接返回产物 digest，因此现场必须把候选 tag 的写权限限制在受控构建链；不能把短 tag 或可被外部改写的 tag 本身当作精确 SHA 证据。读取生产 Secret 的 `build-deploy` job 显式绑定 `production` Environment。
+- 全量分页后仍找不到完整 revision 候选构建记录且连续两次缺失时，按 `push + refs/heads/main + payload.after=GITHUB_SHA` 精确定位失败的 ACR webhook delivery，最多自动补投一次，然后继续原轮询；找不到或补投失败仍保持 fail-fast。
 - 将 orchestrator release 包和安全解包 helper 上传到 ECS 的 root-only `/run/agent-saas-production-staging/`；部署脚本先校验 helper 的 runner-side SHA-256，再拒绝路径穿越、链接和特殊文件，仅从已验证目录安装制品。随后更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`，并通过 drain 旧进程后由 systemd 拉起新版本；任一早期失败与正常结束都会清理该 staging。
 - 正式跑 `/provision + /execute Shell` smoke，断言 workspace venv 路径、base Python 包 import、`ACS_SANDBOX_DEPLOY_SMOKE_OK`。
 - `/health` 暴露当前 Sandbox image、runtime contract、capabilities、networkPolicy、SNAT 与 Sandbox inventory。

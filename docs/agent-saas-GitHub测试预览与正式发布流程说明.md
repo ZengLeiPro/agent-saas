@@ -104,7 +104,7 @@ GitHub 现场已有两套 active Ruleset，且都没有 bypass actor：
 - 只改 contract/test fixture：只跑 contract check，不发布镜像。
 - 真正影响 ACS：执行 Server/Orchestrator typecheck、Orchestrator 测试和 ACS 运维脚本测试。
 
-PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再按影响范围运行 contract check 或完整 Orchestrator 检查，不部署。main push 并不是“完整重跑同一套 ACS CI”：`acs-sandbox.yml` 顶层不设 `paths`，所有 main push 都先进入 Classify；后续仅按 `.github/scripts/acs-classify.sh` 的唯一分类结果选择 Contract/Tests/Gate 拓扑。`.github/acs-bundle-inputs.txt` 是 Orchestrator 仓库内生产源码输入的路径契约，覆盖 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 以及相应 workspace `package.json`。测试会从三个真实 entry 生成 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，再逐项核对清单与 classifier；workflow 直接执行的 `create-component-artifact-index.mjs`、`seal-root-staged-payload.sh` 等生产支撑脚本也必须逐项命中 publish 分类。源码 metafile 不是全部制品输入：`pnpm-lock.yaml` 可单独改变运行时依赖解析，因此 lockfile-only 变更同样保守判定 ACS publish；新增仓库源码、包元数据或生产支撑脚本不能静默漏过 ACS 构建，`node_modules` 等安装产物本身不会误报。ACR tag 的 6 位 SHA 后缀只用于筛选候选 build record；GitHub 侧还必须从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`。解析 digest 前后会再次确认候选 tag 仍唯一绑定同一 `BuildRecordId` 且两次 tag digest 读回稳定，最终只部署 digest reference；不能把短 tag 当作精确 SHA 证据。由于 ACR build-record API 不直接返回产物 digest，现场还必须把 tag 写权限限制在受控构建链。
+PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再按影响范围运行 contract check 或完整 Orchestrator 检查，不部署。main push 并不是“完整重跑同一套 ACS CI”：`acs-sandbox.yml` 顶层不设 `paths`，所有 main push 都先进入 Classify；后续仅按 `.github/scripts/acs-classify.sh` 的唯一分类结果选择 Contract/Tests/Gate 拓扑。`.github/acs-bundle-inputs.txt` 是 Orchestrator 仓库内生产源码输入的路径契约，覆盖 `acs-orchestrator` 的真实生产源码、被引用的 `server/src/**`、`shared/src/**` 以及相应 workspace `package.json`。测试会从三个真实 entry 生成 esbuild metafile，将输入规范化为仓库相对路径并与 `git ls-files` 取交集，再逐项核对清单与 classifier；workflow 直接执行的 `create-component-artifact-index.mjs`、`seal-root-staged-payload.sh` 等生产支撑脚本也必须逐项命中 publish 分类。源码 metafile 不是全部制品输入：`pnpm-lock.yaml` 可单独改变运行时依赖解析，因此 lockfile-only 变更同样保守判定 ACS publish；新增仓库源码、包元数据或生产支撑脚本不能静默漏过 ACS 构建，`node_modules` 等安装产物本身不会误报。ACR tag 的 6 位 SHA 后缀只用于从全部 build-record API 分页中筛选全局唯一候选；分页总数漂移、记录缺失或重复都会 fail closed。GitHub 侧还必须从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`。解析 digest 前后会再次遍历全部分页，确认候选 tag 仍唯一绑定同一 `BuildRecordId` 且两次 tag digest 读回稳定，最终只部署 digest reference；不能把短 tag 当作精确 SHA 证据。由于 ACR build-record API 不直接返回产物 digest，现场还必须把 tag 写权限限制在受控构建链。
 
 ## 四、第二阶段：手动 RC 流程先生成或复用 Release Evidence
 
@@ -144,7 +144,7 @@ Workflow 会：
 
 1. 读取该 SHA 的 Release Evidence 和当前生产基线。
 2. 计算 Web、API、Runtime Worker、ACS 哪些组件是 `deploy`，哪些可以 `keep`。
-3. 对需要 ACS 的版本等待完整 revision、固定 BuildRecordId 与稳定 tag digest 校验后，解析不可变 ACR 镜像 digest。
+3. 对需要 ACS 的版本遍历全部构建记录分页，等待全局唯一的完整 revision、固定 BuildRecordId 与稳定 tag digest 校验后，解析不可变 ACR 镜像 digest。
 4. 在 Linux runner 上只构建一次 Server bundle、Web assets 和需要发布的 ACS Orchestrator bundle；`staging-runtime-assets` 由 `artifact-index.json` 单独固化，不属于 Manifest 字段。ACS Orchestrator 仅在分类为受影响时构建，否则复用生产 baseline 制品。
 5. 按 SHA-256 将真实大制品不可覆盖地写入阿里云 OSS。
 6. 创建 canonical `manifest.json` 与 `artifact-index.json`。

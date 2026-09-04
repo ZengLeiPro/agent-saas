@@ -107,6 +107,7 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { initAuditLog, redactLegacyChatPreviewsInFile } from '../data/login-logs/index.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
+import { createTaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面与查询类路由由 app 统一注册
@@ -330,6 +331,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactService,
       ),
       sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      canReadTaskboardSession: createTaskboardSessionReadAuthorizer(runtime.taskboardExecutionStore),
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
@@ -683,9 +685,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getEventBus: webChannel ? () => webChannel.getEventBus() : undefined,
     }),
   );
-
   let executeUserOffboarding: ExecuteUserOffboarding | undefined;
-
   if (runtime.userStore && config.auth?.enabled) {
     const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
     const avatarsDir = resolve(usersFilePath, '..', 'avatars');

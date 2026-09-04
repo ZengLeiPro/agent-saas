@@ -2942,7 +2942,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     guardrailEventStore,
     messageFeedbackStore,
     appealStore,
-    taskboardService,
+    taskboardService, taskboardExecutionStore: taskboardStoreService,
     taskboardExecutionService: taskboardExecutionCoordinator,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },

@@ -14,27 +14,26 @@ async function runWait(scenario) {
   const output = join(root, 'image.json');
   const events = join(root, 'events');
   await mkdir(bin);
-  await writeFile(join(bin, 'git'), `#!/usr/bin/env bash\nprintf '%s\n' '${releaseSha}'\n`);
+  await writeFile(
+    join(bin, 'git'),
+    `#!/usr/bin/env bash
+set -eu
+test "$#" -eq 2
+test "$1" = rev-list
+test "$2" = --all
+printf '%s\n' '${releaseSha}'
+`,
+  );
   await writeFile(
     join(bin, 'aliyun'),
     `#!/usr/bin/env bash
 set -euo pipefail
 action=$2
-arg() {
-  wanted=$1; shift
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "$wanted" ]; then printf '%s' "$2"; return 0; fi
-    shift
-  done
-  return 1
-}
-test "$(arg --region "$@")" = cn-test
 case "$action" in
   ListRepoBuildRecord)
-    test "$(arg --InstanceId "$@")" = instance
-    test "$(arg --RepoId "$@")" = repository
-    test "$(arg --PageSize "$@")" = 100
-    page=$(arg --PageNo "$@")
+    test "$#" -eq 18
+    test "$3:$4:$5:$6:$7:$8:$9:\${10}:\${11}:\${12}:\${13}:\${14}:\${15}:\${17}:\${18}" = '--mode:AK:--access-key-id:read-id:--access-key-secret:read-secret:--region:cn-test:--InstanceId:instance:--RepoId:repository:--PageNo:--PageSize:100'
+    page=\${16}
     printf 'list:%s\n' "$page" >> '${events}'
     calls=$(grep -c '^list:' '${events}')
     record_id=record-1
@@ -53,19 +52,16 @@ process.stdout.write(JSON.stringify({ Code: 'success', IsSuccess: true, PageNo: 
 NODE
     ;;
   ListRepoBuildRecordLog)
-    test "$(arg --InstanceId "$@")" = instance
-    test "$(arg --BuildRecordId "$@")" = record-1
-    test "$(arg --Offset "$@")" = 0
-    test "$(arg --PageSize "$@")" = 100
+    test "$#" -eq 18
+    test "$3:$4:$5:$6:$7:$8:$9:\${10}:\${11}:\${12}:\${13}:\${14}:\${15}:\${16}:\${17}:\${18}" = '--mode:AK:--access-key-id:read-id:--access-key-secret:read-secret:--region:cn-test:--InstanceId:instance:--BuildRecordId:record-1:--Offset:0:--PageSize:100'
     printf 'log:record-1\n' >> '${events}'
     log_sha='${releaseSha}'
     if [ '${scenario}' = log-sha-mismatch ]; then log_sha='${'b'.repeat(40)}'; fi
     printf '{"Code":"success","IsSuccess":true,"BuildRecordLogs":[{"BuildStage":"GIT_CLONE","Message":"checked out %s"}]}' "$log_sha"
     ;;
   GetRepoTag)
-    test "$(arg --InstanceId "$@")" = instance
-    test "$(arg --RepoId "$@")" = repository
-    test "$(arg --Tag "$@")" = main-aaaaaa
+    test "$#" -eq 16
+    test "$3:$4:$5:$6:$7:$8:$9:\${10}:\${11}:\${12}:\${13}:\${14}:\${15}:\${16}" = '--mode:AK:--access-key-id:read-id:--access-key-secret:read-secret:--region:cn-test:--InstanceId:instance:--RepoId:repository:--Tag:main-aaaaaa'
     printf 'tag:main-aaaaaa\n' >> '${events}'
     tag_calls=$(grep -c '^tag:' '${events}')
     digest='${'a'.repeat(64)}'
@@ -98,7 +94,7 @@ esac
   return { root, output, events, result };
 }
 
-test('executes the full Staging ACS record and tag confirmation sequence', async () => {
+test('executes the strict full Staging ACS record and tag confirmation sequence', async () => {
   const run = await runWait('success');
   assert.equal(run.result.status, 0, run.result.stderr);
   const value = JSON.parse(await readFile(run.output, 'utf8'));

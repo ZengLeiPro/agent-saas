@@ -25,6 +25,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+// 默认 fixture 刻意让三个可选健康源均为 null，验证 unknown 语义。
 const snapshot = {
   generatedAt: "2026-08-26T17:00:00.000Z",
   health: {
@@ -33,7 +34,7 @@ const snapshot = {
     todayCostYuan: 1.25,
     todayRuns: 4,
     completionRateToday: 1,
-    toolRouting24h: { total: 5, acsCount: 5, localCount: 0, failedCount: 0 },
+    toolRouting24h: null,
     dispatch: null,
     sessionMetaProjection: null,
     handFailures1h: 0,
@@ -98,6 +99,42 @@ describe("平台概览站内链接", () => {
     expect(`${window.location.pathname}${window.location.search}`)
       .toBe("/platform-console/overview/overview");
     expect(window.history.state.analysisWorkspace).toEqual({ source: "/chat/session-1", depth: 1 });
+  });
+
+  it("fresh 快照中的可选健康源为 null 时保持 unknown，不渲染绿色正常", async () => {
+    render(<OverviewPage />);
+
+    expect(await screen.findByText("数据未知")).toBeTruthy();
+    expect(screen.getByText("数据未知，无法确认近 24 小时调用状态")).toBeTruthy();
+    expect(screen.getByText("当前数据未知，无法确认任务派发状态。")).toBeTruthy();
+    expect(screen.getByText("当前数据未知，无法确认对话列表同步状态。")).toBeTruthy();
+    expect(screen.queryByText("正常")).toBeNull();
+    expect(screen.queryByText("未发现任务派发异常。")).toBeNull();
+    expect(screen.queryByText("对话列表数据同步正常。")).toBeNull();
+  });
+
+  it("fresh 快照仅在全部内部健康源已知且为零时显示正常", async () => {
+    overviewSnapshot.mockResolvedValueOnce({
+      ...snapshot,
+      health: {
+        ...snapshot.health,
+        toolRouting24h: { total: 0, acsCount: 0, localCount: 0, failedCount: 0 },
+        dispatch: {
+          totalRuns: 0,
+          totalErrors: 0,
+          avgDurationMs: 0,
+          avgFirstEventLatencyMs: null,
+          byChannel: {},
+        },
+        sessionMetaProjection: { failures: 0, pending: 0 },
+      },
+    });
+    render(<OverviewPage />);
+
+    expect(await screen.findByText("正常")).toBeTruthy();
+    expect(screen.getByText("未发现任务派发异常。")).toBeTruthy();
+    expect(screen.getByText("对话列表数据同步正常。")).toBeTruthy();
+    expect(screen.queryByText(/数据未知/)).toBeNull();
   });
 
   it("成功获取空队列后手动刷新失败，不把旧快照渲染为正常", async () => {

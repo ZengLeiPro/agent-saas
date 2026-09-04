@@ -218,10 +218,13 @@ export function OverviewPage() {
   const snapshotIsFresh = snapshotFreshness === "fresh";
   const snapshotUnavailable = snapshotFreshness === "stale" || snapshotFreshness === "unavailable";
   const health = snapshot?.health;
-  const dispatch = health?.dispatch as { dropped?: number; errors?: number; total?: number } | null | undefined;
-  const projectionFailed = Number(health?.sessionMetaProjection?.failed ?? 0);
-  const dispatchErrors = Number(dispatch?.errors ?? dispatch?.dropped ?? 0);
-  const internalIssueCount = dispatchErrors + projectionFailed;
+  const toolRoutingKnown = health?.toolRouting24h != null;
+  const dispatchErrors = health?.dispatch?.totalErrors;
+  const projectionFailures = health?.sessionMetaProjection?.failures;
+  const dispatchKnown = dispatchErrors != null;
+  const projectionKnown = projectionFailures != null;
+  const internalHealthKnown = dispatchKnown && projectionKnown;
+  const internalIssueCount = (dispatchErrors ?? 0) + (projectionFailures ?? 0);
   const activeStatuses = Object.entries(health?.activeRuns.byStatus ?? {}).filter(([, count]) => count > 0);
   const trendValues = costTrend.map((point) => point.actualCostYuanMicro / 1_000_000);
   const latest7 = trendValues.slice(-7).reduce((sum, value) => sum + value, 0);
@@ -308,8 +311,12 @@ export function OverviewPage() {
         <MetricCard
           title="工具调用失败"
           value={formatNumber(health?.toolRouting24h?.failedCount)}
-          description={`${formatNumber(health?.toolRouting24h?.total)} 次调用 / 24h`}
-          tone={!snapshotIsFresh ? "default" : (health?.toolRouting24h?.failedCount ?? 0) > 0 ? "warn" : "good"}
+          description={toolRoutingKnown
+            ? `${formatNumber(health?.toolRouting24h?.total)} 次调用 / 24h`
+            : "数据未知，无法确认近 24 小时调用状态"}
+          tone={!snapshotIsFresh || !toolRoutingKnown
+            ? "default"
+            : health!.toolRouting24h!.failedCount > 0 ? "warn" : "good"}
           onClick={() => navigate("efficiency")}
         />
       </div>
@@ -430,11 +437,15 @@ export function OverviewPage() {
             </span>
             <span className={cn(
               "text-xs",
-              !snapshotIsFresh ? "text-warning-ink" : internalIssueCount > 0 ? "text-destructive" : "text-success",
+              !snapshotIsFresh || !internalHealthKnown
+                ? "text-warning-ink"
+                : internalIssueCount > 0 ? "text-destructive" : "text-success",
             )}>
               {!snapshotIsFresh
                 ? snapshotFreshness === "stale" ? "数据已过期" : "数据不可用"
-                : internalIssueCount > 0 ? `${internalIssueCount} 项需关注` : "正常"}
+                : internalIssueCount > 0
+                  ? `${internalIssueCount} 项需关注`
+                  : internalHealthKnown ? "正常" : "数据未知"}
             </span>
           </summary>
           <CardContent className="grid gap-2 border-t pt-3 sm:grid-cols-2">
@@ -443,7 +454,9 @@ export function OverviewPage() {
               <div className="mt-1 text-xs text-muted-foreground">
                 {!snapshotIsFresh
                   ? snapshotFreshness === "stale" ? "数据已过期，无法确认当前派发状态。" : "数据不可用，无法确认当前派发状态。"
-                  : dispatchErrors > 0 ? `${dispatchErrors} 次派发异常；仅统计本次服务启动后。` : "未发现任务派发异常。"}
+                  : !dispatchKnown
+                    ? "当前数据未知，无法确认任务派发状态。"
+                    : dispatchErrors > 0 ? `${dispatchErrors} 次派发异常；仅统计本次服务启动后。` : "未发现任务派发异常。"}
               </div>
             </div>
             <div className="rounded-md bg-muted/40 p-2.5 text-sm">
@@ -451,7 +464,9 @@ export function OverviewPage() {
               <div className="mt-1 text-xs text-muted-foreground">
                 {!snapshotIsFresh
                   ? snapshotFreshness === "stale" ? "数据已过期，无法确认当前同步状态。" : "数据不可用，无法确认当前同步状态。"
-                  : projectionFailed > 0 ? `${projectionFailed} 个对话同步失败，列表可能显示不全。` : "对话列表数据同步正常。"}
+                  : !projectionKnown
+                    ? "当前数据未知，无法确认对话列表同步状态。"
+                    : projectionFailures > 0 ? `${projectionFailures} 个对话同步失败，列表可能显示不全。` : "对话列表数据同步正常。"}
               </div>
             </div>
           </CardContent>

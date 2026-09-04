@@ -290,9 +290,15 @@ export function createAudioTranscribeAdminRouter(
           options.config.stt = candidate.stt;
           await options.onUpdated?.(candidate.stt);
         },
-        ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
+        onCommitted: async (candidateText) => {
+          try {
+            await options.onConfigReloaded?.(candidateText);
+          } finally {
+            const committedConfig = parseAppConfig(parseJsonc(candidateText));
+            await secretMutation.committed(sttSecretRefs(committedConfig.stt));
+          }
+        },
       });
-      await secretMutation.committed(sttSecretRefs(result.config.stt));
       res.json(adminView(result.config));
     } catch (error) {
       const message = secretMutation.redactError(error, sttSecretRefs(staged));

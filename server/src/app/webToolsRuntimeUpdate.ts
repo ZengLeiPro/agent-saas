@@ -1,5 +1,6 @@
 import type { AppConfig } from './config.js';
 import { resolveWebToolsConfig } from './runtimeGovernanceCredentials.js';
+import { CredentialResolutionError } from '../security/credentialResolutionError.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
 
@@ -35,9 +36,10 @@ export function createWebToolsRuntimeUpdatePreparer(deps: {
         else delete deps.target.webTools;
       };
     } catch (err) {
-      deps.logger?.warn(
-        `webTools 运行时配置刷新失败，继续使用旧配置：${err instanceof Error ? err.message : String(err)}`,
-      );
+      const detail = err instanceof CredentialResolutionError
+        ? `${err.code} field=${err.field}`
+        : 'UNEXPECTED_RUNTIME_CONFIG_ERROR';
+      deps.logger?.warn(`webTools 运行时配置刷新失败，继续使用旧配置：${detail}`);
       throw err;
     }
   };

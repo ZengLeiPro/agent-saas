@@ -14,6 +14,7 @@ import {
   createConfigIdentityRuntime,
   type PreparedConfigRecoveryPublication,
 } from '../runtime/configIdentityRuntime.js';
+import { CredentialResolutionError } from '../security/credentialResolutionError.js';
 import {
   AdminConfigMutationService,
   ConfigConflictError,
@@ -234,6 +235,31 @@ describe('AdminConfigMutationService', () => {
     expect(applyRuntime).toHaveBeenCalledTimes(2);
     const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
     expect(audit).toContain('"result":"rolled_back"');
+  });
+
+  it('writes only the safe credential resolution error to rollback audit', async () => {
+    const test = await fixture();
+    const rawRef = 'vault://sensitive-runtime-ref';
+    const rawVaultDetail = 'upstream returned secret material';
+    const safeError = new CredentialResolutionError('webTools.search.apiKeyRef');
+    // 模拟 resolver 已在 Vault 边界丢弃 raw ref 与底层错误，再触发真实 runtime rollback。
+    expect(JSON.stringify(safeError)).not.toContain(rawRef);
+    expect(JSON.stringify(safeError)).not.toContain(rawVaultDetail);
+    const applyRuntime = vi.fn()
+      .mockRejectedValueOnce(safeError)
+      .mockResolvedValueOnce(undefined);
+
+    await expect(test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['webTools.search.apiKeyRef'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 21, {})),
+      applyRuntime,
+    })).rejects.toMatchObject({ code: 'CREDENTIAL_RESOLUTION_FAILED' });
+
+    const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
+    expect(audit).toContain('CredentialResolutionError: webTools.search.apiKeyRef 凭据解析失败');
+    expect(audit).not.toContain(rawRef);
+    expect(audit).not.toContain(rawVaultDetail);
   });
 
   it('keeps the shared gate closed until rollback audit and observation commit both succeed', async () => {

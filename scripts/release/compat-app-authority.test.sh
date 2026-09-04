@@ -6,10 +6,15 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 helper="$script_dir/compat-app-authority.sh"
 workflow="$repo_root/.github/workflows/ci.yml"
 bash -n "$helper"
+fail() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
+grep -Fq 'LOCK_FILE="/run/lock/agent-saas/promotion.lock"' "$helper" \
+  || fail 'compat rollback must use the fixed production promotion lock'
+if grep -Fq 'AGENT_SAAS_DEPLOY_LOCK_FILE' "$helper"; then
+  fail 'compat rollback production lock must not be caller-configurable'
+fi
 
 tmp="$(mktemp -d)"
 trap 'chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
-fail() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 
 # API and Worker compatibility paths must expose old-old or new-new across every
 # authority helper rename boundary.
@@ -212,10 +217,18 @@ MOCK
   set -e
   [ "$crash_status" -ne 0 ]
 
-  # Prove self-location: rollback cannot depend on the mutable candidate release helper.
+  # Prove self-location and the fixed production lock; neither may depend on mutable input.
   rm -f "$release/scripts/release/compat-app-authority.sh"
   pending="$(readlink -f "$root/compat-deploy-attempt-current")"
   case "$pending" in "$root/rollback-states/"*) ;; *) fail 'pending owner escaped rollback-states' ;; esac
+  lock_file="/run/lock/agent-saas/promotion.lock"
+  mkdir -p "$(dirname "$lock_file")"
+  actions_before="$(wc -l <"$log")"
+  current_before="$(readlink "$root/current")"
+  api_before="$(cat "$etc/api-color")"
+  exec {promotion_lock_fd}>"$lock_file"
+  flock -n "$promotion_lock_fd"
+  set +e
   PATH="$bin:$PATH" MOCK_STATE="$mock" ACTION_LOG="$log" MOCK_PID="$$" RUN_DIR="$run" \
     API_MARKER="$etc/api-color" WORKER_MARKER="$etc/worker-color" \
     AGENT_SAAS_COMPAT_ROOT="$root" AGENT_SAAS_COMPAT_ROLLBACK_STATE="$pending" \
@@ -224,8 +237,53 @@ MOCK
     AGENT_SAAS_APP_AUTHORITY_DIR="$etc/generations" AGENT_SAAS_APP_AUTHORITY_LINK="$etc/app-current" \
     AGENT_SAAS_NGINX_UPSTREAM_FILE="$etc/upstream.conf" AGENT_SAAS_NGINX_API_SITE_FILE="$etc/api-site.conf" \
     AGENT_SAAS_RUNTIME_IDENTITY_FILE="$etc/runtime-identity.json" AGENT_SAAS_SYSTEMD_DIR="$systemd" \
-    AGENT_SAAS_RUN_DIR="$run" AGENT_SAAS_DEPLOY_LOCK_FILE="$case_root/deploy.lock" \
+    AGENT_SAAS_RUN_DIR="$run" \
+    "$pending/rollback.sh" >"$case_root/locked-rollback.log" 2>&1
+  locked_status=$?
+  set -e
+  [ "$locked_status" -ne 0 ] || fail 'compat rollback acquired the fixed production promotion lock while held'
+  grep -Fq 'another deployment/rollback owns the production lock' "$case_root/locked-rollback.log"
+  [ "$(wc -l <"$log")" -eq "$actions_before" ] || fail 'locked rollback performed a production action'
+  [ "$(readlink "$root/current")" = "$current_before" ] || fail 'locked rollback changed current release'
+  [ "$(cat "$etc/api-color")" = "$api_before" ] || fail 'locked rollback changed API authority'
+
+  set +e
+  PATH="$bin:$PATH" MOCK_STATE="$mock" ACTION_LOG="$log" MOCK_PID="$$" RUN_DIR="$run" \
+    API_MARKER="$etc/api-color" WORKER_MARKER="$etc/worker-color" \
+    AGENT_SAAS_COMPAT_ROOT="$root" AGENT_SAAS_COMPAT_ROLLBACK_STATE="$pending" \
+    AGENT_SAAS_API_ACTIVE_COLOR_FILE="$etc/api-color" \
+    AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$etc/worker-color" \
+    AGENT_SAAS_APP_AUTHORITY_DIR="$etc/generations" AGENT_SAAS_APP_AUTHORITY_LINK="$etc/app-current" \
+    AGENT_SAAS_NGINX_UPSTREAM_FILE="$etc/upstream.conf" AGENT_SAAS_NGINX_API_SITE_FILE="$etc/api-site.conf" \
+    AGENT_SAAS_RUNTIME_IDENTITY_FILE="$etc/runtime-identity.json" AGENT_SAAS_SYSTEMD_DIR="$systemd" \
+    AGENT_SAAS_RUN_DIR="$run" AGENT_SAAS_DEPLOY_LOCK_HELD=1 \
+    "$pending/rollback.sh" 9>&- >"$case_root/forged-held-lock.log" 2>&1
+  forged_status=$?
+  set -e
+  [ "$forged_status" -ne 0 ] || fail 'compat rollback trusted a forged inherited-lock declaration'
+  grep -Fq 'declared production lock is not inherited on fd 9' "$case_root/forged-held-lock.log"
+  [ "$(wc -l <"$log")" -eq "$actions_before" ] || fail 'forged lock declaration performed a production action'
+  [ "$(readlink "$root/current")" = "$current_before" ] || fail 'forged lock declaration changed current release'
+  [ "$(cat "$etc/api-color")" = "$api_before" ] || fail 'forged lock declaration changed API authority'
+
+  flock -u "$promotion_lock_fd"
+  eval "exec ${promotion_lock_fd}>&-"
+
+  # Production workflow invokes pending rollback while inheriting the already-held lock on fd 9.
+  exec 9>"$lock_file"
+  flock -n 9
+  PATH="$bin:$PATH" MOCK_STATE="$mock" ACTION_LOG="$log" MOCK_PID="$$" RUN_DIR="$run" \
+    API_MARKER="$etc/api-color" WORKER_MARKER="$etc/worker-color" \
+    AGENT_SAAS_COMPAT_ROOT="$root" AGENT_SAAS_COMPAT_ROLLBACK_STATE="$pending" \
+    AGENT_SAAS_API_ACTIVE_COLOR_FILE="$etc/api-color" \
+    AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$etc/worker-color" \
+    AGENT_SAAS_APP_AUTHORITY_DIR="$etc/generations" AGENT_SAAS_APP_AUTHORITY_LINK="$etc/app-current" \
+    AGENT_SAAS_NGINX_UPSTREAM_FILE="$etc/upstream.conf" AGENT_SAAS_NGINX_API_SITE_FILE="$etc/api-site.conf" \
+    AGENT_SAAS_RUNTIME_IDENTITY_FILE="$etc/runtime-identity.json" AGENT_SAAS_SYSTEMD_DIR="$systemd" \
+    AGENT_SAAS_RUN_DIR="$run" AGENT_SAAS_DEPLOY_LOCK_HELD=1 \
     "$pending/rollback.sh"
+  flock -u 9
+  exec 9>&-
 
   [ ! -e "$root/compat-deploy-attempt-current" ]
   [ "$(readlink "$root/current")" = "$old" ]

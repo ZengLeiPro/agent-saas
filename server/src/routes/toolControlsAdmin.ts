@@ -424,6 +424,7 @@ async function persistUpdatedSettings(
   req: Request,
   expectedConfigText: string,
   nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
+  onCommitted?: (candidateText: string) => Promise<void>,
 ): Promise<{ settings: Pick<AppConfig, 'toolControls' | 'webTools'>; revision: string }> {
   const requestContext = mutationRequestContext(req);
   const expectedRevisions = configRequestRevisions(req);
@@ -453,7 +454,13 @@ async function persistUpdatedSettings(
         webTools: candidate.webTools,
       });
     },
-    ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
+    onCommitted: async (candidateText) => {
+      try {
+        await options.onConfigReloaded?.(candidateText);
+      } finally {
+        await onCommitted?.(candidateText);
+      }
+    },
   });
   return {
     settings: { toolControls: result.config.toolControls, webTools: result.config.webTools },
@@ -523,8 +530,11 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         req,
         configText,
         nextSettings,
+        async (candidateText) => {
+          const committedConfig = parseAppConfig(parseJsonc(candidateText));
+          await secretMutation.committed(webSearchSecretRefs(committedConfig));
+        },
       );
-      await secretMutation.committed(webSearchSecretRefs(persisted.settings));
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
       res.setHeader('ETag', `"${persisted.revision}"`);
       res.json(catalogResponse(persisted.settings, persisted.revision));

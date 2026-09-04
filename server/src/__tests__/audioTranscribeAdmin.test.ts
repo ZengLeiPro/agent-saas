@@ -96,6 +96,7 @@ async function readJson(response: Response) {
   return response.json() as Promise<any>;
 }
 
+// 用于精确卡住 runtime 或 Secret ref 回收阶段，验证配置锁边界。
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
@@ -644,6 +645,43 @@ describe('audio transcribe admin router', () => {
       expect(revokeSecret).toHaveBeenCalledWith('dashscope-ref', expect.any(Object));
       expect(onConfigReloaded).toHaveBeenCalledOnce();
     }, { onConfigReloaded });
+  });
+
+  it('旧 STT ref 成功回收完成前持续持有配置锁，拒绝并发重新引用窗口', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, secretVault }) => {
+      const revokeEntered = deferred();
+      const releaseRevoke = deferred();
+      const revokeSecret = secretVault.revokeSecret.bind(secretVault);
+      vi.spyOn(secretVault, 'revokeSecret').mockImplementation(async (ref, caller) => {
+        if (ref === 'dashscope-ref') {
+          revokeEntered.resolve();
+          await releaseRevoke.promise;
+        }
+        if (ref === 'dashscope-ref') return;
+        return revokeSecret(ref, caller);
+      });
+
+      const firstRequest = fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { apiKey: 'replacement-stt-secret' } }),
+      });
+      await revokeEntered.promise;
+
+      const concurrentResponse = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'concurrent-model' } }),
+      });
+      expect(concurrentResponse.status).toBe(409);
+
+      releaseRevoke.resolve();
+      expect((await firstRequest).status).toBe(200);
+      const committed = parseAppConfig((await import('jsonc-parser')).parse(
+        readFileSync(configPath, 'utf-8'),
+      ));
+      expect(committed.stt?.apiKeyRef).toBeTruthy();
+      expect(committed.stt?.apiKeyRef).not.toBe('dashscope-ref');
+      expect(committed.stt?.model).toBe('fun-asr');
+    });
   });
 
   it('两个管理员交错保存时锁内 callback 未完成前拒绝另一写入', async () => {

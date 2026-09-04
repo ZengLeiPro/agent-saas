@@ -84,6 +84,7 @@ function revision(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
+// 精确卡住 runtime callback 或 Secret ref 回收，验证锁不会提前释放。
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
@@ -690,6 +691,58 @@ describe('tool controls admin router', () => {
       expect(executionSettings.toolControls?.tools?.Read).toBeUndefined();
       expect(onToolSettingsUpdated).toHaveBeenCalledTimes(2);
     }, { onToolSettingsUpdated });
+  });
+
+  it('旧 WebSearch ref 成功回收完成前拒绝并发请求重新引用该 ref', async () => {
+    const secretVault = new InMemorySecretVault();
+    const raw = baseRawConfig();
+    // Fixture 类型来自 inline 旧配置；本用例刻意切换到互斥的 ref 形态。
+    raw.webTools.search = {
+      provider: 'zhipu',
+      apiKeyRef: 'old-web-search-ref',
+      timeoutMs: 8000,
+      maxResults: 5,
+    } as unknown as typeof raw.webTools.search;
+    await withApp(raw, async ({ baseUrl, configPath }) => {
+      const revokeEntered = deferred();
+      const releaseRevoke = deferred();
+      const revokeSecret = secretVault.revokeSecret.bind(secretVault);
+      vi.spyOn(secretVault, 'revokeSecret').mockImplementation(async (ref, caller) => {
+        if (ref === 'old-web-search-ref') {
+          revokeEntered.resolve();
+          await releaseRevoke.promise;
+        }
+        if (ref === 'old-web-search-ref') return;
+        return revokeSecret(ref, caller);
+      });
+
+      const firstRequest = fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: raw.toolControls,
+          webTools: {
+            ...raw.webTools,
+            search: { ...raw.webTools.search, apiKeyRef: undefined, apiKey: 'replacement-web-secret' },
+          },
+        }),
+      });
+      await revokeEntered.promise;
+
+      const concurrentResponse = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: raw.toolControls,
+          webTools: { ...raw.webTools, search: { ...raw.webTools.search, apiKeyRef: 'old-web-search-ref' } },
+        }),
+      });
+      expect(concurrentResponse.status).toBe(409);
+
+      releaseRevoke.resolve();
+      expect((await firstRequest).status).toBe(200);
+      const committed = parseAppConfig(JSON.parse(readFileSync(configPath, 'utf-8')));
+      expect(committed.webTools?.search?.apiKeyRef).toBeTruthy();
+      expect(committed.webTools?.search?.apiKeyRef).not.toBe('old-web-search-ref');
+    }, { secretVault });
   });
 
   it('两个管理员交错保存时锁内 callback 未完成前拒绝另一写入', async () => {

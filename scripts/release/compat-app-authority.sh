@@ -216,11 +216,20 @@ SYSTEMD_DIR="${AGENT_SAAS_SYSTEMD_DIR:-/etc/systemd/system}"
 APP_AUTHORITY_DIR="${AGENT_SAAS_APP_AUTHORITY_DIR:-$(dirname "$ACTIVE_COLOR_FILE")/app-active-color-generations}"
 APP_AUTHORITY_LINK="${AGENT_SAAS_APP_AUTHORITY_LINK:-$(dirname "$ACTIVE_COLOR_FILE")/app-active-color-current}"
 RUN_DIR="${AGENT_SAAS_RUN_DIR:-/run}"
-LOCK_FILE="${AGENT_SAAS_DEPLOY_LOCK_FILE:-/run/lock/agent-saas-deploy.lock}"
+LOCK_FILE="/run/lock/agent-saas/promotion.lock"
+# Compatibility rollback and promotion must serialize on the same fixed production control-plane lock.
+# The inherited-lock fast path is accepted only when fd 9 resolves to that exact lock file.
 ATTEMPT_LINK="$ROOT/compat-deploy-attempt-current"
 log() { printf '[rollback %s] %s\n' "$(date -Is)" "$*"; }
 trap 'log "rollback FAILED at line $LINENO"; exit 1' ERR
-if [ "${AGENT_SAAS_DEPLOY_LOCK_HELD:-0}" -ne 1 ]; then
+mkdir -p "$(dirname "$LOCK_FILE")"
+if [ "${AGENT_SAAS_DEPLOY_LOCK_HELD:-0}" -eq 1 ]; then
+  lock_target="$(readlink -f "$LOCK_FILE")"
+  inherited_lock_target="$(readlink -f "/proc/$$/fd/9" 2>/dev/null || true)"
+  [ -n "$lock_target" ] && [ "$inherited_lock_target" = "$lock_target" ] \
+    || { log 'declared production lock is not inherited on fd 9'; exit 1; }
+  flock -n 9 || { log 'another deployment/rollback owns the production lock'; exit 1; }
+else
   exec 9>"$LOCK_FILE"
   flock -n 9 || { log 'another deployment/rollback owns the production lock'; exit 1; }
 fi

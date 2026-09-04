@@ -29,8 +29,87 @@ import type { UserInfo } from "@/components/UserManager/types";
 type QueryValue = string | number | boolean | null | undefined;
 
 const nullableNumberSchema = z.number().nullable();
+const nonnegativeNumberSchema = z.number().nonnegative();
+const nonnegativeIntegerSchema = z.number().int().nonnegative();
 const nullableStringSchema = z.string().nullable();
 const isoTimestampSchema = z.string().datetime({ offset: true });
+
+const overviewStorageSchema = z.object({
+  rootDisk: z.object({
+    usedPct: z.number().min(0).max(100),
+    usedBytes: nonnegativeIntegerSchema,
+    totalBytes: nonnegativeIntegerSchema,
+    sampledAt: isoTimestampSchema,
+  }).nullable(),
+  nasUsedBytes: nonnegativeIntegerSchema.nullable(),
+  pgTopTables: z.array(z.object({
+    table: z.string(),
+    bytes: nonnegativeIntegerSchema,
+    sampledAt: isoTimestampSchema,
+  })),
+  workspace: z.object({
+    totalBytes: nonnegativeIntegerSchema,
+    orphanCount: nonnegativeIntegerSchema,
+    orphanBytes: nonnegativeIntegerSchema,
+    lastScanAt: isoTimestampSchema.nullable(),
+  }).nullable(),
+  tlsCertDaysLeft: nullableNumberSchema,
+});
+
+const overviewSnapshotSchema = z.object({
+  generatedAt: isoTimestampSchema,
+  health: z.object({
+    activeRuns: z.object({
+      total: nonnegativeIntegerSchema,
+      byStatus: z.record(z.string(), nonnegativeIntegerSchema),
+    }),
+    sandboxes: z.object({
+      total: nonnegativeIntegerSchema,
+      running: nonnegativeIntegerSchema,
+      paused: nonnegativeIntegerSchema,
+      broken: nonnegativeIntegerSchema,
+    }),
+    todayCostYuan: nonnegativeNumberSchema,
+    todayRuns: nonnegativeIntegerSchema,
+    completionRateToday: z.number().min(0).max(1).nullable(),
+    toolRouting24h: z.object({
+      total: nonnegativeIntegerSchema,
+      acsCount: nonnegativeIntegerSchema,
+      localCount: nonnegativeIntegerSchema,
+      failedCount: nonnegativeIntegerSchema,
+    }).nullable(),
+    dispatch: z.object({
+      totalRuns: nonnegativeIntegerSchema,
+      totalErrors: nonnegativeIntegerSchema,
+      avgDurationMs: nonnegativeNumberSchema,
+      avgFirstEventLatencyMs: nonnegativeNumberSchema.nullable(),
+      byChannel: z.record(z.string(), z.object({
+        runs: nonnegativeIntegerSchema,
+        errors: nonnegativeIntegerSchema,
+      })),
+      lastRun: z.record(z.string(), z.unknown()).optional(),
+    }).nullable(),
+    sessionMetaProjection: z.object({
+      failures: nonnegativeIntegerSchema,
+      pending: nonnegativeIntegerSchema,
+      lastError: z.string().optional(),
+    }).nullable(),
+    handFailures1h: nonnegativeIntegerSchema,
+    storage: overviewStorageSchema.nullable(),
+  }),
+  configIdentity: z.unknown().optional().nullable(),
+  attention: z.array(z.object({
+    kind: z.string(),
+    severity: z.enum(["critical", "high", "medium", "low", "info"]),
+    title: z.string(),
+    entityRef: z.object({
+      kind: z.enum(["run", "session", "sandbox", "user", "tenant"]),
+      id: z.string(),
+    }).optional(),
+    occurredAt: z.string().nullable().optional(),
+    actions: z.array(z.string()).optional(),
+  })),
+});
 
 const eventStoreCapacityPointSchema = z.object({
   totalBytes: nullableNumberSchema,
@@ -272,10 +351,12 @@ export const platformAdminApi = {
     return getJson(buildAdminApiPath("/search", { q }));
   },
   async overviewSnapshot(signal?: AbortSignal): Promise<OverviewSnapshot> {
-    const snapshot = await getJson<OverviewSnapshot>(buildAdminApiPath("/overview/snapshot"), signal);
+    const response = await getJson<unknown>(buildAdminApiPath("/overview/snapshot"), signal);
+    const parsed = overviewSnapshotSchema.safeParse(response);
+    if (!parsed.success) throw new Error("平台总览响应无效");
     return {
-      ...snapshot,
-      configIdentity: parseConfigIdentitySummary(snapshot.configIdentity),
+      ...parsed.data,
+      configIdentity: parseConfigIdentitySummary(parsed.data.configIdentity),
     };
   },
   overviewTrends(days = 14, signal?: AbortSignal): Promise<PlatformTrendResponse> {

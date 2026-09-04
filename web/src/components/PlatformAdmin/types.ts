@@ -173,6 +173,7 @@ export type OverviewConfigIdentitySide = ConfigIdentitySide;
 /** Release-bound Config Identity（TASK-318），直接复用 shared wire 契约。 */
 export type OverviewConfigIdentity = ConfigIdentitySummary;
 
+/** 严格校验后的平台概览快照；可选健康源以 null 表达不可验证。 */
 export interface OverviewSnapshot {
   generatedAt: string;
   health: {
@@ -187,13 +188,18 @@ export interface OverviewSnapshot {
       localCount: number;
       failedCount: number;
     } | null;
-    dispatch: Record<string, unknown> | null;
+    dispatch: {
+      totalRuns: number;
+      totalErrors: number;
+      avgDurationMs: number;
+      avgFirstEventLatencyMs: number | null;
+      byChannel: Record<string, { runs: number; errors: number }>;
+      lastRun?: Record<string, unknown>;
+    } | null;
     sessionMetaProjection: {
-      attempted?: number;
-      succeeded?: number;
-      failed?: number;
+      failures: number;
+      pending: number;
       lastError?: string;
-      [key: string]: unknown;
     } | null;
     handFailures1h: number;
     storage: StorageHealth | null;

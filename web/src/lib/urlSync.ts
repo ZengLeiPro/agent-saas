@@ -312,7 +312,7 @@ function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | '
   };
 }
 
-/** 解析 pathname → URL state；search 只由 platform-admin 路由读取，常规 buildUrl 仍只管理 pathname */
+/** 解析 pathname → URL state；search 同时用于管理路由与旧任务中心深链的 canonical。 */
 export function parseUrl(pathname = window.location.pathname, search = window.location.search): ParsedUrlState {
   // 旧管理设置 URL 也统一交给 Governance parser，canonical 到唯一管理路由。
   const governance = parseGovernanceUrl(`${pathname}${search}`);
@@ -389,7 +389,13 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
   }
   if (pathname === '/taskboard') return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null });
   if (pathname === '/cron') {
-    const canonicalPath = new URLSearchParams(search).get('view') === 'board' ? '/taskboard' : null;
+    const query = new URLSearchParams(search);
+    let canonicalPath: string | null = null;
+    if (query.get('view') === 'board') {
+      query.delete('view');
+      const canonicalSearch = query.toString();
+      canonicalPath = `/taskboard${canonicalSearch ? `?${canonicalSearch}` : ''}`;
+    }
     return parsed({ tab: 'cron', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath });
   }
   if (pathname === '/files') return parsed({ tab: 'chat', sessionId: null, settingsSection: 'files-storage', adminSettings: null, canonicalPath: '/settings/files-storage' });

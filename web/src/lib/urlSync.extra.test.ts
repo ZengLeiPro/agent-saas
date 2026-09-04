@@ -163,10 +163,14 @@ describe("parseUrl 常规路径分支", () => {
     expect(parseUrl("/chat/")).toMatchObject({ tab: "chat", sessionId: null });
   });
 
-  it("任务中心两个独立路径都走一级页面，旧 query 链接收敛到任务看板路径", () => {
+  it("任务中心两个独立路径都走一级页面，旧 query 深链无损收敛到任务看板路径", () => {
     expect(parseUrl("/cron")).toMatchObject({ tab: "cron", settingsSection: null });
     expect(parseUrl("/taskboard")).toMatchObject({ tab: "cron", settingsSection: null });
     expect(parseUrl("/cron", "?view=board")).toMatchObject({ tab: "cron", canonicalPath: "/taskboard" });
+    expect(parseUrl("/cron", "?view=board&boardId=board-1&taskId=task-1")).toMatchObject({
+      tab: "cron",
+      canonicalPath: "/taskboard?boardId=board-1&taskId=task-1",
+    });
     expect(parseUrl("/files")).toMatchObject({ tab: "chat", settingsSection: "files-storage", canonicalPath: "/settings/files-storage" });
   });
 

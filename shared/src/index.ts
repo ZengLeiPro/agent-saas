@@ -758,6 +758,27 @@ export {
 export { groupMessages } from './lib/groupMessages';
 export type { GroupMessagesOptions } from './lib/groupMessages';
 
+// Lib - 主对话区投影（纯函数，Web/Mobile 同源）
+export { businessStepMainItems } from './lib/businessStepMainItems';
+export type { BusinessStepMainItemsOptions } from './lib/businessStepMainItems';
+
+// Lib - 插话队列条投影（纯函数）
+export { queuedMessageBarTitle, selectQueuedMessageEntries } from './lib/queuedMessageBar';
+export type { QueuedMessageEntry } from './lib/queuedMessageBar';
+
+// Lib - 客户面失败文案口径（纯函数）
+export {
+  GENERIC_FAILURE_MESSAGE,
+  POLICY_FAILURE_MESSAGE,
+  formatQuotaResetHint,
+  selectClientFailureCopy,
+} from './lib/clientFailureCopy';
+export type {
+  ClientFailureCopy,
+  ClientFailureCopyInput,
+  ClientFailureKind,
+} from './lib/clientFailureCopy';
+
 // Lib - WS event processor (pure functions)
 export {
   processWsEvent,

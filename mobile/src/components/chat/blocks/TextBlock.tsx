@@ -35,6 +35,7 @@ import { TextSelectModal } from '../TextSelectModal';
 import { createMarkdownStyles } from '../markdownStyles';
 import { createMarkdownRules } from '../markdownRules';
 import { MessageCitationCard } from './CitationCard';
+import { GuardrailAppealButton } from './GuardrailAppealButton';
 import { MessageFeedbackButton } from './MessageFeedback';
 import { CATEGORY_ICON, useMessageStyles } from './shared';
 
@@ -241,14 +242,22 @@ export function TextMessage({
     });
 
   /**
-   * 气泡底部动作区：最终回复给「反馈」入口。
-   * MessageFeedbackContext 缺省（个人 Agent 会话 / 数据面 503）时按钮零渲染，
-   * 这里的容器随之收成空行，不改变非专职会话的既有版式。
+   * 气泡底部动作区：最终回复给「反馈」入口；门禁拒答气泡（携带
+   * guardrailEventId）额外给「这个应该在范围内」申诉入口。
+   * MessageFeedbackContext 缺省（个人 Agent 会话 / 数据面 503）时两个按钮
+   * 都零渲染，容器随之收成空行，不改变非专职会话的既有版式。
    */
+  const showAppeal = !message.streaming && !!message.guardrailEventId;
+  const showFeedback = !message.streaming && !!message.finalOutput;
   const actionRow =
-    !message.streaming && message.finalOutput ? (
+    showAppeal || showFeedback ? (
       <View style={styles.messageActions}>
-        <MessageFeedbackButton messageId={message.id} content={message.content} />
+        {message.guardrailEventId && showAppeal ? (
+          <GuardrailAppealButton guardrailEventId={message.guardrailEventId} />
+        ) : null}
+        {showFeedback ? (
+          <MessageFeedbackButton messageId={message.id} content={message.content} />
+        ) : null}
       </View>
     ) : null;
 

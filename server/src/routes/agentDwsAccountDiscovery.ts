@@ -84,7 +84,7 @@ function maskLoginId(value: string): string {
   return `${value.slice(0, 2)}***${value.slice(-2)}`;
 }
 
-/** 诊断视图不暴露正文，但必须暴露可查询的业务终态与稳定原因码。 */
+/** 诊断视图不暴露正文，但必须公开回复类型、业务终态与稳定原因码。 */
 export function toPublicInboxRecord(record: AgentDwsInboxRecord): Record<string, unknown> {
   return {
     inboxId: record.inboxId,
@@ -93,6 +93,7 @@ export function toPublicInboxRecord(record: AgentDwsInboxRecord): Record<string,
     conversationId: record.conversationId,
     messageId: record.messageId ?? null,
     state: record.state,
+    replyKind: record.replyKind ?? null,
     disposition: record.disposition ?? null,
     rejectionReasonCode: record.rejectionReasonCode ?? null,
     sessionId: record.sessionId ?? null,

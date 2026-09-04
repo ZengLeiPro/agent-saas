@@ -395,7 +395,9 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     }
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
-      SET state='reply_pending',response_text=$4,last_error=NULL,updated_at=NOW()
+      SET state='reply_pending',response_text=$4,
+          payload_json=payload_json || jsonb_build_object('replyKind','normal'),
+          last_error=NULL,updated_at=NOW()
       WHERE inbox_id=$1 AND state='processing' AND lease_owner=$2 AND lease_fence=$3
         AND lease_expires_at > NOW()
       RETURNING *
@@ -417,7 +419,9 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
       SET state='reply_pending',response_text=$4,
-          payload_json=payload_json || jsonb_build_object('rejectionReasonCode',$5::text),
+          payload_json=payload_json || jsonb_build_object(
+            'replyKind','access_rejection','rejectionReasonCode',$5::text
+          ),
           last_error=NULL,updated_at=NOW()
       WHERE inbox_id=$1 AND state='processing' AND lease_owner=$2 AND lease_fence=$3
         AND lease_expires_at > NOW()
@@ -494,6 +498,30 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           ),
           last_error=NULL,completed_at=NOW(),updated_at=NOW()
       WHERE inbox_id=$1 AND state='reply_pending'
+        AND payload_json->>'replyKind'='access_rejection'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence, reasonCode]);
+  }
+
+  async blockReply(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId, reasonCode);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+          payload_json=payload_json || jsonb_build_object(
+            'disposition','reply_blocked','rejectionReasonCode',$4::text
+          ),
+          last_error='AGENT_DWS_REPLY_AUTHORIZATION_CHANGED:' || $4::text,
+          completed_at=NOW(),updated_at=NOW()
+      WHERE inbox_id=$1 AND state='reply_pending'
+        AND COALESCE(payload_json->>'replyKind','normal')<>'access_rejection'
         AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
       RETURNING *
     `, [inboxId, owner, fence, reasonCode]);
@@ -569,7 +597,12 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
 
 function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
   const payload = parsePayload(row.payload_json);
-  const disposition = payload.disposition === 'rejected' ? 'rejected' as const : undefined;
+  const replyKind = payload.replyKind === 'normal' || payload.replyKind === 'access_rejection'
+    ? payload.replyKind
+    : undefined;
+  const disposition = payload.disposition === 'rejected' || payload.disposition === 'reply_blocked'
+    ? payload.disposition
+    : undefined;
   const rejectionReasonCode = optionalText(payload.rejectionReasonCode);
   return {
     inboxId: String(row.inbox_id),
@@ -585,6 +618,7 @@ function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
     content: String(row.content),
     ...(row.event_timestamp ? { eventTimestamp: iso(row.event_timestamp) } : {}),
     payload,
+    ...(replyKind ? { replyKind } : {}),
     ...(disposition ? { disposition } : {}),
     ...(rejectionReasonCode ? { rejectionReasonCode } : {}),
     ...(optionalText(row.work_conversation_id)

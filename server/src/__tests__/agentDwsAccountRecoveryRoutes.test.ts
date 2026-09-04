@@ -94,7 +94,8 @@ describe('Agent DWS recovery routes', () => {
   it('inbox 诊断公开结构化拒绝终态但不返回消息正文', async () => {
     const listForAccount = vi.fn(async () => [{
       ...observedInbox(), eventType: 'user_im_message_receive_o2o_all', conversationId: 'cid-1',
-      disposition: 'rejected' as const, rejectionReasonCode: 'ASSIGNMENT_DENIED',
+      replyKind: 'access_rejection' as const, disposition: 'rejected' as const,
+      rejectionReasonCode: 'ASSIGNMENT_DENIED',
       responseText: '敏感拒绝正文', lastError: null,
     }]);
     const opened = await listen({ messageStore: { listForAccount } });
@@ -104,7 +105,8 @@ describe('Agent DWS recovery routes', () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { items: Array<Record<string, unknown>> };
     expect(body.items[0]).toMatchObject({
-      state: 'completed', disposition: 'rejected', rejectionReasonCode: 'ASSIGNMENT_DENIED',
+      state: 'completed', replyKind: 'access_rejection', disposition: 'rejected',
+      rejectionReasonCode: 'ASSIGNMENT_DENIED',
       sessionId: null, runId: null,
     });
     expect(body.items[0]).not.toHaveProperty('content');

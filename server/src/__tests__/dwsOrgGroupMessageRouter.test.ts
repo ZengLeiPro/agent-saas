@@ -42,10 +42,8 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       })),
     saveRejectionResult: vi.fn().mockImplementation(async (
       _id: string, _owner: string, _fence: number, text: string, reasonCode: string,
-    ) => ({
-      ...claimed, state: 'reply_pending', responseText: text,
-      rejectionReasonCode: reasonCode,
-    })),
+    ) => ({ ...claimed, state: 'reply_pending', replyKind: 'access_rejection',
+      responseText: text, rejectionReasonCode: reasonCode })),
     markReplyAttemptStarted: vi
       .fn()
       .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
@@ -53,6 +51,7 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
     reject: vi.fn().mockImplementation(async (
       _id: string, _owner: string, _fence: number, rejectionReasonCode: string,
     ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
+    blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter' }),
     fail: vi.fn().mockResolvedValue(undefined),
     defer: vi.fn().mockResolvedValue(undefined),
     releaseClaim: vi.fn(),

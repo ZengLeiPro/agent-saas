@@ -36,6 +36,7 @@ import {
   sharedAllowedTools,
 } from './orgAgentGroupPolicy.js';
 import {
+  assertDwsReplyAttemptFresh,
   boundedExternalId,
   boundedPositive,
   buildSystemContext,
@@ -46,6 +47,7 @@ import {
   legacyRequesterResolution,
   matchesInboxAccountIdentity,
   normalizeEventTimestamp,
+  persistedRejectionReason,
   rejectionMessage,
   safeLogId,
   serviceIdentity,
@@ -62,7 +64,6 @@ const DEFAULT_LEASE_RENEW_MS = 30_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 32;
 const ACTIVE_RUN_RECHECK_MS = 30_000;
-const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 const DEFAULT_FRONT_REPLY_DEADLINE_MS = 3_000;
 const MAX_EVENT_ID_LENGTH = 512;
 const MAX_CONVERSATION_ID_LENGTH = 1_024;
@@ -464,7 +465,11 @@ export class AgentDwsMessageRouter {
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
     }
-
+    const persistedRejection = persistedRejectionReason(item);
+    if (persistedRejection) {
+      await this.rejectAccess(account, item, persistedRejection);
+      return;
+    }
     const senderName =
       typeof item.payload.senderName === 'string' ? item.payload.senderName : undefined;
     const serviceEvent = item.payload.source === 'background_task_completion';
@@ -529,7 +534,6 @@ export class AgentDwsMessageRouter {
       await this.rejectAccess(account, item, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS');
       return;
     }
-
     const candidateSessionId = `agent-dws-session-${randomUUID()}`;
     const runId =
       item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
@@ -650,11 +654,7 @@ export class AgentDwsMessageRouter {
       this.workerId,
       item.leaseFence,
     );
-    if (!replyAttempt.replyStartedAt)
-      throw new Error('Agent DWS reply attempt timestamp is missing');
-    if (Date.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
-      throw new Error('Agent DWS reply idempotency window expired; manual reconciliation required');
-    }
+    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'reply');
     const replyAccount = await this.options.accountStore.getForTenant(
       item.tenantId,
       item.accountId,
@@ -708,7 +708,15 @@ export class AgentDwsMessageRouter {
       ...(requester ? { requester } : {}),
       reason,
     });
-    // processing 阶段先持久化拒绝正文与原因；reply_pending 重领时直接恢复，不能再次 dispatch。
+    // 普通 reply_pending 的正文可能来自旧授权上下文，当前拒绝时必须隔离并转人工核对。
+    if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
+      await this.options.messageStore.blockReply(
+        item.inboxId, this.workerId, item.leaseFence, reason,
+      );
+      this.options.logger?.warn(`Agent DWS pending normal reply blocked account=${item.accountId} event=${item.eventId} reason=${reason}`);
+      return;
+    }
+    // processing 阶段先持久化拒绝正文与类型；拒绝型 reply_pending 重领时直接恢复。
     const saved = item.state === 'reply_pending'
       ? item
       : await this.options.messageStore.saveRejectionResult(
@@ -725,11 +733,7 @@ export class AgentDwsMessageRouter {
       this.workerId,
       item.leaseFence,
     );
-    if (!replyAttempt.replyStartedAt)
-      throw new Error('Agent DWS rejection reply attempt timestamp is missing');
-    if (Date.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
-      throw new Error('Agent DWS rejection reply idempotency window expired; manual reconciliation required');
-    }
+    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply');
     await this.visibleReply.send(
       account,
       item,

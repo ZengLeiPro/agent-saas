@@ -8,6 +8,7 @@ import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
 const MAX_SYSTEM_CONTEXT_FIELD = 500;
+const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 
 export function isV1InboxWithoutIdentity(item: AgentDwsInboxRecord): boolean {
   return (
@@ -102,6 +103,24 @@ export function rejectionMessage(reason: string): string {
     default:
       return '当前请求未通过组织权限检查。请联系管理员确认本群配置和你的访问范围。';
   }
+}
+
+export function assertDwsReplyAttemptFresh(
+  replyStartedAt: string | undefined,
+  kind: 'reply' | 'rejection reply',
+): void {
+  if (!replyStartedAt) throw new Error(`Agent DWS ${kind} attempt timestamp is missing`);
+  if (Date.now() - Date.parse(replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
+    throw new Error(`Agent DWS ${kind} idempotency window expired; manual reconciliation required`);
+  }
+}
+
+export function persistedRejectionReason(item: AgentDwsInboxRecord): string | undefined {
+  if (item.state !== 'reply_pending' || item.replyKind !== 'access_rejection') return undefined;
+  if (!item.rejectionReasonCode || item.responseText === undefined) {
+    throw new Error('Agent DWS persisted rejection reply metadata is incomplete');
+  }
+  return item.rejectionReasonCode;
 }
 
 export function collectAssistantText(events: PlatformEvent[]): string {

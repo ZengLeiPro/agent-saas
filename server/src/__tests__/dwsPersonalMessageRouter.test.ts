@@ -140,20 +140,19 @@ function setup(input: {
       inboxId: string, _owner: string, _fence: number, responseText: string,
       rejectionReasonCode: string,
     ) => ({ ...(claimedById.get(inboxId) ?? claimed), state: 'reply_pending',
-      responseText, rejectionReasonCode })),
+      replyKind: 'access_rejection', responseText, rejectionReasonCode })),
     markReplyAttemptStarted: vi.fn().mockImplementation(async (inboxId: string) => {
       const entry = claimedById.get(inboxId) ?? claimed;
-      return {
-        ...entry,
-        state: 'reply_pending',
-        replyStartedAt: entry.replyStartedAt ?? new Date().toISOString(),
-      };
+      return { ...entry, state: 'reply_pending',
+        replyStartedAt: entry.replyStartedAt ?? new Date().toISOString() };
     }),
     defer: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
     reject: vi.fn().mockImplementation(async (
       _inboxId: string, _owner: string, _fence: number, rejectionReasonCode: string,
     ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
+    blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter',
+      disposition: 'reply_blocked' }),
     fail: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     deleteForTenant: vi.fn(),
   } satisfies AgentDwsMessageStore;

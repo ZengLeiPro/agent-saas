@@ -172,6 +172,12 @@ function App() {
       ? '个人 Agent'
       : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家' : undefined;
   const activeOrgAgentReadOnly = Boolean(activeAgentTargetUnavailableReason);
+  const sessionReadOnly = Boolean(
+    sessionId
+    && sessionParticipants?.owner.userId
+    && authUser?.id
+    && sessionParticipants.owner.userId !== authUser.id,
+  );
   const orgAgentIdentityLoading = !agentTargetCatalog && !compatibilityReason && (orgAgentsLoading || isLoadingSessions);
   const adminOwnerView = Boolean(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
@@ -369,7 +375,7 @@ function App() {
     previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser: toggleBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession: startOrgAgentWithTransition, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession: startOrgAgentWithTransition, activeOrgAgent, activeOrgAgentReadOnly, sessionReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   };
 
   // 反馈 Provider 恒挂载（2026-07 审查 F8：条件包裹会让 Layout 卸载重挂丢 DOM 状态）；

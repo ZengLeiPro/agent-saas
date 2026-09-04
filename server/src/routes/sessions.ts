@@ -395,6 +395,13 @@ export interface SessionsRouterOptions {
   };
   /** 用户维度会话未读状态真源。 */
   sessionReadStateStore?: SessionReadStateStore;
+  /** 任务看板成员只读打开 owner 执行会话；不得用于写入、分享或预热授权。 */
+  canReadTaskboardSession?: (user: {
+    userId: string;
+    username: string;
+    role: "admin" | "user";
+    tenantId: string;
+  }, sessionId: string) => Promise<boolean>;
   /**
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
@@ -679,9 +686,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const { transcriptPath, hasTranscript } = resolvedPath;
 
     const meta = await readSessionMeta(transcriptPath);
-    if (!canAccessSession(req.user, meta, options.userStore)) {
-      return { ok: false, status: 403, error: "Access denied" };
+    let canRead = canAccessSession(req.user, meta, options.userStore);
+    if (!canRead && req.user && meta?.sessionSource === "taskboard_execution" && options.canReadTaskboardSession) {
+      try {
+        canRead = await options.canReadTaskboardSession({
+          userId: req.user.sub,
+          username: req.user.username,
+          role: req.user.role,
+          tenantId: req.user.tenantId,
+        }, sessionId);
+      } catch (error) {
+        apiLogger.warn(`[sessions] taskboard session read authorization failed sessionId=${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
+    if (!canRead) return { ok: false, status: 403, error: "Access denied" };
     if (meta?.deletedAt && !optionsForBuild.includeDeleted) {
       return { ok: false, status: 404, error: "Session not found" };
     }

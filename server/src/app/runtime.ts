@@ -579,6 +579,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let messageFeedbackStore: PgMessageFeedbackStore | undefined;
   let appealStore: PgAppealStore | undefined;
   let taskboardService: TaskboardService | undefined;
+  // execution store 也为 session 详情提供只读的任务权限映射。
   let taskboardStoreService: RetryableTaskboardService | undefined;
   let rawTaskboardStore: PgTaskboardStore | undefined, taskboardExecutionCoordinator: TaskboardExecutionCoordinator | undefined, taskboardRepositoryProvider: ReturnType<typeof configureTaskboardGithubRepositoryProvider>, taskboardStatusNotificationWorker: ReturnType<typeof startTaskboardStatusNotificationWorker>;
   let pgArtifactStore: PgArtifactStore | undefined;
@@ -2943,6 +2944,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     messageFeedbackStore,
     appealStore,
     taskboardService,
+    taskboardExecutionStore: taskboardStoreService,
     taskboardExecutionService: taskboardExecutionCoordinator,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },

@@ -300,6 +300,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   const webChannel = channelManager.getChannel<WebChannel>('web');
+  // TaskBoard execution 会话仍归 owner；session detail 仅借助 execution store 补充只读授权。
   app.use(
     '/api',
     createSessionsRouter({
@@ -330,6 +331,23 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactService,
       ),
       sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      canReadTaskboardSession: async (user, sessionId) => {
+        const store = runtime.taskboardExecutionStore;
+        if (!store) return false;
+        const context = await store.getExecutionContextBySessionId(sessionId);
+        if (!context || context.identity.tenantId !== user.tenantId) return false;
+        try {
+          await store.getTask({
+            tenantId: user.tenantId,
+            ownerUserId: user.userId,
+            username: user.username,
+            userRole: user.role,
+          }, context.task.id);
+          return true;
+        } catch {
+          return false;
+        }
+      },
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)

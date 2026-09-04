@@ -646,6 +646,23 @@ export {
 } from './lib/contextCitation';
 export type { ContextCitationDetail, ContextCitationEvidence } from './lib/contextCitation';
 
+// Lib - 上下文压缩（/compact v2 黑箱化）跨端超集：web / mobile 两套 API 同源
+export {
+  asCompactionItem,
+  isCompactionItem,
+  isCompactionStatusEvent,
+  createCompactionRunningItem,
+  createCompactionDoneItem,
+  compactionDoneReplacement,
+  compactionItemFromBlock,
+  injectCompactionMessages,
+} from './lib/compaction';
+export type {
+  CompactionMessageItem,
+  CompactionOutcome,
+  CompactionStatusEvent,
+} from './lib/compaction';
+
 // Lib - 工具执行「给人看」摘要（与原始 payload 并存，不替代）
 export { normalizeToolPresentation } from './lib/toolPresentation';
 export type { ToolPresentation, ToolReceipt, DetailLine } from './lib/toolPresentation';

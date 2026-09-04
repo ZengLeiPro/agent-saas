@@ -532,7 +532,7 @@ export function MessageList({
   const renderItem = useCallback(({ item }: { item: BubbleRenderItem }) => {
     // 压缩分界线：水平线独立渲染，不进气泡、不带 header
     if (isCompactionItem(item)) {
-      return <CompactionDivider item={item} />;
+      return <CompactionDivider item={item} debugMode={presentationGate.explicitSessionToggle} />;
     }
 
     const showHeader = headerItemIds.has(item.id);

@@ -55,6 +55,10 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
    * 缺省 = 个人 Agent 会话（存量行为零变化）。PG meta_json 自动投影。
    */
   orgAgentId?: string;
+  /** Stable owner kind; new service sessions must not be inferred from userId/username shapes. */
+  principal?: { kind: 'user'; userId: string } | {
+    kind: 'org_agent'; tenantId: string; agentId: string; accountId: string; workspaceId: string;
+  };
   /** M20-06 canonical target identity. Absence is N-1 and must not imply personal. */
   agentTarget?: AgentTarget;
   agentTargetBindingVersion?: number;

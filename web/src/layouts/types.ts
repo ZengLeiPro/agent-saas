@@ -32,6 +32,8 @@ export interface LayoutProps {
   activeOrgAgent: OrgAgentSummary | null;
   /** 当前会话 target 不可用时输入区只读。 */
   activeOrgAgentReadOnly: boolean;
+  /** 当前登录人仅有会话查看权，不得在该会话中交互。 */
+  sessionReadOnly: boolean;
   /** 服务端投影的结构化只读原因。 */
   activeAgentTargetUnavailableReason?: AgentTargetUnavailableReason;
   /** Header label derived only from persisted/pending canonical target. */
@@ -146,7 +148,7 @@ export interface LayoutProps {
   // Agent profile
   agentProfile?: AgentProfile | null;
 
-  // Session participants
+  // Session participants（用于展示跨用户只读会话的实际 owner）
   sessionParticipants?: SessionParticipants | null;
 
   // File preview

@@ -7,7 +7,8 @@ import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.j
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
-import { createContextAdminConsumerStore, createContextProductService, createContextRetentionWorker } from './runtimeContextAdmin.js';
+import { createContextAdminConsumerStore, createContextAdminTargetOrganizationAccess,
+  createContextProductService, createContextRetentionWorker } from './runtimeContextAdmin.js';
 export { activeOffboardingWriteFence } from './routeGuards.js';
 import type { UserInfo } from '../data/users/types.js';
 import {
@@ -50,7 +51,7 @@ import { createAgentsRouter } from '../routes/agents.js';
 import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
 import { createKbFilesRouter } from '../routes/kbFiles.js';
 import { createOrgQaRouter } from '../routes/orgQa.js';
-import { createAgentDwsAccountsRouter } from '../routes/agentDwsAccounts.js';
+import { registerAgentDwsRoutes } from './routesAgentDws.js';
 import { createFeedbackRouter } from '../routes/feedback.js';
 import { createAppealsRouter, createTenantAppealsRouter } from '../routes/appeals.js';
 import { createRuntimeAuditRouter } from '../routes/runtimeAudit.js';
@@ -106,6 +107,7 @@ import type { WebChannel } from '../channels/web/channel.js';
 import { initAuditLog, redactLegacyChatPreviewsInFile } from '../data/login-logs/index.js';
 import { configureModelPricing } from '../data/usage/pricing.js';
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
+import { createTaskboardSessionReadAuthorizer } from './taskboardSessionReadAccess.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面与查询类路由由 app 统一注册
@@ -236,19 +238,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-  app.use('/api/agent-dws-accounts', requireAdmin);
-  app.use(
-    '/api',
-    createAgentDwsAccountsRouter({
-      accountStore: runtime.agentDwsAccountStore,
-      messageStore: runtime.agentDwsMessageStore,
-      authFlowService: runtime.agentDwsAuthFlowService,
-      eventGateway: runtime.dwsPersonalEventGateway,
-      auditStore: runtime.governanceAuditStore,
-      onContextPolicyUpdated: runtime.agentDwsContextPolicyUpdated,
-      onEnabledChanged: runtime.agentDwsEnabledChanged,
-    }),
-  );
+  registerAgentDwsRoutes(app, runtime);
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
   // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
   app.use(
@@ -318,6 +308,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       consumers: createContextAdminConsumerStore(runtime, config),
       product: createContextProductService(runtime, config),
       retention: createContextRetentionWorker(runtime, config),
+      targetOrganizationAccess: createContextAdminTargetOrganizationAccess(runtime),
     }),
   );
   const webChannel = channelManager.getChannel<WebChannel>('web');
@@ -351,6 +342,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactService,
       ),
       sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      canReadTaskboardSession: createTaskboardSessionReadAuthorizer(runtime.taskboardExecutionStore),
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxCleanupRequired: Boolean(config.serverRemote || config.tenantRemoteHands?.hands.some((hand) => (hand.id === 'agent-saas-acs' || /acs/i.test(hand.id)) && hand.rollout?.mode !== 'disabled' && hand.rollout?.mode !== 'drain')), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId, tenantId)
@@ -854,7 +846,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sharedDir,
       tenantSkillsRootDir,
       terminateAndRevokeUserConnectors,
-      disconnectWebUser: (userId) => webChannel?.disconnectUser(userId),
+      disconnectWebUser: (userId, generation) => generation === undefined ? webChannel?.disconnectUser(userId) : webChannel?.getWsServer()?.disconnectUser(userId, undefined, generation),
       removeCronsByOwners: cronRuntime.service
         ? (ownerIds) => cronRuntime.service!.removeByOwners(ownerIds)
         : undefined,
@@ -958,7 +950,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         verifyExternalRuntime: externalTenantRuntime.verify,
       },
     );
-    // Tenant management (admin-only CRUD；PR 1 仅元数据，不影响任何运行时行为)
     if (runtime.tenantStore) {
       app.use(
         '/api/tenants',
@@ -969,6 +960,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
           resolveMemoryFeatureStatus: runtime.getTenantMemoryFeatureStatus,
           // ★ 2026-07-18 企业专家目录 MVP：新租户开通时 seed 3 个种子专家（disabled）
           orgAgentStore: runtime.orgAgentStore,
+          entitlementStore: runtime.entitlementStore,
           governanceAuditStore: runtime.governanceAuditStore,
           legacyWriteGate,
           onTenantDisabled: webChannel

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { PgEntitlementStore } from '../data/entitlements/index.js';
+import {
+  ENTITLEMENT_RESOURCE_TYPES,
+  PgEntitlementStore,
+  TOOL_ENTITLEMENT_RESOURCE_IDS,
+  normalizeLegacyEntitlementSettings,
+} from '../data/entitlements/index.js';
 import { DEFAULT_TENANT_SETTINGS } from '../data/tenants/types.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
@@ -38,7 +43,28 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_scopes');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_items');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_tenant_policies');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(35);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(37);
+  });
+
+  it('legacy tool scope 与治理工具目录使用同一能力 ID 域', () => {
+    const settings = structuredClone(DEFAULT_TENANT_SETTINGS);
+    settings.features.filesEnabled = true;
+    settings.features.cronEnabled = true;
+    settings.features.mcpEnabled = true;
+    settings.features.customSkillsEnabled = true;
+    settings.features.personalAgentEnabled = true;
+    settings.features.kbEnabled = true;
+    settings.features.imageGenEnabled = true;
+    settings.features.memoryPollingEnabled = true;
+    settings.features.memoryConsolidationEnabled = true;
+    settings.features.memoryWriteDelegationEnabled = true;
+
+    const normalized = normalizeLegacyEntitlementSettings(settings) as {
+      scopes: Array<{ resourceType: string; resourceIds: string[] }>;
+    };
+    const toolScope = normalized.scopes.find(scope => scope.resourceType === 'tool');
+
+    expect(toolScope?.resourceIds).toEqual([...TOOL_ENTITLEMENT_RESOURCE_IDS].sort());
   });
 
   it('pantheon 不进入客户 Entitlement/Policy API', async () => {
@@ -148,6 +174,76 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
       item.sql.includes('test_governance_migration_issues')
       && item.params?.[1] === 'legacy_entitlement_policy_confirmation_required',
     )).toBe(true);
+  });
+
+  it('新组织一次事务初始化六类范围，新增三类使用 selected 空集合', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      return { rows: [], rowCount: 1 };
+    };
+    const pool = { query, connect: async () => ({ query, release: () => undefined }) };
+    const store = new PgEntitlementStore({ pool: pool as never, tablePrefix: 'test' });
+
+    await store.provisionTenantGovernance({
+      tenantId: 'acme',
+      settings: DEFAULT_TENANT_SETTINGS,
+      createdBy: 'platform-1',
+    });
+
+    const scopeInserts = queries.filter(item => item.sql.includes('INSERT INTO test_entitlement_resource_scopes'));
+    expect(scopeInserts.map(item => item.params?.[1])).toEqual(ENTITLEMENT_RESOURCE_TYPES);
+    expect(scopeInserts.filter(item => ['agent_template', 'skill', 'environment_template'].includes(String(item.params?.[1]))))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ params: ['acme', 'agent_template', 'selected', 'platform-1'] }),
+        expect.objectContaining({ params: ['acme', 'skill', 'selected', 'platform-1'] }),
+        expect.objectContaining({ params: ['acme', 'environment_template', 'selected', 'platform-1'] }),
+      ]));
+    expect(queries.some(item => item.sql.includes("'tenant_provisioning'"))).toBe(true);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(1);
+    expect(queries.filter(item => item.sql === 'COMMIT')).toHaveLength(1);
+  });
+
+  it('存量范围回填仅插入缺失类型，第二次执行零变更且不提高既有版本', async () => {
+    const queries: Array<{ sql: string; params?: unknown[] }> = [];
+    let scan = 0;
+    const query = async (sql: string, params?: unknown[]) => {
+      queries.push({ sql, ...(params ? { params } : {}) });
+      if (sql.includes('SELECT resource_type FROM test_entitlement_resource_scopes')) {
+        scan += 1;
+        const types = scan === 1 ? ['model', 'tool', 'connector'] : [...ENTITLEMENT_RESOURCE_TYPES];
+        return { rows: types.map(resource_type => ({ resource_type })), rowCount: types.length };
+      }
+      if (sql.includes('INSERT INTO test_entitlement_resource_scopes')) {
+        return { rows: [{ resource_type: params?.[1] }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 1 };
+    };
+    const pool = { query, connect: async () => ({ query, release: () => undefined }) };
+    const store = new PgEntitlementStore({ pool: pool as never, tablePrefix: 'test' });
+    const input = {
+      tenants: [{ id: 'pantheon' }, { id: 'acme', settings: DEFAULT_TENANT_SETTINGS }],
+      platformTenantId: 'pantheon',
+      createdBy: 'system:scope-baseline',
+    };
+
+    await expect(store.backfillMissingResourceScopes(input)).resolves.toEqual({
+      tenantsScanned: 1,
+      scopesInserted: 3,
+      scopesSkipped: 3,
+      tenantsWithErrors: 0,
+      issuesRecorded: 0,
+    });
+    await expect(store.backfillMissingResourceScopes(input)).resolves.toEqual({
+      tenantsScanned: 1,
+      scopesInserted: 0,
+      scopesSkipped: 6,
+      tenantsWithErrors: 0,
+      issuesRecorded: 0,
+    });
+    const inserts = queries.filter(item => item.sql.includes('INSERT INTO test_entitlement_resource_scopes'));
+    expect(inserts).toHaveLength(3);
+    expect(inserts.every(item => !item.sql.includes('DO UPDATE'))).toBe(true);
   });
 
   it('替换 Resource Scope 使用事务锁、expectedVersion，并原子替换 item', async () => {

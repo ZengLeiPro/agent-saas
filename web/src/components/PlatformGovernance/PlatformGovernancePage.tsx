@@ -3,6 +3,7 @@ import { Boxes, TriangleAlert } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { OrganizationEntitlementScopeEditor } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { PlatformBillingManager } from '@/components/BillingManager';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,6 @@ interface EntitlementRecord {
   updateReason?: string;
 }
 interface ResourceScope { resourceType: string; mode: "all" | "selected"; resourceIds: string[]; source: string; version: number; allowedActions: Array<{ id: string; label: string }> }
-interface EntitlementResourceCatalog { resourceType: string; items: Array<{ resourceId: string; label: string; version: number }> }
 interface TenantPolicy { policyKey: string; value: unknown; source: string; version: number }
 interface EntitlementResponse {
   entitlement: EntitlementRecord | null;
@@ -43,9 +43,6 @@ interface TenantLifecycleResponse {
 interface GovernancePreviewToken { previewId: string; baselineDigest: string; expiresAt: string }
 interface EntitlementPreview extends GovernancePreviewToken {
   impact: { currentVersion: number; nextVersion: number; fromStatus: string; toStatus: string; blockers: string[]; reversible: boolean; effectiveMode: string };
-}
-interface ScopePreview extends GovernancePreviewToken {
-  impact: { currentVersion: number; nextVersion: number; from: { mode: string; resourceCount: number }; to: { mode: string; resourceCount: number }; blockers: string[]; reversible: boolean; effectiveMode: string };
 }
 interface GovernanceReceipt {
   version?: number; status?: string; changeId: string; auditId: string; effectiveAt: string;
@@ -265,58 +262,18 @@ function EntitlementActions({ tenantId, entitlement, actions, onChanged }: {
 }
 
 function ScopeEditor({ tenantId, scope, onChanged }: { tenantId: string; scope: ResourceScope; onChanged: () => void }) {
-  const [catalog, setCatalog] = useState<EntitlementResourceCatalog | null>(null);
-  const [mode, setMode] = useState<ResourceScope['mode']>(scope.mode);
-  const [selected, setSelected] = useState(() => new Set(scope.resourceIds));
-  const [preview, setPreview] = useState<ScopePreview | null>(null);
-  const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [opened, setOpened] = useState(false);
   const action = scope.allowedActions.find(item => item.id === "edit_scope");
-  const staleIds = catalog && mode === "selected"
-    ? [...selected].filter(resourceId => !catalog.items.some(item => item.resourceId === resourceId))
-    : [];
-  const command = { expectedVersion: scope.version, mode, resourceIds: mode === "all" ? [] : [...selected].sort() };
-  const open = async () => {
-    setBusy(true); setError("");
-    try { setCatalog(await governanceResourcesApi.listEntitlementResourceCatalog<EntitlementResourceCatalog>(scope.resourceType)); }
-    catch { setError("权威资源目录当前不可用，已禁止编辑。"); }
-    finally { setBusy(false); }
-  };
-  const runPreview = async () => {
-    setBusy(true); setError(""); setReceipt(null);
-    try { setPreview(await governanceAccessApi.previewEntitlementScope<ScopePreview>(scope.resourceType, command, tenantId)); }
-    catch { setError("范围预览失败，请刷新后重试。"); }
-    finally { setBusy(false); }
-  };
-  const commit = async () => {
-    if (!preview) return;
-    setBusy(true); setError("");
-    try {
-      const result = await governanceAccessApi.updateEntitlementScope<GovernanceReceipt>(scope.resourceType, {
-        ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt,
-      }, tenantId);
-      setReceipt(result); setPreview(null); onChanged();
-    } catch { setError("范围提交失败，可能是目录或版本已变化。"); }
-    finally { setBusy(false); }
-  };
-  const toggle = (resourceId: string) => {
-    setPreview(null); setReceipt(null);
-    setSelected(current => {
-      const next = new Set(current);
-      if (next.has(resourceId)) next.delete(resourceId); else next.add(resourceId);
-      return next;
-    });
-  };
   if (!action) return <ReadOnlyReason />;
-  if (!catalog) return <div className="mt-3"><Button size="sm" variant="outline" disabled={busy} onClick={() => void open()}>{action.label}</Button>{error ? <div className="mt-2 text-xs text-destructive">{error}</div> : null}</div>;
-  return <div className="mt-3 space-y-3 rounded-lg border p-3">
-    <div className="flex gap-2"><Button size="sm" variant={mode === "all" ? "default" : "outline"} onClick={() => { setMode("all"); setPreview(null); setReceipt(null); }}>全部允许</Button><Button size="sm" variant={mode === "selected" ? "default" : "outline"} onClick={() => { setMode("selected"); setPreview(null); setReceipt(null); }}>指定资源</Button></div>
-    {mode === "selected" ? <div className="space-y-2">{catalog.items.length ? catalog.items.map(item => <label key={item.resourceId} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selected.has(item.resourceId)} onChange={() => toggle(item.resourceId)} /><span>{item.label}</span><code className="text-xs text-muted-foreground">{item.resourceId}</code></label>) : <div className="text-xs text-muted-foreground">目录暂无可分配资源。</div>}</div> : null}
-    {staleIds.length ? <div role="alert" className="text-xs text-destructive">当前范围含已退出目录的资源：{staleIds.join("、")}。请先取消选择。</div> : null}
-    {error ? <div role="alert" className="text-xs text-destructive">{error}</div> : null}
-    {receipt ? <Receipt value={receipt} /> : null}
-    {preview ? <div className="space-y-1 rounded-lg bg-muted p-3 text-xs"><div>v{preview.impact.currentVersion} → v{preview.impact.nextVersion} · {preview.impact.from.mode === "all" ? "全部允许" : "选择允许"}（{preview.impact.from.resourceCount}）→ {preview.impact.to.mode === "all" ? "全部允许" : "选择允许"}（{preview.impact.to.resourceCount}）</div><div>生效方式：{localizedValue(preview.impact.effectiveMode, effectiveModeLabels)} · {preview.impact.reversible ? "可逆" : "不可逆"} · 基线 {preview.baselineDigest.slice(0, 12)}… · 有效期至 {new Date(preview.expiresAt).toLocaleString()}</div>{preview.impact.blockers.length ? <div className="rounded border border-destructive/30 p-2 text-destructive">阻断：{preview.impact.blockers.join("、")}</div> : null}<Button className="mt-2" size="sm" disabled={busy || preview.impact.blockers.length > 0 || Date.parse(preview.expiresAt) <= Date.now()} onClick={() => void commit()}>确认提交</Button></div> : <Button size="sm" disabled={busy || staleIds.length > 0} onClick={() => void runPreview()}>预览变更</Button>}
+  if (!opened) return <div className="mt-3"><Button size="sm" variant="outline" onClick={() => setOpened(true)}>{action.label}</Button></div>;
+  return <div className="mt-3 rounded-lg border p-3"><OrganizationEntitlementScopeEditor
+    tenantId={tenantId}
+    resourceType={scope.resourceType as 'model' | 'tool' | 'connector' | 'agent_template' | 'skill' | 'environment_template'}
+    title={`${localizedValue(scope.resourceType, resourceTypeLabels)}范围编辑`}
+    description="当前目录资源与已退出目录的历史引用使用同一预览和提交合同。"
+    previewLabel="预览变更"
+    onChanged={onChanged}
+  />
   </div>;
 }
 

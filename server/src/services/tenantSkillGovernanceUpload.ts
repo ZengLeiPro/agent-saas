@@ -144,7 +144,14 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
         totalBytes: staged.totalBytes,
       };
 
-      installedDir = await moveStagedSkillIntoPlace(staged, skillsParent, false);
+      try {
+        installedDir = await moveStagedSkillIntoPlace(staged, skillsParent, false);
+      } catch (error) {
+        if (error instanceof SkillPackageUploadError && error.code === 'SKILL_ALREADY_EXISTS') {
+          throw duplicateSkillError(staged.skillId);
+        }
+        throw error;
+      }
       try {
         const governed = existing
           ? await deps.skills.restoreAndPublishResource({

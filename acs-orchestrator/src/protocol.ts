@@ -15,6 +15,7 @@ export interface WireWorkspaceRef {
   sessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
+  sharedReadOnlySubPath?: string;
   sandboxResources?: Pick<SandboxResourceSpec, 'cpu' | 'memoryMb'>;
   executionTarget?: string;
   workload?: SandboxWorkloadDescriptor;
@@ -53,6 +54,7 @@ export interface WorkspaceRecipe {
   sessionId?: string;
   sandboxScopeId?: string;
   mountSubPath?: string;
+  sharedReadOnlySubPath?: string;
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
   setupCommands?: string[];
@@ -168,6 +170,8 @@ export interface SandboxRunnerInput {
     username?: string;
     sessionId?: string;
     root: string;
+    /** Orchestrator-verified mount fact; runner resolves the fixed pod-local root. */
+    sharedReadOnlyMounted?: boolean;
   };
   stream?: boolean;
   /**
@@ -217,6 +221,8 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
   if (!sessionId) return { ok: false, error: 'context.workspace.sessionId 必须为非空字符串（用于会话审计与 runner 上下文）' };
   const mountSubPath = parseMountSubPath(workspace.mountSubPath);
   if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
+  const sharedReadOnlySubPath = parseMountSubPath(workspace.sharedReadOnlySubPath);
+  if (sharedReadOnlySubPath.error) return { ok: false, error: `sharedReadOnlySubPath: ${sharedReadOnlySubPath.error}` };
   const sandboxScopeId = typeof workspace.sandboxScopeId === 'string' && workspace.sandboxScopeId.trim()
     ? workspace.sandboxScopeId.trim()
     : undefined;
@@ -262,6 +268,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
           sessionId,
           ...(sandboxScope.value ? { sandboxScopeId: sandboxScope.value } : {}),
           ...(mountSubPath.value ? { mountSubPath: mountSubPath.value } : {}),
+          ...(sharedReadOnlySubPath.value ? { sharedReadOnlySubPath: sharedReadOnlySubPath.value } : {}),
           ...(sandboxResources.value ? { sandboxResources: sandboxResources.value } : {}),
           ...(workload?.ok ? { workload: workload.value } : {}),
           ...(typeof workspace.userId === 'string' ? { userId: workspace.userId } : {}),
@@ -308,6 +315,12 @@ export function parseProvisionRecipe(body: unknown): { ok: true; value: Workspac
   const mountSubPath = parseMountSubPath(recipeRaw.mountSubPath ?? obj.mountSubPath);
   if (mountSubPath.error) return { ok: false, error: mountSubPath.error };
   if (mountSubPath.value) recipe.mountSubPath = mountSubPath.value;
+  const sharedReadOnlySubPath = parseMountSubPath(
+    recipeRaw.sharedReadOnlySubPath ?? obj.sharedReadOnlySubPath,
+  );
+  if (sharedReadOnlySubPath.error)
+    return { ok: false, error: `sharedReadOnlySubPath: ${sharedReadOnlySubPath.error}` };
+  if (sharedReadOnlySubPath.value) recipe.sharedReadOnlySubPath = sharedReadOnlySubPath.value;
   const repo = recipeRaw.repo;
   if (repo && typeof repo === 'object' && typeof (repo as { url?: unknown }).url === 'string') {
     const raw = repo as { url: string; ref?: unknown; remote?: unknown };

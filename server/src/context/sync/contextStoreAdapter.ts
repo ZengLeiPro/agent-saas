@@ -80,6 +80,14 @@ export interface ContextStoreSyncAdapterOptions {
   store: ContextPartitionStore;
   /** Must resolve to source/collection rows provisioned by the upper wiring. */
   resolvePartition?: (key: ContextSyncKey) => ContextPartitionIdentity;
+  /**
+   * Trusted channel ownership materialized with each record. Returning undefined
+   * deliberately leaves the record outside channel-scoped Context recall.
+   */
+  resolveRecordMetadata?: (
+    key: ContextSyncKey,
+    item: ContextIngestItem,
+  ) => Promise<ContextObject | undefined>;
   leaseOwner?: string;
   leaseMs?: number;
   retryBaseMs?: number;
@@ -174,7 +182,10 @@ export class ContextStoreSyncAdapter implements ContextSyncStore {
     const lease = await this.lease(page.key);
     lease.window = page.window;
     lease.truncated ||= page.truncated;
-    const records = page.items.map(toContextRecord);
+    const records = await Promise.all(page.items.map(async item => toContextRecord(
+      item,
+      await this.options.resolveRecordMetadata?.(page.key, item),
+    )));
     if (!page.nextCursor) {
       // Hold the terminal page until advanceWatermark so its records, revisions,
       // evidence, outbox rows and high watermark share one PostgreSQL transaction.
@@ -396,7 +407,10 @@ export function defaultPartitionIdentity(key: ContextSyncKey): ContextPartitionI
 
 const EVIDENCE_EXCERPT_CHARACTERS = 500;
 
-function toContextRecord(item: ContextIngestItem): ContextIngestRecordInput {
+function toContextRecord(
+  item: ContextIngestItem,
+  trustedMetadata?: ContextObject,
+): ContextIngestRecordInput {
   const content: ContextObject = {
     text: item.content,
     kind: item.kind,
@@ -404,6 +418,7 @@ function toContextRecord(item: ContextIngestItem): ContextIngestRecordInput {
   };
   const metadata: ContextObject = {
     ...item.metadata,
+    ...(trustedMetadata ?? {}),
     source: item.source,
     sourceId: item.sourceId,
     occurredAt: item.occurredAt,

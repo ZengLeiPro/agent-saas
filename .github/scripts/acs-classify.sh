@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# ACS 影响分类（acs-sandbox.yml 的 changes job 与 build-deploy 门禁共用）
+# ACS 影响分类（acs-sandbox.yml 的 changes job、bundle 输入清单与 build-deploy 门禁共用）
 # ----------------------------------------------------------------------------
 # 用法: acs-classify.sh <changed_files_path> [base_sha]
 #   changed_files_path: 变更文件清单（每行一个仓库相对路径）
@@ -19,11 +19,19 @@ set -euo pipefail
 
 changed_files="${1:?usage: acs-classify.sh <changed_files_path> [base_sha]}"
 base_sha="${2:-}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/../.." && pwd)"
+bundle_inputs="$repo_root/.github/acs-bundle-inputs.txt"
 
 publish=false
 contract_check=false
 reasons=()
 skipped=()
+
+if [ ! -f "$bundle_inputs" ]; then
+  echo "missing ACS bundle inputs: $bundle_inputs" >&2
+  exit 1
+fi
 
 package_json_affects_acs() {
   if [ -z "$base_sha" ] || ! git cat-file -e "$base_sha:package.json" 2>/dev/null; then
@@ -66,21 +74,39 @@ try {
 NODE
 }
 
+is_packaged_runtime_path() {
+  awk -v path="$1" '$1 !~ /^#/ && $2 == path { found = 1 } END { exit !found }' \
+    "$repo_root/.github/acs-runtime-inputs.txt"
+}
+
+# Keep esbuild source inputs centralized; workflow-only production helpers stay explicit below.
+is_bundle_input_path() {
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    case "$pattern" in \#*) continue ;; esac
+    [[ "$1" == $pattern ]] && return 0
+  done < "$bundle_inputs"
+  return 1
+}
+
 is_publish_path() {
+  if is_bundle_input_path "$1" || is_packaged_runtime_path "$1"; then
+    return 0
+  fi
   case "$1" in
     acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts)
-      # 纯测试与测试辅助文件不判定需要发布（归 contract_check）
+      # 纯测试及其辅助文件不判定需要发布（归 contract_check）
       return 1
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/manage-acs-systemd-unit.sh|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-bundle-inputs.txt|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/manage-acs-systemd-unit.sh|scripts/release/create-component-artifact-index.mjs|scripts/release/seal-root-staged-payload.sh|scripts/release/verify-acr-build-revision.mjs|scripts/release/list-acr-build-records.sh|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
       return 0
       ;;
-    server/src/agent/toolRuntime.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
+    server/src/agent/toolRuntime.ts|server/src/agent/toolRuntimePaths.ts|server/src/agent/workspaceRead.ts|server/src/agent/serverLocalSandboxPolicy.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
       return 0
       ;;
     server/src/agent/descriptions/Read.md|server/src/agent/descriptions/Write.md|server/src/agent/descriptions/List.md|server/src/agent/descriptions/Shell.md|server/src/agent/descriptions/WaitForWorkspaceReady.md|server/src/agent/descriptions/Edit.md|server/src/agent/descriptions/Glob.md|server/src/agent/descriptions/Grep.md|server/src/agent/descriptions/CreateArtifact.md|server/src/agent/descriptions/MemorySearch.md|server/src/agent/descriptions/MemoryList.md)
@@ -94,10 +120,10 @@ is_publish_path() {
 }
 
 # Workload/lifecycle wire, deletion routes, Web/PG admission, config and restore paths must run the ACS contract suite,
-# including files that also require an ACS image publish and all contract tests themselves.
+# including files that also require an ACS image publish, Staging image resolution, and all contract tests.
 is_contract_check_path() {
   case "$1" in
-    .github/workflows/deploy-staging.yml|.github/workflows/promote-release.yml|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/release/staging-workflow.test.mjs|scripts/release/promotion-workflow.test.mjs|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
+    .github/workflows/deploy-staging.yml|.github/workflows/promote-release.yml|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/release/staging-workflow.test.mjs|scripts/release/wait-for-acr-image.sh|scripts/release/promotion-workflow.test.mjs|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
       return 0
       ;;
     shared/src/types/sandboxWorkload.ts|shared/src/types/index.ts|shared/src/index.ts|server/src/agent/types.ts|server/src/__tests__/acsDeployWorkflowContract.test.ts|server/src/__tests__/appConfig.test.ts|server/src/__tests__/appServerRemoteConfig.test.ts|server/src/__tests__/executionDispatchValidation.test.ts|server/src/__tests__/runtimeHandProvisionRace.test.ts|server/src/__tests__/runtimeTombstoneAdmission.test.ts|server/src/__tests__/runtimeWakeSessionRestore.test.ts|server/src/__tests__/sandboxLifecycleService.test.ts|server/src/__tests__/sandboxRunAdmissionFence.test.ts|server/src/__tests__/sandboxScopeActivity.pg.test.ts|server/src/__tests__/sandboxWarmup.test.ts|server/src/__tests__/serverRemoteConfig.test.ts|server/src/__tests__/sessionCatalog.test.ts|server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts)
@@ -113,7 +139,6 @@ is_contract_check_path() {
   return 1
 }
 
-lock_changed=false
 while IFS= read -r file; do
   [ -n "$file" ] || continue
 
@@ -128,7 +153,9 @@ while IFS= read -r file; do
   fi
 
   if [ "$file" = "pnpm-lock.yaml" ]; then
-    lock_changed=true
+    # lockfile 可独立改变 Orchestrator/server/shared 的解析版本；无法从路径证明无关时保守发布。
+    publish=true
+    reasons+=("pnpm-lock.yaml runtime dependency resolution")
     continue
   fi
 
@@ -151,13 +178,6 @@ while IFS= read -r file; do
   skipped+=("$file")
 done < "$changed_files"
 
-if [ "$lock_changed" = true ]; then
-  if [ "$publish" = true ]; then
-    reasons+=("pnpm-lock.yaml paired with ACS publish path")
-  else
-    skipped+=("pnpm-lock.yaml without ACS package/source change")
-  fi
-fi
 
 join_items() {
   if [ "$#" -eq 0 ]; then

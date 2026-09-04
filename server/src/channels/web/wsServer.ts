@@ -357,11 +357,18 @@ export class WsServer {
         }
     }
 
-    /** Disconnect all WS connections for a specific user (e.g. when disabled) */
-    disconnectUser(userId: string, reason?: string): void {
+    /**
+     * Disconnect WS connections for a specific user (e.g. when disabled).
+     * 传入 generation 时只断开该次登录的连接（4401），同一用户其他登录保持在线。
+     */
+    disconnectUser(userId: string, reason?: string, generation?: number): void {
         const clients = this.clientsByUser.get(userId);
         if (!clients) return;
         for (const client of clients) {
+            if (generation !== undefined) {
+                if (client.user?.generation === generation) client.ws.close(4401, reason || 'Authentication generation revoked');
+                continue;
+            }
             client.ws.close(4003, reason || 'Account disabled');
         }
     }

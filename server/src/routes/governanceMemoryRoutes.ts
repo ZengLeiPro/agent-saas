@@ -175,7 +175,7 @@ export function registerGovernanceMemoryRoutes(options: {
     return res.json({
       tenantId,
       authority: 'governance_assignment_sets',
-      accessMode: persona === 'org_admin' ? 'manage' : persona === 'platform_admin' ? 'inspect' : 'effective_only',
+      accessMode: persona === 'org_admin' || persona === 'platform_admin' ? 'manage' : 'effective_only',
       ...(req.query.includeSuites === '1' ? { suites: knowledgeSuites(knowledge, knowledgeEnabled) } : {}),
       knowledge: knowledge.map(set => ({
         resourceId: set.resourceId,
@@ -196,7 +196,9 @@ export function registerGovernanceMemoryRoutes(options: {
   });
 
   router.post('/organization-resources/memory/preview', async (req, res) => {
-    if (options.personaFor(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(options.personaFor(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const parsed = previewSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid request' });
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -216,7 +218,8 @@ export function registerGovernanceMemoryRoutes(options: {
     const baselineDigest = governanceDigest({ resource: baseline(tenantId, parsed.data.resourceId, current), directorySnapshot });
     const expiresAt = new Date(options.now().getTime() + options.previewTtlMs).toISOString();
     const signed = {
-      version: 1, kind: 'org_memory', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'org_memory', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(parsed.data),
     };
     return res.json({
@@ -233,7 +236,9 @@ export function registerGovernanceMemoryRoutes(options: {
   });
 
   router.put('/organization-resources/memory/:resourceId', async (req, res) => {
-    if (options.personaFor(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(options.personaFor(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const parsed = commitSchema.safeParse(req.body);
     if (!parsed.success || parsed.data.resourceId !== req.params.resourceId) return res.status(400).json({ error: 'Invalid request' });
     const tenantId = options.tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
@@ -243,7 +248,8 @@ export function registerGovernanceMemoryRoutes(options: {
       return res.status(409).json({ error: 'Memory preview expired', code: 'GOVERNANCE_PREVIEW_EXPIRED' });
     }
     const expectedPreviewId = `mrpv1.${signature(options.secret, {
-      version: 1, kind: 'org_memory', actorUserId: req.user!.sub, tenantId,
+      version: 1, kind: 'org_memory', actorUserId: req.user!.sub, actorTenantId: req.user!.tenantId,
+      actorPersona: options.personaFor(req), tenantId,
       baselineDigest, expiresAt, changeDigest: governanceDigest(mutation),
     })}`;
     if (!matches(previewId, expectedPreviewId)) {

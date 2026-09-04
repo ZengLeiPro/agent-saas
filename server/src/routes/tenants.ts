@@ -36,6 +36,7 @@ import {
   writeTenantInstructions,
 } from '../data/tenants/instructions.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
+import type { PgEntitlementStore } from '../data/entitlements/store.js';
 import { tenantSettingsPolicyError, tenantSettingsSchema } from './tenantSettingsValidation.js';
 
 const createTenantSchema = z.object({
@@ -90,6 +91,8 @@ export interface CreateTenantsRouterOptions {
    * 缺省时静默跳过 seed（保持向后兼容，不阻断租户创建）。
    */
   orgAgentStore?: OrgAgentStore;
+  /** 新组织治理基线必须与组织创建同成败；生产 PG runtime 必须装配。 */
+  entitlementStore?: Pick<PgEntitlementStore, 'provisionTenantGovernance' | 'deleteTenantGovernance'>;
   legacyWriteGate?: {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
@@ -338,6 +341,7 @@ export function createTenantsRouter(opts: CreateTenantsRouterOptions): Router {
         tenantStore,
         sharedDir,
         ...(opts.orgAgentStore ? { orgAgentStore: opts.orgAgentStore } : {}),
+        ...(opts.entitlementStore ? { entitlementStore: opts.entitlementStore } : {}),
       }, {
         id: parsed.data.id,
         name: parsed.data.name,

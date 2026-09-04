@@ -665,10 +665,11 @@ describe("OrganizationGovernancePage", () => {
   it("环境范围展示权威模板目录和 effective scope", async () => {
     mocks.getEntitlements.mockResolvedValue({ entitlement: null, policies: [], scopes: [{ resourceType: "environment_template", mode: "selected", resourceIds: ["env-python"], version: 2 }] });
     mocks.listEnvironmentTemplates.mockResolvedValue({ templates: [{ templateId: "env-python", name: "Python", status: "published", revision: 4 }, { templateId: "env-old", name: "Old", status: "retired", revision: 5 }] });
+    mocks.listEntitlementResourceCatalog.mockResolvedValue({ resourceType: "environment_template", items: [{ resourceId: "env-python", label: "Python", version: 4 }] });
     render(<OrganizationEnvironmentsPage tenantId="tenant-a" />);
     expect(await screen.findByText("Python")).toBeTruthy();
     expect(screen.queryByText("Old")).toBeNull();
-    expect(screen.getByText("v2")).toBeTruthy();
+    expect(screen.getByText(/Entitlement 权威源.*v2/)).toBeTruthy();
   });
 
   it("凭据草稿注册统一 dirty guard", async () => {
@@ -689,6 +690,10 @@ describe("OrganizationGovernancePage", () => {
     mocks.listEnvironmentTemplates.mockResolvedValue({ templates: [
       { templateId: "env-python", name: "Python", status: "published", revision: 4 },
       { templateId: "env-node", name: "Node.js", status: "published", revision: 1 },
+    ] });
+    mocks.listEntitlementResourceCatalog.mockResolvedValue({ resourceType: "environment_template", items: [
+      { resourceId: "env-python", label: "Python", version: 4 },
+      { resourceId: "env-node", label: "Node.js", version: 1 },
     ] });
     const navigated = renderWithDirtyNavigation(<OrganizationEnvironmentsPage tenantId="tenant-a" />);
     const nodeCheckbox = (await screen.findByText("Node.js")).closest("label")?.querySelector("input");

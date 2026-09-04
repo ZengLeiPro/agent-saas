@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { TOKEN_KEY } from "@/lib/constants";
+import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { useGroupedSessions } from "@/hooks/useGroupedSessions";
 import { useGroups } from "@/hooks/useGroups";
 import { getSortedGroupItems } from "@agent/shared";
@@ -107,7 +108,7 @@ export function MobileSessionList({
     const formData = new FormData();
     formData.append("avatar", file);
     try {
-      const token = localStorage.getItem(TOKEN_KEY);
+      const token = readTabScopedAuth(TOKEN_KEY);
       const res = await fetch(apiUrl("/api/auth/avatar"), {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -80,10 +80,50 @@ function createFixture() {
     },
     eventStoreFactory: () => ({ append: vi.fn(async input => input) }),
   };
-  return { records, runStore, service: new DurableBackgroundTaskService(config as never) };
+  return { records, runStore, sessions, config,
+    service: new DurableBackgroundTaskService(config as never) };
 }
 
 describe('DurableBackgroundTaskService DWS route persistence', () => {
+  it('delivers an exact DWS completion after the requester parent session is gone', async () => {
+    const base = createFixture();
+    const enqueueDwsBackgroundCompletion = vi.fn(async () => undefined);
+    Object.assign(base.config, { enqueueDwsBackgroundCompletion });
+    const parent = await base.runStore.upsertPending({
+      runId: 'parent-dws-exact', sessionId: 'parent-session-1', userId: 'user-1',
+      tenantId: 'tenant-1', model: 'group/model', channel: 'dingtalk',
+      metadata: { wakeMessage: { channel: 'dingtalk', chatId: 'cid-1', senderId: 'sender-1',
+        metadata: { source: 'agent_dws_personal_stream', accountId: 'adws-1',
+          profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+          eventType: 'user_im_message_receive_o2o_all' } } },
+    });
+    const context: ToolCallContext = {
+      channelContext: { channel: 'dingtalk',
+        sessionOwner: { id: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-1' } },
+      workspace: { id: 'parent-session-1', root: '/tmp/workspace', userId: 'user-1', username: 'alice',
+        tenantId: 'tenant-1', sessionId: 'parent-session-1', executionTarget: 'server-container' },
+      sessionId: 'parent-session-1', runId: parent.runId, toolCallId: 'tool-call-exact-dws',
+    };
+    const started = await base.service.enqueue(context, {
+      description: '原会话删除仍回群', prompt: '执行任务', agentType: 'general', includeCompanyInfo: false,
+    });
+    base.sessions.delete('parent-session-1');
+    await base.runStore.markStatus(started.taskId, 'completed', undefined, {
+      wakeState: 'pending',
+      backgroundResult: { status: 'completed', text: 'done', totalTokens: 1,
+        toolUseCount: 0, turnCount: 1, durationMs: 1 },
+    });
+
+    await base.service.reconcileWakeDeliveries();
+
+    expect(enqueueDwsBackgroundCompletion).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'tenant-1', taskId: started.taskId, accountId: 'adws-1', conversationId: 'cid-1',
+    }));
+    expect(base.records.get(started.taskId)?.metadata).toMatchObject({
+      wakeState: 'queued', wakeRunId: `agent-dws-background-completion:${started.taskId}`,
+    });
+  });
+
   it('persists an invalid DWS route at enqueue and discards completion without Web fallback', async () => {
     const base = createFixture();
     const parent = await base.runStore.upsertPending({

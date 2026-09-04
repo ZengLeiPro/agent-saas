@@ -56,7 +56,6 @@ export function useAdminSettingsNavigation(deps: AdminSettingsNavigationDeps) {
   }, [deps, returnUrl]);
 
   const closeAdminSettings = useCallback(() => {
-    if (!deps.getCurrentSettings()) return;
     deps.closeState();
     closePersonalSettingsHistory(returnUrl());
   }, [deps, returnUrl]);

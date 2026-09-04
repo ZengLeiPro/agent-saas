@@ -51,6 +51,8 @@ import {
 import { entitlementDependencyImpact, oauthDependencyImpact, tenantDependencyImpact,
   type GovernanceDependencyImpactResolver } from './governanceImpactAuthority.js';
 import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
+import { createTargetOrganizationAccessGuard, governedTenantFor } from '../governance/auth/targetOrganizationAccess.js';
+import { authorizePlatformMembershipMutation, platformMembershipActions } from './governancePlatformMembership.js';
 
 export function createGovernanceAccessRouter(deps: {
   memberships: PgMembershipStore;
@@ -116,6 +118,7 @@ export function createGovernanceAccessRouter(deps: {
     memoryFeatureStatus?: TenantMemoryFeatureStatusMap;
   }>;
   getTenantLifecycle?: (tenantId: string) => { id: string; name?: string; disabled?: boolean; updatedAt: string } | undefined;
+  tenantExists?: (tenantId: string) => boolean;
   setTenantDisabled?: (
     tenantId: string,
     disabled: boolean,
@@ -143,6 +146,10 @@ export function createGovernanceAccessRouter(deps: {
   const router = Router();
   const personas = new WeakMap<Request, GovernancePersona>();
   const actorMemberships = new WeakMap<Request, TenantMembership>();
+  const targetAccess = createTargetOrganizationAccessGuard({
+    memberships: deps.memberships,
+    ...(deps.tenantExists ? { tenantExists: deps.tenantExists } : {}),
+  });
   const now = deps.now ?? (() => new Date());
   const previewTtlMs = deps.membershipPreviewTtlMs ?? 5 * 60_000;
   const canManageTenant = (req: Request) => {
@@ -150,9 +157,7 @@ export function createGovernanceAccessRouter(deps: {
     return persona === 'platform_admin' || persona === 'org_admin';
   };
   const tenantFor = (req: Request, requested?: string): string | null => {
-    if (personas.get(req) === 'platform_admin') return requested ?? req.user?.tenantId ?? null;
-    if (!req.user?.tenantId || (requested && requested !== req.user.tenantId)) return null;
-    return req.user.tenantId;
+    return governedTenantFor(req, personas.get(req), targetAccess.get(req), requested, deps.tenantExists);
   };
   const assignmentSubjectError = async (
     tenantId: string,
@@ -234,17 +239,12 @@ export function createGovernanceAccessRouter(deps: {
     mutation: MembershipMutation,
     explicitTenantScope: boolean,
   ): MembershipIdentityPatch['authorization'] => {
+    if (personas.get(req) === 'platform_admin') {
+      return authorizePlatformMembershipMutation(req.user!.tenantId, tenantId, current, mutation, explicitTenantScope);
+    }
     const persona = mutation.persona ?? current.persona;
     const isOwner = mutation.isOwner ?? current.isOwner;
     const status = mutation.status ?? current.status;
-    if (personas.get(req) === 'platform_admin') {
-      const recoveryOnly = persona === 'org_admin' && isOwner && status === 'active'
-        && mutation.persona !== 'member' && mutation.isOwner !== false && mutation.status !== 'disabled';
-      if (!explicitTenantScope || tenantId === req.user!.tenantId || !mutation.reason?.trim() || !recoveryOnly) {
-        throw new MembershipInvariantError('PLATFORM_RECOVERY_SCOPE_REQUIRED');
-      }
-      return { kind: 'platform_recovery', actorTenantId: req.user!.tenantId, reason: mutation.reason };
-    }
     const actor = actorMemberships.get(req);
     if (!actor || actor.tenantId !== tenantId || actor.status !== 'active' || actor.persona !== 'org_admin') {
       throw new MembershipInvariantError('MEMBERSHIP_CHANGE_FORBIDDEN');
@@ -265,12 +265,7 @@ export function createGovernanceAccessRouter(deps: {
     target: TenantMembership,
   ): MembershipAllowedAction[] => {
     if (personas.get(req) === 'platform_admin') {
-      if (tenantId === req.user!.tenantId
-        || (target.persona === 'org_admin' && target.isOwner && target.status === 'active')) return [];
-      return [{
-        id: 'recover_owner', label: '恢复为 Owner',
-        change: { persona: 'org_admin', isOwner: true, status: 'active' }, requiresReason: true,
-      }];
+      return platformMembershipActions(req.user!.tenantId, tenantId, target);
     }
     const actor = actorMemberships.get(req);
     if (!actor || actor.persona !== 'org_admin' || actor.status !== 'active' || actor.userId === target.userId) return [];
@@ -309,6 +304,7 @@ export function createGovernanceAccessRouter(deps: {
     actorMemberships.set(req, membership);
     next();
   });
+  router.use(targetAccess.middleware);
   router.use(async (req, res, next) => {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
     const user = req.user!;
@@ -321,6 +317,8 @@ export function createGovernanceAccessRouter(deps: {
       : user.tenantId;
     const correlationId = `governance-access:${randomUUID()}`;
     const actorPersona = personas.get(req)!;
+    const accessMode = targetAccess.get(req)?.accessMode
+      ?? (actorPersona === 'org_admin' ? 'organization_manage' : 'effective_only');
     const auditReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() || undefined : undefined;
     let intentAuditId: string;
     try {
@@ -330,7 +328,7 @@ export function createGovernanceAccessRouter(deps: {
         targetType: 'governance_access_api', targetId: req.path,
         targetTenantId: requestedTenantId, purpose: 'governance access mutation',
         ...(auditReason ? { reason: auditReason } : {}),
-        result: 'intent', metadata: {},
+        result: 'intent', metadata: { accessMode },
       });
       intentAuditId = intent.auditId;
       res.locals.governanceChangeId = intentAuditId;
@@ -346,7 +344,7 @@ export function createGovernanceAccessRouter(deps: {
         targetType: 'governance_access_api', targetId: req.path,
         targetTenantId: requestedTenantId, purpose: 'governance access mutation',
         ...(auditReason ? { reason: auditReason } : {}),
-        result: res.statusCode < 400 ? 'succeeded' : 'failed', metadata: { statusCode: res.statusCode },
+        result: res.statusCode < 400 ? 'succeeded' : 'failed', metadata: { statusCode: res.statusCode, accessMode },
       }).then(event => {
         const payload = body && typeof body === 'object' && !Array.isArray(body)
           ? { effectiveAt: event.occurredAt, ...(body as Record<string, unknown>), changeId: intentAuditId, auditId: event.auditId }
@@ -373,7 +371,7 @@ export function createGovernanceAccessRouter(deps: {
               targetTenantId: requestedTenantId,
               purpose: 'governance access mutation',
               result: res.statusCode < 400 ? 'succeeded' : 'failed',
-              metadata: { statusCode: res.statusCode },
+              metadata: { statusCode: res.statusCode, accessMode },
             },
           });
           auditProjectionId = projection.outboxId;
@@ -433,7 +431,7 @@ export function createGovernanceAccessRouter(deps: {
     if (!deps.oauthGrants) {
       return res.status(503).json({ error: 'OAuth grant authority unavailable', code: 'OAUTH_GRANT_AUTHORITY_UNAVAILABLE' });
     }
-    const tenantId = tenantFor(req);
+    const tenantId = personas.get(req) === 'platform_admin' ? req.user!.tenantId : tenantFor(req);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     await deps.reconcileOAuthGrants?.(tenantId, req.user!.sub);
     return res.json({ grants: await deps.oauthGrants.listForSubject(tenantId, req.user!.sub) });
@@ -790,7 +788,9 @@ export function createGovernanceAccessRouter(deps: {
       source: 'governance', version: 0, assignments: [] });
   });
   router.post('/assignments/:resourceType/:resourceId/preview', async (req, res) => {
-    if (personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
+    if (!['platform_admin', 'org_admin'].includes(personas.get(req) ?? '')) {
+      return res.status(403).json({ error: 'Organization admin required' });
+    }
     const resourceType = assignmentResourceTypeSchema.safeParse(req.params.resourceType);
     const parsed = assignmentPreviewSchema.safeParse(req.body);
     if (!resourceType.success || !parsed.success) return res.status(400).json({ error: 'Invalid body' });
@@ -820,6 +820,7 @@ export function createGovernanceAccessRouter(deps: {
       version: 1,
       actorUserId: req.user!.sub,
       actorTenantId: req.user!.tenantId,
+      actorPersona: personas.get(req),
       tenantId,
       resourceType: resourceType.data,
       resourceId: req.params.resourceId,
@@ -840,9 +841,6 @@ export function createGovernanceAccessRouter(deps: {
 
   router.put('/assignments/:resourceType/:resourceId', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
-    if (personas.get(req) === 'platform_admin') {
-      return res.status(403).json({ error: 'Platform administrators cannot mutate customer assignments', code: 'PLATFORM_ASSIGNMENT_WRITE_FORBIDDEN' });
-    }
     const resourceType = assignmentResourceTypeSchema.safeParse(req.params.resourceType);
     const parsed = assignmentPatchSchema.safeParse(req.body);
     if (!resourceType.success || !parsed.success) return res.status(400).json({ error: 'Invalid body' });
@@ -856,6 +854,7 @@ export function createGovernanceAccessRouter(deps: {
       version: 1,
       actorUserId: req.user!.sub,
       actorTenantId: req.user!.tenantId,
+      actorPersona: personas.get(req),
       tenantId,
       resourceType: resourceType.data,
       resourceId: req.params.resourceId,

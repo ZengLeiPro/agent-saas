@@ -26,6 +26,7 @@ const DEFAULT_STREAM_CLEANUP_GRACE_MS = 30_000;
 const DEFAULT_INVOCATION_RESULT_POLL_TIMEOUT_MS = 5_000;
 const DEFAULT_INVOCATION_RESULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_INVOCATION_RESULT_REQUEST_TIMEOUT_MS = 1_000;
+const SHARED_READ_ONLY_CAPABILITY_TTL_MS = 5_000;
 
 /** 可被 AbortSignal 打断的 sleep；abort 时 reject AbortError（外层按既有 aborted 分支归一化）。 */
 function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
@@ -122,6 +123,7 @@ export class HttpTransport implements ExecutionTransport {
   private readonly invocationResultPollTimeoutMs: number;
   private readonly invocationResultPollIntervalMs: number;
   private readonly invocationResultRequestTimeoutMs: number;
+  private sharedReadOnlyCapabilityCache?: { ready: boolean; expiresAt: number };
 
   constructor(options: HttpTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
@@ -261,6 +263,16 @@ export class HttpTransport implements ExecutionTransport {
         metadata: { aborted: true },
       };
     }
+    if (
+      request.context.workspace.sharedReadOnlySubPath &&
+      !(await this.hasSharedReadOnlyMountCapability())
+    ) {
+      return {
+        status: 'error',
+        error: 'ACS 不支持组织任务共享只读挂载协议；本次工具调用已阻断',
+        metadata: { reasonCode: 'ACS_SHARED_READ_ONLY_MOUNT_UNAVAILABLE' },
+      };
+    }
     if (this.shouldUseStreaming(request)) {
       let finalResponse: ToolInvocationResponse | null = null;
       for await (const chunk of this.invokeStream(request)) {
@@ -371,6 +383,20 @@ export class HttpTransport implements ExecutionTransport {
       };
       return;
     }
+    if (
+      request.context.workspace.sharedReadOnlySubPath &&
+      !(await this.hasSharedReadOnlyMountCapability())
+    ) {
+      yield {
+        type: 'completed',
+        response: {
+          status: 'error',
+          error: 'ACS 不支持组织任务共享只读挂载协议；本次工具调用已阻断',
+          metadata: { reasonCode: 'ACS_SHARED_READ_ONLY_MOUNT_UNAVAILABLE' },
+        },
+      };
+      return;
+    }
     const wireRequest = this.buildWireRequest(request);
     const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
     const upstreamSignal = request.context.signal;
@@ -471,6 +497,23 @@ export class HttpTransport implements ExecutionTransport {
     return Boolean((request.context.invocationId ?? request.context.correlation?.invocationId) && request.toolName === 'Shell' && mode !== 'background');
   }
 
+  private async hasSharedReadOnlyMountCapability(): Promise<boolean> {
+    const now = Date.now();
+    if (
+      this.sharedReadOnlyCapabilityCache?.expiresAt &&
+      this.sharedReadOnlyCapabilityCache.expiresAt > now
+    ) {
+      return this.sharedReadOnlyCapabilityCache.ready;
+    }
+    const health = await this.health();
+    const ready = health.status === 'ok' && supportsSharedReadOnlyMount(health.metadata);
+    this.sharedReadOnlyCapabilityCache = {
+      ready,
+      expiresAt: now + SHARED_READ_ONLY_CAPABILITY_TTL_MS,
+    };
+    return ready;
+  }
+
   async cancelInvocation(invocationId: string | undefined): Promise<void> {
     if (!invocationId) return;
     await this.fetchInvocationControlRequest(
@@ -553,7 +596,21 @@ export class HttpTransport implements ExecutionTransport {
   }
 }
 
-async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncIterable<ToolInvocationStreamChunk> {
+export function supportsSharedReadOnlyMount(
+  metadata: Record<string, unknown> | undefined,
+): boolean {
+  const capabilities = metadata?.capabilities;
+  if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities))
+    return false;
+  const capability = (capabilities as Record<string, unknown>).sharedReadOnlyMount;
+  if (!capability || typeof capability !== 'object' || Array.isArray(capability)) return false;
+  const value = capability as Record<string, unknown>;
+  return value.available === true && value.protocolVersion === 1;
+}
+
+async function* parseSseStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncIterable<ToolInvocationStreamChunk> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -633,6 +690,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
     sessionId: ws.sessionId,
     sandboxScopeId: ws.sandboxScopeId,
     mountSubPath: ws.mountSubPath,
+    sharedReadOnlySubPath: ws.sharedReadOnlySubPath,
     ...(ws.sandboxResources ? { sandboxResources: ws.sandboxResources } : {}),
     ...(ws.workload ? { workload: ws.workload } : {}),
     executionTarget: ws.executionTarget,
@@ -649,7 +707,7 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
   };
 }
 
-export interface WireWorkspaceRef extends Omit<WorkspaceRef, 'root' | 'topLevelSessionId' | 'sandboxPolicy'> {
+export interface WireWorkspaceRef extends Omit<WorkspaceRef, 'root' | 'topLevelSessionId' | 'sandboxPolicy' | 'sharedReadOnlyRoot'> {
   /** id 仍然是 optional 与 WorkspaceRef 一致（向后兼容当前 LocalWorkspaceProvider 输出）。 */
   id?: string;
 }

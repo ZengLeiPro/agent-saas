@@ -92,6 +92,22 @@ describe('TenantStore', () => {
   });
 
   describe('创建补偿', () => {
+    it('Entitlement 基线初始化失败时回滚组织并把失败返回调用方', async () => {
+      const store = new TenantStore(storePath);
+      const sharedDir = join(tmpDir, 'shared');
+      const entitlementStore = {
+        provisionTenantGovernance: vi.fn().mockRejectedValue(new Error('scope baseline failed')),
+        deleteTenantGovernance: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await expect(provisionTenant({ tenantStore: store, sharedDir, entitlementStore }, {
+        id: 'failed-org', name: '失败组织', createdBy: 'platform-1',
+      })).rejects.toThrow('scope baseline failed');
+
+      expect(store.findById('failed-org')).toBeUndefined();
+      expect(entitlementStore.deleteTenantGovernance).toHaveBeenCalledWith('failed-org');
+    });
+
     it('删除已持久化 Tenant 与初始化 company.md，重新加载后也不可见', async () => {
       const store = new TenantStore(storePath);
       const sharedDir = join(tmpDir, 'shared');

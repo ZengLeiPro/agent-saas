@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon } from 'lucide-react';
 import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -11,6 +11,7 @@ import { SubagentBlock } from './SubagentBlock';
 import { ExecutionHiddenPlaceholder } from './ActivityGroupBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
 import { UserVoiceMessage } from './UserVoiceMessage';
+import { UserMessageBubble } from './UserMessageBubble';
 import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
@@ -469,7 +470,10 @@ function UserAttachmentChip({ att, filePreview }: {
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.12] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => void handleClick()}
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleClick();
+          }}
           aria-label={label}
           title={label}
         >
@@ -745,28 +749,20 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div className="flex flex-col items-end">
         <div className="group max-w-full">
-          <div
-            className={cn(
-              "whitespace-pre-wrap break-words rounded-2xl rounded-tr-md bg-user-bubble px-3.5 py-2 msg-user-text text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]",
-              isPlaying && "border-l-2 border-primary",
-              isFailed && "opacity-60",
-            )}
-          >
-            {message.isVoiceTranscript && (
-              <span className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                <Mic className="size-3" />
-                <span>语音转文字</span>
-              </span>
-            )}
-            {(message.displayContent ?? message.content) || null}
-            {message.attachments && message.attachments.length > 0 && (
+          <UserMessageBubble
+            messageId={message.id}
+            content={message.displayContent ?? message.content}
+            isVoiceTranscript={message.isVoiceTranscript}
+            isPlaying={isPlaying}
+            isFailed={isFailed}
+            attachments={message.attachments && message.attachments.length > 0 ? (
               <div className={cn("flex flex-wrap gap-1", (message.displayContent ?? message.content) && "mt-1.5")}>
                 {message.attachments.map((att, i) => (
                   <UserAttachmentChip key={i} att={att} filePreview={filePreview} />
                 ))}
               </div>
-            )}
-          </div>
+            ) : undefined}
+          />
           {message.status === 'queued' && (
             <div className="mt-1 text-right text-xs text-muted-foreground">
               已排队，将在当前步骤结束后插入

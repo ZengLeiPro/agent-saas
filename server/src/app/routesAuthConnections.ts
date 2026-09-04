@@ -15,7 +15,7 @@ export function registerAuthConnectionRoutes(input: {
   sharedDir: string;
   tenantSkillsRootDir?: string;
   terminateAndRevokeUserConnectors: (target: UserInfo) => Promise<void>;
-  disconnectWebUser: (userId: string) => void;
+  disconnectWebUser: (userId: string, generation?: number) => void;
   removeCronsByOwners?: (ownerIds: string[]) => Promise<unknown>;
   nativeOAuthHandoffAvailable: boolean;
   legacyWriteGate: AuthRouterDeps['legacyWriteGate'];
@@ -54,8 +54,8 @@ export function registerAuthConnectionRoutes(input: {
     getModelsConfig: () => runtime.config.models,
     runStore: runtime.runtimeRunStore,
     authEpochAuthority: runtime.authEpochAuthority,
-    onAuthFenced: async (userId, reason) => { // login also evicts older WS generations
-      disconnectWebUser(userId);
+    onAuthFenced: async (userId, reason, generation) => { // logout 只断开该 generation 的连接
+      disconnectWebUser(userId, generation);
       if (reason === 'revoke' || reason === 'delete_account') {
         const user = userStore.findById(userId);
         if (user) await terminateAndRevokeUserConnectors(user);

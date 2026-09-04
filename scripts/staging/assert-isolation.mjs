@@ -21,12 +21,30 @@ const LOGICAL_SHARED_NAS_PROBES = new Set([
 
 function isFreshProbe(probe, now, maxAgeMs) {
   const observedAt = Date.parse(probe.observedAt ?? '');
+  const observedDigest = digestBuffer(Buffer.from(canonicalJson(probe.observed ?? null)));
   return (
-    /^sha256:[a-f0-9]{64}$/u.test(probe.evidenceDigest ?? '') &&
+    probe.evidenceDigest === observedDigest &&
     Number.isFinite(observedAt) &&
     observedAt <= now + 60_000 &&
     now - observedAt <= maxAgeMs
   );
+}
+
+function assertProductionOssProbe(probe) {
+  const observed = probe.observed;
+  if (
+    !observed ||
+    typeof observed.bucket !== 'string' ||
+    !observed.bucket ||
+    typeof observed.sentinelKey !== 'string' ||
+    !observed.sentinelKey ||
+    observed.sentinelExists !== true ||
+    observed.forbidOverwrite !== true ||
+    observed.responseStatus !== 403 ||
+    !/^AccessDenied(?:$|[A-Za-z0-9_-])/u.test(observed.responseCode ?? '')
+  ) {
+    throw new Error('Production OSS probe did not prove an authorization 403/AccessDenied denial');
+  }
 }
 
 function assertSharedNasProbe(probe) {
@@ -90,6 +108,7 @@ export function assertIsolationEvidence(value, { now = Date.now(), maxAgeMs = 60
     ) {
       throw new Error(`Isolation probe did not prove a fresh production denial: ${id}`);
     }
+    if (id === 'oss-identity-cannot-write-production-bucket') assertProductionOssProbe(probe);
   }
   const normalized = canonicalJson(
     [...byId.values()].sort((left, right) => String(left.id).localeCompare(String(right.id))),

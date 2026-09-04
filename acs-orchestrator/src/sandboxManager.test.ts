@@ -8,6 +8,12 @@ import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager, brokenSandboxStateReason } from './sandboxManager.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
 import { isRawSandboxDelete, mockCurrentSandboxStatusReads } from './sandboxManagerLifecycleTestFixtures.js';
+const isolatedWorkspace = {
+  workspaceId: 'ws_kaiyan__test',
+  sessionId: 'session-123',
+  mountSubPath: 'workspaces/kaiyan/u-1/work/task-a',
+  sharedReadOnlySubPath: 'workspaces/kaiyan/u-1',
+};
 describe('SandboxManager egress and runtime injection', () => {
   async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
     const applies: Array<Record<string, unknown>> = [];
@@ -32,11 +38,7 @@ describe('SandboxManager egress and runtime injection', () => {
     } as unknown as Kubectl;
 
     const manager = new SandboxManager({ ...baseConfig(), egress }, kubectl, noopLogger);
-    await manager.ensureRunning({
-      workspaceId: 'ws_kaiyan__test',
-      sessionId: 'session-123',
-      mountSubPath: 'workspaces/kaiyan/u-1',
-    });
+    await manager.ensureRunning(isolatedWorkspace);
 
     const sandbox = applies.find((item) => item.kind === 'Sandbox');
     const trafficPolicy = applies.find((item) => item.kind === 'TrafficPolicy');
@@ -140,11 +142,7 @@ describe('SandboxManager', () => {
       imagePullSecretNames: ['acr-agentsaasacrprod'],
     }, kubectl, noopLogger);
 
-    await manager.ensureRunning({
-      workspaceId: 'ws_kaiyan__test',
-      sessionId: 'session-123',
-      mountSubPath: 'workspaces/kaiyan/u-1',
-    });
+    await manager.ensureRunning(isolatedWorkspace);
 
     const podSpec = (((applied?.spec as Record<string, unknown>).template as Record<string, unknown>).spec as Record<string, unknown>);
     const container = (podSpec.containers as Array<Record<string, unknown>>)[0]!;
@@ -168,8 +166,9 @@ describe('SandboxManager', () => {
     expect(container.volumeMounts).toMatchObject([{
       name: 'workspace',
       mountPath: '/workspace',
-      subPath: 'workspaces/kaiyan/u-1',
-    }]);
+      subPath: 'workspaces/kaiyan/u-1/work/task-a',
+    }, { name: 'workspace', mountPath: '/agent-shared', subPath: 'workspaces/kaiyan/u-1', readOnly: true }]);
+    expect(container.env).toContainEqual({ name: 'AGENT_SHARED_READ_ONLY_PATH', value: '/agent-shared' });
     expect(podSpec).toMatchObject({
       automountServiceAccountToken: false,
       enableServiceLinks: false,
@@ -195,7 +194,8 @@ describe('SandboxManager', () => {
       'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__test',
       'agent-saas.kaiyan.net/sandbox-scope-id': 'ws_kaiyan__test',
       'agent-saas.kaiyan.net/session-id': 'session-123',
-      'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
+      'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1/work/task-a',
+      'agent-saas.kaiyan.net/shared-read-only-subpath': 'workspaces/kaiyan/u-1',
       'agent-saas.kaiyan.net/network-policy-mode': 'public-egress',
       'agent-saas.kaiyan.net/network-policy-deny-private': 'true',
       'network.alibabacloud.com/enable-network-policy-agent': 'true',

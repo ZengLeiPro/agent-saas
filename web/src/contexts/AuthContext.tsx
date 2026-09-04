@@ -17,6 +17,12 @@ import {
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
 import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
+import {
+  IDENTITY_META_KEY,
+  readTabScopedAuth,
+  removeTabScopedAuth,
+  writeTabScopedAuth,
+} from "@/platform/tabScopedAuthStorage";
 import { authPreload } from "@/lib/preload";
 import { apiUrl } from '@/lib/apiBase';
 import { clearSessionListCache } from "@/lib/sessionListCache";
@@ -81,11 +87,10 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const IDENTITY_META_KEY = "agentChat.identity.v1";
 
 function readIdentityState(): IdentityState {
   try {
-    const parsed = JSON.parse(localStorage.getItem(IDENTITY_META_KEY) || "null") as IdentityState | null;
+    const parsed = JSON.parse(readTabScopedAuth(IDENTITY_META_KEY) || "null") as IdentityState | null;
     const generation = typeof parsed?.generation === "number" ? parsed.generation : 0;
     const identity = parsed?.identity && parsed.identity.generation === generation ? parsed.identity : null;
     return { generation, identity };
@@ -93,7 +98,7 @@ function readIdentityState(): IdentityState {
 }
 
 function persistIdentityState(state: IdentityState): void {
-  localStorage.setItem(IDENTITY_META_KEY, JSON.stringify(state));
+  writeTabScopedAuth(IDENTITY_META_KEY, JSON.stringify(state));
 }
 
 function clearAccountScopedState(): void {
@@ -103,7 +108,7 @@ function clearAccountScopedState(): void {
   wsClient.resetRecovery({ sessionId: null });
   resetChatStore();
   setMessageCacheIdentity(null);
-  localStorage.removeItem(SESSION_STORAGE_KEY);
+  removeTabScopedAuth(SESSION_STORAGE_KEY);
   clearWebCacheV2Namespace();
   clearSessionListCache();
   void clearAllMessageCache();
@@ -156,10 +161,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authEnabled, setAuthEnabled] = useState(true);
   const [accounts, setAccounts] = useState<SavedAccountSummary[]>(readSavedAccounts);
   const lifecycle = useMemo(() => new AuthLifecycleTransaction(
-    createStorageJournalStore({
-      getItem: (key) => localStorage.getItem(key),
-      setItem: (key, value) => localStorage.setItem(key, value),
-      removeItem: (key) => localStorage.removeItem(key),
+    createStorageJournalStore({ // 日志与身份同域：一个 tab 的退出不能回放到另一个 tab
+      getItem: (key) => readTabScopedAuth(key),
+      setItem: (key, value) => writeTabScopedAuth(key, value),
+      removeItem: (key) => removeTabScopedAuth(key),
     }),
     {
       fenceGeneration: async () => {
@@ -167,7 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         wsClient.freezeSending();
         if (identityRef.current.identity) transitionIdentity({ type: 'logout' });
         setUser(null);
-        const token = localStorage.getItem(TOKEN_KEY);
+        const token = readTabScopedAuth(TOKEN_KEY);
         if (token) void fetch(apiUrl('/api/auth/logout'), {
           method: 'POST', headers: { Authorization: `Bearer ${token}` },
         }).catch(() => undefined);
@@ -176,7 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       stopQueue: () => resetChatStore(),
       clearCursorEpoch: () => {
         wsClient.resetRecovery({ sessionId: null });
-        localStorage.removeItem(SESSION_STORAGE_KEY);
+        removeTabScopedAuth(SESSION_STORAGE_KEY);
       },
       clearCache: async () => { // includes every v2 namespace and N-1 sensitive cache
         setMessageCacheIdentity(null);
@@ -198,8 +203,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
       deleteToken: () => {
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(AUTH_SESSION_KEY);
+        removeTabScopedAuth(TOKEN_KEY);
+        removeTabScopedAuth(AUTH_SESSION_KEY);
       },
     },
   ), [transitionIdentity]);
@@ -207,7 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const requestServerLogout = useCallback((): Promise<void> => {
     // Capture the valid token before teardown; await the server receipt only
     // after local sensitive state and the token are already cleared.
-    const token = localStorage.getItem(TOKEN_KEY);
+    const token = readTabScopedAuth(TOKEN_KEY);
     if (!token) return Promise.resolve();
     return fetch(apiUrl('/api/auth/logout'), {
       method: 'POST', headers: { Authorization: `Bearer ${token}` },
@@ -243,8 +248,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearAccountScopedState();
       },
       persistTokenAndBinding: (binding) => {
-        localStorage.setItem(TOKEN_KEY, nextAuth.token);
-        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+        writeTabScopedAuth(TOKEN_KEY, nextAuth.token);
+        writeTabScopedAuth(AUTH_SESSION_KEY, JSON.stringify(binding));
       },
       installAuthenticatedState: () => {
         setAccounts(remainingAccounts);
@@ -258,8 +263,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       failClosed: () => {
         wsClient.freezeSending();
         wsClient.disconnect();
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(AUTH_SESSION_KEY);
+        removeTabScopedAuth(TOKEN_KEY);
+        removeTabScopedAuth(AUTH_SESSION_KEY);
         setUser(null);
       },
     });
@@ -269,15 +274,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logoutCurrentAccount();
   }, [logoutCurrentAccount]);
 
-  // 401 and WS auth failure enter the same canonical transaction.
+  // 当前 token 被服务端拒绝（401 / WS 鉴权失败）：只清掉这一个账号并回到登录页。
+  // 不能复用 logoutCurrentAccount——它会静默激活列表里的下一个账号，用户会莫名其妙变成另一个身份。
+  const expireCurrentAccount = useCallback(async () => {
+    const invalidToken = readTabScopedAuth(TOKEN_KEY);
+    const currentKey = user ? getAccountKey(user) : null;
+    await lifecycle.logout();
+    const remainingAccounts = currentKey
+      ? forgetSavedAccount(currentKey)
+      : invalidToken ? forgetSavedAccountByToken(invalidToken) : readSavedAccounts();
+    setAccounts(remainingAccounts);
+  }, [lifecycle, user]);
+
   useEffect(() => {
     setOnUnauthorized(() => {
-      logout();
+      void expireCurrentAccount();
     });
     wsClient.setOnAuthFailure(() => {
-      logout();
+      void expireCurrentAccount();
     });
-  }, [logout]);
+  }, [expireCurrentAccount]);
 
   // Recover any durable logout/delete journal before accepting cached auth.
   useEffect(() => {
@@ -290,22 +306,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         commitConnections: () => undefined,
         failClosed: () => {
           wsClient.disconnect();
-          localStorage.removeItem(TOKEN_KEY);
-          localStorage.removeItem(AUTH_SESSION_KEY);
+          removeTabScopedAuth(TOKEN_KEY);
+          removeTabScopedAuth(AUTH_SESSION_KEY);
           setUser(null);
         },
       });
       const result = await authPreload;
       if (result.status === 'authenticated') {
         const nextUser = normalizeAuthUser(result.user);
-        const bindingRaw = localStorage.getItem(AUTH_SESSION_KEY);
+        const bindingRaw = readTabScopedAuth(AUTH_SESSION_KEY);
         if (!bindingRaw) {
-          localStorage.removeItem(TOKEN_KEY);
+          removeTabScopedAuth(TOKEN_KEY);
           clearAccountScopedState();
         } else {
           setUser(nextUser);
           transitionIdentity({ type: 'authenticated', principal: { userId: nextUser.id, tenantId: nextUser.tenantId } });
-          const token = localStorage.getItem(TOKEN_KEY);
+          const token = readTabScopedAuth(TOKEN_KEY);
           if (token) {
             const binding = JSON.parse(bindingRaw) as { authEpoch: number; generation: number };
             setAccounts(rememberSavedAccount(token, nextUser, binding));
@@ -316,9 +332,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (result.status === 'no-auth') {
         setAuthEnabled(false);
       } else if (result.status === 'unauthenticated') {
-        const invalidToken = localStorage.getItem(TOKEN_KEY);
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(AUTH_SESSION_KEY);
+        const invalidToken = readTabScopedAuth(TOKEN_KEY);
+        removeTabScopedAuth(TOKEN_KEY);
+        removeTabScopedAuth(AUTH_SESSION_KEY);
         clearAccountScopedState();
         if (identityRef.current.identity) transitionIdentity({ type: 'token-invalidated' });
         if (invalidToken) setAccounts(forgetSavedAccountByToken(invalidToken));
@@ -337,8 +353,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isSwitching) clearAccountScopedState();
       },
       persistTokenAndBinding: async (binding) => {
-        localStorage.setItem(TOKEN_KEY, data.token);
-        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+        writeTabScopedAuth(TOKEN_KEY, data.token);
+        writeTabScopedAuth(AUTH_SESSION_KEY, JSON.stringify(binding));
       },
       installAuthenticatedState: () => {
         setAccounts(rememberSavedAccount(data.token, nextUser, { authEpoch: data.authEpoch, generation: data.generation }));
@@ -352,8 +368,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       failClosed: () => {
         wsClient.freezeSending();
         wsClient.disconnect();
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(AUTH_SESSION_KEY);
+        removeTabScopedAuth(TOKEN_KEY);
+        removeTabScopedAuth(AUTH_SESSION_KEY);
         setUser(null);
       },
     });
@@ -383,8 +399,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearAccountScopedState();
       },
       persistTokenAndBinding: (binding) => {
-        localStorage.setItem(TOKEN_KEY, savedAuth.token);
-        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+        writeTabScopedAuth(TOKEN_KEY, savedAuth.token);
+        writeTabScopedAuth(AUTH_SESSION_KEY, JSON.stringify(binding));
       },
       installAuthenticatedState: () => {
         setUser(nextUser);
@@ -397,8 +413,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       failClosed: () => {
         wsClient.freezeSending();
         wsClient.disconnect();
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(AUTH_SESSION_KEY);
+        removeTabScopedAuth(TOKEN_KEY);
+        removeTabScopedAuth(AUTH_SESSION_KEY);
         setUser(null);
       },
     });

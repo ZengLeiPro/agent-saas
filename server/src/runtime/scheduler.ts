@@ -16,7 +16,7 @@ const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
 const STALE_APPROVAL_BATCH_SIZE = 50;
 const STAGED_INTERACTION_RECOVERY_BATCH_SIZE = 50;
-const BACKGROUND_COMMAND_START_TIMEOUT_MS = 2 * 60_000;
+const BACKGROUND_TASK_START_TIMEOUT_MS = 2 * 60_000;
 const DEFAULT_MAX_CONCURRENT_RUNS = 16;
 export const SCHEDULER_STATE_METADATA_KEY = 'schedulerState';
 export const SCHEDULER_STATE_STAGED = 'staged';
@@ -352,11 +352,19 @@ export class RuntimeScheduler {
       // the kill switch is closed or capacity pressure would leak ready=false quota.
       for (const record of recoverable) {
         if (record.status !== 'pending' || !isBackgroundTaskRun(record) || isBackgroundTaskReady(record)
-          || Date.parse(record.requestedAt) > now.getTime() - BACKGROUND_COMMAND_START_TIMEOUT_MS) continue;
-        const message = '后台任务启动确认超时；已冻结未获得 durable intent 的任务';
+          || Date.parse(record.requestedAt) > now.getTime() - BACKGROUND_TASK_START_TIMEOUT_MS) continue;
+        const command = isBackgroundCommandTaskRun(record);
+        const message = command
+          ? '后台命令启动确认超时；已尝试终止可能存在的 ACS 进程'
+          : '后台 Agent 启动确认超时；任务尚未开始执行';
         try {
           if (this.options.failBackgroundTask) await this.options.failBackgroundTask(record, message);
-          else await this.options.runStore.markStatus(record.runId, 'failed', 'background_task_activation_timeout', { wakeState: 'pending' });
+          else await this.options.runStore.markStatus(
+            record.runId,
+            'failed',
+            command ? 'background_command_start_timeout' : 'background_agent_start_timeout',
+            { wakeState: 'pending' },
+          );
           backgroundStateChanged = true;
         } catch (err) {
           this.options.logger?.error(`Failed to freeze stale background task reservation ${record.runId}: ${err instanceof Error ? err.message : String(err)}`);
@@ -637,6 +645,10 @@ export class RuntimeScheduler {
       }, { tenantId: requireTenantId(acquired.tenantId) });
     } catch (error) {
       const message = `scheduler_pre_wake_event_failed: ${error instanceof Error ? error.message : String(error)}`;
+      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
+        await this.options.failBackgroundTask(acquired, message);
+        return;
+      }
       const terminal = await finalizeTerminalRun({
         runStore: this.options.runStore,
         eventStore: this.options.eventStore,
@@ -658,13 +670,14 @@ export class RuntimeScheduler {
       this.options.logger?.error(
         `Runtime scheduler failed before wake for ${acquired.runId}: ${message}; terminal=${terminal.won ? 'claimed' : terminal.record?.status ?? 'missing'}`,
       );
-      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
-        await this.options.failBackgroundTask(terminal.record ?? acquired, message).catch(() => undefined);
-      }
       return;
     }
 
     if (!this.options.autoWake || !this.options.wake) {
+      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
+        await this.options.failBackgroundTask(acquired, 'scheduler_recovery_scan');
+        return;
+      }
       const terminal = await finalizeTerminalRun({
         runStore: this.options.runStore,
         eventStore: this.options.eventStore,
@@ -685,9 +698,6 @@ export class RuntimeScheduler {
       });
       if (terminal.won) this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
       else this.options.logger?.error(`Runtime scheduler orphan terminal CAS lost for ${acquired.runId}: current=${terminal.record?.status ?? 'missing'}`);
-      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
-        await this.options.failBackgroundTask(terminal.record ?? acquired, 'scheduler_recovery_scan').catch(() => undefined);
-      }
       return;
     }
 

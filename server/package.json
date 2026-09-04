@@ -35,6 +35,8 @@
     "context:relation-eval:baseline": "tsx src/scripts/context-relation-eval.mts --dataset=src/context/relations/fixtures/phase4-baseline-v1.json",
     "backfill:runtime-sessions": "tsx scripts/backfill-runtime-sessions.mts",
     "repair:runtime-session-statuses": "tsx scripts/repair-runtime-session-statuses.mts",
+    "audit:entitlement-scopes": "tsx scripts/audit-entitlement-resource-scopes.mts",
+    "repair:entitlement-scopes": "tsx scripts/repair-entitlement-resource-scopes.mts",
     "repair:taskboard-workflow": "tsx scripts/repairTaskboardWorkflow.ts",
     "kb:previews": "tsx scripts/generate-kb-previews.mts",
     "migrate:platform-tenant-pantheon": "tsx scripts/migrate-platform-tenant-pantheon.mts",

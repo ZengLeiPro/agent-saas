@@ -82,6 +82,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const [tenantError, setTenantError] = useState<string | null>(null);
   const [ownSkills, setOwnSkills] = useState<TenantOwnSkillInfo[]>([]);
   const [ownError, setOwnError] = useState<string | null>(null);
+  const tenantRefreshGenerationRef = useRef(0);
   // 上传 skill（platform mode → pool；tenant mode → 组织自有）
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -102,21 +103,28 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const canPromoteToPlatform = isPlatformAdmin && canPlatform("skill.platform.manage");
 
   const refreshTenantSkills = useCallback(async () => {
-    if (!isTenantMode || !tenantIdScope) return;
+    const generation = ++tenantRefreshGenerationRef.current;
+    if (!isTenantMode || !tenantIdScope) {
+      setTenantLoading(false);
+      return;
+    }
     setTenantLoading(true);
     try {
       const [poolResult, ownResult] = await Promise.all([
         fetchTenantSkillPool(tenantIdScope),
         fetchTenantOwnSkills(tenantIdScope),
       ]);
+      if (generation !== tenantRefreshGenerationRef.current) return;
       setTenantSkills(poolResult.skills);
       setOwnSkills(ownResult.skills);
       setTenantError(null);
       setOwnError(null);
     } catch (err) {
-      setTenantError(err instanceof Error ? err.message : String(err));
+      if (generation === tenantRefreshGenerationRef.current) {
+        setTenantError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setTenantLoading(false);
+      if (generation === tenantRefreshGenerationRef.current) setTenantLoading(false);
     }
   }, [isTenantMode, tenantIdScope]);
 
@@ -523,9 +531,15 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       </Button>
                       <Select
                         value={skill.exposure}
-                        disabled={writeDisabled}
+                        disabled={writeDisabled || tenantsLoading}
                         onValueChange={(value) => {
-                          void handleUpdatePlatformSkill(skill, { exposure: value as PoolSkillInfo["exposure"] });
+                          const exposure = value as PoolSkillInfo["exposure"];
+                          void handleUpdatePlatformSkill(skill, {
+                            exposure,
+                            tenantIds: exposure === "allow_tenants" && skill.exposure === "all"
+                              ? platformTenantOptions.map((tenant) => tenant.id)
+                              : skill.tenantIds,
+                          });
                         }}
                       >
                         <SelectTrigger className="h-8 w-40" aria-label={`设置技能 ${skill.name} 的组织开放范围`}>
@@ -554,7 +568,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           <Checkbox
                             checked={skill.tenantIds.includes(tenant.id)}
                             aria-label={`设置技能 ${skill.name} 对组织 ${tenant.name} 的开放范围`}
-                            disabled={writeDisabled}
+                            disabled={writeDisabled || tenantsLoading}
                             onCheckedChange={(checked) => {
                               const tenantIds = checked === true
                                 ? Array.from(new Set([...skill.tenantIds, tenant.id]))

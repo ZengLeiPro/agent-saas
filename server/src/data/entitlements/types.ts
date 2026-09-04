@@ -2,14 +2,35 @@ import type { TenantSettings } from '../tenants/types.js';
 
 export type EntitlementSource = 'plan_default' | 'platform_override' | 'legacy_migrated';
 export type EntitlementStatus = 'trial' | 'active' | 'suspended' | 'expired';
-export type EntitlementResourceType =
-  | 'model'
-  | 'agent_template'
-  | 'skill'
-  | 'connector'
-  | 'environment_template'
-  | 'tool';
+export const ENTITLEMENT_RESOURCE_TYPES = [
+  'model',
+  'tool',
+  'connector',
+  'agent_template',
+  'skill',
+  'environment_template',
+] as const;
+export type EntitlementResourceType = typeof ENTITLEMENT_RESOURCE_TYPES[number];
 export type EntitlementScopeMode = 'all' | 'selected';
+
+/**
+ * `tool` Entitlement 管理的是租户能力开关，不是 Agent runtime descriptor。
+ * 该清单同时约束治理目录、存量投影和运行前授权，避免跨层 ID 漂移。
+ */
+export const TOOL_ENTITLEMENT_RESOURCE_IDS = [
+  'files',
+  'cron',
+  'mcp',
+  'custom_skill',
+  'personal_agent',
+  'org_knowledge',
+  'image_gen',
+  'memory_polling',
+  'memory_consolidation',
+  'memory_write_delegation',
+] as const;
+export type ToolEntitlementResourceId = typeof TOOL_ENTITLEMENT_RESOURCE_IDS[number];
+export const PERSONAL_AGENT_TOOL_ENTITLEMENT_ID: ToolEntitlementResourceId = 'personal_agent';
 
 export interface TenantEntitlementSet {
   tenantId: string;
@@ -129,6 +150,14 @@ export interface LegacyEntitlementBackfillResult {
   tenantsProjected: number;
   scopesProjected: number;
   policiesProjected: number;
+  issuesRecorded: number;
+}
+
+export interface EntitlementScopeBaselineBackfillResult {
+  tenantsScanned: number;
+  scopesInserted: number;
+  scopesSkipped: number;
+  tenantsWithErrors: number;
   issuesRecorded: number;
 }
 

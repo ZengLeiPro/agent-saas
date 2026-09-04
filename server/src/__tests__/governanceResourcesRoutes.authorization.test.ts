@@ -232,18 +232,34 @@ function withOffboardingPreview(change: Record<string, unknown>, preview: Record
 }
 
 describe('typed governance resource routes: authorization and credential boundaries', () => {
-  it('平台管理员可跨租户只读查看组织凭据，但跨租户写管理仍 fail closed', async () => {
-    const getAgent = vi.fn();
-    const getSkill = vi.fn();
+  it('平台管理员无需目标 Membership 即可管理显式选择组织的 Agent、Skill 和共享凭据', async () => {
+    const orgAgent = {
+      agentId: 'org-a', tenantId: 'tenant-a', kind: 'org_agent', ownerUserId: 'member-1',
+      status: 'enabled', revision: 1,
+    };
+    const tenantSkill = {
+      skillId: 'tenant-s', tenantId: 'tenant-a', scope: 'tenant', ownerUserId: 'member-1',
+      status: 'draft', revision: 1,
+    };
+    const getAgent = vi.fn().mockResolvedValue(orgAgent);
+    const getSkill = vi.fn().mockResolvedValue(tenantSkill);
     const listCredentials = vi.fn().mockResolvedValue([{
       credentialId: 'cred-a', tenantId: 'tenant-a', connectorId: 'github', kind: 'org_shared',
       custodianUserId: 'admin-1', secretRef: 'sec-a', status: 'active', version: 1,
     }]);
-    const getCredential = vi.fn();
+    const getCredential = vi.fn().mockResolvedValue({
+      credentialId: 'cred-a', tenantId: 'tenant-a', connectorId: 'github', kind: 'org_shared',
+      custodianUserId: 'member-1', secretRef: 'sec-a', status: 'active', version: 1,
+    });
+    const getMembership = vi.fn().mockImplementation(async (tenantId: string, userId: string) => (
+      tenantId === 'tenant-a' && userId === 'member-1'
+        ? { tenantId, userId, persona: 'member', isOwner: false, status: 'active', version: 1 }
+        : null
+    ));
     const test = await rig({
       platformAdmin: true,
       user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
-      getAgent, getSkill, listCredentials, getCredential,
+      getAgent, getSkill, listCredentials, getCredential, getMembership,
     });
     // 平台管理员在组织控制台可跨租户只读查看组织凭据（与成员/权限策略等治理页一致）
     const read = await test.request('/api/governance/resources/credentials?tenantId=tenant-a');
@@ -251,40 +267,29 @@ describe('typed governance resource routes: authorization and credential boundar
     await expect(read.json()).resolves.toMatchObject({ credentials: [{ credentialId: 'cred-a' }] });
     expect(listCredentials).toHaveBeenCalledWith('tenant-a');
 
-    // 平台管理员跨租户仍不可读取或管理客户组织 Agent/Skill 资源，
-    // 也不可跨租户写组织凭据（创建、状态变更）
-    const forbidden = [
-      await test.request('/api/governance/resources/agents/org-a?tenantId=tenant-a'),
-      await test.request('/api/governance/resources/agents', json('POST', { tenantId: 'tenant-a', kind: 'org_agent' })),
-      await test.request('/api/governance/resources/agents/org-a/versions?tenantId=tenant-a', json('POST', { expectedRevision: 1, definition: {} })),
-      await test.request('/api/governance/resources/agents/org-a/status?tenantId=tenant-a', json('PATCH', { expectedRevision: 1, status: 'disabled' })),
-      await test.request('/api/governance/resources/agents/org-a/archive?tenantId=tenant-a', json('POST', { expectedRevision: 1 })),
-      await test.request('/api/governance/resources/skills/tenant-s?tenantId=tenant-a'),
-      await test.request('/api/governance/resources/skills', json('POST', { tenantId: 'tenant-a', skillId: 'tenant-s', scope: 'tenant' })),
-      await test.request('/api/governance/resources/skills/tenant-s/versions?tenantId=tenant-a', json('POST', { expectedRevision: 1, definition: {} })),
-      await test.request('/api/governance/resources/credentials', json('POST', {
-        tenantId: 'tenant-a', connectorId: 'github', kind: 'org_shared', purpose: 'shared', secret: 'sensitive',
-      })),
-      await test.request('/api/governance/resources/credentials/cred-a/status?tenantId=tenant-a', json('PATCH', {
-        expectedVersion: 1, status: 'rotation_due', reason: 'rotation',
-      })),
-    ];
-    expect(forbidden.every(response => response.status === 403)).toBe(true);
-    expect(getAgent).not.toHaveBeenCalled();
-    expect(getSkill).not.toHaveBeenCalled();
-    expect(getCredential).not.toHaveBeenCalled();
-    expect(test.agentCreate).not.toHaveBeenCalled();
-    expect(test.agentPublish).not.toHaveBeenCalled();
-    expect(test.agentSetStatus).not.toHaveBeenCalled();
-    expect(test.agentArchive).not.toHaveBeenCalled();
-    expect(test.skillCreate).not.toHaveBeenCalled();
-    expect(test.skillPublishVersion).not.toHaveBeenCalled();
-    expect(test.credentialCreate).not.toHaveBeenCalled();
-    expect(test.updateCredential).not.toHaveBeenCalled();
+    expect((await test.request('/api/governance/resources/agents/org-a?tenantId=tenant-a')).status).toBe(200);
+    expect((await test.request('/api/governance/resources/agents', json('POST', {
+      tenantId: 'tenant-a', kind: 'org_agent', ownerUserId: 'member-1',
+    }))).status).toBe(201);
+    expect((await test.request('/api/governance/resources/skills/tenant-s?tenantId=tenant-a')).status).toBe(200);
+    expect((await test.request('/api/governance/resources/skills', json('POST', {
+      tenantId: 'tenant-a', skillId: 'tenant-new', scope: 'tenant', ownerUserId: 'member-1',
+    }))).status).toBe(201);
+    const credentialPreview = await test.request('/api/governance/resources/credentials/preview', json('POST', {
+      tenantId: 'tenant-a', connectorId: 'github', kind: 'org_shared', custodianUserId: 'member-1',
+      purpose: 'shared', secret: 'sensitive', reason: 'create shared credential',
+    }));
+    expect(credentialPreview.status).toBe(200);
+    expect(getMembership).toHaveBeenCalledWith('tenant-a', 'member-1');
+
+    const personal = await test.request('/api/governance/resources/credentials', json('POST', {
+      tenantId: 'tenant-a', connectorId: 'github', kind: 'personal_grant', purpose: 'private', secret: 'sensitive',
+    }));
+    expect(personal.status).toBe(403);
 
     const sameTenantPlatform = await rig({
       platformAdmin: true,
-      user: { sub: 'platform-1', username: 'root', tenantId: 'tenant-a', role: 'admin' },
+      user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
       getMembership: vi.fn().mockResolvedValue({
         tenantId: 'tenant-a', userId: 'platform-1', persona: 'member',
         isOwner: false, status: 'active', version: 1,

@@ -2,9 +2,19 @@
 export interface ContextRecallSubject {
   tenantId: string;
   userId: string;
+  /** Server-resolved organization access mode; never accepted from model or client input. */
+  accessMode?: 'platform_manage' | 'organization_manage' | 'effective_only';
   workspaceId?: string;
   sessionId?: string;
   orgAgentId?: string;
+  channelScope?: {
+    bindingId: string;
+    conversationSpaceId: string;
+    workConversationId: string;
+    conversationId: string;
+    policyRevision: number;
+    allowedSourceIds: readonly string[];
+  };
 }
 
 export interface ContextRecallCollectionScope {

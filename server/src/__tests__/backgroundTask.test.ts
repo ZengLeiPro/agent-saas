@@ -330,7 +330,6 @@ describe('DurableBackgroundTaskService', () => {
       agentType: 'explore',
       includeCompanyInfo: false,
     });
-
     expect(started).toMatchObject({
       status: 'pending', description: '后台调研', model: 'group/worker', shortTaskId: expect.stringMatching(/^T-[A-F0-9]{24}$/),
     });

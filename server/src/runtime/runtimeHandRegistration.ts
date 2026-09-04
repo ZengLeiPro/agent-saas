@@ -149,6 +149,7 @@ function buildWorkspaceRecipe(
   sessionId?: string,
   mountSubPath?: string,
   topLevelSessionId?: string,
+  sharedReadOnlySubPath?: string,
 ): WorkspaceRecipe {
   const effectiveMountSubPath = override?.mountSubPath ?? mountSubPath;
   return {
@@ -158,6 +159,9 @@ function buildWorkspaceRecipe(
       ?? deriveSandboxScopeId({ workspaceId, mountSubPath: effectiveMountSubPath, topLevelSessionId }),
     ...(sessionId ? { sessionId } : {}),
     ...(!override?.mountSubPath && mountSubPath ? { mountSubPath } : {}),
+    ...(!override?.sharedReadOnlySubPath && sharedReadOnlySubPath
+      ? { sharedReadOnlySubPath }
+      : {}),
   };
 }
 
@@ -170,6 +174,7 @@ export async function ensureRuntimeHandRegistered(params: {
   runId?: string;
   workspaceId: string;
   workspaceMountSubPath?: string;
+  workspaceSharedReadOnlySubPath?: string;
   /**
    * 顶层会话 ID（per-session Sandbox 的归属键）。顶层会话传自己的 sessionId；
    * 子 Agent / 后台任务传**递归到顶层**的那个 ID，从而与父会话落在同一 pod（决策 7）。
@@ -261,6 +266,7 @@ export async function ensureRuntimeHandRegistered(params: {
     params.sessionId,
     params.workspaceMountSubPath,
     params.topLevelSessionId,
+    params.workspaceSharedReadOnlySubPath,
   );
   const environmentVersion = params.environmentStore && effectiveTemplateVersionId
     ? await params.environmentStore.getTemplateVersion(effectiveTemplateVersionId)

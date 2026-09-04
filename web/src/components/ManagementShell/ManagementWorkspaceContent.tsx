@@ -1,7 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 
-import { useAuth } from '@/contexts/AuthContext';
+import { GovernanceCapabilityNotice } from '@/components/GovernanceConsole';
+import { governanceCapability } from '@agent/shared';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
 import type { GovernanceRouteState } from '@/lib/governanceNavigation';
 import type { LayoutProps } from '@/layouts/types';
@@ -12,16 +13,12 @@ const CompanyInfoSectionPanel = lazy(() =>
     default: module.CompanyInfoSection,
   })),
 );
-const CronManager = lazy(() =>
-  import('@/components/CronManager').then((module) => ({ default: module.CronManager })),
-);
+const organizationFilesCapability = governanceCapability('organization.files');
+const organizationAutomationCapability = governanceCapability('organization.automation');
 const EfficiencyViewPanel = lazy(() =>
   import('@/components/UsageDashboard/EfficiencyView').then((module) => ({
     default: module.EfficiencyView,
   })),
-);
-const FileBrowser = lazy(() =>
-  import('@/components/FileBrowser').then((module) => ({ default: module.FileBrowser })),
 );
 const ManagementSettingsAccessGate = lazy(() =>
   import('@/components/ManagementSettingsAccessGate').then((module) => ({
@@ -89,7 +86,6 @@ export function ManagementWorkspaceContent({
   route,
   access,
   onReturnPersonal,
-  openFilePreview,
   platformAdminSection,
   platformAdminEntityId,
   setPlatformAdminRoute,
@@ -97,12 +93,10 @@ export function ManagementWorkspaceContent({
   route: GovernanceRouteState;
   access: ManagementSettingsAccess;
   onReturnPersonal: () => void;
-  openFilePreview: LayoutProps['openFilePreview'];
   platformAdminSection: LayoutProps['platformAdminSection'];
   platformAdminEntityId: string | null;
   setPlatformAdminRoute: LayoutProps['setPlatformAdminRoute'];
 }) {
-  const { user } = useAuth();
   const target = route.area === 'organization' ? 'tenant' : 'platform';
 
   return (
@@ -138,18 +132,11 @@ export function ManagementWorkspaceContent({
                     renderUsage={(tenantId) => (
                       <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />
                     )}
-                    renderFiles={() => (
-                      <FileBrowser
-                        onPreviewFile={openFilePreview}
-                        owner={user?.username}
-                        fullPage
-                        reserveCloseButtonSpace
-                      />
-                    )}
+                    renderFiles={(tenantId) => <GovernanceCapabilityNotice title={`组织文件与数据（${tenantId}）`} description={organizationFilesCapability?.reason} />}
                     renderCompanyInfo={(tenantId, tenantName) => (
                       <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />
                     )}
-                    renderAutomation={() => <CronManager />}
+                    renderAutomation={(tenantId) => <GovernanceCapabilityNotice title={`组织自动化任务（${tenantId}）`} description={organizationAutomationCapability?.reason} />}
                     settingsOpen={false}
                     settingsSection="users"
                     onSettingsSectionChange={() => undefined}

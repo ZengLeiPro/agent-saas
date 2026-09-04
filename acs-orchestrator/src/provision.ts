@@ -44,6 +44,7 @@ export class Provisioner {
       sessionId: recipe.sessionId!,
       sandboxScopeId: recipe.sandboxScopeId,
       mountSubPath: recipe.mountSubPath,
+      sharedReadOnlySubPath: recipe.sharedReadOnlySubPath,
       workload: recipe.workload ?? { class: 'unknown' },
     });
     const recipeHash = createHash('sha256').update(JSON.stringify(provisionFingerprint(recipe))).digest('hex');
@@ -91,7 +92,8 @@ export class Provisioner {
 
   private async provisionExclusive(
     recipe: WorkspaceRecipe,
-    plannedRef: { name: string; workspaceId: string; sessionId: string; sandboxScopeId?: string; mountSubPath?: string },
+    plannedRef: { name: string; workspaceId: string; sessionId: string; sandboxScopeId?: string;
+      mountSubPath?: string; sharedReadOnlySubPath?: string },
     recipeHash: string,
   ): Promise<ProvisionResult> {
     const logs: ProvisioningLogEntry[] = [];
@@ -104,6 +106,7 @@ export class Provisioner {
         sessionId: recipe.sessionId!,
         sandboxScopeId: recipe.sandboxScopeId,
         mountSubPath: recipe.mountSubPath,
+        sharedReadOnlySubPath: recipe.sharedReadOnlySubPath,
         ...(resourceOverride ? { resources: resourceOverride } : {}),
         workload: recipe.workload ?? { class: 'unknown' },
       }, {

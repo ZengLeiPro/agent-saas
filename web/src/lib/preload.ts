@@ -7,9 +7,11 @@ import { DEFAULT_TENANT_ID } from "@agent/shared";
 import type { TenantFeatureFlags, UserPreferences } from "@agent/shared";
 import { TOKEN_KEY } from "./constants";
 import { AUTH_SESSION_KEY } from '@agent/shared';
+import { readTabScopedAuth, removeTabScopedAuth, writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 
 function currentAuthHeaders(): HeadersInit {
-  const token = localStorage.getItem(TOKEN_KEY);
+  // 登录身份按标签页隔离：两个 tab 各自带自己的 token，不再互相串号。
+  const token = readTabScopedAuth(TOKEN_KEY);
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -41,13 +43,13 @@ async function fetchAuth(): Promise<AuthPreloadResult> {
         const generation = Number(res.headers.get('X-Auth-Generation'));
         if (refreshedToken) {
           try {
-            localStorage.setItem(TOKEN_KEY, refreshedToken);
+            writeTabScopedAuth(TOKEN_KEY, refreshedToken);
             if (Number.isSafeInteger(authEpoch) && authEpoch > 0 && Number.isSafeInteger(generation) && generation > 0) {
-              localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ authEpoch, generation }));
+              writeTabScopedAuth(AUTH_SESSION_KEY, JSON.stringify({ authEpoch, generation }));
             }
           } catch {
-            localStorage.removeItem(TOKEN_KEY);
-            localStorage.removeItem(AUTH_SESSION_KEY);
+            removeTabScopedAuth(TOKEN_KEY);
+            removeTabScopedAuth(AUTH_SESSION_KEY);
             return { status: 'unauthenticated' };
           }
         }

@@ -2519,7 +2519,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [dispatchConnection]);
 
   const submitCurrentMessage = useCallback(async () => {
-    const trimmedInput = inputRef.current.trim();
+    if ((sessionRef.current.accessRef?.current ?? "owner") !== "owner") return; const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
     if (isSessionAutomationCommand(trimmedInput)) {
       const { submitChatAutomationCommand } = await import("./chatAutomationSubmission");
@@ -2597,7 +2597,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }, [automation.submitCommand, setInput, fileUpload.clearFiles, fileUpload.reportUploadError, sendChatViaWs, mutateQueuedInterjections]);
 
 
-  const sendMessage = useCallback(() => submitCurrentMessage(), [submitCurrentMessage]);
+  const sendMessage = useCallback(submitCurrentMessage, [submitCurrentMessage]);
 
   // ---- 活跃会话事件流订阅 ----
   const subscribeToActiveStream = useCallback(async (

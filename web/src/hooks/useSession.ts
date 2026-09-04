@@ -4,10 +4,11 @@ import type {
   ApiSessionDetail,
   TokenUsage,
 } from "@/lib/sessionsApi";
-import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
+import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionDetailAccessMode, SessionOwnerInfo } from "@agent/shared";
 import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
+import { removeTabScopedAuth, writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { sessionsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import {
@@ -83,6 +84,7 @@ export interface SessionState {
   loadDetailPromiseRef: React.RefObject<Promise<void> | null>;
   /** 当前加载的会话 owner 信息 */
   sessionOwner: SessionOwnerInfo | null;
+  accessRef: React.RefObject<SessionDetailAccessMode | "unknown">;
   setSessionId: (id: string | null) => void;
   loadSessions: (opts?: { fresh?: boolean; silent?: boolean; skipMerge?: boolean }) => Promise<void>;
   loadMoreSessions: () => Promise<void>;
@@ -161,7 +163,9 @@ export function useSession(
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
-
+  const sessionAccessModeRef = useRef<SessionDetailAccessMode | "unknown">(
+    options?.initialSessionId ? "unknown" : "owner",
+  );
   const isNewSessionRef = useRef(false);
   const hasInitialLoadRef = useRef(false);
   const loadDetailPromiseRef = useRef<Promise<void> | null>(null);
@@ -309,7 +313,7 @@ export function useSession(
       loadSessionDetailRequest(id, opts, {
         callbacksRef: cbRef, sessionsRef, sessionIdRef, detailCursorRef,
         loadNonceRef, detailAbortRef, setIsLoadingMessages, setSessionLoadError,
-        setHasMoreHistory, setSessionId, setSessionOwner, setTokenUsage,
+        setHasMoreHistory, setSessionId, setSessionOwner, setSessionAccessMode: (mode) => { sessionAccessModeRef.current = mode; }, setTokenUsage,
         setContextUsage, fetchTokenUsage, removeSession,
       }),
     [],
@@ -387,6 +391,7 @@ export function useSession(
       if (id === sessionId) return;
       cbRef.current.cancelActiveStream();
       cbRef.current.resetMessages();
+      sessionAccessModeRef.current = "unknown";
       setSessionId(sessionIdRef.current = id);
       setSessionOwner(null);
       setTokenUsage(null);
@@ -471,7 +476,7 @@ export function useSession(
         selectSession(remainingSessions[0].sessionId); await loadDetailPromiseRef.current;
       } else {
         setSessionId(null);
-        localStorage.removeItem(SESSION_STORAGE_KEY);
+        removeTabScopedAuth(SESSION_STORAGE_KEY);
         cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
       }
     } catch (err) {
@@ -526,7 +531,7 @@ export function useSession(
       setSessionId(null);
       setTokenUsage(null);
       setContextUsage(null);
-      localStorage.removeItem(SESSION_STORAGE_KEY);
+      removeTabScopedAuth(SESSION_STORAGE_KEY);
     }
   }, []);
 
@@ -674,7 +679,7 @@ export function useSession(
   const newSession = useCallback(() => {
     // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
     // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
-    // 只有新建会话这条路径原先漏了）。
+    // 只有新建会话路径原先漏了）。
     ++loadNonceRef.current;
     detailAbortRef.current?.abort();
     detailAbortRef.current = null;
@@ -683,13 +688,14 @@ export function useSession(
     isNewSessionRef.current = true;
     setSessionId(sessionIdRef.current = null);
     setSessionOwner(null);
+    sessionAccessModeRef.current = "owner";
     setTokenUsage(null);
     setContextUsage(null);
     setIsLoadingMessages(false);
     setSessionLoadError(null);
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
-    localStorage.removeItem(SESSION_STORAGE_KEY);
+    removeTabScopedAuth(SESSION_STORAGE_KEY);
   }, []);
 
   const retrySessionLoad = useCallback(() => {
@@ -741,7 +747,7 @@ export function useSession(
   // Persist current session ID (only write when non-null to avoid clearing stored value during init)
   useEffect(() => {
     if (sessionId) {
-      localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+      writeTabScopedAuth(SESSION_STORAGE_KEY, sessionId);
     }
   }, [sessionId]);
 
@@ -875,6 +881,7 @@ export function useSession(
     isLoadingMore,
     loadDetailPromiseRef,
     sessionOwner,
+    accessRef: sessionAccessModeRef,
     setSessionId,
     loadSessions,
     loadMoreSessions,

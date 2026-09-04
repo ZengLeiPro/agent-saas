@@ -162,7 +162,7 @@ export class PgMembershipStore {
         throw new MembershipInvariantError('OWNER_MUST_BE_ORG_ADMIN');
       }
 
-      if (patch.authorization.kind === 'platform_recovery') {
+      if (patch.authorization.kind === 'platform_recovery' || patch.authorization.kind === 'platform_manage') {
         const platformActor = await client.query(
           `SELECT status FROM ${this.platformAdminsTable} WHERE user_id = $1 FOR UPDATE`,
           [patch.updatedBy],
@@ -171,7 +171,8 @@ export class PgMembershipStore {
         const hasReason = Boolean(patch.authorization.reason?.trim());
         const recoveryOnly = persona === 'org_admin' && isOwner && status === 'active'
           && patch.persona !== 'member' && patch.isOwner !== false && patch.status !== 'disabled';
-        if (platformActor.rows[0]?.status !== 'active' || !explicitCustomerScope || !hasReason || !recoveryOnly) {
+        if (platformActor.rows[0]?.status !== 'active' || !explicitCustomerScope || !hasReason
+          || (patch.authorization.kind === 'platform_recovery' && !recoveryOnly)) {
           throw new MembershipInvariantError('PLATFORM_RECOVERY_SCOPE_REQUIRED');
         }
       } else {

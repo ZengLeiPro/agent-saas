@@ -108,40 +108,43 @@
 
 ## 3. 部署流程
 
-触发方式（ci.yml 头注释）：`push main` 只构建 + 测试 + 打包，**不部署生产**；
-发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`）。
-`deploy_plan` 会从 `/etc/agent-saas/active-color` 和 active 色 release symlink 读取生产
-ECS SHA，以该 SHA 到目标 SHA 的累计 diff 判断 ECS 是否必要。确认只有 Web、Mobile、
-文档或测试路径时，`deploy-ecs` 为 skipped，`deploy-web-oss` 直接发布 OSS 和独立
-recovery-web；存在 ECS 相关路径时，后端成功后才放行 Web。生产基线或分类不可用时
-fail-open 继续部署 ECS；`force_ecs=true` 可无条件重发。Server release 始终不含前端文件。
+触发方式：`push main` 只构建、测试与打包，**不部署生产**。`ci.yml` 的旧
+`workflow_dispatch` 已收窄为必须显式确认 `web_only_compatibility=true` 的 Web-only
+兼容入口。`deploy_plan` 从 `/etc/agent-saas/active-color` 和 active 色 release symlink
+读取生产 ECS SHA，以该 SHA 到目标 SHA 的累计 diff 证明是否仅影响 Web。只有 Web、Mobile、
+文档或测试路径时才允许 `deploy-web-oss` 发布 OSS 与独立 recovery-web；只要存在 Server、
+Shared、技能源、依赖、部署配置或未知路径，或生产基线/分类不可用，都会在任何生产 mutation
+前 fail closed。该入口不再支持 `force_ecs`，`deploy-ecs` 不可达；API/Runtime Worker
+变更必须走 Staging RC 与 Production Promotion。Server release 始终不含前端文件。
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
 只允许一个批次从 build 走到 Web OSS 发布结束；普通 push CI 使用独立 `run_id`，不受
-生产发布队列影响。远端脚本还会非阻塞获取
-`/run/lock/agent-saas-deploy.lock` 的 `flock`，覆盖手工 SSH 等绕过 GitHub Actions 的入口。
-两层任一冲突都不会等待或打断在途发布，后发远端批次直接失败并删除自己的独立上传包。
+生产发布队列影响。所有生产入口共享 `/run/lock/agent-saas/promotion.lock`：Web-only
+compatibility 在读取基线前创建远端锁租约，并持续持有到 identity commit，或失败补偿与
+权威证明结束；ECS 与 Promotion mutation 也必须取得同一把 `flock`。这覆盖手工 SSH 等绕过
+GitHub Actions 的入口，锁租约丢失时禁止继续 mutation 或无锁补偿。
 
 deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与脚本注释一致）：
 
-| 步   | 动作                                                                                                                                                                                                                                                                                     | 失败时                                                                                                                                |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | 获取 ECS `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理                                                                                                                                                                                                                      | 上传包自动回收；活动色不动                                                                                                            |
-| 1    | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue                                                                                                                                                                                                                                  | green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口                                 | 直接退出，什么都没动 |
-| 2    | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode                                                                                     | 切流前失败，老色照常服务；上传包自动回收                                                                                              |
-| 3    | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active）                                                      | 同上                                                                                                                                  |
-| 4    | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停                                                                                                                                                                                                   | 同上                                                                                                                                  |
-| 5    | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping                                                                                                                                                                                                    | 同上                                                                                                                                  |
-| 6    | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s                                                                                                                                                                                    | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
-| 7    | **warmup 软门禁**：等 ready 载荷 `warmup.state=done`，最长 420s；`failed`/超时降级为警告继续（dispatch 时增量同步兜底，见 §7）                                                                                                                                                           | 不失败，仅告警                                                                                                                        |
-| 8    | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON                                                                                                                                                                                                                 | `rollback_idle_and_exit`                                                                                                              |
-| 8.5  | 若分类命中 Runtime Worker：解析 worker idle 色、等待上次排水实例退出，只准备 idle worker symlink；切流前不启动、不 claim run                                                                                                                                                             | `rollback_idle_and_exit` 还原 worker symlink                                                                                          |
-| 9    | 切流：安装受版本管理的 API 站点配置（`/api/upload` 请求体直通、NAS fallback 临时目录）+ 重写 `/etc/nginx/conf.d/agent-saas-upstream.conf`（新色 primary、旧色 backup）→ `nginx -t` → `systemctl reload nginx` → 经 `https://127.0.0.1`（Host: api.agent.kaiyan.net）验证，最多重试 10 次 | `nginx -t` 失败同时还原站点与 upstream conf；reload 后验证失败把 nginx 翻回旧色再 `rollback_idle_and_exit`                            |
-| 10   | 更新 `/etc/agent-saas/active-color` 为新色                                                                                                                                                                                                                                               | —                                                                                                                                     |
-| 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过                                                                                                                                                              | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败                                               |
-| 11   | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker）                                                                                                                                                                             | —                                                                                                                                     |
-| 12   | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s）                                                              | —                                                                                                                                     |
-| 13   | 收尾：保留 pnpm store 热缓存供下次隔离安装复用，只删除上传包                                                                                                                                                                                                                             | —                                                                                                                                     |
+<!-- prettier-ignore -->
+| 步 | 动作 | 失败时 |
+| --- | --- | --- |
+| 0 | 获取共享 Production `flock`，安装/刷新超龄部署包清理 timer，并立即执行一次清理 | 上传包自动回收；活动色不动 |
+| 1 | 前置校验：`/etc/agent-saas/active-color` 存在且为 `blue|green`，`agent-saas-server@<active>` 必须 active，否则要求先完成一次性手工迁移。据此解析 idle 色/端口 | 直接退出，什么都没动 |
+| 2 | 安装前清理旧 release：保留最近 4 个现有版本 + current/previous + Web/worker 两组 symlink 的 target；同 SHA 的未完成目录直接回收，活动版本则幂等 no-op；随后校验至少 8 GiB 可用空间与 25 万可用 inode | 切流前失败，老色照常服务；上传包自动回收 |
+| 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
+| 4 | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停 | 同上 |
+| 5 | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping | 同上 |
+| 6 | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
+| 7 | **warmup 软门禁**：等 ready 载荷 `warmup.state=done`，最长 420s；`failed`/超时降级为警告继续（dispatch 时增量同步兜底，见 §7） | 不失败，仅告警 |
+| 8 | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON | `rollback_idle_and_exit` |
+| 8.5 | 若分类命中 Runtime Worker：解析 worker idle 色、等待上次排水实例退出，只准备 idle worker symlink；切流前不启动、不 claim run | `rollback_idle_and_exit` 还原 worker symlink |
+| 9 | 切流：安装受版本管理的 API 站点配置（`/api/upload` 请求体直通、NAS fallback 临时目录）+ 重写 `/etc/nginx/conf.d/agent-saas-upstream.conf`（新色 primary、旧色 backup）→ `nginx -t` → `systemctl reload nginx` → 经 `https://127.0.0.1`（Host: api.agent.kaiyan.net）验证，最多重试 10 次 | `nginx -t` 失败同时还原站点与 upstream conf；reload 后验证失败把 nginx 翻回旧色再 `rollback_idle_and_exit` |
+| 10 | 更新 `/etc/agent-saas/active-color` 为新色 | — |
+| 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过 | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败 |
+| 11 | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker） | — |
+| 12 | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s） | — |
+| 13 | 收尾：保留 pnpm store 热缓存供下次隔离安装复用，只删除上传包 | — |
 
 核心设计：**门禁前移**。步骤 6-8 的所有校验都发生在切流（步骤 9）之前，此时
 公网流量 100% 在老色上；所以「部署失败」对用户是不可见事件，只是这次发版没发出去。
@@ -162,12 +165,13 @@ CI 侧还有两个配套 step（不在远端脚本内）：
 
 路由定义在 `server/src/routes/health.ts`，生产挂载于 `/api` 前缀下：
 
-| 端点                 | 谁用                                               | 返回                                                                                                                                                                                                 | 何时 503                                                                                                                              |
-| -------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/healthz`       | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining`                                                                                                                                                                             | draining 时                                                                                                                           |
-| `/api/healthz/live`  | liveness：systemd/监控判「要不要拉起/告警」        | 200 `ok`                                                                                                                                                                                             | 永不——进程在即 200，不反映可服务状态                                                                                                  |
-| `/api/healthz/ready` | readiness：部署门禁在新色端口上等它 200 才切流     | JSON `{status, draining, warmup}`；`warmup` 含 `state/totalUsers/processedUsers/syncedUsers/...`                                                                                                     | draining 时。注意 warmup **不** gate ready（未完成时 dispatch 侧版本化同步兜底正确性），是否等 `warmup.state=done` 由部署脚本自行决定 |
-| `/api/healthz/drain` | 发布脚本判断实例是否排空/可切 release              | JSON `{status, draining, activeStreams, activeRuns{pending,running,waitingApproval,waitingUser,waitingHand,blocking,total}, idle}`；`idle = !draining && activeStreams==0 && activeRuns.blocking==0` | draining 时；或 activeRuns 查询失败（此时 `status:"error"`）                                                                          |
+<!-- prettier-ignore -->
+| 端点 | 谁用 | 返回 | 何时 503 |
+| --- | --- | --- | --- |
+| `/api/healthz` | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining` | draining 时 |
+| `/api/healthz/live` | liveness：systemd/监控判「要不要拉起/告警」 | 200 `ok` | 永不——进程在即 200，不反映可服务状态 |
+| `/api/healthz/ready` | readiness：部署门禁在新色端口上等它 200 才切流 | JSON `{status, draining, warmup}`；`warmup` 含 `state/totalUsers/processedUsers/syncedUsers/...` | draining 时。注意 warmup **不** gate ready（未完成时 dispatch 侧版本化同步兜底正确性），是否等 `warmup.state=done` 由部署脚本自行决定 |
+| `/api/healthz/drain` | 发布脚本判断实例是否排空/可切 release | JSON `{status, draining, activeStreams, activeRuns{pending,running,waitingApproval,waitingUser,waitingHand,blocking,total}, idle}`；`idle = !draining && activeStreams==0 && activeRuns.blocking==0` | draining 时；或 activeRuns 查询失败（此时 `status:"error"`） |
 
 另有面向人的 `/api/health`：未认证仅回 `{status}`，认证用户附带 uptime、内存、
 activeStreams、dispatch 指标，始终 200，不作机器门禁用。

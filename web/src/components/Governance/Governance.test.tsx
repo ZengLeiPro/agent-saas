@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { EffectiveResourceList } from './EffectiveResourceList';
 import { GovernanceUnavailable } from './GovernanceUnavailable';
+import { GovernanceApiError } from '@agent/shared';
 import { PermissionWhyPanel } from './PermissionWhyPanel';
 import { governanceFixture } from './testFixtures';
 
@@ -75,5 +76,12 @@ describe('治理共享展示层', () => {
     expect(screen.getByRole('alert').textContent).toContain('权限不足');
     expect(screen.getByRole('alert').textContent).toContain('当前账号没有访问此治理页面的权限');
     expect(screen.getByRole('alert').textContent).not.toContain('权限服务暂不可用');
+  });
+
+  it('保留权威错误码与请求 ID，部分写入不提供盲目重试', () => {
+    render(<GovernanceUnavailable error={new GovernanceApiError('GOVERNANCE_PARTIAL_CHANGE', 'partial', 500, 'req-1')} onRetry={vi.fn()} />);
+    expect(screen.getByRole('alert').textContent).toContain('GOVERNANCE_PARTIAL_CHANGE');
+    expect(screen.getByRole('alert').textContent).toContain('请求 ID：req-1');
+    expect(screen.queryByRole('button', { name: '重试权威判定' })).toBeNull();
   });
 });

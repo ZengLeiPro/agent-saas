@@ -7,6 +7,7 @@ import { getActiveRunBySession, listRecoverableRuns } from './runStoreRecoveryQu
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
+import { UNREADY_BACKGROUND_TASK_SQL } from './background/backgroundTaskRuntime.js';
 
 /** SQL implementation for authoritative Runtime Run state; all steering joins preserve tenant/session identity. */
 export class PgRunStoreQueries {
@@ -460,8 +461,18 @@ export class PgRunStoreQueries {
     }
   }
 
+  /**
+   * Staged background rows stay visible to the scheduler's timeout reaper, while
+   * acquireLease keeps them unclaimable until their durable setup is complete.
+   */
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
-    return listRecoverableRuns(this.pool, this.runsTable, this.steeringInputsTable, this.toolInvocationsTable, now);
+    return await listRecoverableRuns(
+      this.pool,
+      this.runsTable,
+      this.steeringInputsTable,
+      this.toolInvocationsTable,
+      now,
+    );
   }
 
   async listStaleWaitingApproval(cutoff: Date, limit = 50): Promise<RunRecord[]> {
@@ -635,6 +646,7 @@ export class PgRunStoreQueries {
             candidate.status = 'pending'
             AND COALESCE(candidate.metadata->>'schedulerState', '') = 'staged'
           )
+          AND NOT (${UNREADY_BACKGROUND_TASK_SQL})
           AND (
             candidate.status <> 'pending'
             OR NOT EXISTS (

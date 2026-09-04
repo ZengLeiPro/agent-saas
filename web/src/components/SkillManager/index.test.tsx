@@ -95,6 +95,26 @@ beforeEach(() => {
 });
 
 describe('SkillManager 组织治理上传', () => {
+  it('快速切换目标组织时忽略旧组织的慢响应', async () => {
+    let resolveA!: (value: { tenantId: string; skills: typeof governedSkill[] }) => void;
+    mocks.fetchTenantSkillPool.mockImplementation((tenantId: string) => new Promise((resolve) => {
+      if (tenantId === 'tenant-a') resolveA = resolve;
+      else resolve({ tenantId, skills: [] });
+    }));
+    mocks.fetchTenantOwnSkills.mockImplementation(async (tenantId: string) => ({
+      tenantId,
+      skills: tenantId === 'tenant-b'
+        ? [{ ...governedSkill, id: 'b-skill', name: 'B 技能', governance: { ...governedSkill.governance, tenantId } }]
+        : [],
+    }));
+    const { rerender } = render(<SkillManager mode="tenant" tenantIdScope="tenant-a" />);
+    rerender(<SkillManager mode="tenant" tenantIdScope="tenant-b" />);
+    expect(await screen.findByText('B 技能')).toBeTruthy();
+    resolveA({ tenantId: 'tenant-a', skills: [{ ...governedSkill, id: 'a-skill', name: 'A 技能' }] });
+    await waitFor(() => expect(screen.queryByText('A 技能')).toBeNull());
+    expect(screen.getByText('B 技能')).toBeTruthy();
+  });
+
   it('平台管理员代管组织时展示上传限制、只调用治理上传，并刷新权威版本与组织作用域', async () => {
     const { container } = render(<SkillManager mode="tenant" tenantIdScope="kaiyan" tenantName="开沿科技" />);
     await waitFor(() => expect((screen.getByRole('button', { name: '上传技能' }) as HTMLButtonElement).disabled).toBe(false));

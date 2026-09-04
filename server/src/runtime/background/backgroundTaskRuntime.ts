@@ -1,5 +1,6 @@
 import type { ToolCallContext } from '../../agent/toolRuntime.js';
 import type { RunRecord } from '../runStore.js';
+import type { OrgAgentWorkOrderControl } from '../../data/orgGroupAgents/index.js';
 
 export const BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON = 'background_command_monitor_handoff';
 
@@ -37,6 +38,16 @@ export interface BackgroundCommandReservation {
   status: 'starting';
 }
 
+export type OrgAgentWorkOrderControlAction =
+  | 'amend' | 'pause' | 'resume' | 'review' | 'reassign';
+
+export interface OrgAgentWorkOrderControlRequest {
+  taskId: string;
+  action: OrgAgentWorkOrderControlAction;
+  text?: string;
+  workerType?: 'general' | 'explore';
+}
+
 /**
  * BackgroundTask(action=output) 的入参（2026-08-03 工具面收敛批次）：
  * 后台命令增量续读，语义与 hand 端 BashOutput 协议一一对应。
@@ -62,6 +73,28 @@ export interface BackgroundTaskRuntime {
   list(context: ToolCallContext, limit?: number): Promise<RunRecord[]>;
   get(context: ToolCallContext, taskId: string): Promise<RunRecord | null>;
   cancel(context: ToolCallContext, taskId: string): Promise<RunRecord>;
+  controlWorkOrder(
+    context: ToolCallContext,
+    request: OrgAgentWorkOrderControlRequest,
+  ): Promise<{ task: RunRecord | null; workOrder: import('../../data/orgGroupAgents/index.js').OrgAgentWorkOrder }>;
+  cancelWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null>;
+  pauseWorkOrder(tenantId: string, workOrderId: string, expectedVersion: number): Promise<RunRecord | null>;
+  retryWorkOrder(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+    options?: {
+      allowPendingArtifacts?: boolean;
+      control?: OrgAgentWorkOrderControl;
+      supersedePendingCompletion?: boolean;
+    },
+  ): Promise<RunRecord>;
+  publishWorkOrderArtifacts(
+    tenantId: string,
+    workOrderId: string,
+    expectedVersion: number,
+  ): Promise<import('../../data/orgGroupAgents/index.js').OrgAgentWorkAttempt>;
+  reconcileStagedOrgWork(): Promise<void>;
   /**
    * 运行中后台命令的增量输出续读（内部按 hand 协议名 BashOutput 透传，ACS 零改动）。
    * 仅对 taskType=command 且未进终态的任务有效；其余情况抛出带引导的错误。
@@ -82,8 +115,12 @@ export function isBackgroundCommandTaskRun(record: Pick<RunRecord, 'metadata'>):
 }
 
 export function isBackgroundTaskReady(record: Pick<RunRecord, 'metadata'>): boolean {
-  return !isBackgroundTaskRun(record) || record.metadata?.backgroundTaskReady === true;
+  return record.metadata?.backgroundTaskVersion !== 2 || record.metadata.backgroundTaskReady === true;
 }
+
+export const UNREADY_BACKGROUND_TASK_SQL =
+  "COALESCE(candidate.metadata->>'backgroundTaskVersion', '') = '2' AND "
+  + "COALESCE(candidate.metadata->>'backgroundTaskReady', 'false') <> 'true'";
 
 export function isBackgroundTaskWakeRun(record: Pick<RunRecord, 'metadata'>): boolean {
   return record.metadata?.backgroundTaskWake === true;

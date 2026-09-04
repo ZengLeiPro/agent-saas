@@ -269,7 +269,7 @@ export function TenantAdminShell({
   renderOrgAgents?: (tenantId?: string, tenantName?: string) => ReactNode;
   renderMcp?: (tenantId?: string, tenantName?: string) => ReactNode;
   renderUsage: (tenantId?: string) => ReactNode;
-  renderFiles: () => ReactNode;
+  renderFiles: (tenantId: string, tenantName?: string) => ReactNode;
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
   /** 受控：modal 是否打开（由 useChatAppState.adminSettings 控制） */
   settingsOpen: boolean;
@@ -289,7 +289,7 @@ export function TenantAdminShell({
   governanceRoute?: GovernanceRouteState | null;
   governanceContentOnly?: boolean;
   governanceContentEmbedded?: boolean;
-  renderAutomation?: () => ReactNode;
+  renderAutomation?: (tenantId: string, tenantName?: string) => ReactNode;
   /** 桌面统一设置回传实际组织目标；undefined 表示 Shell 尚不可用。 */
   onSettingsTargetTenantIdChange?: (tenantId: string | null | undefined) => void;
   /** 统一设置或治理工作区的共享未保存导航保护。 */
@@ -393,7 +393,7 @@ export function TenantAdminShell({
     { id: "mcp", node: renderMcp(effectiveTenantId, currentTenant?.name) },
     { id: "connector-dictionary" as TenantSection, node: <TenantConnectorDictionaryPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "billing", node: <TenantBillingPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
-    { id: "files", node: renderFiles() },
+    { id: "files", node: renderFiles(effectiveTenantId, currentTenant?.name) },
     { id: "company", node: renderCompanyInfo(effectiveTenantId, currentTenant?.name) },
     { id: "instructions", node: <TenantInstructionsPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "settings", node: <TenantSettingsPanel tenantId={effectiveTenantId} /> },

@@ -58,6 +58,7 @@ import { serverRemoteHandRegistrationOptions } from '../serverRemoteHandRegistra
 import { createRuntimeSessionRecord, type MemoryPolicyVersion, type RuntimeSessionRecord } from '../sessionCatalog.js';
 import { applyMainSessionToolFilter } from '../toolProfiles.js';
 import { SessionContextService, SessionToolProvider } from '../sessionContext.js';
+import { DefaultToolPolicy } from '../toolPolicy.js';
 import type { TenantRemoteHandAuthTokenResolver } from '../tenantRemoteHandResolver.js';
 import type { RunRecord } from '../runStore.js';
 import type { RunContext } from '../types.js';
@@ -83,6 +84,12 @@ const logger = createLogger('SubagentRunner');
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const SUBAGENT_CAPACITY_POLL_MS = 100;
+
+export function createSubagentToolPolicy(
+  evaluator: RawRuntimeRunDispatchConfig['orgAgentChannelPolicyEvaluator'],
+): DefaultToolPolicy {
+  return new DefaultToolPolicy(evaluator);
+}
 
 /**
  * 无条件剥夺清单（D4，按 descriptor.name/id 匹配）：
@@ -446,6 +453,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       runId: childRunId,
       workspaceId: parentWorkspace.id ?? childSessionId,
       workspaceMountSubPath: parentWorkspace.mountSubPath,
+      workspaceSharedReadOnlySubPath: parentWorkspace.sharedReadOnlySubPath,
       // 决策 7：hand recipe 会重算 sandboxScopeId，必须把顶层组键一并透传，
       // 否则子 Agent 的 hand 会落到 workspace 级 scope 而与父会话分到两个 pod。
       topLevelSessionId: parentWorkspace.topLevelSessionId ?? parentSessionId,
@@ -524,6 +532,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       runStore: config.runStore,
       automationGuard: config.sessionAutomationRuntimeGuard,
+      toolPolicy: createSubagentToolPolicy(config.orgAgentChannelPolicyEvaluator),
     });
 
     // ── 子 hooks（不透传父 hooks，防子事件泄进父通道）──
@@ -581,6 +590,15 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTarget,
       env: parentContext.env,
       sandboxPolicy: parentWorkspace.sandboxPolicy,
+      ...(childRuntimeIsolationRequirement
+        ? { runtimeIsolationRequirement: childRuntimeIsolationRequirement }
+        : {}),
+      ...(childRecord.executionRole === 'worker' ? {
+        executionRole: 'worker' as const,
+        // ensureRuntimeHandRegistered 对 runtimeIsolationRequirement 已做证据校验；
+        // 没有 requirement 的普通组织子 Agent 不获得任务写能力。
+        runtimeIsolationAttested: Boolean(childRuntimeIsolationRequirement),
+      } : {}),
       channelContext: {
         ...parentContext.channelContext,
         outputTransactionMode: 'terminal_buffered',

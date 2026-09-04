@@ -74,7 +74,7 @@ export function MobileLayout(props: LayoutProps) {
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, sessionReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser, isLoading: authLoading, authEnabled } = useAuth();
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
@@ -282,7 +282,6 @@ export function MobileLayout(props: LayoutProps) {
           route={governanceRoute}
           access={managementAccess}
           onReturnPersonal={handleReturnPersonalSettings}
-          openFilePreview={handleOpenFilePreview}
           platformAdminSection={platformAdminSection}
           platformAdminEntityId={platformAdminEntityId}
           setPlatformAdminRoute={setPlatformAdminRoute}
@@ -512,8 +511,8 @@ export function MobileLayout(props: LayoutProps) {
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
-              readOnly={isTrashPreview || activeOrgAgentReadOnly || orgAgentIdentityLoading}
-              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载 Agent 目录..." : (!isTrashPreview && activeOrgAgentReadOnly ? activeAgentTargetUnavailableReason?.message ?? "该 Agent 当前不可用，请联系组织管理员" : undefined)}
+              readOnly={isTrashPreview || sessionReadOnly || activeOrgAgentReadOnly || orgAgentIdentityLoading}
+              readOnlyInputPlaceholder={sessionReadOnly ? "任务执行会话仅供协作成员查看" : (!isTrashPreview && orgAgentIdentityLoading ? "正在加载 Agent 目录..." : (!isTrashPreview && activeOrgAgentReadOnly ? activeAgentTargetUnavailableReason?.message ?? "该 Agent 当前不可用，请联系组织管理员" : undefined))}
               agentProfile={orgAgentIdentityLoading ? null : agentProfile}
               sessionParticipants={sessionParticipants}
               emptySlot={activeOrgAgent
@@ -529,7 +528,7 @@ export function MobileLayout(props: LayoutProps) {
                     <p className="mt-2 text-sm text-muted-foreground">请联系组织管理员完成专家指派。</p>
                   </div>
                 ) : chatEmptySlot))}
-              initialComposer={!isTrashPreview && !orgAgentIdentityLoading && !activeOrgAgentReadOnly && (Boolean(activeOrgAgent) || personalAgentEnabled)}
+              initialComposer={!isTrashPreview && !sessionReadOnly && !orgAgentIdentityLoading && !activeOrgAgentReadOnly && (Boolean(activeOrgAgent) || personalAgentEnabled)}
               orgAgent={isTrashPreview ? null : activeOrgAgent}
               onNewOrgAgentConversation={activeOrgAgent && !activeOrgAgentReadOnly && !loading
                 ? () => { startOrgAgentSession(activeOrgAgent.id); }

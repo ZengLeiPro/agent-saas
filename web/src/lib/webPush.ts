@@ -1,6 +1,7 @@
 import { apiUrl } from '@/lib/apiBase';
 import { authFetch } from '@/lib/authFetch';
 import { TOKEN_KEY } from '@/lib/constants';
+import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 
 const LOCAL_BINDING_KEY = 'agent_saas_web_push_binding';
 
@@ -106,7 +107,7 @@ export function getCurrentWebPushRecord(
 
 export async function unsubscribeCurrentBrowserPush(): Promise<void> {
   const binding = readLocalBinding();
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token = readTabScopedAuth(TOKEN_KEY);
   writeLocalBinding(null);
 
   // 先发起服务端删除，不让 Service Worker API 异常阻塞旧账号解绑；也不走全局 401 回调。

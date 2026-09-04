@@ -10,6 +10,7 @@ import {
 } from '../data/governance-schema/migrations.js';
 import { governanceV23Statements } from '../data/governance-schema/v23Migration.js';
 import { governanceV32Statements, governanceV33Statements } from '../data/governance-schema/v32V33Migration.js';
+import { governanceV37DeliveryAttemptPhaseStatements } from '../data/governance-schema/v37DeliveryAttemptPhaseMigration.js';
 import { PgOAuthGrantStore } from '../data/oauthGrants/store.js';
 import { PgAgentDwsMessageStore } from '../data/agentDwsMessages/store.js';
 
@@ -17,7 +18,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
+describePg('Governance Schema 当前版本 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const legacyV28Prefix = `legacy28_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -61,7 +62,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V35 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到当前版本并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -105,8 +106,8 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     const appliedVersions = await pool.query<{ version: number }>(
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
-    expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 35 }, (_, index) => index + 1),
+    expect(appliedVersions.rows.map((row) => Number(row.version))).toEqual(
+      Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -117,6 +118,18 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     ]);
     const v19Table = await pool.query<{ name: string | null }>(`SELECT to_regclass($1) AS name`, [`${prefix}_agent_dws_accounts`]);
     expect(v19Table.rows[0]?.name).toBe(`${prefix}_agent_dws_accounts`);
+    const deliveryPhaseColumns = await pool.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name=$1
+        AND column_name IN ('provider_attempt_phase','provider_started_at','next_attempt_at')
+      ORDER BY column_name`,
+      [`${prefix}_agent_dws_delivery_intents`],
+    );
+    expect(deliveryPhaseColumns.rows.map((row) => row.column_name)).toEqual([
+      'next_attempt_at',
+      'provider_attempt_phase',
+      'provider_started_at',
+    ]);
     await pool.query(`INSERT INTO ${prefix}_managed_agents
       (agent_id,tenant_id,kind,owner_user_id,status,revision,created_by,updated_by)
       VALUES ('oa-sales','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);
@@ -226,6 +239,8 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
       { projector: 'preference', count: '1' },
       { projector: 'tenant_settings', count: '3' },
     ]);
+    for (const statement of governanceV37DeliveryAttemptPhaseStatements(prefix))
+      await pool.query(statement);
   }, 60_000);
 
   it('V22 将组织记忆建模为带名称、状态和租户主键的 Assignment Set 元数据', async () => {
@@ -277,7 +292,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
   }, 30_000);
 
-  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V35 仍幂等', async () => {
+  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至当前版本仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -580,8 +595,8 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
     const appliedVersions = await pool.query<{ version: number }>(
       `SELECT version FROM ${legacyPrefix}_governance_schema_versions ORDER BY version`,
     );
-    expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 35 }, (_, index) => index + 1),
+    expect(appliedVersions.rows.map((row) => Number(row.version))).toEqual(
+      Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1),
     );
     const retentionTable = await pool.query<{ name: string | null }>(
       'SELECT to_regclass($1) AS name',
@@ -671,7 +686,7 @@ describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与�
       .rejects.toMatchObject({ code: '23514' });
   }, 30_000);
 
-  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V35', async () => {
+  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到当前版本', async () => {
     const v32Prefix = v32RollbackPrefix;
     let injected = false;
     const failingPool = {

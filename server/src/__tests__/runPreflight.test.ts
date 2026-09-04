@@ -19,7 +19,12 @@ import {
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 import type { TenantMembership, PlatformAdmin } from '../data/memberships/types.js';
-import type { EntitlementResourceScope, TenantEntitlementSet, TenantPolicy as TenantPolicyRecord } from '../data/entitlements/types.js';
+import {
+  PERSONAL_AGENT_TOOL_ENTITLEMENT_ID,
+  type EntitlementResourceScope,
+  type TenantEntitlementSet,
+  type TenantPolicy as TenantPolicyRecord,
+} from '../data/entitlements/types.js';
 import type { ResourceAssignmentSet } from '../data/assignments/types.js';
 import type { UserRecord } from '../data/users/index.js';
 import type { TenantRecord } from '../data/tenants/types.js';
@@ -167,6 +172,7 @@ interface PreflightFixtureOverrides {
   membership?: TenantMembership | null;
   platformAdmin?: PlatformAdmin | null;
   entitlement?: TenantEntitlementSet | null;
+  scope?: EntitlementResourceScope;
   policies?: TenantPolicyRecord[];
   assignmentSets?: Map<string, ResourceAssignmentSet | null>;
   orgAgent?: OrgAgentRecord;
@@ -204,7 +210,7 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
   };
   const entitlementStore = {
     getEntitlementSet: async () => entitlementValue,
-    listResourceScopes: async () => [scopeRecord()],
+    listResourceScopes: async () => [overrides.scope ?? scopeRecord()],
     getPolicies: async () => policies,
   };
   const assignmentStore = {
@@ -430,6 +436,30 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.snapshot.agent).toEqual({ type: 'personal_agent', id: 'user-1' });
   });
 
+  it('恢复 selected personal_agent 后个人 Agent preflight 仍允许运行', async () => {
+    const service = buildService({
+      enforcementMode: 'enforce',
+      scope: {
+        ...scopeRecord(),
+        mode: 'selected',
+        resourceIds: [PERSONAL_AGENT_TOOL_ENTITLEMENT_ID],
+        version: 6,
+      },
+    });
+
+    const result = await service.preflight({ ...baseInput, orgAgentId: undefined });
+
+    expect(result.proceed).toBe(true);
+    expect(result.accessDecision).toMatchObject({
+      verdict: 'allow',
+      action: 'personal_agent.run',
+    });
+    expect(result.accessDecision.chain).toContainEqual(expect.objectContaining({
+      layer: 'entitlement',
+      result: 'pass',
+    }));
+  });
+
   it('平台管理员运行本人 Personal Agent 不依赖客户 Entitlement 与 Tenant Policy', async () => {
     const platformUser = { ...userRecord('pantheon'), role: 'admin' as const };
     const service = buildService({
@@ -528,7 +558,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
-      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }, { version: 27 }, { version: 28 }, { version: 29 }, { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }] };
+      if (sql.includes('SELECT version FROM')) return { rows: [{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }, { version: 27 }, { version: 28 }, { version: 29 }, { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }] };
       return { rows: [], rowCount: 0 };
     };
     const pool = { query, connect: async () => ({ query, release: () => undefined }) };

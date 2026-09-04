@@ -21,6 +21,7 @@ type ViewerState =
   | { status: "error"; message: string };
 
 const ARTIFACT_HTML_MAX_BYTES = 16 * 1024 * 1024;
+const MARKDOWN_CONTENT_CLASS = "mx-auto max-w-[72ch]";
 const TEXT_VIEW_KINDS = new Set(["markdown", "html", "text", "source"]);
 
 export function ArtifactContentViewer({
@@ -112,7 +113,7 @@ export function ArtifactContentViewer({
       <div ref={scrollRef} onScroll={(event) => onPositionChange?.({ scrollTop: event.currentTarget.scrollTop })} className={`h-full overflow-auto bg-card ${className || ""}`}>
         {state.truncated && <div role="status" className="sticky top-0 border-b border-border bg-background/95 px-5 py-2 text-xs text-muted-foreground">文件较大，仅显示前 2 MiB</div>}
         {descriptor.viewKind === "markdown"
-          ? <div className="p-5 sm:p-8"><ArtifactMarkdownContent content={state.text} /></div>
+          ? <div className="p-5 sm:p-8"><div className={MARKDOWN_CONTENT_CLASS}><ArtifactMarkdownContent content={state.text} /></div></div>
           : <pre className="whitespace-pre-wrap break-words p-5 font-mono text-xs leading-5 sm:p-8">{state.text}</pre>}
       </div>
     );

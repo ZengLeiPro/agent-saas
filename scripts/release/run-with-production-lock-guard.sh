@@ -11,11 +11,22 @@ set -euo pipefail
 guarded_pid=''
 launcher_pid=''
 pid_file="${RUNNER_TEMP:-/tmp}/production-lock-guard-${BASHPID}.pid"
+arm_file="${pid_file}.armed"
 assert_lock() {
   timeout --signal=TERM --kill-after=2 10 ssh -i "$PRODUCTION_LOCK_SSH_KEY" \
     -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 \
     "$ECS_USER@$ECS_HOST" \
     "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
+}
+capture_guarded_pid() {
+  [ -z "$guarded_pid" ] || return 0
+  [ -s "$pid_file" ] || return 1
+  read -r guarded_pid < "$pid_file"
+  [[ "$guarded_pid" =~ ^[1-9][0-9]*$ ]] || {
+    echo 'invalid guarded process group id' >&2
+    guarded_pid=''
+    return 70
+  }
 }
 process_group_exists() {
   [ -n "$guarded_pid" ] && kill -0 -- "-$guarded_pid" 2>/dev/null
@@ -39,37 +50,54 @@ confirm_process_group_stopped() {
   return 70
 }
 terminate_guarded() {
-  [ -n "$guarded_pid" ] || return 0
-  terminate_process_group
+  if [ -z "$guarded_pid" ] && [ -n "$launcher_pid" ]; then
+    # The child cannot exec the mutation until arm_file exists. During startup cancellation,
+    # wait for its PGID handshake so cleanup can terminate the correct session, not just setsid.
+    for _ in $(seq 1 50); do
+      capture_guarded_pid && break
+      kill -0 "$launcher_pid" 2>/dev/null || break
+      sleep 0.02
+    done
+  fi
+  if [ -n "$guarded_pid" ]; then
+    terminate_process_group
+  elif [ -n "$launcher_pid" ]; then
+    kill "$launcher_pid" 2>/dev/null || true
+  fi
   if [ -n "$launcher_pid" ]; then
     wait "$launcher_pid" 2>/dev/null || true
     launcher_pid=''
   fi
-  confirm_process_group_stopped
+  [ -z "$guarded_pid" ] || confirm_process_group_stopped
 }
 cleanup() {
   status=$?
   trap - EXIT
   if ! terminate_guarded; then status=70; fi
-  rm -f -- "$pid_file"
+  rm -f -- "$pid_file" "$arm_file"
   exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 assert_lock
-rm -f -- "$pid_file"
-setsid --wait bash -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' \
-  production-lock-guard "$pid_file" "$@" &
+rm -f -- "$pid_file" "$arm_file"
+setsid --wait bash -c '
+  pid_file=$1
+  arm_file=$2
+  shift 2
+  printf "%s\n" "$$" > "$pid_file"
+  while [ ! -e "$arm_file" ]; do sleep 0.02; done
+  exec "$@"
+' production-lock-guard "$pid_file" "$arm_file" "$@" &
 launcher_pid=$!
 for _ in $(seq 1 50); do
-  [ -s "$pid_file" ] && break
+  capture_guarded_pid && break
   kill -0 "$launcher_pid" 2>/dev/null || break
   sleep 0.02
 done
-[ -s "$pid_file" ] || { echo 'guarded process group did not start' >&2; exit 70; }
-read -r guarded_pid < "$pid_file"
-[[ "$guarded_pid" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid guarded process group id' >&2; exit 70; }
+[ -n "$guarded_pid" ] || { echo 'guarded process group did not start' >&2; exit 70; }
+: > "$arm_file"
 
 next_owner_check=$SECONDS
 while kill -0 "$launcher_pid" 2>/dev/null; do

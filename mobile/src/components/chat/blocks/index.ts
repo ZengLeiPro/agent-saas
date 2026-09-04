@@ -22,6 +22,12 @@ export { CanonicalPresentationBody, EvidenceRefs, ReceiptRow } from './Presentat
 export { PresentationBlocks, type BlockContext } from './PresentationBlockViews';
 export { RecordsBlockView } from './RecordsBlockView';
 export { SubagentBlock } from './SubagentBlock';
+export {
+  SubagentTranscriptProvider,
+  useSubagentTranscript,
+  type SubagentTranscriptContextValue,
+  type SubagentTranscriptTarget,
+} from './SubagentTranscriptContext';
 export { ModerationMessage, SystemTimelineMessage } from './SystemBlocks';
 export { TextMessage } from './TextBlock';
 export { ThinkingBlock } from './ThinkingBlock';

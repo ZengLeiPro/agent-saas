@@ -19,6 +19,11 @@ import { useAppLifecycle } from '../../src/hooks/useAppLifecycle';
 import { useScrollToTop } from '../../src/hooks/useScrollToTop';
 import { useRuntimeRecovery } from '../../src/hooks/useRuntimeRecovery';
 import { MessageList } from '../../src/components/chat/MessageList';
+import { SubagentTranscriptSheet } from '../../src/components/chat/SubagentTranscriptSheet';
+import {
+  SubagentTranscriptProvider,
+  type SubagentTranscriptTarget,
+} from '../../src/components/chat/blocks';
 import { MessageFeedbackProvider } from '../../src/contexts/MessageFeedbackContext';
 import { AskUserPromptPanel } from '../../src/components/chat/AskUserPromptPanel';
 import { QueuedMessageBar } from '../../src/components/chat/QueuedMessageBar';
@@ -55,6 +60,8 @@ export default function ChatDetailScreen() {
   const recoverFromFailure = useRuntimeRecovery();
   const [tooShortTip, setTooShortTip] = useState(false);
   const [showTokenDetail, setShowTokenDetail] = useState(false);
+  // 子任务完整过程：面板挂在会话页（这里才拿得到 MessageList），块内只发起打开请求
+  const [transcriptTarget, setTranscriptTarget] = useState<SubagentTranscriptTarget | null>(null);
   const defaultBottomPadding = 56 + insets.bottom;
   const [composerHeight, setComposerHeight] = useState(defaultBottomPadding);
   const lastComposerHeightRef = useRef(defaultBottomPadding);
@@ -456,6 +463,11 @@ export default function ChatDetailScreen() {
 
   const interactionDisabled = Boolean(chat.activeAgentTargetUnavailableReason || !chat.activeAgentTarget);
 
+  const transcriptValue = useMemo(
+    () => ({ openTranscript: (target: SubagentTranscriptTarget) => setTranscriptTarget(target) }),
+    [],
+  );
+
   return (
     <View style={styles.container} testID="chat-screen">
       <Stack.Screen
@@ -524,6 +536,7 @@ export default function ChatDetailScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
       {/* 反馈入口的数据面开关：无会话或后端 503 时 value=null，气泡里的按钮零渲染 */}
       <MessageFeedbackProvider sessionId={chat.sessionId}>
+      <SubagentTranscriptProvider value={transcriptValue}>
       <MessageList
         headerPadding={0}
         bottomPadding={Platform.OS === 'ios' ? composerHeight - (isKeyboardOpen ? insets.bottom : 0) : defaultBottomPadding}
@@ -545,6 +558,7 @@ export default function ChatDetailScreen() {
         isLoadingEarlier={chat.isLoadingEarlier}
         onLoadEarlier={chat.loadEarlierMessages}
       />
+      </SubagentTranscriptProvider>
       </MessageFeedbackProvider>
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>
@@ -607,6 +621,16 @@ export default function ChatDetailScreen() {
           sessionId={sessionId || ''}
           topOffset={0}
           onDismiss={() => setShowTokenDetail(false)}
+        />
+      )}
+
+      {/* 子任务完整过程：全屏覆盖，复用 MessageList 渲染子会话回放 */}
+      {transcriptTarget && (
+        <SubagentTranscriptSheet
+          visible
+          childSessionId={transcriptTarget.childSessionId}
+          title={transcriptTarget.title}
+          onClose={() => setTranscriptTarget(null)}
         />
       )}
     </View>

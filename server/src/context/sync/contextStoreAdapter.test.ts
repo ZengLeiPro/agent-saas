@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ContextSyncPartition } from '../store/index.js';
+import { computeContextVersionFingerprint } from '../store/validation.js';
 import {
   ContextStoreSyncAdapter,
   defaultPartitionIdentity,
@@ -162,6 +163,67 @@ describe('ContextStoreSyncAdapter', () => {
     expect(first.collectionId).not.toContain(key.tenantId);
     expect(first.collectionId).not.toContain(key.accountId);
     expect(first.collectionId).not.toContain(key.profileId);
+  });
+
+  it('materializes trusted group ownership into the ingested revision and prevents upstream metadata from spoofing it', async () => {
+    const { store } = setup();
+    const resolveRecordMetadata = vi.fn(async () => ({
+      agentId: 'agent-group-a',
+      bindingId: 'binding-group-a',
+      conversationSpaceId: 'space-group-a',
+      workConversationId: 'work-group-a',
+      policyRevision: 9,
+      visibility: 'conversation',
+      orgAgentContextScope: 'work_conversation',
+    }));
+    const adapter = new ContextStoreSyncAdapter({
+      store,
+      leaseOwner: 'worker-a',
+      leaseMs: 60_000,
+      retryBaseMs: 60_000,
+      resolvePartition: () => identity,
+      resolveRecordMetadata,
+    });
+    const forged = page({
+      nextCursor: undefined,
+      items: [{
+        ...page().items[0]!,
+        metadata: {
+          senderId: 'user-a',
+          agentId: 'forged-agent',
+          bindingId: 'forged-binding',
+          conversationSpaceId: 'forged-space',
+          workConversationId: 'forged-work',
+          policyRevision: 1,
+          visibility: 'public',
+        },
+      }],
+    });
+
+    await adapter.ingestPage(forged);
+    await adapter.advanceWatermark({
+      key,
+      expected: '2026-08-21T23:00:00.000Z',
+      value: window.to,
+    });
+
+    const record = vi.mocked(store.ingestPage).mock.calls[0]![0].records[0]!;
+    expect(resolveRecordMetadata).toHaveBeenCalledWith(key, forged.items[0]);
+    expect(record.metadata).toMatchObject({
+      agentId: 'agent-group-a',
+      bindingId: 'binding-group-a',
+      conversationSpaceId: 'space-group-a',
+      workConversationId: 'work-group-a',
+      policyRevision: 9,
+      visibility: 'conversation',
+      orgAgentContextScope: 'work_conversation',
+    });
+    expect(computeContextVersionFingerprint(record)).not.toBe(
+      computeContextVersionFingerprint({
+        ...record,
+        metadata: { ...record.metadata, bindingId: 'other-binding' },
+      }),
+    );
   });
 
   it('renews an active lease during long-running upstream inventory work', async () => {

@@ -168,6 +168,7 @@ describe('AcsExecutor active sandbox tracking', () => {
           sessionId: ref.sessionId,
           sandboxScopeId: ref.sandboxScopeId,
           mountSubPath: ref.mountSubPath,
+          sharedReadOnlySubPath: 'workspaces/kaiyan/shared/binding-1/work-1',
         },
       },
     }, { stream: true })[Symbol.asyncIterator]();
@@ -180,6 +181,7 @@ describe('AcsExecutor active sandbox tracking', () => {
         attemptId: 'attempt-1',
         sandboxId: 'as-correlation',
       },
+      workspace: { sharedReadOnlyMounted: true },
     });
     child.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'ok' } })}\n`);
     child.emit('close', 0, null);

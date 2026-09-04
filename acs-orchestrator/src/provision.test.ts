@@ -100,6 +100,27 @@ describe('Provisioner runtime bootstrap', () => {
     });
   });
 
+  it('passes the Agent shared read-only mount through both SandboxRef boundaries', async () => {
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    const manager = sandboxManagerStub();
+    const ref = vi.spyOn(manager, 'ref');
+    const ensureRunning = vi.spyOn(manager, 'ensureRunning');
+    const provisioner = new Provisioner(baseConfig(), kubectlStub(calls), manager, () => new Set());
+
+    await provisioner.provision({
+      workspaceId: 'task-workspace', sessionId: 'session-123',
+      sandboxScopeId: 'task-scope', mountSubPath: 'workspaces/agent/work/task/attempt-1',
+      sharedReadOnlySubPath: 'workspaces/agent/shared/binding/topic',
+    });
+
+    expect(ref).toHaveBeenCalledWith(expect.objectContaining({
+      sharedReadOnlySubPath: 'workspaces/agent/shared/binding/topic',
+    }));
+    expect(ensureRunning).toHaveBeenCalledWith(expect.objectContaining({
+      sharedReadOnlySubPath: 'workspaces/agent/shared/binding/topic',
+    }), expect.any(Object));
+  });
+
   it('fails closed when the actual runtime SandboxRef breaks an isolation condition', async () => {
     const calls: Array<{ args: string[]; input?: string }> = [];
     const manager = sandboxManagerStub();

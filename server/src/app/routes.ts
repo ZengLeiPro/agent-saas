@@ -51,7 +51,7 @@ import { createAgentsRouter } from '../routes/agents.js';
 import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
 import { createKbFilesRouter } from '../routes/kbFiles.js';
 import { createOrgQaRouter } from '../routes/orgQa.js';
-import { createAgentDwsAccountsRouter } from '../routes/agentDwsAccounts.js';
+import { registerAgentDwsRoutes } from './routesAgentDws.js';
 import { createFeedbackRouter } from '../routes/feedback.js';
 import { createAppealsRouter, createTenantAppealsRouter } from '../routes/appeals.js';
 import { createRuntimeAuditRouter } from '../routes/runtimeAudit.js';
@@ -226,19 +226,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-  app.use('/api/agent-dws-accounts', requireAdmin);
-  app.use(
-    '/api',
-    createAgentDwsAccountsRouter({
-      accountStore: runtime.agentDwsAccountStore,
-      messageStore: runtime.agentDwsMessageStore,
-      authFlowService: runtime.agentDwsAuthFlowService,
-      eventGateway: runtime.dwsPersonalEventGateway,
-      auditStore: runtime.governanceAuditStore,
-      onContextPolicyUpdated: runtime.agentDwsContextPolicyUpdated,
-      onEnabledChanged: runtime.agentDwsEnabledChanged,
-    }),
-  );
+  registerAgentDwsRoutes(app, runtime);
   // 飞书单轨连接状态：浏览器/PG 只接触非敏感元数据；用户 token 与官方 CLI
   // 加密 keychain 始终保存在其独立 NAS workspace 的 .lark-cli/ 内。
   app.use(

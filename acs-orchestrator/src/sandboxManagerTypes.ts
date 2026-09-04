@@ -18,6 +18,7 @@ export interface SandboxRef {
   sessionId: string;
   sandboxScopeId: string;
   mountSubPath: string;
+  sharedReadOnlySubPath?: string;
   /** per-tenant/workspace 规格覆盖；缺省时用全局默认。 */
   resources?: SandboxResourceOverride;
   workload?: SandboxWorkloadDescriptor;

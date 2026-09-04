@@ -1,6 +1,6 @@
 import pg from 'pg';
 import type { ExecutionTargetKind, SandboxWorkloadWireDescriptor, ToolDescriptor, ToolRisk } from '../agent/toolRuntime.js';
-import { parseWorkspaceId } from './workspaceIdentity.js';
+import { parseWorkspacePrincipal } from './workspaceIdentity.js';
 
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
@@ -57,6 +57,8 @@ export interface WorkspaceRecipe {
    * relative to the orchestrator's workspace root.
    */
   mountSubPath?: string;
+  /** Optional Agent-owned shared view mounted read-only beside the writable task workspace. */
+  sharedReadOnlySubPath?: string;
   repo?: { url: string; ref?: string; remote?: string };
   files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
   packages?: string[];
@@ -319,7 +321,7 @@ export class PgHandStore implements HandStore {
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
   async register(input: RegisterHandInput): Promise<HandRecord> {
-    const owner = parseWorkspaceId(input.workspaceId);
+    const owner = parseWorkspacePrincipal(input.workspaceId);
     const result = await this.pool.query<{ row_json: unknown }>(`
       INSERT INTO ${this.handsTable}
         (hand_id, session_id, workspace_id, tenant_id, user_id, type, status, endpoint,
@@ -349,7 +351,7 @@ export class PgHandStore implements HandStore {
       input.sessionId ?? null,
       input.workspaceId,
       owner?.tenantId ?? null,
-      owner?.userId ?? null,
+      owner?.kind === 'user' ? owner.userId : null,
       input.type,
       input.status ?? 'ready',
       input.endpoint ?? null,
@@ -360,7 +362,9 @@ export class PgHandStore implements HandStore {
       input.runId ?? null,
       input.recipeDigest ?? null,
       input.terminatedAt?.toISOString() ?? null,
-      JSON.stringify(input.metadata ?? {}),
+      JSON.stringify(owner && owner.kind !== 'user'
+        ? { ...input.metadata, workspacePrincipal: { kind: owner.kind, principalId: owner.principalId } }
+        : input.metadata ?? {}),
     ]);
     return normalizeHandRecord(result.rows[0]!.row_json);
   }

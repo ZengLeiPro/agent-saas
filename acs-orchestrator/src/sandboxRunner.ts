@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, normalize } from 'node:path';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ServerLocalExecutionProvider, type WorkspaceRef } from 'server/agent/toolRuntime.js';
@@ -198,6 +198,9 @@ async function executeSandboxRunnerInputInternal(
     userId: input.workspace.userId,
     username: input.workspace.username,
     sessionId: input.workspace.sessionId,
+    ...(input.workspace.sharedReadOnlyMounted
+      ? { sharedReadOnlyRoot: resolveMountedSharedReadOnlyRoot(process.env.AGENT_SHARED_READ_ONLY_PATH) }
+      : {}),
     executionTarget: 'server-local',
   };
   const provider = new ServerLocalExecutionProvider({ envBuilder: () => effectiveEnv });
@@ -246,6 +249,13 @@ async function executeSandboxRunnerInputInternal(
   } finally {
     await snapshot?.cleanup().catch(() => undefined);
   }
+}
+
+export function resolveMountedSharedReadOnlyRoot(value: string | undefined): string {
+  if (!value || !isAbsolute(value)) {
+    throw new Error('组织共享只读目录已声明挂载，但 AGENT_SHARED_READ_ONLY_PATH 无效');
+  }
+  return resolve(value);
 }
 
 export function normalizeShellCommandForCwd(command: string, cwd: string | undefined): string {

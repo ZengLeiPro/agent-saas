@@ -420,6 +420,43 @@ export async function copyTrustedFile(
   }
 }
 
+/** Atomically exposes a fully prepared directory without replacing an existing publication. */
+export async function moveTrustedDirectoryIfAbsent(
+  sourceRoot: string,
+  sourceRelativePath: string,
+  destinationRoot: string,
+  destinationRelativePath: string,
+): Promise<void> {
+  const source = await bindParent(sourceRoot, sourceRelativePath);
+  const destination = await bindParent(destinationRoot, destinationRelativePath, true);
+  let sourceDirectory: FileHandle | undefined;
+  try {
+    sourceDirectory = await openChildDirectory(source.parent, source.leaf);
+    if (!(await sourceDirectory.stat()).isDirectory()) throw new UnsafeFilePathError();
+    const existing = await lstat(procPath(destination.parent, destination.leaf)).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      return asUnsafe(error);
+    });
+    if (existing) throw Object.assign(new Error('Destination already exists'), { code: 'EEXIST' });
+    try {
+      await rename(
+        procPath(source.parent, source.leaf),
+        procPath(destination.parent, destination.leaf),
+      );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOTEMPTY') {
+        throw Object.assign(new Error('Destination already exists'), { code: 'EEXIST' });
+      }
+      asUnsafe(error);
+    }
+  } finally {
+    await sourceDirectory?.close().catch(() => undefined);
+    await source.parent.close().catch(() => undefined);
+    await destination.parent.close().catch(() => undefined);
+  }
+}
+
 async function removeEntry(parent: FileHandle, leaf: string): Promise<void> {
   let directory: FileHandle | undefined;
   try {

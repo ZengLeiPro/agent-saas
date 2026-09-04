@@ -257,6 +257,55 @@ describe('RawAgentLoop MCP deferred 真实工具身份与审批恢复', () => {
     expect(eventStore.events.filter((event) => event.type === 'mcp_tools_loaded')).toHaveLength(1);
   });
 
+  it('交互钩子声明 deferred 时保留 pending approval，可信通道随后批准可恢复执行', async () => {
+    const eventStore = new MemoryEventStore('tenant-1');
+    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred', 'tenant-1');
+    const runtime = new ControlledMcpRuntime();
+    const firstLoop = new RawAgentLoop({
+      modelAdapter: new SearchThenCallAdapter(),
+      eventStore,
+      approvalStore,
+      transcriptProjection: new LegacyTranscriptProjection('/dev/null'),
+      toolRuntime: runtime,
+      mcpLoadingMode: 'openai_responses_hosted',
+    });
+
+    const firstEvents = await collect(firstLoop.run({
+      message: { channel: 'dingtalk', chatId: 'group-1', content: '读取 GitHub 42 号 issue' },
+      prompt: '读取 GitHub 42 号 issue',
+      instructions: '只在任务需要连接器真实数据时搜索 MCP。',
+      maxTurns: 3,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      ...context('run-deferred'),
+      hooks: { onInteraction: async () => ({ deferred: true }) },
+    }));
+
+    expect(firstEvents.at(-1)?.type).not.toBe('done');
+    expect(runtime.invoke).not.toHaveBeenCalled();
+    const approvals = await approvalStore.list('session-mcp-deferred');
+    expect(approvals).toEqual([expect.objectContaining({ status: 'pending', toolName: githubTool.name })]);
+
+    const rebuiltLoop = new RawAgentLoop({
+      modelAdapter: new FinalAnswerAdapter(),
+      eventStore,
+      approvalStore,
+      transcriptProjection: new LegacyTranscriptProjection('/dev/null'),
+      toolRuntime: runtime,
+      mcpLoadingMode: 'openai_responses_hosted',
+    });
+    const resumed = await collect(rebuiltLoop.resumeApproval({
+      approvalId: approvals[0]!.id,
+      response: { allow: true, message: '管理员批准' },
+      instructions: '只在任务需要连接器真实数据时搜索 MCP。',
+      maxTurns: 3,
+    }, context('run-deferred-resume')));
+
+    expect(runtime.invoke).toHaveBeenCalledOnce();
+    expect((await approvalStore.list('session-mcp-deferred'))[0]).toMatchObject({ status: 'approved' });
+    expect(resumed.at(-1)).toEqual({ type: 'done' });
+  });
+
   it('即使 provider 绕过 Search 直接生成真实工具名，runtime 也拒绝执行', async () => {
     const eventStore = new MemoryEventStore('tenant-1');
     const approvalStore = new EventBackedApprovalStore(eventStore, 'session-mcp-deferred', 'tenant-1');

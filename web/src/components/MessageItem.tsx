@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic, ChevronDown, ChevronUp } from 'lucide-react';
 import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -475,7 +475,10 @@ function UserAttachmentChip({ att, filePreview }: {
         <button
           type="button"
           className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.12] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => void handleClick()}
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleClick();
+          }}
           aria-label={label}
           title={label}
         >
@@ -496,6 +499,100 @@ function UserAttachmentChip({ att, filePreview }: {
         />
       )}
     </>
+  );
+}
+
+function UserMessageBubble({
+  message,
+  isPlaying,
+  isFailed,
+  filePreview,
+}: {
+  message: Extract<MessageItemType, { type: 'user' }>;
+  isPlaying: boolean;
+  isFailed: boolean;
+  filePreview: ReturnType<typeof useFilePreview> | null;
+}) {
+  const content = message.displayContent ?? message.content;
+  const textRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [isCollapsible, setIsCollapsible] = useState(false);
+
+  useLayoutEffect(() => {
+    setExpanded(false);
+  }, [message.id, content]);
+
+  useLayoutEffect(() => {
+    const text = textRef.current;
+    if (!text || expanded) return;
+
+    const measure = () => {
+      setIsCollapsible(text.scrollHeight > text.clientHeight + 1);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [content, expanded]);
+
+  const collapsed = isCollapsible && !expanded;
+
+  return (
+    <div
+      className={cn(
+        "whitespace-pre-wrap break-words rounded-2xl rounded-tr-md bg-user-bubble px-3.5 py-2 msg-user-text text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]",
+        collapsed && "cursor-pointer",
+        isPlaying && "border-l-2 border-primary",
+        isFailed && "opacity-60",
+      )}
+      onClick={collapsed ? () => setExpanded(true) : undefined}
+      data-testid="user-message-bubble"
+    >
+      {message.isVoiceTranscript && (
+        <span className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
+          <Mic className="size-3" />
+          <span>语音转文字</span>
+        </span>
+      )}
+      {content ? (
+        <div ref={textRef} className={!expanded ? "line-clamp-5" : undefined}>
+          {content}
+        </div>
+      ) : null}
+      {message.attachments && message.attachments.length > 0 && (
+        <div className={cn("flex flex-wrap gap-1", content && "mt-1.5")}>
+          {message.attachments.map((att, i) => (
+            <UserAttachmentChip key={i} att={att} filePreview={filePreview} />
+          ))}
+        </div>
+      )}
+      {isCollapsible && (
+        <div className="mt-1 flex h-7 items-center justify-end">
+          {expanded ? (
+            <button
+              type="button"
+              className="flex size-7 items-center justify-center rounded-full bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded(false);
+              }}
+              aria-label="收起消息"
+              title="收起消息"
+            >
+              <ChevronUp className="size-4" aria-hidden="true" />
+            </button>
+          ) : (
+            <span
+              className="flex size-7 items-center justify-center rounded-full bg-background/90 text-muted-foreground shadow-sm"
+              aria-hidden="true"
+            >
+              <ChevronDown className="size-4" />
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -751,28 +848,12 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div className="flex flex-col items-end">
         <div className="group max-w-full">
-          <div
-            className={cn(
-              "whitespace-pre-wrap break-words rounded-2xl rounded-tr-md bg-user-bubble px-3.5 py-2 msg-user-text text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]",
-              isPlaying && "border-l-2 border-primary",
-              isFailed && "opacity-60",
-            )}
-          >
-            {message.isVoiceTranscript && (
-              <span className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-                <Mic className="size-3" />
-                <span>语音转文字</span>
-              </span>
-            )}
-            {(message.displayContent ?? message.content) || null}
-            {message.attachments && message.attachments.length > 0 && (
-              <div className={cn("flex flex-wrap gap-1", (message.displayContent ?? message.content) && "mt-1.5")}>
-                {message.attachments.map((att, i) => (
-                  <UserAttachmentChip key={i} att={att} filePreview={filePreview} />
-                ))}
-              </div>
-            )}
-          </div>
+          <UserMessageBubble
+            message={message}
+            isPlaying={isPlaying}
+            isFailed={isFailed}
+            filePreview={filePreview}
+          />
           {message.status === 'queued' && (
             <div className="mt-1 text-right text-xs text-muted-foreground">
               已排队，将在当前步骤结束后插入

@@ -814,43 +814,61 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   const appRollback = deploy.slice(appRollbackStart, appRollbackEnd);
   assert.ok(
     appRollback.indexOf('record_rollback_attempt') <
-      appRollback.indexOf('systemctl restart "agent-saas-runtime-worker@$worker_active"'),
+      appRollback.indexOf('cp -a "$rollback_root/api.release.env"'),
   );
-  const previousWorkerRestart = appRollback.indexOf(
-    'systemctl restart "agent-saas-runtime-worker@$worker_active"',
+  assert.doesNotMatch(
+    appRollback,
+    /systemctl (?:restart|enable|disable)|nginx -t|commit_app_active_colors/u,
   );
-  const previousApiRestart = appRollback.indexOf(
+
+  const appDeployStart = deploy.indexOf('deploy_app() {');
+  const appCleanupStart = deploy.indexOf('  cleanup_app_failure() {', appDeployStart);
+  const appCleanupEnd = deploy.indexOf('  arm_deploy_rollback cleanup_app_failure', appCleanupStart);
+  const appCleanup = deploy.slice(appCleanupStart, appCleanupEnd);
+  const oldApiRestart = appCleanup.indexOf(
     'systemctl restart "agent-saas-server@$api_active"',
   );
-  const nginxRestore = appRollback.indexOf('cp -a "$rollback_root/nginx-upstream.conf"');
-  const candidateWorkerStop = appRollback.indexOf(
-    'systemctl disable --now "agent-saas-runtime-worker@$worker_idle"',
+  const rollbackWorkerCall = appCleanup.indexOf('commit_rollback_worker_authority');
+  const rollbackApiCall = appCleanup.indexOf('commit_rollback_api_authority');
+  const atomicMarkerCommit = appCleanup.indexOf('commit_app_active_colors');
+  const successReceipt = appCleanup.lastIndexOf('record_rollback_success');
+  assert.ok(oldApiRestart > appCleanup.indexOf('rollback_app_release'));
+  assert.ok(rollbackWorkerCall > oldApiRestart);
+  assert.ok(rollbackApiCall > rollbackWorkerCall);
+  assert.ok(atomicMarkerCommit > rollbackApiCall);
+  assert.ok(successReceipt > atomicMarkerCommit);
+  assert.match(appCleanup, /transaction_rollback_status=70/u);
+  assert.match(appCleanup, /app_candidate_restored/u);
+  assert.match(appCleanup, /app_old_compensated/u);
+
+  const workerRollbackStart = deploy.indexOf('commit_rollback_worker_authority() {');
+  const workerRollbackEnd = deploy.indexOf('restore_candidate_worker_authority() {');
+  const workerRollback = deploy.slice(workerRollbackStart, workerRollbackEnd);
+  assert.match(
+    workerRollback,
+    /systemctl restart "agent-saas-runtime-worker@\$active_color"/u,
   );
-  const candidateApiStop = appRollback.indexOf(
-    'systemctl disable --now "agent-saas-server@$api_idle"',
+  assert.match(
+    workerRollback,
+    /systemctl disable --now "agent-saas-runtime-worker@\$candidate_color"/u,
   );
-  assert.ok(previousWorkerRestart >= 0 && previousApiRestart > previousWorkerRestart);
-  assert.ok(nginxRestore > previousApiRestart);
-  assert.ok(candidateWorkerStop > nginxRestore && candidateApiStop > candidateWorkerStop);
   assert.ok(
-    candidateWorkerStop > appRollback.indexOf('cmp "$rollback_root/runtime-worker@.service"'),
+    workerRollback.indexOf('Rollback Worker final ConfigIdentity') <
+      workerRollback.indexOf('commit_worker_active_color'),
   );
+
+  const apiRollbackStart = deploy.indexOf('commit_rollback_api_authority() {');
+  const apiRollbackEnd = deploy.indexOf('restore_candidate_api_authority() {');
+  const apiRollback = deploy.slice(apiRollbackStart, apiRollbackEnd);
+  assert.match(apiRollback, /nginx -t/u);
   assert.match(
-    appRollback,
-    /if \[ "\$rollback_status" -eq 0 \]; then[\s\S]*systemctl disable --now "agent-saas-runtime-worker@\$worker_idle"/u,
+    apiRollback,
+    /systemctl disable --now "agent-saas-server@\$candidate_color"/u,
   );
-  assert.match(appRollback, /最终现场验证通过后才停止 candidate/u);
-  assert.match(appRollback, /retaining candidate services/u);
-  assert.ok(appRollback.indexOf('record_rollback_success') > candidateApiStop);
-  assert.match(
-    appRollback,
-    /rm -f[\s\S]*agent-saas-server-\$api_active\.draining[\s\S]*agent-saas-runtime-worker-\$worker_active\.draining/u,
+  assert.ok(
+    apiRollback.indexOf('Rollback old API final ConfigIdentity') <
+      apiRollback.indexOf('commit_api_active_color'),
   );
-  assert.match(appRollback, /api-active-ready\.json/u);
-  assert.match(appRollback, /worker_rollback_pid.*worker_rollback_ready/su);
-  assert.match(appRollback, /api-authoritative-ready\.json/u);
-  assert.match(appRollback, /cmp "\$rollback_root\/server@\.service" "\$server_unit"/u);
-  assert.match(appRollback, /cmp "\$rollback_root\/runtime-worker@\.service" "\$worker_unit"/u);
   assert.ok(
     workflow.indexOf('rollback-web.attempted', workflow.indexOf('restore_web_entry()')) <
       workflow.indexOf(
@@ -867,7 +885,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(deploy, /acs_mutation_started=true/u);
   assert.match(deploy, /app_mutation_started=true/u);
   assert.match(deploy, /正式路径始终执行现场 readback[\s\S]*ROLLBACK_RUNTIME_VERIFY=true/u);
-  assert.match(deploy, /systemctl reload nginx[\s\S]*api-authoritative-ready\.json/u);
+  assert.match(deploy, /systemctl reload nginx[\s\S]*validate_api_routing_boundary/u);
   assert.match(phaseVerifier, /Production changed after promotion gate/u);
   assert.match(phaseVerifier, /PHASES\.slice\(0, phaseIndex\)/u);
   assert.match(phaseVerifier, /PHASES\.slice\(phaseIndex\)/u);
@@ -1063,23 +1081,27 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('App cleanup after Worker drain restarts the previous API and Worker before success receipt', async () => {
+test('App cleanup after Worker drain restores both sides before the success receipt', async () => {
   const deploy = await readFile(deployPath, 'utf8');
-  const rollbackStart = deploy.indexOf('rollback_app_release()');
-  const rollbackEnd = deploy.indexOf('cleanup_app_failure()', rollbackStart);
-  const rollback = deploy.slice(rollbackStart, rollbackEnd);
+  const appDeployStart = deploy.indexOf('deploy_app() {');
+  const cleanupStart = deploy.indexOf('  cleanup_app_failure() {', appDeployStart);
+  const cleanupEnd = deploy.indexOf('  arm_deploy_rollback cleanup_app_failure', cleanupStart);
+  const cleanup = deploy.slice(cleanupStart, cleanupEnd);
   const workerDrain = deploy.indexOf(
     'install -m 0644 /dev/null "/run/agent-saas-runtime-worker-$worker_active.draining"',
-    rollbackEnd,
+    cleanupEnd,
   );
   const apiDrain = deploy.indexOf(
     'install -m 0644 /dev/null "/run/agent-saas-server-$api_active.draining"',
     workerDrain,
   );
-  assert.ok(workerDrain > rollbackEnd && apiDrain > workerDrain);
-  assert.ok(rollback.indexOf('agent-saas-runtime-worker-$worker_active.draining') >= 0);
-  assert.ok(rollback.indexOf('systemctl restart "agent-saas-runtime-worker@$worker_active"') >= 0);
-  assert.ok(rollback.indexOf('worker_rollback_pid') >= 0);
-  assert.ok(rollback.indexOf('worker_rollback_ready') >= 0);
-  assert.ok(rollback.indexOf('record_rollback_success') > rollback.indexOf('sleep 2'));
+  assert.ok(workerDrain > cleanupEnd && apiDrain > workerDrain);
+  assert.ok(cleanup.indexOf('agent-saas-server-$api_active.draining') >= 0);
+  assert.ok(cleanup.indexOf('commit_rollback_worker_authority') >= 0);
+  assert.ok(cleanup.indexOf('commit_rollback_api_authority') >= 0);
+  assert.ok(cleanup.indexOf('commit_app_active_colors') >= 0);
+  assert.ok(
+    cleanup.lastIndexOf('record_rollback_success') >
+      cleanup.indexOf('commit_app_active_colors'),
+  );
 });

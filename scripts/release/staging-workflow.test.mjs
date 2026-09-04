@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { validateExpectedConfigIdentityObservers } from './read-production-state.mjs';
+
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
 const acrWaitPath = new URL('./wait-for-acr-image.sh', import.meta.url);
 const acceptanceWorkflowPath = new URL(
@@ -183,6 +185,76 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
     /--arg releaseSha "\$\(jq -r \.components\.web\.sourceSha "\$RUNNER_TEMP\/manifest\.json"\)"/u,
   );
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('首次 Production ConfigIdentity 迁移必须显式选择且不降低 steady-state 门禁', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  assert.match(
+    workflow,
+    /production_config_identity_stage:[\s\S]*type: choice[\s\S]*default: steady-state[\s\S]*- steady-state[\s\S]*- legacy-pre-upgrade-baseline/u,
+  );
+  assert.match(
+    workflow,
+    /PRODUCTION_CONFIG_IDENTITY_STAGE: \$\{\{ inputs\.production_config_identity_stage \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /read-production-state\.mjs' --config-identity-stage '\$PRODUCTION_CONFIG_IDENTITY_STAGE'/u,
+  );
+  assert.match(workflow, /Selected stage: \\`\$PRODUCTION_CONFIG_IDENTITY_STAGE\\`/u);
+  assert.match(workflow, /Default remains `steady-state`/u);
+
+  assert.doesNotThrow(() =>
+    validateExpectedConfigIdentityObservers(undefined, undefined, {
+      configIdentityStage: 'legacy-pre-upgrade-baseline',
+    }),
+  );
+  assert.throws(
+    () => validateExpectedConfigIdentityObservers(undefined, undefined),
+    /completely absent outside the legacy pre-upgrade baseline/u,
+  );
+
+  const expected = {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+  };
+  const apiSummary = {
+    schemaVersion: 1,
+    status: 'consistent',
+    releaseId: 'rc-20260904-01',
+    expected,
+    observed: {
+      ...expected,
+      credentialVersionDigest: null,
+      versionResolution: 'resolved',
+      secretRefCount: 0,
+    },
+  };
+  for (const [trusted, api] of [
+    [expected, undefined],
+    [undefined, apiSummary],
+  ]) {
+    assert.throws(
+      () =>
+        validateExpectedConfigIdentityObservers(trusted, api, {
+          configIdentityStage: 'legacy-pre-upgrade-baseline',
+        }),
+      /missing from/u,
+    );
+  }
+  assert.throws(
+    () =>
+      validateExpectedConfigIdentityObservers(
+        expected,
+        {
+          ...apiSummary,
+          expected: { ...expected, digest: `sha256:${'b'.repeat(64)}` },
+          observed: { ...apiSummary.observed, digest: `sha256:${'b'.repeat(64)}` },
+        },
+        { configIdentityStage: 'legacy-pre-upgrade-baseline' },
+      ),
+    /disagrees across observers/u,
+  );
 });
 
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {

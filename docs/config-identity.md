@@ -154,8 +154,10 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
    私有快照（0600）；匿名 `/api/healthz/ready` 只用一致性做 readiness 门禁，不返回摘要。
    `read-live-production-components.mjs` / `read-production-state.mjs` 从活动色私有快照读取并
    二次严格校验后写入 Production State 与 Release Evidence；legacy API 可以完全没有
-   `configIdentity`，但一旦提供该对象，非空 `releaseId` 必须存在并等于
-   `api.release.releaseId`，Evidence schema 同样强制此绑定。
+   `configIdentity`，但一旦提供该对象，上游 `read-production-state.mjs` 会强制非空
+   `releaseId` 等于 `api.release.releaseId`。Release Evidence schema 自身只校验
+   `configIdentity.releaseId` 非空并要求 expected 存在；同一 release 的绑定由上游 reader
+   完成，不能把 schema 的结构校验误写成跨对象绑定。
 4. `read-runtime-identity.mjs` 的校验器对 `configIdentity` 做结构校验
    （存在时必须合法），旧 identity 文件（无该字段）保持兼容。
 
@@ -175,7 +177,13 @@ raw config 的任何入口。drifted / unverifiable 同时进入待关注队列�
   新 SCHEMA_VERSION env。
 - 合并本变更后，**存量环境需要一次重新发布**才能绑定 expected identity；
   在此之前 runtime 只会报告 `unverifiable: expected_not_bound`（production
-  不阻断启动，仅 overview 提示）。Staging 在下一次部署后立即强制生效。
+  不阻断启动，仅 overview 提示）。首次从完全没有 ConfigIdentity 的旧 Production
+  生成 Staging Release Evidence 时，`部署预发 RC` 必须由操作者把
+  `production_config_identity_stage` 从默认 `steady-state` 显式改为
+  `legacy-pre-upgrade-baseline`；workflow 会把选择写入 Job Summary，且绝不自动 fallback。
+  legacy stage 只放行 trusted runtime identity 与 API summary **同时完全缺失**的基线；
+  任一 observer 已出现后，单边缺失或摘要不一致仍 fail closed。完成首次重新发布后继续使用
+  默认 `steady-state`。Staging 在下一次部署后立即强制生效。
 
 ## 9. 相关文件
 

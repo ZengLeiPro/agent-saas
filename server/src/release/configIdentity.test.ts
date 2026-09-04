@@ -106,6 +106,10 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
     'dingtalk-app-secret-value',
     'embedding-api-key-value',
     'model-group-api-key-value',
+    'url-user-visible-secret',
+    'url-password-visible-secret',
+    'url-query-visible-secret',
+    'url-fragment-visible-secret',
   ];
 
   it('所有注册凭据字段种植明文后，投影与摘要输入均不含明文', () => {
@@ -179,7 +183,11 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
         connectionString: 'postgresql://user:db-password-s3cr3t@db.internal:5432/runtime',
       },
       stt: { enabled: true, apiKey: 'sk-inline-wetools-key' },
-      serverRemote: { baseUrl: 'http://127.0.0.1:3300', authToken: 'inline-bearer-token-123' },
+      serverRemote: {
+        baseUrl:
+          'https://url-user-visible-secret:url-password-visible-secret@hand.example.com/private/path?access_token=url-query-visible-secret#url-fragment-visible-secret',
+        authToken: 'inline-bearer-token-123',
+      },
       webTools: { search: { enabled: true, provider: 'tavily', apiKey: 'sk-inline-wetools-key' } },
     });
     const { projection } = buildCanonicalConfigProjection(config);
@@ -193,6 +201,10 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
     // webhook：query 中的 access_token 被剥掉，host+path 保留。
     expect(serialized).toContain('oapi.dingtalk.com');
     expect(serialized).not.toContain('tok-123');
+    // HTTP(S) URL 仅公开 origin；userinfo 与 fragment 永不以明文进入投影。
+    expect(serialized).toContain('https://hand.example.com');
+    expect(serialized).not.toContain('url-user-visible-secret');
+    expect(serialized).not.toContain('url-fragment-visible-secret');
   });
 
   it('signedUrl 的路径型 token 整值只进入 opaque digest', () => {
@@ -208,7 +220,7 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
               {
                 artifactId: 'a1',
                 path: '/tmp/a',
-                signedUrl: `https://objects.example.com/download/${token}`,
+                signedUrl: `https://signed-url-user:${token}@objects.example.com/download/${token}#signed-url-fragment-${token}`,
               },
             ],
           },
@@ -220,6 +232,8 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
 
     expect(serialized).not.toContain('path-bearer-token-one');
     expect(serialized).not.toContain('/download/');
+    expect(serialized).not.toContain('signed-url-user');
+    expect(serialized).not.toContain('signed-url-fragment');
     expect(serialized).toContain('https://objects.example.com');
     expect(digestOf(first)).toBe(digestOf(second));
   });

@@ -166,7 +166,7 @@ test('candidate readiness and Web readiness precede the joint API/Worker authori
   assert.ok(workflow.includes('runtime-worker-execution-fencing-v1'));
 });
 
-test('standard preflight executes compatibility authority and legacy workflow regressions', () => {
-  assert.match(preflight, /scripts\/release\/legacy-production-workflows\.test\.mjs/u);
+test('standard preflight executes Release contracts and compatibility authority regressions', () => {
+  assert.match(preflight, /pnpm test:release-contracts/u);
   assert.match(preflight, /bash scripts\/release\/compat-app-authority\.test\.sh/u);
 });

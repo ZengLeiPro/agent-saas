@@ -62,22 +62,12 @@ record_rollback_success() {
 
 
 rollback_app_release() {
-  # 每个恢复动作独立累计状态；先恢复并验证旧 Worker/API，再停 candidate。
+  # 这里只恢复旧 generation 的磁盘状态。服务、nginx 与 authority 必须由
+  # cleanup_app_failure 在持有 governance fence 且通过双侧 readiness 后提交。
   local rollback_status=0
-  local runtime_verify="${ROLLBACK_RUNTIME_VERIFY:-true}"
   set +e
 
   record_rollback_attempt || rollback_status=1
-  if [ -n "$worker_idle_previous" ]; then
-    ln -sfn "$worker_idle_previous" "$APP_WORKER_ROOT/$worker_idle" || rollback_status=1
-  else
-    rm -f "$APP_WORKER_ROOT/$worker_idle" || rollback_status=1
-  fi
-  if [ -n "$api_idle_previous" ]; then
-    ln -sfn "$api_idle_previous" "$APP_COLOR_ROOT/$api_idle" || rollback_status=1
-  else
-    rm -f "$APP_COLOR_ROOT/$api_idle" || rollback_status=1
-  fi
   if [ "$had_api_env" = true ]; then
     cp -a "$rollback_root/api.release.env" "$api_env" || rollback_status=1
   else
@@ -89,126 +79,27 @@ rollback_app_release() {
     rm -f "$worker_env" || rollback_status=1
   fi
 
+  if [ -n "$api_idle_previous" ]; then
+    ln -sfn "$api_idle_previous" "$APP_COLOR_ROOT/$api_idle" || rollback_status=1
+  else
+    rm -f "$APP_COLOR_ROOT/$api_idle" || rollback_status=1
+  fi
+  if [ -n "$worker_idle_previous" ]; then
+    ln -sfn "$worker_idle_previous" "$APP_WORKER_ROOT/$worker_idle" || rollback_status=1
+  else
+    rm -f "$APP_WORKER_ROOT/$worker_idle" || rollback_status=1
+  fi
+
   cp -a "$rollback_root/server@.service" "$server_unit" || rollback_status=1
   cp -a "$rollback_root/runtime-worker@.service" "$worker_unit" || rollback_status=1
   systemctl daemon-reload || rollback_status=1
   rm -f "/run/agent-saas-server-$api_active.draining" || rollback_status=1
   rm -f "/run/agent-saas-runtime-worker-$worker_active.draining" || rollback_status=1
-  rm -f "/run/agent-saas-server-$api_active.pid" || rollback_status=1
-  rm -f "/run/agent-saas-runtime-worker-$worker_active.pid" \
-    "/run/agent-saas-runtime-worker-$worker_active.ready" || rollback_status=1
-  systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || rollback_status=1
-  systemctl enable "agent-saas-server@$api_active" >/dev/null 2>&1 || rollback_status=1
-
-  api_active_root="$(readlink -f "$APP_COLOR_ROOT/$api_active" 2>/dev/null || true)"
-  worker_active_root="$(readlink -f "$APP_WORKER_ROOT/$worker_active" 2>/dev/null || true)"
-  if [ "$runtime_verify" = true ]; then
-    test -n "$api_active_root" || rollback_status=1
-    test -n "$worker_active_root" || rollback_status=1
-    node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$api_active_root" --component server >/dev/null || rollback_status=1
-    node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$worker_active_root" --component server >/dev/null || rollback_status=1
-  fi
-
-  systemctl restart "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || rollback_status=1
-  worker_rollback_pid=''
-  worker_rollback_ready=''
-  if [ "$runtime_verify" = true ]; then
-    for _ in $(seq 1 60); do
-      worker_rollback_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
-      worker_rollback_ready="$(cat "/run/agent-saas-runtime-worker-$worker_active.ready" 2>/dev/null || true)"
-      if [ -n "$worker_rollback_pid" ] && \
-        [ "$worker_rollback_pid" = "$worker_rollback_ready" ] && \
-        [ "$(systemctl show "agent-saas-runtime-worker@$worker_active" --property MainPID --value)" = "$worker_rollback_pid" ] && \
-        kill -0 "$worker_rollback_pid" 2>/dev/null; then
-        break
-      fi
-      sleep 1
-    done
-    test -n "$worker_rollback_pid" || rollback_status=1
-    test "$worker_rollback_pid" = "$worker_rollback_ready" || rollback_status=1
-    kill -0 "$worker_rollback_pid" 2>/dev/null || rollback_status=1
-  fi
-  printf '%s\n' "$worker_active" >"$WORKER_ACTIVE_COLOR_PATH" || rollback_status=1
-
-  systemctl restart "agent-saas-server@$api_active" >/dev/null 2>&1 || rollback_status=1
-  api_rollback_pid=''
-  if [ "$runtime_verify" = true ]; then
-    for _ in $(seq 1 60); do
-      api_rollback_pid="$(cat "/run/agent-saas-server-$api_active.pid" 2>/dev/null || true)"
-      if [ -n "$api_rollback_pid" ] && \
-        [ "$(systemctl show "agent-saas-server@$api_active" --property MainPID --value)" = "$api_rollback_pid" ] && \
-        kill -0 "$api_rollback_pid" 2>/dev/null && \
-        curl -fsS "http://127.0.0.1:$api_active_port/api/healthz/ready" \
-          >"$rollback_root/api-active-ready.json"; then
-        break
-      fi
-      sleep 1
-    done
-    test -n "$api_rollback_pid" || rollback_status=1
-    kill -0 "$api_rollback_pid" 2>/dev/null || rollback_status=1
-    node - "$api_active_root/manifest.json" "$rollback_root/api-active-ready.json" <<'NODE' || rollback_status=1
-const fs = require('node:fs');
-const [manifestPath, readyPath] = process.argv.slice(2);
-const manifest = JSON.parse(fs.readFileSync(manifestPath));
-const release = JSON.parse(fs.readFileSync(readyPath)).release;
-if (
-  release.environment !== 'production' ||
-  release.releaseId !== manifest.releaseId ||
-  release.releaseSha !== manifest.components.api.sourceSha ||
-  release.serverDigest !== manifest.components.api.artifactDigest
-) process.exit(1);
-NODE
-  fi
-
-  if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
-    cp -a "$rollback_root/nginx-upstream.conf" "$NGINX_UPSTREAM_PATH" || rollback_status=1
-    if nginx -t >/dev/null 2>&1; then
-      systemctl reload nginx || rollback_status=1
-    else
-      rollback_status=1
-    fi
-  fi
-  printf '%s\n' "$api_active" >"$ACTIVE_COLOR_PATH" || rollback_status=1
-  printf '%s\n' "$worker_active" >"$WORKER_ACTIVE_COLOR_PATH" || rollback_status=1
-  if [ "$runtime_verify" = true ]; then
-    curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready \
-      >"$rollback_root/api-authoritative-ready.json" || rollback_status=1
-    node - "$rollback_root/api-active-ready.json" "$rollback_root/api-authoritative-ready.json" <<'NODE' || rollback_status=1
-const fs = require('node:fs');
-const [directPath, authoritativePath] = process.argv.slice(2);
-const direct = JSON.parse(fs.readFileSync(directPath));
-const authoritative = JSON.parse(fs.readFileSync(authoritativePath));
-if (JSON.stringify(direct.release) !== JSON.stringify(authoritative.release)) process.exit(1);
-NODE
-  fi
-
-  if [ "$runtime_verify" = true ]; then
-    sleep 2
-    test ! -e "/run/agent-saas-server-$api_active.draining" || rollback_status=1
-    test ! -e "/run/agent-saas-runtime-worker-$worker_active.draining" || rollback_status=1
-    systemctl is-active --quiet "agent-saas-server@$api_active" || rollback_status=1
-    systemctl is-active --quiet "agent-saas-runtime-worker@$worker_active" || rollback_status=1
-    test "$(systemctl show "agent-saas-server@$api_active" --property MainPID --value)" = "$api_rollback_pid" || rollback_status=1
-    test "$(systemctl show "agent-saas-runtime-worker@$worker_active" --property MainPID --value)" = "$worker_rollback_pid" || rollback_status=1
-    test "$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")" = "$api_active" || rollback_status=1
-    test "$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")" = "$worker_active" || rollback_status=1
-    cmp "$rollback_root/server@.service" "$server_unit" || rollback_status=1
-    cmp "$rollback_root/runtime-worker@.service" "$worker_unit" || rollback_status=1
-  fi
-
-  # 最终现场验证通过后才停止 candidate；任一恢复失败时保留最后一个可能健康的实例。
-  if [ "$rollback_status" -eq 0 ]; then
-    systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || rollback_status=1
-    systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || rollback_status=1
-  else
-    echo 'Previous App release is not fully verified; retaining candidate services' >&2
-  fi
 
   if [ "$rollback_status" -ne 0 ]; then
     echo 'App rollback completed with one or more recovery failures' >&2
     return 70
   fi
-  record_rollback_success || return 70
   return 0
 }
 
@@ -1624,7 +1515,7 @@ deploy_app() {
   cleanup_app_failure() {
     local api_restored=false api_rollback_committed=false api_candidate_stopped=false
     local worker_restored=false candidate_stopped=false worker_rollback_committed=false
-    local app_candidate_restored=false app_old_compensated=false
+    local app_old_restored=false app_candidate_restored=false app_old_compensated=false
     local api_candidate_nginx_backup rollback_target=old old_release_id
     local app_committed="$DEPLOY_APP_ROLLBACK_COMMITTED"
     local api_active="$DEPLOY_APP_ROLLBACK_API_ACTIVE" api_idle="$DEPLOY_APP_ROLLBACK_API_IDLE"
@@ -1748,6 +1639,7 @@ EOF
         else
           rm -f "$worker_env" || true
         fi
+        app_old_restored=true
       else
         if [ "$api_candidate_admitted" = true ] \
           && [ "$worker_candidate_admitted" = true ] \
@@ -1786,6 +1678,14 @@ EOF
         fi
       fi
       release_config_governance_fence
+      if [ "$transaction_rollback_status" -eq 0 ] \
+        && { [ "$app_old_restored" = true ] \
+          || [ "$app_candidate_restored" = true ] \
+          || [ "$app_old_compensated" = true ]; }; then
+        record_rollback_success || transaction_rollback_status=70
+      else
+        transaction_rollback_status=70
+      fi
       if [ "$transaction_rollback_status" -ne 0 ]; then
         exit "$transaction_rollback_status"
       fi

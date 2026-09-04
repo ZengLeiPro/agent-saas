@@ -15,8 +15,15 @@ import { Download } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Markdown from 'react-native-markdown-display';
-import type { MessageItem } from '@agent/shared';
-import { authFetch, formatFileSize, getFileTypeVisual, getPreviewFileType } from '@agent/shared';
+import type { MarkerSegment, MessageItem } from '@agent/shared';
+import {
+  authFetch,
+  formatFileSize,
+  getFileTypeVisual,
+  getPreviewFileType,
+  splitByMessageMarkers,
+  stripPartialCiteMarker,
+} from '@agent/shared';
 import { DropdownMenu, type DropdownSection } from '../../overlays/DropdownMenu';
 import { fileCacheService } from '../../../services/fileCacheService';
 import { cjkMarkdownIt } from '../../../lib/markdownIt';
@@ -27,59 +34,31 @@ import { ImageLightbox } from '../ImageLightbox';
 import { TextSelectModal } from '../TextSelectModal';
 import { createMarkdownStyles } from '../markdownStyles';
 import { createMarkdownRules } from '../markdownRules';
+import { MessageCitationCard } from './CitationCard';
 import { CATEGORY_ICON, useMessageStyles } from './shared';
 
 // --- Text Message (Markdown) ---
-// --- FILE marker parsing for inline rendering ---
+// --- [FILE]/[CITE] 标记切分 ---
+// 切分逻辑统一走 shared 的 splitByMessageMarkers（FILE 行为与旧实现逐行为等价，
+// CITE 新增文档/Context 两类引用卡）；mobile 不再复制一份正则与 JSON 解析。
 
-const FILE_MARKER_RE_INLINE = /\[FILE\](\{.*?\})\[\/FILE\]/g;
-// Partial match at end of streaming text (incomplete marker)
+/** 流式尾部未闭合的 [FILE] 标记（shared 只负责裁剪半截 [CITE]） */
 const FILE_MARKER_PARTIAL_RE = /\[FILE\](?:\{[^}]*)?$/;
 
-type TextSegment =
-  | { type: 'text'; content: string }
-  | {
-      type: 'file';
-      filePath: string;
-      fileName: string;
-      fileType: string;
-      fileSize: number;
-      owner?: string;
-    };
+type FileSegment = Extract<MarkerSegment, { type: 'file' }>;
 
-function parseTextSegments(content: string, owner?: string): TextSegment[] {
-  const segments: TextSegment[] = [];
-  let lastIndex = 0;
-  for (const match of content.matchAll(new RegExp(FILE_MARKER_RE_INLINE.source, 'g'))) {
-    const before = content.slice(lastIndex, match.index);
-    if (before.trim()) segments.push({ type: 'text', content: before });
-    try {
-      const payload = JSON.parse(match[1]);
-      const filePath: string = payload.filePath || payload.path;
-      if (filePath) {
-        segments.push({
-          type: 'file',
-          filePath,
-          fileName: payload.fileName || filePath.split('/').pop() || 'file',
-          fileType: payload.fileType || '',
-          fileSize: payload.fileSize ?? 0,
-          ...(owner ? { owner } : {}),
-        });
-      }
-    } catch {
-      /* skip malformed */
-    }
-    lastIndex = match.index! + match[0].length;
-  }
-  const tail = content.slice(lastIndex);
-  if (tail.trim()) segments.push({ type: 'text', content: tail });
-  return segments;
+/** 流式渲染时抑制半截标记：CITE 交给 shared，FILE 沿用 mobile 既有的尾部裁剪 */
+function displaySourceOf(content: string, streaming?: boolean): string {
+  if (!streaming) return content;
+  return stripPartialCiteMarker(content).replace(FILE_MARKER_PARTIAL_RE, '');
 }
 
-function stripFileMarkers(content: string): string {
-  return content
-    .replace(new RegExp(FILE_MARKER_RE_INLINE.source, 'g'), '')
-    .replace(FILE_MARKER_PARTIAL_RE, '');
+/** 复制 / 分享 / 朗读用的纯文本：丢掉所有标记段，只留正文 */
+function plainTextOf(segments: MarkerSegment[]): string {
+  return segments
+    .filter((seg): seg is Extract<MarkerSegment, { type: 'text' }> => seg.type === 'text')
+    .map((seg) => seg.content)
+    .join('');
 }
 
 function InlineFileCard({
@@ -88,18 +67,18 @@ function InlineFileCard({
   colors,
   styles: s,
 }: {
-  segment: TextSegment & { type: 'file' };
+  segment: FileSegment & { owner?: string };
   onPreviewMd?: (filePath: string) => void;
   colors: ThemeColors;
   styles: ReturnType<typeof useMessageStyles>;
 }) {
-  const [resolvedSize, setResolvedSize] = useState(segment.fileSize);
+  // shared 的 marker 切分只给出路径与文件名，体积统一靠 HEAD 探测（与 web 同口径）。
+  const [resolvedSize, setResolvedSize] = useState(0);
   const [downloading, setDownloading] = useState(false);
 
   const ownerParam = segment.owner ? `&owner=${encodeURIComponent(segment.owner)}` : '';
 
   useEffect(() => {
-    if (segment.fileSize > 0) return;
     let cancelled = false;
     authFetch(`/api/file/download?path=${encodeURIComponent(segment.filePath)}${ownerParam}`, {
       method: 'HEAD',
@@ -113,7 +92,7 @@ function InlineFileCard({
     return () => {
       cancelled = true;
     };
-  }, [segment.filePath, segment.fileSize, ownerParam]);
+  }, [segment.filePath, ownerParam]);
 
   // Mobile only previews inert Markdown workspace files. HTML is fail-closed to Artifact delivery.
   const previewKind = getPreviewFileType(segment.fileName);
@@ -125,19 +104,14 @@ function InlineFileCard({
     setDownloading(true);
     try {
       const { openOrShareFile } = await import('../../../utils/openOrShareFile');
-      const uri = await fileCacheService.getOrDownload(
-        segment.filePath,
-        0,
-        segment.fileSize || 0,
-        segment.owner,
-      );
+      const uri = await fileCacheService.getOrDownload(segment.filePath, 0, 0, segment.owner);
       await openOrShareFile(uri);
     } catch (err: any) {
       Alert.alert('下载失败', `${err?.message || String(err)}\n\npath: ${segment.filePath}`);
     } finally {
       setDownloading(false);
     }
-  }, [segment.filePath, segment.fileName, segment.fileSize, segment.owner]);
+  }, [segment.filePath, segment.owner]);
 
   const handlePress = useCallback(async () => {
     if (isRetiredHtml) {
@@ -222,18 +196,48 @@ export function TextMessage({
     [onPreviewMd, colors, message.owner, typo],
   );
 
-  // Parse segments: text + inline file cards
+  // 标记切分：文本段 + 文件卡 + 引用角标。流式时先裁掉半截 [CITE]/[FILE]。
   const segments = useMemo(
-    () => parseTextSegments(message.content, message.owner),
-    [message.content, message.owner],
+    () => splitByMessageMarkers(displaySourceOf(message.content, message.streaming)),
+    [message.content, message.streaming],
   );
-  const hasFileMarkers = segments.some((s) => s.type === 'file');
+  const hasMarkers = segments.some((seg) => seg.type !== 'text');
 
-  // Plain text for clipboard/share (strip markers)
+  // 复制 / 分享 / 朗读用的纯文本（不含任何标记）
   const plainText = useMemo(
-    () => (hasFileMarkers ? stripFileMarkers(message.content) : message.content),
-    [message.content, hasFileMarkers],
+    () => (hasMarkers ? plainTextOf(segments) : message.content),
+    [segments, hasMarkers, message.content],
   );
+
+  /**
+   * 标记段渲染：文件卡在流式期间不出现（那时 marker 可能仍不完整，
+   * 已闭合的也先按裁剪口径不落卡片），引用角标则在流式中即可点开。
+   */
+  const renderSegments = (allowFileCards: boolean) =>
+    segments.map((seg, i) => {
+      if (seg.type === 'text') {
+        return (
+          <Markdown key={i} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
+            {seg.content}
+          </Markdown>
+        );
+      }
+      if (seg.type === 'citation') {
+        return (
+          <MessageCitationCard key={i} citation={seg} {...(message.owner ? { owner: message.owner } : {})} />
+        );
+      }
+      if (!allowFileCards) return null;
+      return (
+        <InlineFileCard
+          key={i}
+          segment={{ ...seg, ...(message.owner ? { owner: message.owner } : {}) }}
+          onPreviewMd={onPreviewMd}
+          colors={colors}
+          styles={styles}
+        />
+      );
+    });
 
   const [assistMenuVisible, setAssistMenuVisible] = useState(false);
   const [assistAnchorTop, setAssistAnchorTop] = useState(0);
@@ -287,15 +291,12 @@ export function TextMessage({
     [],
   );
 
-  // Streaming: strip markers from display but don't render inline cards (marker may be incomplete)
+  // 流式：正文与引用角标照常渲染，文件卡等本轮落定后再出现
   if (message.streaming) {
-    const streamContent = hasFileMarkers ? stripFileMarkers(message.content) : message.content;
     return (
       <View style={styles.assistantBubble}>
         {finalOutputDivider}
-        <Markdown markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
-          {streamContent}
-        </Markdown>
+        {renderSegments(false)}
         <View style={styles.cursor} />
         {lightboxUri && (
           <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
@@ -304,28 +305,14 @@ export function TextMessage({
     );
   }
 
-  // Non-streaming with file markers: render interleaved text + file cards
-  if (hasFileMarkers) {
+  // 非流式且含标记：文本 / 文件卡 / 引用角标交错渲染
+  if (hasMarkers) {
     return (
       <>
         <GestureDetector gesture={longPressGesture}>
           <View style={styles.assistantBubble}>
             {finalOutputDivider}
-            {segments.map((seg, i) =>
-              seg.type === 'text' ? (
-                <Markdown key={i} markdownit={cjkMarkdownIt} style={mdStyles} rules={rules}>
-                  {seg.content}
-                </Markdown>
-              ) : (
-                <InlineFileCard
-                  key={i}
-                  segment={seg}
-                  onPreviewMd={onPreviewMd}
-                  colors={colors}
-                  styles={styles}
-                />
-              ),
-            )}
+            {renderSegments(true)}
             {lightboxUri && (
               <ImageLightbox visible uri={lightboxUri} onClose={() => setLightboxUri(null)} />
             )}

@@ -10,6 +10,8 @@ export { BusinessStepDetailSheet, BusinessStepResultContent, OutcomeLine } from 
 export { BusinessStepFlow, BusinessStepPlanUpdate } from './BusinessStepFlow';
 export { BusinessStepStatusIcon, BusinessStepTimelineRow } from './BusinessStepTimeline';
 export { BlockActionProvider, useBlockActionContext } from './BlockActionContext';
+export { MessageCitationCard } from './CitationCard';
+export { ContextCitationSheet, type ContextCitationSheetProps } from './ContextCitationSheet';
 export { DetailLines, type DetailVariant } from './DetailLines';
 export { FileDownloadCard } from './FileDownloadCard';
 export { PermissionBlock } from './PermissionBlock';

@@ -617,6 +617,16 @@ export {
 } from './lib/markers';
 export type { MarkerSegment, CitationSegment } from './lib/markers';
 
+// Lib - 会话 Context 引用证据（[CITE] contextId 分支）只读展示模型
+export {
+  normalizeContextCitationDetail,
+  contextCitationError,
+  contextCitationPath,
+  safeContextCitationUrl,
+  formatContextCitationTime,
+} from './lib/contextCitation';
+export type { ContextCitationDetail, ContextCitationEvidence } from './lib/contextCitation';
+
 // Lib - 工具执行「给人看」摘要（与原始 payload 并存，不替代）
 export { normalizeToolPresentation } from './lib/toolPresentation';
 export type { ToolPresentation, ToolReceipt, DetailLine } from './lib/toolPresentation';

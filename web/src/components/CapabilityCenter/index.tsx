@@ -11,13 +11,8 @@ import { SkillSelector } from "@/components/SkillSelector";
 import { McpManager } from "@/components/McpManager";
 import { CapabilityTabsList } from "./CapabilityTabsList";
 import { useCapabilityNavigation } from "./navigation";
-import {
-  CatalogToolbar,
-  CapabilityLogo,
-  CAPABILITY_EMPTY_SURFACE,
-  CAPABILITY_SURFACE,
-  CAPABILITY_SURFACE_HOVER,
- CatalogHeader } from "./CatalogUi";
+import { CatalogToolbar, CapabilityLogo, CAPABILITY_EMPTY_SURFACE, CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "./CatalogUi";
+import { CatalogHeader } from "./CatalogHeader";
 import { BuiltInConnectors } from "./BuiltInConnectors";
 import { ScenariosPanel } from "@/components/scenarios/ScenariosPanel";
 

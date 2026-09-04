@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CatalogHeader } from "./CatalogUi";
+import { CatalogHeader } from "./CatalogHeader";
 import { GithubConnector } from "./GithubConnector";
 import { XConnector } from "./XConnector";
 import { DingtalkConnectorCard, DingtalkConnectorDrawer, useDwsConnections } from "./DingtalkConnector";

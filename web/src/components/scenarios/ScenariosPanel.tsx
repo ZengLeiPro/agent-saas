@@ -10,7 +10,8 @@ import {
   type WorkflowLibraryPublicV3,
 } from "@agent/shared";
 import { Button } from "@/components/ui/button";
-import { CapabilityFilterTabs, CatalogHeader, CAPABILITY_EMPTY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
+import { CapabilityFilterTabs, CAPABILITY_EMPTY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
+import { CatalogHeader } from "@/components/CapabilityCenter/CatalogHeader";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,7 +24,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
-import { ScenarioCard, ScenarioModeBadge, ScenarioRequireBadges, WorkflowScenarioCard } from "./ScenarioCard";
+import { ScenarioCard, ScenarioModeBadge, ScenarioRequireBadges } from "./ScenarioCard";
+import { WorkflowScenarioCard } from "./WorkflowScenarioCard";
 import { getWorkflowCardReplayScript, type ReplayScript } from "./replay";
 import { hasLazyReplayScript } from "./replay/availability";
 import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from "./replay/technicalInquiryTraceMeta";

@@ -5,7 +5,7 @@ import { CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogU
 import { cn } from "@/lib/utils";
 import { getReplayScript } from "./replay/registry";
 import { isHookScenario } from "./workflowUi";
-import type { WorkflowScenarioCardProps } from "./ScenarioCard";
+import type { WorkflowScenarioCardProps } from "./WorkflowScenarioCard";
 
 /** P0 引导演示入口：只讲业务结果和体验方式，不把完整 Workflow 规格塞回首屏。 */
 export function WorkflowPresentationCard({

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ChevronDown, ChevronRight, PlayCircle } from "lucide-react";
-import { CatalogHeader } from "@/components/CapabilityCenter/CatalogUi";
+import { CatalogHeader } from "@/components/CapabilityCenter/CatalogHeader";
 import {
   sanitizeRole,
   sanitizeScenario,

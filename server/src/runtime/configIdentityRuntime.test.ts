@@ -35,7 +35,7 @@ const PG = {
 
 async function observe(
   config: AppConfig,
-  vault?: InMemorySecretVault,
+  vault?: Pick<SecretVault, 'inspectRef'>,
   processCwd = '/srv/server',
 ) {
   const { computeObservedConfigIdentity } = await import('../release/configIdentity.js');
@@ -292,13 +292,19 @@ describe('createConfigIdentityRuntime', () => {
       updatedAt: '2026-08-30T00:00:00.000Z',
     };
     const inspectRef = vi.fn().mockResolvedValue(metadata);
+    const secretVault = { inspectRef } as unknown as SecretVault;
+    const expectedObservation = await observe(config, secretVault);
     const warn = vi.fn();
     let failClock = false;
     const runtime = createConfigIdentityRuntime({
       config,
-      secretVault: { inspectRef } as unknown as SecretVault,
+      secretVault,
       environment: 'test',
-      expected: { schemaVersion: 1, digest: digestOf(config) },
+      expected: {
+        schemaVersion: 1,
+        digest: expectedObservation.digest,
+        credentialVersionDigest: expectedObservation.credentialVersionDigest ?? undefined,
+      },
       logger: { info: () => undefined, warn },
       now: () => {
         if (failClock) throw new Error('identity recompute failed');
@@ -520,10 +526,17 @@ describe('createConfigIdentityRuntime', () => {
       config,
       secretVault: vault,
       environment: 'production',
-      expected: { schemaVersion: 1, digest: observation.digest },
+      expected: {
+        schemaVersion: 1,
+        digest: observation.digest,
+        credentialVersionDigest: observation.credentialVersionDigest ?? undefined,
+      },
     });
     await runtime.initialize();
     expect(runtime.getSummary().status).toBe('consistent');
+    expect(runtime.getSummary().expected?.credentialVersionDigest).toBe(
+      observation.credentialVersionDigest,
+    );
     expect(runtime.getSummary().observed?.versionResolution).toBe('resolved');
   });
 

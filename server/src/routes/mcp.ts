@@ -236,8 +236,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
 
   /**
    * 解析 upsert 入参的 tenantId：
-   *   - 已存在 server：默认沿用 existing.tenantId；如果入参指定了新 tenantId，
-   *     仅平台 admin 可改；组织 admin 试图改归属返回 403
+   *   - 已存在 server：固定沿用 existing.tenantId；普通更新禁止迁移归属
    *   - 新建 server：平台 admin 默认 own（kaiyan），可显式指定任意 tenantId 或 '*'；
    *     组织 admin 强制设为 own，无论入参传什么
    */
@@ -245,10 +244,21 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     req: Request,
     existing: ManagedMcpServer | undefined,
     inputTenantId: string | undefined,
-  ): { ok: true; tenantId: string } | { ok: false; status: number; error: string } {
+    targetTenantId?: string,
+  ): { ok: true; tenantId: string } | { ok: false; status: number; error: string; code?: string } {
     const callerTenantId = currentTenantId(req);
     if (!callerTenantId) return { ok: false, status: 401, error: 'Authentication required' };
     const platform = isPlatformAdmin(req.user);
+    if (targetTenantId) {
+      if (!platform && targetTenantId !== callerTenantId) {
+        return { ok: false, status: 403, error: '跨组织访问被拒绝' };
+      }
+      if ((existing && existing.tenantId !== targetTenantId)
+        || (inputTenantId && inputTenantId !== targetTenantId)) {
+        return { ok: false, status: 409, error: '资源属于其他作用域，不能从当前入口修改', code: 'MCP_SCOPE_CONFLICT' };
+      }
+      return { ok: true, tenantId: targetTenantId };
+    }
     if (existing) {
       // 跨组织写防御：组织 admin 不能改非自己组织的 server
       if (!platform && existing.tenantId !== callerTenantId) {
@@ -257,7 +267,7 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
       // tenantId 改归属：仅平台 admin
       if (inputTenantId && inputTenantId !== existing.tenantId) {
         if (!platform) return { ok: false, status: 403, error: '仅平台 admin 可修改 tenantId' };
-        return { ok: true, tenantId: inputTenantId };
+        return { ok: false, status: 409, error: '普通更新不能迁移资源作用域', code: 'MCP_SCOPE_CONFLICT' };
       }
       return { ok: true, tenantId: existing.tenantId };
     }
@@ -654,8 +664,10 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (existing?.managedByConnectorId) {
       return res.status(409).json({ error: '该 MCP adapter 由原生连接器管理' });
     }
-    const decision = resolveTenantIdForUpsert(req, existing, parsed.data.tenantId);
-    if (!decision.ok) return res.status(decision.status).json({ error: decision.error });
+    const target = typeof req.query.tenantId === 'string' ? tenantIdSchema.safeParse(req.query.tenantId) : undefined;
+    if (req.query.tenantId !== undefined && (!target || !target.success)) return res.status(400).json({ error: 'Invalid tenantId' });
+    const decision = resolveTenantIdForUpsert(req, existing, parsed.data.tenantId, target?.data);
+    if (!decision.ok) return res.status(decision.status).json({ error: decision.error, ...(decision.code ? { code: decision.code } : {}) });
     try {
       if (existing && oauthIdentity(existing) !== oauthIdentity({ config: parsed.data.config, tenantId: decision.tenantId })) {
         await oauthService?.disconnectServerUsers(id);
@@ -674,6 +686,14 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!existing) return res.status(404).json({ error: 'MCP server not found' });
     if (existing.managedByConnectorId) {
       return res.status(409).json({ error: '该 MCP adapter 由原生连接器管理' });
+    }
+    const target = typeof req.query.tenantId === 'string' ? tenantIdSchema.safeParse(req.query.tenantId) : undefined;
+    if (req.query.tenantId !== undefined && (!target || !target.success)) return res.status(400).json({ error: 'Invalid tenantId' });
+    if (target?.data && !isPlatformAdmin(req.user) && target.data !== currentTenantId(req)) {
+      return res.status(403).json({ error: '跨组织访问被拒绝' });
+    }
+    if (target?.data && existing.tenantId !== target.data) {
+      return res.status(409).json({ error: '资源属于其他作用域，不能从当前入口修改', code: 'MCP_SCOPE_CONFLICT' });
     }
     if (!canWriteServerForTenant(req, existing.tenantId)) {
       return res.status(403).json({ error: '跨组织访问被拒绝' });

@@ -7,6 +7,7 @@ import { createGovernanceAccessRouter } from '../routes/governanceAccess.js';
 import { createGovernanceResourcesRouter } from '../routes/governanceResources.js';
 import type { GovernanceCredential } from '../data/credentials/types.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
+import { createGovernanceCapabilitiesRouter } from '../routes/governanceCapabilities.js';
 import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
 import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -77,6 +78,7 @@ export function registerGovernanceRoutes(
   runtime: AppRuntime,
   options: { webChannel?: WebChannel; executeUserOffboarding?: ExecuteUserOffboarding },
 ): void {
+  app.use('/api/governance/capabilities', createGovernanceCapabilitiesRouter());
   const previewSecret = runtime.config.auth?.jwtSecret;
   const applyLifecycleChange = async (change: TenantLifecycleChange): Promise<'applied' | 'pending'> => {
     let broadcastApplied = !runtime.runtimePgEventStore;

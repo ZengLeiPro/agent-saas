@@ -1,18 +1,19 @@
 import { authFetch } from './authFetch';
+import { GovernanceApiError } from './governanceErrors';
 import type { NativeOAuthStartBinding } from './oauthCallbackBridge';
 import type { ManagedMcpServer, McpAdminServersResponse, McpDiagnosticResponse, McpOAuthStartResponse, McpTemplatesResponse, MyMcpResponse } from '../types/mcp';
 
-type ApiErrorBody = { error?: string; details?: unknown };
+type ApiErrorBody = { error?: string; message?: string; code?: string; details?: unknown; requestId?: string; correlationId?: string };
 
 function formatApiError(body: ApiErrorBody, fallback: string): string {
   const details = body.details ? `: ${JSON.stringify(body.details)}` : '';
-  return `${body.error || fallback}${details}`;
+  return `${body.message || body.error || fallback}${details}`;
 }
 
 async function jsonOrError<T>(res: Response, message: string): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as ApiErrorBody;
-    throw new Error(formatApiError(body, `${message}: ${res.status}`));
+    throw new GovernanceApiError(body.code ?? `HTTP_${res.status}`, formatApiError(body, `${message}: ${res.status}`), res.status, body.requestId ?? body.correlationId ?? res.headers?.get('x-request-id') ?? undefined);
   }
   return res.json() as Promise<T>;
 }
@@ -78,21 +79,26 @@ export async function fetchMcpAdminServers(tenantId?: string): Promise<McpAdminS
   return jsonOrError(await authFetch(`/api/mcp/admin/servers${query}`), 'Failed to fetch MCP servers');
 }
 
-export async function upsertMcpServer(server: ManagedMcpServer): Promise<void> {
-  const res = await authFetch(`/api/mcp/admin/servers/${encodeURIComponent(server.id)}`, {
+export async function upsertMcpServer(server: ManagedMcpServer, targetTenantId?: string): Promise<void> {
+  const query = targetTenantId ? `?tenantId=${encodeURIComponent(targetTenantId)}` : '';
+  const res = await authFetch(`/api/mcp/admin/servers/${encodeURIComponent(server.id)}${query}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(server),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as ApiErrorBody;
-    throw new Error(formatApiError(body, `Failed to save MCP server: ${res.status}`));
+    throw new GovernanceApiError(body.code ?? `HTTP_${res.status}`, formatApiError(body, `Failed to save MCP server: ${res.status}`), res.status, body.requestId ?? body.correlationId);
   }
 }
 
-export async function deleteMcpServer(id: string): Promise<void> {
-  const res = await authFetch(`/api/mcp/admin/servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`Failed to delete MCP server: ${res.status}`);
+export async function deleteMcpServer(id: string, targetTenantId?: string): Promise<void> {
+  const query = targetTenantId ? `?tenantId=${encodeURIComponent(targetTenantId)}` : '';
+  const res = await authFetch(`/api/mcp/admin/servers/${encodeURIComponent(id)}${query}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as ApiErrorBody;
+    throw new GovernanceApiError(body.code ?? `HTTP_${res.status}`, formatApiError(body, `Failed to delete MCP server: ${res.status}`), res.status, body.requestId ?? body.correlationId);
+  }
 }
 
 export async function upsertMyMcpServer(server: ManagedMcpServer): Promise<void> {

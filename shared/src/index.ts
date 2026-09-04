@@ -1,7 +1,7 @@
 export * from './types/correlation';
+export { GOVERNANCE_CAPABILITIES, governanceCapability } from './types/governanceCapability';
+export { GovernanceApiError, governanceApiErrorMessage } from './lib/governanceErrors';
 export * from './mobileV1';
-
-// Platform abstraction
 export { initPlatform, getPlatform } from './platform/context';
 export type {
   IStorage,

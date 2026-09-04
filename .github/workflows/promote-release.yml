@@ -696,7 +696,7 @@ jobs:
           setsid timeout --signal=TERM --kill-after=10 1810 ssh \
             -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
             -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "timeout --signal=TERM --kill-after=10 1800 sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' WEB_LOCK_READY='$web_lock_ready' WEB_LOCK_RELEASE='$web_lock_release' WEB_LOCK_TIMEOUT_SECONDS=1700 GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            "timeout --signal=TERM --kill-after=10 1800 sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' WEB_LOCK_READY='$web_lock_ready' WEB_LOCK_RELEASE='$web_lock_release' WEB_LOCK_TIMEOUT_SECONDS=1700 GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
             >"$web_lock_log" 2>&1 &
           web_lock_pid=$!
           lock_ready=false

@@ -447,8 +447,8 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   const acsDeployStart = acsWorkflow.indexOf(
     '      - name: Deploy orchestrator with drain and smoke',
   );
-  const acsIdentityStart = acsWorkflow.indexOf('      - name: Refresh trusted Production identity');
-  const acsDeployStep = acsWorkflow.slice(acsDeployStart, acsIdentityStart);
+  const acsDeployEnd = acsWorkflow.indexOf('      - name: Clean sealed ACS Production staging');
+  const acsDeployStep = acsWorkflow.slice(acsDeployStart, acsDeployEnd);
   assert.match(acsWorkflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
   assert.match(acsWorkflow, /Upload and seal orchestrator release/u);
   assert.match(
@@ -457,15 +457,25 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   assert.match(
     acsWorkflow,
-    /bash -s -- extract '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
+    /seal_script_digest="\$\(sha256sum scripts\/release\/seal-root-staged-payload\.sh/u,
   );
+  assert.match(acsWorkflow, /SEAL_STAGED_PAYLOAD_SCRIPT_SHA256='\$seal_script_digest'/u);
+  assert.match(acsDeploy, /seal_payload_fd_path="\/proc\/\$\$\/fd\/\$seal_payload_fd"/u);
+  assert.match(acsDeploy, /bash "\$seal_payload_fd_path" extract/u);
+  assert.match(
+    acsDeploy,
+    /runtime_environment_file="\$RUNTIME_PREFLIGHT_ROOT\/acs-orchestrator\.env"/u,
+  );
+  assert.match(acsDeploy, /cp -a "\$RUNTIME_PREFLIGHT_DIR\/\." "\$candidate\/"/u);
+  assert.doesNotMatch(acsDeploy, /tar -xzf "\$RELEASE_TGZ"/u);
   assert.doesNotMatch(acsWorkflow, /:\/tmp\/agent-saas-acs-release\.tgz/u);
   assert.match(acsWorkflow, /Clean sealed ACS Production staging/u);
   assert.match(
     acsWorkflow,
     /if: always\(\) && steps\.necessity\.outputs\.deploy_needed == 'true'/u,
   );
-  assert.match(acsWorkflow, /sudo rm -rf -- '\$release_remote' '\$identity_remote'/u);
+  assert.match(acsWorkflow, /sudo rm -rf -- '\$release_remote'/u);
+  assert.doesNotMatch(acsWorkflow, /identity_remote/u);
   assert.match(acsDeployStep, /git fetch --no-tags origin main/u);
   assert.match(acsDeployStep, /latest_main_sha="\$\(git rev-parse origin\/main\)"/u);
   assert.match(acsDeployStep, /if \[ "\$latest_main_sha" != "\$GITHUB_SHA" \]/u);

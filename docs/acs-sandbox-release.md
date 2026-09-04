@@ -45,7 +45,7 @@ ACS Sandbox workflow 不使用顶层 `paths`；`main` push 与面向 `main` 的 
 
 只改 `server/src/runtime/rawAgentLoop.ts` / `server/src/runtime/rawRuntimeRunDispatch.ts` 时，workflow 会跑 ACS contract check，但默认不发布镜像。这类变更主要是主服务侧契约风险，主服务 CI/CD 负责真正部署；除非同时改到 ACS 发布路径，否则滚 ACS 没有增量。
 
-只改 `shared/**` 源码目前不触发 ACS 发布。当前 ACS runtime 没有直接 import `shared/src`；如果后续 Sandbox runtime 真正依赖 shared，需要同步更新 workflow 与本节。
+`shared/**` 不能整体视为非 ACS 输入：当前真实 Orchestrator bundle 已引用的 `shared/src/**` 会由 `.github/acs-bundle-inputs.txt` 命中并触发 ACS 发布；未进入真实 bundle 的 shared 文件按 classifier 结果处理。每次新增 import 都由 esbuild metafile 契约复核，不能靠文档白名单漏掉。
 
 只改 ACS orchestrator 自身代码时，主服务 CI/CD 不会自动部署 `/opt/agent-saas`；现在由 ACS Sandbox workflow 同步 `/opt/agent-saas` 并重启 `agent-saas-acs-orchestrator.service`。如果同时改到 Sandbox runner 或工具运行依赖，同一个 workflow 会继续发布新 Sandbox 镜像。
 
@@ -223,16 +223,17 @@ curl -sf http://127.0.0.1:3400/health
 - `Classify ACS Impact` 通过 `.github/scripts/acs-classify.sh` 读取 changed files，输出 `publish` / `contract_check`；workflow 顶层没有 `paths` 过滤。
 - `main` push 只分类并执行相应测试，不进入生产 `build-deploy`；只有最新 `main` 的 `workflow_dispatch` 才能进入该 job，非 `main` dispatch 也不会进入。
 - `publish=true` 时跑 typecheck、orchestrator tests 与 operational scripts；镜像由 GitHub push webhook 触发 ACR EE 源码构建。
-- `workflow_dispatch` 只接受当前 `GITHUB_SHA` 对应的不可变镜像，禁止用后继镜像替代；读取生产
-  Secret 的 `build-deploy` job 显式绑定 `production` Environment。
+- `workflow_dispatch` 先用 tag 的 6 位 SHA 后缀筛选 ACR build record，再从该 record 的 `GIT_CLONE` 日志验证完整 40 位 `GITHUB_SHA`；只有完整 revision 绑定通过后才解析不可变 image digest，禁止把短 tag 或后继镜像当作当前提交。读取生产 Secret 的 `build-deploy` job 显式绑定 `production` Environment。
 - exact SHA 构建记录连续两次缺失时，按 `push + refs/heads/main + payload.after=GITHUB_SHA` 精确定位失败的 ACR webhook delivery，最多自动补投一次，然后继续原轮询；找不到或补投失败仍保持 fail-fast。
-- 将 orchestrator release 包上传到 ECS，更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`，并通过 drain 旧进程后由 systemd 拉起新版本。
+- 将 orchestrator release 包和安全解包 helper 上传到 ECS 的 root-only `/run/agent-saas-production-staging/`；部署脚本先校验 helper 的 runner-side SHA-256，再拒绝路径穿越、链接和特殊文件，仅从已验证目录安装制品。随后更新 `/etc/agent-saas/acs-orchestrator.env` 的 `ACS_SANDBOX_IMAGE`，并通过 drain 旧进程后由 systemd 拉起新版本；任一早期失败与正常结束都会清理该 staging。
 - 正式跑 `/provision + /execute Shell` smoke，断言 workspace venv 路径、base Python 包 import、`ACS_SANDBOX_DEPLOY_SMOKE_OK`。
 - `/health` 暴露当前 Sandbox image、runtime contract、capabilities、networkPolicy、SNAT 与 Sandbox inventory。
 - `publish=false && contract_check=true` 时只跑 `server` / `acs-orchestrator` typecheck 和 `acs-orchestrator` tests，不发布。
 
 Workflow 的必需生产 Secrets 是 `ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
-`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`，均只配置在 `production` Environment。
+`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ACR_READ_ACCESS_KEY_ID`、
+`ACR_READ_ACCESS_KEY_SECRET`，均只配置在 `production` Environment。后两项只读 ACR build record、
+`GIT_CLONE` 日志与 image metadata，不得授予镜像写入或删除权限。
 `ACS_WEBHOOK_REDELIVERY_TOKEN` 是可选恢复凭据：仅在当前 SHA 的 ACR 自动构建记录缺失时用于补投
 一次 GitHub webhook；正常命中构建记录时不需要，必须补投但未配置时 Workflow fail closed。该 token
 必须仅授权 `ZengLeiPro/agent-saas`，Repository permissions 只有 `Webhooks: write`，禁止复用个人

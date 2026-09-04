@@ -61,9 +61,7 @@ function actualBundleRepositoryInputs(): string[] {
   if (!result.metafile) throw new Error('esbuild did not return a metafile');
 
   const trackedFiles = new Set(
-    execFileSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' })
-      .trim()
-      .split('\n'),
+    execFileSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' }).trim().split('\n'),
   );
   return Object.keys(result.metafile.inputs)
     .map((path) => (path.startsWith('../') ? path.slice(3) : `acs-orchestrator/${path}`))
@@ -98,6 +96,21 @@ const classificationCases = [
   { path: 'acs-orchestrator/src/config.ts', publish: 'true', contractCheck: 'false' },
   { path: 'pnpm-lock.yaml', publish: 'true', contractCheck: 'false' },
   { path: '.github/acs-bundle-inputs.txt', publish: 'true', contractCheck: 'false' },
+  {
+    path: 'scripts/release/create-component-artifact-index.mjs',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  {
+    path: 'scripts/release/seal-root-staged-payload.sh',
+    publish: 'true',
+    contractCheck: 'false',
+  },
+  {
+    path: 'scripts/release/verify-acr-build-revision.mjs',
+    publish: 'true',
+    contractCheck: 'false',
+  },
   { path: 'server/src/runtime/invocationCorrelation.ts', publish: 'true', contractCheck: 'false' },
   { path: 'shared/src/schemas/workflowScenario.ts', publish: 'true', contractCheck: 'false' },
   { path: 'shared/package.json', publish: 'true', contractCheck: 'false' },
@@ -404,8 +417,8 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).toContain('build_record_found=true');
     expect(workflow).toContain('实际部署前的独立门禁会拒绝这个旧 dispatch');
     const deployStart = workflow.indexOf('- name: Deploy orchestrator with drain and smoke');
-    const identityStart = workflow.indexOf('- name: Refresh trusted Production identity');
-    const deployStep = workflow.slice(deployStart, identityStart);
+    const cleanupStart = workflow.indexOf('- name: Clean sealed ACS Production staging');
+    const deployStep = workflow.slice(deployStart, cleanupStart);
     expect(deployStep).toContain('git fetch --no-tags origin main');
     expect(deployStep).toContain('if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then');
     expect(deployStep.indexOf('latest_main_sha=')).toBeLessThan(deployStep.indexOf('bash -s'));
@@ -417,7 +430,7 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).not.toContain('group: acs-production-deploy');
   });
 
-  it('只接受 exact SHA 镜像并对缺失构建记录快速失败', () => {
+  it('先按 6 位 tag 选候选，再用 GIT_CLONE 日志绑定完整 SHA', () => {
     const waitStep = workflow.slice(
       workflow.indexOf('- name: Wait for ACR auto-build of HEAD'),
       workflow.indexOf('- name: Resolve immutable ACS image'),
@@ -432,8 +445,20 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).toContain('Unable to query ACR build records');
     expect(waitStep).not.toContain('2>/dev/null || true');
     expect(workflow).toContain("tag.endswith('-' + sha6)");
+    expect(workflow).toContain("r.get('BuildRecordId')");
+    expect(workflow).toContain('ListRepoBuildRecordLog');
+    expect(workflow).toContain('scripts/release/verify-acr-build-revision.mjs');
+    expect(workflow.indexOf('ListRepoBuildRecordLog')).toBeLessThan(
+      workflow.indexOf('echo "image_tag=$btag"'),
+    );
     expect(workflow).toContain('a later image will not be substituted');
     expect(workflow).not.toContain('for i in $(seq 1 60)');
+  });
+
+  it('只在 deploy 脚本持有 promotion.lock 时刷新 ACS trusted identity', () => {
+    expect(workflow).not.toContain('- name: Refresh trusted Production identity');
+    expect(workflow).not.toContain('production-identity-${GITHUB_RUN_ID}');
+    expect(workflow).toContain('scripts/release/write-live-production-identity.mjs');
   });
 
   it('为 ACR 排队和实际构建保留独立等待预算', () => {

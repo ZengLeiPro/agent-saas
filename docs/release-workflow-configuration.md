@@ -34,9 +34,11 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 
 ## production
 
-必需 Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、
-`ECS_SSH_KEY`、`OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、
-`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
+必需 Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ACR_READ_ACCESS_KEY_ID`、
+`ACR_READ_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
+`OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、`PRODUCTION_OBSERVATION_TOKEN`、
+`RELEASE_EVIDENCE_WRITE_TOKEN`。ACR 两项只允许读取 build record、构建日志与 image metadata；
+ACS workflow 用短 tag 选候选后，必须从 `GIT_CLONE` 日志绑定完整 40 位 commit SHA。
 
 可选恢复 Secret：`ACS_WEBHOOK_REDELIVERY_TOKEN`。它只供 ACS compatibility 在当前 SHA 的 ACR
 自动构建记录缺失时补投一次 GitHub webhook；必须配置在 `production` Environment，并限制为仅对
@@ -156,9 +158,11 @@ Migration plan 从权威 runner 同时构建 baseline/target 相对 import/re-ex
 RC annotated tag message 必须包含 `manifest-digest: sha256:...`；Promotion 同时核对 tag、GitHub
 Release 与 OSS 三份绑定。`promoting` attestation 必须不可变绑定 release SHA、migration phase、plan
 digest 与生产 before/target digest：`none` 才能直接完成，`expand` 只能先进入
-`awaiting_expand_confirmation`。最终 append 会再次验证 confirmation evidence 的完整 schema、API
-ready release ID/SHA、2 小时确认窗口及 5 分钟 live/evidence 新鲜度；通用 operation key 或陈旧证据
-都不能绕过。确认窗口一旦过期，独立确认 Workflow 立即 fail closed，不允许同一次确认自动续期或
+`awaiting_expand_confirmation`。独立确认 Workflow 必须先取得 `/run/lock/agent-saas/promotion.lock`
+的 PID/start-time/FD owner proof；锁 holder 的租约上限必须长于 Workflow 自身上限，并在两次 Production live/API ready 读回、
+稳定性比较、最终 evidence 持久化与 `completed` 追加期间持续监控 holder 存活。所有外部上传与 append 都必须由该监控包装并在前后复验 owner proof；竞争、丢锁或提交前漂移均 fail closed。最终
+append 还会验证 confirmation evidence 的完整 schema、API ready release ID/SHA、2 小时确认窗口及
+5 分钟 live/evidence 新鲜度；通用 operation key 或陈旧证据都不能绕过。确认窗口一旦过期，独立确认 Workflow 立即 fail closed，不允许同一次确认自动续期或
 追加自迁移；需要基于当前 main 和当前生产基线重新创建 RC。任何分叉 attestation、同路径
 不同内容或 receipt 缺失都 fail closed。OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
 仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。升级前已存在、尚未携带 migration binding 的旧 `promoting` 记录只允许原样 hydrate 供审计读取；兼容读取不会补写或推断 digest，也不会放宽任何新的 `promoting` append，停在旧 `promoting` 的历史不能由新代码直接补成 `completed`。

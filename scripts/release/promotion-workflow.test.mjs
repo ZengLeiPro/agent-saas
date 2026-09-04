@@ -62,6 +62,16 @@ function runScriptLines(text) {
   return output;
 }
 
+function productionWebEntrypoints(workflow) {
+  return workflow
+    .split('\n')
+    .filter(
+      (line) =>
+        line.includes('sudo PHASE=web ') &&
+        line.includes("bash '$PROMOTION_REMOTE/deploy-production-release.sh'"),
+    );
+}
+
 test('durable promoting marker interruptions always converge through needs_human', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const approvalStep = workflow.slice(
@@ -406,6 +416,42 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
+test('both Production Web shell entrypoints satisfy the real deploy script parameter contract', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const entrypoints = productionWebEntrypoints(workflow);
+  assert.equal(entrypoints.length, 2);
+  const values = {
+    PHASE: 'web',
+    RELEASE_DIR: '/nonexistent/release',
+    MANIFEST_PATH: '/nonexistent/manifest.json',
+    EXPECTED_MANIFEST_DIGEST: `sha256:${'a'.repeat(64)}`,
+    VERIFY_INSTALLED_SCRIPT: '/nonexistent/verify-installed-release.mjs',
+    READ_LIVE_COMPONENTS_SCRIPT: '/nonexistent/read-live-production-components.mjs',
+    VERIFY_PROMOTION_PHASE_SCRIPT: '/nonexistent/verify-promotion-phase-state.mjs',
+    WEB_LOCK_READY: '/tmp/agent-saas-promotion-test-ready',
+    WEB_LOCK_RELEASE: '/tmp/agent-saas-promotion-test-release',
+    WEB_LOCK_TIMEOUT_SECONDS: '1',
+    GITHUB_RUN_ID: '123456',
+    GITHUB_RUN_ATTEMPT: '2',
+  };
+  for (const entrypoint of entrypoints) {
+    const assigned = new Set(
+      [...entrypoint.matchAll(/\b([A-Z][A-Z0-9_]*)=(?:'[^']*'|web)(?=\s|$)/gu)].map(
+        (match) => match[1],
+      ),
+    );
+    const env = { ...process.env };
+    for (const [key, value] of Object.entries(values)) if (assigned.has(key)) env[key] = value;
+    const result = spawnSync('bash', [deployPath.pathname], { encoding: 'utf8', env });
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(
+      result.stderr,
+      /(?:PHASE|RELEASE_DIR|MANIFEST_PATH|EXPECTED_MANIFEST_DIGEST|VERIFY_INSTALLED_SCRIPT|READ_LIVE_COMPONENTS_SCRIPT|VERIFY_PROMOTION_PHASE_SCRIPT|WEB_LOCK_READY|WEB_LOCK_RELEASE|GITHUB_RUN_ID|GITHUB_RUN_ATTEMPT) is required/u,
+    );
+    assert.match(result.stderr, /Cannot find module|MODULE_NOT_FOUND/u);
+  }
+});
+
 test('production ACS promotion enforces lifecycle policy and fails closed on health mismatch', async () => {
   const deploy = await readFile(deployPath, 'utf8');
   assert.match(deploy, /!line\.startsWith\('ACS_SANDBOX_LIFECYCLE_POLICY_MODE='\)/u);
@@ -727,10 +773,37 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.doesNotMatch(workflow, /confirmation_window_refreshed/u);
   ordered(workflow, [
     'Expand confirmation request is invalid or expired after two hours',
-    'Read production components and verify migration confirmation binding',
+    'Confirm live binding and append completed attestation under the Production host lock',
   ]);
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /production-api-ready\.json/u);
+  assert.match(workflow, /production-lock-lease\.sh/u);
+  assert.match(workflow, /bash -s -- hold '\$lock_token'/u);
+  assert.match(workflow, /bash -s -- assert '\$lock_token'/u);
+  assert.match(workflow, /bash -s -- release '\$lock_token'/u);
+  ordered(workflow, [
+    'setsid timeout --signal=TERM --kill-after=10 7250 ssh',
+    'live-initial.json',
+    'migration-confirmation-initial.json',
+    'live-final.json',
+    'migration-confirmation.json',
+    '先按内容 digest 持久化最终锁内读回',
+    '--state completed',
+  ]);
+  assert.match(workflow, /PRODUCTION_LOCK_TIMEOUT_SECONDS=7200/u);
+  assert.match(workflow, /run_guarded\(\)[\s\S]*setsid "\$@"/u);
+  assert.match(workflow, /terminate_guarded\(\)[\s\S]*kill -0 -- "-\$guarded_pid"/u);
+  assert.match(workflow, /terminate_guarded\(\)[\s\S]*kill -KILL -- "-\$guarded_pid"/u);
+  assert.match(workflow, /cleanup\(\)[\s\S]*terminate_guarded[\s\S]*bash -s -- release/u);
+  assert.match(workflow, /run_guarded\(\)[\s\S]*kill -0 "\$lock_pid"/u);
+  assert.match(workflow, /next_owner_check[\s\S]*if ! assert_lock/u);
+  assert.match(workflow, /run_guarded pnpm exec tsx[\s\S]*--state completed/u);
+  assert.match(
+    workflow,
+    /run_guarded bash scripts\/release\/upload-github-release-asset-immutable\.sh/u,
+  );
+  assert.match(workflow, /run_guarded bash scripts\/release\/upload-oss-object-immutable\.sh/u);
+  assert.match(workflow, /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt\)/u);
   assert.match(workflow, /upload-oss-object-immutable\.sh[\s\S]*--state completed/u);
   assert.match(workflow, /Release was already confirmed by another workflow run/u);
   assert.doesNotMatch(workflow, /--state completed[\s\S]*migration-confirmations\/confirmation-/u);
@@ -740,7 +813,7 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(workflow, /migration-confirmations\/\$\{confirmation_digest#sha256:\}\.json/u);
   assert.match(workflow, /api\.agent\.kaiyan\.net\/api\/healthz\/ready/u);
   ordered(workflow, [
-    '先按内容 digest 持久化独立读回',
+    '先按内容 digest 持久化最终锁内读回',
     '--state completed',
     'GitHub Release 是重跑读取源',
     'upload-github-release-asset-immutable.sh',

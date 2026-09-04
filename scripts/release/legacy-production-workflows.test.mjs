@@ -80,6 +80,8 @@ test('all legacy jobs reading production Secrets bind exactly one production Env
   const productionSecrets = [
     'ALIYUN_ACCESS_KEY_ID',
     'ALIYUN_ACCESS_KEY_SECRET',
+    'ACR_READ_ACCESS_KEY_ID',
+    'ACR_READ_ACCESS_KEY_SECRET',
     'ECS_HOST',
     'ECS_USER',
     'ECS_SSH_KEY',
@@ -120,6 +122,8 @@ test('all legacy jobs reading production Secrets bind exactly one production Env
   );
   for (const docs of [releaseDocs, githubDocs]) {
     assert.match(docs, /删除同名\s+(?:Repository|repository)\/organization Secrets?/u);
+    assert.match(docs, /`ACR_READ_ACCESS_KEY_ID`/u);
+    assert.match(docs, /`ACR_READ_ACCESS_KEY_SECRET`/u);
     assert.match(docs, /`OSS_WEB_DEPLOY_AK_ID`/u);
     assert.match(docs, /`OSS_WEB_DEPLOY_AK_SECRET`/u);
     assert.match(docs, /`ACS_WEBHOOK_REDELIVERY_TOKEN`/u);

@@ -427,6 +427,8 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 
 - `ALIYUN_ACCESS_KEY_ID`
 - `ALIYUN_ACCESS_KEY_SECRET`
+- `ACR_READ_ACCESS_KEY_ID`
+- `ACR_READ_ACCESS_KEY_SECRET`
 - `ECS_HOST`
 - `ECS_USER`
 - `ECS_SSH_KEY`
@@ -443,7 +445,7 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 
 要求：
 
-- 使用生产专用、最小权限的 RAM 与 SSH 身份。
+- 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、`GIT_CLONE` 日志与 image metadata，不得写入或删除镜像。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
   `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
@@ -514,6 +516,10 @@ STAGING_KEY='/Users/kaiyan001/.ssh/id_ed25519'
 gh secret set ALIYUN_ACCESS_KEY_ID \
   --repo "$TARGET_REPOSITORY" --env production
 gh secret set ALIYUN_ACCESS_KEY_SECRET \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set ACR_READ_ACCESS_KEY_ID \
+  --repo "$TARGET_REPOSITORY" --env production
+gh secret set ACR_READ_ACCESS_KEY_SECRET \
   --repo "$TARGET_REPOSITORY" --env production
 gh secret set OSS_WEB_DEPLOY_AK_ID \
   --repo "$TARGET_REPOSITORY" --env production

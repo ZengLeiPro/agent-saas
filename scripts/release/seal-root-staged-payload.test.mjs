@@ -90,6 +90,23 @@ test('rejects archive hard links before extraction and clears staging', async ()
   assert.equal(await exists(value.destination), false);
 });
 
+test('rejects symlinked staging paths before cleanup can follow them', async () => {
+  const value = await fixture('staging-symlink');
+  const destinationLink = join(value.root, 'run-link');
+  await symlink(value.destination, destinationLink);
+  const result = spawnSync(
+    'bash',
+    [SCRIPT, 'verify', value.digest, join(destinationLink, 'payload.tgz'), destinationLink],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, STAGED_PAYLOAD_ALLOWED_ROOT: value.root },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.equal(await exists(value.destination), true);
+  assert.equal(await exists(value.archive), true);
+});
+
 test('rejects staging destinations outside the controlled root', async () => {
   const value = await fixture('escape');
   const outside = await mkdtemp(join(tmpdir(), 'staged-payload-outside-'));

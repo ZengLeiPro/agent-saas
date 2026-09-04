@@ -4174,6 +4174,14 @@ export function createMigrationPlan({
     candidatePaths = [...new Set(candidatePaths)];
     const startupSchemaRoots = (sha) => {
       const snapshot = snapshotFor(sha);
+      // Dynamic loader edges cannot be intersected with a changed-path set. Every authoritative
+      // Production root must fail closed before diff-based pruning, including when only an
+      // external JSON/SQL provider changed.
+      for (const root of PRODUCTION_STARTUP_SCHEMA_ROOTS) {
+        if (!snapshot.repositoryPaths.has(root)) continue;
+        if (hasUnprovenRuntimeModuleLoad(snapshot.read(root), root))
+          throw new Error(`Migration dependency ${root} uses dynamic import or require`);
+      }
       const roots = authorityRootsIntersectingDiff(snapshot, candidatePaths);
       for (const path of candidatePaths) {
         try {

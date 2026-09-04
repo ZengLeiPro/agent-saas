@@ -15,8 +15,12 @@ esac
 printf '%s' "$EXPECTED_SHA256" | grep -Eq '^[a-f0-9]{64}$'
 
 allowed_root_abs="$(realpath -m -- "$ALLOWED_ROOT")"
+destination_lexical="$(realpath -ms -- "$DESTINATION")"
+archive_lexical="$(realpath -ms -- "$ARCHIVE")"
 destination_abs="$(realpath -m -- "$DESTINATION")"
 archive_abs="$(realpath -m -- "$ARCHIVE")"
+test "$destination_lexical" = "$destination_abs"
+test "$archive_lexical" = "$archive_abs"
 case "$destination_abs" in
   "$allowed_root_abs"/*) ;;
   *) echo "staging destination escapes the allowed root" >&2; exit 65 ;;
@@ -33,10 +37,10 @@ cleanup_failure() {
 }
 trap cleanup_failure EXIT
 
-test -d "$destination_abs"
-test -f "$archive_abs"
-test ! -L "$destination_abs"
-test ! -L "$archive_abs"
+test -d "$DESTINATION"
+test -f "$ARCHIVE"
+test ! -L "$DESTINATION"
+test ! -L "$ARCHIVE"
 actual_sha256="$(sha256sum "$archive_abs" | cut -d' ' -f1)"
 test "$actual_sha256" = "$EXPECTED_SHA256"
 

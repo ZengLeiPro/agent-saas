@@ -6,6 +6,8 @@ PRESERVE_ACS_UNIT_BAK=false
 ACS_ROLLBACK_ATTEMPTED=false
 RELEASE_TGZ="${RELEASE_TGZ:-/tmp/agent-saas-acs-release.tgz}"
 RELEASE_STAGING_DIR="${RELEASE_STAGING_DIR:-}"
+SEAL_STAGED_PAYLOAD_SCRIPT="${SEAL_STAGED_PAYLOAD_SCRIPT:-}"
+SEAL_STAGED_PAYLOAD_SCRIPT_SHA256="${SEAL_STAGED_PAYLOAD_SCRIPT_SHA256:-}"
 
 cleanup_release_payload() {
   case "$RELEASE_STAGING_DIR" in
@@ -144,6 +146,9 @@ if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" != true ]; then
 : "${IMAGE_TAG:?missing IMAGE_TAG}"
 : "${IMAGE_DIGEST:?missing IMAGE_DIGEST}"
 : "${ORCHESTRATOR_ARTIFACT_DIGEST:?missing ORCHESTRATOR_ARTIFACT_DIGEST}"
+: "${RELEASE_STAGING_DIR:?missing RELEASE_STAGING_DIR}"
+: "${SEAL_STAGED_PAYLOAD_SCRIPT:?missing SEAL_STAGED_PAYLOAD_SCRIPT}"
+: "${SEAL_STAGED_PAYLOAD_SCRIPT_SHA256:?missing SEAL_STAGED_PAYLOAD_SCRIPT_SHA256}"
 : "${COMPAT_RELEASE_ID:?missing COMPAT_RELEASE_ID}"
 : "${ECS_DEPLOY_ROOT:?missing ECS_DEPLOY_ROOT}"
 : "${ACS_SERVICE_NAME:?missing ACS_SERVICE_NAME}"
@@ -152,7 +157,18 @@ if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" != true ]; then
 
 printf '%s' "$IMAGE_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
 printf '%s' "$ORCHESTRATOR_ARTIFACT_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
+printf '%s' "$SEAL_STAGED_PAYLOAD_SCRIPT_SHA256" | grep -Eq '^[a-f0-9]{64}$'
 printf '%s' "$COMPAT_RELEASE_ID" | grep -Eq '^rc-[0-9]{8}-[0-9]{2,}$'
+case "$(realpath -m -- "$RELEASE_STAGING_DIR")" in
+  /run/agent-saas-production-staging/acs-release-*) ;;
+  *) echo 'RELEASE_STAGING_DIR must be a dedicated Production staging directory' >&2; exit 64 ;;
+esac
+test -f "$SEAL_STAGED_PAYLOAD_SCRIPT"
+test ! -L "$SEAL_STAGED_PAYLOAD_SCRIPT"
+exec {seal_payload_fd}<"$SEAL_STAGED_PAYLOAD_SCRIPT"
+seal_payload_fd_path="/proc/$$/fd/$seal_payload_fd"
+test "$(sha256sum "$seal_payload_fd_path" | cut -d' ' -f1)" = \
+  "$SEAL_STAGED_PAYLOAD_SCRIPT_SHA256"
 printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
 
 lock=/run/lock/agent-saas/promotion.lock
@@ -174,6 +190,7 @@ IDENTITY_STATE_CAPTURED=false
 RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
 RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
 RUNTIME_IDENTITY_UPDATED=false
+RUNTIME_PREFLIGHT_ROOT=""
 RUNTIME_PREFLIGHT_DIR=""
 ACS_NODE=/usr/bin/node
 SYSTEMCTL_BIN=/usr/bin/systemctl
@@ -216,9 +233,6 @@ cleanup() {
     fi
   fi
   if [ "${PRODUCTION_CLEANUP_ARMED:-false}" != "true" ]; then
-    case "${RUNTIME_PREFLIGHT_DIR:-}" in
-      /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
-    esac
     cleanup_release_payload
     cleanup_acs_unit_backup
     return "$deploy_status"
@@ -350,9 +364,6 @@ EOF
     fi
     [ -n "${SNAT_OPERATION_STATE_FILE:-}" ] && rm -f "$SNAT_OPERATION_STATE_FILE"
   fi
-  case "${RUNTIME_PREFLIGHT_DIR:-}" in
-    /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
-  esac
   cleanup_release_payload
   rm -f "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
@@ -374,10 +385,19 @@ fi
 actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
 test "$actual_archive_digest" = "$ORCHESTRATOR_ARTIFACT_DIGEST"
 
-# 先在 /tmp 解包，并用 systemd 最终 ExecStart 的同一个 /usr/bin/node 执行 Runtime guard。
-# guard 与 managed unit 校验通过前，不得写入 /etc 或落下持久 release 目录。
-RUNTIME_PREFLIGHT_DIR="$(mktemp -d "/tmp/agent-saas-runtime-preflight-${GITHUB_RUN_ID}-XXXXXX")"
-tar -xzf "$RELEASE_TGZ" -C "$RUNTIME_PREFLIGHT_DIR"
+# 只在 root-owned staging 下通过 digest-pinned helper 安全解包，并用 systemd 最终
+# ExecStart 的同一个 /usr/bin/node 执行 Runtime guard。guard 与 managed unit 校验
+# 通过前，不得写入 /etc 或落下持久 release 目录。
+RUNTIME_PREFLIGHT_ROOT="$RELEASE_STAGING_DIR/runtime-preflight"
+RUNTIME_PREFLIGHT_DIR="$RUNTIME_PREFLIGHT_ROOT/payload"
+rm -rf -- "$RUNTIME_PREFLIGHT_ROOT"
+install -d -m 0700 "$RUNTIME_PREFLIGHT_DIR"
+install -m 0400 "$RELEASE_TGZ" "$RUNTIME_PREFLIGHT_DIR/payload.tgz"
+STAGED_PAYLOAD_ALLOWED_ROOT=/run/agent-saas-production-staging \
+  bash "$seal_payload_fd_path" extract \
+  "${ORCHESTRATOR_ARTIFACT_DIGEST#sha256:}" \
+  "$RUNTIME_PREFLIGHT_DIR/payload.tgz" "$RUNTIME_PREFLIGHT_DIR"
+exec {seal_payload_fd}<&-
 test -x "$ACS_NODE"
 test -x "$SYSTEMCTL_BIN"
 test -f "$ENV_FILE"
@@ -385,10 +405,10 @@ test -s "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json"
 unit_helper="$RUNTIME_PREFLIGHT_DIR/scripts/release/manage-acs-systemd-unit.sh"
 unit_source="$RUNTIME_PREFLIGHT_DIR/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template"
 desired_environment_file="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/config/production.env"
-runtime_environment_file="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator.env"
+runtime_environment_file="$RUNTIME_PREFLIGHT_ROOT/acs-orchestrator.env"
 test -s "$unit_helper"
 test -s "$desired_environment_file"
-# 在 /tmp 构造最终 EnvironmentFile：仓库声明的 SNAT 模式会先应用，自定义 CLI 路径原样保留。
+# 在 root-only staging 构造临时最终 EnvironmentFile：仓库声明的 SNAT 模式会先应用，自定义 CLI 路径原样保留。
 # Runtime guard 自己按 systemd EnvironmentFile 语义解析，禁止 source/eval 生产 env。
 install -m 0600 "$ENV_FILE" "$runtime_environment_file"
 python3 "$RUNTIME_PREFLIGHT_DIR/scripts/apply-orchestrator-env.py" \
@@ -415,8 +435,6 @@ fi
 ACS_UNIT_UPDATED=true
 install_acs_managed_unit "$unit_source" "$ACS_UNIT_PATH" "$SYSTEMCTL_BIN"
 assert_no_acs_managed_unit_dropins "$ACS_SERVICE_NAME"
-rm -rf -- "$RUNTIME_PREFLIGHT_DIR"
-RUNTIME_PREFLIGHT_DIR=""
 PRODUCTION_CLEANUP_ARMED=true
 
 # Runtime guard 通过后才读取、备份并探测生产 identity 写入边界。
@@ -437,7 +455,7 @@ else
   rm -rf "$candidate"
   mkdir -p "$candidate/.release"
   install -m 0444 "$RELEASE_TGZ" "$candidate/.release/acs-orchestrator.tgz"
-  tar -xzf "$RELEASE_TGZ" -C "$candidate"
+  cp -a "$RUNTIME_PREFLIGHT_DIR/." "$candidate/"
   test -f "$candidate/acs-orchestrator/dist/index.js"
   test -f "$candidate/acs-orchestrator/dist/backgroundShellWorker.js"
   test -f "$candidate/acs-orchestrator/dist/restorePerPodCli.js"
@@ -447,6 +465,9 @@ else
     --sha "$GITHUB_SHA" --sandbox-image-digest "$IMAGE_DIGEST" >/dev/null
   mv "$candidate" "$APP_DIR"
 fi
+rm -rf -- "$RUNTIME_PREFLIGHT_ROOT"
+RUNTIME_PREFLIGHT_ROOT=""
+RUNTIME_PREFLIGHT_DIR=""
 cd "$APP_DIR"
 
 # ── 2. 备份并更新镜像 env（新进程拉起时生效）──

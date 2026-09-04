@@ -178,6 +178,27 @@ test('classifies destructive SQL in production startup schema roots regardless o
   }
 });
 
+test('fails closed when an unchanged authority root has a dynamic loader and only its external provider changes', () => {
+  const root = 'server/src/taskboard/storeSchema.ts';
+  const provider = 'config/taskboard-migration-provider.json';
+  const rootSource =
+    'const load = require; export const statements = load(process.env.PROVIDER_PATH);';
+  const baselineProvider = '{"sql":"CREATE TABLE tasks(id text)"}';
+  const targetProvider = '{"sql":"DROP TABLE tasks"}';
+  const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+    changedPaths: [provider],
+    baselines: { [root]: rootSource, [provider]: baselineProvider },
+    targets: { [root]: rootSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff(targetProvider) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    new RegExp(`${root} uses dynamic import or require`, 'u'),
+  );
+});
+
 test('classifies a destructive provider imported by a production startup schema root', () => {
   const root = 'server/src/taskboard/storeSchema.ts';
   const provider = 'server/src/taskboard/v2Schema.ts';

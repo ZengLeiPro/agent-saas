@@ -565,7 +565,7 @@ jobs:
           redelivery_checked=false
           records_file="$RUNNER_TEMP/acr-build-records.json"
           query_error_file="$RUNNER_TEMP/acr-build-records.error"
-          echo "Looking for ACR build record with tag suffix -$SHA6 (HEAD $GITHUB_SHA) ..."
+          echo "Looking for ACR build record with tag suffix -$SHA6 and full GIT_CLONE revision $GITHUB_SHA ..."
           while true; do
             poll_index=$((poll_index + 1))
             set +e
@@ -592,17 +592,18 @@ jobs:
               data = json.loads(records_path.read_text())
           except Exception as error:
               detail = clean(error_path.read_text(errors='replace')) or clean(error)
-              print(f'QUERY_ERROR\t\tCLI exit {query_status}: {detail}')
+              print(f'QUERY_ERROR\t\t\tCLI exit {query_status}: {detail}')
               raise SystemExit
           if query_status != 0 or data.get('Code') != 'success' or data.get('IsSuccess') is not True:
               detail = clean(data.get('Message')) or clean(error_path.read_text(errors='replace'))
               code = clean(data.get('Code')) or 'unknown'
-              print(f'QUERY_ERROR\t\tCLI exit {query_status}, code {code}: {detail}')
+              print(f'QUERY_ERROR\t\t\tCLI exit {query_status}, code {code}: {detail}')
               raise SystemExit
           for r in data.get('BuildRecords', []):
               tag = (r.get('Image') or {}).get('ImageTag', '')
               if tag.endswith('-' + sha6):
-                  print(f"{r.get('BuildStatus','')}\t{tag}")
+                  record_id = clean(r.get('BuildRecordId'))
+                  print(f"{r.get('BuildStatus','')}\t{tag}\t{record_id}")
                   break
           else:
               print('NOT_FOUND')
@@ -610,11 +611,25 @@ jobs:
             )
             bstatus=$(echo "$result" | cut -f1)
             btag=$(echo "$result" | cut -f2 -s)
-            bdetail=$(echo "$result" | cut -f3- -s)
+            brecord_id=$(echo "$result" | cut -f3 -s)
+            bdetail=$(echo "$result" | cut -f4- -s)
             echo "  [$poll_index] $bstatus ${btag:-}"
             case "$bstatus" in
               SUCCESS)
+                test -n "$brecord_id" || {
+                  echo 'Successful ACR build record is missing BuildRecordId' >&2
+                  exit 1
+                }
+                logs_file="$RUNNER_TEMP/acr-build-record-$brecord_id-logs.json"
+                aliyun cr ListRepoBuildRecordLog \
+                  --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
+                  --region "$ACR_REGION_ID" \
+                  --InstanceId "$ACR_INSTANCE_ID" \
+                  --BuildRecordId "$brecord_id" \
+                  --Offset 0 --PageSize 100 > "$logs_file"
+                node scripts/release/verify-acr-build-revision.mjs "$logs_file" "$GITHUB_SHA"
                 echo "image_tag=$btag" >> "$GITHUB_OUTPUT"
+                echo "build_record_id=$brecord_id" >> "$GITHUB_OUTPUT"
                 exit 0
                 ;;
               FAILED|CANCELED)
@@ -624,7 +639,7 @@ jobs:
               NOT_FOUND)
                 query_errors=0
                 if [ "$build_record_found" = "true" ]; then
-                  echo "::error title=ACR build record disappeared::The exact SHA build record for $GITHUB_SHA disappeared after it was discovered. Refusing to substitute another image."
+                  echo "::error title=ACR build record disappeared::The 6-character candidate build record for $GITHUB_SHA disappeared after it was discovered. Refusing to substitute another image."
                   exit 1
                 fi
                 git fetch --quiet --no-tags origin main
@@ -815,6 +830,10 @@ jobs:
             "sudo tee '$remote/payload.tgz' >/dev/null" \
             < "$RUNNER_TEMP/acs-orchestrator.tgz"
           ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
+            "sudo tee '$remote/seal-root-staged-payload.sh' >/dev/null && \
+             sudo chmod 0500 '$remote/seal-root-staged-payload.sh'" \
+            < scripts/release/seal-root-staged-payload.sh
+          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
             "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
              bash -s -- verify '$payload_digest' '$remote/payload.tgz' '$remote'" \
             < scripts/release/seal-root-staged-payload.sh
@@ -827,6 +846,7 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main
           latest_main_sha="$(git rev-parse origin/main)"
+          seal_script_digest="$(sha256sum scripts/release/seal-root-staged-payload.sh | cut -d' ' -f1)"
           if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then
             echo "::error title=Stale ACS deploy dispatch::main advanced to $latest_main_sha before Production mutation. Dispatch again from latest main."
             exit 1
@@ -835,46 +855,12 @@ jobs:
           ssh -i ~/.ssh/ecs_deploy_key \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \
-            "RELEASE_TGZ='$remote/payload.tgz' RELEASE_STAGING_DIR='$remote' IMAGE='$ACS_IMAGE_REFERENCE' IMAGE_TAG='$ACS_IMAGE_TAG' IMAGE_DIGEST='$ACS_IMAGE_DIGEST' ORCHESTRATOR_ARTIFACT_DIGEST='$ORCHESTRATOR_ARTIFACT_DIGEST' COMPAT_RELEASE_ID='$COMPAT_RELEASE_ID' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_SHA='$GITHUB_SHA' bash -s" < scripts/deploy-acs-orchestrator.sh
-
-      - name: Refresh trusted Production identity
-        if: steps.necessity.outputs.deploy_needed == 'true'
-        run: |
-          set -euo pipefail
-          payload_archive="$RUNNER_TEMP/production-identity-acs.tgz"
-          tar -czf "$payload_archive" -- \
-            scripts/release/artifact-lib.mjs \
-            scripts/release/read-live-production-components.mjs \
-            scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs \
-            scripts/release/verify-installed-release.mjs \
-            scripts/release/write-live-production-identity.mjs
-          payload_digest="$(sha256sum "$payload_archive" | cut -d' ' -f1)"
-          remote="$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-acs"
-          cleanup() {
-            ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-              "sudo rm -rf -- '$remote'" || true
-          }
-          trap cleanup EXIT
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "sudo install -d -m 0700 '$remote'"
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "sudo tee '$remote/payload.tgz' >/dev/null" < "$payload_archive"
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "sudo env STAGED_PAYLOAD_ALLOWED_ROOT='$PRODUCTION_STAGING_ROOT' \
-             bash -s -- extract '$payload_digest' '$remote/payload.tgz' '$remote'" \
-            < scripts/release/seal-root-staged-payload.sh
-          ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$remote/scripts/release/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
-             sudo node '$remote/scripts/release/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
-             sudo node '$remote/scripts/release/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null"
-          echo "Production identity refreshed after ACS deployment"
+            "RELEASE_TGZ='$remote/payload.tgz' RELEASE_STAGING_DIR='$remote' SEAL_STAGED_PAYLOAD_SCRIPT='$remote/seal-root-staged-payload.sh' SEAL_STAGED_PAYLOAD_SCRIPT_SHA256='$seal_script_digest' IMAGE='$ACS_IMAGE_REFERENCE' IMAGE_TAG='$ACS_IMAGE_TAG' IMAGE_DIGEST='$ACS_IMAGE_DIGEST' ORCHESTRATOR_ARTIFACT_DIGEST='$ORCHESTRATOR_ARTIFACT_DIGEST' COMPAT_RELEASE_ID='$COMPAT_RELEASE_ID' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_SHA='$GITHUB_SHA' bash -s" < scripts/deploy-acs-orchestrator.sh
 
       - name: Clean sealed ACS Production staging
         if: always() && steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
           release_remote="$PRODUCTION_STAGING_ROOT/acs-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          identity_remote="$PRODUCTION_STAGING_ROOT/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-acs"
           ssh -i ~/.ssh/ecs_deploy_key "$ECS_USER@$ECS_HOST" \
-            "sudo rm -rf -- '$release_remote' '$identity_remote'"
+            "sudo rm -rf -- '$release_remote'"

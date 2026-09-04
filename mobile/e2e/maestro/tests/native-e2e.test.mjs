@@ -78,6 +78,8 @@ test('app exposes the stable native IDs consumed by Maestro', async () => {
     'app/chat/[sessionId].tsx', 'app/share-target.tsx', 'src/components/ConnectionBanner.tsx',
     'src/components/SessionRow.tsx', 'src/components/chat/ChatInput.tsx', 'src/components/chat/MessageItem.tsx',
     'src/components/chat/ModelPicker.tsx', 'src/components/overlays/DropdownMenu.tsx',
+    // 会话页顶栏（返回三态 / Agent 目标入口 / 用量胶囊）已拆成独立组件。
+    'src/components/chat/ChatSessionHeader.tsx',
     // 交互区/队列条与表单体已拆成独立组件，稳定 ID 随代码一起搬到这些文件。
     'src/components/chat/AskUserPromptPanel.tsx', 'src/components/chat/QueuedMessageBar.tsx',
     'src/components/chat/blocks/AskUserBlock.tsx', 'src/components/chat/blocks/PermissionBlock.tsx',

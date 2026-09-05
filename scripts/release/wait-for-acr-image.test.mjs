@@ -52,12 +52,12 @@ process.stdout.write(JSON.stringify({ Code: 'success', IsSuccess: true, PageNo: 
 NODE
     ;;
   ListRepoBuildRecordLog)
-    test "$#" -eq 18
-    test "$3:$4:$5:$6:$7:$8:$9:\${10}:\${11}:\${12}:\${13}:\${14}:\${15}:\${16}:\${17}:\${18}" = '--mode:AK:--access-key-id:read-id:--access-key-secret:read-secret:--region:cn-test:--InstanceId:instance:--BuildRecordId:record-1:--Offset:0:--PageSize:100'
+    test "$#" -eq 16
+    test "$3:$4:$5:$6:$7:$8:$9:\${10}:\${11}:\${12}:\${13}:\${14}:\${15}:\${16}" = '--mode:AK:--access-key-id:read-id:--access-key-secret:read-secret:--region:cn-test:--InstanceId:instance:--BuildRecordId:record-1:--Offset:0'
     printf 'log:record-1\n' >> '${events}'
-    log_sha='${releaseSha}'
-    if [ '${scenario}' = log-sha-mismatch ]; then log_sha='${'b'.repeat(40)}'; fi
-    printf '{"Code":"success","IsSuccess":true,"BuildRecordLogs":[{"BuildStage":"GIT_CLONE","Message":"checked out %s"}]}' "$log_sha"
+    log_sha='${releaseSha.slice(0, 7)}'
+    if [ '${scenario}' = log-sha-mismatch ]; then log_sha='${'b'.repeat(7)}'; fi
+    printf '{"Code":"success","IsSuccess":true,"BuildRecordLogs":[{"LineNumber":5,"Message":"commit info: * main %s [origin/main] subject"}]}' "$log_sha"
     ;;
   GetRepoTag)
     test "$#" -eq 16
@@ -125,9 +125,9 @@ test('rejects a Staging ACS tag digest change between stable reads', async () =>
   await rm(run.root, { recursive: true, force: true });
 });
 
-test('rejects a Staging ACR log that is not bound to the requested full SHA', async () => {
+test('rejects a Staging ACR log whose commit info does not match the requested SHA', async () => {
   const run = await runWait('log-sha-mismatch');
   assert.notEqual(run.result.status, 0);
-  assert.match(run.result.stderr, /not bound to full source commit/u);
+  assert.match(run.result.stderr, /cloned bbbbbbb \(main\), not source commit/u);
   await rm(run.root, { recursive: true, force: true });
 });

@@ -54,6 +54,7 @@ describe('MessageFeedback', () => {
       sessionId: '11111111-1111-4111-8111-111111111111',
       messageId: 'line-3',
       content: '这是回答内容',
+      rating: 'down',
       comment: '答非所问',
     });
 
@@ -72,7 +73,7 @@ describe('MessageFeedback', () => {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
     const realHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
-    authFetchMock.mockResolvedValueOnce(jsonResponse({ items: [{ contentHash: realHash, createdAt: '2026-07-10T08:00:00.000Z' }] }));
+    authFetchMock.mockResolvedValueOnce(jsonResponse({ items: [{ contentHash: realHash, rating: 'down', createdAt: '2026-07-10T08:00:00.000Z' }] }));
 
     render(
       <MessageFeedbackProvider sessionId="11111111-1111-4111-8111-111111111111">
@@ -80,11 +81,52 @@ describe('MessageFeedback', () => {
       </MessageFeedbackProvider>,
     );
 
-    const submitted = await screen.findByRole('button', { name: '已反馈' });
+    const submitted = await screen.findByRole('button', { name: '已反馈：这个回答有问题' });
     expect((submitted as HTMLButtonElement).disabled).toBe(true);
     // 防连点：点击不弹层
     fireEvent.click(submitted);
     expect(screen.queryByPlaceholderText('可选：说明问题（如答非所问、信息有误）')).toBeNull();
+  });
+
+  it('点赞：直接提交 rating=up 且不弹评论层，恢复态由 GET 的 rating 区分', async () => {
+    const content = '这个回答很有用';
+    authFetchMock.mockResolvedValueOnce(jsonResponse({ items: [] }));
+    render(
+      <MessageFeedbackProvider sessionId="11111111-1111-4111-8111-111111111111">
+        <MessageFeedbackButton messageId="line-7" content={content} />
+      </MessageFeedbackProvider>,
+    );
+
+    const upButton = await screen.findByRole('button', { name: '反馈这个回答有帮助' });
+    authFetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, duplicated: false, contentHash: 'hash-up' }));
+    fireEvent.click(upButton);
+
+    await waitFor(() => {
+      expect(authFetchMock).toHaveBeenCalledWith('/api/feedback', expect.objectContaining({ method: 'POST' }));
+    });
+    const postBody = JSON.parse(String((authFetchMock.mock.calls.at(-1)?.[1] as RequestInit).body));
+    expect(postBody).toMatchObject({ messageId: 'line-7', content, rating: 'up' });
+    expect(postBody.comment).toBeUndefined();
+    // 点赞不打开评论弹层
+    expect(screen.queryByPlaceholderText('可选：说明问题（如答非所问、信息有误）')).toBeNull();
+  });
+
+  it('点赞恢复态：GET rating=up → 赞按钮标为已反馈，踩按钮同时禁用', async () => {
+    const content = '被点过赞的回答';
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
+    const realHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    authFetchMock.mockResolvedValueOnce(jsonResponse({ items: [{ contentHash: realHash, rating: 'up' }] }));
+
+    render(
+      <MessageFeedbackProvider sessionId="11111111-1111-4111-8111-111111111111">
+        <MessageFeedbackButton messageId="line-8" content={content} />
+      </MessageFeedbackProvider>,
+    );
+
+    const up = await screen.findByRole('button', { name: '已反馈：这个回答有帮助' });
+    expect((up as HTMLButtonElement).disabled).toBe(true);
+    const down = screen.getByRole('button', { name: '反馈这个回答有问题' });
+    expect((down as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('用例13: Provider 缺省时按钮零渲染（红线回归）', () => {

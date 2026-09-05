@@ -3,14 +3,14 @@
  *
  * - MessageFeedbackContext 缺省（个人 Agent 会话 / 数据面 503）→ 零渲染，
  *   与 Web 同一条兼容性红线。
- * - 点「踩」打开底部弹层填可选原因（≤500 字，上限来自 shared 契约），
- *   提交成功后按钮转实心并禁用，重载后由 Provider 的 contentHash 集合恢复。
- * - 服务端只有「踩」这一种反馈（server/src/routes/feedback.ts 无评分字段），
- *   因此这里不提供点赞入口。
+ * - 点「赞」直接提交 rating='up'（好评不需要理由）；点「踩」打开底部弹层填
+ *   可选原因（≤500 字，上限来自 shared 契约）。
+ * - 提交成功后对应按钮转实心并禁用，重载后由 Provider 的 contentHash → rating
+ *   映射恢复；幂等键是 sha256(消息全文)，同一条消息只保留首次评分。
  */
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { ThumbsDown } from 'lucide-react-native';
+import { ThumbsDown, ThumbsUp } from 'lucide-react-native';
 import { MESSAGE_FEEDBACK_COMMENT_MAX } from '@agent/shared';
 import { sha256Hex, useMessageFeedback } from '../../../contexts/MessageFeedbackContext';
 import { BottomSheet, Button, Input } from '../../ui';
@@ -35,6 +35,7 @@ export function MessageFeedbackButton({
   const styles = useMemo(
     () =>
       StyleSheet.create({
+        triggers: { flexDirection: 'row', alignItems: 'center' },
         trigger: { padding: spacing.xs },
         sheetBody: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
         hint: { ...typo.caption, color: colors.mutedForeground },
@@ -51,15 +52,20 @@ export function MessageFeedbackButton({
   if (!feedback) return null;
 
   const submitted = feedback.isSubmitted(contentHash);
-  const label = submitted ? '已反馈' : '反馈这个回答有问题';
+  const rating = feedback.submittedRating(contentHash);
+  const upLabel = rating === 'up' ? '已反馈：这个回答有帮助' : '反馈这个回答有帮助';
+  const downLabel = rating === 'down' ? '已反馈：这个回答有问题' : '反馈这个回答有问题';
+  // 未选中的那一侧在已反馈后压成弱色：既禁用又不误导用户以为还能改评分。
+  const idleColor = submitted ? colors.border : colors.mutedForeground;
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (nextRating: 'up' | 'down') => {
     if (submitting) return;
     setSubmitting(true);
     const ok = await feedback.submit({
       messageId,
       content,
-      ...(comment.trim() ? { comment } : {}),
+      rating: nextRating,
+      ...(nextRating === 'down' && comment.trim() ? { comment } : {}),
     });
     setSubmitting(false);
     if (ok) {
@@ -70,10 +76,28 @@ export function MessageFeedbackButton({
 
   return (
     <>
+      <View style={styles.triggers}>
+      <Pressable
+        testID="message-feedback-up-button"
+        accessibilityRole="button"
+        accessibilityLabel={upLabel}
+        accessibilityState={{ disabled: submitted }}
+        hitSlop={8}
+        disabled={submitted || submitting}
+        onPress={() => { void handleSubmit('up'); }}
+        style={styles.trigger}
+      >
+        <ThumbsUp
+          size={14}
+          strokeWidth={2}
+          color={rating === 'up' ? colors.primary : idleColor}
+          fill={rating === 'up' ? colors.primary : 'transparent'}
+        />
+      </Pressable>
       <Pressable
         testID="message-feedback-button"
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={downLabel}
         accessibilityState={{ disabled: submitted }}
         hitSlop={8}
         disabled={submitted}
@@ -83,10 +107,11 @@ export function MessageFeedbackButton({
         <ThumbsDown
           size={14}
           strokeWidth={2}
-          color={submitted ? colors.destructive : colors.mutedForeground}
-          fill={submitted ? colors.destructive : 'transparent'}
+          color={rating === 'down' ? colors.destructive : idleColor}
+          fill={rating === 'down' ? colors.destructive : 'transparent'}
         />
       </Pressable>
+      </View>
       <BottomSheet
         visible={visible}
         onClose={() => setVisible(false)}
@@ -120,7 +145,7 @@ export function MessageFeedbackButton({
               size="sm"
               loading={submitting}
               onPress={() => {
-                void handleSubmit();
+                void handleSubmit('down');
               }}
               testID="message-feedback-submit"
             />

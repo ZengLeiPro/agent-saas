@@ -1,7 +1,8 @@
 /**
  * 消息反馈（message_feedback）PG 存储（2026-07 唯恩批次）
  *
- * 员工对专职 Agent 回答点「踩」+ 可选评论。消息 id 跨刷新不稳定（流式=客户端
+ * 员工对专职 Agent 回答点「赞/踩」+ 可选评论。评分落 verdict 列（2026-09 起
+ * 由客户端显式给出，缺省仍是 'down'）。消息 id 跨刷新不稳定（流式=客户端
  * 随机 id，刷新后=line-N），因此以 **content_hash（sha256(消息全文)）为幂等键**：
  * UNIQUE (tenant_id, session_id, user_id, content_hash)，重复提交 ON CONFLICT
  * DO NOTHING 返回 duplicated。
@@ -13,6 +14,14 @@
 
 import pg from 'pg';
 
+/**
+ * 评分。与 shared `MessageFeedbackRating` 同一套字面量，这里本地声明而不 import
+ * `@agent/shared`——server 的 typecheck:staged 走裸 tsc（无 tsconfig paths），
+ * 跨包类型 import 会解析到 node_modules 里的旧副本。与 `types/index.ts` 里
+ * RuntimeFailureKind 的处理方式一致。
+ */
+export type MessageFeedbackRating = 'up' | 'down';
+
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 
@@ -23,6 +32,8 @@ export interface MessageFeedbackInsert {
   orgAgentId?: string;
   userId: string;
   username?: string;
+  /** 缺省 'down'：路由层 zod 已兜底，这里再兜一次防内部调用漏传 */
+  rating?: MessageFeedbackRating;
   comment?: string;
   /** 消息全文前 500 字（server 截取，质检台列表展示用） */
   messageExcerpt: string;
@@ -32,7 +43,9 @@ export interface MessageFeedbackInsert {
 
 export interface MessageFeedbackRecord extends MessageFeedbackInsert {
   id: string;
-  verdict: 'down';
+  rating: MessageFeedbackRating;
+  /** @deprecated 质检台历史字段名，值恒等于 rating；新读者用 rating */
+  verdict: MessageFeedbackRating;
   createdAt: string;
 }
 
@@ -51,6 +64,7 @@ export interface MessageFeedbackListFilter {
 /** 本人已反馈状态恢复用的裁剪视图 */
 export interface MessageFeedbackOwnItem {
   contentHash: string;
+  rating: MessageFeedbackRating;
   comment?: string;
   createdAt: string;
 }
@@ -99,6 +113,10 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
           UNIQUE (tenant_id, session_id, user_id, content_hash)
         )
       `);
+      // expand-only 迁移（2026-09）：老库若缺 verdict 列则补加。加可空语义列 + 默认值，
+      // 不 DROP、不回填、不加 NOT NULL 约束——旧版本服务端不写该列时由默认值兜底，
+      // 新旧两个版本可同时连同一套库（N/N+1）。
+      await client.query(`ALTER TABLE ${this.feedbackTable} ADD COLUMN IF NOT EXISTS verdict TEXT DEFAULT 'down'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.feedbackTable}_tenant_idx ON ${this.feedbackTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.feedbackTable}_org_agent_idx ON ${this.feedbackTable} (tenant_id, org_agent_id, created_at DESC)`);
     } finally {
@@ -110,8 +128,8 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
   async insert(item: MessageFeedbackInsert): Promise<{ duplicated: boolean }> {
     const result = await this.pool.query(
       `INSERT INTO ${this.feedbackTable}
-        (tenant_id, session_id, message_id, org_agent_id, user_id, username, comment, message_excerpt, content_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        (tenant_id, session_id, message_id, org_agent_id, user_id, username, verdict, comment, message_excerpt, content_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (tenant_id, session_id, user_id, content_hash) DO NOTHING`,
       [
         item.tenantId,
@@ -120,6 +138,7 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
         item.orgAgentId ?? null,
         item.userId,
         item.username ?? null,
+        normalizeRating(item.rating),
         item.comment ?? null,
         item.messageExcerpt,
         item.contentHash,
@@ -174,7 +193,7 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
   async listBySessionUser(tenantId: string, sessionId: string, userId: string): Promise<MessageFeedbackOwnItem[]> {
     // tenant_id 前置让 UNIQUE (tenant_id, session_id, user_id, content_hash) 索引前缀命中
     const result = await this.pool.query(
-      `SELECT content_hash, comment, created_at
+      `SELECT content_hash, verdict, comment, created_at
          FROM ${this.feedbackTable}
         WHERE tenant_id = $1 AND session_id = $2 AND user_id = $3
         ORDER BY created_at ASC`,
@@ -182,13 +201,20 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
     );
     return result.rows.map((row) => ({
       contentHash: row.content_hash,
+      rating: normalizeRating(row.verdict),
       ...(row.comment ? { comment: row.comment } : {}),
       createdAt: toIso(row.created_at),
     }));
   }
 }
 
+/** 老行 verdict 可能为 NULL（expand-only 迁移前写入），一律回落 'down' */
+function normalizeRating(value: unknown): MessageFeedbackRating {
+  return value === 'up' ? 'up' : 'down';
+}
+
 function rowToRecord(row: Record<string, unknown>): MessageFeedbackRecord {
+  const rating = normalizeRating(row.verdict);
   return {
     id: String(row.id),
     tenantId: String(row.tenant_id),
@@ -197,7 +223,8 @@ function rowToRecord(row: Record<string, unknown>): MessageFeedbackRecord {
     ...(row.org_agent_id ? { orgAgentId: String(row.org_agent_id) } : {}),
     userId: String(row.user_id),
     ...(row.username ? { username: String(row.username) } : {}),
-    verdict: 'down',
+    rating,
+    verdict: rating,
     ...(row.comment ? { comment: String(row.comment) } : {}),
     messageExcerpt: String(row.message_excerpt),
     contentHash: String(row.content_hash),

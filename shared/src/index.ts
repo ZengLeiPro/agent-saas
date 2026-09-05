@@ -687,19 +687,19 @@ export type { TokenUsageView, TokenUsageTone } from './lib/tokenUsageView';
 
 // Lib - 消息反馈（点踩）与门禁拒答申诉的端点 / 幂等 / 文案契约
 export {
-  MESSAGE_FEEDBACK_COMMENT_MAX,
+  MESSAGE_FEEDBACK_COMMENT_MAX, DEFAULT_MESSAGE_FEEDBACK_RATING,
   MESSAGE_FEEDBACK_PATH,
   GUARDRAIL_APPEAL_PATH,
   messageFeedbackSessionPath,
   buildMessageFeedbackPayload,
-  parseSubmittedFeedbackHashes,
+  parseSubmittedFeedbackHashes, parseSubmittedFeedbackEntries,
   messageFeedbackOutcome,
   buildGuardrailAppealPayload,
   guardrailAppealOutcome,
   guardrailAppealFailureCopy,
 } from './lib/messageFeedback';
 export type {
-  MessageFeedbackInput,
+  MessageFeedbackInput, MessageFeedbackRating, SubmittedMessageFeedback,
   MessageFeedbackOutcome,
   GuardrailAppealOutcome,
 } from './lib/messageFeedback';

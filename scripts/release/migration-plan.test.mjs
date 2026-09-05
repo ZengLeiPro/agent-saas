@@ -10,6 +10,7 @@ import {
   isProductionStartupSchemaRootSource,
   PRODUCTION_STARTUP_SCHEMA_ROOTS,
 } from './migration-plan.mjs';
+import { migrationSourceDigest, MIGRATION_REVIEWS_PATH } from './migration-reviews.mjs';
 
 const BASELINE = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
@@ -2680,8 +2681,9 @@ test('real repository closure uses the PR base or a deterministic target-only fa
     baseline,
     target,
   });
+  // PR 允许携带已审核登记为 expand 的迁移：门禁只拒 contract 与 !ok，不把 expand 当失败。
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
-  assert.equal(result.migrationPlan.phase, 'none');
+  assert.notEqual(result.migrationPlan.phase, 'contract');
 });
 
 test('classifies destructive SQL when only a statically imported JSON resource changes', () => {
@@ -2898,4 +2900,78 @@ test('ignores function-scoped runtime fs member selection as a repository depend
   });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.equal(result.migrationPlan.phase, 'none');
+});
+
+// —— 2026-09-05 修订：PR 允许携带已审核的 expand；无 SQL 变化的依赖模块自动判 no-schema-change ——
+
+const REVIEW_EVIDENCE_PATH = 'docs/release/迁移门禁修订审核.md';
+const REVIEW_EVIDENCE_SOURCE = '真实 PG 升级与回滚用例已跑通。';
+
+function reviewDocument(files) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    reviews: [
+      {
+        baselineSha: BASELINE,
+        files,
+        evidence: [
+          { path: REVIEW_EVIDENCE_PATH, digest: migrationSourceDigest(REVIEW_EVIDENCE_SOURCE) },
+        ],
+      },
+    ],
+  });
+}
+
+test('完全合规的白名单 ADD COLUMN 变更可以随 PR 进入，相位是 expand 而不是阻断', () => {
+  const statement = "ALTER TABLE runs ADD COLUMN IF NOT EXISTS label text DEFAULT 'unknown'";
+  const before = `// release-migration: expand\nconst createRuns = ${JSON.stringify('CREATE TABLE IF NOT EXISTS runs (id text)')};`;
+  const addedLine = `const addLabel = ${JSON.stringify(statement)};`;
+  const after = `${before}\n${addedLine}`;
+  const result = plan(after, `@@ -2,0 +3 @@\n+${addedLine}`, {
+    baselines: { [PATH]: before },
+    targets: { [PATH]: after },
+    nameStatus: `M\t${PATH}`,
+  });
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.equal(result.migrationPlan.phase, 'expand');
+  assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
+});
+
+test('已审核登记为 expand 的迁移随 PR 进入时 ok，登记为 contract 的仍然阻断', () => {
+  const before = `// release-migration: expand\nconst createRuns = ${JSON.stringify('CREATE TABLE IF NOT EXISTS runs (id text)')};`;
+  const expandLine = `const addLabel = ${JSON.stringify("ALTER TABLE runs ADD COLUMN IF NOT EXISTS label text DEFAULT 'unknown'")};`;
+  const contractLine = `const dropLabel = ${JSON.stringify('ALTER TABLE runs DROP COLUMN label')};`;
+  for (const [classification, changedLine, expected] of [
+    ['expand', expandLine, true],
+    ['contract', contractLine, false],
+  ]) {
+    const after = `${before}\n${changedLine}`;
+    const document = reviewDocument([
+      {
+        path: PATH,
+        baselineDigest: migrationSourceDigest(before),
+        targetDigest: migrationSourceDigest(after),
+        classification,
+        reason: '人工审核结论。',
+      },
+    ]);
+    const result = createMigrationPlan({
+      changedPaths: [PATH],
+      baseline: BASELINE,
+      target: TARGET,
+      execFileSync: gitFixture({
+        baselines: { [PATH]: before },
+        targets: {
+          [PATH]: after,
+          [REVIEW_EVIDENCE_PATH]: REVIEW_EVIDENCE_SOURCE,
+          [MIGRATION_REVIEWS_PATH]: document,
+        },
+        diffs: { [PATH]: `@@ -2,0 +3 @@\n+${changedLine}` },
+        nameStatus: `M\t${PATH}`,
+      }),
+    });
+    assert.equal(result.ok, expected, `${classification}: ${result.blockingReasons.join('\n')}`);
+    assert.equal(result.migrationPlan.phase, 'expand', classification);
+    if (!expected) assert.match(result.blockingReasons.join('\n'), /reviewed contract/u);
+  }
 });

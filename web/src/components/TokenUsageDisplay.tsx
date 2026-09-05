@@ -3,6 +3,11 @@ import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { TokenUsage } from "@/lib/sessionsApi";
+import {
+  contextAccuracyLabel,
+  formatUsagePercent,
+  selectTokenUsageView,
+} from "@agent/shared";
 import type { ContextUsageCategory, ContextUsageData, MessageItem, SubagentStatus } from "@agent/shared";
 import { formatTokenCount } from "@/lib/sessionsApi";
 
@@ -29,12 +34,8 @@ function DetailRow({ label, value }: { label: string; value: number | string }) 
   );
 }
 
-function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
 function AccuracyBadge({ accuracy }: { accuracy: ContextUsageCategory['accuracy'] }) {
-  const label = accuracy === 'provider' ? '实际' : accuracy === 'derived' ? '差额' : '校准估算';
+  const label = contextAccuracyLabel(accuracy);
   return (
     <span className="rounded-full bg-muted px-1.5 py-px text-[9px] font-medium text-muted-foreground">
       {label}
@@ -189,72 +190,41 @@ export function TokenUsageDisplay({
   };
   const childAgents = collectChildAgentResources(messages);
 
-  const cumulativeTokens = tokenUsage
-    ? tokenUsage.totalTokens
-      ?? (tokenUsage.totalInputTokens + tokenUsage.totalOutputTokens + tokenUsage.subagentTotalTokens)
-    : 0;
-  const accounting = tokenUsage?.contextAccounting;
+  // 「当前上下文 vs 累计消耗」的取值优先级、阈值预警与胶囊 / tooltip 文案，
+  // 统一由 shared selectTokenUsageView 裁定，本组件只负责把结果画出来。
+  const view = selectTokenUsageView(tokenUsage, contextUsage);
+  if (!view.visible) return null;
+  const {
+    cumulativeTokens,
+    parentCumulativeTokens,
+    displayTokens,
+    hasRealtime,
+    hasExactContext,
+    hasContextWindow,
+    maxTokens,
+    percentage,
+    threshold,
+    hasThreshold,
+    thresholdTokens,
+    nearThreshold,
+    overThreshold,
+    cacheHitRatio,
+    accountingReason,
+    autoCompactHint,
+    pillLabel: label,
+    title,
+  } = view;
+  const subagentUsage = tokenUsage?.subagentUsage;
 
-  // 实时 contextUsage 优先。没有实时事件时，仅在服务端明确标记 exact=true
-  // 才把 transcript/provider usage 当“当前上下文”显示。Responses 接力场景
-  // 上游每轮 usage 仍报全量输入（Ark 实测），同样是 exact，与全量重发场景一视同仁展示。
-  const hasRealtime = contextUsage != null && contextUsage.totalTokens > 0;
-  const hasContextWindow = hasRealtime
-    && typeof contextUsage!.maxTokens === 'number'
-    && contextUsage!.maxTokens > 0
-    && typeof contextUsage!.percentage === 'number';
-  const hasExactFallback = !hasRealtime && accounting?.exact === true && (tokenUsage?.contextTokens ?? 0) > 0;
-  const hasExactContext = hasRealtime || hasExactFallback;
-  const displayTokens = hasRealtime
-    ? contextUsage!.totalTokens
-    : hasExactFallback
-      ? tokenUsage!.contextTokens
-      : cumulativeTokens;
-  if (displayTokens === 0) return null;
-
-  // 百分比接近 autoCompactThreshold 时变色预警
-  // threshold 未定义时不计算预警（保持中性色），避免用 1 作为默认导致预警色永远不触发
-  const percentage = hasContextWindow ? contextUsage!.percentage! : 0;
-  const threshold = contextUsage?.autoCompactThreshold;
-  const hasThreshold = hasContextWindow && threshold != null;
-  const nearThreshold = hasThreshold && percentage >= threshold! * 0.8;
-  const overThreshold = hasThreshold && percentage >= threshold!;
   const buttonColor = overThreshold ? 'text-rose-600 dark:text-rose-400'
     : nearThreshold ? 'text-amber-600 dark:text-amber-400'
     : 'text-muted-foreground';
-  const label = (
-    <>
-      {hasExactContext ? formatTokenCount(displayTokens) : `累计 ${formatTokenCount(displayTokens)}`}
-      {hasContextWindow && ` · ${(percentage * 100).toFixed(0)}%`}
-    </>
-  );
-  const title = hasRealtime && hasContextWindow
-    ? `上下文占用：${formatTokenCount(displayTokens)} / ${formatTokenCount(contextUsage!.maxTokens!)} (${(percentage * 100).toFixed(1)}%)`
-    : hasRealtime
-      ? `当前上下文：${formatTokenCount(displayTokens)}`
-    : hasExactFallback
-      ? `当前上下文：${formatTokenCount(displayTokens)}（provider usage）`
-      : `${accounting?.label ?? '上下文不可确认'}：显示累计用量`;
-  const realtimeCacheRatio = typeof contextUsage?.cacheHitRatio === 'number'
-    ? contextUsage.cacheHitRatio
-    : undefined;
-  const tokenCacheRatio = typeof tokenUsage?.cacheHitRatio === 'number'
-    ? tokenUsage.cacheHitRatio
-    : undefined;
-  const cacheHitRatio = hasRealtime && realtimeCacheRatio !== undefined
-    ? realtimeCacheRatio
-    : tokenCacheRatio;
-  const subagentUsage = tokenUsage?.subagentUsage;
-  const parentCumulativeTokens = tokenUsage
-    ? Math.max(0, cumulativeTokens - tokenUsage.subagentTotalTokens)
-    : 0;
 
   // Hero 卡：百分比大数字 + 进度条的状态色，与积分弹窗预算条同一套语义
   const heroPercentColor = overThreshold ? 'text-rose-600 dark:text-rose-400'
     : nearThreshold ? 'text-amber-600 dark:text-amber-400'
     : 'text-foreground';
   const barColor = overThreshold ? 'bg-rose-500' : nearThreshold ? 'bg-amber-500' : 'bg-brand-500';
-  const thresholdTokens = hasThreshold ? Math.floor(contextUsage!.maxTokens! * threshold!) : 0;
   const breakdown = hasRealtime ? contextUsage!.breakdown : undefined;
   // Hero 第二列：任务累计消耗。与「当前上下文」是两个维度——
   // 前者只增不减、关联成本；后者是窗口占用、会被压缩重置。
@@ -305,7 +275,7 @@ export function TokenUsageDisplay({
                         <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">
                           <span className="block">当前上下文</span>
                           <span className="mt-0.5 block truncate tabular-nums">
-                            {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                            {formatTokenCount(displayTokens)} / {formatTokenCount(maxTokens!)}
                           </span>
                         </div>
                       </>
@@ -326,7 +296,7 @@ export function TokenUsageDisplay({
                   </div>
                   <div className="min-w-0 border-l border-border/60 pl-2">
                     <div className="text-xl font-semibold leading-none tabular-nums">
-                      {cacheHitRatio !== undefined ? formatPercent(cacheHitRatio) : '—'}
+                      {cacheHitRatio !== null ? formatUsagePercent(cacheHitRatio) : '—'}
                     </div>
                     <div className="mt-1.5 text-[9px] leading-tight text-muted-foreground">
                       缓存命中率
@@ -339,7 +309,7 @@ export function TokenUsageDisplay({
                     {(percentage * 100).toFixed(1)}%
                   </span>
                   <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                    当前上下文 {formatTokenCount(displayTokens)} / {formatTokenCount(contextUsage!.maxTokens!)}
+                    当前上下文 {formatTokenCount(displayTokens)} / {formatTokenCount(maxTokens!)}
                   </span>
                 </div>
               ) : (
@@ -365,18 +335,15 @@ export function TokenUsageDisplay({
                       />
                     )}
                   </div>
-                  {hasThreshold && contextUsage!.isAutoCompactEnabled && (
+                  {autoCompactHint && (
                     <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/80">
-                      自动压缩阈值 {formatTokenCount(thresholdTokens)}（{(threshold! * 100).toFixed(0)}%）
-                      {overThreshold
-                        ? ' · 已达阈值，即将自动压缩'
-                        : ` · 距压缩还剩 ${formatTokenCount(Math.max(0, thresholdTokens - displayTokens))}`}
+                      {autoCompactHint}
                     </p>
                   )}
                 </>
               )}
-              {hasExactFallback && accounting?.reason && (
-                <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/80">{accounting.reason}</p>
+              {accountingReason && (
+                <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/80">{accountingReason}</p>
               )}
             </div>
           ) : (
@@ -394,7 +361,7 @@ export function TokenUsageDisplay({
                 <span className="text-xs text-muted-foreground">tokens</span>
               </div>
               <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/80">
-                {accounting?.reason ?? '当前上下文口径不可确认，以上展示累计用量。'}
+                {accountingReason}
               </p>
             </div>
           )}
@@ -476,8 +443,8 @@ export function TokenUsageDisplay({
                   <DetailRow label="累计输出" value={tokenUsage.totalOutputTokens} />
                   <DetailRow label="缓存读取" value={tokenUsage.totalCacheReadTokens} />
                   <DetailRow label="缓存写入" value={tokenUsage.totalCacheCreationTokens} />
-                  {cacheHitRatio !== undefined && (
-                    <DetailRow label="缓存命中率" value={formatPercent(cacheHitRatio)} />
+                  {cacheHitRatio !== null && (
+                    <DetailRow label="缓存命中率" value={formatUsagePercent(cacheHitRatio)} />
                   )}
                   {tokenUsage.totalCostUsd != null && tokenUsage.totalCostUsd > 0 && (
                     <div className="flex items-center justify-between gap-4">
@@ -507,7 +474,7 @@ export function TokenUsageDisplay({
                       <DetailRow label="缓存写入（上报）" value={subagentUsage.cacheCreationTokens} />
                       <DetailRow label="输出" value={subagentUsage.outputTokens} />
                       {subagentUsage.cacheHitRatio != null && (
-                        <DetailRow label="缓存命中率" value={formatPercent(subagentUsage.cacheHitRatio)} />
+                        <DetailRow label="缓存命中率" value={formatUsagePercent(subagentUsage.cacheHitRatio)} />
                       )}
                       {subagentUsage.cacheCreationTokens === 0 && (
                         <p className="pt-0.5 text-[10px] leading-relaxed text-muted-foreground/80">

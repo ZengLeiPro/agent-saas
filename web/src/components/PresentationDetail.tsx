@@ -1,4 +1,5 @@
 import { createContext, Fragment, useContext } from "react";
+import { groupDetailLines } from "@agent/shared";
 import type { DetailLine, ToolPresentation } from "@agent/shared";
 import { Circle, CircleCheck, CircleX, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -195,45 +196,6 @@ function DetailRow({ line }: { line: DetailLine }) {
     );
   }
   return null;
-}
-
-/**
- * 连续的缺口/警告行聚合为一个橙底色块（demo B11 缺口区的容器形态）。
- * 紧邻其前的小节标题行被吸收为色块标题；没有则用默认标题。
- * 只影响 warn 行的排版分组，其他行原样保持顺序。
- */
-type DetailGroup =
-  | { kind: "line"; line: DetailLine }
-  | { kind: "warnGroup"; header: string; warns: string[] };
-
-const DEFAULT_WARN_HEADER = "需要注意";
-
-function isWarnLine(line: DetailLine | undefined): line is { warn: string } {
-  return typeof line === "object" && line !== null && "warn" in line;
-}
-
-export function groupDetailLines(detail: DetailLine[]): DetailGroup[] {
-  const groups: DetailGroup[] = [];
-  for (let i = 0; i < detail.length; i++) {
-    const line = detail[i];
-    const isSectionHeader = typeof line === "object" && line !== null && "section" in line;
-    if (isSectionHeader && isWarnLine(detail[i + 1])) {
-      const warns: string[] = [];
-      let j = i + 1;
-      for (; isWarnLine(detail[j]); j++) warns.push((detail[j] as { warn: string }).warn);
-      groups.push({ kind: "warnGroup", header: (line as { section: string }).section, warns });
-      i = j - 1;
-    } else if (isWarnLine(line)) {
-      const warns: string[] = [line.warn];
-      let j = i + 1;
-      for (; isWarnLine(detail[j]); j++) warns.push((detail[j] as { warn: string }).warn);
-      groups.push({ kind: "warnGroup", header: DEFAULT_WARN_HEADER, warns });
-      i = j - 1;
-    } else {
-      groups.push({ kind: "line", line });
-    }
-  }
-  return groups;
 }
 
 function WarnGroup({ header, warns }: { header: string; warns: string[] }) {

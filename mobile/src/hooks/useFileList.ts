@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authFetch } from '@agent/shared';
 import type { FileEntry, FileListResponse } from '@agent/shared';
 
 const CACHE_PREFIX = 'fileList:';
+const RECURSIVE_PAGE_SIZE = 200;
 
 function getCacheKey(path: string, recursive?: boolean, owner?: string, root?: boolean): string {
   return `${CACHE_PREFIX}${root ? '__root__:' : ''}${owner || ''}:${path}:${recursive ? '1' : '0'}`;
@@ -13,108 +14,130 @@ export function useFileList(path: string, recursive?: boolean, owner?: string, r
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [stale, setStale] = useState(false);
-  // Track the latest request to prevent stale responses from overwriting fresh data
+  const [error, setError] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+  const staleRef = useRef(false);
 
-  useEffect(() => {
-    const thisRequestId = ++requestIdRef.current;
-    let hasCache = false;
-
-    setLoading(true);
-
+  const fetchPage = useCallback(async (cursor: string | null, replace: boolean) => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const requestId = ++requestIdRef.current;
     const cacheKey = getCacheKey(path, recursive, owner, root);
 
-    // 1. Try cache first
-    AsyncStorage.getItem(cacheKey)
-      .then((raw) => {
-        if (thisRequestId !== requestIdRef.current) return;
-        if (raw) {
-          const cached = JSON.parse(raw) as { entries: FileEntry[]; parentPath: string | null };
-          if (cached.entries?.length) {
-            setEntries(cached.entries);
-            setParentPath(cached.parentPath);
-            setLoading(false);
-            setStale(true);
-            hasCache = true;
+    if (replace) {
+      setLoading(true);
+      setLoadingMore(false);
+      setError(null);
+      setNextCursor(null);
+      setStale(false);
+      staleRef.current = false;
+      // “全部”可能包含数万文件，不读写 AsyncStorage；文件夹视图保留快速缓存。
+      if (!recursive) {
+        try {
+          const raw = await AsyncStorage.getItem(cacheKey);
+          if (requestId !== requestIdRef.current) return;
+          if (raw) {
+            const cached = JSON.parse(raw) as { entries: FileEntry[]; parentPath: string | null };
+            if (cached.entries?.length) {
+              setEntries(cached.entries);
+              setParentPath(cached.parentPath);
+              setLoading(false);
+              setStale(true);
+              staleRef.current = true;
+            } else {
+              setEntries([]);
+            }
+          } else {
+            setEntries([]);
           }
+        } catch {
+          if (requestId === requestIdRef.current) setEntries([]);
         }
-      })
-      .catch(() => {});
-
-    // 2. Network request
-    const params = new URLSearchParams({ path });
-    if (recursive) params.set('recursive', 'true');
-    if (owner) params.set('owner', owner);
-    if (root) params.set('root', 'true');
-
-    authFetch(`/api/file/list?${params}`)
-      .then(async (res) => {
-        if (thisRequestId !== requestIdRef.current) return;
-        if (res.ok) {
-          const data = (await res.json()) as FileListResponse;
-          if (thisRequestId !== requestIdRef.current) return;
-          setEntries(data.entries);
-          setParentPath(data.parentPath);
-          setStale(false);
-
-          // Write cache (fire-and-forget)
-          AsyncStorage.setItem(cacheKey, JSON.stringify({
-            entries: data.entries,
-            parentPath: data.parentPath,
-          })).catch(() => {});
-        } else if (!hasCache) {
-          setEntries([]);
-          setParentPath(null);
-        }
-      })
-      .catch(() => {
-        if (thisRequestId !== requestIdRef.current) return;
-        // Network error: keep cached data if available
-        if (!hasCache) {
-          setEntries([]);
-          setParentPath(null);
-        }
-      })
-      .finally(() => {
-        if (thisRequestId !== requestIdRef.current) return;
-        setLoading(false);
-      });
-  }, [path, recursive, owner, root]);
-
-  const refresh = useCallback(async () => {
-    const cacheKey = getCacheKey(path, recursive, owner, root);
-    const thisRequestId = ++requestIdRef.current;
-
-    setLoading(true);
+      } else {
+        setEntries([]);
+        void AsyncStorage.removeItem(cacheKey).catch(() => {});
+      }
+    } else {
+      setLoadingMore(true);
+    }
 
     try {
       const params = new URLSearchParams({ path });
-      if (recursive) params.set('recursive', 'true');
+      if (recursive) {
+        params.set('recursive', 'true');
+        params.set('limit', String(RECURSIVE_PAGE_SIZE));
+        if (cursor) params.set('cursor', cursor);
+      }
       if (owner) params.set('owner', owner);
       if (root) params.set('root', 'true');
 
-      const res = await authFetch(`/api/file/list?${params}`);
-      if (thisRequestId !== requestIdRef.current) return;
-      if (res.ok) {
-        const data = (await res.json()) as FileListResponse;
-        setEntries(data.entries);
-        setParentPath(data.parentPath);
-        setStale(false);
-        AsyncStorage.setItem(cacheKey, JSON.stringify({
+      const res = await authFetch(`/api/file/list?${params}`, { signal: controller.signal });
+      if (requestId !== requestIdRef.current) return;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: '加载失败' })) as { error?: string };
+        throw new Error(data.error || '加载失败');
+      }
+      const data = (await res.json()) as FileListResponse;
+      if (requestId !== requestIdRef.current) return;
+      setEntries((previous) => replace ? data.entries : [...previous, ...data.entries]);
+      setParentPath(data.parentPath);
+      setNextCursor(data.nextCursor ?? null);
+      setStale(false);
+      staleRef.current = false;
+
+      if (!recursive) {
+        void AsyncStorage.setItem(cacheKey, JSON.stringify({
           entries: data.entries,
           parentPath: data.parentPath,
         })).catch(() => {});
       }
-    } catch { /* keep current data */ }
-    finally {
-      if (thisRequestId === requestIdRef.current) {
+    } catch (caught) {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+      if (replace) {
+        setError(caught instanceof Error ? caught.message : '加载失败');
+        if (!staleRef.current) {
+          setEntries([]);
+          setParentPath(null);
+        }
+      }
+    } finally {
+      if (requestId === requestIdRef.current) {
         setLoading(false);
+        setLoadingMore(false);
       }
     }
-  }, [path, recursive, owner, root]);
+  }, [owner, path, recursive, root]);
 
-  return { entries, parentPath, loading, refresh, stale };
+  useEffect(() => {
+    void fetchPage(null, true);
+    return () => {
+      requestIdRef.current += 1;
+      controllerRef.current?.abort();
+    };
+  }, [fetchPage]);
+
+  const refresh = useCallback(() => fetchPage(null, true), [fetchPage]);
+  const loadMore = useCallback(() => {
+    if (!nextCursor || loading || loadingMore) return Promise.resolve();
+    return fetchPage(nextCursor, false);
+  }, [fetchPage, loading, loadingMore, nextCursor]);
+
+  return {
+    entries,
+    parentPath,
+    loading,
+    loadingMore,
+    refresh,
+    loadMore,
+    hasMore: nextCursor !== null,
+    stale,
+    error,
+  };
 }
 
 /** Clear all file list caches (called on logout) */
@@ -122,8 +145,6 @@ export async function clearFileListCache(): Promise<void> {
   try {
     const keys = await AsyncStorage.getAllKeys();
     const cacheKeys = keys.filter(k => k.startsWith(CACHE_PREFIX));
-    if (cacheKeys.length > 0) {
-      await AsyncStorage.multiRemove(cacheKeys);
-    }
+    if (cacheKeys.length > 0) await AsyncStorage.multiRemove(cacheKeys);
   } catch { /* silent */ }
 }

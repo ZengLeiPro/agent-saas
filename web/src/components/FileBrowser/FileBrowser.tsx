@@ -171,7 +171,15 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
   const [imagePreview, setImagePreview] = useState<{ src: string; name: string } | null>(null);
 
   const listPath = viewMode === "all" ? "assets" : currentPath;
-  const { entries: rawEntries, loading, error, refresh } = useFileList(listPath, effectiveOwner, viewMode === "all");
+  const {
+    entries: rawEntries,
+    loading,
+    loadingMore,
+    error,
+    hasMore,
+    refresh,
+    loadMore,
+  } = useFileList(listPath, effectiveOwner, viewMode === "all");
 
   const entries = useMemo(
     () => sortEntries(rawEntries, sortKey, sortOrder),
@@ -299,7 +307,7 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
           className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={refresh}
           title="刷新"
-          disabled={loading}
+          disabled={loading || loadingMore}
         >
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </Button>
@@ -365,7 +373,7 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
             重试
           </Button>
         </div>
-      ) : entries.length === 0 ? (
+      ) : entries.length === 0 && !hasMore ? (
         <EmptyState variant={viewMode} />
       ) : (
         <ScrollArea className="flex-1">
@@ -380,6 +388,14 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
                   showPath={viewMode === "all"}
                 />
               ))}
+              {hasMore && (
+                <div className="flex justify-center py-3">
+                  <Button variant="ghost" size="sm" onClick={loadMore} disabled={loadingMore}>
+                    <RefreshCw className={cn("size-3.5", loadingMore && "animate-spin")} />
+                    {loadingMore ? "正在加载" : "加载更多"}
+                  </Button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-1 p-2">
@@ -391,6 +407,18 @@ export function FileBrowser({ onClose, onPreviewFile, owner, fullPage, reserveCl
                   onDelete={setDeleteTarget}
                 />
               ))}
+              {hasMore && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="col-span-full justify-self-center"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                >
+                  <RefreshCw className={cn("size-3.5", loadingMore && "animate-spin")} />
+                  {loadingMore ? "正在加载" : "加载更多"}
+                </Button>
+              )}
             </div>
           )}
         </ScrollArea>

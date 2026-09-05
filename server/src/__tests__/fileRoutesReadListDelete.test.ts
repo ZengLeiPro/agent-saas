@@ -368,7 +368,7 @@ describe("/api/file/list", () => {
     expect(alpha.modifiedAt).toBeGreaterThan(0);
   });
 
-  it("递归模式只收文件（无目录条目），嵌套路径正确，跳过 dot 目录与 symlink 目录", async () => {
+  it("递归模式按游标分页，只收文件且不重不漏，跳过 dot 目录与 symlink 目录", async () => {
     // dot 目录整体跳过；symlink 目录不跟随
     mkdirSync(join(userCwd, "assets", ".secretdir"));
     writeFileSync(join(userCwd, "assets", ".secretdir", "in.txt"), "IN");
@@ -377,19 +377,39 @@ describe("/api/file/list", () => {
     symlinkSync(join(tmpRoot, "linked-target"), join(userCwd, "assets", "linked"));
     await startAsUser();
 
-    const res = await fetch(listUrl("assets", "&recursive=true"));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.entries.every((e: any) => e.isDirectory === false)).toBe(true);
-    // 排序按 name（basename）字母序
-    expect(body.entries.map((e: any) => e.path)).toEqual([
+    const entries: any[] = [];
+    let cursor: string | null = null;
+    do {
+      const extra: string = `&recursive=true&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const res: Response = await fetch(listUrl("assets", extra));
+      expect(res.status).toBe(200);
+      const body = await res.json() as { entries: any[]; nextCursor: string | null };
+      expect(body.entries.length).toBeLessThanOrEqual(2);
+      expect(body.entries.every((e: any) => e.isDirectory === false)).toBe(true);
+      entries.push(...body.entries);
+      cursor = body.nextCursor;
+    } while (cursor);
+
+    expect(entries.map((e: any) => e.path)).toEqual([
       "assets/alpha.md",
-      "assets/reports/2026/deep.txt",
-      "assets/image.png",
       "assets/docs/readme.md",
       "assets/docs/util.ts",
+      "assets/image.png",
+      "assets/reports/2026/deep.txt",
       "assets/zeta.txt",
     ]);
+    expect(new Set(entries.map((e: any) => e.path)).size).toBe(entries.length);
+  });
+
+  it("递归分页拒绝无效 limit 与伪造游标", async () => {
+    await startAsUser();
+    const invalidLimit = await fetch(listUrl("assets", "&recursive=true&limit=501"));
+    expect(invalidLimit.status).toBe(400);
+    expect(await invalidLimit.json()).toEqual({ error: "Invalid limit" });
+
+    const invalidCursor = await fetch(listUrl("assets", "&recursive=true&cursor=not-a-cursor"));
+    expect(invalidCursor.status).toBe(400);
+    expect(await invalidCursor.json()).toEqual({ error: "Invalid cursor" });
   });
 
   it("memory 根目录允许列出（含 topics 子目录）", async () => {

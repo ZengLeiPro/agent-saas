@@ -1,12 +1,16 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent } from "react";
 import type { UploadedFile } from "@/components/types";
 import { authFetch } from "@/lib/authFetch";
 import { MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
-import { validateWebUploadedFiles } from "@/lib/chatSubmissionAdapter";
-import { validateAttachmentSelection } from "@agent/shared";
+import { acceptUploadedFiles, useAttachmentUploads, validateAttachmentSelection } from "@agent/shared";
 
-function revokeFilePreviews(files: UploadedFile[]): void {
+/**
+ * Web 附件上传：状态机内核在 shared `useAttachmentUploads`（与 mobile 共用），
+ * 这里只保留浏览器专有的部分——File 对象、图片 previewUrl、拖拽 / 粘贴 / 资料库选取。
+ */
+
+function revokeFilePreviews(files: readonly UploadedFile[]): void {
   files.forEach((file) => {
     if (file.previewUrl) {
       URL.revokeObjectURL(file.previewUrl);
@@ -53,78 +57,21 @@ export function useFileUpload(
   getSessionId?: () => string | null,
   boundary?: { online: boolean; identityKey: string },
 ): FileUploadState {
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const core = useAttachmentUploads({
+    boundary: boundary ? { ready: boundary.online, identityKey: boundary.identityKey } : undefined,
+    unavailableMessage: '网络已断开，请重新选择文件',
+    onDiscardFiles: revokeFilePreviews,
+  });
+  const { beginUpload, appendFiles, setUploadError, boundaryBlockReason, replaceFiles: replaceCoreFiles } = core;
   const [isDragging, setIsDragging] = useState(false);
-  const generationRef = useRef(0);
-  const nextUploadIdRef = useRef(0);
-  const activeUploadsRef = useRef(new Map<number, number>());
-  const abortControllersRef = useRef(new Map<number, AbortController>());
-  const boundaryRef = useRef(boundary);
-
-  const refreshUploading = useCallback(() => {
-    const currentGeneration = generationRef.current;
-    setUploading([...activeUploadsRef.current.values()].some((generation) => generation === currentGeneration));
-  }, []);
-
-  const dismissUploadError = useCallback(() => {
-    setUploadError(null);
-  }, []);
-
-  const reportUploadError = useCallback((message: string) => {
-    setUploadError(message);
-  }, []);
 
   const replaceFiles = useCallback((files: UploadedFile[]) => {
-    generationRef.current += 1;
-    for (const controller of abortControllersRef.current.values()) controller.abort();
-    abortControllersRef.current.clear();
-    activeUploadsRef.current.clear();
-    setUploadedFiles((previous) => {
-      revokeFilePreviews(previous);
-      return files;
-    });
-    setUploading(false);
-    setUploadError(null);
+    replaceCoreFiles(files);
     setIsDragging(false);
-  }, []);
-
-  const uploadedFilesRef = useRef<UploadedFile[]>([]);
-
-  // Keep ref in sync for cleanup
-  useEffect(() => {
-    uploadedFilesRef.current = uploadedFiles;
-  }, [uploadedFiles]);
-
-  // Cleanup previews on unmount
-  useEffect(() => {
-    return () => {
-      generationRef.current += 1;
-      for (const controller of abortControllersRef.current.values()) controller.abort();
-      abortControllersRef.current.clear();
-      activeUploadsRef.current.clear();
-      revokeFilePreviews(uploadedFilesRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    const previous = boundaryRef.current;
-    boundaryRef.current = boundary;
-    const identityChanged = !!previous && !!boundary && previous.identityKey !== boundary.identityKey;
-    const fenced = identityChanged || boundary?.online === false;
-    if (!fenced) return;
-    const hadActive = activeUploadsRef.current.size > 0;
-    generationRef.current += 1;
-    for (const controller of abortControllersRef.current.values()) controller.abort();
-    abortControllersRef.current.clear();
-    activeUploadsRef.current.clear();
-    setUploading(false);
-    if (hadActive) setUploadError(identityChanged ? '身份已切换，请重新选择文件' : '网络已断开，请重新选择文件');
-  }, [boundary?.identityKey, boundary?.online]);
+  }, [replaceCoreFiles]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
-    if (boundaryRef.current?.online === false) {
+    if (boundaryBlockReason()) {
       setUploadError('当前离线，无法上传');
       return;
     }
@@ -137,14 +84,7 @@ export function useFileUpload(
       return;
     }
 
-    const generation = generationRef.current;
-    const uploadId = ++nextUploadIdRef.current;
-    const controller = new AbortController();
-    activeUploadsRef.current.set(uploadId, generation);
-    abortControllersRef.current.set(uploadId, controller);
-    refreshUploading();
-    setUploadError(null);
-
+    const slot = beginUpload();
     try {
       const formData = new FormData();
       files.forEach((file) => {
@@ -157,7 +97,7 @@ export function useFileUpload(
       const response = await authFetch(uploadUrl, {
         method: "POST",
         headers: { "X-Upload-Request-Id": requestId },
-        signal: controller.signal,
+        signal: slot.signal,
         body: formData,
       });
 
@@ -170,35 +110,21 @@ export function useFileUpload(
       if (!data.success) {
         throw new Error(data.error || "Upload failed");
       }
-      if (generation !== generationRef.current) return;
-      const validation = validateWebUploadedFiles(data.files as UploadedFile[]);
-      if (!validation.ok) throw new Error(validation.issue.message);
-
-      const uploadedWithPreviews = data.files.map((file: UploadedFile, index: number) => {
+      if (!slot.isCurrent()) return;
+      appendFiles(acceptUploadedFiles(data.files as UploadedFile[], (file, index) => {
         const sourceFile = files[index];
-        if (file.isImage && sourceFile) {
-          return {
-            ...file,
-            attachmentId: validation.value[index].attachmentId,
-            previewUrl: URL.createObjectURL(sourceFile),
-          };
-        }
-        return { ...file, attachmentId: validation.value[index].attachmentId };
-      });
-
-      setUploadedFiles((previous) => [...previous, ...uploadedWithPreviews]);
+        return file.isImage && sourceFile ? { ...file, previewUrl: URL.createObjectURL(sourceFile) } : file;
+      }));
     } catch (error) {
-      if (generation === generationRef.current) {
+      if (slot.isCurrent()) {
         setUploadError(
           "上传失败：" + (error instanceof Error ? error.message : "未知错误"),
         );
       }
     } finally {
-      activeUploadsRef.current.delete(uploadId);
-      abortControllersRef.current.delete(uploadId);
-      refreshUploading();
+      slot.finish();
     }
-  }, [getSessionId, refreshUploading]);
+  }, [appendFiles, beginUpload, boundaryBlockReason, getSessionId, setUploadError]);
 
   const handleFileSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
@@ -216,10 +142,10 @@ export function useFileUpload(
 
     await uploadFiles(files);
     event.target.value = "";
-  }, [uploadFiles]);
+  }, [setUploadError, uploadFiles]);
 
   const handleAssetSelect = useCallback(async (paths: string[]) => {
-    if (boundaryRef.current?.online === false) {
+    if (boundaryBlockReason()) {
       const message = '当前离线，无法上传';
       setUploadError(message);
       throw new Error(message);
@@ -231,21 +157,14 @@ export function useFileUpload(
       throw new Error(message);
     }
 
-    const generation = generationRef.current;
-    const uploadId = ++nextUploadIdRef.current;
-    const controller = new AbortController();
-    activeUploadsRef.current.set(uploadId, generation);
-    abortControllersRef.current.set(uploadId, controller);
-    refreshUploading();
-    setUploadError(null);
-
+    const slot = beginUpload();
     try {
       const sessionId = getSessionId?.()?.trim();
       const uploadUrl = sessionId ? `/api/upload/assets?sessionId=${encodeURIComponent(sessionId)}` : "/api/upload/assets";
       const response = await authFetch(uploadUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        signal: slot.signal,
         body: JSON.stringify({ paths }),
       });
       const data = await response.json().catch(() => ({})) as {
@@ -256,24 +175,17 @@ export function useFileUpload(
       if (!response.ok || !data.success || !data.files) {
         throw new Error(data.error || `Upload failed: ${response.status}`);
       }
-      if (generation !== generationRef.current) return;
-      const validation = validateWebUploadedFiles(data.files);
-      if (!validation.ok) throw new Error(validation.issue.message);
-      setUploadedFiles((previous) => [...previous, ...data.files!.map((file, index) => ({
-        ...file,
-        attachmentId: validation.value[index].attachmentId,
-      }))]);
+      if (!slot.isCurrent()) return;
+      appendFiles(acceptUploadedFiles(data.files));
     } catch (error) {
-      if (generation === generationRef.current) {
+      if (slot.isCurrent()) {
         setUploadError(`添加资料失败：${error instanceof Error ? error.message : "未知错误"}`);
       }
       throw error;
     } finally {
-      activeUploadsRef.current.delete(uploadId);
-      abortControllersRef.current.delete(uploadId);
-      refreshUploading();
+      slot.finish();
     }
-  }, [getSessionId, refreshUploading]);
+  }, [appendFiles, beginUpload, boundaryBlockReason, getSessionId, setUploadError]);
 
   const handlePaste = useCallback(async (event: ClipboardEvent) => {
     const items = event.clipboardData?.items;
@@ -299,19 +211,7 @@ export function useFileUpload(
     }
 
     await uploadFiles(files);
-  }, [uploadFiles]);
-
-  const removeFile = useCallback((index: number) => {
-    setUploadedFiles((previous) => {
-      const next = [...previous];
-      const target = next[index];
-      if (target?.previewUrl) {
-        URL.revokeObjectURL(target.previewUrl);
-      }
-      next.splice(index, 1);
-      return next;
-    });
-  }, []);
+  }, [setUploadError, uploadFiles]);
 
   // 仅外部文件拖入才触发文件上传 UI；内部 element 拖拽（如分组重排）不应被拦截
   const isExternalFileDrag = (event: DragEvent): boolean => {
@@ -365,52 +265,25 @@ export function useFileUpload(
     }
 
     await uploadFiles(files);
-  }, [activeTab, uploadFiles]);
-
-  const clearFiles = useCallback(() => {
-    generationRef.current += 1;
-    for (const controller of abortControllersRef.current.values()) controller.abort();
-    abortControllersRef.current.clear();
-    activeUploadsRef.current.clear();
-    setUploading(false);
-    setUploadError(null);
-    setUploadedFiles((previous) => {
-      revokeFilePreviews(previous);
-      return [];
-    });
-  }, []);
-
-  const consumeFiles = useCallback((): UploadedFile[] => {
-    generationRef.current += 1;
-    for (const controller of abortControllersRef.current.values()) controller.abort();
-    abortControllersRef.current.clear();
-    activeUploadsRef.current.clear();
-    setUploading(false);
-    setUploadError(null);
-    const current = uploadedFilesRef.current;
-    setUploadedFiles([]);
-    // Note: we do NOT revoke previews here since caller may still need them briefly
-    // The caller is responsible for revoking after use
-    return current;
-  }, []);
+  }, [activeTab, setUploadError, uploadFiles]);
 
   return {
-    uploadedFiles,
-    uploading,
-    uploadError,
-    dismissUploadError,
-    reportUploadError,
+    uploadedFiles: core.uploadedFiles,
+    uploading: core.uploading,
+    uploadError: core.uploadError,
+    dismissUploadError: core.dismissUploadError,
+    reportUploadError: core.reportUploadError,
     isDragging,
     replaceFiles,
-    removeFile,
+    removeFile: core.removeFile,
     handleFileSelect,
     handleAssetSelect,
     handlePaste,
     handleDragOver,
     handleDragLeave,
     handleDrop,
-    clearFiles,
+    clearFiles: core.clearFiles,
     setIsDragging,
-    consumeFiles,
+    consumeFiles: core.consumeFiles,
   };
 }

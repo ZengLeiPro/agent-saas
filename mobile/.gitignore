@@ -46,3 +46,7 @@ builds/
 # generated native folders
 /ios
 /android
+
+# check:router-export 的临时导出产物
+.expo-export-ios/
+.expo-export-android/

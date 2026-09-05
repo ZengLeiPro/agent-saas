@@ -3,15 +3,15 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 352133,
+    "startupJsGzipBytes": 352537,
     "startupCssGzipBytes": 34963,
-    "startupJsBrotliBytes": 280720,
+    "startupJsBrotliBytes": 281108,
     "startupCssBrotliBytes": 27673,
-    "largestJsGzipBytes": 352133,
+    "largestJsGzipBytes": 352537,
     "largestCssGzipBytes": 34963,
-    "largestJsBrotliBytes": 280720,
+    "largestJsBrotliBytes": 281108,
     "largestCssBrotliBytes": 27673,
-    "largestJs": "assets/index-CC5cQjhE.js",
+    "largestJs": "assets/index-DJD9CuKm.js",
     "largestCss": "assets/index-CDFZj6l4.css"
   },
   "tolerance": {
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "记忆管理支持用户拍板的 1000 轮配置并统一中文说明；按当前 OSS 生产构建重新记录累计启动体积。CI 实测 JS gzip 352143B，较旧基线累计增加 1027B、超过既有容差 3B；本地同参数构建略有差异。启动请求数仍为 JS/CSS 各 1，无新增依赖，绝对上限与 1024B 容差保持不变。",
+  "reason": "P5-1 附件上传状态机下沉 shared useAttachmentUploads：Web useFileUpload 改为消费共享 hook，启动包 +1.4KB gzip（同一状态机不再两端各一份）",
   "updatedAt": "2026-09-05"
 }

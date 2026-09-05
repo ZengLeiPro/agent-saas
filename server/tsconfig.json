@@ -6,7 +6,9 @@
     "baseUrl": ".",
     "paths": {
       "@agent/shared": ["../shared/src/index.ts"],
-      "@agent/shared/*": ["../shared/src/*"]
+      "@agent/shared/*": ["../shared/src/*"],
+      "@kaiyan/ky-app-contract": ["../packages/ky-app-contract/src/index.ts"],
+      "@kaiyan/ky-app-server": ["../packages/ky-app-server/src/index.ts"]
     },
     "esModuleInterop": true,
     "strict": true,

@@ -31,10 +31,17 @@ test('分片脚本保留原 PR preflight 的全部门禁', () => {
   }
 });
 
-test('生产 server bundle 内联工作区 shared 包', () => {
+test('生产 server bundle 内联工作区 shared 包与 ky-app 契约包', () => {
   const build = serverPackage.scripts.build;
   assert.match(build, /--packages=external/u);
   assert.match(build, /--alias:@agent\/shared=\.\.\/shared\/src\/index\.ts/u);
+  // WP2a：@kaiyan/ky-app-contract 是 devDependency，生产 deploy 不装它，必须内联进 bundle。
+  assert.match(
+    build,
+    /--alias:@kaiyan\/ky-app-contract=\.\.\/packages\/ky-app-contract\/src\/index\.ts/u,
+  );
+  assert.equal(serverPackage.dependencies.jose, '^6.1.3');
+  assert.equal(serverPackage.dependencies.ajv, '^8.18.0');
 });
 
 test('本地 PR preflight 仍按原顺序串行执行全部任务', () => {

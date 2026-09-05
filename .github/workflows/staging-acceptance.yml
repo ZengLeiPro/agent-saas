@@ -60,7 +60,7 @@ jobs:
           ref: refs/tags/${{ inputs.release_id }}
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v6
+      - uses: ./.github/actions/setup-pnpm
       - name: Setup exact Runtime contract Node
         uses: actions/setup-node@v5
         with:

@@ -150,8 +150,8 @@ test('M10-05 runtime source has no location dependency, startup request, or acti
     activityReporter,
     /request\w*Permission|ActivityLocation|\bLocation\.|\{\s*location[,}]/,
   );
-  const auditList = readMobile('src/components/audit/AuditLogList.tsx');
-  assert.doesNotMatch(auditList, /item\.location|wgs84ToGcj02|openLocationInAmap/);
+  // 登录日志/审计移动页已随「管理后台留 Web」拍板整体删除（含位置展示代码），断言文件不再存在。
+  assert.equal(existsSync(resolve(MOBILE_ROOT, 'src/components/audit/AuditLogList.tsx')), false);
 
   for (const startupPath of [
     'app/_layout.tsx',

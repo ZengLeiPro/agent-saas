@@ -25,6 +25,7 @@ export {
   dockerAvailable,
   startDockerPostgres,
   usePgUrl,
+  waitForPostgresReady,
   looksLikeTestDatabase,
   type PgHandle,
 } from './harness/pg.js';

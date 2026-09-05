@@ -81,7 +81,7 @@ export async function resolveDatabase(
     if (explicit === undefined || explicit === '') {
       throw new Error('--pg url 需要 --database-url 或环境变量 TEST_DATABASE_URL');
     }
-    return { pg: usePgUrl(explicit), source: '外部提供的 DATABASE_URL' };
+    return { pg: usePgUrl(explicit, { log }), source: '外部提供的 DATABASE_URL' };
   }
   return {
     pg: await startDockerPostgres({ log }),
@@ -193,7 +193,11 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorRunResult
   let app: AppInstance | null = null;
   let secondApp: AppInstance | null = null;
   try {
+    // C-fix-01：两个 worker 都等同一个数据库就绪信号（`pg.ready()` 记忆化，只真正探测一次），
+    // 不各自猜，也不靠容器内的 pg_isready。
+    await pg.ready();
     app = await startApp({ projectDir, port: appPort, env, log });
+    await pg.ready();
     secondApp = await startApp({
       projectDir,
       port: secondPort,

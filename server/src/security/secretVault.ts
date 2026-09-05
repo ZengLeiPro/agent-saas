@@ -151,6 +151,26 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
   feishu_connector: { read: ['__system__'] },
   github_app: { read: ['__system__'] },
   // 配置 admin 的 revoke 与 write 同权：启用事务失败时必须撤销暂存 Secret。
+  // WP2a 定制项目对接（规范 §3.1/§3.2/§8.4）：SAT 私钥、安装密钥、服务凭据明文。
+  // 三者都只允许 __system__ 服务主体读写轮换撤销，任何 proxy actor 一律拒绝。
+  ky_app_installation_key: {
+    read: ['__system__'],
+    write: ['__system__'],
+    rotate: ['__system__'],
+    revoke: ['__system__'],
+  },
+  ky_app_sat_signing_key: {
+    read: ['__system__'],
+    write: ['__system__'],
+    rotate: ['__system__'],
+    revoke: ['__system__'],
+  },
+  ky_app_service_credential: {
+    read: ['__system__'],
+    write: ['__system__'],
+    rotate: ['__system__'],
+    revoke: ['__system__'],
+  },
   image_gen_tools: {
     read: ['__system__'],
     write: ['image_gen_config_admin'],

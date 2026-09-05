@@ -10,7 +10,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
+describePg('Entitlement 资源范围基线 PostgreSQL 合约', () => {
   const prefix = `scopebase_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgEntitlementStore;
@@ -88,12 +88,12 @@ describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
     };
     await expect(store.backfillMissingResourceScopes(input)).resolves.toMatchObject({
       scopesInserted: 2,
-      scopesSkipped: 4,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length - 2,
       tenantsWithErrors: 0,
     });
     await expect(store.backfillMissingResourceScopes(input)).resolves.toMatchObject({
       scopesInserted: 0,
-      scopesSkipped: 6,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length,
       tenantsWithErrors: 0,
     });
     expect(

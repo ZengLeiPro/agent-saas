@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -51,29 +51,32 @@ for (const [packageDir, files] of [...packageFiles].sort(([a], [b]) => a.localeC
     .map((path) => relative(packageRoot, join(root, path)).split(sep).join('/'));
   const serverGlobalTypeFiles = ['src/auth/types.ts'];
   const chunkSize = 4;
-  for (let index = 0; index < relativeFiles.length; index += chunkSize) {
-    const chunk = relativeFiles.slice(index, index + chunkSize);
-    console.log(
-      `[typecheck:staged] server: ${index + 1}-${index + chunk.length}/${relativeFiles.length}`,
-    );
-    run([
-      '-F',
-      'server',
-      'exec',
-      'tsc',
-      '--noEmit',
-      '--target',
-      'ES2022',
-      '--module',
-      'ESNext',
-      '--moduleResolution',
-      'bundler',
-      '--esModuleInterop',
-      '--strict',
-      '--skipLibCheck',
-      ...declarationFiles,
-      ...serverGlobalTypeFiles,
-      ...chunk,
-    ]);
+  // 走临时 tsconfig 而不是命令行开关：server 的 tsconfig 里有 paths（@agent/shared、
+  // @kaiyan/ky-app-*），这些工作区包只在源码里存在（dist 不入库），命令行形态解析不到。
+  // 覆盖 include 为空，保证仍然只编译本次暂存的文件。
+  const stagedConfigPath = join(packageRoot, 'tsconfig.staged.json');
+  try {
+    for (let index = 0; index < relativeFiles.length; index += chunkSize) {
+      const chunk = relativeFiles.slice(index, index + chunkSize);
+      console.log(
+        `[typecheck:staged] server: ${index + 1}-${index + chunk.length}/${relativeFiles.length}`,
+      );
+      writeFileSync(
+        stagedConfigPath,
+        `${JSON.stringify(
+          {
+            extends: './tsconfig.json',
+            compilerOptions: { noEmit: true, incremental: false, tsBuildInfoFile: null },
+            include: [],
+            files: [...declarationFiles, ...serverGlobalTypeFiles, ...chunk],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      run(['-F', 'server', 'exec', 'tsc', '--noEmit', '-p', 'tsconfig.staged.json']);
+    }
+  } finally {
+    rmSync(stagedConfigPath, { force: true });
   }
 }

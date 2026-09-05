@@ -15,6 +15,10 @@ test('分片脚本保留原 PR preflight 的全部门禁', () => {
     "pnpm -r --filter './packages/*' test",
     "pnpm -r --filter './packages/*' build",
     'pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts',
+    // WP2a：v41 迁移与定制项目 store 的 PG 合约必须在 postgres 任务显式清单里。
+    'src/__tests__/entitlementScopeBaseline.pg.test.ts',
+    'src/kyapp/systems/store.pg.test.ts',
+    'src/kyapp/__tests__/kyAppStores.pg.test.ts',
     'pnpm test:release-contracts',
     'pnpm check:runtime-dependencies',
     'pnpm -F server typecheck',

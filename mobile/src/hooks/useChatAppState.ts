@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Alert, AppState, type AppStateStatus } from "react-native";
-import { File } from "expo-file-system";
 import type {
   MessageItem,
   AskUserAnswers,
@@ -25,20 +24,17 @@ import {
   wsClient,
   authFetch,
   processWsEvent,
-  projectInteractionResolution,
   finalizeRunningSubagents,
   getPlatform,
   useConnectionState,
   fetchAgentProfile,
   INPUT_DRAFT_KEY,
   createChatClientState,
-  createInteractionRequestId,
   isRememberedResolvedInteraction,
   rememberResolvedInteraction,
   reduceChatClientState,
   selectChatClientQueueItems,
   cacheKeyForIdentity,
-  adaptAgentTargetCatalogResponse,
   resolveLandingAgentTarget,
   resolveNewSessionAgentTarget,
 } from "@agent/shared";
@@ -53,7 +49,6 @@ import { useFileUpload } from "./useFileUpload";
 import { useAuth } from "../contexts/AuthContext";
 import { useLocalAppLock } from "../contexts/LocalAppLockContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
-import { acknowledgedInteractionResponse } from "./interactionResponseAck";
 import type { MessageItemInput } from "@agent/shared";
 import { canonicalChatAttachmentToDisplay } from "@agent/shared";
 import { buildMobileChatSubmission, toMobileChatWireMessage, validateMobileUploadedFiles } from "../lib/chatSubmissionAdapter";
@@ -62,44 +57,13 @@ import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chat
 import { telemetryClient } from '../telemetry/runtime';
 import { shouldProjectInteractionEvent } from '../lib/interactionProjectionFence';
 import { replaceRetryBubble } from '../lib/retryBubbleTransition';
+import { useAgentTargetCatalog } from "./useAgentTargetCatalog";
+import { useVoiceCapture } from "./useVoiceCapture";
+import { useInteractionResponses } from "./useInteractionResponses";
 import {
   applyReplayedSessionMetadata, markMessageBubbleFailed, useAgentProfile, useForkFromMessage,
   useModelSelection, useSessionParticipants, useStreamWatchdog,
 } from "@agent/shared";
-
-/** A response write is not an ACK; expire it so the interaction remains retryable. */
-const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
-
-function voiceFailureAction(code: string): string {
-  switch (code.toLowerCase()) {
-    case 'upload_failed': return '语音上传失败，请重录；也可改用文字发送。';
-    case 'stt_silence': return '未识别到有效语音，请重录或改用文字发送。';
-    case 'stt_timeout': return '语音识别超时，请重试录音或改用文字发送。';
-    case 'stt_not_configured': return '语音识别暂不可用，请改用文字发送。';
-    default: return '语音处理失败，请重录；仍失败时可改用文字发送。';
-  }
-}
-
-function createVoiceId(): string {
-  const id = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto?.randomUUID?.();
-  if (!id) throw new Error('设备安全随机数能力不可用');
-  return id;
-}
-
-function pendingInteractionKey(sessionId: string, interactionId: string): string {
-  return `${sessionId}\u0000${interactionId}`;
-}
-
-type PendingInteractionResponse = {
-  sessionId: string;
-  interactionId: string;
-  type: "permission_request" | "ask_user";
-  response: Record<string, unknown>;
-  version: number;
-  generation: number;
-  attemptId: string;
-  ackTimer?: ReturnType<typeof setTimeout>;
-};
 
 export interface ChatAppState {
   messages: MessageItem[];
@@ -197,53 +161,10 @@ export function useChatAppStateCore(): ChatAppState {
   const { user, identity } = useAuth();
   const localAppLock = useLocalAppLock();
   const isAdmin = user?.role === "admin";
-  const [agentTargetCatalog, setAgentTargetCatalog] = useState<AgentTargetCatalog<OrgAgentSummary> | null>(null);
-  const [agentTargetCatalogReason, setAgentTargetCatalogReason] = useState<AgentTargetUnavailableReason | null>(null);
-  const [agentTargetCatalogLoading, setAgentTargetCatalogLoading] = useState(true);
-  const agentTargetCatalogOwnerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
-  const agentTargetCatalogOwnerKeyRef = useRef(agentTargetCatalogOwnerKey);
-  agentTargetCatalogOwnerKeyRef.current = agentTargetCatalogOwnerKey;
-  const [pendingAgentTarget, setPendingAgentTargetState] = useState<AgentTarget | null>(null);
-  const pendingAgentTargetRef = useRef<AgentTarget | null>(null);
-  const setPendingAgentTarget = useCallback((target: AgentTarget | null) => {
-    pendingAgentTargetRef.current = target;
-    setPendingAgentTargetState(target);
-  }, []);
-
-  const refreshAgentTargetCatalog = useCallback(async () => {
-    const requestOwnerKey = agentTargetCatalogOwnerKey;
-    if (!user) {
-      setAgentTargetCatalog(null);
-      setAgentTargetCatalogReason(null);
-      setAgentTargetCatalogLoading(false);
-      return;
-    }
-    setAgentTargetCatalogLoading(true);
-    try {
-      const response = await authFetch('/api/org-agents/mine');
-      if (!response.ok) throw new Error('target_catalog_unavailable');
-      const adapted = adaptAgentTargetCatalogResponse<OrgAgentSummary>(await response.json(), user.tenantId);
-      if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
-      if (adapted.kind === 'catalog') {
-        setAgentTargetCatalog(adapted.catalog);
-        setAgentTargetCatalogReason(null);
-      } else {
-        setAgentTargetCatalog(null);
-        setAgentTargetCatalogReason(adapted.reason);
-      }
-    } catch {
-      if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
-      setAgentTargetCatalog(null);
-      setAgentTargetCatalogReason({ code: 'target_catalog_unavailable', message: 'Agent 目录加载失败，暂时无法发送。', contactAdmin: true });
-    } finally {
-      if (agentTargetCatalogOwnerKeyRef.current === requestOwnerKey) setAgentTargetCatalogLoading(false);
-    }
-  }, [agentTargetCatalogOwnerKey, user]);
-
-  useEffect(() => {
-    setPendingAgentTarget(null);
-    void refreshAgentTargetCatalog();
-  }, [refreshAgentTargetCatalog, setPendingAgentTarget]);
+  const {
+    agentTargetCatalog, agentTargetCatalogReason, agentTargetCatalogLoading, refreshAgentTargetCatalog,
+    pendingAgentTarget, pendingAgentTargetRef, setPendingAgentTarget,
+  } = useAgentTargetCatalog(user);
 
   // M20-04: drafts are account + tenant + generation scoped.
   const draftStorageKey = (() => { try { return cacheKeyForIdentity(identity, 'draft-text', 'new'); } catch { return null; } })();
@@ -381,7 +302,6 @@ export function useChatAppStateCore(): ChatAppState {
     createdAt: number;
   }
   const outboxRef = useRef<OutboxEntry[]>([]);
-  const pendingVoiceRef = useRef<{ base: CanonicalVoiceSubmission; serverText: string } | null>(null);
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -469,14 +389,10 @@ export function useChatAppStateCore(): ChatAppState {
     identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
   });
 
-  const voiceIdentityKey = identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous';
-  const voiceIdentityRef = useRef(voiceIdentityKey);
-  useEffect(() => {
-    if (voiceIdentityRef.current !== voiceIdentityKey) {
-      pendingVoiceRef.current = null;
-      voiceIdentityRef.current = voiceIdentityKey;
-    }
-  }, [voiceIdentityKey]);
+  const { sendVoiceMessage, pendingVoiceRef } = useVoiceCapture({
+    msg, fileUpload, setInput,
+    identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
+  });
 
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
@@ -484,36 +400,7 @@ export function useChatAppStateCore(): ChatAppState {
   stoppingRef.current = stopping;
   const msgRef = useRef(msg);
   msgRef.current = msg;
-  // 交互回复以服务端 ACK 为准；同一 interaction 在 ACK 到达前只允许一次提交。
-  const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
-  const interactionResponseGenerationRef = useRef(new Map<string, number>());
   const sessionIdRef = useRef<string | null>(null);
-  const releaseInteractionResponse = useCallback((key: string, generation: number, error: string) => {
-    const pending = pendingInteractionResponsesRef.current.get(key);
-    if (!pending || pending.generation !== generation) return;
-    if (pending.ackTimer) clearTimeout(pending.ackTimer);
-    pendingInteractionResponsesRef.current.delete(key);
-    if (sessionIdRef.current !== pending.sessionId) return;
-    // Keep the card pending, so its normal UI is immediately retryable.
-    msgRef.current.addMessage({
-      type: "system-error",
-      severity: "error",
-      content: `回复未确认：${error}。请重试。`,
-      timestamp: Date.now(),
-    });
-  }, []);
-  const releaseAllInteractionResponses = useCallback((error: string) => {
-    for (const [key, pending] of [...pendingInteractionResponsesRef.current]) {
-      releaseInteractionResponse(key, pending.generation, error);
-    }
-  }, [releaseInteractionResponse]);
-  const settleInteractionResponse = useCallback((sessionId: string, interactionId: string) => {
-    const key = pendingInteractionKey(sessionId, interactionId);
-    const pending = pendingInteractionResponsesRef.current.get(key);
-    if (!pending) return;
-    if (pending.ackTimer) clearTimeout(pending.ackTimer);
-    pendingInteractionResponsesRef.current.delete(key);
-  }, []);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(null);
   const refreshTokenUsageRef = useRef<() => void>(() => {});
@@ -682,6 +569,10 @@ export function useChatAppStateCore(): ChatAppState {
   });
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const {
+    releaseAllInteractionResponses, settleInteractionResponse, resolveInteractionResponse,
+    handlePermissionResponse, handleAskUserResponse, clearPendingInteractionResponses,
+  } = useInteractionResponses({ msgRef, sessionIdRef, sessionRef, resolvedInteractionIdsRef });
   const currentSessionItem = session.sessionId
     ? session.sessions.find(item => item.sessionId === session.sessionId)
     : undefined;
@@ -845,10 +736,7 @@ export function useChatAppStateCore(): ChatAppState {
       // 清 ACK 超时定时器
       for (const t of ackTimersRef.current.values()) clearTimeout(t);
       ackTimersRef.current.clear();
-      for (const pending of pendingInteractionResponsesRef.current.values()) {
-        if (pending.ackTimer) clearTimeout(pending.ackTimer);
-      }
-      pendingInteractionResponsesRef.current.clear();
+      clearPendingInteractionResponses();
     };
   }, [dispatchConnection, makeResumeMessage, releaseAllInteractionResponses]);
 
@@ -1030,71 +918,6 @@ export function useChatAppStateCore(): ChatAppState {
     [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState, agentTargetCatalogReason],
   );
 
-
-  const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: "respond_ok" | "respond_error" }>) => {
-    const ackAttemptId = data.clientAttemptId;
-    const candidates = [...pendingInteractionResponsesRef.current.entries()].filter(([, pending]) =>
-      pending.interactionId === data.interactionId
-      && (!data.sessionId || pending.sessionId === data.sessionId)
-      && (!ackAttemptId || pending.attemptId === ackAttemptId),
-    );
-    const matched = candidates.length === 1 ? candidates[0] : undefined;
-    if (!matched) return;
-    const [key, pending] = matched;
-    if (ackAttemptId === undefined && pending.generation > 1) return;
-    if (data.version !== undefined && data.version !== pending.version) return;
-
-    if (pending.ackTimer) clearTimeout(pending.ackTimer);
-    if (data.type === 'respond_ok' && data.status === 'accepted') {
-      // accepted 只确认服务端接管了请求，仍需等待 canonical terminal；丢帧时释放提交锁供重试。
-      pending.ackTimer = setTimeout(() => {
-        releaseInteractionResponse(key, pending.generation, "等待服务端完成超时");
-      }, INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
-      return;
-    }
-    pendingInteractionResponsesRef.current.delete(key);
-
-    if (data.type === "respond_ok") {
-      rememberResolvedInteraction(resolvedInteractionIdsRef.current, pending.sessionId, pending.interactionId);
-      sessionRef.current.applySessionInteractionEvent?.({
-        type: 'resolved',
-        sessionId: pending.sessionId,
-        interactionId: pending.interactionId,
-      });
-    }
-    // ACK 归属原会话；用户已切到其他会话时不得修改当前消息投影。
-    if (sessionIdRef.current !== pending.sessionId) return;
-
-    if (data.type === "respond_ok") {
-      const canonicalResponse = acknowledgedInteractionResponse(data, pending.response);
-      msgRef.current.setMessages(projectInteractionResolution(
-        msgRef.current.messagesRef.current,
-        pending.interactionId,
-        canonicalResponse,
-      ));
-      return;
-    }
-
-    const idx = msgRef.current.messagesRef.current.findIndex((m) =>
-      m.type === pending.type && m.interactionId === pending.interactionId,
-    );
-    if (idx < 0) return;
-
-    // 失败时卡片始终保持 pending，用户可直接重试；错误另以系统消息可见地呈现。
-    msgRef.current.updateMessageAt(idx, (m) =>
-      m.type === pending.type && m.interactionId === pending.interactionId
-        ? { ...m, status: "pending" as const }
-        : m,
-    );
-    const reason = data.error || "服务端拒绝了该回复";
-    Alert.alert("回复未提交", `${reason}。请重试。`);
-    msgRef.current.addMessage({
-      type: "system-error",
-      severity: "error",
-      content: `回复未提交：${reason}。请重试。`,
-      timestamp: Date.now(),
-    });
-  }, [releaseInteractionResponse]);
 
   // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
@@ -1803,61 +1626,6 @@ export function useChatAppStateCore(): ChatAppState {
     void sendChatViaWs(trimmedInput, capturedFiles, !voice, voice);
   }, [activeAgentTarget, activeAgentTargetUnavailableReason, input, fileUpload, msg, sendChatViaWs]);
 
-  // Record -> controlled M50-03 upload -> authoritative STT -> editable draft. No automatic dispatch.
-  const sendVoiceMessage = useCallback(async (fileUri: string, durationMs: number) => {
-    const voiceIntentId = createVoiceId();
-    const uploadRequestId = createVoiceId();
-    const transcriptionRequestId = createVoiceId();
-    const durationSec = Math.round(durationMs / 1000);
-    const voiceMsgIndex = msg.addMessage({
-      type: "user-voice", audioUrl: "", duration: durationSec, status: "uploading", timestamp: Date.now(),
-    });
-    msg.triggerScroll();
-    try {
-      const formData = new FormData();
-      formData.append("files", { uri: fileUri, name: `voice_${voiceIntentId}.wav`, type: "audio/wav" } as unknown as Blob);
-      const uploadRes = await authFetch("/api/upload", {
-        method: "POST", body: formData, headers: { "X-Upload-Request-Id": uploadRequestId },
-      });
-      const uploadData = await uploadRes.json() as { success?: boolean; files?: Array<{ attachmentId?: string; originalName?: string; size?: number; mimeType?: string; isImage?: boolean }> };
-      const uploaded = uploadData.files?.[0];
-      if (!uploadRes.ok || !uploadData.success || !uploaded?.attachmentId) throw new Error("upload_failed");
-      const audioUrl = `/api/attachments/${encodeURIComponent(uploaded.attachmentId)}/content`;
-      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
-        ? { ...m, audioUrl, attachmentId: uploaded.attachmentId, voiceIntentId, uploadRequestId, status: "transcribing" as const }
-        : m);
-      const sttRes = await authFetch('/api/voice/transcriptions', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestId: transcriptionRequestId, attachmentId: uploaded.attachmentId, durationMs }),
-      });
-      const sttData = await sttRes.json() as { success?: boolean; result?: { transcriptionId: string; text: string; durationMs: number }; error?: { code?: string; message?: string } };
-      if (!sttRes.ok || !sttData.success || !sttData.result) throw new Error(sttData.error?.code || 'stt_provider_error');
-      const base: CanonicalVoiceSubmission = {
-        voiceIntentId, uploadRequestId, attachmentId: uploaded.attachmentId,
-        transcriptionId: sttData.result.transcriptionId, durationMs: sttData.result.durationMs,
-        transcript: { status: 'ready', text: sttData.result.text, edited: false, source: 'server_stt' },
-      };
-      pendingVoiceRef.current = { base, serverText: sttData.result.text };
-      fileUpload.addUploadedFiles([{
-        attachmentId: uploaded.attachmentId, originalName: uploaded.originalName || '语音.wav', relativePath: '',
-        size: uploaded.size ?? 0, mimeType: uploaded.mimeType || 'audio/wav', isImage: false,
-      }]);
-      setInput(sttData.result.text);
-      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
-        ? { ...m, transcribedText: sttData.result!.text, transcriptionId: sttData.result!.transcriptionId, status: "ready" as const }
-        : m);
-    } catch (error) {
-      const code = error instanceof Error ? error.message : 'stt_provider_error';
-      const reasonCode = ['upload_failed', 'stt_provider_error', 'transcription_failed'].includes(code.toLowerCase()) ? code.toLowerCase() : 'voice_failed';
-      telemetryClient()?.capture('voice_error', { correlationId: voiceIntentId, measurements: { reasonCode } });
-      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
-        ? { ...m, status: "failed" as const, failedReason: voiceFailureAction(code) }
-        : m);
-    } finally {
-      try { new File(fileUri).delete(); } catch {}
-    }
-  }, [fileUpload, msg]);
-
   const retryMessage = useCallback(
     (message: MessageItem) => {
       if (message.type !== "user" || message.status !== "failed") return;
@@ -1910,80 +1678,6 @@ export function useChatAppStateCore(): ChatAppState {
       );
     },
     [msg, sendChatViaWs, fileUpload],
-  );
-
-  const respondToInteraction = useCallback(
-    async (
-      interactionId: string,
-      type: "permission_request" | "ask_user",
-      response: Record<string, unknown>,
-    ) => {
-      const currentSessionId = sessionIdRef.current;
-      if (!currentSessionId) return;
-      const key = pendingInteractionKey(currentSessionId, interactionId);
-      // A live attempt owns the submit slot only inside its canonical session.
-      if (pendingInteractionResponsesRef.current.has(key)) return;
-      const generation = (interactionResponseGenerationRef.current.get(key) ?? 0) + 1;
-      const interactionMessage = msgRef.current.messagesRef.current.find((message) =>
-        (message.type === 'permission_request' || message.type === 'ask_user') && message.interactionId === interactionId,
-      ) as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }> | undefined;
-      const version = interactionMessage?.interactionVersion;
-      if (!Number.isSafeInteger(version)) return; // fail closed until authoritative interaction detail is hydrated
-      interactionResponseGenerationRef.current.set(key, generation);
-      const attemptId = createInteractionRequestId(currentSessionId, interactionId, response);
-      pendingInteractionResponsesRef.current.set(key, {
-        sessionId: currentSessionId,
-        interactionId,
-        type,
-        response,
-        version: version!,
-        generation,
-        attemptId,
-      });
-
-      let ok = false;
-      try {
-        ok = await wsClient.ensureConnectedSend({
-          action: "respond",
-          interactionId,
-          sessionId: currentSessionId,
-          version,
-          requestId: attemptId,
-          clientAttemptId: attemptId,
-          response,
-          ...response,
-        });
-      } catch {
-        // A transport exception has the same retry semantics as a negative ACK.
-      }
-      const pending = pendingInteractionResponsesRef.current.get(key);
-      if (!pending || pending.generation !== generation) return;
-      if (!ok) {
-        releaseInteractionResponse(key, generation, "网络连接失败");
-        return;
-      }
-      pending.ackTimer = setTimeout(() => {
-        releaseInteractionResponse(key, generation, "等待服务端确认超时");
-      }, INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
-    },
-    [releaseInteractionResponse],
-  );
-
-  const handlePermissionResponse = useCallback(
-    async (interactionId: string, allow: boolean) => {
-      await respondToInteraction(interactionId, "permission_request", {
-        allow,
-        message: allow ? undefined : "User denied",
-      });
-    },
-    [respondToInteraction],
-  );
-
-  const handleAskUserResponse = useCallback(
-    async (interactionId: string, answers: AskUserAnswers) => {
-      await respondToInteraction(interactionId, "ask_user", { answers });
-    },
-    [respondToInteraction],
   );
 
   // 包装 selectSession/newSession 以同步更新 immediateSessionIdRef

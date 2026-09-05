@@ -327,6 +327,8 @@ export type ModelEvent =
     terminalStatus?: ModelTerminalStatus;
     incompleteReason?: string;
     errorCode?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+    quotaResetAt?: string;
     /** Provider 结构化失败消息；只用于恢复判定和后台诊断，不直接展示给客户。 */
     errorMessage?: string;
     /** 本次 provider 请求与 attempt 的诊断关联键。 */
@@ -387,21 +389,7 @@ export interface ModelAdapter {
   stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent>;
 }
 
-/** 发流前 provider 失败的结构化错误；避免在 adapter 边界退化成不可审计字符串。 */
-export class ModelProviderError extends Error {
-  readonly name = 'ModelProviderError';
-
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly code: string,
-    readonly modelRequestId: string,
-    readonly attemptId: string,
-    readonly emittedOutputCount: number, readonly failureKind?: RuntimeFailureKind, readonly recoveryAction?: RuntimeRecoveryAction, readonly partialContent?: string,
-  ) {
-    super(message);
-  }
-}
+export { ModelProviderError } from './failureTypes.js';
 
 export interface AgentLoop {
   run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent>;
@@ -727,6 +715,8 @@ export type PlatformEvent =
      * 导致仅凭 sessionId 无法在审计中复盘失败原因。本字段补齐这条断链。
      */
     error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+    quotaResetAt?: string;
   }
   | {
     id: string;
@@ -799,6 +789,8 @@ export type PlatformEvent =
     status: RunStatus;
     previousStatus?: RunStatus;
     reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+    quotaResetAt?: string;
   }
   | SessionReadStateChangedEvent
   | {

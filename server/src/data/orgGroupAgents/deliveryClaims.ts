@@ -1,6 +1,6 @@
 import type pg from 'pg';
 
-import type { DwsDeliveryIntent } from './types.js';
+import type { DwsDeliveryIntent, DwsReplyRecoveryState } from './types.js';
 import { mapDelivery } from './storeMappers.js';
 
 export const DELIVERY_MAX_ATTEMPTS = 5;
@@ -14,6 +14,7 @@ export function deliveryRetryDelayMs(attempt: number): number {
 
 export interface DeliveryClaimTables {
   deliveries: string;
+  inbox: string;
   workOrders: string;
   attempts: string;
 }
@@ -41,15 +42,53 @@ export function sanitizeDeliveryReceipt(value: Record<string, unknown>): Record<
   return result;
 }
 
+/** Linearizes the millisecond-normalized account identity fence with provider start. */
 export async function startDeliveryProviderAttempt(
-  pool: pg.Pool, deliveriesTable: string, deliveryId: string, owner: string, fence: number,
+  pool: pg.Pool, deliveriesTable: string, accountsTable: string,
+  bindingsTable: string, managedAgentsTable: string,
+  deliveryId: string, owner: string, fence: number,
 ): Promise<DwsDeliveryIntent> {
   const result = await pool.query(
-    `UPDATE ${deliveriesTable}
+    `UPDATE ${deliveriesTable} AS delivery
     SET provider_started_at=NOW(),provider_attempt_phase='provider_started',updated_at=NOW()
     WHERE delivery_id=$1 AND delivery_state='sending' AND lease_owner=$2 AND lease_fence=$3
       AND lease_expires_at>NOW() AND provider_attempt_phase='before_provider'
-      AND provider_started_at IS NULL RETURNING *`,
+      AND provider_started_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM ${accountsTable} AS account
+        WHERE account.tenant_id=delivery.tenant_id AND account.account_id=delivery.account_id
+          AND account.status='active'
+          AND account.profile_id=delivery.account_profile_id
+          AND account.corp_id=delivery.account_corp_id
+          AND account.dingtalk_user_id=delivery.account_dingtalk_user_id
+          AND date_trunc('milliseconds', account.identity_updated_at)
+            =date_trunc('milliseconds', delivery.account_identity_updated_at)
+      )
+      AND (
+        (delivery.binding_id IS NULL AND delivery.agent_id IS NULL
+          AND delivery.policy_revision IS NULL)
+        OR EXISTS (
+          SELECT 1 FROM ${bindingsTable} AS binding
+          JOIN ${managedAgentsTable} AS agent
+            ON agent.tenant_id=binding.tenant_id AND agent.agent_id=binding.agent_id
+          WHERE binding.tenant_id=delivery.tenant_id
+            AND binding.account_id=delivery.account_id
+            AND binding.conversation_id=delivery.conversation_id
+            AND binding.binding_id=delivery.binding_id
+            AND binding.agent_id=delivery.agent_id
+            AND binding.revision=delivery.policy_revision
+            AND binding.activation_state='active' AND binding.enabled=TRUE
+            AND binding.policy_json->>'enabled'='true'
+            AND COALESCE(binding.policy_json->>'liveDeny','false')='false'
+            AND binding.account_profile_id=delivery.account_profile_id
+            AND binding.account_corp_id=delivery.account_corp_id
+            AND binding.account_dingtalk_user_id=delivery.account_dingtalk_user_id
+            AND date_trunc('milliseconds', binding.account_identity_updated_at)
+              =date_trunc('milliseconds', delivery.account_identity_updated_at)
+            AND agent.status='enabled'
+        )
+      )
+    RETURNING delivery.*`,
     [deliveryId, owner, fence],
   );
   if (!result.rows[0]) throw new Error('DWS_DELIVERY_LEASE_LOST');
@@ -209,6 +248,54 @@ export async function claimDeliveryIntent(
   return result.rows[0] ? mapDelivery(result.rows[0] as Record<string, unknown>) : null;
 }
 
+export async function cancelUnstartedDeliveryIntentsForInbox(
+  pool: pg.Pool,
+  deliveriesTable: string,
+  tenantId: string,
+  inboxId: string,
+  reason: string,
+): Promise<number> {
+  // Unknown legacy claims are quarantined so no worker can send them after inbox recovery.
+  const result = await pool.query(
+    `UPDATE ${deliveriesTable}
+    SET delivery_state=CASE WHEN provider_attempt_phase='before_provider'
+          THEN 'dead_letter' ELSE 'unknown' END,
+        lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+        last_error=$3,completed_at=NOW(),updated_at=NOW()
+    WHERE tenant_id=$1 AND inbox_id=$2 AND provider_started_at IS NULL
+      AND delivery_state IN ('pending','sending')`,
+    [tenantId, inboxId, compactDeliveryError(reason)],
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function getReplyRecoveryStateForInbox(
+  pool: pg.Pool,
+  deliveriesTable: string,
+  tenantId: string,
+  inboxId: string,
+): Promise<DwsReplyRecoveryState> {
+  const result = await pool.query<{ recovery_state: DwsReplyRecoveryState }>(
+    `SELECT CASE
+      WHEN COUNT(*) FILTER (WHERE delivery_state='unknown'
+        OR (delivery_state<>'sent' AND NOT (
+          (provider_attempt_phase='before_provider' AND provider_started_at IS NULL)
+          OR (delivery_state='dead_letter' AND provider_attempt_phase='provider_started'
+            AND provider_started_at IS NOT NULL
+            AND COALESCE(last_error,'') LIKE 'ORG_AGENT_PROVIDER_AUTHORIZATION_%')
+        ))) > 0 THEN 'unknown'
+      WHEN COUNT(*) FILTER (WHERE delivery_state='sent') > 0 THEN 'sent'
+      WHEN COUNT(*) > 0 THEN 'unstarted'
+      ELSE 'none'
+    END AS recovery_state
+    FROM ${deliveriesTable}
+    WHERE tenant_id=$1 AND inbox_id=$2
+      AND delivery_kind='front_reply' AND disposition='replied'`,
+    [tenantId, inboxId],
+  );
+  return result.rows[0]?.recovery_state ?? 'none';
+}
+
 export async function claimNextDeliveryIntent(
   pool: pg.Pool,
   tables: DeliveryClaimTables,
@@ -220,6 +307,12 @@ export async function claimNextDeliveryIntent(
       SELECT delivery_id FROM ${tables.deliveries} pending_delivery
       WHERE delivery_state='pending'
         AND (next_attempt_at IS NULL OR next_attempt_at<=NOW())
+        AND (pending_delivery.inbox_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM ${tables.inbox} inbound
+          WHERE inbound.tenant_id=pending_delivery.tenant_id
+            AND inbound.inbox_id=pending_delivery.inbox_id
+            AND inbound.state IN ('reply_pending','dead_letter')
+        ))
         AND (delivery_kind<>'task_completion' OR EXISTS (
           SELECT 1 FROM ${tables.workOrders} work
           JOIN ${tables.attempts} attempt

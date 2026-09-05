@@ -30,7 +30,8 @@ const BUILD_PROFILES: readonly V1BuildProfile[] = [
 
 /**
  * V1 强制信息架构：生产包只保留「对话 / 设置」两个 Tab。
- * （方案 §1.3、§2.2「Files Tab 必须隐藏」）
+ * （方案 §1.3、§2.2「Files Tab 必须隐藏」；P3-3c 后文件中心是 Stack 路由，
+ * `app/(tabs)/_layout.tsx` 里已经不存在 files Tab 定义。）
  */
 export const V1_PRODUCTION_TABS: readonly string[] = ['chat', 'settings'];
 
@@ -50,13 +51,49 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
   // 会话详情与 Markdown 产物查看（§2.1 #5/#6/#11）
   'chat/[sessionId]',
   'chat/markdown-preview',
-  // 设置 Tab：当前账号与当前 Agent、必要偏好、退出
+  // 设置 Tab（P3-3d）：主页按 Web `unifiedSettingsRegistry` 的 8 个个人分区重排，
+  // 分区 ID 与 Web `/settings/<id>` 一一对应（`connections` 落能力中心连接器 Tab、
+  // `trash` 是页内 TrashSheet，两者没有独立路由）。
   '(tabs)/settings',
+  'settings/account-security',
+  'settings/my-agent',
+  'settings/chat-model',
+  'settings/appearance-layout',
+  'settings/files-storage',
+  // 个人治理：服务端权威有效资源视图（P3-3d 起进入生产 IA）
+  'settings/my-permissions',
   'settings/agent-profile',
   'settings/user-detail/[userId]',
   'change-password',
-  // OAuth callback 保留最小安全回跳；Connections 管理页本身延期。
+  // 我的 Agent → 记忆：memory 目录浏览与人格 / MEMORY.md 编辑（P3-3d 解锁）
+  'memory-browser',
+  'persona-editor',
+  // OAuth callback 保留最小安全回跳。
   'oauth/callback',
+  // 能力中心（P3-3a）：工作流 / 技能 / 连接器 / 专家四 Tab，
+  // 与 Web `/capabilities/*` 同一信息架构；旧的 settings/skills 与
+  // settings/connections 已并入此处并记墓碑。
+  'capabilities',
+  'capabilities/workflows',
+  'capabilities/skills',
+  'capabilities/connectors',
+  'capabilities/experts',
+  // 任务中心（P3-3b）：定时任务列表 / 详情 / 创建编辑，与 Web `CronManager`
+  // 的「定时任务」二级 Tab 同一信息架构（任务看板不进 mobile）。
+  // 入口按 `tenantFeatures.cronEnabled` + `personalAgentOnly` 门控，
+  // 与 Web `getSidebarNavItems` 一致。
+  'cron',
+  'cron/[jobId]',
+  'cron-form',
+  // 文件中心（P3-3c）：浏览 / 子目录 / 通用预览，与 Web `FileBrowser` +
+  // `FilePreviewPanel` 同一信息架构。09-05 拍板不恢复第三个 Tab，
+  // 入口是会话列表「文件」pill 与设置页「文件与存储」，按
+  // `tenantFeatures.filesEnabled` 门控（见 src/lib/filesEntry.ts）。
+  'files',
+  'files/browse',
+  'files/preview',
+  // 全屏文本编辑器：任务中心的提示词/事件内容编辑走它（此前随 Cron 一起延期）
+  'text-editor',
   // 系统分享附件入口（§2.1 #8）
   'share-target',
 ];
@@ -76,6 +113,10 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
   'settings/agent-profile/[username]': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
   'settings/skills-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
   'settings/skills-tenant-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/skills': 'P3-3a：员工技能页并入能力中心 capabilities/skills，旧路由删除',
+  'settings/connections': 'P3-3a：MCP/OAuth 连接管理并入能力中心 capabilities/connectors，旧路由删除',
+  '(tabs)/files': 'P3-3c：文件中心迁到 Stack 路由 files（不恢复第三个 Tab），旧 Tab 路由删除',
+  '(tabs)/files/browse': 'P3-3c：文件中心迁到 Stack 路由 files/browse，旧 Tab 路由删除',
 };
 
 /**
@@ -83,17 +124,10 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
  * 理由文案是发布 Gate A 审计证据的一部分，不得留空。
  */
 export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
-  '(tabs)/files': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
-  '(tabs)/files/browse': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
-  cron: '§2.2 Cron 导航与管理 UI 延期（Gate A）',
-  'cron/[jobId]': '§2.2 Cron 导航与管理 UI 延期（Gate A）',
-  'cron-form': '§2.2 Cron 导航与管理 UI 延期（Gate A）',
-  'memory-browser': '§2.2 Memory 浏览与编辑 UI 延期（Gate A）',
-  'persona-editor': '§1.3 V1 最小设置：Agent 人格/记忆编辑不在信息架构内（M30-03 后评估）',
-  'text-editor': '仅被延期的 Cron/Memory 流程使用（§2.2）',
-  'settings/skills': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
-  'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',
-  'settings/connections': '§2.2 Connections/OAuth 原生管理入口延期；仅保留最小 OAuth callback（Gate A）',
+  // P3-3d 起为空：设置 8 分区落地后，memory-browser / persona-editor /
+  // settings/my-permissions 全部转入 allowlist。清单保留是为了
+  // 「未来新增页面可以先登记延期理由再上线」；空对象不改变 fail closed 语义
+  // ——未分类路由仍然被生产 allowlist 拒绝。
 };
 
 /** 路由分类结果。 */

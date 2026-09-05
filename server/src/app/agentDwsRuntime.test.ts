@@ -31,7 +31,7 @@ function setup(input: { agent?: OrgAgentRecord; verdict?: 'allow' | 'deny' } = {
   };
 }
 
-describe('authorizeAgentDwsRequesterAccess', () => {
+describe('authorizeAgentDwsRequesterAccess provider fence', () => {
   it('audience 通过后以真实 requester 执行 Assignment preflight', async () => {
     const deps = setup();
     await expect(authorizeAgentDwsRequesterAccess({
@@ -55,6 +55,28 @@ describe('authorizeAgentDwsRequesterAccess', () => {
     expect(deps.auditStore.events).toEqual([
       expect.objectContaining({ action: 'dws.requester.access_decision', result: 'failed', reason: 'ORG_AGENT_AUDIENCE_DENIED' }),
     ]);
+  });
+
+  it('provider-start 最终授权在慢审计后重新读取 audience/Assignment', async () => {
+    let releaseAudit!: () => void;
+    let auditStarted!: () => void;
+    const started = new Promise<void>(resolve => { auditStarted = resolve; });
+    const auditStore = { append: vi.fn().mockImplementationOnce(async () => {
+      auditStarted();
+      await new Promise<void>(resolve => { releaseAudit = resolve; });
+    }).mockResolvedValue(undefined) };
+    const deps = setup();
+    const pending = authorizeAgentDwsRequesterAccess({
+      account, requester, sessionId: 'session-a', runId: 'run-a', phase: 'provider_start',
+      ...deps, auditStore: auditStore as never,
+    });
+    await started;
+    deps.orgAgentStore.get.mockReturnValue({ ...agent, enabled: false });
+    releaseAudit();
+
+    await expect(pending).resolves.toEqual({ allowed: false, reason: 'ORG_AGENT_UNAVAILABLE' });
+    expect(deps.preflight).toHaveBeenCalledOnce();
+    expect(auditStore.append).toHaveBeenCalledTimes(2);
   });
 
   it('Assignment deny 即使处于 shadow 模式也按 accessDecision 硬拒绝', async () => {

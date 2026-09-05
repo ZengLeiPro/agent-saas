@@ -76,12 +76,13 @@ test('renders a fail-closed Staging config with persistent local Artifact storag
     backend: 'local',
     rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
     signedUrlSecret: 'staging-artifact-secret-that-is-at-least-32-characters',
-    readUrlTtlSeconds: 900,
+    readUrlTtlSeconds: 300,
     maxBlobBytes: 100 * 1024 * 1024,
     retentionDays: 90,
     gcIntervalMs: 24 * 60 * 60 * 1000,
   });
   assert.notEqual(config.artifact.signedUrlSecret, config.auth.jwtSecret);
+  assert.deepEqual(config.runtimeEventStore.writerCapability, { capability: 'tenant-native-v1' });
   assert.equal(config.runtimeScheduler.maxConcurrentRuns, 10);
   assert.equal(config.tenantRemoteHands.hands[0].authTokenRef, STAGING_ACS_TOKEN_REF);
   assert.equal(config.egress.server.failOpen, false);

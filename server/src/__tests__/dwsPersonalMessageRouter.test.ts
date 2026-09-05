@@ -26,12 +26,12 @@ const account: AgentDwsAccountRecord = {
   runtimeStatus: 'ready',
   eventKinds: ['at_me', 'all_direct'],
   revision: 2,
+  identityUpdatedAt: '2026-08-13T00:00:00.000Z',
   createdAt: '2026-08-14T00:00:00.000Z',
   createdBy: 'admin-a',
   updatedAt: '2026-08-14T00:00:00.000Z',
   updatedBy: 'admin-a',
 };
-
 const requester = {
   id: 'user-a',
   username: 'alice',
@@ -68,11 +68,6 @@ const item: AgentDwsInboxRecord = {
   updatedAt: '2026-08-14T00:00:00.000Z',
 };
 
-/** 夹具基准时间（与 item.createdAt 对齐）。 */
-const fixtureNowIso = '2026-08-14T00:00:00.000Z';
-/** 注入给路由器的固定时钟：基准时间之后 60 秒，让 DWS 幂等窗口判定与真实时间无关。 */
-const injectedNowMs = Date.parse(fixtureNowIso) + 60_000;
-
 function setup(input: {
   claimed?: AgentDwsInboxRecord | AgentDwsInboxRecord[];
   dispatch?: AgentRunDispatch;
@@ -99,6 +94,7 @@ function setup(input: {
     init: vi.fn(),
     ingest: vi.fn(),
     listForAccount: vi.fn().mockResolvedValue([]),
+    hasObservedGroup: vi.fn().mockResolvedValue(false),
     listActiveForAccount: vi.fn().mockResolvedValue([]),
     claimNext,
     releaseClaim: vi.fn().mockResolvedValue({ ...claimed, state: 'pending', attempt: 0 }),
@@ -140,17 +136,24 @@ function setup(input: {
     saveDispatchResult: vi.fn().mockImplementation(async (
       inboxId: string, _owner: string, _fence: number, responseText: string,
     ) => ({ ...(claimedById.get(inboxId) ?? claimed), state: 'reply_pending', responseText })),
+    saveRejectionResult: vi.fn().mockImplementation(async (
+      inboxId: string, _owner: string, _fence: number, responseText: string,
+      rejectionReasonCode: string,
+    ) => ({ ...(claimedById.get(inboxId) ?? claimed), state: 'reply_pending',
+      replyKind: 'access_rejection', responseText, rejectionReasonCode })),
     markReplyAttemptStarted: vi.fn().mockImplementation(async (inboxId: string) => {
       const entry = claimedById.get(inboxId) ?? claimed;
-      return {
-        ...entry,
-        state: 'reply_pending',
-        // 相对注入时钟的固定时间戳；真实 store 写的是「当前时间」，这里等价且确定。
-        replyStartedAt: entry.replyStartedAt ?? fixtureNowIso,
-      };
+      return { ...entry, state: 'reply_pending',
+        replyStartedAt: entry.replyStartedAt ?? item.updatedAt };
     }),
     defer: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
+    reject: vi.fn().mockImplementation(async (
+      _inboxId: string, _owner: string, _fence: number, rejectionReasonCode: string,
+    ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
+    blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter',
+      disposition: 'reply_blocked' }),
+    markReplyUnknown: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter', disposition: 'delivery_unknown' }),
     fail: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     deleteForTenant: vi.fn(),
   } satisfies AgentDwsMessageStore;
@@ -195,17 +198,15 @@ function setup(input: {
     ...(input.recoveredEvents ? {
       eventStore: { listByRun: vi.fn().mockResolvedValue(input.recoveredEvents) },
     } : {}),
-    now: () => injectedNowMs,
+    now: () => Date.parse(item.updatedAt) + 60_000,
     pollMs: input.pollMs ?? 60_000,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
     ...(input.maxConcurrency ? { maxConcurrency: input.maxConcurrency } : {}),
     ...(input.logger ? { logger: input.logger } : {}),
   });
-  return {
-    router, messageStore, accountStore, dispatch, sender,
-    authorizeRequester, auditRequesterRejection, auditToolPolicyRejection,
-  };
+  return { router, messageStore, accountStore, dispatch, sender, authorizeRequester,
+    auditRequesterRejection, auditToolPolicyRejection };
 }
 
 describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () => {
@@ -340,7 +341,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     await router.stop();
   });
 
-  it('binds a stable Session, dispatches the org Agent, and sends one identity-fenced durable reply', async () => {
+  it('binds a stable Session, dispatches the org Agent, and successfully sends one identity-fenced durable reply', async () => {
     const { router, messageStore, dispatch, sender, authorizeRequester } = setup();
 
     await expect(router.runOnce()).resolves.toBe(true);
@@ -373,11 +374,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       account,
       expect.objectContaining({ eventId: 'event-a', conversationId: 'cid-a' }),
       '今天已完成三项工作。',
-      expect.stringMatching(/^agent-dws-reply-/),
+      expect.stringMatching(/^agent-dws-reply-/), expect.any(Function),
     );
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
-
   it('非 v1 行缺少入站账号身份快照时仍 fail closed，不执行也不回复', async () => {
     const { router, dispatch, sender, messageStore } = setup({
       claimed: { ...item, payload: {} },
@@ -392,7 +392,6 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       expect.objectContaining({ message: expect.stringContaining('identity is missing') }),
     );
   });
-
   it('v2 已持久化回复在崩溃重领后不重复 dispatch，并继续发送与完成', async () => {
     const recovered = {
       ...item,
@@ -411,7 +410,8 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(messageStore.saveDispatchResult).not.toHaveBeenCalled();
     expect(messageStore.markReplyAttemptStarted).toHaveBeenCalledOnce();
     expect(sender.send).toHaveBeenCalledWith(
-      account, expect.objectContaining({ eventId: item.eventId }), '崩溃前已持久化回复', expect.any(String),
+      account, expect.objectContaining({ eventId: item.eventId }), '崩溃前已持久化回复',
+      expect.any(String), expect.any(Function),
     );
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
@@ -495,6 +495,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       ...account,
       profileId: 'corp-a:agent-other',
       dingtalkUserId: 'agent-other',
+      identityUpdatedAt: '2026-08-15T00:00:00.000Z',
       revision: account.revision + 1,
     };
     const { router, accountStore, sender, messageStore } = setup();
@@ -547,7 +548,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       account,
       expect.objectContaining({ eventId: 'background-task-completion:bg-1' }),
       '任务 T-1234ABCD 已完成。',
-      expect.any(String),
+      expect.any(String), expect.any(Function),
     );
   });
 
@@ -582,7 +583,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       runId: expect.stringMatching(/^agent-dws-run-/), toolName: 'Shell',
     }));
     expect(sender.send).toHaveBeenCalledWith(
-      account, expect.any(Object), '已说明无法执行。', expect.any(String),
+      account, expect.any(Object), '已说明无法执行。', expect.any(String), expect.any(Function),
     );
   });
 
@@ -595,7 +596,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'event-a', reason: 'REQUESTER_IDENTITY_MISSING',
     }));
-    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'REQUESTER_IDENTITY_MISSING',
+    );
+    expect(messageStore.complete).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
 
@@ -605,7 +609,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     await expect(router.runOnce()).resolves.toBe(true);
 
     expect(messageStore.getOrCreateBinding).not.toHaveBeenCalled();
-    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS',
+    );
+    expect(messageStore.complete).not.toHaveBeenCalled();
     expect(messageStore.fail).not.toHaveBeenCalled();
     expect(auditRequesterRejection).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'event-a', reason: 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS',
@@ -628,7 +635,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       requester, reason: 'ASSIGNMENT_DENIED',
     }));
     expect(messageStore.markDispatchStarted).not.toHaveBeenCalled();
-    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(messageStore.reject).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'ASSIGNMENT_DENIED',
+    );
+    expect(messageStore.complete).not.toHaveBeenCalled();
     expect(messageStore.fail).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
@@ -663,6 +673,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(dispatch).not.toHaveBeenCalled();
     expect(sender.send).toHaveBeenCalledWith(
       account, expect.any(Object), '已生成的回复', expect.stringMatching(/^agent-dws-reply-/),
+      expect.any(Function),
     );
   });
 
@@ -684,7 +695,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       'inbox-a', expect.any(String), 1, '从 EventStore 恢复的回复',
     );
     expect(sender.send).toHaveBeenCalledWith(
-      account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String),
+      account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String), expect.any(Function),
     );
   });
 
@@ -755,14 +766,13 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(messageStore.fail).not.toHaveBeenCalled();
   });
 
-  it('does not blindly resend after the DWS 24-hour idempotency window', async () => {
+  it('does not blindly resend a normal reply after the DWS 24-hour idempotency window', async () => {
     const claimed = {
       ...item,
       attempt: 2,
       runId: 'run-a',
       responseText: '已生成的回复',
-      // 相对注入时钟回拨 24 小时，越过 23 小时幂等窗口。
-      replyStartedAt: new Date(injectedNowMs - 24 * 60 * 60 * 1_000).toISOString(),
+      replyStartedAt: new Date(Date.parse(item.updatedAt) - 24 * 60 * 60 * 1_000).toISOString(),
     };
     const { router, messageStore, sender } = setup({ claimed });
 

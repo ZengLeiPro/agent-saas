@@ -1,6 +1,7 @@
 import { File, Paths, Directory } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getPlatform, TOKEN_KEY } from '@agent/shared';
+import { getPlatform, resolveKbFileSrc, TOKEN_KEY } from '@agent/shared';
+import { resolveFileReadSource } from '../lib/fileReadSource';
 
 // --- Constants ---
 const MAX_CACHE_SIZE = 1024 * 1024 * 1024; // 1 GB
@@ -36,12 +37,18 @@ function djb2Hash(str: string): string {
 }
 
 function makeCacheKey(serverPath: string, owner?: string, root?: boolean): string {
+  // KB 是租户共享只读，owner/root 不参与命名；同时剥掉 `#page=N` fragment，
+  // 避免同一份文档因引用页码不同而重复落盘。
+  const source = resolveFileReadSource(serverPath);
+  if (source.kind === 'kb') return `__kb__:${source.doc}`;
   const prefix = root ? '__root__:' : '';
   return owner ? `${prefix}${owner}:${serverPath}` : `${prefix}${serverPath}`;
 }
 
 function makeLocalFileName(serverPath: string, owner?: string, root?: boolean): string {
-  const ext = serverPath.includes('.') ? serverPath.slice(serverPath.lastIndexOf('.')) : '';
+  // 扩展名取自真实文档名（kb 路径要先剥伪协议与 fragment），供原生预览器识别类型
+  const doc = resolveFileReadSource(serverPath).doc;
+  const ext = doc.includes('.') ? doc.slice(doc.lastIndexOf('.')) : '';
   return djb2Hash(makeCacheKey(serverPath, owner, root)) + ext;
 }
 
@@ -210,9 +217,17 @@ class FileCacheService {
 
     const platform = getPlatform();
     const baseUrl = platform.platformConfig.getBaseUrl();
-    const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
-    const rootParam = root ? '&root=true' : '';
-    const url = `${baseUrl}/api/file/download?path=${encodeURIComponent(serverPath)}${ownerParam}${rootParam}`;
+    // KB 文档（`kb://<doc>#page=N`，引用溯源卡）走租户共享只读端点 `/api/kb/file`，
+    // 与 Web `CitationCard`/`PdfJsReader` 同一口径；此前只认工作区端点，
+    // 导致 KB 根文档在移动端必然 404（P1 缺口）。
+    const source = resolveFileReadSource(serverPath, 'download', { owner, root });
+    let url: string;
+    if (source.kind === 'kb') {
+      if (!source.doc) throw new Error('引用文档路径无效');
+      url = await resolveKbFileSrc(source.doc);
+    } else {
+      url = `${baseUrl}${source.workspaceUrl}`;
+    }
     // Native downloads bypass authFetch, so enforce the identical origin policy
     // before reading the Bearer token or handing the request to Expo FileSystem.
     platform.platformConfig.assertTrustedUrl?.(url, 'http');

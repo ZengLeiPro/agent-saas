@@ -602,6 +602,35 @@ ln -sfn "$APP_DIR" "$CURRENT_LINK"
 CURRENT_LINK_UPDATED=true
 
 
+# ── 2c. 提前提交 ImageCache 制作（后台、容错）──
+# 冷 Sandbox 的主要耗时是拉新镜像；smoke 的首个 provision 以前总在无缓存状态下拉取。
+# 现在在 drain/health 等待期间并行制作缓存（ACS 按镜像名自动匹配），smoke 就有机会命中。
+# 制作失败只告警（Pod 回退正常拉取）；清理旧缓存仍在第 6 段 smoke 之后执行。
+IMAGE_CACHE_EARLY_LOG="/tmp/acs-imc-early-${TRANSACTION_ID}.log"
+IMAGE_CACHE_NAME="agent-saas-acs-sandbox-$(printf '%s' "$IMAGE_TAG" | tr 'A-Z._' 'a-z--')"
+(
+  set +e
+  if ! command -v aliyun >/dev/null 2>&1; then echo "WARN: aliyun CLI missing, skip early image cache"; exit 0; fi
+  EXISTING=$(aliyun acc list-image-caches --biz-region-id cn-shenzhen 2>/dev/null)
+  if printf '%s' "$EXISTING" | grep -F "\"$IMAGE\"" >/dev/null 2>&1; then
+    echo "image cache already exists for $IMAGE_TAG"
+    exit 0
+  fi
+  if aliyun acc create-image-cache \
+    --biz-region-id cn-shenzhen \
+    --image-cache-name "$IMAGE_CACHE_NAME" \
+    --images "$IMAGE" \
+    --network-config '{"SecurityGroupId":"sg-wz97utch71p1mo0etbg9","VSwitchIds":["vsw-wz99c9ukqjjwn8xlzg5h5"]}' \
+    --acr-registry-infos InstanceId=cri-tapxtcyd6odwj3m4 RegionId=cn-shenzhen >/tmp/acs-imc-create.json 2>&1; then
+    echo "image cache creation submitted early: $IMAGE_CACHE_NAME"
+  else
+    echo "WARN: early image cache creation failed (non-fatal)"
+    cat /tmp/acs-imc-create.json 2>/dev/null || true
+  fi
+  exit 0
+) >"$IMAGE_CACHE_EARLY_LOG" 2>&1 &
+IMAGE_CACHE_EARLY_PID=$!
+
 # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后 clean exit →
 #      当前事务显式 systemctl restart 拉起新代码、新 env 与 managed unit ──
 # 2026-07-15 修复：SIGUSR2 必须送达注册了 handler 的 node 本体。
@@ -710,6 +739,13 @@ echo "runtime config and lifecycle policy gate passed: max=$EXPECTED_MAX_RUNNING
 # SMOKE_SESSION/SMOKE_WS/SMOKE_MOUNT 已在 cleanup 定义前赋值，确保任何失败路径都能清理。
 
 SMOKE_OK=true
+SMOKE_PHASE_STARTED=$(date +%s)
+smoke_phase_done() {
+  local now
+  now=$(date +%s)
+  echo "smoke phase '$1' took $((now - SMOKE_PHASE_STARTED))s"
+  SMOKE_PHASE_STARTED=$now
+}
 if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
   -H "$AUTH_HEADER" -H 'X-ACS-Maintenance-Bypass: deploy-smoke-v1' -H 'Content-Type: application/json' \
   -d "{\"workspaceId\":\"${SMOKE_WS}\",\"recipe\":{\"workspaceId\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\",\"workload\":{\"class\":\"deploy-smoke\"}}}" \
@@ -718,6 +754,7 @@ if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
 elif ! grep -F '"status":"ok"' /tmp/acs-provision.json >/dev/null; then
   SMOKE_OK=false
 fi
+smoke_phase_done provision
 
 if [ "$SMOKE_OK" = "true" ]; then
   printf '%s' "{\"toolName\":\"Shell\",\"input\":{\"command\":\"set -eu; test \\\"\$(id -u)\\\" = 501; test \\\"\$(pwd)\\\" = /workspace; command -v aliyun; aliyun version; command -v gh; gh --version; command -v ntn; ntn --version; command -v gws; gws --version; command -v dws; dws --version; command -v lark-cli; lark-cli --version; echo ACR_BUILD_DEPLOY_SMOKE_OK\",\"timeoutMs\":120000},\"context\":{\"workspace\":{\"id\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\",\"workload\":{\"class\":\"deploy-smoke\"}}}}" >/tmp/acs-execute-payload.json
@@ -728,6 +765,7 @@ if [ "$SMOKE_OK" = "true" ]; then
   elif ! grep -F 'ACR_BUILD_DEPLOY_SMOKE_OK' /tmp/acs-execute.json >/dev/null; then
     SMOKE_OK=false
   fi
+  smoke_phase_done execute
 fi
 
 if [ "$SMOKE_OK" = "true" ]; then
@@ -743,6 +781,7 @@ if [ "$SMOKE_OK" = "true" ]; then
     >/tmp/acs-browser-lease-e2e.log 2>&1; then
     SMOKE_OK=false
   fi
+  smoke_phase_done browser-lease-e2e
 fi
 
 if [ "$SMOKE_OK" != "true" ]; then
@@ -864,30 +903,16 @@ fi
 rm -rf "$IDENTITY_SYNC_DIR"
 echo "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
 
-# ── 6. ImageCache: 为本次镜像提交缓存制作 + 清理旧缓存（2026-07-31 方案3-P0）──
+# ── 6. ImageCache: 回收第 2c 段提交的缓存制作结果 + 清理旧缓存（2026-07-31 方案3-P0）──
 # 命中缓存的新 Sandbox 镜像拉取官方口径省 90%+。整段子 shell 容错：
 # 缓存制作失败只告警，绝不影响部署结果（无缓存时 Pod 回退正常拉取）。
 # ECS 侧凭据=EcsRamRole（policy AgentSaasAccImageCache，仅 acc 镜像缓存四个 API）。
+wait "$IMAGE_CACHE_EARLY_PID" 2>/dev/null || true
+cat "$IMAGE_CACHE_EARLY_LOG" 2>/dev/null || true
+rm -f "$IMAGE_CACHE_EARLY_LOG"
 (
   set +e
-  if ! command -v aliyun >/dev/null 2>&1; then echo "WARN: aliyun CLI missing, skip image cache"; exit 0; fi
-  CACHE_NAME="agent-saas-acs-sandbox-$(printf '%s' "$IMAGE_TAG" | tr 'A-Z._' 'a-z--')"
-  EXISTING=$(aliyun acc list-image-caches --biz-region-id cn-shenzhen 2>/dev/null)
-  if printf '%s' "$EXISTING" | grep -F "\"$IMAGE\"" >/dev/null 2>&1; then
-    echo "image cache already exists for $IMAGE_TAG"
-  else
-    if aliyun acc create-image-cache \
-      --biz-region-id cn-shenzhen \
-      --image-cache-name "$CACHE_NAME" \
-      --images "$IMAGE" \
-      --network-config '{"SecurityGroupId":"sg-wz97utch71p1mo0etbg9","VSwitchIds":["vsw-wz99c9ukqjjwn8xlzg5h5"]}' \
-      --acr-registry-infos InstanceId=cri-tapxtcyd6odwj3m4 RegionId=cn-shenzhen >/tmp/acs-imc-create.json 2>&1; then
-      echo "image cache creation submitted: $CACHE_NAME"
-    else
-      echo "WARN: image cache creation failed (non-fatal)"
-      cat /tmp/acs-imc-create.json 2>/dev/null || true
-    fi
-  fi
+  if ! command -v aliyun >/dev/null 2>&1; then exit 0; fi
   # 只清理本前缀且不是最近 3 个的缓存（免费额度 20/地域，防堆积）
   aliyun acc list-image-caches --biz-region-id cn-shenzhen 2>/dev/null | node -e '
     let raw = ""; process.stdin.on("data", (c) => raw += c).on("end", () => {

@@ -6,13 +6,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  Platform,
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { X, Check } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import { useColors, spacing, typography } from '../src/theme';
+import { useColors, spacing, typography, monoFamily } from '../src/theme';
 import { textEditorBridge } from '../src/lib/textEditorBridge';
 
 export default function TextEditorScreen() {
@@ -73,11 +72,9 @@ export default function TextEditorScreen() {
           paddingTop: spacing.md,
         },
         textArea: {
-          ...typography.body,
+          ...typography.mono,
           color: colors.foreground,
-          fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-          fontSize: 13,
-          lineHeight: 20,
+          fontFamily: monoFamily,
           flex: 1,
           textAlignVertical: 'top',
           padding: 0,

@@ -1,5 +1,9 @@
 import { redactInteractionCredentials } from '@agent/shared';
 
+import type {
+  AgentDwsAccountRecord,
+  AgentDwsAccountStore,
+} from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { OrgAgentChannelBinding, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { UserStore } from '../data/users/store.js';
@@ -16,6 +20,7 @@ import {
   persistedInteractionEventId,
 } from '../channels/web/channelRuntimeHelpers.js';
 import { restoreOrgAgentRunContext } from '../runtime/orgAgentRunContext.js';
+import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 
 export interface OrgAgentPendingApprovalView {
   approvalId: string;
@@ -49,6 +54,7 @@ type ApprovalRunStore = Pick<
 export class OrgAgentApprovalService {
   constructor(
     private readonly deps: {
+      accountStore: Pick<AgentDwsAccountStore, 'getForTenant'>;
       messageStore: Pick<AgentDwsMessageStore, 'listActiveForAccount'>;
       runStore: ApprovalRunStore;
       eventStoreFor(transcriptPath: string, tenantId: string): EventStore;
@@ -73,6 +79,8 @@ export class OrgAgentApprovalService {
     accountId: string,
     limit = 100,
   ): Promise<OrgAgentPendingApprovalView[]> {
+    const account = await this.deps.accountStore.getForTenant(tenantId, accountId);
+    if (!account) return [];
     const inboxes = await this.deps.messageStore.listActiveForAccount(tenantId, accountId);
     const results = await Promise.all(
       inboxes.map(async (inbox) => {
@@ -85,7 +93,7 @@ export class OrgAgentApprovalService {
           context.bindingId,
         );
         try {
-          await this.assertLiveBinding({ tenantId, accountId }, binding, run);
+          await this.assertLiveBinding({ tenantId, accountId, account }, binding, run);
         } catch {
           return [];
         }
@@ -122,8 +130,8 @@ export class OrgAgentApprovalService {
   }> {
     const located = await this.locate(input.tenantId, input.accountId, input.approvalId);
     if (!located) throw new OrgAgentApprovalError(404, '待审批操作不存在或已失效');
-    const { approval, run, eventStore, binding } = located;
-    await this.assertLiveBinding(input, binding, run);
+    const { approval, run, eventStore, binding, account } = located;
+    await this.assertLiveBinding({ ...input, account }, binding, run);
     const response = {
       allow: input.decision === 'approved',
       message:
@@ -238,6 +246,8 @@ export class OrgAgentApprovalService {
   }
 
   private async locate(tenantId: string, accountId: string, approvalId: string) {
+    const account = await this.deps.accountStore.getForTenant(tenantId, accountId);
+    if (!account) return null;
     const inboxes = await this.deps.messageStore.listActiveForAccount(tenantId, accountId);
     for (const inbox of inboxes) {
       if (!inbox.sessionId || !inbox.runId || !inbox.workConversationId) continue;
@@ -258,7 +268,7 @@ export class OrgAgentApprovalService {
         tenantId,
         context.bindingId,
       );
-      return { inbox, run, context, eventStore, approval, binding };
+      return { inbox, run, context, eventStore, approval, binding, account };
     }
     return null;
   }
@@ -303,7 +313,7 @@ export class OrgAgentApprovalService {
   }
 
   private async assertLiveBinding(
-    input: { tenantId: string; accountId: string },
+    input: { tenantId: string; accountId: string; account: AgentDwsAccountRecord },
     binding: OrgAgentChannelBinding | null,
     run: RunRecord,
   ): Promise<void> {
@@ -326,6 +336,7 @@ export class OrgAgentApprovalService {
       currentRole !== actor.role ||
       !currentRole ||
       !binding ||
+      !bindingMatchesCurrentAccountIdentity(binding, input.account) ||
       binding.tenantId !== input.tenantId ||
       binding.accountId !== input.accountId ||
       binding.bindingId !== channel.bindingId ||

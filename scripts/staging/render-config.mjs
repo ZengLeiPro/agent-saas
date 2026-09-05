@@ -57,7 +57,7 @@ export function renderStagingConfig(source, env = process.env) {
     backend: 'local',
     rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
     signedUrlSecret: artifactSignedUrlSecret,
-    readUrlTtlSeconds: 900,
+    readUrlTtlSeconds: 300,
     maxBlobBytes: 100 * 1024 * 1024,
     retentionDays: 90,
     gcIntervalMs: 24 * 60 * 60 * 1000,
@@ -97,6 +97,7 @@ export function renderStagingConfig(source, env = process.env) {
     connectionString: databaseUrl,
     tablePrefix: 'staging_runtime',
     poolMax: 10,
+    writerCapability: { capability: 'tenant-native-v1' },
   };
   config.runtimeScheduler = {
     ...(config.runtimeScheduler ?? {}),

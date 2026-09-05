@@ -20,6 +20,7 @@ const account: AgentDwsAccountRecord = {
   runtimeStatus: 'ready',
   eventKinds: ['at_me'],
   revision: 1,
+  identityUpdatedAt: '2026-09-03T00:00:00.000Z',
   createdAt: '2026-09-04T00:00:00.000Z',
   createdBy: 'admin',
   updatedAt: '2026-09-04T00:00:00.000Z',
@@ -30,6 +31,10 @@ const delivery: DwsDeliveryIntent = {
   deliveryId: 'delivery-1',
   tenantId: 'tenant-1',
   accountId: 'account-1',
+  accountIdentity: {
+    profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+    identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+  },
   conversationId: 'group-1',
   agentId: 'agent-1',
   bindingId: 'binding-1',
@@ -75,6 +80,10 @@ function harness(input?: {
       agentId: 'agent-1',
       activationState: 'active',
       enabled: true,
+      accountIdentity: {
+        profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+        identityUpdatedAt: '2026-09-03T00:00:00.000Z',
+      },
       policy: {
         enabled: true,
         liveDeny: input?.liveDeny ?? false,
@@ -121,7 +130,16 @@ function harness(input?: {
       ]),
   } as unknown as OrgGroupAgentStore;
   const sender = {
-    send: vi.fn().mockResolvedValue(input?.receipt ?? { status: 'accepted', acceptedAt: 'now' }),
+    send: vi.fn(async (
+      _account: unknown,
+      _event: unknown,
+      _text: string,
+      _key: string,
+      onProviderStart?: () => Promise<void>,
+    ): Promise<Record<string, unknown> | undefined> => {
+      await onProviderStart?.();
+      return input?.receipt ?? { status: 'accepted', acceptedAt: 'now' };
+    }),
   };
   return {
     store,
@@ -150,14 +168,14 @@ function harness(input?: {
   };
 }
 
-describe('deliverNextOrgAgentIntent', () => {
-  it('returns false without a pending intent', async () => {
+describe('deliverNextOrgAgentIntent provider fences', () => {
+  it('没有待投递 intent 时返回 false', async () => {
     const test = harness({ pending: false });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(false);
     expect(test.sender.send).not.toHaveBeenCalled();
   });
 
-  it('sends a claimed intent and persists its receipt', async () => {
+  it('sends a claimed intent and persists its receipt after provider start', async () => {
     const test = harness();
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
     expect(test.sender.send).toHaveBeenCalledWith(
@@ -169,6 +187,7 @@ describe('deliverNextOrgAgentIntent', () => {
       }),
       '处理完成',
       'delivery-key',
+      expect.any(Function),
     );
     expect(test.store.markDeliverySent).toHaveBeenCalledWith(
       'delivery-1',
@@ -183,9 +202,57 @@ describe('deliverNextOrgAgentIntent', () => {
     );
   });
 
-  it('marks provider receipt ambiguity unknown and never retries it automatically', async () => {
+  it('retries deterministic sender preparation failures before provider transport', async () => {
+    const test = harness();
+    test.sender.send.mockRejectedValueOnce(new Error('workspace mount unavailable'));
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.store.markDeliveryProviderStarted).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledWith(
+      'delivery-1',
+      'worker-1',
+      7,
+      expect.any(Error),
+      1_000,
+      5,
+    );
+  });
+
+  it('sender 准备期间 liveDeny 生效时 provider fence 阻断实际发送', async () => {
+    const test = harness();
+    const providerInvoke = vi.fn();
+    vi.mocked(test.store.markDeliveryProviderStarted).mockRejectedValueOnce(
+      new Error('DWS_DELIVERY_LEASE_LOST'),
+    );
+    test.sender.send.mockImplementationOnce(async (
+      _account, _event, _text, _key, onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      providerInvoke();
+      return { status: 'accepted' };
+    });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(providerInvoke).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
+  });
+
+  it('marks provider receipt ambiguity unknown and excludes automatic retry', async () => {
     const test = harness({ receipt: undefined });
-    test.sender.send.mockResolvedValueOnce(undefined);
+    test.sender.send.mockImplementationOnce(async (
+      _account,
+      _event,
+      _text,
+      _key,
+      onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      return undefined;
+    });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
     expect(test.store.markDeliveryUnknown).toHaveBeenCalledWith(
       'delivery-1',
@@ -333,6 +400,50 @@ describe('deliverNextOrgAgentIntent', () => {
     expect(test.sender.send).not.toHaveBeenCalled();
     expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
     expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+  });
+
+  it('Direct delivery 固定于身份 A 后，账号换绑 B 会 dead-letter 且不发送旧正文', async () => {
+    const direct = {
+      ...delivery,
+      agentId: undefined,
+      bindingId: undefined,
+      conversationId: 'direct-1',
+      destination: {
+        provider: 'dingtalk' as const, accountId: 'account-1',
+        conversationId: 'direct-1', kind: 'direct' as const, peerOpenId: 'open-a',
+      },
+      accountIdentity: {
+        profileId: 'corp-old:user-old', corpId: 'corp-old', dingtalkUserId: 'user-old',
+        identityUpdatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    };
+    const test = harness({ claimedDelivery: direct });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
+    );
+  });
+
+  it('账号身份切换后不会用旧 binding 投递，而是 dead-letter', async () => {
+    const test = harness();
+    const currentBinding = await test.store.getBinding('tenant-1', 'account-1', 'group-1');
+    vi.mocked(test.store.getBinding).mockResolvedValueOnce({
+      ...currentBinding!,
+      accountIdentity: {
+        profileId: 'corp-old:user-old', corpId: 'corp-old', dingtalkUserId: 'user-old',
+        identityUpdatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-1', 'worker-1', 7, 'ORG_AGENT_CHANNEL_LIVE_DENY',
+    );
   });
 
   it('dead-letters a claimed intent when the live binding denies delivery', async () => {

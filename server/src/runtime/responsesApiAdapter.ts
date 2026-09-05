@@ -32,7 +32,12 @@ import type {
   RuntimeConnection,
 } from './types.js';
 import type { ModelProviderOptions } from '../types/index.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { ResponsesStreamError, SseFrameBuffer } from './responses/responsesSseFraming.js';
+import { computeRequestInputPrefixHash, computeRequestPrefixDiagnostics } from './responses/responsesPrefixDiagnostics.js';
+import { executeBoundedResponses } from './responses/boundedResponsesTransport.js';
+import { ResponsesStreamGuardError } from './responses/responsesStreamBudget.js';
+import { withResponsesGuardRecovery, canRecoverResponsesGuard, type ResponsesRecoveryScope } from './responses/responsesRequestRecovery.js';
 import { createLogger } from '../utils/logger.js';
 import {
   defendUserMessageText,
@@ -41,7 +46,13 @@ import {
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
 import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
-import { classifyModelFailure } from './runtimeFailure.js';
+import { classifyModelFailure, parseQuotaResetAt } from './runtimeFailure.js';
+import {
+  extractProviderError,
+  isInvalidEncryptedContent,
+  isRetryablePreStreamHttpError,
+  providerErrorDiagnosticMessage,
+} from './providerErrorParsing.js';
 import type { FinishedOutcome, FinishedPatch } from './responsesAttemptDiagnostics.js';
 import {
   ResponsesAttemptDiagnostics,
@@ -61,31 +72,6 @@ import {
   type ResponsesTransport,
   type ResponsesTransportStreamDiagnostic,
 } from './responses/responsesTransport.js';
-function computeRequestInputPrefixHash(body: Record<string, unknown>): string {
-  const input = Array.isArray(body.input) ? body.input.slice(0, 8) : [];
-  return createHash('sha256').update(JSON.stringify({
-    instructions: body.instructions,
-    tools: body.tools,
-    input,
-  })).digest('hex').slice(0, 32);
-}
-
-function computeRequestPrefixDiagnostics(body: Record<string, unknown>): {
-  instructionsHash: string;
-  toolsHash: string;
-  historyHash: string;
-} {
-  const hash = (value: unknown) => createHash('sha256')
-    .update(JSON.stringify(value ?? null))
-    .digest('hex')
-    .slice(0, 32);
-  return {
-    instructionsHash: hash(body.instructions),
-    toolsHash: hash(body.tools),
-    historyHash: hash(body.input),
-  };
-}
-
 const logger = createLogger('ResponsesAdapter');
 
 /** Responses API 默认 max_output_tokens 下限：≤16 触发服务端 500（实测 doubao）。 */
@@ -199,7 +185,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
 
   async *stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent> {
     try {
-      for await (const event of this.streamWithRetry(request, context)) {
+      for await (const event of withResponsesGuardRecovery(request, context,
+        (scope) => this.streamWithRetry(request, context, undefined, scope))) {
         if (event.type === 'completed') {
           try {
             this.transport.observeResult?.({
@@ -229,6 +216,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     request: ModelRequest,
     context: RunContext,
     retryState?: ResponsesRetryState,
+    scope: ResponsesRecoveryScope = { modelRequestId: randomUUID(), recovered: false, lastAttempt: 0 },
   ): AsyncIterable<ModelEvent> {
     // P0.6：max_output_tokens 强制下限 ≥64
     // 取值优先级：调用方显式 request > 模型配置 max_output_tokens > 默认 4096。
@@ -341,16 +329,16 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let modelRequestAttemptCount = 0;
 
     const requestSignal = request.signal ?? context.signal;
-    const modelRequestId = retryState?.modelRequestId ?? randomUUID();
+    const modelRequestId = scope.modelRequestId;
     const outputTransactionMode = resolveModelOutputTransactionMode(context.channelContext);
     // 默认仍不重试：网络错误/5xx 不能证明上游未接单、未计费。只有模型组显式配置
     // pre_stream_retry_delays_ms 时才启用有限重试。流内额外覆盖 provider 官方
     // 瞬时服务端错误和零输出的 reader 异常；三类故障共用同一份次数与退避预算，
     // 避免重复工具副作用和重试乘法膨胀。
-    const retryDelaysMs = this.providerOptions.preStreamRetryDelaysMs ?? [];
+    const retryDelaysMs = scope.recovered ? [] : this.providerOptions.preStreamRetryDelaysMs ?? [];
     let transientRetryIndex = retryState?.transientRetryIndex ?? 0;
     // previous_response_id 400/404 的全量降级不占瞬时故障重试次数。
-    const maxAttempts = retryState?.maxAttempts
+    const maxAttempts = scope.recovered ? 1 : retryState?.maxAttempts
       ?? 1
         + retryDelaysMs.length
         + (hasPrevious ? 1 : 0)
@@ -358,6 +346,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     let response: Response | null = null;
     let responseContinuationBinding = expectedContinuationBinding;
     let activeAttempt: ResponsesAttemptDiagnostics | null = null;
+    let activeGuard: Awaited<ReturnType<typeof executeBoundedResponses>>['guard'] | undefined;
     const firstAttempt = (retryState?.lastAttempt ?? 0) + 1;
     for (let attempt = firstAttempt; attempt <= maxAttempts; attempt++) {
       modelRequestAttemptCount = attempt;
@@ -373,7 +362,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       await context.authorizeModelTurn?.();
       const attemptDiagnostics = new ResponsesAttemptDiagnostics(context, {
         modelRequestId,
-        attempt,
+        attempt: ++scope.lastAttempt,
         model: request.model,
         responseMode,
         outputTransactionMode,
@@ -385,15 +374,18 @@ export class ResponsesApiAdapter implements ModelAdapter {
       await attemptDiagnostics.started();
       let attemptResponse: Response;
       try {
-        const executed = await this.transport.execute({
+        const executed = await executeBoundedResponses(this.transport, {
           serializedBody,
           context,
           clientRequestId: attemptDiagnostics.clientRequestId,
           ...(promptCacheKey ? { promptCacheKey } : {}),
           signal: requestSignal,
+          recoveryAttempt: scope.recovered,
           ...(expectedContinuationBinding ? { expectedContinuationBinding } : {}),
         });
         attemptResponse = executed.response;
+        activeGuard = executed.guard;
+        attemptDiagnostics.observeStreamBudget(() => executed.guard.budget.snapshot());
         wireMode = executed.wireMode;
         wireRequestBodyBytes = executed.wireRequestBodyBytes;
         wireFallbackReason = executed.wireFallbackReason;
@@ -407,16 +399,18 @@ export class ResponsesApiAdapter implements ModelAdapter {
           ? undefined
           : retryDelaysMs[transientRetryIndex];
         const willRetry = retryDelayMs !== undefined;
+        const guardRetry = canRecoverResponsesGuard(err, request, context, scope, false);
         await attemptDiagnostics.finished(
           aborted ? 'aborted' : permanentTransportError ? 'provider_error' : 'network_error',
           {
             errorCode: aborted
               ? 'MODEL_REQUEST_ABORTED'
+              : err instanceof ResponsesStreamGuardError ? err.code
               : permanentTransportError
                 ? 'MODEL_TRANSPORT_PERMANENT_ERROR'
                 : 'MODEL_NETWORK_ERROR',
             errorMessage: compactDiagnosticError(err),
-            ...(willRetry
+            ...(guardRetry ? { willRetry: true, retryReason: 'stream_guard_recovery' } : willRetry
               ? { willRetry: true, retryReason: 'transient_network_error' }
               : {
                 retryBlockedReason: aborted
@@ -442,7 +436,14 @@ export class ResponsesApiAdapter implements ModelAdapter {
         activeAttempt = attemptDiagnostics;
         break;
       }
-      const text = await attemptResponse.text().catch(() => '');
+      const text = await attemptResponse.text().catch(async (err: unknown) => {
+        if (!(err instanceof ResponsesStreamGuardError)) return '';
+        await attemptDiagnostics.finished('stream_error', {
+          errorCode: err.code, errorMessage: err.message,
+          willRetry: canRecoverResponsesGuard(err, request, context, scope, false),
+        });
+        throw err;
+      });
       // previous_response_id 不被上游认可（跨模型切换后残留 / 服务端 TTL 过期）：
       // 确定性 4xx，重发同 body 无意义 → 降级全量重建后立即重试（不退避，不占额外网络成本）。
       if (
@@ -518,20 +519,25 @@ export class ResponsesApiAdapter implements ModelAdapter {
         await waitForRetry(retryDelayMs, requestSignal);
         continue;
       }
-      const failureProtocol = classifyModelFailure(providerError.code, retryBlockedReason);
+      // Retry-After 只在解析不到 resets_at/resets_in_seconds 时兜底。
+      const quotaResetAt = providerError.quotaResetAt
+        ?? parseQuotaResetAt({ retryAfterSeconds: Number(attemptResponse.headers.get('retry-after')) });
+      const failureProtocol = classifyModelFailure(providerError.code, retryBlockedReason, quotaResetAt);
       throw new ModelProviderError(
         providerDiagnosticMessage,
         attemptResponse.status,
         providerError.code ?? `HTTP_${attemptResponse.status}`,
         modelRequestId,
         attemptDiagnostics.attemptId,
-        0, failureProtocol?.failureKind, failureProtocol?.recoveryAction,
+        0, failureProtocol?.failureKind, failureProtocol?.recoveryAction, undefined,
+        failureProtocol?.quotaResetAt,
       );
     }
     if (!response || !activeAttempt) {
       throw new Error('Responses API request did not produce a response.');
     }
     if (!response.body) {
+      activeGuard?.stop(new Error('MODEL_RESPONSE_BODY_MISSING'));
       await activeAttempt.finished('stream_error', {
         errorCode: 'MODEL_RESPONSE_BODY_MISSING',
         errorMessage: 'Responses API response body is empty',
@@ -540,6 +546,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     }
     const responseContentType = response.headers.get('content-type');
     if (responseContentType && !/\btext\/event-stream\b/i.test(responseContentType)) {
+      activeGuard?.stop(new Error('MODEL_RESPONSE_CONTENT_TYPE_INVALID'));
       await activeAttempt.finished('stream_error', {
         errorCode: 'MODEL_RESPONSE_CONTENT_TYPE_INVALID',
         errorMessage: `Expected text/event-stream, got ${compactHeader(responseContentType) ?? 'unknown'}`,
@@ -597,6 +604,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     try {
       reader = response.body.getReader();
     } catch (err) {
+      activeGuard?.stop(err);
       await activeAttempt.finished('stream_error', {
         errorCode: 'MODEL_STREAM_READER_ACQUIRE_ERROR',
         errorMessage: compactDiagnosticError(err),
@@ -638,6 +646,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
             }
             const eventType = typeof event.type === 'string' ? event.type : frame.eventName ?? '';
             activeAttempt.observeEvent(eventType, event.sequence_number);
+            activeGuard?.observe({ ...event, type: eventType });
+            await activeAttempt.streamProgress();
 
             if (eventType === 'response.created') {
               responseId = event.response?.id;
@@ -916,7 +926,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         );
       }
       // 不再等 EOF：终态就是协议边界，主动取消剩余 body，避免成功轮次被悬挂连接拖死。
-      await reader.cancel().catch(() => undefined);
+      void reader.cancel().catch(() => undefined);
       if (canonicalTextSuffix) {
         emittedOutputCount += 1;
         content += canonicalTextSuffix;
@@ -932,6 +942,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       streamReadSettled = true;
     } catch (err) {
       const classified = classifyStreamError(err, requestSignal);
+      const guardRetry = canRecoverResponsesGuard(err, request, context, scope, hasDeliveredOutput);
       const transportInterrupted = STREAM_TRANSPORT_INTERRUPT_CODES.has(classified.code)
         && !requestSignal?.aborted;
       const replaySafe = !hasDeliveredOutput
@@ -949,7 +960,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
           : !replaySafe
             ? 'irreversible_output_delivered'
             : 'retry_budget_exhausted';
-      await reader.cancel().catch(() => undefined);
+      activeGuard?.stop(err);
+      void reader.cancel().catch(() => undefined);
       await activeAttempt.finished(classified.outcome, {
         errorCode: classified.code,
         errorMessage: classified.message,
@@ -957,7 +969,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         hasDeliveredOutput,
         officialTerminalReceived: false,
         ...transportDiagnosticPatch(classified.transportDiagnostic),
-        ...(willRetry
+        ...(guardRetry ? { willRetry: true, retryReason: 'stream_guard_recovery' } : willRetry
           ? { willRetry: true, retryReason: 'transient_stream_interrupt' }
           : { retryBlockedReason }),
       });
@@ -985,7 +997,8 @@ export class ResponsesApiAdapter implements ModelAdapter {
       // async generator 的消费者可能在任一 delta 后 return()；该路径不会进入 catch。
       // 补齐 attempt 终态，避免 PG 永久只剩 started/checkpoint。
       if (!streamReadSettled && !activeAttempt.isFinished()) {
-        await reader.cancel().catch(() => undefined);
+        activeGuard?.stop(new DOMException('Consumer closed', 'AbortError'));
+        void reader.cancel().catch(() => undefined);
         await activeAttempt.finished('aborted', {
           errorCode: 'MODEL_STREAM_CONSUMER_CLOSED',
           errorMessage: 'Model stream consumer closed before adapter completion',
@@ -993,6 +1006,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         });
       }
       reader.releaseLock();
+      activeGuard?.dispose();
     }
 
     if (pendingStreamReadRetry) {
@@ -1016,7 +1030,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         usePrevious,
         responseMode,
         continuationReplayReset,
-      });
+      }, scope);
       return;
     }
 
@@ -1088,7 +1102,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
           usePrevious,
           responseMode,
           continuationReplayReset,
-        });
+        }, scope);
         return;
       }
       const retryBlockedReason = requestSignal?.aborted ? 'aborted' : !transientTerminal ? 'permanent_error' : !replaySafe ? 'irreversible_output_delivered' : 'retry_budget_exhausted';
@@ -1118,7 +1132,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
         providerStatus: response.status,
         responseChained: usePrevious,
         responseMode,
-        modelRequestAttemptCount,
+        modelRequestAttemptCount: scope.lastAttempt,
         ...(promptCacheKey ? { promptCacheKey } : {}),
         requestInputPrefixHash,
         requestInstructionsHash,
@@ -1219,7 +1233,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
     });
 
     logger.info(
-      `Responses 请求完成 mode=${responseMode} attempts=${modelRequestAttemptCount} `
+      `Responses 请求完成 mode=${responseMode} attempts=${scope.lastAttempt} `
       + `model=${request.model} session=${sessionIdShort ?? '-'} body_bytes=${requestBodyBytes} `
       + `wire=${wireMode ?? '-'} wire_bytes=${wireRequestBodyBytes ?? requestBodyBytes} `
       + `prompt_cache_key=${promptCacheKey?.slice(0, 12) ?? '-'} `
@@ -1245,7 +1259,7 @@ export class ResponsesApiAdapter implements ModelAdapter {
       ...(actualModel ? { actualModel } : {}),
       responseChained: usePrevious,
       responseMode,
-      modelRequestAttemptCount,
+      modelRequestAttemptCount: scope.lastAttempt,
       ...(promptCacheKey ? { promptCacheKey } : {}),
       requestInputPrefixHash,
       requestInstructionsHash,
@@ -1566,55 +1580,6 @@ export class ResponsesApiAdapter implements ModelAdapter {
 // helpers
 // ─────────────────────────────────────────────────────────────
 
-class ResponsesStreamError extends Error {
-  constructor(
-    readonly outcome: FinishedOutcome,
-    readonly code: string,
-    message: string,
-  ) {
-    super(`[${code}] ${message}`);
-    this.name = 'ResponsesStreamError';
-  }
-}
-
-class SseFrameBuffer {
-  private buffer = '';
-
-  constructor(private readonly maxBytes: number) {}
-
-  push(chunk: string): string[] {
-    this.buffer += chunk;
-    const blocks: string[] = [];
-    while (true) {
-      const boundary = /(?:\r\n|\r|\n)(?:\r\n|\r|\n)/.exec(this.buffer);
-      if (!boundary || boundary.index === undefined) break;
-      const block = this.buffer.slice(0, boundary.index);
-      if (Buffer.byteLength(block, 'utf8') > this.maxBytes) {
-        throw new ResponsesStreamError(
-          'parse_error',
-          'MODEL_SSE_FRAME_TOO_LARGE',
-          `Responses SSE frame exceeded ${this.maxBytes} bytes`,
-        );
-      }
-      blocks.push(block);
-      this.buffer = this.buffer.slice(boundary.index + boundary[0].length);
-    }
-    if (Buffer.byteLength(this.buffer, 'utf8') > this.maxBytes) {
-      throw new ResponsesStreamError(
-        'parse_error',
-        'MODEL_SSE_FRAME_TOO_LARGE',
-        `Responses SSE frame exceeded ${this.maxBytes} bytes`,
-      );
-    }
-    return blocks;
-  }
-
-  finish(): string {
-    const tail = this.buffer;
-    this.buffer = '';
-    return tail;
-  }
-}
 
 function assertReservedExtraBodyKeys(extraBody: Record<string, unknown> | undefined): void {
   if (!extraBody) return;
@@ -1802,7 +1767,7 @@ function classifyStreamError(
   if (signal?.aborted) {
     return { outcome: 'aborted', code: 'MODEL_REQUEST_ABORTED', message: 'Model request was aborted' };
   }
-  if (err instanceof ResponsesStreamError) {
+  if (err instanceof ResponsesStreamError || err instanceof ResponsesStreamGuardError) {
     return { outcome: err.outcome, code: err.code, message: compactDiagnosticMessage(err.message) };
   }
   return {
@@ -1833,29 +1798,6 @@ function transportDiagnosticPatch(
   };
 }
 
-function providerErrorDiagnosticMessage(status: number, code: string | undefined): string {
-  const candidate = compactDiagnosticToken(code, 120);
-  const safeCode = candidate && /^[A-Za-z0-9_.:-]+$/.test(candidate) ? candidate : undefined;
-  if (safeCode?.toLowerCase() === 'invalid_prompt') {
-    return `Responses API HTTP ${status}: Request blocked by provider`;
-  }
-  return `Responses API HTTP ${status}${safeCode ? ` (${safeCode})` : ''}`;
-}
-
-function extractProviderError(text: string): { code?: string; message?: string } {
-  try {
-    const parsed = JSON.parse(text) as Record<string, any>;
-    const error = parsed.error ?? parsed;
-    return {
-      ...(typeof error?.code === 'string' ? { code: compactDiagnosticMessage(error.code) } : {}),
-      ...(typeof error?.message === 'string' ? { message: compactDiagnosticMessage(error.message) } : {}),
-    };
-  } catch {
-    const message = compactDiagnosticMessage(text);
-    return message ? { message } : {};
-  }
-}
-
 function bodyContainsEncryptedReasoning(body: Record<string, unknown>): boolean {
   return Array.isArray(body.input) && body.input.some((item) => (
     !!item
@@ -1879,19 +1821,8 @@ function stripEncryptedReasoning(body: Record<string, unknown>): {
   return { body: { ...body, input }, changed: true };
 }
 
-function isInvalidEncryptedContent(status: number, code: string | undefined, message: string): boolean {
-  if (status !== 400) return false;
-  return /invalid[_\s-]?encrypted[_\s-]?content/i.test(`${code ?? ''} ${message}`);
-}
-
-// 429 里额度/配额耗尽类：需要人工充值或扩配额才能恢复，重试只会连续撞同一堵墙。
-// 限流（RPM/TPM）、服务过载、模型加载中都不属于这一类，退避后通常可恢复。
-function isQuotaExhausted(code: string | undefined, message: string): boolean {
-  return /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i
-    .test(`${code ?? ''} ${message}`);
-}
-
 function isPermanentTransportError(error: unknown): boolean {
+  if (error instanceof ResponsesStreamGuardError) return true;
   if (error instanceof ModelProviderError) {
     return error.status === 400 || error.status === 401 || error.status === 403 || error.status === 404;
   }
@@ -1906,20 +1837,6 @@ function isPermanentTransportError(error: unknown): boolean {
     return status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429;
   }
   return false;
-}
-
-function isRetryablePreStreamHttpError(
-  status: number,
-  code: string | undefined,
-  message: string,
-): boolean {
-  if (status === 502 || status === 503 || status === 504) return true;
-  // 429 发流前被拒 = 上游未接单、不计费，退避重试只花时延不花钱；
-  // 覆盖 ServerOverloaded / ModelLoadingError / RPM·TPM 限流等可自愈形态。
-  if (status === 429) return !isQuotaExhausted(code, message);
-  if (status !== 500) return false;
-  return /\b(?:EOF|ECONNRESET|EPIPE|ETIMEDOUT)\b|socket hang up|connection (?:reset|closed)|unexpected end of file/i.test(message)
-    || /stream error:\s*stream ID \d+;\s*PROTOCOL_ERROR;\s*received from peer/i.test(message);
 }
 
 function isRetryableStreamTerminalError(

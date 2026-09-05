@@ -3,10 +3,9 @@ import type pg from 'pg';
 
 import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
 import {
-  DEFAULT_ORG_AGENT_CHANNEL_POLICY,
-  DEFAULT_ORG_AGENT_EFFECTIVE_CONFIG,
   type DwsDeliveryIntent,
   type DwsDeliveryIntentCreate,
+  type DwsReplyRecoveryState,
   type ExternalActorRef,
   type OrgAgentChannelActorRef,
   type OrgAgentChannelBinding,
@@ -26,11 +25,13 @@ import {
   requiredRow, validateDestination, validateEffectiveConfig, validatePolicy,
 } from './storeMappers.js';
 import {
+  cancelUnstartedDeliveryIntentsForInbox,
   claimDeliveryIntent,
   claimNextDeliveryIntent,
   compactDeliveryError,
   finishClaimedDelivery,
   getDeliveryIntent,
+  getReplyRecoveryStateForInbox,
   listDeliveryIntents,
   reconcileExpiredDeliveriesForAccount,
   reconcileExpiredAndStaleDeliveries,
@@ -53,6 +54,10 @@ import {
   updateWorkOrderControl as updateStoredWorkOrderControl,
 } from './workOrderLifecycle.js';
 import { changeStoredMemoryStatus, promoteStoredMemory } from './memoryLifecycle.js';
+import {
+  ensureIdentityBoundShadowBinding,
+  type EnsureIdentityBoundShadowBindingInput,
+} from './bindingIdentityStore.js';
 
 const MAX_DELIVERY_LEASE_MS = 24 * 60 * 60 * 1_000;
 
@@ -61,6 +66,8 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   private readonly bindingsTable: string;
   private readonly conversationsTable: string;
   private readonly inboxTable: string;
+  private readonly accountsTable: string;
+  private readonly managedAgentsTable: string;
   private readonly deliveriesTable: string;
   private readonly workOrdersTable: string;
   private readonly attemptsTable: string;
@@ -74,6 +81,8 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     this.bindingsTable = `${this.prefix}_org_agent_channel_bindings`;
     this.conversationsTable = `${this.prefix}_org_agent_work_conversations`;
     this.inboxTable = `${this.prefix}_agent_dws_event_inbox`;
+    this.accountsTable = `${this.prefix}_agent_dws_accounts`;
+    this.managedAgentsTable = `${this.prefix}_managed_agents`;
     this.deliveriesTable = `${this.prefix}_agent_dws_delivery_intents`;
     this.workOrdersTable = `${this.prefix}_org_agent_work_orders`;
     this.attemptsTable = `${this.prefix}_org_agent_work_attempts`;
@@ -84,57 +93,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     await new PgGovernanceMigrationRunner(this.pool, this.prefix).run();
   }
 
-  async ensureShadowBinding(input: {
-    tenantId: string;
-    accountId: string;
-    agentId: string;
-    conversationId: string;
-    channelKind: 'group' | 'direct';
-    workspaceId: string;
-  }): Promise<OrgAgentChannelBinding> {
-    assertTexts(
-      input.tenantId,
-      input.accountId,
-      input.agentId,
-      input.conversationId,
-      input.workspaceId,
-    );
-    const bindingId = `oacb-${randomUUID()}`;
-    const result = await this.pool.query(
-      `
-      INSERT INTO ${this.bindingsTable} AS binding (
-        binding_id,tenant_id,account_id,agent_id,conversation_id,channel_kind,activation_state,enabled,
-        conversation_space_id,service_session_id,workspace_id,policy_json,effective_config_json,
-        revision,created_at,updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,'shadow',FALSE,$7,$8,$9,$10::jsonb,$11::jsonb,1,NOW(),NOW())
-      ON CONFLICT (account_id,conversation_id) DO UPDATE
-      SET updated_at=binding.updated_at
-      RETURNING binding.*
-    `,
-      [
-        bindingId,
-        input.tenantId,
-        input.accountId,
-        input.agentId,
-        input.conversationId,
-        input.channelKind,
-        `space-${randomUUID()}`,
-        `agent-dws-service-${randomUUID()}`,
-        input.workspaceId,
-        JSON.stringify(DEFAULT_ORG_AGENT_CHANNEL_POLICY),
-        JSON.stringify(DEFAULT_ORG_AGENT_EFFECTIVE_CONFIG),
-      ],
-    );
-    const binding = mapBinding(requiredRow(result.rows[0]));
-    if (
-      binding.tenantId !== input.tenantId ||
-      binding.agentId !== input.agentId ||
-      binding.channelKind !== input.channelKind ||
-      binding.workspaceId !== input.workspaceId
-    ) {
-      throw new Error('ORG_AGENT_BINDING_IDENTITY_CONFLICT');
-    }
-    return binding;
+  async ensureShadowBinding(
+    input: EnsureIdentityBoundShadowBindingInput,
+  ): Promise<OrgAgentChannelBinding> {
+    return await ensureIdentityBoundShadowBinding(this.pool, this.bindingsTable, input);
   }
 
   async getBinding(
@@ -327,16 +289,22 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       input.tenantId,
       input.accountId,
       input.conversationId,
+      input.accountIdentity.profileId,
+      input.accountIdentity.corpId,
+      input.accountIdentity.dingtalkUserId,
+      input.accountIdentity.identityUpdatedAt,
       input.content,
       input.idempotencyKey,
     );
+    // 所有新 delivery 都固定账号身份纪元；NULL 仅代表迁移前 legacy 记录。
     const result = await this.pool.query(
       `INSERT INTO ${this.deliveriesTable} AS delivery (
       delivery_id,tenant_id,inbox_id,account_id,conversation_id,work_conversation_id,source,
       agent_id,binding_id,conversation_space_id,policy_revision,visibility,source_work_order_id,source_attempt_id,
-      delivery_kind,disposition,delivery_state,destination_json,content,idempotency_key,
-      provider_receipt_json,attempt,lease_fence,created_at,updated_at,completed_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending',$17::jsonb,$18,$19,$20::jsonb,0,0,NOW(),NOW(),$21)
+      delivery_kind,disposition,delivery_state,provider_attempt_phase,destination_json,content,idempotency_key,
+      provider_receipt_json,attempt,lease_fence,created_at,updated_at,completed_at,
+      account_profile_id,account_corp_id,account_dingtalk_user_id,account_identity_updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending','before_provider',$17::jsonb,$18,$19,$20::jsonb,0,0,NOW(),NOW(),$21,$22,$23,$24,$25::timestamptz)
     ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key=delivery.idempotency_key
     RETURNING delivery.*`,
       [
@@ -363,6 +331,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
         input.idempotencyKey,
         input.providerReceipt ? JSON.stringify(sanitizeDeliveryReceipt(input.providerReceipt)) : null,
         input.completedAt ?? null,
+        input.accountIdentity.profileId,
+        input.accountIdentity.corpId,
+        input.accountIdentity.dingtalkUserId,
+        input.accountIdentity.identityUpdatedAt,
       ],
     );
     return mapDelivery(requiredRow(result.rows[0]));
@@ -388,6 +360,31 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     return claimNextDeliveryIntent(this.pool, this.deliveryTables(), owner, ttlMs);
   }
 
+  async cancelUnstartedDeliveriesForInbox(
+    tenantId: string,
+    inboxId: string,
+    reason: string,
+  ): Promise<number> {
+    assertTexts(tenantId, inboxId, reason);
+    return cancelUnstartedDeliveryIntentsForInbox(
+      this.pool,
+      this.deliveriesTable,
+      tenantId,
+      inboxId,
+      reason,
+    );
+  }
+
+  async getReplyRecoveryStateForInbox(
+    tenantId: string,
+    inboxId: string,
+  ): Promise<DwsReplyRecoveryState> {
+    assertTexts(tenantId, inboxId);
+    return getReplyRecoveryStateForInbox(
+      this.pool, this.deliveriesTable, tenantId, inboxId,
+    );
+  }
+
   async reconcileAllExpiredDeliveries(limit = 100): Promise<number> {
     const bounded = Math.max(1, Math.min(1_000, Math.trunc(limit)));
     return reconcileExpiredAndStaleDeliveries(this.pool, this.deliveryTables(), bounded);
@@ -399,7 +396,11 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     fence: number,
   ): Promise<DwsDeliveryIntent> {
     assertTexts(deliveryId, owner);
-    return startDeliveryProviderAttempt(this.pool, this.deliveriesTable, deliveryId, owner, fence);
+    return startDeliveryProviderAttempt(
+      this.pool, this.deliveriesTable, this.accountsTable,
+      this.bindingsTable, this.managedAgentsTable,
+      deliveryId, owner, fence,
+    );
   }
 
   async releaseClaimedDeliveryForRetry(
@@ -984,6 +985,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   private deliveryTables() {
     return {
       deliveries: this.deliveriesTable,
+      inbox: this.inboxTable,
       workOrders: this.workOrdersTable,
       attempts: this.attemptsTable,
     };

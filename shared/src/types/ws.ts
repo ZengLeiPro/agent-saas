@@ -124,7 +124,8 @@ type WsEventPayload =
     | { type: 'title_updated'; sessionId: string; title: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
-    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
+    /** quotaResetAt：配额窗口绝对重置时刻（ISO）；仅 failureKind='quota_exhausted' 且上游给了结构化字段时下发 */
+    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; quotaResetAt?: string; finalOutput?: boolean }
     | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'respond_error'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'rejected' | 'not_found' | 'expired'; error: string; reason?: string; retryable?: boolean }
     | { type: 'respond_ok'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'accepted' | 'duplicate' | 'resolved'; response?: Record<string, unknown> }
@@ -136,7 +137,7 @@ type WsEventPayload =
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean; readSeq?: number; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'user_message'; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }
-    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
+    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; quotaResetAt?: string }
     | { type: 'groups_changed' }
     | { type: 'tenant_features_changed'; tenantId: string; tenantFeatures: TenantFeatureFlags; debugMode: boolean }
     // ── SDK 0.2.112+ 新增事件 ──

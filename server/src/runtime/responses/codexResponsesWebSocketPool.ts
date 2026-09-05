@@ -13,6 +13,7 @@ import {
 } from './codexResponsesWebSocketErrors.js';
 import { ResponsesTransportStreamError } from './responsesTransport.js';
 import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
+import { RESPONSES_STREAM_LIMITS, ResponsesStreamGuardError, isResponsesSemanticProgress } from './responsesStreamBudget.js';
 
 export {
   CodexWebSocketAccountUnavailableError,
@@ -44,10 +45,12 @@ export interface CodexWebSocketExecuteInput {
   cacheAffinityId: string;
   clientRequestId: string;
   signal?: AbortSignal;
+  recoveryAttempt?: boolean;
 }
 
 export interface CodexWebSocketExecuteResult {
   response: Response;
+  invalidate: () => void;
   wireMode: CodexWireMode;
   wireRequestBodyBytes: number;
 }
@@ -149,6 +152,7 @@ export class CodexResponsesWebSocketPool {
     } catch (error) {
       if (!(error instanceof CodexWebSocketReanchorError)) throw error;
       this.discard(entry, error.code);
+      if (input.recoveryAttempt || input.signal?.aborted) throw error;
       const replacement = await this.connect(key, input);
       const fullPlan = buildFullRequestPlan(logicalBody, 'websocket_fallback_full');
       try {
@@ -184,7 +188,7 @@ export class CodexResponsesWebSocketPool {
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
     let socket: EgressWebSocket | undefined;
     let lastError: unknown;
-    const connectAttempts = Math.max(1, Math.floor(this.options.connectAttempts ?? 2));
+    const connectAttempts = input.recoveryAttempt ? 1 : Math.max(1, Math.floor(this.options.connectAttempts ?? 2));
     for (let attempt = 1; attempt <= connectAttempts; attempt += 1) {
       try {
         socket = await this.connector({
@@ -278,6 +282,9 @@ export class CodexResponsesWebSocketPool {
     let terminal = false;
     let officialTerminalReceived = false;
     let frameCount = 0;
+    let wireBytes = 0;
+    let rawBytes = 0;
+    let cancelRequest = () => this.discard(entry, 'response_consumer_cancelled');
     let lastSequenceNumber: number | undefined;
     let pendingSocketError: { detail: string; empty: boolean } | undefined;
     let socketErrorSettleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -292,7 +299,7 @@ export class CodexResponsesWebSocketPool {
         controllerRef = controller;
       },
       cancel: () => {
-        if (!terminal) this.discard(entry, 'response_consumer_cancelled');
+        if (!terminal) cancelRequest();
       },
     });
 
@@ -315,6 +322,11 @@ export class CodexResponsesWebSocketPool {
         cleanup();
         controllerRef?.close();
         reject(error);
+      };
+      cancelRequest = () => {
+        terminal = true;
+        cleanup();
+        this.discard(entry, 'response_consumer_cancelled');
       };
 
       const failStream = (error: Error, preExposureReason?: string) => {
@@ -340,6 +352,7 @@ export class CodexResponsesWebSocketPool {
         bufferedFrames.length = 0;
         resolve({
           entry,
+          invalidate: () => { cancelRequest(); },
           response: new Response(stream, {
             status: 200,
             headers: { 'content-type': 'text/event-stream; charset=utf-8' },
@@ -353,8 +366,7 @@ export class CodexResponsesWebSocketPool {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           failStream(
-            new Error('Codex WebSocket idle timeout waiting for response event'),
-            'idle_timeout',
+            new ResponsesStreamGuardError('MODEL_STREAM_IDLE_TIMEOUT', 'Codex WebSocket 等待语义进展超时'),
           );
           this.discard(entry, 'idle_timeout');
         }, this.options.idleEventTimeoutMs ?? DEFAULT_IDLE_EVENT_TIMEOUT_MS);
@@ -403,8 +415,7 @@ export class CodexResponsesWebSocketPool {
           ));
           return;
         }
-        if (entry.closed) return;
-        resetIdleTimer();
+        if (entry.closed || terminal) return;
         frameCount += 1;
         const text = websocketMessageText(raw.data);
         if (text === undefined) {
@@ -416,6 +427,13 @@ export class CodexResponsesWebSocketPool {
           return;
         }
         let event: Record<string, unknown>;
+        // 解析前限制原始字节；入队前另按实际 SSE 封装字节限制。
+        rawBytes += Buffer.byteLength(text, 'utf8');
+        if (rawBytes > RESPONSES_STREAM_LIMITS.wireBytes) {
+          failStream(new ResponsesStreamGuardError('MODEL_STREAM_WIRE_LIMIT', `rawBytes=${rawBytes}`));
+          this.discard(entry, 'wire_limit');
+          return;
+        }
         try {
           event = JSON.parse(text) as Record<string, unknown>;
         } catch (error) {
@@ -427,6 +445,7 @@ export class CodexResponsesWebSocketPool {
           return;
         }
         const eventType = typeof event.type === 'string' ? event.type : '';
+        if (isResponsesSemanticProgress(event)) resetIdleTimer();
         if (typeof event.sequence_number === 'number' && Number.isFinite(event.sequence_number)) {
           lastSequenceNumber = event.sequence_number;
         }
@@ -467,6 +486,12 @@ export class CodexResponsesWebSocketPool {
         }
 
         const frame = encoder.encode(`event: ${eventType || 'message'}\n${sseDataLines(text)}\n\n`);
+        wireBytes += frame.byteLength;
+        if (wireBytes > RESPONSES_STREAM_LIMITS.wireBytes) {
+          failStream(new ResponsesStreamGuardError('MODEL_STREAM_WIRE_LIMIT', `wireBytes=${wireBytes}`));
+          this.discard(entry, 'wire_limit');
+          return;
+        }
         if (exposed) controllerRef?.enqueue(frame);
         else bufferedFrames.push(frame);
 

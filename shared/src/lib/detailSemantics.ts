@@ -6,16 +6,21 @@
  * 分型渲染必须落在同一批判定上：一端把「17/18」判成中性、另一端判成通过，
  * 销售演示里同一条会话就会呈现两种结论。
  *
- * 全部判定遵守同一条纪律：**宁可判不出来，也不能判错**。字段协议里没有结构化的
- * 判定位（TodoOutcome.stat 只有 label/value 两个字符串），所以这里全部基于文本做
- * 保守判别，任何拿不准的一律退回中性 / 不隐藏。
+ * 全部判定遵守同一条纪律：**宁可判不出来，也不能判错**。TodoOutcome.stat 带可选的
+ * 结构化判定位 `verdict`：服务端/模型显式给出时以它为准；缺省时回落到基于 value 的
+ * 文本保守判别，任何拿不准的一律退回中性 / 不隐藏。
  */
 import type { DetailLine } from './toolPresentation';
 import type { PresentationTone, RecordsBlock } from './presentation/types';
 
+/** stat 的结构化判定位取值。`neutral` 表示「明确不下结论」，不等同于缺省。 */
+export type OutcomeStatVerdict = 'pass' | 'fail' | 'neutral';
+
 export interface OutcomeStat {
   label: string;
   value: string;
+  /** 显式判定位；缺省时回落到 value 文本的保守判别。 */
+  verdict?: OutcomeStatVerdict;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,14 +63,20 @@ const FAIL_TEXT =
 const PASS_TEXT = /(通过|满足|合规|达标|一致|成功|正常|已核对|已覆盖|无差异|无例外)/;
 
 /**
- * 只看 **value**，不看 label。
+ * 结构化判定位 `verdict` 优先：它由服务端/模型显式给出，比任何文本猜测更可信，
+ * 显式 `neutral` 也压过文本判别（「明确不下结论」不该被 value 里的「通过」改判）。
+ *
+ * 缺省时回落到文本判别，只看 **value**，不看 label。
  * chip 的形态是「维度名 + 结论/计数」，label 是维度名：
  * 「失败 0」的 label 含「失败」但这条是好消息，按 label 上色会把 0 失败染红。
  *
- * 含数字的 value 一律判为中性（计数值）。代价是「17/18 通过」拿不到绿色，
- * 收益是任何计数标签都不会被误判——符合「宁可不上色不误上色」。
+ * 含数字的 value 一律判为中性（计数值）。代价是「17/18 通过」在没有 `verdict` 时
+ * 拿不到绿色，收益是任何计数标签都不会被误判——符合「宁可不上色不误上色」。
  */
 export function statVerdict(stat: OutcomeStat): StatVerdict {
+  if (stat.verdict === 'pass' || stat.verdict === 'fail') return stat.verdict;
+  if (stat.verdict === 'neutral') return null;
+
   const v = stat.value.trim();
   if (!v) return null;
   if (/[\d０-９]/.test(v)) return null;

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "WP1 ky-app-cli/create-ky-app：doctor 与模板的数据库、端口与测试开关",
+  "reason": "Admin Runner 治理层：launcher 回执目录必须由部署环境显式注入且不得落入密封 release 树；每次调用 nonce 由 launcher 注入子进程供 governance bootstrap 拒绝直跑；WP1 ky-app-cli/create-ky-app：doctor 与模板的数据库、端口与测试开关",
   "updatedAt": "2026-09-05",
   "domains": {
     "server": {
@@ -151,9 +151,11 @@
       "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
     },
     "deployment/scripts": {
-      "budget": 38,
+      "budget": 40,
       "names": [
         "ACS_ORCH_AUTH_TOKEN",
+        "AGENT_SAAS_ADMIN_LAUNCH_NONCE",
+        "AGENT_SAAS_ADMIN_RECEIPT_DIR",
         "AGENT_SAAS_EMBEDDED",
         "AGENT_SAAS_RELEASE_ATTESTATION_DIR",
         "AGENT_SAAS_RELEASE_MANIFEST_DIR",

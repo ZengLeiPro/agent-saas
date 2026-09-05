@@ -141,6 +141,7 @@ function SystemErrorBanner({
     ...(message.failureKind ? { failureKind: message.failureKind } : {}),
     ...(message.recoveryAction ? { recoveryAction: message.recoveryAction } : {}),
     ...(message.canonicalFailure ? { canonicalFailure: message.canonicalFailure } : {}),
+    ...(message.quotaResetAt ? { resetAt: message.quotaResetAt } : {}),
   }), [message, presentation]);
   const danger = presentation.tone === 'danger';
   const tone = resolveActivityToneTokens(danger ? 'danger' : 'neutral', colors);

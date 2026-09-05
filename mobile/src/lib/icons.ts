@@ -23,7 +23,16 @@ import {
   Coins,
   Columns3,
   Cpu,
+  File as FileGeneric,
+  FileArchive,
+  FileAudio,
+  FileCode,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
   Files,
+  Folder,
   Fingerprint,
   Info,
   Library,
@@ -31,6 +40,7 @@ import {
   Loader2,
   MessageSquareText,
   Plug,
+  Presentation,
   Puzzle,
   Recycle,
   ScrollText,
@@ -47,6 +57,8 @@ import {
   Workflow,
   Wrench,
 } from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import type { FileTypeCategory } from '@agent/shared';
 
 export const ICON_SIZE = { inline: 14, action: 16, feature: 20 } as const;
 export const ICON_STROKE = { default: 2, emphasis: 2.5 } as const;
@@ -83,6 +95,26 @@ export const EntityIcons = {
   workflow: Workflow,
   configStatus: Fingerprint,
 } as const;
+
+/**
+ * 文件类型图标 —— 与 Web `FileBrowser/fileIcons.tsx` 的 `resolveFileIcon` 一比一对齐，
+ * 类别键直接复用 shared `getFileTypeVisual` 的 `FileTypeCategory`（外加目录 `folder`）。
+ * 色板同样来自 shared（`FileTypeVisual.color/colorDark`），改图标或改色都要两处同步。
+ */
+export const FileTypeIcons = {
+  folder: Folder,
+  pdf: FileText,
+  word: FileText,
+  ppt: Presentation,
+  excel: FileSpreadsheet,
+  code: FileCode,
+  image: FileImage,
+  video: FileVideo,
+  audio: FileAudio,
+  text: FileText,
+  archive: FileArchive,
+  default: FileGeneric,
+} as const satisfies Record<FileTypeCategory | 'folder', LucideIcon>;
 
 /** 运行状态四件套（+ pending）—— 全站唯一，禁止另起图标 */
 export const StatusIcons = {

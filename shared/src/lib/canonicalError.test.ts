@@ -20,6 +20,7 @@ const CASES: Array<[CanonicalErrorKind, Parameters<typeof mapCanonicalError>[0]]
   ['tls_untrusted', { source: 'tls', tls: true }],
   ['server_unavailable', { source: 'http', status: 503 }],
   ['rate_limited', { source: 'http', status: 429 }],
+  ['quota_exhausted', { source: 'runtime', reasonCode: 'usage_limit_reached' }],
   ['client_misconfigured', { source: 'ws', code: 'invalid_submission' }],
   ['sync_overflow', { source: 'ws', code: 'sync_overflow' }],
   ['stale_generation', { source: 'ws', code: 'generation_mismatch' }],
@@ -166,5 +167,51 @@ describe('M40-05 retry and exactly one recovery action', () => {
     await first;
     await tap();
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+describe('配额耗尽（quota_exhausted）与绝对重置时刻', () => {
+  const NOW = Date.parse('2026-08-03T00:58:00.000Z');
+
+  it('只按上游结构化错误码归类，自由文本一律留在 rate_limited 兜底', () => {
+    // 火山 Ark / OpenAI / Codex 的明确码
+    for (const code of [
+      'QuotaExceeded', 'AccountQuotaExceeded', 'insufficient_quota',
+      'usage_limit_reached', 'billing_hard_limit_reached',
+    ]) {
+      expect(mapCanonicalError({ source: 'runtime', status: 429, code }).kind).toBe('quota_exhausted');
+    }
+    // 只有自由文本时不猜（2026-08-23 红线）：仍是普通限流
+    expect(mapCanonicalError({
+      source: 'runtime', status: 429,
+      legacyMessage: 'You have exceeded the 5-hour usage quota',
+    }).kind).toBe('rate_limited');
+  });
+
+  it('配额耗尽不可重试、不给 retry 动作（重试撞同一堵墙）', () => {
+    const failure = mapCanonicalError({ source: 'runtime', code: 'usage_limit_reached' });
+    expect(failure.retryable).toBe(false);
+    expect(failure.recoveryAction.kind).toBe('none');
+  });
+
+  it('resetAt 归一为 ISO；越界/无效值丢弃；只在配额/限流类别保留', () => {
+    const at = new Date(NOW + 4 * 60 * 60 * 1000).toISOString();
+    expect(mapCanonicalError({ code: 'usage_limit_reached', resetAt: at }, NOW).resetAt).toBe(at);
+    expect(mapCanonicalError({ status: 429, resetAt: at }, NOW).resetAt).toBe(at);
+    // 超过 24h 窗口 / 已过期 / 非时间串一律不填
+    expect(mapCanonicalError({ code: 'usage_limit_reached', resetAt: new Date(NOW + 48 * 3600_000).toISOString() }, NOW).resetAt).toBeUndefined();
+    expect(mapCanonicalError({ code: 'usage_limit_reached', resetAt: new Date(NOW - 3600_000).toISOString() }, NOW).resetAt).toBeUndefined();
+    expect(mapCanonicalError({ code: 'usage_limit_reached', resetAt: 'not-a-time' }, NOW).resetAt).toBeUndefined();
+    // 与配额无关的类别不携带 resetAt
+    expect(mapCanonicalError({ code: 'server_error', resetAt: at }, NOW).resetAt).toBeUndefined();
+  });
+
+  it('会话恢复保留 resetAt（持久化的是已脱敏的 canonical 结构）', () => {
+    // restoreCanonicalSessionFailure 内部按真实 now 重新校验窗口，这里用真实时间基准。
+    const at = new Date(Date.now() + 3600_000).toISOString();
+    const failure = mapCanonicalError({ code: 'usage_limit_reached', resetAt: at, correlationId: 'corr-quota-1' });
+    const restored = restoreCanonicalSessionFailure(serializeCanonicalSessionFailure(failure));
+    expect(restored?.kind).toBe('quota_exhausted');
+    expect(restored?.resetAt).toBe(at);
   });
 });

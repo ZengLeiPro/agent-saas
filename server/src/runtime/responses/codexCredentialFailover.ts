@@ -73,6 +73,7 @@ export async function executeCodexCredentialFailover(input: {
 
       try {
         const result = await input.executeWithCredential(token);
+        if (input.request.recoveryAttempt) return result;
         const quotaCode = await codexQuotaResponseCode(result.response);
         if (quotaCode) {
           let cooldownUntil: string;
@@ -97,6 +98,7 @@ export async function executeCodexCredentialFailover(input: {
         return result;
       } catch (error) {
         if (isCodexQuotaTransportError(error)) {
+          if (input.request.recoveryAttempt || input.request.signal?.aborted) throw error;
           const cooldownUntil = await markQuotaCooldown(
             input.credentials,
             credentialRef,
@@ -111,6 +113,7 @@ export async function executeCodexCredentialFailover(input: {
           continue;
         }
         if (error instanceof CodexAccountAuthUnavailableError) {
+          if (input.request.recoveryAttempt || input.request.signal?.aborted) throw error;
           await markAuthUnavailable(
             input.credentials,
             credentialRef,

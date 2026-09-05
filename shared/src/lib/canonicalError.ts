@@ -8,6 +8,7 @@ export const CANONICAL_ERROR_KINDS = [
   'tls_untrusted',
   'server_unavailable',
   'rate_limited',
+  'quota_exhausted',
   'client_misconfigured',
   'sync_overflow',
   'stale_generation',
@@ -46,6 +47,12 @@ export interface CanonicalError {
   tone: CanonicalErrorTone;
   retryable: boolean;
   retryAfterMs?: number;
+  /**
+   * 配额/限流窗口的绝对重置时刻（ISO 8601 UTC）。
+   * 只在服务端从上游结构化字段（Codex `error.resets_at` / `resets_in_seconds`、
+   * Retry-After 等）解析到时才有；解析不到就不填，客户面回落相对倒计时。
+   */
+  resetAt?: string;
   correlationId?: string;
   recoveryAction: CanonicalRecoveryAction;
   /** The failed operation is terminal. Renderers must clear any spinner. */
@@ -70,6 +77,7 @@ export interface CanonicalErrorInput {
   reasonCode?: unknown;
   retryAfter?: unknown;
   retryAfterMs?: unknown;
+  resetAt?: unknown;
   correlationId?: unknown;
   online?: boolean;
   timeout?: boolean;
@@ -97,6 +105,10 @@ const DEFINITIONS: Record<CanonicalErrorKind, ErrorDefinition> = {
   tls_untrusted: { title: '无法建立安全连接', safeMessage: '请检查设备时间、网络或受信任证书设置。', tone: 'danger', retryable: false, action: 'open-settings', label: '打开设置' },
   server_unavailable: { title: '服务暂不可用', safeMessage: '服务暂时不可用，请稍后重试。', tone: 'warn', retryable: true, action: 'retry', label: '重试' },
   rate_limited: { title: '操作过于频繁', safeMessage: '请等待片刻后重试。', tone: 'warn', retryable: true, action: 'retry', label: '稍后重试' },
+  // 配额耗尽与限流的差别是「重试无用」：同一模型在窗口重置前必然继续被拒，
+  // 因此 retryable=false、不给 retry 动作；客户面的「切换模型」由
+  // selectClientFailureCopy 补（canonical 动作枚举里没有换模型这个概念）。
+  quota_exhausted: { title: '模型额度已用尽', safeMessage: '当前模型额度已用尽，请切换其他模型。', tone: 'warn', retryable: false, action: 'none', label: '' },
   client_misconfigured: { title: '应用配置有误', safeMessage: '当前应用配置无法完成此操作，请联系管理员。', tone: 'danger', retryable: false, action: 'contact-admin', label: '联系管理员' },
   sync_overflow: { title: '需要完整同步', safeMessage: '本地进度与服务端差距过大，需要重新同步。', tone: 'warn', retryable: false, action: 'full-sync', label: '完整同步' },
   stale_generation: { title: '会话状态已更新', safeMessage: '当前会话状态已失效，请刷新后继续。', tone: 'warn', retryable: false, action: 'refresh', label: '刷新状态' },
@@ -117,6 +129,13 @@ const CODE_KIND: Readonly<Record<string, CanonicalErrorKind>> = Object.freeze({
   tls_untrusted: 'tls_untrusted', cert_untrusted: 'tls_untrusted', certificate_unknown: 'tls_untrusted', ssl_error: 'tls_untrusted',
   server_unavailable: 'server_unavailable', server_draining: 'server_unavailable', service_unavailable: 'server_unavailable', server_error: 'server_unavailable',
   rate_limited: 'rate_limited', rate_limit: 'rate_limited', too_many_requests: 'rate_limited',
+  // 只认上游明确给出的结构化错误码，绝不从自由文本猜（2026-08-23 红线）。
+  // 火山 Ark：QuotaExceeded / AccountQuotaExceeded；OpenAI/Codex：usage_limit_reached / insufficient_quota。
+  quota_exhausted: 'quota_exhausted', quota_exceeded: 'quota_exhausted', account_quota_exceeded: 'quota_exhausted',
+  // 火山 Ark 的码是 PascalCase 且不带分隔符，normalizedCode 只降级大小写，因此单列。
+  quotaexceeded: 'quota_exhausted', accountquotaexceeded: 'quota_exhausted',
+  insufficient_quota: 'quota_exhausted', usage_limit_reached: 'quota_exhausted', usage_limit_exceeded: 'quota_exhausted',
+  billing_hard_limit_reached: 'quota_exhausted',
   client_misconfigured: 'client_misconfigured', invalid_configuration: 'client_misconfigured', provider_not_configured: 'client_misconfigured', callback_domain_missing: 'client_misconfigured', stt_not_configured: 'client_misconfigured',
   sync_overflow: 'sync_overflow', buffer_overflow: 'sync_overflow',
   stale_generation: 'stale_generation', stale_auth_epoch: 'stale_generation', generation_mismatch: 'stale_generation',
@@ -167,6 +186,16 @@ function retryAfterMs(value: unknown, nowMs: number): number | undefined {
   const date = Date.parse(value);
   if (!Number.isFinite(date)) return undefined;
   return Math.min(Math.max(0, date - nowMs), 24 * 60 * 60 * 1000);
+}
+
+/** 绝对重置时刻：只接受能解析成合法时间、且落在「现在 ± 24h」窗口内的值。 */
+function resetAtIso(value: unknown, nowMs: number): string | undefined {
+  if (typeof value !== 'string' || value.length > 64) return undefined;
+  const parsed = Date.parse(value.trim());
+  if (!Number.isFinite(parsed)) return undefined;
+  // 越界值（时钟漂移、上游填错单位）一律丢弃：宁可不显示，也不能报一个错的时刻。
+  if (parsed < nowMs - 60_000 || parsed > nowMs + 24 * 60 * 60 * 1000) return undefined;
+  return new Date(parsed).toISOString();
 }
 
 function legacyKind(message: unknown): CanonicalErrorKind | undefined {
@@ -224,7 +253,10 @@ export function mapCanonicalError(input: CanonicalErrorInput | unknown, nowMs = 
   );
   const correlationId = safeCorrelationId(safeOwn(safeInput, 'correlationId'))
     ?? safeCorrelationId(safeOwn(safeOwn(safeInput, 'error'), 'correlationId'));
-  const delay = kind === 'rate_limited' || RETRYABLE_KINDS.has(kind) ? explicitMs ?? headerMs : undefined;
+  const quotaLike = kind === 'rate_limited' || kind === 'quota_exhausted';
+  const delay = quotaLike || RETRYABLE_KINDS.has(kind) ? explicitMs ?? headerMs : undefined;
+  // resetAt 只对配额/限流有意义，其他类别不携带（避免无关失败被渲染成倒计时）。
+  const resetAt = quotaLike ? resetAtIso(safeOwn(safeInput, 'resetAt'), nowMs) : undefined;
   return Object.freeze({
     kind,
     title: definition.title,
@@ -232,6 +264,7 @@ export function mapCanonicalError(input: CanonicalErrorInput | unknown, nowMs = 
     tone: definition.tone,
     retryable: definition.retryable,
     ...(delay !== undefined ? { retryAfterMs: delay } : {}),
+    ...(resetAt ? { resetAt } : {}),
     ...(correlationId ? { correlationId } : {}),
     recoveryAction: Object.freeze({ kind: definition.action, label: definition.label }),
     terminal: true as const,
@@ -370,6 +403,7 @@ export function restoreCanonicalSessionFailure(value: unknown): CanonicalError |
     source: 'session',
     code: kind,
     retryAfterMs: safeOwn(candidate, 'retryAfterMs'),
+    resetAt: safeOwn(candidate, 'resetAt'),
     correlationId: safeOwn(candidate, 'correlationId'),
   });
   return restored.kind === kind ? restored : undefined;

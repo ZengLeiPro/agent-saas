@@ -24,6 +24,8 @@ import { sttConfigSchema, sttPricingSchema } from './sttConfigSchema.js';
 import { runtimeSchedulerConfigSchema } from './runtimeSchedulerConfigSchema.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import { ttsConfigSchema } from './ttsConfigSchema.js';
+import { codexSubscriptionConfigSchema } from './codexSubscriptionConfigSchema.js';
+import { modelGroupQuotaSourceSchema } from './modelQuotaSourceSchema.js';
 const agentPermissionModeSchema = z.enum([
   'default',
   'acceptEdits',
@@ -537,6 +539,8 @@ const modelGroupSchema = z.object({
   disable_response_chaining: z.boolean().optional(),
   /** 组级关闭 prompt_cache_key（见 modelResponsesOptionsSchema.disable_prompt_cache_key）。 */
   disable_prompt_cache_key: z.boolean().optional(),
+  /** 套餐用量查询来源（管控面凭据），见 modelQuotaSourceSchema。 */
+  quotaSource: modelGroupQuotaSourceSchema.optional(),
   models: z.array(modelItemSchema).min(1),
 }).extend(modelProviderOptionsSchema.shape)
   .extend(modelResponsesOptionsSchema.shape);
@@ -551,30 +555,6 @@ const modelsConfigSchema = z.object({
     fallbackModels: z.array(z.string().min(1)).optional(),
     timeoutMs: z.number().int().positive().max(120_000).optional(),
   }).optional(),
-});
-
-const codexSubscriptionConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  websocketEnabled: z.boolean().default(false),
-  quotaCooldownMinutes: z.number().int().min(1).max(10_080).default(60),
-  /** SecretVault ref；OAuth access/refresh token 不得直接进入 config.json。 */
-  credentialRef: z.string().min(1).optional(), credentialRefs: z.array(z.string().min(1)).min(1).optional(),
-  endpoint: z.string().url().refine((value) => {
-    try {
-      const url = new URL(value);
-      return url.protocol === 'https:'
-        && !url.username
-        && !url.password
-        && url.hostname === 'chatgpt.com'
-        && url.pathname === '/backend-api/codex/responses';
-    } catch {
-      return false;
-    }
-  }, '只允许 https://chatgpt.com/backend-api/codex/responses').optional(),
-  originator: z.string().regex(
-    /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/,
-    '必须是 2–64 位字母、数字、点、下划线或连字符',
-  ).optional(),
 });
 
 const titleGeneratorConfigSchema = z.object({

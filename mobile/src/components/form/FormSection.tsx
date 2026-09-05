@@ -1,6 +1,8 @@
-import React, { Children, isValidElement, cloneElement } from 'react';
+import React, { Children, cloneElement, isValidElement } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { useColors } from '../../theme';
+import { useColors, spacing, fontScale, fontWeight } from '../../theme';
+import { Card } from '../ui/Card';
+import { resolveListRowPosition, type ListRowPosition } from '../ui/listRowStyles';
 
 interface FormSectionProps {
   header?: string;
@@ -9,9 +11,16 @@ interface FormSectionProps {
   required?: boolean;
 }
 
+/**
+ * 分组卡片 —— 复用 `ui/Card`（flush）+ `listRowStyles` 的分组规则：
+ * 卡片本身负责圆角与裁切，行的首尾/分隔由 `position` 下发给每个 Form* 行
+ * （与 `ui/ListRowGroup` 同一套语义，两者可以在同一张卡里混排）。
+ */
 export function FormSection({ header, footer, children, required }: FormSectionProps) {
   const colors = useColors();
-  const items = Children.toArray(children).filter((c) => c != null);
+  const items = Children.toArray(children).filter(isValidElement) as React.ReactElement<{
+    position?: ListRowPosition;
+  }>[];
 
   return (
     <View style={styles.wrapper}>
@@ -21,27 +30,14 @@ export function FormSection({ header, footer, children, required }: FormSectionP
           {required ? <Text style={{ color: colors.destructive }}> *</Text> : null}
         </Text>
       ) : null}
-      <View
-        style={[
-          styles.card,
-          {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-          },
-        ]}
-      >
-        {items.map((child, idx) => {
-          const showSeparator = idx < items.length - 1;
-          return (
-            <View key={idx}>
-              {isValidElement(child) ? child : <View>{child}</View>}
-              {showSeparator ? (
-                <View style={[styles.separator, { backgroundColor: colors.border }]} />
-              ) : null}
-            </View>
-          );
-        })}
-      </View>
+      <Card flush style={styles.card}>
+        {items.map((child, index) =>
+          cloneElement(child, {
+            key: child.key ?? index,
+            position: resolveListRowPosition(index, items.length),
+          }),
+        )}
+      </Card>
       {footer ? (
         <Text style={[styles.footer, { color: colors.mutedForeground }]}>{footer}</Text>
       ) : null}
@@ -51,29 +47,21 @@ export function FormSection({ header, footer, children, required }: FormSectionP
 
 const styles = StyleSheet.create({
   wrapper: {
-    marginBottom: 24,
+    marginBottom: spacing['2xl'],
   },
   header: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...fontScale.xs,
+    fontWeight: fontWeight.semibold,
     letterSpacing: 0.5,
-    paddingHorizontal: 20,
-    marginBottom: 8,
+    paddingHorizontal: spacing.xl,
+    marginBottom: spacing.sm,
   },
   footer: {
-    fontSize: 12,
-    paddingHorizontal: 20,
-    marginTop: 8,
-    lineHeight: 16,
+    ...fontScale.xs,
+    paddingHorizontal: spacing.xl,
+    marginTop: spacing.sm,
   },
   card: {
-    marginHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: 'hidden',
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 16,
+    marginHorizontal: spacing.lg,
   },
 });

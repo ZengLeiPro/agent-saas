@@ -50,7 +50,7 @@ type TodoItem = {
   outcome?: {
     text: string;
     tone?: 'ok' | 'warn' | 'fail';
-    stat?: Array<{ label: string; value: string }>;
+    stat?: Array<{ label: string; value: string; verdict?: 'pass' | 'fail' | 'neutral' }>;
   };
   detail?: unknown[];
   display?: unknown[];
@@ -184,8 +184,14 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
             .object({
               text: z.string().min(1).max(120),
               tone: z.enum(['ok', 'warn', 'fail']).optional(),
+              // verdict 是唯一的结构化判定位：不给则渲染层按 value 文本保守判别，
+              // 含数字的值（「17/18 通过」）一律中性；给了就以它为准。
               stat: z
-                .array(z.object({ label: z.string().min(1).max(20), value: z.string().min(1).max(40) }))
+                .array(z.object({
+                  label: z.string().min(1).max(20),
+                  value: z.string().min(1).max(40),
+                  verdict: z.enum(['pass', 'fail', 'neutral']).optional(),
+                }))
                 .max(6)
                 .optional(),
             })

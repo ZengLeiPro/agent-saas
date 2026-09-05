@@ -15,7 +15,8 @@ import type { ToolPresentation } from "../agent/toolPresentationBuilder.js";
 
 export type ChannelType = "web" | "dingtalk" | "cron";
 
-export type RuntimeFailureKind = 'policy_rejection';
+/** 与 shared `RuntimeFailureKind` 同一套字面量（跨包本地声明，见 data/feedback/store.ts 注释）。 */
+export type RuntimeFailureKind = 'policy_rejection' | 'quota_exhausted';
 export type RuntimeRecoveryAction = 'switch_model';
 
 export interface UploadedFileInfo {
@@ -287,6 +288,8 @@ export interface OutboundEvent {
   error?: string;
   failureKind?: RuntimeFailureKind;
   recoveryAction?: RuntimeRecoveryAction;
+  /** 配额窗口绝对重置时刻（ISO）；仅 failureKind='quota_exhausted' 且上游给了结构化字段时有值 */
+  quotaResetAt?: string;
   interactionId?: string;
   displayName?: string;
   toolInput?: Record<string, unknown>;

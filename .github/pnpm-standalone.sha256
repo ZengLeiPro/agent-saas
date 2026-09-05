@@ -1,0 +1,4 @@
+# sha256 of pnpm standalone release binaries used by .github/actions/setup-pnpm.
+# Format: <sha256>  <asset>@<version>. Add a line whenever package.json packageManager is bumped:
+#   curl -fsSL -o pnpm https://github.com/pnpm/pnpm/releases/download/v<version>/<asset> && sha256sum pnpm
+042fdc373cccacbc9a305c7578bd13862512760bc7ed47c0edc1e3bd7bdc35e1  pnpm-linux-x64@10.18.3

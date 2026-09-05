@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
+      - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -434,13 +434,18 @@ jobs:
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/promotion-upload.tgz" \
             "$ECS_USER@$ECS_HOST:$remote_archive"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo install -m 0400 '$remote_archive' '$root_archive' && \
+            "test ! -L '/run/agent-saas-locks' && \
+             sudo install -d -o root -g root -m 0700 '/run/agent-saas-locks' && \
+             sudo install -m 0400 '$remote_archive' '$root_archive' && \
              rm -f '$remote_archive' && \
              test \"\$(sudo sha256sum '$root_archive' | cut -d' ' -f1)\" = '$archive_digest' && \
              sudo rm -rf '$remote' && sudo install -d -m 0700 '$remote' && \
              sudo tar --no-same-owner --no-same-permissions -xzf '$root_archive' -C '$remote' && \
              sudo chown -R root:root '$remote' && sudo chmod -R a-w '$remote' && \
-             test ! -w '$remote/deploy-production-release.sh' && \
+             sudo test -f '$remote/deploy-production-release.sh' && \
+             sudo test ! -L '$remote/deploy-production-release.sh' && \
+             test \"\$(sudo stat -c '%u:%g' '$remote/deploy-production-release.sh')\" = 0:0 && \
+             test -z \"\$(sudo find '$remote' -perm /222 -print -quit)\" && \
              sudo rm -f '$root_archive' || { \
                rm -f '$remote_archive'; \
                sudo rm -rf '$remote' '$root_archive'; \

@@ -1,4 +1,5 @@
 import type { MessageItem } from "../types/message";
+import type { OutcomeStat } from "./detailSemantics";
 import { normalizeDetailLine, type DetailLine } from "./toolPresentation";
 import { normalizeDisplay } from "./presentation/registry";
 import type { PresentationBlock } from "./presentation/types";
@@ -15,12 +16,12 @@ export type TodoStatus =
  * 一句话业务结果/现状。折叠视图里步骤只剩标题一行时，它是唯一的信息位：
  * - text：业务结论（「17/18 通过，1 张退回」「等财务审批，截止明午」）；
  * - tone：修正折叠行语义色——completed+warn = 完成但有例外，不允许干净绿勾掩盖；
- * - stat：分流计数徽标（一致 61 / 差异 19 / 无法匹配 6）。
+ * - stat：分流计数徽标（一致 61 / 差异 19 / 无法匹配 6），可带结构化判定位 verdict。
  */
 export interface TodoOutcome {
   text: string;
   tone?: "ok" | "warn" | "fail";
-  stat?: Array<{ label: string; value: string }>;
+  stat?: OutcomeStat[];
 }
 
 export interface TodoItem {
@@ -208,12 +209,18 @@ function normalizeTodoOutcome(raw: unknown): TodoOutcome | undefined {
   const stat = Array.isArray(outcome.stat)
     ? outcome.stat
       .slice(0, TODO_OUTCOME_STAT_LIMIT)
-      .flatMap((item): Array<{ label: string; value: string }> => {
+      .flatMap((item): OutcomeStat[] => {
         if (!item || typeof item !== "object") return [];
         const entry = item as Record<string, unknown>;
         const label = text(entry.label, 20);
         const value = text(entry.value, 40);
-        return label && value ? [{ label, value }] : [];
+        if (!label || !value) return [];
+        // 未知取值一律丢弃回落文本判别——判定位只接受协议里的三个字面量。
+        const verdict = entry.verdict === "pass" || entry.verdict === "fail"
+            || entry.verdict === "neutral"
+          ? entry.verdict
+          : undefined;
+        return [{ label, value, ...(verdict ? { verdict } : {}) }];
       })
     : [];
 

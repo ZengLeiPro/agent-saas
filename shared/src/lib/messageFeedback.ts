@@ -6,12 +6,21 @@
  * 两端共用同一份端点、幂等语义与失败文案；组件只剩 UI 绑定。
  *
  * 服务端契约（server/src/routes/feedback.ts、routes/appeals.ts）：
- * - POST /api/feedback                    { sessionId, messageId, content, comment? }
- * - GET  /api/feedback/session/:sessionId  → { items: [{ contentHash }] }
+ * - POST /api/feedback                    { sessionId, messageId, content, rating?, comment? }
+ * - GET  /api/feedback/session/:sessionId  → { items: [{ contentHash, rating? }] }
  * - POST /api/appeals                     { guardrailEventId, appealReason? }
  * - 两个 store 未装配（file backend）→ 503，前端一律隐藏入口而不是报错；
  * - 申诉幂等：同一 guardrailEventId + user 唯一，重复提交 409 = 已申诉成功态。
  */
+
+/**
+ * 反馈评分。服务端 zod schema `rating` 缺省为 'down'：
+ * 旧客户端不带该字段仍按「踩」入库，新客户端打到旧服务端时该字段被 zod strip，
+ * 同样落「踩」——两个方向都不崩（N/N+1 双版本兼容）。
+ */
+export type MessageFeedbackRating = 'up' | 'down';
+
+export const DEFAULT_MESSAGE_FEEDBACK_RATING: MessageFeedbackRating = 'down';
 
 /** 评论 / 申诉理由的长度上限，与服务端 zod schema 一致 */
 export const MESSAGE_FEEDBACK_COMMENT_MAX = 500;
@@ -29,6 +38,8 @@ export interface MessageFeedbackInput {
   messageId: string;
   /** 消息全文；服务端会与 transcript 比对 sha256 后落 excerpt */
   content: string;
+  /** 缺省 'down'——保持 2026-07 只有「踩」时的行为不变 */
+  rating?: MessageFeedbackRating;
   comment?: string;
 }
 
@@ -37,6 +48,7 @@ export function buildMessageFeedbackPayload(input: MessageFeedbackInput): {
   sessionId: string;
   messageId: string;
   content: string;
+  rating: MessageFeedbackRating;
   comment?: string;
 } {
   const comment = input.comment?.trim();
@@ -44,24 +56,41 @@ export function buildMessageFeedbackPayload(input: MessageFeedbackInput): {
     sessionId: input.sessionId,
     messageId: input.messageId,
     content: input.content,
+    rating: input.rating === 'up' ? 'up' : DEFAULT_MESSAGE_FEEDBACK_RATING,
     ...(comment ? { comment: comment.slice(0, MESSAGE_FEEDBACK_COMMENT_MAX) } : {}),
   };
 }
 
-/** GET /api/feedback/session/:id 的响应 → 已提交的 contentHash 集合（脏数据静默丢弃） */
-export function parseSubmittedFeedbackHashes(payload: unknown): string[] {
+export interface SubmittedMessageFeedback {
+  contentHash: string;
+  rating: MessageFeedbackRating;
+}
+
+/**
+ * GET /api/feedback/session/:id 的响应 → 已提交条目（脏数据静默丢弃）。
+ * 旧服务端不回传 rating 时回落 'down'，与它当时唯一支持的评分一致。
+ */
+export function parseSubmittedFeedbackEntries(payload: unknown): SubmittedMessageFeedback[] {
   if (!payload || typeof payload !== 'object') return [];
   const items = (payload as { items?: unknown }).items;
   if (!Array.isArray(items)) return [];
-  const hashes: string[] = [];
+  const entries: SubmittedMessageFeedback[] = [];
   for (const item of items) {
-    const hash =
-      item && typeof item === 'object'
-        ? (item as { contentHash?: unknown }).contentHash
-        : undefined;
-    if (typeof hash === 'string' && hash) hashes.push(hash);
+    if (!item || typeof item !== 'object') continue;
+    const hash = (item as { contentHash?: unknown }).contentHash;
+    if (typeof hash !== 'string' || !hash) continue;
+    const rating = (item as { rating?: unknown }).rating;
+    entries.push({
+      contentHash: hash,
+      rating: rating === 'up' ? 'up' : DEFAULT_MESSAGE_FEEDBACK_RATING,
+    });
   }
-  return hashes;
+  return entries;
+}
+
+/** GET /api/feedback/session/:id 的响应 → 已提交的 contentHash 集合（脏数据静默丢弃） */
+export function parseSubmittedFeedbackHashes(payload: unknown): string[] {
+  return parseSubmittedFeedbackEntries(payload).map((entry) => entry.contentHash);
 }
 
 /**

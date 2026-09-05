@@ -93,6 +93,10 @@ function createRig() {
       ...snapshotOrgAgentRunContext(orgContext()),
     },
   };
+  const accountIdentity = {
+    profileId: 'corp-a:agent-a', corpId: 'corp-a', dingtalkUserId: 'agent-a',
+    identityUpdatedAt: now,
+  };
   const binding = {
     bindingId: 'binding-a',
     tenantId: TENANT,
@@ -105,6 +109,7 @@ function createRig() {
     conversationSpaceId: 'space-a',
     serviceSessionId: 'session-a',
     workspaceId: 'workspace-a',
+    accountIdentity,
     policy: {
       enabled: true,
       membership: 'members' as const,
@@ -161,7 +166,14 @@ function createRig() {
       },
     ),
   };
+  const accountStore = { getForTenant: vi.fn(async () => ({
+    accountId: ACCOUNT, tenantId: TENANT, agentId: 'agent-a', displayName: '开开', loginId: 'agent',
+    ...accountIdentity, status: 'active' as const, runtimeStatus: 'ready' as const,
+    eventKinds: ['at_me' as const], revision: 1, createdAt: now, createdBy: 'admin-a',
+    updatedAt: now, updatedBy: 'admin-a',
+  })) };
   const service = new OrgAgentApprovalService({
+    accountStore,
     messageStore: {
       listActiveForAccount: vi.fn(async () => [
         {
@@ -204,7 +216,7 @@ function createRig() {
     },
     resolveRequesterGovernanceRole: vi.fn(async () => 'org_admin' as const),
   });
-  return { service, events, runStore, scheduler, binding, currentRun: () => run };
+  return { service, events, runStore, scheduler, accountStore, binding, currentRun: () => run };
 }
 
 describe('OrgAgentApprovalService', () => {
@@ -253,7 +265,7 @@ describe('OrgAgentApprovalService', () => {
     );
   });
 
-  it('绑定 revision 或 liveDeny 变化后拒绝旧审批', async () => {
+  it('活动绑定的 revision 或 liveDeny 变化后拒绝旧审批', async () => {
     const rig = createRig();
     rig.binding.policy.liveDeny = true;
     const approval = await new EventBackedApprovalStore(rig.events, 'session-a', TENANT).create({
@@ -274,6 +286,28 @@ describe('OrgAgentApprovalService', () => {
       }),
     ).rejects.toMatchObject({ status: 409 } satisfies Partial<OrgAgentApprovalError>);
     expect(rig.runStore.claimPersistedInteractionResume).not.toHaveBeenCalled();
+  });
+
+  it('账号换绑其他成员后不展示或恢复旧群的待审批副作用', async () => {
+    const rig = createRig();
+    const approval = await new EventBackedApprovalStore(rig.events, 'session-a', TENANT).create({
+      sessionId: 'session-a', runId: 'run-a', toolCallId: 'call-old',
+      toolId: 'dws-business', toolName: 'DwsBusiness', input: { args: ['doc', 'update'] },
+    });
+    rig.accountStore.getForTenant.mockResolvedValue({
+      accountId: ACCOUNT, tenantId: TENANT, agentId: 'agent-a', displayName: '开开', loginId: 'agent',
+      profileId: 'corp-b:agent-b', corpId: 'corp-b', dingtalkUserId: 'agent-b',
+      identityUpdatedAt: '2026-09-05T00:00:00.000Z', status: 'active', runtimeStatus: 'ready',
+      eventKinds: ['at_me'], revision: 2, createdAt: approval.createdAt, createdBy: 'admin-a',
+      updatedAt: approval.createdAt, updatedBy: 'admin-a',
+    });
+
+    await expect(rig.service.listPending(TENANT, ACCOUNT)).resolves.toEqual([]);
+    await expect(rig.service.decide({
+      tenantId: TENANT, accountId: ACCOUNT, approvalId: approval.id,
+      decision: 'approved', actorUserId: 'admin-a',
+    })).rejects.toMatchObject({ status: 409 });
+    expect(rig.scheduler.activateCreatedRun).not.toHaveBeenCalled();
   });
 
   it('并发相反决定返回冲突，同向重试保持幂等', async () => {

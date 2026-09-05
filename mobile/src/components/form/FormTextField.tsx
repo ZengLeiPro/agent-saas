@@ -1,6 +1,7 @@
 import React from 'react';
-import { StyleSheet, TextInput, type KeyboardTypeOptions, type ReturnKeyTypeOptions } from 'react-native';
-import { useColors } from '../../theme';
+import { StyleSheet, type KeyboardTypeOptions, type ReturnKeyTypeOptions } from 'react-native';
+import { Input } from '../ui/Input';
+import type { ListRowPosition } from '../ui/listRowStyles';
 import { FormRow } from './FormRow';
 
 interface FormTextFieldProps {
@@ -19,8 +20,15 @@ interface FormTextFieldProps {
   onSubmitEditing?: () => void;
   rightAccessory?: React.ReactNode;
   required?: boolean;
+  /** 校验失败：文字转 danger（行内输入没有边框可以变色） */
+  invalid?: boolean;
+  position?: ListRowPosition;
 }
 
+/**
+ * 行内文本输入：`ui/Input` 的 `bare` 形态嵌进 `FormRow`。
+ * 输入框本体的字号/占位色/禁用态全部由 Input 统一提供，本文件不再自带样式档。
+ */
 export function FormTextField({
   label,
   value,
@@ -37,23 +45,24 @@ export function FormTextField({
   onSubmitEditing,
   rightAccessory,
   required,
+  invalid,
+  position,
 }: FormTextFieldProps) {
-  const colors = useColors();
   return (
-    <FormRow label={label} disabled={disabled} rightAccessory={rightAccessory} required={required}>
-      <TextInput
-        style={[
-          styles.input,
-          {
-            color: disabled ? colors.mutedForeground : colors.foreground,
-          },
-          label ? styles.inputAligned : null,
-          multiline ? styles.inputMultiline : null,
-        ]}
+    <FormRow
+      label={label}
+      disabled={disabled}
+      rightAccessory={rightAccessory}
+      required={required}
+      position={position}
+    >
+      <Input
+        style={styles.input}
+        variant="bare"
+        align={label && !multiline ? 'right' : 'left'}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor={colors.mutedForeground}
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
@@ -62,8 +71,8 @@ export function FormTextField({
         editable={!disabled}
         multiline={multiline}
         autoFocus={autoFocus}
+        invalid={invalid}
         onSubmitEditing={onSubmitEditing}
-        textAlignVertical={multiline ? 'top' : 'center'}
       />
     </FormRow>
   );
@@ -72,15 +81,5 @@ export function FormTextField({
 const styles = StyleSheet.create({
   input: {
     flex: 1,
-    fontSize: 16,
-    paddingVertical: 0,
-    minHeight: 24,
-  },
-  inputAligned: {
-    textAlign: 'right',
-  },
-  inputMultiline: {
-    textAlign: 'left',
-    minHeight: 60,
   },
 });

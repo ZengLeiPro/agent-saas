@@ -12,6 +12,10 @@ import {
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
+import {
+  bindingMatchesCurrentAccountIdentity,
+  deliveryMatchesCurrentAccountIdentity,
+} from './agentDwsAccountIdentity.js';
 
 export interface OrgAgentDeliveryWorkerOptions {
   store: OrgGroupAgentStore;
@@ -28,9 +32,10 @@ export interface OrgAgentDeliveryWorkerOptions {
 }
 
 /**
- * Drains durable outbound intents independently from the inbound event that created them.
+ * Drains identity-pinned durable outbound intents independently from their inbound event.
  * Unknown deliveries are deliberately excluded: only an administrator can prove that an
- * unknown provider attempt was not sent and move it back to pending.
+ * unknown provider attempt was not sent and move it back to pending. The sender marks
+ * provider start only after deterministic local transport preparation has succeeded.
  */
 export async function deliverNextOrgAgentIntent(
   options: OrgAgentDeliveryWorkerOptions,
@@ -39,6 +44,7 @@ export async function deliverNextOrgAgentIntent(
   const delivery = await options.store.claimNextDelivery(options.workerId, options.leaseTtlMs);
   if (!delivery) return false;
 
+  // Only failures after the sender crosses its transport boundary are ambiguous.
   let providerStarted = false;
   try {
     const account = await options.accountStore.getForTenant(delivery.tenantId, delivery.accountId);
@@ -53,6 +59,15 @@ export async function deliverNextOrgAgentIntent(
         options.workerId,
         delivery.leaseFence,
         'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
+      );
+      return true;
+    }
+    if (!deliveryMatchesCurrentAccountIdentity(delivery.accountIdentity, account)) {
+      await options.store.markClaimedDeliveryDeadLetter(
+        delivery.deliveryId,
+        options.workerId,
+        delivery.leaseFence,
+        'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
       );
       return true;
     }
@@ -122,6 +137,7 @@ export async function deliverNextOrgAgentIntent(
       );
       if (
         !binding ||
+        !bindingMatchesCurrentAccountIdentity(binding, account) ||
         binding.bindingId !== delivery.bindingId ||
         binding.agentId !== delivery.agentId
       ) {
@@ -164,18 +180,20 @@ export async function deliverNextOrgAgentIntent(
       }
     }
 
-    await options.store.markDeliveryProviderStarted(
-      delivery.deliveryId,
-      options.workerId,
-      delivery.leaseFence,
-    );
-    providerStarted = true;
     try {
       const receipt = await options.sender.send(
         account,
         deliveryEvent(delivery),
         delivery.content,
         delivery.idempotencyKey,
+        async () => {
+          await options.store.markDeliveryProviderStarted(
+            delivery.deliveryId,
+            options.workerId,
+            delivery.leaseFence,
+          );
+          providerStarted = true;
+        },
       );
       if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
       await options.store.markDeliverySent(
@@ -185,6 +203,7 @@ export async function deliverNextOrgAgentIntent(
         receipt,
       );
     } catch (error) {
+      if (!providerStarted) throw error;
       await options.store.markDeliveryUnknown(
         delivery.deliveryId,
         options.workerId,
@@ -213,10 +232,12 @@ export async function createRedactedTerminalNotice(
   store: OrgGroupAgentStore,
   delivery: DwsDeliveryIntent,
 ): Promise<void> {
+  if (!delivery.accountIdentity) return;
   await store.createDelivery({
     tenantId: delivery.tenantId,
     ...(delivery.inboxId ? { inboxId: delivery.inboxId } : {}),
     accountId: delivery.accountId,
+    accountIdentity: delivery.accountIdentity,
     conversationId: delivery.conversationId,
     source: 'system',
     deliveryKind: 'system_notice',

@@ -11,6 +11,8 @@ import { governanceV23Statements } from '../data/governance-schema/v23Migration.
 import { governanceV34Statements } from '../data/governance-schema/v34Migration.js';
 import { governanceV36OrgGroupAgentStatements } from '../data/governance-schema/v36OrgGroupAgentMigration.js';
 import { governanceV37DeliveryAttemptPhaseStatements } from '../data/governance-schema/v37DeliveryAttemptPhaseMigration.js';
+import { governanceV39OrgGroupBindingIdentityStatements } from '../data/governance-schema/v39OrgGroupBindingIdentityMigration.js';
+import { governanceV40DwsDeliveryAccountIdentityStatements } from '../data/governance-schema/v40DwsDeliveryAccountIdentityMigration.js';
 
 describe('Governance schema migration SQL fixtures', () => {
   it('V22 在约束前确定性回填 V18 org_memory 的空名称与状态，且名称不引用正文', () => {
@@ -213,6 +215,26 @@ describe('Governance schema migration SQL fixtures', () => {
     const sql = governanceV37DeliveryAttemptPhaseStatements('safe').join('\n');
     expect(sql).toContain("provider_attempt_phase TEXT\n      NOT NULL DEFAULT 'legacy_unknown'");
     expect(sql).toContain("'legacy_unknown','before_provider','provider_started'");
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
+  });
+
+  it('V39 expand 群 binding 的账号身份快照且只回填当前身份纪元', () => {
+    const sql = governanceV39OrgGroupBindingIdentityStatements('safe').join('\n');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_profile_id TEXT');
+    expect(sql).toContain('binding.created_at >= account.identity_updated_at');
+    expect(sql).toContain("account.profile_id=account.corp_id || ':' || account.dingtalk_user_id");
+    expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
+  });
+
+  it('V40 仅 expand durable delivery 的账号身份纪元且不回填 legacy', () => {
+    const sql = governanceV40DwsDeliveryAccountIdentityStatements('safe').join('\n');
+    expect(sql).toContain('ALTER TABLE safe_agent_dws_delivery_intents');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_profile_id TEXT');
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS account_identity_updated_at TIMESTAMPTZ');
+    expect(sql).toContain('CONSTRAINT safe_adws_di_identity_ck');
+    expect(sql).toContain('account_profile_id IS NULL AND account_corp_id IS NULL');
+    expect(sql).toContain('account_profile_id IS NOT NULL AND account_corp_id IS NOT NULL');
+    expect(sql).not.toContain('UPDATE safe_agent_dws_delivery_intents');
     expect(sql).not.toMatch(/\bDROP\s+(TABLE|COLUMN|CONSTRAINT)\b/i);
   });
 });

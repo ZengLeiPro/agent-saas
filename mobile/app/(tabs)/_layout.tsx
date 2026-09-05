@@ -2,11 +2,9 @@ import React from "react";
 import { Platform, View, Text, Pressable, StyleSheet } from "react-native";
 import { Tabs } from "expo-router";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
-import { MessagesSquare, Folder, Settings } from "lucide-react-native";
+import { MessagesSquare, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { DEFAULT_TENANT_SETTINGS } from "@agent/shared";
 import { useColors, type ThemeColors } from "../../src/theme";
-import { useAuth } from "../../src/contexts/AuthContext";
 import { TabBarProvider, useTabBar } from "../../src/contexts/TabBarContext";
 import { getV1VisibleTabs } from "../../src/v1/v1Capabilities";
 import { getV1BuildProfile } from "../../src/v1/v1Runtime";
@@ -24,12 +22,6 @@ const allTabs = [
     },
   },
   {
-    name: "files",
-    label: "文件",
-    Icon: Folder,
-    sf: { default: "folder", selected: "folder.fill" },
-  },
-  {
     name: "settings",
     label: "设置",
     Icon: Settings,
@@ -40,13 +32,11 @@ const allTabs = [
 const allTabNames = allTabs.map((tab) => tab.name);
 
 function useVisibleTabs() {
-  const { user } = useAuth();
-  const features = user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   // V1 范围裁剪（M00-01）：生产构建只保留「对话 / 设置」两个 Tab。
+  // P3-3c 起文件中心不再是 Tab（改为 `/files` Stack 路由，入口在会话列表 pill），
+  // 因此这里不再有 files 分支与 `filesEnabled` 过滤。
   const v1Tabs = new Set(getV1VisibleTabs(getV1BuildProfile(), allTabNames));
-  return allTabs.filter(
-    (tab) => v1Tabs.has(tab.name) && (tab.name !== "files" || features.filesEnabled),
-  );
+  return allTabs.filter((tab) => v1Tabs.has(tab.name));
 }
 
 // ── iOS: NativeTabs (native labels are the stable accessibility selectors) ──

@@ -41,6 +41,22 @@ describe('statVerdict', () => {
     expect(statVerdict({ label: '备注', value: '   ' })).toBeNull();
     expect(statVerdict({ label: '备注', value: '待复核' })).toBeNull();
   });
+
+  it('显式 verdict 优先：含数字的 value 也能拿到判定色', () => {
+    expect(statVerdict({ label: '通过率', value: '17/18 通过', verdict: 'pass' })).toBe('pass');
+    expect(statVerdict({ label: '退回', value: '1 张', verdict: 'fail' })).toBe('fail');
+    expect(statVerdict({ label: '待复核', value: '3 张', verdict: 'neutral' })).toBeNull();
+  });
+
+  it('显式 neutral 压过文本判绿——「明确不下结论」不该被 value 改判', () => {
+    expect(statVerdict({ label: '核对', value: '通过' })).toBe('pass');
+    expect(statVerdict({ label: '核对', value: '通过', verdict: 'neutral' })).toBeNull();
+  });
+
+  it('缺省 verdict 的旧事件回落文本判别（向后兼容）', () => {
+    expect(statVerdict({ label: '核对', value: '未通过' })).toBe('fail');
+    expect(statVerdict({ label: '通过率', value: '17/18 通过' })).toBeNull();
+  });
 });
 
 describe('visibleOutcomeStats', () => {

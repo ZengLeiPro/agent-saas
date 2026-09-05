@@ -1,21 +1,27 @@
 import React from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
-import { useColors } from '../../theme';
+import { useColors, spacing } from '../../theme';
 
 interface FormScrollViewProps {
   children: React.ReactNode;
   contentBottomInset?: number;
+  testID?: string;
 }
 
-export function FormScrollView({ children, contentBottomInset = 32 }: FormScrollViewProps) {
+export function FormScrollView({
+  children,
+  contentBottomInset = spacing['3xl'],
+  testID,
+}: FormScrollViewProps) {
   const colors = useColors();
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.background }}
+      style={[styles.flex, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        style={{ flex: 1 }}
+        testID={testID}
+        style={styles.flex}
         contentContainerStyle={[styles.content, { paddingBottom: contentBottomInset }]}
         keyboardShouldPersistTaps="handled"
       >
@@ -26,7 +32,10 @@ export function FormScrollView({ children, contentBottomInset = 32 }: FormScroll
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   content: {
-    paddingTop: 16,
+    paddingTop: spacing.lg,
   },
 });

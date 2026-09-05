@@ -6,9 +6,10 @@ import { MoreHorizontal } from 'lucide-react-native';
 import { DropdownMenu, type DropdownSection } from '../../src/components/overlays/DropdownMenu';
 import { BackButton } from '../../src/components/BackButton';
 import * as Clipboard from 'expo-clipboard';
-import { authFetch } from '@agent/shared';
 import { fileCacheService } from '../../src/services/fileCacheService';
+import { fetchFileText } from '../../src/services/fileTextService';
 import { textContentCache } from '../../src/services/textContentCache';
+import { resolveKbPreviewSource } from '../../src/lib/filePreviewTarget';
 import Markdown from 'react-native-markdown-display';
 import { cjkMarkdownIt } from '../../src/lib/markdownIt';
 import { createMarkdownStyles } from '../../src/components/chat/markdownStyles';
@@ -30,8 +31,10 @@ export default function MarkdownPreviewScreen() {
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const typo = useChatTypography();
 
-  const fileName = filePath ? filePath.split('/').pop() || filePath : '';
-  const dirPath = filePath && filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : '';
+  // kb:// 引用要按真实文档名显示与解析相对路径（伪协议与 fragment 不参与）
+  const docPath = filePath ? resolveKbPreviewSource(filePath).doc : '';
+  const fileName = docPath ? docPath.split('/').pop() || docPath : '';
+  const dirPath = docPath && docPath.includes('/') ? docPath.slice(0, docPath.lastIndexOf('/')) : '';
 
   const handleDownload = useCallback(async () => {
     if (!filePath) return;
@@ -119,17 +122,13 @@ export default function MarkdownPreviewScreen() {
       setLoading(false);
     }).catch(() => {});
 
-    // 2. Fetch from network
-    const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
-    const rootParam = isRootMode ? '&root=true' : '';
-    authFetch(`/api/file/read?path=${encodeURIComponent(filePath)}${ownerParam}${rootParam}`)
-      .then(async (res) => {
+    // 2. Fetch from network（KB 引用自动分流到 /api/kb/file，见 fileTextService）
+    fetchFileText(filePath, { ...(owner ? { owner } : {}), ...(isRootMode ? { root: true } : {}) })
+      .then((fetched) => {
         if (cancelled) return;
-        if (!res.ok) throw new Error(`加载失败: ${res.status}`);
-        const data = (await res.json()) as { content: string };
-        setContent(data.content);
+        setContent(fetched);
         // Write to cache (fire-and-forget)
-        textContentCache.set(filePath, data.content, Date.now(), owner, isRootMode || undefined).catch(() => {});
+        textContentCache.set(filePath, fetched, Date.now(), owner, isRootMode || undefined).catch(() => {});
       })
       .catch((err) => {
         if (cancelled) return;
@@ -149,7 +148,7 @@ export default function MarkdownPreviewScreen() {
   }, [filePath, owner, isRootMode]);
 
   // 当前文件所在目录，用于解析相对路径链接
-  const baseDir = filePath ? filePath.replace(/\/[^/]*$/, '') : '';
+  const baseDir = docPath ? docPath.replace(/\/[^/]*$/, '') : '';
 
   const rules = useMemo(() => createMarkdownRules({
     colors,

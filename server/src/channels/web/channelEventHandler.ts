@@ -444,6 +444,7 @@ export async function handleWebChannelEvents(
           ...(lastErrorMetadata?.runId ? { runId: lastErrorMetadata.runId } : {}),
           ...(lastErrorMetadata?.failureKind ? { failureKind: lastErrorMetadata.failureKind } : {}),
           ...(lastErrorMetadata?.recoveryAction ? { recoveryAction: lastErrorMetadata.recoveryAction } : {}),
+          ...(lastErrorMetadata?.quotaResetAt ? { quotaResetAt: lastErrorMetadata.quotaResetAt } : {}),
         });
         // 更新幂等记录终态
         if (clientMsgId) {

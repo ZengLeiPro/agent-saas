@@ -1,7 +1,7 @@
 /**
  * 消息反馈路由（2026-07 唯恩批次）
  *
- * POST /api/feedback                       — 登录用户对专职 Agent 回答点「踩」（owner-only）
+ * POST /api/feedback                       — 登录用户对专职 Agent 回答点「赞/踩」（owner-only）
  * GET  /api/feedback/session/:sessionId    — 本人在某会话的反馈（刷新后恢复已反馈态）
  *
  * 安全要点：
@@ -10,6 +10,7 @@
  * - orgAgentId 从会话 meta 取（防客户端伪造归因）
  * - content 服务端校验（2026-07 审查 F7）：必须命中该会话 transcript 中某个
  *   assistant 文本块（sha256 比对），否则 400——保证 message_excerpt 是真实 AI 输出
+ * - rating（'up' | 'down'）缺省 'down'：旧客户端不带该字段时行为与 2026-07 完全一致
  * - content_hash 由 server 计算 sha256（幂等键），excerpt 截前 500 字
  * - store 未装配（file backend）→ 503，前端隐藏入口
  */
@@ -31,6 +32,8 @@ const postFeedbackSchema = z.object({
   sessionId: z.string().min(1).max(128),
   messageId: z.string().min(1).max(128),
   content: z.string().min(1),
+  // 缺省 down：老客户端（Web/mobile 只有「踩」的版本）不带 rating 时语义不变。
+  rating: z.enum(['up', 'down']).default('down'),
   comment: z.string().max(500).optional(),
 });
 
@@ -93,7 +96,7 @@ export function createFeedbackRouter(deps: FeedbackRouterDeps): Router {
       res.status(400).json({ error: 'Invalid body', issues: parsed.error.issues });
       return;
     }
-    const { sessionId, messageId, content, comment } = parsed.data;
+    const { sessionId, messageId, content, rating, comment } = parsed.data;
 
     try {
       const loaded = await loadOwnedSessionMeta(req, res, sessionId);
@@ -122,12 +125,13 @@ export function createFeedbackRouter(deps: FeedbackRouterDeps): Router {
         orgAgentId: meta.orgAgentId,
         userId: user.sub,
         username: user.username,
+        rating,
         ...(comment?.trim() ? { comment: comment.trim() } : {}),
         messageExcerpt: content.slice(0, 500),
         contentHash,
       });
       if (!duplicated) {
-        auditLog(req, 'message_feedback_submitted', `${sessionId} (${meta.orgAgentId})`);
+        auditLog(req, 'message_feedback_submitted', `${sessionId} (${meta.orgAgentId}) rating=${rating}`);
       }
       res.json({ ok: true, duplicated, contentHash });
     } catch (err) {

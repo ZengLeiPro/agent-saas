@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "WP1 ky-app-server：定制项目部署配置 KY_* 只在 config 模块集中读取",
+  "reason": "WP1 ky-app-cli/create-ky-app：doctor 与模板的数据库、端口与测试开关",
   "updatedAt": "2026-09-05",
   "domains": {
     "server": {
@@ -194,8 +194,10 @@
       ]
     },
     "packages": {
-      "budget": 12,
+      "budget": 17,
       "names": [
+        "DATABASE_URL",
+        "KY_DIRECTORY_URL",
         "KY_ENV",
         "KY_INSTALLATION_ID",
         "KY_INSTALLATION_KEY",
@@ -206,8 +208,11 @@
         "KY_LOCAL_LOGIN_ENABLED",
         "KY_ORIGIN",
         "KY_SERVICE_CREDENTIAL",
+        "KY_SHELL_ORIGIN",
         "KY_SYSTEM_ID",
-        "KY_TENANT_ID"
+        "KY_TENANT_ID",
+        "PORT",
+        "TEST_DATABASE_URL"
       ]
     }
   }

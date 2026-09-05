@@ -292,6 +292,10 @@ importers:
         version: 2.9.0
 
   packages/create-ky-app:
+    dependencies:
+      '@kaiyan/ky-app-contract':
+        specifier: workspace:*
+        version: link:../ky-app-contract
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

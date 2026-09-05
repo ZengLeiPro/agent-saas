@@ -1,0 +1,28 @@
+# __SYSTEM_NAME__ 部署配置（§2.4）。真值只从密钥管理注入，绝不写进这个文件。
+# 复制成 .env 后填写；.env 已在 .gitignore 里。
+
+# --- KY Agent 衔接契约（必填） ---
+KY_ENV=
+KY_SYSTEM_ID=
+KY_TENANT_ID=
+KY_INSTALLATION_ID=
+KY_ORIGIN=
+KY_SERVICE_CREDENTIAL=
+KY_INSTALLATION_KEY=
+KY_INSTALLATION_KEY_VERSION=
+
+# --- 可选：安装密钥轮换窗口（24 小时内同时接受 previous） ---
+KY_INSTALLATION_KEY_PREVIOUS=
+KY_INSTALLATION_KEY_PREVIOUS_VERSION=
+
+# --- 可选：仅 KY_ENV=local|test 允许注入 ---
+KY_JWKS_URL=
+KY_LOCAL_LOGIN_ENABLED=
+# 本地 mock 壳的 origin，会加进 CSP 的 frame-ancestors；仅 local/test 生效
+KY_SHELL_ORIGIN=
+# 组织目录接口基址（KY Agent 的 API 基址）
+KY_DIRECTORY_URL=
+
+# --- 本项目自身 ---
+DATABASE_URL=
+PORT=

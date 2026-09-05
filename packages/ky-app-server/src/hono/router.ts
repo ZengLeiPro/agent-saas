@@ -59,7 +59,7 @@ export function createKyAppRouter(options: KyAppRouterConfig): {
   const nonceCounter = new Counter(ATTEST_NONCE_MAX, 10 * 60_000);
   const attestIpCounter = new Counter(ATTEST_IP_LIMIT.max, ATTEST_IP_LIMIT.windowMs);
 
-  app.use('*', securityHeaders());
+  app.use('*', securityHeaders(options.securityHeaders ?? {}));
   app.use('*', requestContext(runtime));
   app.onError((error, c) => errorResponder(c, error));
   app.notFound((c) => errorResponder(c, new KyAppError('not_found', { message: '端点不存在' })));

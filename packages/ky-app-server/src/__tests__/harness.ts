@@ -47,6 +47,8 @@ export interface HarnessOptions {
   /** 兜底模式初始是否开启（会实际走一次 enable）。 */
   env?: 'test' | 'prod';
   staleness?: () => DirectoryStalenessGate;
+  /** §5.1 响应头覆盖（本地 mock 壳需要额外的 frame-ancestors）。 */
+  securityHeaders?: KyAppRouterConfig['securityHeaders'];
 }
 
 export async function createHarness(options: HarnessOptions = {}) {
@@ -139,6 +141,7 @@ export async function createHarness(options: HarnessOptions = {}) {
         manifest: TEST_MANIFEST,
       }),
     health: { appVersion: '1.0.0' },
+    ...(options.securityHeaders === undefined ? {} : { securityHeaders: options.securityHeaders }),
     testHooks: {
       provision: async (input) => input,
       // §9.3-12：一致性测试用它触发一轮目录消费并读回本地状态。

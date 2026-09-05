@@ -311,6 +311,21 @@ describe('§5.1 响应头', () => {
   });
 });
 
+describe('§5.1 响应头可覆盖（本地 mock 壳）', () => {
+  it('securityHeaders 选项可以放宽 frame-ancestors', async () => {
+    const custom = await createHarness({
+      securityHeaders: {
+        contentSecurityPolicy: `${CONTENT_SECURITY_POLICY} http://127.0.0.1:5555`,
+        hsts: false,
+      },
+    });
+    const response = await custom.router.request('https://app.test.invalid/ky/v1/health/live');
+    expect(response.headers.get('content-security-policy')).toContain('http://127.0.0.1:5555');
+    expect(response.headers.get('strict-transport-security')).toBeNull();
+    expect(response.headers.get('x-frame-options')).toBeNull();
+  });
+});
+
 describe('错误输出（附录 D）', () => {
   it('401 / 403 / 404 都是附录 D 结构且不含 details', async () => {
     const responses = await Promise.all([

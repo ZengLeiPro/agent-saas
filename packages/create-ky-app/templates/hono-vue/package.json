@@ -1,0 +1,43 @@
+{
+  "name": "__SYSTEM_ID__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "__SYSTEM_NAME__ —— 开沿定制项目（KY Agent 衔接契约 v1）",
+  "ky": {
+    "start": [
+      "node",
+      "server/dist/index.js",
+      "--port",
+      "{{port}}"
+    ]
+  },
+  "scripts": {
+    "dev": "pnpm run build && node server/dist/index.js --port 8787",
+    "build": "pnpm run build:server && pnpm run build:web",
+    "build:server": "tsc -p server/tsconfig.json",
+    "build:web": "vite build --config web/vite.config.ts",
+    "start": "node server/dist/index.js",
+    "migrate": "node server/dist/migrate.js",
+    "doctor": "ky-app doctor --pg docker --browser auto",
+    "mock-shell": "ky-app mock-shell",
+    "typecheck": "tsc --noEmit -p server/tsconfig.json",
+    "test": "vitest run",
+    "secret-scan": "node scripts/secret-scan.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.14",
+    "hono": "^4.12.30",
+    "pg": "^8.21.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "playwright": "1.58.2",
+    "typescript": "^5.6.0",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  }
+}

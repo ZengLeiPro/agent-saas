@@ -15,6 +15,7 @@ import type { EventsHandler } from '../events/handler.js';
 import type { JwksClient } from '../jwks/client.js';
 import type { JtiStore } from '../sat/jtiStore.js';
 import type { KyAppConfig } from '../config/index.js';
+import type { SecurityHeadersOptions } from './securityHeaders.js';
 import type { LocalKeyRing } from '../local/keys.js';
 import type { VerifiedIdentity } from '../sat/verify.js';
 import type { VerifiedLocalIdentity } from '../local/token.js';
@@ -86,6 +87,11 @@ export interface KyAppRouterConfig {
   /** 目录消费位点，用于 `health/ready`。 */
   directorySync?: () => Promise<{ checkpoint: number; ageSeconds: number }>;
   health: KyAppRouterHealth;
+  /**
+   * §5.1 响应头的覆盖项。生产不要动；本地 / 一致性测试需要把 mock 壳的 origin
+   * 加进 `frame-ancestors`，否则跨源 iframe 加载不了。
+   */
+  securityHeaders?: SecurityHeadersOptions;
   testHooks?: KyAppTestHooks;
   /** 取客户端 IP（限速用）；缺省读 `x-forwarded-for` / `x-real-ip`。 */
   clientIp?: (headers: Headers) => string | undefined;

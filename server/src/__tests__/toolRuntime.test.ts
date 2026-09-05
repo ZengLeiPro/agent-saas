@@ -644,7 +644,7 @@ describe('PlatformToolRuntime', () => {
     expect(result.content).toBe('edited in container');
     expect(containerInvoke).toHaveBeenCalledWith({
       toolName: 'Edit',
-      input: { file_path: 'hello.txt', old_string: 'a', new_string: 'b' },
+      input: { file_path: 'hello.txt', edits: [{ old_string: 'a', new_string: 'b' }] },
       context: {
         workspace: expect.objectContaining({ root: '/tmp/project', executionTarget: 'server-container' }),
         signal: undefined,

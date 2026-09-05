@@ -4,9 +4,9 @@ import desktopSource from "./DesktopLayout.tsx?raw";
 import mobileSource from "./MobileLayout.tsx?raw";
 
 describe("任务看板执行会话只读接线", () => {
-  it("按加载态和实际 owner 判定只读，未知详情默认锁定", () => {
-    expect(appSource).toContain("isLoadingMessages || !sessionParticipants");
-    expect(appSource).toContain("sessionParticipants.owner.userId !== authUser?.id");
+  it("按服务端访问模式判定只读，未知详情默认锁定，自有会话不锁", () => {
+    expect(appSource).toContain('sessionId && sessionAccessMode !== "owner"');
+    expect(appSource).not.toContain("!sessionParticipants");
     expect(appSource).toContain("activeOrgAgentReadOnly, sessionReadOnly");
   });
 

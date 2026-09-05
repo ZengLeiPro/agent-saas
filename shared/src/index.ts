@@ -942,6 +942,7 @@ export {
 } from './hooks/useGroups';
 export type { GroupsEditingState, GroupMenuItem } from './hooks/useGroups';
 export { useGroupedSessions } from './hooks/useGroupedSessions';
+export * from './hooks/useAttachmentUploads';
 
 // Store
 export { getChatStore, useChatStore, resetChatStore, INITIAL_BLOCK_STATE } from './store/index';

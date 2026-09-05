@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
+import { applyWorkspaceEdits, type EditOperation } from '../../agent/editOperations.js';
 import {
   lstat,
   mkdir,
@@ -358,22 +359,14 @@ export async function invokeMemoryConsolidationDraftTool(
     }
     if (call.toolId === 'Edit') {
       if (current === null) throw new Error(`Edit: cannot read ${relativePath} (file not found)`);
-      const oldString = input.old_string;
-      const newString = input.new_string;
-      if (typeof oldString !== 'string' || typeof newString !== 'string') {
-        throw new Error('Edit: old_string and new_string must be strings.');
+      const operations = Array.isArray(input.edits) ? [...input.edits] : [];
+      if (input.old_string !== undefined || input.new_string !== undefined) {
+        operations.unshift({ old_string: input.old_string, new_string: input.new_string, replace_all: input.replace_all });
       }
-      if (!oldString) throw new Error('Edit: empty old_string not allowed; use Write for new files.');
-      if (oldString === newString) throw new Error('Edit: old_string equals new_string; no-op.');
-      const occurrences = current.split(oldString).length - 1;
-      if (occurrences === 0) throw new Error('Edit: old_string not found.');
-      if (input.replace_all !== true && occurrences > 1) {
-        throw new Error(`Edit: old_string matched ${occurrences} times; supply more surrounding context or set replace_all=true.`);
-      }
-      const updated = current.split(oldString).join(newString);
+      const applied = applyWorkspaceEdits(current, operations as EditOperation[], relativePath);
+      const { updatedContent: updated, replacements, occurrences } = applied;
       assertDraftCapacity(draft, relativePath, updated);
       draft.staged.set(relativePath, updated);
-      const replacements = input.replace_all === true ? occurrences : 1;
       return {
         content: `Staged ${relativePath} (${replacements} replacement${replacements === 1 ? '' : 's'}, ${updated.length} bytes).`,
         metadata: {
@@ -410,8 +403,9 @@ async function openSafeParentDirectory(
   try {
     for (const segment of parentRel === '.' ? [] : parentRel.split('/')) {
       const child = join(`/proc/self/fd/${current.fd}`, segment);
+      let created = false;
       if (create) {
-        await mkdir(child, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+        await mkdir(child, { mode: 0o700 }).then(() => { created = true; }).catch((error: NodeJS.ErrnoException) => {
           if (error.code !== 'EEXIST') throw error;
         });
       }
@@ -424,6 +418,15 @@ async function openSafeParentDirectory(
           throw new Error(`记忆审查工具约束：拒绝符号链接目录 ${segment}。`);
         }
         throw error;
+      }
+      if (created) {
+        try {
+          const owner = await rootHandle.stat();
+          await next.chown(owner.uid, owner.gid);
+        } catch (error) {
+          await next.close();
+          throw error;
+        }
       }
       await current.close();
       current = next;
@@ -469,6 +472,10 @@ async function atomicWrite(rootHandle: FileHandle, relativePath: string, content
       throw error;
     });
     handle = await open(temporary, 'wx', existingMode);
+    // Worker 和容器使用不同 UID；原子替换必须归属 workspace 用户。
+    const owner = await rootHandle.stat();
+    await handle.chown(owner.uid, owner.gid);
+    await handle.chmod(existingMode);
     await handle.writeFile(content, 'utf8');
     await handle.sync();
     await handle.close();

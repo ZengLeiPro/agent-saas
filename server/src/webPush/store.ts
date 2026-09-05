@@ -206,10 +206,12 @@ export class PgWebPushStore {
 
     try {
       await client.query('BEGIN');
+      // updated_at 在 PG 是微秒精度，经 pg 驱动转 JS Date 后只剩毫秒；直接等值比较永远不等，
+      // 会让每次投递都被判成「记录已变更」而跳过。这里两侧都截到毫秒再比。
       const current = await client.query<SubscriptionRow>(`
         SELECT id, tenant_id, user_id, endpoint, endpoint_hash, p256dh, auth, device_name, created_at, updated_at
         FROM ${this.subscriptionsTable}
-        WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND endpoint_hash=$4 AND updated_at=$5::timestamptz
+        WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND endpoint_hash=$4 AND date_trunc('milliseconds', updated_at)=date_trunc('milliseconds', $5::timestamptz)
         FOR UPDATE
       `, [expected.id, owner.tenantId, owner.userId, expected.endpointHash, expected.updatedAt]);
       if (!current.rows[0]) {

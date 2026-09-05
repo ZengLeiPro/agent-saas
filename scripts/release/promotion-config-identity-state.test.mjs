@@ -12,56 +12,50 @@ const fixture = JSON.parse(
   await readFile(new URL('./fixtures/legacy-api-promotion-retries.json', import.meta.url), 'utf8'),
 );
 
-test('first ConfigIdentity migration retries through planner, live selection, and observers', () => {
-  const target = Object.fromEntries(
-    Object.entries(fixture.manifest.components).map(([component, identity]) => {
-      const { action: _action, sourceSha, ...digests } = identity;
-      return [component, { gitSha: sourceSha, ...digests }];
-    }),
-  );
-  for (const { failedStage, productionState, requiresApiUpgrade } of fixture.retries) {
-    const plan = planPromotionConfigIdentityBaseline({
-      retryMode: 'retry_after_change',
-      apiAction: fixture.manifest.components.api.action,
-      runtimeWorkerAction: fixture.manifest.components.runtimeWorker.action,
-    });
-    assert.deepEqual(plan, {
-      reader: 'read-live-production-components.mjs',
-      configIdentityStage: 'legacy-api-upgrade-retry-baseline',
-    });
-    const selected = selectLiveConfigIdentity({
-      privateConfigIdentity: productionState.configIdentity,
-      publicConfigIdentity: undefined,
-      apiReleaseId: productionState.apiReleaseId,
-      configIdentityStage: plan.configIdentityStage,
-    });
-    assert.doesNotThrow(
-      () =>
-        validateExpectedConfigIdentityObservers(
-          fixture.observerBaselines.firstMigrationTrustedConfigIdentity,
-          selected,
-          { configIdentityStage: plan.configIdentityStage },
-        ),
-      failedStage,
-    );
-
-    for (const [component, observed] of Object.entries(productionState.components)) {
-      const baselineJson = JSON.stringify(fixture.manifest.productionBaseline[component]);
-      const targetJson = JSON.stringify(target[component]);
-      assert.ok(
-        [baselineJson, targetJson].includes(JSON.stringify(observed)),
-        `${failedStage} ${component} must be baseline or target`,
+test('正常发布与未写入重试固定走 steady-state', () => {
+  for (const retryMode of ['fresh', 'retry_before_change']) {
+    for (const action of ['deploy', 'keep']) {
+      assert.deepEqual(
+        planPromotionConfigIdentityBaseline({
+          retryMode,
+          apiAction: action,
+          runtimeWorkerAction: action,
+        }),
+        { reader: 'read-production-state.mjs', configIdentityStage: 'steady-state' },
       );
     }
-    assert.equal(
-      assertPromotionConfigIdentityWriteGate({
-        manifest: fixture.manifest,
-        productionState,
-      }).legacyApiRequiresUpgrade,
-      requiresApiUpgrade,
-      failedStage,
-    );
   }
+});
+
+test('生产写入拒绝缺失或不一致的身份，即使本轮将部署 API', () => {
+  for (const manifest of [fixture.manifest, fixture.apiKeepManifest]) {
+    for (const configIdentity of [undefined, { status: 'not_collected' }, { status: 'mismatch' }]) {
+      assert.throws(
+        () =>
+          assertPromotionConfigIdentityWriteGate({
+            manifest,
+            productionState: { configIdentity },
+          }),
+        /require a consistent ConfigIdentity/u,
+      );
+    }
+  }
+  const state = fixture.retries.find(({ failedStage }) => failedStage === 'web').productionState;
+  assert.deepEqual(
+    assertPromotionConfigIdentityWriteGate({
+      manifest: fixture.manifest,
+      productionState: state,
+    }),
+    { configIdentityConfirmed: true },
+  );
+  assert.deepEqual(
+    planPromotionConfigIdentityBaseline({
+      retryMode: 'retry_after_change',
+      apiAction: 'deploy',
+      runtimeWorkerAction: 'deploy',
+    }),
+    { reader: 'read-live-production-components.mjs', configIdentityStage: 'candidate-readback' },
+  );
 });
 
 test('App switched before Web failure is recoverable only in retry baseline', () => {
@@ -70,13 +64,15 @@ test('App switched before Web failure is recoverable only in retry baseline', ()
     privateConfigIdentity: productionState.configIdentity,
     publicConfigIdentity: undefined,
     apiReleaseId: productionState.apiReleaseId,
-    configIdentityStage: 'legacy-api-upgrade-retry-baseline',
+    configIdentityStage: 'candidate-readback',
   });
 
-  assert.doesNotThrow(() =>
-    validateExpectedConfigIdentityObservers(undefined, selected, {
-      configIdentityStage: 'legacy-api-upgrade-retry-baseline',
-    }),
+  assert.throws(
+    () =>
+      validateExpectedConfigIdentityObservers(undefined, selected, {
+        configIdentityStage: 'candidate-readback',
+      }),
+    /missing from trusted runtime identity/u,
   );
   assert.throws(
     () => validateExpectedConfigIdentityObservers(undefined, selected),
@@ -86,7 +82,7 @@ test('App switched before Web failure is recoverable only in retry baseline', ()
     validateExpectedConfigIdentityObservers(
       fixture.observerBaselines.regularReleaseTrustedConfigIdentity,
       selected,
-      { configIdentityStage: 'legacy-api-upgrade-retry-baseline' },
+      { configIdentityStage: 'candidate-readback' },
     ),
   );
   assert.throws(
@@ -99,7 +95,7 @@ test('App switched before Web failure is recoverable only in retry baseline', ()
   );
 });
 
-test('legacy API plus API keep is rejected before any production write', () => {
+test('缺失身份且 API keep 时在写入前拒绝', () => {
   const legacyState = fixture.retries.find(
     ({ failedStage }) => failedStage === 'acs',
   ).productionState;
@@ -109,7 +105,7 @@ test('legacy API plus API keep is rejected before any production write', () => {
         manifest: fixture.apiKeepManifest,
         productionState: legacyState,
       }),
-    /requires this Manifest to deploy API and Runtime Worker before any production write/u,
+    /require a consistent ConfigIdentity/u,
   );
   assert.deepEqual(
     planPromotionConfigIdentityBaseline({
@@ -124,7 +120,7 @@ test('legacy API plus API keep is rejected before any production write', () => {
   );
 });
 
-test('the legacy retry stage cannot be selected when API and Worker actions disagree', () => {
+test('API 和 Worker 动作不一致时拒绝重试', () => {
   assert.throws(
     () =>
       planPromotionConfigIdentityBaseline({

@@ -90,25 +90,14 @@ export function detectWorkspaceImageMime(
 type PathGuard = (fullPath: string) => void;
 
 const editOperationSchema = z.object({
-  old_string: z.string().describe('要查找的文本；精确匹配失败后会尝试安全的空白与 Unicode 标点归一化。'),
+  old_string: z.string().min(1).describe('要查找的非空文本；精确匹配失败后会尝试安全的空白与 Unicode 标点归一化。'),
   new_string: z.string().describe('替换后的文本。'),
   replace_all: z.boolean().optional().describe('替换该 edit 的全部匹配项。'),
 });
 
 const editInputSchema = z.object({
   file_path: z.string().min(1).describe('工作区相对路径，或工作区内的绝对路径。'),
-  old_string: z.string().optional().describe('兼容单 edit 调用：要查找的文本。'),
-  new_string: z.string().optional().describe('兼容单 edit 调用：替换后的文本。'),
-  replace_all: z.boolean().optional().describe('兼容单 edit 调用：替换全部匹配项。'),
-  edits: z.array(editOperationSchema).min(1).max(100).optional().describe('一次原子应用的 edit 数组；全部针对原始文件匹配。'),
-}).superRefine((input, context) => {
-  const hasLegacyField = input.old_string !== undefined || input.new_string !== undefined;
-  if (!hasLegacyField && !input.edits) {
-    context.addIssue({ code: 'custom', message: 'Edit requires old_string/new_string or a non-empty edits array.' });
-  }
-  if (hasLegacyField && (input.old_string === undefined || input.new_string === undefined)) {
-    context.addIssue({ code: 'custom', message: 'Edit legacy input requires both old_string and new_string.' });
-  }
+  edits: z.array(editOperationSchema).min(1).max(100).describe('唯一编辑入口；单处修改也传一个元素。全部针对原始文件匹配，不得重复或重叠。'),
 });
 
 function parseJsonString(value: unknown): unknown {
@@ -147,14 +136,11 @@ export function prepareEditInput(value: unknown): unknown {
   const oldString = record.old_string ?? record.oldText;
   const newString = record.new_string ?? record.newText;
   const replaceAll = record.replace_all ?? record.replaceAll;
-  return {
-    ...record,
-    ...(filePath !== undefined ? { file_path: filePath } : {}),
-    ...(oldString !== undefined ? { old_string: oldString } : {}),
-    ...(newString !== undefined ? { new_string: newString } : {}),
-    ...(replaceAll !== undefined ? { replace_all: replaceAll } : {}),
-    ...(edits ? { edits } : {}),
-  };
+  // 旧 transcript/调用方仍可传单条字段；模型只看到一种数组格式。
+  const legacy = oldString !== undefined || newString !== undefined
+    ? [{ old_string: oldString, new_string: newString, ...(replaceAll !== undefined ? { replace_all: replaceAll } : {}) }]
+    : [];
+  return { file_path: filePath, edits: [...legacy, ...(edits ?? [])] };
 }
 
 function collectEditOperations(input: EditInput): EditOperation[] {

@@ -131,50 +131,31 @@ test('private ConfigIdentity is mandatory unless a strict legacy API identity su
   );
 });
 
-test('legacy retry rejects a public ConfigIdentity for the wrong active API release', () => {
+test('已移除的 legacy 重试协议与仅有公开摘要的现场不能进入生产', () => {
   assert.throws(
     () =>
       selectLiveConfigIdentity({
-        privateConfigIdentity: undefined,
-        publicConfigIdentity: {
-          schemaVersion: 1,
-          status: 'not_collected',
-          releaseId: 'stale-legacy-release',
-        },
-        apiReleaseId: 'active-legacy-release',
+        apiReleaseId: 'active-release',
         configIdentityStage: 'legacy-api-upgrade-retry-baseline',
       }),
-    /releaseId disagrees with active API release identity/u,
+    /Unknown live ConfigIdentity stage/u,
   );
-});
-
-test('legacy retry accepts a public ConfigIdentity for the active API release', () => {
-  const publicSummary = {
-    schemaVersion: 1,
-    status: 'not_collected',
-    releaseId: 'active-legacy-release',
-  };
-  assert.deepEqual(
-    selectLiveConfigIdentity({
-      privateConfigIdentity: undefined,
-      publicConfigIdentity: publicSummary,
-      apiReleaseId: 'active-legacy-release',
-      configIdentityStage: 'legacy-api-upgrade-retry-baseline',
-    }),
-    publicSummary,
-  );
-});
-
-test('legacy retry accepts a completely missing ConfigIdentity', () => {
-  assert.equal(
-    selectLiveConfigIdentity({
-      privateConfigIdentity: undefined,
-      publicConfigIdentity: undefined,
-      apiReleaseId: 'legacy-release',
-      configIdentityStage: 'legacy-api-upgrade-retry-baseline',
-    }),
-    undefined,
-  );
+  for (const configIdentityStage of ['candidate-readback', 'steady-state']) {
+    assert.throws(
+      () =>
+        selectLiveConfigIdentity({
+          privateConfigIdentity: undefined,
+          publicConfigIdentity: {
+            schemaVersion: 1,
+            status: 'not_collected',
+            releaseId: 'active-release',
+          },
+          apiReleaseId: 'active-release',
+          configIdentityStage,
+        }),
+      /Private Production ConfigIdentity snapshot is required/u,
+    );
+  }
 });
 
 test('live selection binds private ConfigIdentity to the active API release', () => {

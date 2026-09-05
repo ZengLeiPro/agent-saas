@@ -8,10 +8,7 @@ import { reconcilePromotion } from './reconcile-promotion.mjs';
 import { verifyPromotionAcsSelection } from './verify-promotion-acs-selection.mjs';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
-const confirmationWorkflowPath = new URL(
-  '../../.github/workflows/confirm-expand-migration.yml',
-  import.meta.url,
-);
+const confirmationWorkflowPath = new URL('./finalize-expand-migration.sh', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
 const attestationCliPath = new URL(
   '../../server/src/release/releaseAttestationCli.ts',
@@ -328,7 +325,7 @@ test('final outcome preserves fail-closed reconciliation and trusted identity ev
     'component convergence lacks a confirmed trusted production identity',
     '--state "$outcome"',
     'state=failure',
-    'case "$outcome" in completed|awaiting_expand_confirmation) state=success ;; esac',
+    'case "$outcome" in completed) state=success ;; awaiting_expand_confirmation) state=in_progress ;; esac',
   ]);
   assert.doesNotMatch(finalOutcome, /^\s*outcome=completed$/mu);
 });
@@ -462,7 +459,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(
     workflow,
-    /Read every live component[\s\S]*if: always\(\) && env\.PROMOTION_STARTED == 'true'/u,
+    /Read every live component[\s\S]*if: [^\n]*always\(\) && env\.PROMOTION_STARTED == 'true'/u,
   );
   assert.match(workflow, /steps\.deploy_acs\.outcome[^\n]*!= skipped/u);
   const readbackBlock = workflow
@@ -680,8 +677,8 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   const workerUnit = await readFile(workerUnitPath, 'utf8');
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /promotion-config-identity-state\.mjs plan/u);
-  assert.match(workflow, /legacy_api_requires_upgrade/u);
-  assert.match(workflow, /\[ "\$legacy_api_requires_upgrade" = false \]/u);
+  assert.match(workflow, /assert-write-gate/u);
+  assert.doesNotMatch(workflow, /legacy_api_requires_upgrade/u);
   assert.equal(workflow.match(/config_identity_readback_stage=candidate-readback/gu)?.length, 1);
   assert.match(workflow, /\[ "\$api_action" = deploy \]/u);
   // Web 锁断言只检查发布步骤，避免命中其他 SSH 辅助函数。
@@ -727,7 +724,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /rm -f '\$remote_archive'/u);
   assert.match(workflow, /separate_release/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|appAcsCompatibility/u);
-  assert.match(workflow, /separate_confirmation_required/u);
+  assert.match(workflow, /automatic_readback_required/u);
   assert.match(workflow, /awaiting_expand_confirmation/u);
   assert.match(workflow, /promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /migrationPlanDigest/u);
@@ -1023,29 +1020,20 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   execFileSync('bash', ['-n', deployPath.pathname]);
 });
 
-test('expand confirmation is a separate release-bound and production-serialized workflow', async () => {
+test('expand confirmation runs automatically with the existing release-bound evidence and lock', async () => {
   const [workflow, attestationCli, releaseDocs, releaseConfigDocs] = await Promise.all([
     readFile(confirmationWorkflowPath, 'utf8'),
     readFile(attestationCliPath, 'utf8'),
     readFile(releaseDocsPath, 'utf8'),
     readFile(releaseConfigDocsPath, 'utf8'),
   ]);
-  assert.match(workflow, /name: 确认扩展迁移/u);
-  assert.match(workflow, /name: 校验确认请求/u);
-  assert.match(workflow, /group: production-runtime\s+cancel-in-progress: false/u);
-  assert.match(workflow, /environment: production/u);
-  assert.match(workflow, /release_id:/u);
-  assert.match(workflow, /attestation-snapshot\.mjs select/u);
-  assert.match(workflow, /confirm-expand-migration\.mjs/u);
-  assert.match(workflow, /Expand confirmation request is invalid or expired after two hours/u);
-  assert.match(workflow, /dispatch a new Promotion instead of refreshing this request/u);
-  assert.doesNotMatch(workflow, /REFRESH_CONFIRMATION_WINDOW/u);
-  assert.doesNotMatch(workflow, /expand-reobservation:/u);
-  assert.doesNotMatch(workflow, /confirmation_window_refreshed/u);
-  ordered(workflow, [
-    'Expand confirmation request is invalid or expired after two hours',
-    'Confirm live binding and append completed attestation under the Production host lock',
-  ]);
+  const promotion = await readFile(workflowPath, 'utf8');
+  assert.match(promotion, /group: production-runtime\s+cancel-in-progress: false/u);
+  assert.match(promotion, /自动核验扩展迁移并完成发布/u);
+  assert.match(
+    promotion,
+    /timeout --signal=TERM --kill-after=10 1800 bash scripts\/release\/finalize-expand-migration\.sh/u,
+  );
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /production-api-ready\.json/u);
   assert.match(workflow, /production-lock-lease\.sh/u);
@@ -1076,7 +1064,7 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(workflow, /run_guarded bash scripts\/release\/upload-oss-object-immutable\.sh/u);
   assert.match(workflow, /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt\)/u);
   assert.match(workflow, /upload-oss-object-immutable\.sh[\s\S]*--state completed/u);
-  assert.match(workflow, /Release was already confirmed by another workflow run/u);
+  assert.match(workflow, /promotion-finalization-mode\.mjs/u);
   assert.doesNotMatch(workflow, /--state completed[\s\S]*migration-confirmations\/confirmation-/u);
   assert.match(workflow, /--api-ready/u);
   assert.match(workflow, /--state completed/u);
@@ -1093,8 +1081,8 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(attestationCli, /confirmation-evidence/u);
   assert.match(attestationCli, /currentState === 'awaiting_expand_confirmation'/u);
   assert.match(attestationCli, /confirmationEvidenceDigest !== evidenceDigest/u);
-  assert.match(releaseDocs, /GitHub 上六个 Workflow/u);
-  assert.match(releaseDocs, /`Confirm Expand Migration`/u);
+  assert.match(releaseDocs, /GitHub 上五个 Workflow/u);
+  assert.match(releaseDocs, /自动收尾/u);
   assert.match(releaseDocs, /2 小时确认窗口和 5 分钟现场\/证据新鲜度/u);
   assert.match(releaseDocs, /psql 反斜杠元命令均拒绝/u);
   assert.match(releaseDocs, /全部 INSERT/u);
@@ -1106,8 +1094,8 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(releaseConfigDocs, /producer 仅用写 Token/u);
   assert.match(releaseConfigDocs, /publisher 仅用读 Token/u);
   assert.doesNotMatch(releaseConfigDocs, /准备发布证据` 只持有读身份/u);
-  assert.match(workflow, /CONFIRMATION_REPAIR=true/u);
-  assert.match(workflow, /Repair OSS attestation mirror/u);
+  assert.match(workflow, /\[ "\$mode" = repair \]/u);
+  assert.match(workflow, /修复 OSS 镜像/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });

@@ -25,20 +25,20 @@
 
 对 **parse 之后的 AppConfig**（Zod 校验 + 默认值填充后）做投影：
 
-| 输入形态                                                                            | 投影结果                                                                                                                                                                                                                        |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 普通有效配置字段                                                                    | 原值（键按 `canonicalJson` 排序）                                                                                                                                                                                               |
-| JSONC 注释 / 原始文本排版                                                           | 不存在（parse 时天然消除）                                                                                                                                                                                                      |
-| 受管 inline/ref 双形态字段的 inline 值（含 memory embedding / model group API key） | `{form:'inline'}`（明文不进投影）                                                                                                                                                                                               |
-| 受管字段的 ref id                                                                   | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）                                                                                                                                                                  |
-| 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/tts 等）                       | `{__redacted:'secret'}`                                                                                                                                                                                                         |
-| URL（webhook/代理/signed URL 等）                                                   | 普通 HTTP(S) URL 只保留安全 origin，pathname/query 分别以 path-bound `{__opaqueDigest__}` 表达，userinfo/hash 不进入投影；signed URL 仅保留 origin                                                                                 |
-| DB 连接串                                                                           | 只保留 host/database                                                                                                                                                                                                            |
-| 绝对机器存储路径（agent.cwd、vault file、artifact root 等）                         | 不进投影（同语义配置在不同主机目录得到相同 digest）                                                                                                                                                                             |
+| 输入形态                                                                            | 投影结果                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 普通有效配置字段                                                                    | 原值（键按 `canonicalJson` 排序）                                                                                                                                                                                                                                                                                                                                      |
+| JSONC 注释 / 原始文本排版                                                           | 不存在（parse 时天然消除）                                                                                                                                                                                                                                                                                                                                             |
+| 受管 inline/ref 双形态字段的 inline 值（含 memory embedding / model group API key） | `{form:'inline'}`（明文不进投影）                                                                                                                                                                                                                                                                                                                                      |
+| 受管字段的 ref id                                                                   | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）                                                                                                                                                                                                                                                                                                         |
+| 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/tts 等）                       | `{__redacted:'secret'}`                                                                                                                                                                                                                                                                                                                                                |
+| URL（webhook/代理/signed URL 等）                                                   | 普通 HTTP(S) URL 只保留安全 origin，pathname/query 分别以 path-bound `{__opaqueDigest__}` 表达，userinfo/hash 不进入投影；signed URL 仅保留 origin                                                                                                                                                                                                                     |
+| DB 连接串                                                                           | 只保留 host/database                                                                                                                                                                                                                                                                                                                                                   |
+| 绝对机器存储路径（agent.cwd、vault file、artifact root 等）                         | 不进投影（同语义配置在不同主机目录得到相同 digest）                                                                                                                                                                                                                                                                                                                    |
 | 相对机器存储路径                                                                    | 以真实 `processCwd` 执行 `resolve(base,value)` 后再 `relative(base,resolved)`；空串规范为 `.`，`agent.sharedDir` 的 base 为真实 `projectRoot=resolve(processCwd,'..')`，其余字段 base 为 `processCwd`。canonical form 再投影为 `{__opaqueDigest__: sha256(...)}`，因此根截断、`./`、尾分隔符等运行期等价路径 identity 相同，目标变化可见且绝对 cwd/目标/路径原文不可见 |
-| systemPrompts.* / tool descriptionOverride.text                                    | `{__opaqueDigest__: sha256(...)}`，prompt/description 原文、token 与其中路径不可见，文本变化仍改变 identity                                                                                                                     |
-| 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）           | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见                                                                                                                                                                         |
-| env 值（dispatch.env/proxy 的 value）                                               | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见）                                                                                                                                                               |
+| systemPrompts.* / tool descriptionOverride.text                                     | `{__opaqueDigest__: sha256(...)}`，prompt/description 原文、token 与其中路径不可见，文本变化仍改变 identity                                                                                                                                                                                                                                                            |
+| 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）           | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见                                                                                                                                                                                                                                                                                                                |
+| env 值（dispatch.env/proxy 的 value）                                               | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见）                                                                                                                                                                                                                                                                                                      |
 
 已发布投影语义的任何变化都必须递增 `CONFIG_IDENTITY_SCHEMA_VERSION` 并显式迁移，
 **不允许静默改变 digest 语义**。本次修正发生在首版 PR 合并发布前，属于未发布 v1
@@ -77,7 +77,7 @@ overview snapshot 在 wire 层再校验一次，不合法载荷降级为 `null` 
 | wire 契约                     | `shared/src/schemas/configIdentity.ts`                                              | 四态词汇、摘要 schema、`parseConfigIdentitySummary`                                      |
 | observed runtime              | `server/src/runtime/configIdentityRuntime.ts`                                       | 启动计算、热更新重算、5s 节流摘要                                                        |
 | expected 绑定                 | deploy 脚本 → release env → `readExpectedConfigIdentity`                            | `AGENT_SAAS_CONFIG_IDENTITY_DIGEST`（+ 可选 SCHEMA_VERSION / CREDENTIAL_VERSION_DIGEST） |
-| 部署期 CLI                    | `server/src/release/configIdentityCli.ts`（构建产物 `dist/config-identity-cli.js`） | 在部署主机上对实际 config.json 计算 expected identity，并用 `--process-cwd` 复刻路径基准  |
+| 部署期 CLI                    | `server/src/release/configIdentityCli.ts`（构建产物 `dist/config-identity-cli.js`） | 在部署主机上对实际 config.json 计算 expected identity，并用 `--process-cwd` 复刻路径基准 |
 | 前端                          | `web/src/components/PlatformAdmin/pages/ConfigIdentityCard.tsx`                     | 平台概览只读区块（四态 + 摘要）                                                          |
 
 ### 受管凭据注册表
@@ -181,15 +181,11 @@ raw config 的任何入口。drifted / unverifiable 同时进入待关注队列�
   更新 shared wire schema 的 `z.literal`、旧 observed 摘要按
   `schema_version_unsupported` 判定不可验证（不误报一致/漂移）、部署脚本写入
   新 SCHEMA_VERSION env。
-- 合并本变更后，**存量环境需要一次重新发布**才能绑定 expected identity；
-  在此之前 runtime 只会报告 `unverifiable: expected_not_bound`（production
-  不阻断启动，仅 overview 提示）。首次从完全没有 ConfigIdentity 的旧 Production
-  生成 Staging Release Evidence 时，`部署预发 RC` 必须由操作者把
-  `production_config_identity_stage` 从默认 `steady-state` 显式改为
-  `legacy-pre-upgrade-baseline`；workflow 会把选择写入 Job Summary，且绝不自动 fallback。
-  legacy stage 只放行 trusted runtime identity 与 API summary **同时完全缺失**的基线；
-  任一 observer 已出现后，单边缺失或摘要不一致仍 fail closed。完成首次重新发布后继续使用
-  默认 `steady-state`。Staging 在下一次部署后立即强制生效。
+- RC60 已完成首次 Production ConfigIdentity 绑定。预发基线与正常生产发布固定使用
+  `steady-state`，不再提供首次升级的 legacy 入口。配置身份缺失、单边缺失或不一致一律阻断。
+- 分阶段发布或中断恢复允许 `candidate-readback`：必须存在与当前 API release 绑定且一致的
+  私有配置快照，允许该快照先于最终 trusted identity 提交；组件矩阵校验仍执行。
+  全部组件收敛并提交 trusted identity 后，最终读回必须通过 `steady-state`。
 
 ## 9. 相关文件
 

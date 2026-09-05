@@ -160,19 +160,19 @@ function toolDescriptor(name: string): ToolDescriptor {
 }
 
 describe('Agent Runtime Profile schema and runtime intersection', () => {
-  it('publishes Shell-first memory/explore as v2 while retaining immutable v1 history', () => {
+  it('发布新版记忆预设并保留不可变历史', () => {
     const records = createBuiltinAgentProfileRecords('2026-07-22T00:00:00.000Z');
     for (const key of ['memory_poll', 'subagent_explore'] as const) {
       const current = getBuiltinProfileByBinding(key);
-      expect(current.version.versionNumber).toBe(2);
-      expect(current.version.publishedAt).toBe('2026-07-24T17:04:00.000Z');
+      expect(current.version.versionNumber).toBe(key === 'memory_poll' ? 3 : 2);
+      expect(current.version.publishedAt).toBe(key === 'memory_poll' ? '2026-09-05T15:34:00.000Z' : '2026-07-24T17:04:00.000Z');
       expect(current.version.config.tools.allowlist).toContain('Shell');
       const versions = records.versions
         .filter((version) => version.profileId === current.profile.profileId)
         .sort((a, b) => b.versionNumber - a.versionNumber);
-      expect(versions.map((version) => version.versionNumber)).toEqual([2, 1]);
+      expect(versions.map((version) => version.versionNumber)).toEqual(key === 'memory_poll' ? [3, 2, 1] : [2, 1]);
       expect(versions[0]!.config.tools.allowlist).not.toEqual(expect.arrayContaining(['List', 'Glob', 'Grep']));
-      expect(versions[1]!.config.tools.allowlist).toEqual(expect.arrayContaining(
+      expect(versions.at(-1)!.config.tools.allowlist).toEqual(expect.arrayContaining(
         key === 'memory_poll' ? ['List', 'Glob', 'Grep'] : ['Glob', 'Grep'],
       ));
     }

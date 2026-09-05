@@ -88,6 +88,7 @@ describe('useSession 会话详情加载韧性', () => {
 
     act(() => result.current.selectSession('taskboard-session'));
     expect(result.current.accessRef.current).toBe('unknown');
+    expect(result.current.sessionAccessMode).toBe('unknown');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200);
@@ -95,6 +96,32 @@ describe('useSession 会话详情加载韧性', () => {
       await result.current.loadDetailPromiseRef.current;
     });
     expect(result.current.accessRef.current).toBe('read_only');
+    expect(result.current.sessionAccessMode).toBe('read_only');
+  });
+
+  it('自有会话详情返回 owner 后，渲染层访问模式回到 owner（回归：自有会话不得被锁成只读）', async () => {
+    let resolveDetail!: (response: Response) => void;
+    authFetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/sessions/own-session?')) {
+        return new Promise<Response>((resolve) => { resolveDetail = resolve; });
+      }
+      if (url.startsWith('/api/chat/interactions/pending')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/stats')) return Promise.resolve(jsonResponse({}));
+      return Promise.resolve(jsonResponse({ sessions: [], hasMore: false }));
+    });
+    const { result } = renderHook(() => useSession(callbacks()));
+    expect(result.current.sessionAccessMode).toBe('owner');
+
+    act(() => result.current.selectSession('own-session'));
+    expect(result.current.sessionAccessMode).toBe('unknown');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+      resolveDetail(detailResponse('自己的历史', 'owner'));
+      await result.current.loadDetailPromiseRef.current;
+    });
+    expect(result.current.sessionAccessMode).toBe('owner');
+    expect(result.current.accessRef.current).toBe('owner');
   });
 
   it('IndexedDB 永久挂起时在缓存预算后直接请求网络', async () => {

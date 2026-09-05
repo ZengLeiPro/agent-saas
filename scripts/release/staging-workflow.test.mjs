@@ -187,31 +187,17 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('首次 Production ConfigIdentity 迁移必须显式选择且不降低 steady-state 门禁', async () => {
+test('预发固定使用稳态基线，拒绝配置身份缺失与漂移', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  assert.match(
-    workflow,
-    /production_config_identity_stage:[\s\S]*type: choice[\s\S]*default: steady-state[\s\S]*- steady-state[\s\S]*- legacy-pre-upgrade-baseline/u,
-  );
-  assert.match(
-    workflow,
-    /PRODUCTION_CONFIG_IDENTITY_STAGE: \$\{\{ inputs\.production_config_identity_stage \}\}/u,
-  );
+  assert.doesNotMatch(workflow, /production_config_identity_stage:|legacy-pre-upgrade-baseline/u);
+  assert.match(workflow, /PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state/u);
   assert.match(
     workflow,
     /read-production-state\.mjs' --config-identity-stage '\$PRODUCTION_CONFIG_IDENTITY_STAGE'/u,
   );
-  assert.match(workflow, /Selected stage: \\`\$PRODUCTION_CONFIG_IDENTITY_STAGE\\`/u);
-  assert.match(workflow, /Default remains `steady-state`/u);
-
-  assert.doesNotThrow(() =>
-    validateExpectedConfigIdentityObservers(undefined, undefined, {
-      configIdentityStage: 'legacy-pre-upgrade-baseline',
-    }),
-  );
   assert.throws(
     () => validateExpectedConfigIdentityObservers(undefined, undefined),
-    /completely absent outside the legacy pre-upgrade baseline/u,
+    /completely absent during steady-state/u,
   );
 
   const expected = {
@@ -237,7 +223,7 @@ test('首次 Production ConfigIdentity 迁移必须显式选择且不降低 stea
     assert.throws(
       () =>
         validateExpectedConfigIdentityObservers(trusted, api, {
-          configIdentityStage: 'legacy-pre-upgrade-baseline',
+          configIdentityStage: 'steady-state',
         }),
       /missing from/u,
     );
@@ -251,7 +237,7 @@ test('首次 Production ConfigIdentity 迁移必须显式选择且不降低 stea
           expected: { ...expected, digest: `sha256:${'b'.repeat(64)}` },
           observed: { ...apiSummary.observed, digest: `sha256:${'b'.repeat(64)}` },
         },
-        { configIdentityStage: 'legacy-pre-upgrade-baseline' },
+        { configIdentityStage: 'steady-state' },
       ),
     /disagrees across observers/u,
   );
@@ -557,7 +543,9 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /restore_optional_file "\$had_server_unit"/u);
   assert.ok(
     deploy.indexOf('trap finish EXIT # one-shot dispatcher') <
-      deploy.indexOf('install_staging_unit \\\n  "$UNIT_DIR/agent-saas-server-staging.service.template"'),
+      deploy.indexOf(
+        'install_staging_unit \\\n  "$UNIT_DIR/agent-saas-server-staging.service.template"',
+      ),
   );
   assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_ENABLED=true/u);
   assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce/u);
@@ -616,8 +604,14 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
   const validator = deploy.match(
     /node - "\$MANIFEST_PATH" "\$acs_health_probe" <<'NODE'\n([\s\S]*?)\nNODE\n\ninstall -m 0444/u,
   )?.[1];
-  assert.ok(validator, 'Staging ACS health validator must remain executable as an isolated contract');
-  assert.ok(deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") < deploy.indexOf('deployment_committed=true'));
+  assert.ok(
+    validator,
+    'Staging ACS health validator must remain executable as an isolated contract',
+  );
+  assert.ok(
+    deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") <
+      deploy.indexOf('deployment_committed=true'),
+  );
   assert.match(
     deploy,
     /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
@@ -658,12 +652,25 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
     });
     assert.notEqual(shadow.status, 0, 'shadow response must fail the deployment health gate');
 
-    await writeFile(paths[1], JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }));
-    const disabled = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
-    assert.notEqual(disabled.status, 0, 'disabled lifecycle controller must fail the deployment health gate');
+    await writeFile(
+      paths[1],
+      JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }),
+    );
+    const disabled = spawnSync(process.execPath, ['-', ...paths], {
+      input: validator,
+      encoding: 'utf8',
+    });
+    assert.notEqual(
+      disabled.status,
+      0,
+      'disabled lifecycle controller must fail the deployment health gate',
+    );
 
     await writeFile(paths[1], JSON.stringify({ ...acs, lifecyclePolicyMode: 'enforce' }));
-    const enforce = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    const enforce = spawnSync(process.execPath, ['-', ...paths], {
+      input: validator,
+      encoding: 'utf8',
+    });
     assert.equal(enforce.status, 0, enforce.stderr);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -782,10 +789,7 @@ test('Staging API and Worker keep mutable process data isolated while executing 
     serverUnit,
     /ExecStartPre=\/usr\/bin\/rm -f \/run\/agent-saas-staging\/config-identity\.json/u,
   );
-  assert.notEqual(
-    serverUnit.indexOf('Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH='),
-    -1,
-  );
+  assert.notEqual(serverUnit.indexOf('Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH='), -1);
   assert.ok(
     serverUnit.indexOf('Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=') >
       serverUnit.indexOf('EnvironmentFile=/etc/agent-saas-staging/server.env'),

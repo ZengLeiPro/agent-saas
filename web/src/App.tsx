@@ -83,7 +83,7 @@ function App() {
   );
 
   const {
-    messages, input, sandboxProfile, setSandboxProfile, loading, sessionId, sessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
+    messages, input, sandboxProfile, setSandboxProfile, loading, sessionId, sessions, sessionAccessMode, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, settingsOpen, settingsSection,
     uploadedFiles, uploading, uploadError, dismissUploadError, isDragging, isLoadingSessions, isLoadingMessages,
     sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
     deleteSessionId, deleteSessionCount, lastMessageRef, scrollContainerRef, isNearBottomRef,
@@ -177,10 +177,8 @@ function App() {
       ? '个人 Agent'
       : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家' : undefined;
   const activeOrgAgentReadOnly = !!activeAgentTargetUnavailableReason;
-  const sessionReadOnly = !!(sessionId && (
-    isLoadingMessages || !sessionParticipants
-    || sessionParticipants.owner.userId !== authUser?.id
-  ));
+  // 只读判定以服务端 accessMode 为准：unknown（切换中/未返回）与 read_only 均锁定；自有会话为 owner。
+  const sessionReadOnly = !!(sessionId && sessionAccessMode !== "owner");
   const orgAgentIdentityLoading = !agentTargetCatalog && !compatibilityReason && (orgAgentsLoading || isLoadingSessions);
   const adminOwnerView = !!(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
@@ -441,7 +439,7 @@ function App() {
           }
         }}
         onConfirm={() => {
-          void handleDeleteSession();
+          return handleDeleteSession();
         }}
         isAdmin={isAdmin}
         count={deleteSessionCount}

@@ -19,6 +19,19 @@ const configIdentityCases = JSON.parse(
 ).cases;
 
 function observations() {
+  const expected = { schemaVersion: 1, digest: FINGERPRINT };
+  const configIdentity = {
+    schemaVersion: 1,
+    status: 'consistent',
+    releaseId: 'rc-20260826-01',
+    expected,
+    observed: {
+      ...expected,
+      credentialVersionDigest: null,
+      versionResolution: 'resolved',
+      secretRefCount: 0,
+    },
+  };
   const components = {
     web: { gitSha: SHA, artifactDigest: WEB, deployedAt: '2026-08-26T00:00:00.000Z' },
     api: { gitSha: SHA, artifactDigest: SERVER, deployedAt: '2026-08-26T00:00:00.000Z' },
@@ -32,12 +45,14 @@ function observations() {
   };
   return {
     runtime: {
+      configIdentity: expected,
       environment: 'production',
       components,
       configFingerprint: FINGERPRINT,
       topology: { observedAt: '2026-08-26T00:00:00.000Z' },
     },
     api: {
+      configIdentity,
       status: 'ok',
       release: {
         environment: 'production',
@@ -78,7 +93,7 @@ for (const fixtureCase of configIdentityCases) {
 
 test('cross-validates API, Worker topology, Web snapshot and ACS identities', () => {
   const state = validateProductionObservations(observations(), {
-    configIdentityStage: 'legacy-pre-upgrade-baseline',
+    configIdentityStage: 'steady-state',
   });
   assert.equal(state.components.acs.sandboxImageDigest, IMAGE);
   assert.match(state.digest, /^sha256:/u);
@@ -90,7 +105,7 @@ test('fails closed when any observer is unknown or disagrees', () => {
   assert.throws(
     () =>
       validateProductionObservations(drifted, {
-        configIdentityStage: 'legacy-pre-upgrade-baseline',
+        configIdentityStage: 'steady-state',
       }),
     /disagrees/u,
   );
@@ -99,28 +114,30 @@ test('fails closed when any observer is unknown or disagrees', () => {
   assert.throws(
     () =>
       validateProductionObservations(unknown, {
-        configIdentityStage: 'legacy-pre-upgrade-baseline',
+        configIdentityStage: 'steady-state',
       }),
     /disagrees/u,
   );
 });
 
-test('only the explicit legacy pre-upgrade baseline accepts complete ConfigIdentity absence', () => {
+test('正常生产与旧入口均拒绝完全缺失的配置身份', () => {
   const fixture = JSON.parse(
     readFileSync(new URL('./fixtures/legacy-main-production-observations.json', import.meta.url)),
   );
-  assert.doesNotThrow(() =>
-    validateProductionObservations(fixture, {
-      configIdentityStage: 'legacy-pre-upgrade-baseline',
-    }),
+  assert.throws(
+    () =>
+      validateProductionObservations(fixture, {
+        configIdentityStage: 'legacy-pre-upgrade-baseline',
+      }),
+    /Unknown Production ConfigIdentity stage/u,
   );
   assert.throws(
     () => validateProductionObservations(fixture),
-    /completely absent outside the legacy pre-upgrade baseline/u,
+    /completely absent during steady-state/u,
   );
 });
 
-test('API-upgrade retry baseline accepts only absence or an upgraded consistent API summary', () => {
+test('候选读回允许已切换的新身份，拒绝缺失或不一致', () => {
   const oldExpected = { schemaVersion: 1, digest: `sha256:${'6'.repeat(64)}` };
   const newExpected = { schemaVersion: 1, digest: `sha256:${'7'.repeat(64)}` };
   const upgradedApi = {
@@ -135,20 +152,22 @@ test('API-upgrade retry baseline accepts only absence or an upgraded consistent 
       secretRefCount: 0,
     },
   };
-  const retryOptions = { configIdentityStage: 'legacy-api-upgrade-retry-baseline' };
+  const retryOptions = { configIdentityStage: 'candidate-readback' };
 
-  assert.doesNotThrow(() =>
-    validateExpectedConfigIdentityObservers(undefined, undefined, retryOptions),
+  assert.throws(
+    () => validateExpectedConfigIdentityObservers(undefined, undefined, retryOptions),
+    /requires a consistent API expected/u,
   );
-  assert.doesNotThrow(() =>
-    validateExpectedConfigIdentityObservers(undefined, upgradedApi, retryOptions),
+  assert.throws(
+    () => validateExpectedConfigIdentityObservers(undefined, upgradedApi, retryOptions),
+    /missing from trusted runtime identity/u,
   );
   assert.doesNotThrow(() =>
     validateExpectedConfigIdentityObservers(oldExpected, upgradedApi, retryOptions),
   );
   assert.throws(
     () => validateExpectedConfigIdentityObservers(oldExpected, undefined, retryOptions),
-    /requires either complete observer absence or a consistent API expected/u,
+    /requires a consistent API expected/u,
   );
   assert.throws(
     () =>
@@ -163,7 +182,7 @@ test('API-upgrade retry baseline accepts only absence or an upgraded consistent 
         },
         retryOptions,
       ),
-    /requires either complete observer absence or a consistent API expected/u,
+    /requires a consistent API expected/u,
   );
 
   for (const configIdentityStage of ['candidate-readback', 'steady-state']) {

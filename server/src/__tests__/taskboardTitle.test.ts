@@ -20,7 +20,7 @@ const identity = {
 
 const titleConfig = [{ model: 'title-model' }];
 
-describe('任务看板标题生成', () => {
+describe('任务看板标题生成与配置刷新门禁', () => {
   it('复用平台标题模型配置和系统提示语', async () => {
     mocks.generateTitleWithFallback.mockResolvedValueOnce('自动生成标题');
     const generateTitle = createRuntimeTaskboardTitleGenerator('/agent', {
@@ -36,11 +36,11 @@ describe('任务看板标题生成', () => {
     );
   });
 
-  it('共享配置刷新异常时返回空标题', async () => {
+  it('共享配置异步刷新失败时返回空标题', async () => {
     const generateTitle = createTaskboardTitleGenerator({
       agentCwd: '/agent',
       titleGeneratorConfigs: titleConfig,
-      refreshSharedConfig: vi.fn(() => { throw new Error('配置刷新失败'); }),
+      refreshSharedConfig: vi.fn().mockResolvedValue(false),
     });
 
     await expect(generateTitle('根据正文生成任务标题', identity)).resolves.toBeNull();

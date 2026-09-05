@@ -35,13 +35,15 @@ entry="$name $*"
 if [ -n "\${ROLLBACK_FAIL_MATCH:-}" ] && [[ "$entry" == *"$ROLLBACK_FAIL_MATCH"* ]]; then
   exit 42
 fi
-exit 0
 `;
   for (const name of ['cp', 'ln', 'rm', 'nginx', 'systemctl']) {
     const path = join(bin, name);
-    await writeFile(path, command);
+    const action = ['cp', 'ln', 'rm'].includes(name) ? `exec /usr/bin/${name} "$@"\n` : 'exit 0\n';
+    await writeFile(path, `${command}${action}`);
     await chmod(path, 0o755);
   }
+  await writeFile(join(root, 'etc/active-color'), 'green\n');
+  await writeFile(join(root, 'etc/runtime-worker-active-color'), 'green\n');
   return {
     root,
     bin,
@@ -83,16 +85,23 @@ async function runRollback(failMatch = '', mode = '--test-app-rollback') {
   return { ...value, result, log };
 }
 
-test('App rollback restores all boundaries and restarts both previous services', async () => {
+test('App rollback prepares disk boundaries without publishing unverified authority', async () => {
   const value = await runRollback();
   assert.equal(value.result.status, 0, value.result.stderr);
   assert.match(value.log, /systemctl daemon-reload/u);
   assert.match(value.log, /rm -f \/run\/agent-saas-server-blue\.draining/u);
   assert.match(value.log, /rm -f \/run\/agent-saas-runtime-worker-blue\.draining/u);
-  assert.match(value.log, /systemctl restart agent-saas-server@blue/u);
-  assert.match(value.log, /systemctl restart agent-saas-runtime-worker@blue/u);
-  assert.match(value.log, /systemctl disable --now agent-saas-server@green/u);
-  assert.match(value.log, /systemctl disable --now agent-saas-runtime-worker@green/u);
+  assert.doesNotMatch(value.log, /systemctl (?:restart|reload|enable|disable)/u);
+  assert.doesNotMatch(value.log, /nginx -t/u);
+  assert.doesNotMatch(
+    value.log,
+    new RegExp(`cp -a ${join(value.rollbackRoot, 'nginx-upstream.conf')}`),
+  );
+  assert.equal((await readFile(join(value.root, 'etc/active-color'), 'utf8')).trim(), 'green');
+  assert.equal(
+    (await readFile(join(value.root, 'etc/runtime-worker-active-color'), 'utf8')).trim(),
+    'green',
+  );
 });
 
 test('EXIT trap preserves deploy failure unless consolidated rollback fails with status 70', async () => {
@@ -102,7 +111,7 @@ test('EXIT trap preserves deploy failure unless consolidated rollback fails with
   const failedRollback = await runRollback('api.release.env', '--test-app-cleanup-trap');
   assert.equal(failedRollback.result.status, 70, failedRollback.result.stderr);
   assert.match(failedRollback.result.stderr, /rollback status 70/u);
-  assert.match(failedRollback.log, /systemctl restart agent-saas-runtime-worker@blue/u);
+  assert.match(failedRollback.log, /rm -f \/run\/agent-saas-runtime-worker-blue\.draining/u);
 });
 
 for (const [label, failure, requiredLaterActions] of [
@@ -112,7 +121,7 @@ for (const [label, failure, requiredLaterActions] of [
     [
       'worker.release.env',
       'systemctl daemon-reload',
-      'systemctl restart agent-saas-runtime-worker@blue',
+      'rm -f /run/agent-saas-runtime-worker-blue.draining',
     ],
   ],
   [
@@ -121,29 +130,21 @@ for (const [label, failure, requiredLaterActions] of [
     [
       'runtime-worker@.service',
       'systemctl daemon-reload',
-      'systemctl restart agent-saas-runtime-worker@blue',
+      'rm -f /run/agent-saas-runtime-worker-blue.draining',
     ],
   ],
   [
     'daemon reload',
     'systemctl daemon-reload',
     [
-      'systemctl restart agent-saas-server@blue',
-      'systemctl restart agent-saas-runtime-worker@blue',
+      'rm -f /run/agent-saas-server-blue.draining',
+      'rm -f /run/agent-saas-runtime-worker-blue.draining',
     ],
   ],
   [
     'draining marker cleanup',
     'rm -f /run/agent-saas-server-blue.draining',
-    [
-      'systemctl restart agent-saas-server@blue',
-      'systemctl restart agent-saas-runtime-worker@blue',
-    ],
-  ],
-  [
-    'first previous service restart',
-    'systemctl restart agent-saas-server@blue',
-    ['systemctl restart agent-saas-runtime-worker@blue'],
+    ['rm -f /run/agent-saas-runtime-worker-blue.draining'],
   ],
 ]) {
   test(`${label} failure is consolidated after all later recovery actions`, async () => {
@@ -153,7 +154,5 @@ for (const [label, failure, requiredLaterActions] of [
     for (const action of requiredLaterActions) {
       assert.ok(value.log.includes(action), `${basename(SCRIPT)} did not continue to ${action}`);
     }
-    assert.doesNotMatch(value.log, /systemctl disable --now agent-saas-server@green/u);
-    assert.doesNotMatch(value.log, /systemctl disable --now agent-saas-runtime-worker@green/u);
   });
 }

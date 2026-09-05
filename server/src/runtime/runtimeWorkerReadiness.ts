@@ -1,3 +1,4 @@
+import type { ConfigIdentitySummary } from '@agent/shared';
 import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { RuntimeAdmissionGuard, RuntimeAdmissionSnapshot } from './memoryPressureGuard.js';
 
@@ -19,13 +20,20 @@ export interface RuntimeWorkerReadinessOptions {
   now?: () => number;
 }
 
-// runtime-worker 的 readyfile 同时代表运行准入与必要 singleton worker 已建立权威状态。
+// runtime-worker 的 readyfile 同时代表显式开放准入、ConfigIdentity 一致性与必要
+// singleton worker 已建立权威状态。任一证据缺失或撤销时都必须 fail closed。
 export function projectRuntimeWorkerReadyFile(
   readyFile: string,
   snapshot: RuntimeAdmissionSnapshot | undefined,
+  configIdentity: ConfigIdentitySummary | undefined,
+  privateSnapshotCurrent: boolean,
   pid = process.pid,
 ): void {
-  if (snapshot?.admitting === false) {
+  if (
+    snapshot?.admitting !== true
+    || configIdentity?.status !== 'consistent'
+    || !privateSnapshotCurrent
+  ) {
     removeRuntimeWorkerReadyFiles(readyFile);
     return;
   }

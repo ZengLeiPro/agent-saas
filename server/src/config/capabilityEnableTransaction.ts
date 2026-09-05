@@ -12,6 +12,7 @@ import {
 import type { CapabilityValidationJournal } from './capabilityValidationJournal.js';
 import {
   ConfigConflictError,
+  ConfigMutationCommittedError,
   RuntimeRestoreFailedError,
   type AdminConfigMutationService,
 } from './adminConfigMutationService.js';
@@ -306,15 +307,19 @@ export async function runCapabilityEnableTransaction(
       journalPersisted,
     };
   } catch (error) {
-    // 运行时恢复失败时进程内配置与 config.json 已经不一致：此时撤销 Secret 只会
-    // 让仍在运行的实例连凭据一起失效，保留它们等人工处置。
+    // durable/runtime 已提交但 publication/prune 失败，或运行时恢复失败时，配置仍可能
+    // 引用候选 Secret；此时撤销只会让已生效/仍在运行的实例失去凭据，必须保留。
+    const mutationCommitted = error instanceof ConfigMutationCommittedError;
     const runtimeRestoreFailed = error instanceof RuntimeRestoreFailedError;
-    if (runtimeRestoreFailed) {
+    const retainStagedSecrets = mutationCommitted || runtimeRestoreFailed;
+    if (retainStagedSecrets) {
       console.error(
-        `[capability-enable] ${capability}: 运行时回滚失败，已保留本次暂存 Secret（${staging.refIds.length} 个）避免运行实例立即失效，需人工核对进程内配置`,
+        mutationCommitted
+          ? `[capability-enable] ${capability}: 配置已提交但后续发布或维护失败，已保留本次暂存 Secret（${staging.refIds.length} 个）避免生效配置失去凭据，需人工核对发布状态`
+          : `[capability-enable] ${capability}: 运行时回滚失败，已保留本次暂存 Secret（${staging.refIds.length} 个）避免运行实例立即失效，需人工核对进程内配置`,
       );
     }
-    const unrevoked = runtimeRestoreFailed ? 0 : await staging.rollback();
+    const unrevoked = retainStagedSecrets ? 0 : await staging.rollback();
     if (unrevoked > 0) {
       console.error(
         `[capability-enable] ${capability}: ${unrevoked} 个暂存 Secret 撤销失败，需人工在 SecretVault 中吊销`,
@@ -337,7 +342,7 @@ export async function runCapabilityEnableTransaction(
     }
     const failure = toCapabilityEnableError(error);
     if (unrevoked > 0) failure.details.unrevokedSecrets = unrevoked;
-    if (runtimeRestoreFailed) failure.details.unrevokedSecrets = staging.refIds.length;
+    if (retainStagedSecrets) failure.details.unrevokedSecrets = staging.refIds.length;
     throw failure;
   } finally {
     finishValidating();

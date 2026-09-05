@@ -34,6 +34,7 @@ export async function assembleReleaseEvidence(options) {
   const expiresAt = options['expires-at'];
   if (!createdAt || !expiresAt || Date.parse(expiresAt) <= Date.parse(createdAt))
     throw new Error('Release timestamps are invalid');
+  // 最终候选必须保留 authoritative evidence 的脱敏 ConfigIdentity。
   const built = (name) => {
     const item = index.artifacts[name];
     if (!item) return undefined;
@@ -56,6 +57,9 @@ export async function assembleReleaseEvidence(options) {
     sourcePullRequests: authoritative.sourcePullRequests,
     checks: authoritative.checks,
     productionBaseline: authoritative.productionBaseline,
+    ...(authoritative.configIdentity !== undefined
+      ? { configIdentity: authoritative.configIdentity }
+      : {}),
     affectedComponents: authoritative.affectedComponents,
     builtArtifacts: {
       serverBundle: built('serverBundle'),

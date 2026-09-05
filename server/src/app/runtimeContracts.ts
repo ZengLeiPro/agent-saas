@@ -1,8 +1,14 @@
 import type { AppConfig } from '../types/index.js';
 import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
+import type { ProviderQuotaService } from '../quota/providerQuotaService.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
+import type { PreparedConfigRecoveryPublication } from '../runtime/configIdentityRuntime.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { PgSessionAutomationStore } from '../runtime/sessionAutomationStore.js';
 import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
@@ -157,6 +163,17 @@ export interface AppRuntime {
   cronRuntime: CronRuntime;
   getMemoryIndexService?: () => MemoryIndexService | null;
   getMemoryConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
+  /**
+   * TASK-318：稳定只读脱敏配置身份摘要。
+   * 内容只含 digest/计数/时间戳/四态状态，不含 secret 与 raw config。
+   */
+  getConfigIdentitySummary?: () => import('@agent/shared').ConfigIdentitySummary;
+  /** readiness、overview 与 Worker 门禁使用的可等待强一致读取。 */
+  refreshConfigIdentitySummary?: () => Promise<import('@agent/shared').ConfigIdentitySummary>;
+  /** 当前私有 ConfigIdentity snapshot 必须与内存 summary 逐字一致。 */
+  isPrivateConfigIdentitySummaryCurrent: () => boolean;
+  /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门及 permit 所有者。 */
+  configRuntimeRecoveryGate: ConfigRuntimeRecoveryGate;
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
   auditProjectionShutdown?: () => Promise<void>;
@@ -170,6 +187,8 @@ export interface AppRuntime {
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
+  /** 套餐额度采集/读取（仅 PG runtime 装配；ws-only 只读+按需刷新，Worker 跑周期采集）。 */
+  providerQuotaService?: ProviderQuotaService;
   codexWebSocketShutdown?: () => void;
   codexWebSocketCredentialShutdown?: (credentialRefs: readonly string[]) => void;
   userStore?: UserStore;
@@ -254,11 +273,33 @@ export interface AppRuntime {
    * 主返回空 content 或 catch 后会按顺序尝试 fallback。
    */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** titleGenerator 缺省或删除时，恢复启动阶段默认标题模型。 */
+  defaultTitleModel?: string;
   /** 标题 utility 专用 adapter factory；Codex 固定 HTTP/SSE，不复用主会话 WebSocket pool。 */
   titleModelAdapterFactory?: TitleModelAdapterFactory;
-  refreshSharedConfig: () => void;
+  /** 从磁盘加载并应用共享配置；force 绕过节流并重新确认内容指纹。 */
+  refreshSharedConfig: (force?: boolean) => boolean | Promise<boolean>;
+  /** Voice 安全入口每次重读共享配置，并强制重新解析当前 STT SecretRef。 */
+  refreshVoiceTranscriptionConfig: () => Promise<boolean>;
   /** 解析模型 SecretRef 并原子替换当前进程的运行时模型连接快照。 */
   updateModelsConfig?: (models: NonNullable<AppConfig['models']>) => Promise<void>;
+  /** 管理端写盘前复用 Production 配置安全门禁与 SecretVault ref 校验。 */
+  validateSharedConfigCandidate?: (next: AppConfig) => Promise<void>;
+  /** 纯同步撤销 ConfigIdentity observation、取消在途计算并发布 not_collected。 */
+  invalidateSharedConfigIdentity: () => void;
+  /** 管理端原子提交后撤销旧 ConfigIdentity observation 并重算。 */
+  notifySharedConfigChanged: () => void;
+  /** 恢复事务只计算 observation；由 mutation service 在 audit 成功后同步提交。 */
+  prepareSharedConfigIdentityPublication: (
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
+  ) => Promise<PreparedConfigRecoveryPublication>;
+  /** 普通管理端提交后按精确文本推进指纹；gate dirty 时始终拒绝。 */
+  acknowledgeSharedConfigApplied: (expectedConfigText: string) => boolean;
+  /** 恢复事务专用精确文本确认；只接受当前 active permit。 */
+  acknowledgeRecoveryConfigApplied: (
+    expectedConfigText: string,
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
+  ) => boolean;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。
@@ -456,7 +497,6 @@ export interface AppRuntime {
    */
   beginRuntimeDrain: () => Promise<void>;
 }
-
 
 /** Runtime construction options. */
 export interface CreateRuntimeOptions {

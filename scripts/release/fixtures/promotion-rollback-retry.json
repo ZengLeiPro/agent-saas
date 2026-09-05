@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "fixturePurpose": "promotion reconciliation, recovery, and reviewed retry state-machine closure",
+  "manifestActions": {
+    "apiAction": "deploy",
+    "runtimeWorkerAction": "deploy"
+  },
+  "before": {
+    "web": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "api": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "runtimeWorker": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "acs": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "orchestratorArtifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "sandboxImageDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  },
+  "target": {
+    "web": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "api": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "runtimeWorker": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "acs": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "orchestratorArtifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sandboxImageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "temporaryFailures": [
+    {
+      "failedStage": "app",
+      "observedAtFailure": {
+        "web": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "api": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "runtimeWorker": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "acs": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "orchestratorArtifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sandboxImageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      }
+    },
+    {
+      "failedStage": "web",
+      "observedAtFailure": {
+        "web": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "api": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "runtimeWorker": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "acs": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "orchestratorArtifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sandboxImageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      }
+    }
+  ],
+  "attestationPrefix": [
+    { "state": "verified", "operationKey": "verified:fixture" },
+    { "state": "approved", "operationKey": "approval:fixture-1" },
+    { "state": "promoting", "operationKey": "promoting:fixture-1" }
+  ],
+  "recoveryStates": ["partial_failed", "needs_human"],
+  "failedBeforeChangeRetry": {
+    "releaseId": "rc-20260831-01",
+    "manifestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor": "release-fixture",
+    "initialAttestations": [
+      { "state": "built", "operationKey": "build:failed-before-change" },
+      { "state": "staging_deployed", "operationKey": "staging:failed-before-change" },
+      { "state": "verified", "operationKey": "verified:failed-before-change" },
+      { "state": "approved", "operationKey": "approval:failed-before-change:1" },
+      { "state": "promoting", "operationKey": "promoting:failed-before-change:1" }
+    ],
+    "reconcile": {
+      "observationComplete": true,
+      "rollbackAttempted": false,
+      "operationKey": "reconcile:failed-before-change:1",
+      "expectedOutcome": "failed_before_change"
+    },
+    "retry": {
+      "expectedMode": "retry_after_change",
+      "approvalOperationKey": "approval:failed-before-change:2",
+      "promotingOperationKey": "promoting:failed-before-change:2"
+    }
+  },
+  "illegalTails": [
+    [
+      { "state": "verified", "operationKey": "verified:fixture" },
+      { "state": "approved", "operationKey": "approval:fixture" },
+      { "state": "promoting", "operationKey": "promoting:fixture" },
+      { "state": "completed", "operationKey": "completed:fixture" },
+      { "state": "rolled_back", "operationKey": "rollback:fixture" }
+    ],
+    [
+      { "state": "verified", "operationKey": "verified:fixture" },
+      { "state": "approved", "operationKey": "approval:fixture" },
+      { "state": "promoting", "operationKey": "promoting:fixture" },
+      { "state": "rejected", "operationKey": "rejected:fixture" },
+      { "state": "rolled_back", "operationKey": "rollback:fixture" }
+    ],
+    [
+      { "state": "verified", "operationKey": "verified:fixture" },
+      { "state": "approved", "operationKey": "approval:fixture" },
+      { "state": "promoting", "operationKey": "promoting:fixture" },
+      { "state": "superseded", "operationKey": "superseded:fixture" },
+      { "state": "rolled_back", "operationKey": "rollback:fixture" }
+    ]
+  ]
+}

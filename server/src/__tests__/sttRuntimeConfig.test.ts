@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { appConfigSchema } from '../app/config.js';
 import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
@@ -58,6 +58,27 @@ describe('resolveSttRuntimeConfig', () => {
       OSS_ACCESS_KEY_ID: 'oss-id-secret',
       OSS_ACCESS_KEY_SECRET: 'oss-key-secret',
     });
+  });
+
+  it('SecretVault 二次解析失败只暴露稳定字段，不泄漏 ref 或底层错误', async () => {
+    const vault = new InMemorySecretVault();
+    const secretRef = 'vault://stt/ref-sensitive';
+    const vaultDetail = 'upstream leaked credential detail';
+    vi.spyOn(vault, 'getSecret').mockRejectedValue(new Error(vaultDetail));
+
+    const error = await resolveSttRuntimeConfig({
+      apiKeyRef: secretRef,
+      ossAccessKeyId: 'inline-id',
+      ossAccessKeySecret: 'inline-secret',
+    }, vault).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: 'CredentialResolutionError',
+      code: 'CREDENTIAL_RESOLUTION_FAILED',
+      field: 'stt.apiKeyRef',
+    });
+    expect(String(error)).not.toContain(secretRef);
+    expect(String(error)).not.toContain(vaultDetail);
   });
 
   it('直连工具配置不依赖旧 audioTranscribeTenantIds，并返回固定按次价格', async () => {

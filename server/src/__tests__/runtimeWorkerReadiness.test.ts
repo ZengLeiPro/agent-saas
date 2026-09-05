@@ -13,6 +13,19 @@ import {
 } from '../runtime/runtimeWorkerReadiness.js';
 
 const cleanupDirs: string[] = [];
+const CONFIG_DIGEST = `sha256:${'a'.repeat(64)}`;
+const CONSISTENT_CONFIG_IDENTITY = {
+  schemaVersion: 1 as const,
+  status: 'consistent' as const,
+  expected: { schemaVersion: 1, digest: CONFIG_DIGEST },
+  observed: {
+    schemaVersion: 1,
+    digest: CONFIG_DIGEST,
+    credentialVersionDigest: null,
+    versionResolution: 'resolved' as const,
+    secretRefCount: 0,
+  },
+};
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'runtime-worker-readiness-'));
@@ -28,18 +41,61 @@ describe('Runtime Worker split-role readiness', () => {
     for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('withdraws and republishes the worker readyfile with admission transitions', () => {
+  it('requires explicit admission, identity and private snapshot before publishing ready', () => {
     const paths = fixture();
     const readyFile = paths.readyFileForColor('blue');
+    const admitting = { state: 'healthy' as const, admitting: true };
 
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 4321);
-    expect(readFileSync(readyFile, 'utf8')).toBe('4321\n');
-
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, 4321);
+    projectRuntimeWorkerReadyFile(readyFile, admitting, undefined, true, 4321);
     expect(existsSync(readyFile)).toBe(false);
 
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 4321);
+    projectRuntimeWorkerReadyFile(readyFile, admitting, CONSISTENT_CONFIG_IDENTITY, false, 4321);
+    expect(existsSync(readyFile)).toBe(false);
+
+    projectRuntimeWorkerReadyFile(readyFile, undefined, CONSISTENT_CONFIG_IDENTITY, true, 4321);
+    expect(existsSync(readyFile)).toBe(false);
+
+    projectRuntimeWorkerReadyFile(readyFile, admitting, CONSISTENT_CONFIG_IDENTITY, true, 4321);
     expect(readFileSync(readyFile, 'utf8')).toBe('4321\n');
+
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      admitting,
+      { ...CONSISTENT_CONFIG_IDENTITY, status: 'drifted' },
+      true,
+      4321,
+    );
+    expect(existsSync(readyFile)).toBe(false);
+
+    projectRuntimeWorkerReadyFile(readyFile, admitting, CONSISTENT_CONFIG_IDENTITY, true, 4321);
+    expect(readFileSync(readyFile, 'utf8')).toBe('4321\n');
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['not collected', { schemaVersion: 1 as const, status: 'not_collected' as const }],
+    [
+      'unverifiable',
+      {
+        schemaVersion: 1 as const,
+        status: 'unverifiable' as const,
+        reason: 'expected_not_bound' as const,
+        observed: CONSISTENT_CONFIG_IDENTITY.observed,
+      },
+    ],
+  ])('withdraws an existing readyfile when ConfigIdentity is %s', (_label, identity) => {
+    const paths = fixture();
+    const readyFile = paths.readyFileForColor('blue');
+    writeFileSync(readyFile, '4321\n');
+
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      { state: 'healthy', admitting: true },
+      identity,
+      true,
+      4321,
+    );
+    expect(existsSync(readyFile)).toBe(false);
   });
 
   it('withdraws worker readiness until enabled retention establishes status authority', () => {
@@ -54,12 +110,24 @@ describe('Runtime Worker split-role readiness', () => {
       reason: 'runtime_event_retention_status_unavailable',
       sampledAt: '1970-01-01T00:00:01.000Z',
     });
-    projectRuntimeWorkerReadyFile(readyFile, unavailable, 4321);
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      unavailable,
+      CONSISTENT_CONFIG_IDENTITY,
+      true,
+      4321,
+    );
     expect(existsSync(readyFile)).toBe(false);
 
     const recovered = includeRuntimeEventRetentionReadiness(healthy, true, true);
     expect(recovered).toBe(healthy);
-    projectRuntimeWorkerReadyFile(readyFile, recovered, 4321);
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      recovered,
+      CONSISTENT_CONFIG_IDENTITY,
+      true,
+      4321,
+    );
     expect(readFileSync(readyFile, 'utf8')).toBe('4321\n');
   });
 
@@ -114,9 +182,9 @@ describe('Runtime Worker split-role readiness', () => {
     writeFileSync(readyFile, '1234\n');
     const options = { ...paths, isProcessAlive: (pid: number) => pid === 1234 };
     expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(false);
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 1234);
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
     expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(true);
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, 1234);
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
     expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(false);
   });
 
@@ -124,18 +192,18 @@ describe('Runtime Worker split-role readiness', () => {
     const paths = fixture();
     const readyFile = paths.readyFileForColor('blue');
     writeFileSync(paths.activeColorFile, 'blue\n');
-    const options = { ...paths, isProcessAlive: (pid: number) => pid === 1234 };
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 1234);
+    const options = { ...paths, isProcessAlive: (pid: number) => pid === 1234 || pid === 5678 };
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
     expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(true);
 
-    writeFileSync(readyFile, '1234\n');
+    writeFileSync(readyFile, '5678\n');
     expect(isActiveRuntimeWorkerOrgAgentV2Ready(options)).toBe(false);
   });
 
   it('removes both readiness files during normal worker shutdown', () => {
     const paths = fixture();
     const readyFile = paths.readyFileForColor('blue');
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 1234);
+    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, CONSISTENT_CONFIG_IDENTITY, true, 1234);
     removeRuntimeWorkerReadyFiles(readyFile);
     expect(existsSync(readyFile)).toBe(false);
     expect(existsSync(`${readyFile}.org-group-agent-background-v2`)).toBe(false);

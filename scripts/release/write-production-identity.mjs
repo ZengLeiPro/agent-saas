@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 function read(path) {
   return readFileSync(path, 'utf8').trim();
@@ -16,7 +17,200 @@ function unitMainPid(unit) {
   return pid;
 }
 
-export function buildProductionIdentity(manifest, topology, observedAt, previousIdentity) {
+/**
+ * TASK-318：从 active 色 API release env 读取部署期绑定的 expected config
+ * identity。仅当 env 声明的 releaseId 与本次 Manifest 一致时才采用，防止把
+ * 旧 release 的配置身份写进新的 trusted identity；env 完全不存在 identity 变量时
+ * 返回 undefined（兼容旧发布），但 digest 已存在时 schema version 必须显式绑定。
+ */
+export function readExpectedConfigIdentityFromReleaseEnv(
+  color,
+  releaseId,
+  options = {},
+) {
+  const values = readReleaseEnvironment(color, options);
+  if (!values || values.AGENT_SAAS_RELEASE_ID !== releaseId) return undefined;
+  return parseExpectedConfigIdentity(values);
+}
+
+function readReleaseEnvironment(
+  color,
+  { readFile = readFileSync, envPath = `/etc/agent-saas/server-${color}.release.env` } = {},
+) {
+  let env;
+  try {
+    env = readFile(envPath, 'utf8');
+  } catch {
+    return undefined;
+  }
+  return Object.fromEntries(
+    env
+      .split(/\r?\n/u)
+      .filter((line) => line && line.includes('='))
+      .map((line) => {
+        const separator = line.indexOf('=');
+        return [line.slice(0, separator), line.slice(separator + 1).trim()];
+      }),
+  );
+}
+
+function parseExpectedConfigIdentity(values) {
+  const digest = values.AGENT_SAAS_CONFIG_IDENTITY_DIGEST;
+  if (!digest) {
+    if (
+      values.AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION ||
+      values.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST
+    ) {
+      throw new Error('Release env carries config identity metadata without its digest');
+    }
+    return undefined;
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(digest))
+    throw new Error('Release env carries a malformed config identity digest');
+  const rawSchemaVersion = values.AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION;
+  if (!rawSchemaVersion)
+    throw new Error('Release env is missing config identity schema version');
+  const schemaVersion = Number(rawSchemaVersion);
+  if (!Number.isSafeInteger(schemaVersion) || schemaVersion <= 0)
+    throw new Error('Release env carries a malformed config identity schema version');
+  const credentialVersionDigest = values.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST;
+  if (credentialVersionDigest && !/^sha256:[a-f0-9]{64}$/u.test(credentialVersionDigest)) {
+    throw new Error('Release env carries a malformed config credential version digest');
+  }
+  return {
+    schemaVersion,
+    digest,
+    ...(credentialVersionDigest ? { credentialVersionDigest } : {}),
+  };
+}
+
+function validateTrustedExpectedConfigIdentity(value) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Trusted Production identity carries a malformed configIdentity');
+  }
+  const unknown = Object.keys(value).filter(
+    (key) => !['schemaVersion', 'digest', 'credentialVersionDigest'].includes(key),
+  );
+  if (unknown.length > 0) {
+    throw new Error(`Trusted Production identity configIdentity has unknown fields: ${unknown.join(',')}`);
+  }
+  if (!Number.isSafeInteger(value.schemaVersion) || value.schemaVersion <= 0) {
+    throw new Error('Trusted Production identity carries a malformed config identity schema version');
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(value.digest ?? '')) {
+    throw new Error('Trusted Production identity carries a malformed config identity digest');
+  }
+  if (
+    value.credentialVersionDigest !== undefined &&
+    !/^sha256:[a-f0-9]{64}$/u.test(value.credentialVersionDigest)
+  ) {
+    throw new Error('Trusted Production identity carries a malformed config credential version digest');
+  }
+  return {
+    schemaVersion: value.schemaVersion,
+    digest: value.digest,
+    ...(value.credentialVersionDigest
+      ? { credentialVersionDigest: value.credentialVersionDigest }
+      : {}),
+  };
+}
+
+function readActiveReleaseManifest(activeReleaseTarget, options) {
+  if (options.activeReleaseManifest) return options.activeReleaseManifest;
+  const readManifest = options.readActiveReleaseManifest ?? readFileSync;
+  try {
+    const value = readManifest(join(activeReleaseTarget, 'manifest.json'), 'utf8');
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    throw new Error('Kept API active release manifest is unavailable or malformed');
+  }
+}
+
+function assertKeptApiReleaseBinding(values, previousIdentity, activeReleaseTarget, options) {
+  const activeManifest = readActiveReleaseManifest(activeReleaseTarget, options);
+  const activeReleaseId = values.AGENT_SAAS_RELEASE_ID;
+  if (!activeReleaseId || activeReleaseId !== activeManifest?.releaseId) {
+    throw new Error('Kept API release env releaseId disagrees with active release manifest');
+  }
+
+  const normalizedTarget = activeReleaseTarget.replace(/\/+$/u, '');
+  const targetName = basename(normalizedTarget);
+  const releaseRoot = options.activeReleasesRoot ?? '/opt/agent-saas-app/releases';
+  const targetDigest = dirname(normalizedTarget) === releaseRoot && /^[a-f0-9]{64}$/u.test(targetName)
+    ? `sha256:${targetName}`
+    : undefined;
+  const envDigest = values.AGENT_SAAS_SERVER_DIGEST;
+  const manifestDigest = activeManifest?.components?.api?.artifactDigest;
+  const trustedDigest = previousIdentity?.components?.api?.artifactDigest;
+  if (
+    !targetDigest ||
+    !/^sha256:[a-f0-9]{64}$/u.test(envDigest ?? '') ||
+    envDigest !== targetDigest ||
+    envDigest !== manifestDigest ||
+    envDigest !== trustedDigest
+  ) {
+    throw new Error('Kept API server digest is not bound to the active release target');
+  }
+}
+
+function sameExpectedConfigIdentity(left, right) {
+  return left.schemaVersion === right.schemaVersion &&
+    left.digest === right.digest &&
+    left.credentialVersionDigest === right.credentialVersionDigest;
+}
+
+/**
+ * API deploy 时绑定本次 release env；API keep 时从当前 active release env 与
+ * 已落盘 trusted identity 双向交叉校验后继承，防止 Web/ACS-only promotion
+ * 把 expected ConfigIdentity 静默清空。
+ */
+export function resolveExpectedConfigIdentityForProduction(
+  manifest,
+  color,
+  previousIdentity,
+  options = {},
+) {
+  const previous = validateTrustedExpectedConfigIdentity(previousIdentity?.configIdentity);
+  if (manifest.components.api.action === 'deploy') {
+    const deployed = readExpectedConfigIdentityFromReleaseEnv(
+      color,
+      manifest.releaseId,
+      options,
+    );
+    if (previous && !deployed) {
+      throw new Error('Deploying API would drop trusted expected configIdentity');
+    }
+    return deployed;
+  }
+
+  const values = readReleaseEnvironment(color, options);
+  if (!values) throw new Error('Kept API active release environment is unavailable');
+  const activeReleaseTarget = options.activeReleaseTarget
+    ?? previousIdentity?.topology?.api?.releaseTarget;
+  if (typeof activeReleaseTarget !== 'string' || !activeReleaseTarget) {
+    throw new Error('Kept API active release target is unavailable');
+  }
+  assertKeptApiReleaseBinding(values, previousIdentity, activeReleaseTarget, options);
+  const active = parseExpectedConfigIdentity(values);
+  if (!previous && !active) return undefined;
+  if (!previous || !active) {
+    throw new Error('Kept API expected configIdentity is missing from one trusted source');
+  }
+  if (!sameExpectedConfigIdentity(previous, active)) {
+    throw new Error('Kept API expected configIdentity disagrees across trusted sources');
+  }
+  return previous;
+}
+
+
+export function buildProductionIdentity(
+  manifest,
+  topology,
+  observedAt,
+  previousIdentity,
+  expectedConfigIdentity,
+) {
   const deployedAt = (component) => {
     if (manifest.components[component].action === 'deploy') return observedAt;
     const previous = previousIdentity?.components?.[component]?.deployedAt;
@@ -29,7 +223,11 @@ export function buildProductionIdentity(manifest, topology, observedAt, previous
     environment: 'production',
     gitSha: manifest.components.api.sourceSha,
     configSchemaVersion: 1,
+    // legacy 字段：语义不变（绑定 Manifest digest，不是配置身份）。
     configFingerprint: manifest.digest,
+    // TASK-318：Release expected config identity（显式新增字段；由部署脚本
+    // 在发布时计算并写入 release env，这里从 active 色 env 读取并固化）。
+    ...(expectedConfigIdentity ? { configIdentity: expectedConfigIdentity } : {}),
     components: {
       web: {
         gitSha: manifest.components.web.sourceSha,
@@ -107,6 +305,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     topology,
     new Date().toISOString(),
     previousIdentity,
+    resolveExpectedConfigIdentityForProduction(manifest, apiColor, previousIdentity, {
+      activeReleaseTarget: topology.api.releaseTarget,
+    }),
   );
   writeFileSync(`${outputPath}.candidate`, `${JSON.stringify(identity, null, 2)}\n`, {
     mode: 0o444,

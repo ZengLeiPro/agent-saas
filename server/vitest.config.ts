@@ -12,6 +12,9 @@ export default defineConfig({
       '@agent/shared/lib/chatSubmission': fileURLToPath(
         new URL('../shared/src/lib/chatSubmission.ts', import.meta.url),
       ),
+      '@agent/shared/schemas/configIdentity': fileURLToPath(
+        new URL('../shared/src/schemas/configIdentity.ts', import.meta.url),
+      ),
       '@agent/shared/schemas/releaseManifest': fileURLToPath(
         new URL('../shared/src/schemas/releaseManifest.ts', import.meta.url),
       ),
@@ -19,9 +22,9 @@ export default defineConfig({
     },
   },
   test: {
-    // 测试文件匹配模式（server + shared 源码 alias）
+    // 测试文件匹配模式（server + shared 源码 aliases）
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'tests/**/*.{test,spec}.{ts,tsx}'],
-    // 排除的目录
+    // 排除依赖与构建产物
     exclude: ['node_modules', 'dist'],
     // 使用 Node.js 环境
     environment: 'node',

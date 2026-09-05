@@ -10,10 +10,10 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedConfigRefresher } from '../app/sharedConfigRefresher.js';
-import { createSessionAutomationFlagSource } from '../app/sessionAutomationFlagSource.js';
 import type { AppConfig } from '../app/config.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 import { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
+import { assertProductionManagedCredentialSafety } from '../release/configIdentity.js';
 
 const BASE_GROUP = {
   id: 'ark-agents',
@@ -101,43 +101,31 @@ describe('createSharedConfigRefresher', () => {
 
   it('跨进程热更新完整 Codex 配置，并让同一个 CredentialManager 立即读取新账号顺序', () => {
     const initial = {
-      enabled: true,
-      websocketEnabled: true,
-      quotaCooldownMinutes: 60,
+      enabled: true, websocketEnabled: true, quotaCooldownMinutes: 60,
       credentialRef: 'credential-old-primary',
       credentialRefs: ['credential-old-primary', 'credential-old-secondary'],
-      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
-      originator: 'codex-tui',
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses', originator: 'codex-tui',
     } satisfies NonNullable<AppConfig['codexSubscription']>;
     const replacement = {
-      enabled: true,
-      websocketEnabled: true,
-      quotaCooldownMinutes: 120,
+      enabled: true, websocketEnabled: true, quotaCooldownMinutes: 120,
       credentialRef: 'credential-new-primary',
       credentialRefs: ['credential-new-primary', 'credential-old-primary'],
-      endpoint: 'https://chatgpt.com/backend-api/codex/responses',
-      originator: 'codex-tui',
+      endpoint: 'https://chatgpt.com/backend-api/codex/responses', originator: 'codex-tui',
     } satisfies NonNullable<AppConfig['codexSubscription']>;
     writeCodexConfig(dir, initial);
     const config = {
       models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
       codexSubscription: structuredClone(initial),
     } as unknown as AppConfig;
-    const manager = new CodexCredentialManager({
-      vault: new InMemorySecretVault(),
-      getConfig: () => config.codexSubscription,
-    });
+    const manager = new CodexCredentialManager({ vault: new InMemorySecretVault(),
+      getConfig: () => config.codexSubscription });
     const logs: string[] = [];
     const invalidatedRefs: Array<readonly string[] | undefined> = [];
     let clock = 10_000;
-    const refresher = createSharedConfigRefresher({
-      config,
-      processCwd: dir,
+    const refresher = createSharedConfigRefresher({ config, processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
       logger: { info: (message) => logs.push(message), warn: () => {} },
-      onCodexSubscriptionUpdated: (refs) => invalidatedRefs.push(refs),
-      now: () => clock,
-    });
+      onCodexSubscriptionUpdated: (refs) => invalidatedRefs.push(refs), now: () => clock });
 
     expect(manager.getCredentialRefs()).toEqual(initial.credentialRefs);
     writeCodexConfig(dir, replacement);
@@ -232,7 +220,9 @@ describe('createSharedConfigRefresher', () => {
 
   it('文件未变化时不重复解析（节流 + 指纹双重保护）', () => {
     writeConfig(dir, [BASE_GROUP]);
-    const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
@@ -241,11 +231,12 @@ describe('createSharedConfigRefresher', () => {
       now: () => clock,
     });
 
+    refresher.refreshIfChanged();
+    const afterInitialSync = refresher.getAppliedStamps().config;
     clock += 5_000;
     refresher.refreshIfChanged();
-    const applied = refresher.getAppliedStamps().config;
     refresher.refreshIfChanged();
-    expect(refresher.getAppliedStamps().config).toEqual(applied);
+    expect(refresher.getAppliedStamps().config).toEqual(afterInitialSync);
     expect(config.models!.groups).toHaveLength(1);
   });
 
@@ -329,7 +320,7 @@ describe('createSharedConfigRefresher', () => {
         updateGuardrailModelConfigs: () => {},
         titleGeneratorConfigs: titleConfigs,
       },
-      onSystemPromptOverridesUpdated: (next) => { promptOverrides = next; },
+      prepareSystemPromptOverridesUpdate: (next) => () => { promptOverrides = next; },
       now: () => clock,
     });
 
@@ -350,25 +341,26 @@ describe('createSharedConfigRefresher', () => {
     expect(promptOverrides).toEqual({ 'utility.title': '新提示语' });
   });
 
-  it('组织白名单变更后重载 tenantStore', () => {
+  it('组织白名单两阶段提交，失败保留旧内存/stamp 并立即重试', () => {
     writeConfig(dir, [BASE_GROUP]);
     const tenantsPath = join(dir, 'tenants.json');
     writeFileSync(tenantsPath, JSON.stringify({ version: 1, tenants: [] }), 'utf-8');
     let reloaded = 0;
+    let failReload = false;
     const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      tenantStore: { reload: () => { reloaded += 1; } } as never,
+      tenantStore: { reload: () => { if (failReload) throw new Error('invalid tenants'); reloaded += 1; }, prepareReloadSnapshot: () => { if (failReload) throw new Error('invalid tenants'); return { commit: () => { reloaded += 1; }, rollback: () => { reloaded -= 1; } }; } } as never,
       tenantsFilePath: tenantsPath,
       now: () => clock,
     });
 
     clock += 5_000;
     refresher.refreshIfChanged();
-    expect(reloaded).toBe(0); // 没变化不该重载
+    expect(reloaded).toBe(1); // 首轮必须对齐构造前可能变化的磁盘快照
 
     writeFileSync(
       tenantsPath,
@@ -377,9 +369,17 @@ describe('createSharedConfigRefresher', () => {
     );
     clock += 5_000;
     refresher.refreshIfChanged();
-    expect(reloaded).toBe(1);
+    expect(reloaded).toBe(2);
     // 确认读的就是这个文件，避免路径拼错却静默通过
     expect(readFileSync(tenantsPath, 'utf-8')).toContain('kaiyan');
+
+    const appliedBeforeFailure = refresher.getAppliedStamps().tenants; // 失败绝不能推进已应用指纹
+    writeFileSync(tenantsPath, '{broken', 'utf-8'); failReload = true; clock += 5_000;
+    expect(refresher.refreshIfChanged()).toBe(false);
+    expect(refresher.getAppliedStamps().tenants).toEqual(appliedBeforeFailure);
+    failReload = false; writeFileSync(tenantsPath, JSON.stringify({ version: 1, tenants: [] }), 'utf-8');
+    expect(refresher.refreshIfChanged()).toBe(true); // 失败后节流窗口内立即重试
+    expect(reloaded).toBe(3);
   });
 
   /**
@@ -406,7 +406,7 @@ describe('createSharedConfigRefresher', () => {
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onWebToolsUpdated: (next) => { seen.push(next?.search?.provider); },
+      prepareWebToolsUpdate: (next) => () => { seen.push(next?.search?.provider); },
       now: () => clock,
     });
 
@@ -496,7 +496,7 @@ describe('createSharedConfigRefresher', () => {
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onSttUpdated: (next) => {
+      prepareSttUpdate: (next) => () => {
         seen.push(`${next?.enabled}:${next?.pricing?.creditsPerCall}`);
       },
       now: () => clock,
@@ -511,87 +511,269 @@ describe('createSharedConfigRefresher', () => {
     expect(seen).toEqual(['true:123']);
   });
 
-  it('flag source 在无 model resolver 路径也会按 read 刷新 false -> true', () => {
-    const writeWithAutomation = (executionEnabled?: boolean) => {
-      writeFileSync(join(dir, 'config.json'), JSON.stringify({
-        agent: { cwd: '.' }, server: { port: 3200 },
-        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
-        ...(executionEnabled === undefined ? {} : { sessionAutomation: {
-          controlEnabled: true, executionEnabled, fixedLoopEnabled: true,
-          adaptiveLoopEnabled: true, goalEnabled: true, evaluatorEnforced: true,
-        } }),
-      }, null, 2), 'utf-8');
-    };
-    writeWithAutomation(false);
-    const config = {
-      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
-      sessionAutomation: { controlEnabled: true, executionEnabled: false },
-    } as unknown as AppConfig;
-    const source = createSessionAutomationFlagSource(config);
-    let clock = 10_000;
-    const refresher = createSharedConfigRefresher({
-      config, processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      now: () => clock,
-    });
-    source.attachRefresh(refresher.refreshIfChanged);
-
-    expect(source.executionEnabled()).toBe(false);
-    writeWithAutomation(true);
-    clock += 5_000;
-
-    expect(source.executionEnabled()).toBe(true);
-    expect(source.read().fixedLoopEnabled).toBe(true);
-
-    writeWithAutomation();
-    clock += 5_000;
-    expect(source.executionEnabled()).toBe(false);
-    expect(source.read().controlEnabled).toBe(false);
-  });
-
-  it('首次 attach 会比对已加载内容，不把启动窗口内的新文件 stamp 当作基线', () => {
-    writeFileSync(join(dir, 'config.json'), JSON.stringify({
-      agent: { cwd: '.' }, server: { port: 3200 },
-      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
-      sessionAutomation: { controlEnabled: true, executionEnabled: false },
-    }), 'utf-8');
-    const config = {
-      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
-      sessionAutomation: { controlEnabled: true, executionEnabled: true },
-    } as unknown as AppConfig;
-    const source = createSessionAutomationFlagSource(config);
-    let clock = 10_000;
-    const refresher = createSharedConfigRefresher({
-      config, processCwd: dir,
-      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      now: () => clock,
-    });
-
-    source.attachRefresh(refresher.refreshIfChanged);
-
-    expect(source.executionEnabled()).toBe(false);
-    expect(refresher.getAppliedStamps().config).toBeDefined();
-    clock += 5_000;
-  });
-
-  it('webTools 未变化时不触发回调', () => {
+  it('TASK-318：identity 重算与管理端精确文本确认抵御并发覆盖', () => {
     writeConfig(dir, [BASE_GROUP]);
-    const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
-    let calls = 0;
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const reasons: string[] = [];
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onWebToolsUpdated: () => { calls += 1; },
+      onConfigReloaded: () => reasons.push('reloaded'),
+      now: () => clock,
+    });
+
+    // 首轮重新确认构造前磁盘状态并触发 observed identity 重算
+    refresher.refreshIfChanged();
+    expect(reasons).toEqual(['reloaded']);
+
+    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(reasons).toEqual(['reloaded', 'reloaded']);
+    expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
+    const exactAppliedText = readFileSync(join(dir, 'config.json'), 'utf-8');
+    expect(refresher.acknowledgeConfigApplied(exactAppliedText)).toBe(true); refresher.refreshIfChanged(true);
+    expect(reasons).toEqual(['reloaded', 'reloaded']);
+    writeConfig(dir, [BASE_GROUP]);
+    expect(refresher.acknowledgeConfigApplied(exactAppliedText)).toBe(false);
+  });
+
+  it('TASK-318：Production 安全门禁在应用前拒绝受管 inline secret，整次重载保持旧配置', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const warns: string[] = [];
+    let reloadCalls = 0;
+    let webToolsCalls = 0;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      validateConfigReload: assertProductionManagedCredentialSafety,
+      onConfigReloaded: () => {
+        reloadCalls += 1;
+      },
+      prepareWebToolsUpdate: () => () => {
+        webToolsCalls += 1;
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify(
+        {
+          agent: { cwd: '.' },
+          server: { port: 3200 },
+          models: { groups: [BASE_GROUP, QWEN_GROUP], default: 'ark-agents/glm-5.2' },
+          webTools: {
+            enabled: true,
+            search: { enabled: true, provider: 'tavily', apiKey: 'inline-secret-key' },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.models!.groups.map((group) => group.id)).not.toContain('qwen');
+    expect(config.webTools).toBeUndefined();
+    expect(webToolsCalls).toBe(0);
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('webTools.search.apiKey'))).toBe(true);
+  });
+
+  it('TASK-318：webTools 凭据准备失败时 AppConfig、执行侧与 observed identity 全部保留旧值', async () => {
+    const writeWebTools = (provider: string) => writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        webTools: { enabled: true, search: { provider, apiKeyRef: `ref-${provider}` } },
+      }),
+    );
+    writeWebTools('tencent_wsa');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      webTools: { enabled: true, search: { provider: 'tencent_wsa', apiKeyRef: 'ref-tencent_wsa' } },
+    } as unknown as AppConfig;
+    let runtimeProvider = 'tencent_wsa';
+    let reloadCalls = 0;
+    let clock = 10_000;
+    const warns: string[] = [];
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      prepareWebToolsUpdate: async (next) => {
+        await Promise.resolve();
+        if (next?.search?.provider === 'zhipu') throw new Error('SecretVault resolve failed');
+        return () => { runtimeProvider = next?.search?.provider ?? 'none'; };
+      },
+      onConfigReloaded: () => { reloadCalls += 1; },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeWebTools('zhipu');
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(config.webTools?.search?.provider).toBe('tencent_wsa');
+    expect(runtimeProvider).toBe('tencent_wsa');
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('SecretVault resolve failed'))).toBe(true);
+  });
+
+  it('TASK-318：提示语 prepare 失败不提交任何切面，修复后重试一次原子发布', () => {
+    const stt = {
+      enabled: false,
+      apiKeyRef: 'vault-dashscope',
+      ossAccessKeyIdRef: 'vault-oss-id',
+      ossAccessKeySecretRef: 'vault-oss-secret',
+      model: 'fun-asr',
+      pricing: { creditsPerCall: 0, costYuanPerCall: 0.08 },
+    };
+    const writeCandidate = (provider: string, enabled: boolean, prompt: string) => writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        systemPrompts: { 'utility.title': prompt },
+        webTools: { enabled: true, search: { provider, apiKeyRef: `ref-${provider}` } },
+        stt: { ...stt, enabled },
+      }),
+    );
+    writeCandidate('tencent_wsa', false, '旧提示语');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      systemPrompts: { 'utility.title': '旧提示语' },
+      webTools: { enabled: true, search: { provider: 'tencent_wsa', apiKeyRef: 'ref-tencent_wsa' } },
+      stt,
+    } as unknown as AppConfig;
+    let runtimeProvider = 'tencent_wsa';
+    let runtimeSttEnabled = false;
+    let promptOverrides: NonNullable<AppConfig['systemPrompts']> = { 'utility.title': '旧提示语' };
+    let shouldRejectPromptPreparation = true;
+    let reloadCalls = 0;
+    let clock = 10_000;
+    const warns: string[] = [];
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      prepareSystemPromptOverridesUpdate: (next) => {
+        if (shouldRejectPromptPreparation) throw new Error('prompt registry prepare failed');
+        return () => { promptOverrides = next; };
+      },
+      prepareWebToolsUpdate: (next) => () => {
+        runtimeProvider = next?.search?.provider ?? 'none';
+      },
+      prepareSttUpdate: (next) => () => {
+        runtimeSttEnabled = next?.enabled === true;
+      },
+      onConfigReloaded: () => { reloadCalls += 1; },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+    const initialStamp = refresher.getAppliedStamps().config;
+
+    writeCandidate('zhipu', true, '新提示语');
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.systemPrompts).toEqual({ 'utility.title': '旧提示语' });
+    expect(config.webTools?.search?.provider).toBe('tencent_wsa');
+    expect(config.stt?.enabled).toBe(false);
+    expect(promptOverrides).toEqual({ 'utility.title': '旧提示语' });
+    expect(runtimeProvider).toBe('tencent_wsa');
+    expect(runtimeSttEnabled).toBe(false);
+    expect(refresher.getAppliedStamps().config).toEqual(initialStamp);
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('prompt registry prepare failed'))).toBe(true);
+
+    shouldRejectPromptPreparation = false;
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.systemPrompts).toEqual({ 'utility.title': '新提示语' });
+    expect(config.webTools?.search?.provider).toBe('zhipu');
+    expect(config.stt?.enabled).toBe(true);
+    expect(promptOverrides).toEqual({ 'utility.title': '新提示语' });
+    expect(runtimeProvider).toBe('zhipu');
+    expect(runtimeSttEnabled).toBe(true);
+    expect(refresher.getAppliedStamps().config).not.toEqual(initialStamp);
+    expect(reloadCalls).toBe(1);
+  });
+
+
+  it('TASK-318：异步 ref version 门禁失败时也在应用前 fail closed', async () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const warns: string[] = [];
+    let reloadCalls = 0;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      validateConfigReload: async () => {
+        await Promise.resolve();
+        throw new Error('managed ref version unresolved');
+      },
+      onConfigReloaded: () => {
+        reloadCalls += 1;
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
       now: () => clock,
     });
 
     writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
     clock += 5_000;
     refresher.refreshIfChanged();
+    expect(config.models!.groups.map((group) => group.id)).not.toContain('qwen');
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(config.models!.groups.map((group) => group.id)).not.toContain('qwen');
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('managed ref version unresolved'))).toBe(true);
+  });
+
+  it('TASK-318：onConfigReloaded 抛错不打断热更新主流程（配置仍完成替换）', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const warns: string[] = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onConfigReloaded: () => {
+        throw new Error('identity recompute exploded');
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    expect(() => refresher.refreshIfChanged()).not.toThrow();
+    // 热更新本身成功完成，回调异常只被记录。
     expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
-    expect(calls).toBe(0);
+    expect(warns.some((message) => message.includes('identity recompute exploded'))).toBe(true);
   });
 });

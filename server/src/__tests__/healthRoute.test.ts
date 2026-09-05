@@ -3,9 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { parseAppConfig } from '../app/config.js';
+import { computeObservedConfigIdentity } from '../release/configIdentity.js';
 import { createHealthRouter } from '../routes/health.js';
+import { HttpSecretVault, InMemorySecretVault } from '../security/secretVault.js';
+import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import {
   projectRuntimeWorkerReadyFile,
@@ -17,16 +21,33 @@ const APP_CONFIG = {
   agent: { maxTurns: 4, permissionMode: 'ask' },
   tts: undefined,
 } as any;
+const WORKER_CONFIG_IDENTITY = {
+  schemaVersion: 1 as const,
+  status: 'consistent' as const,
+  expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+  observed: {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+    credentialVersionDigest: null,
+    versionResolution: 'resolved' as const,
+    secretRefCount: 0,
+  },
+};
 
 async function startHealthServer(
   options: Parameters<typeof createHealthRouter>[1] = {},
   config: any = APP_CONFIG,
-  authenticated = false,
+  requestUser?: unknown,
 ) {
   const originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
   const app = express();
-  if (authenticated) app.use((req, _res, next) => { req.user = { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-a' }; next(); });
+  if (requestUser) {
+    app.use((req, _res, next) => {
+      req.user = requestUser as typeof req.user;
+      next();
+    });
+  }
   try {
     app.use('/api', createHealthRouter(config, options));
   } finally {
@@ -54,8 +75,17 @@ describe('health router', () => {
   });
 
   it('reports the same fail-closed TTS capability used by server and clients', async () => {
-    const disabled = await startHealthServer({}, { ...APP_CONFIG, tts: { enabled: false, doubaoAppId: 'app', doubaoApiKey: 'key' } }, true);
-    const enabled = await startHealthServer({}, { ...APP_CONFIG, tts: { enabled: true, doubaoAppId: 'app', doubaoApiKey: 'key' } }, true);
+    const requestUser = { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-a' };
+    const disabled = await startHealthServer(
+      {},
+      { ...APP_CONFIG, tts: { enabled: false, doubaoAppId: 'app', doubaoApiKey: 'key' } },
+      requestUser,
+    );
+    const enabled = await startHealthServer(
+      {},
+      { ...APP_CONFIG, tts: { enabled: true, doubaoAppId: 'app', doubaoApiKey: 'key' } },
+      requestUser,
+    );
     servers.push(disabled, enabled);
     expect(await (await disabled.request('/api/health')).json()).toMatchObject({ ttsAvailable: false });
     expect(await (await enabled.request('/api/health')).json()).toMatchObject({ ttsAvailable: true });
@@ -225,7 +255,7 @@ describe('health router', () => {
     });
   });
 
-  it('fails ws-only readiness when the active runtime worker withdraws its readyfile', async () => {
+  it('fails ws-only readiness when the active runtime worker withdraws its identity-bound readyfile', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'split-role-health-'));
     cleanupDirs.push(dir);
     const activeColorFile = join(dir, 'active-color');
@@ -241,13 +271,25 @@ describe('health router', () => {
       () => ({ state: 'unknown', admitting: true }),
       getActiveWorkerSnapshot,
     );
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 1234);
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      { state: 'healthy', admitting: true },
+      WORKER_CONFIG_IDENTITY,
+      true,
+      1234,
+    );
     const server = await startHealthServer({ getRuntimeAdmissionSnapshot });
     servers.push(server);
 
     expect((await server.request('/api/healthz/ready')).status).toBe(200);
 
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, 1234);
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      { state: 'paused', admitting: false },
+      WORKER_CONFIG_IDENTITY,
+      true,
+      1234,
+    );
     const response = await server.request('/api/healthz/ready');
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({
@@ -482,6 +524,63 @@ describe('health router', () => {
     });
   });
 
+  it.each([
+    ['匿名调用者', undefined],
+    ['普通调用者', { id: 'member-1', role: 'member' }],
+  ])('TASK-318：%s 的公开 readiness 仅返回白名单 release identity', async (_label, user) => {
+    const server = await startHealthServer(
+      {
+        getRuntimeIdentity: () =>
+          ({
+            environment: 'staging',
+            releaseId: 'rc-20260825-01',
+            releaseSha: 'a'.repeat(40),
+            serverDigest: `sha256:${'b'.repeat(64)}`,
+            webDigest: `sha256:${'c'.repeat(64)}`,
+            acsOrchestratorDigest: `sha256:${'d'.repeat(64)}`,
+            acsSandboxImageDigest: `sha256:${'e'.repeat(64)}`,
+            safetyAttested: true,
+            expectedConfigIdentity: {
+              schemaVersion: 1,
+              digest: `sha256:${'f'.repeat(64)}`,
+              credentialVersionDigest: `sha256:${'1'.repeat(64)}`,
+            },
+            configIdentity: { plaintextSecretProbe: 'must-not-leak-config-identity' },
+            observedIdentity: { digest: 'must-not-leak-observed-identity' },
+            credentialVersionDigest: 'must-not-leak-credential-version',
+          }) as any,
+      },
+      APP_CONFIG,
+      user,
+    );
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = (await response.json()) as any;
+    const serialized = JSON.stringify(body);
+
+    expect(response.status).toBe(200);
+    expect(body.release).toEqual({
+      environment: 'staging',
+      releaseId: 'rc-20260825-01',
+      releaseSha: 'a'.repeat(40),
+      serverDigest: `sha256:${'b'.repeat(64)}`,
+      webDigest: `sha256:${'c'.repeat(64)}`,
+      acsOrchestratorDigest: `sha256:${'d'.repeat(64)}`,
+      acsSandboxImageDigest: `sha256:${'e'.repeat(64)}`,
+      safetyAttested: true,
+    });
+    for (const forbidden of [
+      'expectedConfigIdentity',
+      'configIdentity',
+      'observed',
+      'credentialVersionDigest',
+      'must-not-leak',
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
   it('fails readiness closed for an unattested staging identity', async () => {
     const server = await startHealthServer({
       getRuntimeIdentity: () => ({ environment: 'staging', safetyAttested: false }),
@@ -509,7 +608,151 @@ describe('health router', () => {
     });
   });
 
-  it('defaults warmup to done when no status provider is wired', async () => {
+  it('TASK-318：配置身份刷新异常时 readiness 返回 503 而不是暴露内部错误', async () => {
+    const server = await startHealthServer({
+      getConfigIdentitySummary: async () => {
+        throw new Error('private vault failure must not leak');
+      },
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: 'not_ready',
+      error: 'config_identity_unavailable',
+    });
+  });
+
+  it('TASK-318：公开 readiness 不暴露 configIdentity 或上游额外字段', async () => {
+    const configIdentity = {
+      schemaVersion: 1 as const,
+      status: 'consistent' as const,
+      expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+      observed: {
+        schemaVersion: 1,
+        digest: `sha256:${'a'.repeat(64)}`,
+        credentialVersionDigest: null,
+        versionResolution: 'resolved' as const,
+        secretRefCount: 0,
+      },
+      releaseId: 'release-1',
+      plaintextSecretProbe: 'must-not-leak',
+    };
+    const server = await startHealthServer({
+      getConfigIdentitySummary: () => configIdentity as any,
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = (await response.json()) as any;
+    expect(response.status).toBe(200);
+    expect(body).not.toHaveProperty('configIdentity');
+    expect(JSON.stringify(body)).not.toContain('must-not-leak');
+  });
+
+  it('TASK-318：正常递增时钟下配置无变化跨多个刷新周期 readiness 持续 200', async () => {
+    const config = parseAppConfig({ agent: { cwd: '/srv/agent' }, server: {} });
+    const deployTime = await computeObservedConfigIdentity(config, undefined, '/srv/server');
+    let clock = 0;
+    const runtime = createConfigIdentityRuntime({
+      config,
+      environment: 'test',
+      processCwd: '/srv/server',
+      expected: { schemaVersion: 1, digest: deployTime.digest },
+      now: () => new Date(clock),
+    });
+    await runtime.initialize();
+    const server = await startHealthServer({ getConfigIdentitySummary: runtime.refreshSummary }, config);
+    servers.push(server);
+
+    for (const nextClock of [0, 6_000, 12_000, 30_000]) {
+      clock = nextClock;
+      expect((await server.request('/api/healthz/ready')).status).toBe(200);
+      expect(runtime.getSummary().status).toBe('consistent');
+    }
+  });
+
+  it('TASK-318：Production HttpSecretVault 外部轮换且时钟回拨后 readiness fail closed', async () => {
+    let remoteVersion = 1;
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      id: 'remote-ref-id',
+      ownerId: 'global',
+      kind: 'tenant-hand',
+      version: remoteVersion,
+      metadata: {},
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    })));
+    let clock = 10_000;
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+      metadataCacheTtlMs: 5_000,
+      nowMs: () => clock,
+    });
+    const config = parseAppConfig({
+      agent: { cwd: '/srv/agent' },
+      server: {},
+      runtimeEventStore: {
+        backend: 'pg',
+        connectionString: 'postgresql://u:p@db.internal:5432/runtime',
+      },
+      tenantRemoteHands: {
+        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: 'remote-ref-id' }],
+      },
+    });
+    const deployTime = await computeObservedConfigIdentity(config, vault, '/srv/server');
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: vault,
+      environment: 'production',
+      processCwd: '/srv/server',
+      expected: {
+        schemaVersion: 1,
+        digest: deployTime.digest,
+        credentialVersionDigest: deployTime.credentialVersionDigest ?? undefined,
+      },
+      now: () => new Date(clock),
+    });
+    await runtime.initialize();
+    const server = await startHealthServer({ getConfigIdentitySummary: runtime.refreshSummary }, config);
+    servers.push(server);
+    expect((await server.request('/api/healthz/ready')).status).toBe(200);
+
+    remoteVersion = 2;
+    clock = 0;
+    expect((await server.request('/api/healthz/ready')).status).toBe(503);
+    expect(runtime.getSummary().status).toBe('drifted');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('TASK-318：已绑定 expected 的 drift 在匿名 readiness 只表现为 503', async () => {
+    const server = await startHealthServer({
+      getConfigIdentitySummary: () => ({
+        schemaVersion: 1,
+        status: 'drifted',
+        expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'b'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
+        },
+        releaseId: 'release-1',
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = (await response.json()) as any;
+    expect(response.status).toBe(503);
+    expect(body).not.toHaveProperty('configIdentity');
+  });
+
+  it('未接入 provider 时 warmup 默认为 done', async () => {
     const server = await startHealthServer({});
     servers.push(server);
 

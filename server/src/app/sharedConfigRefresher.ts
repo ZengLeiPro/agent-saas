@@ -10,31 +10,130 @@
  * 「模型配置 + 组织白名单 + Session Automation flags」这条同样需要跨进程新鲜度的路径补齐。
  *
  * 设计取舍：
- *   - 用 statSync 的 mtimeMs+size 做变更判据，未变化时零解析开销；
- *   - 带最小间隔节流，避免热路径高频 stat；
+ *   - 安全入口以稳定 stat + SHA-256 内容版本判定，避免同尺寸/时间戳覆盖与 TOCTOU；
+ *   - 首轮强制对齐磁盘，后续可节流；安全敏感入口使用 force；
  *   - 解析失败保留旧配置并告警，绝不因为一次坏写入把正在服务的进程打挂。
  */
-import { statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { parse as parseJsonc } from 'jsonc-parser';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
 import type { AppConfig } from './config.js';
-import { getAppConfigPath, loadAppConfig } from './config.js';
+import { getAppConfigPath, parseAppConfig } from './config.js';
 import type { TenantStore } from '../data/tenants/store.js';
-import { applyModelsHotUpdate, type ModelsHotUpdateTarget } from './modelsHotUpdate.js';
+import {
+  prepareModelsHotUpdate,
+  type ModelsHotUpdateCommit,
+  type ModelsHotUpdateTarget,
+} from './modelsHotUpdate.js';
+import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
+import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
+import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
+import {
+  finalizeSharedConfigTransaction,
+  type SharedConfigCommitStep,
+} from './sharedConfigTransaction.js';
 
-/** 同一文件两次 stat 的最小间隔，避免 resolver 热路径打满 IO。 */
+/** 非安全入口的最小检查间隔；模型、消息等安全入口会用 force 绕过。 */
 const DEFAULT_MIN_STAT_INTERVAL_MS = 1000;
 
 interface FileStamp {
   mtimeMs: number;
   size: number;
+  digest: string;
+  stable: boolean;
 }
 
-function readStamp(filePath: string): FileStamp | undefined {
+interface FileSnapshot {
+  stamp: FileStamp;
+  text: string;
+}
+
+type MaybePromise<T> = T | Promise<T>;
+
+type ConfigChanges = {
+  models: boolean;
+  titleGenerator: boolean;
+  guardrail: boolean;
+  systemPrompts: boolean;
+  toolControls: boolean;
+  codexSubscription: boolean;
+  stt: boolean;
+  sessionAutomation: boolean;
+  webTools: boolean;
+};
+type ConfigChangeKey = keyof ConfigChanges;
+type PreparationOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
+type ControlledPreparation<T> = PreparationOutcome<T> | Promise<PreparationOutcome<T>>;
+type PreparationResults = [
+  PreparationOutcome<void | undefined>,
+  PreparationOutcome<ModelsHotUpdateCommit | undefined>,
+  PreparationOutcome<ModelsHotUpdateCommit | undefined>,
+  PreparationOutcome<WebToolsRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<WebToolsRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
+  PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
+];
+
+const MODEL_CHANGE_KEYS: ConfigChangeKey[] = ['models', 'titleGenerator', 'guardrail'];
+const CHANGE_LABELS: Record<ConfigChangeKey, string> = {
+  models: 'models/title/guardrail/pricing',
+  titleGenerator: 'models/title/guardrail/pricing',
+  guardrail: 'models/title/guardrail/pricing',
+  systemPrompts: 'systemPrompt',
+  toolControls: 'toolControls',
+  codexSubscription: 'codexSubscription',
+  stt: 'STT',
+  sessionAutomation: 'Session Automation',
+  webTools: 'WebTools',
+};
+
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as Promise<unknown>).then === 'function'
+  );
+}
+
+/** Promise 一经产生便安装 rejection handler；后续同步 prepare 抛错也不会留下悬空 rejection。 */
+function startControlledPreparation<T>(start: () => MaybePromise<T>): ControlledPreparation<T> {
   try {
-    const st = statSync(filePath);
-    return { mtimeMs: st.mtimeMs, size: st.size };
+    const value = start();
+    if (!isPromiseLike(value)) return { ok: true, value };
+    return Promise.resolve(value).then(
+      (resolved) => ({ ok: true as const, value: resolved }),
+      (error) => ({ ok: false as const, error }),
+    );
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+function readSnapshot(filePath: string): FileSnapshot | undefined {
+  try {
+    const before = statSync(filePath);
+    const content = readFileSync(filePath);
+    const after = statSync(filePath);
+    return {
+      text: content.toString('utf-8'),
+      stamp: {
+        mtimeMs: after.mtimeMs,
+        size: after.size,
+        digest: createHash('sha256').update(content).digest('hex'),
+        stable: before.mtimeMs === after.mtimeMs && before.size === after.size,
+      },
+    };
   } catch {
     return undefined;
   }
+}
+
+function readStamp(filePath: string): FileStamp | undefined {
+  return readSnapshot(filePath)?.stamp;
 }
 
 function codexCredentialRefs(config: AppConfig['codexSubscription']): string[] {
@@ -45,16 +144,26 @@ function codexCredentialRefs(config: AppConfig['codexSubscription']): string[] {
 
 function sameStamp(a: FileStamp | undefined, b: FileStamp | undefined): boolean {
   if (!a || !b) return a === b;
-  return a.mtimeMs === b.mtimeMs && a.size === b.size;
+  return (
+    a.stable && b.stable && a.mtimeMs === b.mtimeMs && a.size === b.size && a.digest === b.digest
+  );
 }
 
 export interface SharedConfigRefresher {
   /**
    * 若磁盘上的 config.json / tenants.json 已被其他进程改写，则重新加载并应用。
-   * 幂等、可高频调用；未发生变化时开销为一次 statSync（受节流保护）。
+   * 幂等、可高频调用；普通入口受节流保护，force 会读取稳定内容摘要以强校验。
+   * 返回 false 表示磁盘候选未安全提交，安全敏感调用方应 fail closed。
    */
-  refreshIfChanged(): void;
-  /** 供测试与诊断：返回已应用的磁盘指纹。 */
+  refreshIfChanged(force?: boolean): boolean | Promise<boolean>;
+  /** 普通管理端提交后仅在 gate clean 且稳定磁盘仍是精确文本时推进指纹。 */
+  acknowledgeConfigApplied(expectedConfigText: string): boolean;
+  /** 恢复事务专用：只接受当前 active permit，并确认已恢复的精确磁盘文本。 */
+  acknowledgeRecoveryConfigApplied(
+    expectedConfigText: string,
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
+  ): boolean;
+  /** 供测试与诊断：返回已应用的磁盘指纹（不包含待修复的脏执行切面）。 */
   getAppliedStamps(): { config?: FileStamp; tenants?: FileStamp };
 }
 
@@ -62,20 +171,35 @@ export function createSharedConfigRefresher(params: {
   config: AppConfig;
   processCwd: string;
   target: ModelsHotUpdateTarget;
-  onSystemPromptOverridesUpdated?: (next: NonNullable<AppConfig['systemPrompts']>) => void;
+  /** 系统提示语先完成纯校验/规范化，再返回只做同步赋值的 commit。 */
+  prepareSystemPromptOverridesUpdate?: (
+    next: NonNullable<AppConfig['systemPrompts']>,
+  ) => () => void;
   /**
-   * webTools 变更回调。凭据需经 SecretVault 异步解析，实现方自行 fire-and-forget，
-   * 刷新器本身保持同步且不因解析失败中断其他配置的热更新。
+   * webTools 两阶段更新：先异步解析凭据并返回无副作用的 commit；仅当候选文件仍
+   * 是最新版且所有门禁成功时，才与 AppConfig / observed identity 同步提交。
    */
-  onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
-  /**
-   * STT 变更回调。凭据需经 SecretVault 异步解析，行为与 webTools 一致。
-   */
-  onSttUpdated?: (next: AppConfig['stt']) => void;
+  prepareWebToolsUpdate?: (
+    next: AppConfig['webTools'],
+  ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
+  /** toolControls 两阶段更新：准备 RawRuntime 快照，候选确认后再同步提交。 */
+  prepareToolControlsUpdate?: (next: AppConfig['toolControls']) => ToolControlsRuntimeUpdateCommit;
+  /** STT 两阶段更新：SecretVault 解析成功后返回无副作用的执行侧 commit。 */
+  prepareSttUpdate?: (
+    next: AppConfig['stt'],
+  ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
+  /** 模型候选变化后异步解析 SecretRef，再返回无失败的执行快照提交。 */
+  onModelsUpdated?: (
+    nextConfig: AppConfig,
+  ) => ModelsHotUpdateCommit | Promise<ModelsHotUpdateCommit>;
+  /** 共享恢复门 dirty 时所有 config 推进与发布 fail closed。 */
+  recoveryGate?: ConfigRuntimeRecoveryGate;
+  /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
+  onConfigReloaded?: () => void;
+  /** 应用新配置前的门禁；支持异步校验，失败时保留旧内存配置。 */
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
   /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
   onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
-  /** 模型持久化配置变化后，由调用方异步解析 SecretRef 并替换执行快照。 */
-  onModelsUpdated?: (next: NonNullable<AppConfig['models']>) => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -87,10 +211,14 @@ export function createSharedConfigRefresher(params: {
     config,
     processCwd,
     target,
-    onSystemPromptOverridesUpdated,
-    onWebToolsUpdated,
-    onSttUpdated,
+    prepareSystemPromptOverridesUpdate,
+    prepareToolControlsUpdate,
+    prepareWebToolsUpdate,
+    prepareSttUpdate,
     onModelsUpdated,
+    recoveryGate,
+    onConfigReloaded,
+    validateConfigReload,
     tenantStore,
     tenantsFilePath,
     logger,
@@ -99,152 +227,503 @@ export function createSharedConfigRefresher(params: {
   } = params;
 
   const configPath = getAppConfigPath(processCwd);
-  // config 可能早于 refresher 很久加载；首次刷新必须把当前磁盘内容与已加载内容比对，
-  // 不能把 attach 时的文件 stamp 误当成那份内存内容的基线而吞掉启动窗口内的更新。
+  // config/tenant 内存快照早于本刷新器装配；不能把构造时磁盘指纹冒充已应用版本，
+  // 否则启动窗口内的跨进程写入会被永久漏掉。首轮调用必须重新加载确认。
   let appliedConfigStamp: FileStamp | undefined;
-  let appliedTenantsStamp = tenantsFilePath ? readStamp(tenantsFilePath) : undefined;
+  let pendingConfigStamp: FileStamp | undefined;
+  let pendingConfigRefresh: Promise<boolean> | undefined;
+  let configRefreshNeedsRetry = false;
+  const dirtyConfigChanges = new Set<ConfigChangeKey>();
+  let appliedTenantsStamp: FileStamp | undefined;
+  let tenantRefreshNeedsRetry = false;
   let lastCheckedAtMs = Number.NEGATIVE_INFINITY;
 
-  function refreshConfigFile(): void {
-    const stamp = readStamp(configPath);
-    if (sameStamp(stamp, appliedConfigStamp)) return;
+  function warnConfigReload(error: unknown): void {
+    configRefreshNeedsRetry = true;
+    // 别人正写到一半、写坏了，或未通过 Production 安全门禁：拒绝推进指纹并重试
+    // 内存配置，且不推进 appliedConfigStamp，修好后可立刻重新拾取。
+    logger?.warn(
+      `[SharedConfig] config.json 已变化但解析失败或安全校验失败，继续使用当前内存配置：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 
-    let nextConfig: AppConfig;
-    try {
-      nextConfig = loadAppConfig(processCwd);
-    } catch (error) {
-      // 别人正写到一半、或写坏了：保留当前内存配置，等下一次变更再试。
-      // 不推进 appliedConfigStamp，这样修好之后能立刻被重新拾起。
-      logger?.warn(
-        `[SharedConfig] config.json 已变化但解析失败，继续使用当前内存配置：${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return;
+  function getConfigChanges(nextConfig: AppConfig): ConfigChanges {
+    const changes: ConfigChanges = {
+      models:
+        Boolean(nextConfig.models) &&
+        JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models),
+      titleGenerator:
+        JSON.stringify(config.titleGenerator ?? null) !==
+        JSON.stringify(nextConfig.titleGenerator ?? null),
+      guardrail:
+        JSON.stringify(config.guardrail ?? null) !== JSON.stringify(nextConfig.guardrail ?? null),
+      systemPrompts:
+        JSON.stringify(config.systemPrompts ?? null) !==
+        JSON.stringify(nextConfig.systemPrompts ?? null),
+      toolControls:
+        JSON.stringify(config.toolControls ?? null) !==
+        JSON.stringify(nextConfig.toolControls ?? null),
+      codexSubscription:
+        JSON.stringify(config.codexSubscription ?? null) !==
+        JSON.stringify(nextConfig.codexSubscription ?? null),
+      stt: JSON.stringify(config.stt ?? null) !== JSON.stringify(nextConfig.stt ?? null),
+      sessionAutomation:
+        JSON.stringify(config.sessionAutomation ?? null) !==
+        JSON.stringify(nextConfig.sessionAutomation ?? null),
+      webTools:
+        JSON.stringify(config.webTools ?? null) !== JSON.stringify(nextConfig.webTools ?? null),
+    };
+    for (const key of dirtyConfigChanges) changes[key] = true;
+    return changes;
+  }
+
+  function dirtyChangeLabels(): string[] {
+    return [...new Set([...dirtyConfigChanges].map((key) => CHANGE_LABELS[key]))];
+  }
+
+  function markDirtyRollback(label: string, changes: ConfigChanges): void {
+    if (label === 'models/title/guardrail/pricing') {
+      for (const key of MODEL_CHANGE_KEYS) dirtyConfigChanges.add(key);
+    } else if (label === 'system prompts') dirtyConfigChanges.add('systemPrompts');
+    else if (label === 'tool controls') dirtyConfigChanges.add('toolControls');
+    else if (label === 'stt') dirtyConfigChanges.add('stt');
+    else if (label === 'web tools') dirtyConfigChanges.add('webTools');
+    else if (label === 'AppConfig') {
+      for (const key of Object.keys(changes) as ConfigChangeKey[]) {
+        if (changes[key]) dirtyConfigChanges.add(key);
+      }
     }
+  }
 
-    const modelsChanged = Boolean(nextConfig.models)
-      && JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models);
-    const titleGeneratorChanged = JSON.stringify(config.titleGenerator ?? null)
-      !== JSON.stringify(nextConfig.titleGenerator ?? null);
-    const guardrailChanged = JSON.stringify(config.guardrail ?? null)
-      !== JSON.stringify(nextConfig.guardrail ?? null);
-
-    if (modelsChanged) config.models = nextConfig.models;
-    if (titleGeneratorChanged) {
-      if (nextConfig.titleGenerator) config.titleGenerator = nextConfig.titleGenerator;
+  function applyConfigSlices(source: AppConfig, changes: ConfigChanges): void {
+    if (changes.models) {
+      if (source.models) config.models = source.models;
+      else delete config.models;
+    }
+    if (changes.titleGenerator) {
+      if (source.titleGenerator) config.titleGenerator = source.titleGenerator;
       else delete config.titleGenerator;
     }
-    if (guardrailChanged) {
-      if (nextConfig.guardrail) config.guardrail = nextConfig.guardrail;
+    if (changes.guardrail) {
+      if (source.guardrail) config.guardrail = source.guardrail;
       else delete config.guardrail;
     }
+    if (changes.systemPrompts) {
+      if (source.systemPrompts) config.systemPrompts = source.systemPrompts;
+      else delete config.systemPrompts;
+    }
+    if (changes.toolControls) {
+      if (source.toolControls) config.toolControls = source.toolControls;
+      else delete config.toolControls;
+    }
+    if (changes.codexSubscription) {
+      if (source.codexSubscription) config.codexSubscription = source.codexSubscription;
+      else delete config.codexSubscription;
+    }
+    if (changes.stt) {
+      if (source.stt) config.stt = source.stt;
+      else delete config.stt;
+    }
+    if (changes.sessionAutomation) {
+      if (source.sessionAutomation) config.sessionAutomation = source.sessionAutomation;
+      else delete config.sessionAutomation;
+    }
+    if (changes.webTools) {
+      if (source.webTools) config.webTools = source.webTools;
+      else delete config.webTools;
+    }
+  }
 
-    if ((modelsChanged || titleGeneratorChanged || guardrailChanged) && config.models) {
-      if (modelsChanged && onModelsUpdated) onModelsUpdated(config.models);
-      else applyModelsHotUpdate({ config, target, models: config.models });
+  function publishConfigFile(
+    nextConfig: AppConfig,
+    previousConfig: AppConfig,
+    stamp: FileStamp,
+    changes: ConfigChanges,
+  ): void {
+    if ((changes.models || changes.titleGenerator || changes.guardrail) && nextConfig.models) {
       logger?.info(
-        `[SharedConfig] 已从磁盘热更新模型及辅助模型配置：${config.models.groups.length} 组 / ` +
-          `${config.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
+        `[SharedConfig] 已从磁盘热更新模型及辅助模型配置：${nextConfig.models.groups.length} 组 / ` +
+          `${nextConfig.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
       );
     }
-
-    const systemPromptsChanged = JSON.stringify(config.systemPrompts ?? null)
-      !== JSON.stringify(nextConfig.systemPrompts ?? null);
-    if (systemPromptsChanged) {
-      if (nextConfig.systemPrompts) config.systemPrompts = nextConfig.systemPrompts;
-      else delete config.systemPrompts;
-      onSystemPromptOverridesUpdated?.(nextConfig.systemPrompts ?? {});
-      logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
+    if (changes.systemPrompts) logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
+    if (changes.toolControls) logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
+    if (changes.codexSubscription) {
+      const previousRefs = codexCredentialRefs(previousConfig.codexSubscription);
+      const refs = codexCredentialRefs(nextConfig.codexSubscription);
+      const closeAll = previousConfig.codexSubscription?.enabled !== nextConfig.codexSubscription?.enabled
+        || previousConfig.codexSubscription?.websocketEnabled !== nextConfig.codexSubscription?.websocketEnabled
+        || previousConfig.codexSubscription?.endpoint !== nextConfig.codexSubscription?.endpoint
+        || previousConfig.codexSubscription?.originator !== nextConfig.codexSubscription?.originator;
+      const changedRefs = [...new Set([...previousRefs, ...refs])]
+        .filter((ref) => previousRefs.includes(ref) !== refs.includes(ref));
+      params.onCodexSubscriptionUpdated?.(closeAll ? undefined : changedRefs);
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=${nextConfig.codexSubscription?.enabled === true} / ` +
+          `websocketEnabled=${nextConfig.codexSubscription?.websocketEnabled === true} / ` +
+          `credentialCount=${new Set(refs).size}`,
+      );
     }
-
-    const toolControlsChanged = JSON.stringify(config.toolControls ?? null)
-      !== JSON.stringify(nextConfig.toolControls ?? null);
-    if (toolControlsChanged) {
-      if (nextConfig.toolControls) config.toolControls = nextConfig.toolControls;
-      else delete config.toolControls;
-      logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
+    if (changes.stt) {
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
+      );
     }
-
-    const sessionAutomationChanged = JSON.stringify(config.sessionAutomation ?? null)
-      !== JSON.stringify(nextConfig.sessionAutomation ?? null);
-    if (sessionAutomationChanged) {
-      if (nextConfig.sessionAutomation) config.sessionAutomation = nextConfig.sessionAutomation;
-      else delete config.sessionAutomation;
+    if (changes.sessionAutomation) {
       logger?.info(
         `[SharedConfig] 已从磁盘热更新 Session Automation 配置：executionEnabled=${nextConfig.sessionAutomation?.executionEnabled === true}`,
       );
     }
-
-    /**
-     * webTools 与模型同属「管理端写、执行进程读」：2026-08-16 实测把搜索源换成智谱后，
-     * ws-only 进程内存已更新、config.json 也已落盘，但 runtime-worker 仍用启动时的旧
-     * provider，真实会话持续报旧供应商的鉴权错误。凭据要经 SecretVault 解析（异步），
-     * 故这里只同步内存配置并把解析交给回调。
-     */
-    const webToolsChanged = JSON.stringify(config.webTools ?? null)
-      !== JSON.stringify(nextConfig.webTools ?? null);
-    if (webToolsChanged) {
-      if (nextConfig.webTools) config.webTools = nextConfig.webTools;
-      else delete config.webTools;
-      onWebToolsUpdated?.(nextConfig.webTools);
+    if (changes.webTools) {
       logger?.info(
         `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
       );
     }
 
-    const sttChanged = JSON.stringify(config.stt ?? null)
-      !== JSON.stringify(nextConfig.stt ?? null);
-    if (sttChanged) {
-      if (nextConfig.stt) config.stt = nextConfig.stt;
-      else delete config.stt;
-      onSttUpdated?.(nextConfig.stt);
-      logger?.info(
-        `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
-      );
-    }
-
-    const previousCodexSubscription = config.codexSubscription;
-    const codexSubscriptionChanged = JSON.stringify(previousCodexSubscription ?? null)
-      !== JSON.stringify(nextConfig.codexSubscription ?? null);
-    if (codexSubscriptionChanged) {
-      if (nextConfig.codexSubscription) config.codexSubscription = nextConfig.codexSubscription;
-      else delete config.codexSubscription;
-      const previousRefs = codexCredentialRefs(previousCodexSubscription);
-      const refs = codexCredentialRefs(nextConfig.codexSubscription);
-      const closeAll = previousCodexSubscription?.enabled !== nextConfig.codexSubscription?.enabled
-        || previousCodexSubscription?.websocketEnabled !== nextConfig.codexSubscription?.websocketEnabled
-        || previousCodexSubscription?.endpoint !== nextConfig.codexSubscription?.endpoint
-        || previousCodexSubscription?.originator !== nextConfig.codexSubscription?.originator;
-      const changedRefs = [...new Set([...previousRefs, ...refs])]
-        .filter((ref) => previousRefs.includes(ref) !== refs.includes(ref));
-      params.onCodexSubscriptionUpdated?.(closeAll ? undefined : changedRefs);
-      logger?.info(
-        `[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=${nextConfig.codexSubscription?.enabled === true} / `
-          + `websocketEnabled=${nextConfig.codexSubscription?.websocketEnabled === true} / `
-          + `credentialCount=${new Set(refs).size}`,
-      );
-    }
-
+    const repairedDirtyChanges = dirtyChangeLabels();
+    dirtyConfigChanges.clear();
     appliedConfigStamp = stamp;
+    configRefreshNeedsRetry = false;
+    if (repairedDirtyChanges.length > 0) {
+      logger?.info(
+        `[SharedConfig] 脏执行切面已随完整 post-check 成功清理：${repairedDirtyChanges.join(', ')}`,
+      );
+    }
+    try {
+      onConfigReloaded?.();
+    } catch (error) {
+      logger?.warn(
+        `[SharedConfig] config identity 回调执行失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
-  function refreshTenantsFile(): void {
-    if (!tenantStore || !tenantsFilePath) return;
-    const stamp = readStamp(tenantsFilePath);
-    if (sameStamp(stamp, appliedTenantsStamp)) return;
-    tenantStore.reload();
-    appliedTenantsStamp = stamp;
-    logger?.info('[SharedConfig] 已从磁盘重载组织配置（模型白名单/功能开关）');
+  function finalizeConfigFile(params: {
+    nextConfig: AppConfig;
+    previousConfig: AppConfig;
+    stamp: FileStamp;
+    changes: ConfigChanges;
+    candidateModels?: ModelsHotUpdateCommit;
+    rollbackModels?: ModelsHotUpdateCommit;
+    candidateSystemPrompts?: () => void;
+    rollbackSystemPrompts?: () => void;
+    candidateToolControls?: ToolControlsRuntimeUpdateCommit;
+    rollbackToolControls?: ToolControlsRuntimeUpdateCommit;
+    candidateStt?: SttRuntimeUpdateCommit;
+    rollbackStt?: SttRuntimeUpdateCommit;
+    candidateWebTools?: WebToolsRuntimeUpdateCommit;
+    rollbackWebTools?: WebToolsRuntimeUpdateCommit;
+  }): boolean {
+    const steps: SharedConfigCommitStep[] = [];
+    const addStep = (label: string, commit?: () => void, rollback?: () => void): void => {
+      if (commit && rollback) steps.push({ label, commit, rollback });
+    };
+    addStep('models/title/guardrail/pricing', params.candidateModels, params.rollbackModels);
+    addStep('system prompts', params.candidateSystemPrompts, params.rollbackSystemPrompts);
+    addStep('tool controls', params.candidateToolControls, params.rollbackToolControls);
+    addStep('stt', params.candidateStt, params.rollbackStt);
+    addStep('web tools', params.candidateWebTools, params.rollbackWebTools);
+    steps.push({
+      label: 'AppConfig',
+      commit: () => applyConfigSlices(params.nextConfig, params.changes),
+      rollback: () => applyConfigSlices(params.previousConfig, params.changes),
+    });
+
+    return finalizeSharedConfigTransaction({
+      steps,
+      isCandidateCurrent: () => sameStamp(readStamp(configPath), params.stamp),
+      publish: () => publishConfigFile(
+        params.nextConfig,
+        params.previousConfig,
+        params.stamp,
+        params.changes,
+      ),
+      onFailure: ({ error, rollbackErrors }) => {
+        configRefreshNeedsRetry = true;
+        for (const rollbackError of rollbackErrors)
+          markDirtyRollback(rollbackError.label, params.changes);
+        const rollbackMessage =
+          rollbackErrors.length > 0
+            ? `；回滚失败：${rollbackErrors
+                .map(
+                  ({ label, error: rollbackError }) =>
+                    `${label}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+                )
+                .join('；')}`
+            : '';
+        const dirtyMessage =
+          dirtyConfigChanges.size > 0
+            ? `；脏执行切面（下一轮强制重放）：${dirtyChangeLabels().join(', ')}`
+            : '';
+        warnConfigReload(
+          new Error(
+            `${error instanceof Error ? error.message : String(error)}${rollbackMessage}${dirtyMessage}`,
+          ),
+        );
+      },
+    });
+  }
+
+  function refreshConfigFile(): boolean | Promise<boolean> {
+    const snapshot = readSnapshot(configPath);
+    const observedStamp = snapshot?.stamp;
+    if (observedStamp && !configRefreshNeedsRetry && sameStamp(observedStamp, appliedConfigStamp)) {
+      configRefreshNeedsRetry = false;
+      return true;
+    }
+    if (pendingConfigStamp !== undefined && sameStamp(observedStamp, pendingConfigStamp)) {
+      return pendingConfigRefresh ?? false;
+    }
+    if (!snapshot) {
+      warnConfigReload(new Error(`配置文件不可读取：${configPath}`));
+      return false;
+    }
+
+    const stamp = snapshot.stamp;
+    let nextConfig: AppConfig;
+    let previousConfig: AppConfig;
+    let changes: ConfigChanges;
+    let candidateModels: ModelsHotUpdateCommit | undefined;
+    let rollbackModels: ModelsHotUpdateCommit | undefined;
+    let candidateSystemPrompts: (() => void) | undefined;
+    let rollbackSystemPrompts: (() => void) | undefined;
+    let candidateToolControls: ToolControlsRuntimeUpdateCommit | undefined;
+    let rollbackToolControls: ToolControlsRuntimeUpdateCommit | undefined;
+    try {
+      nextConfig = parseAppConfig(parseJsonc(snapshot.text));
+      if (config.models && !nextConfig.models) {
+        throw new Error('运行中移除 models 需要重启，拒绝推进共享配置指纹');
+      }
+      previousConfig = { ...config } as AppConfig;
+      changes = getConfigChanges(nextConfig);
+      if (dirtyConfigChanges.size > 0) {
+        logger?.info(
+          `[SharedConfig] 检测到脏执行切面，强制重放：${dirtyChangeLabels().join(', ')}`,
+        );
+      }
+
+      if (changes.models || changes.titleGenerator || changes.guardrail) {
+        if (!nextConfig.models || !previousConfig.models) {
+          throw new Error('模型执行侧缺少可回滚的提交前快照，拒绝热更新');
+        }
+        // 最新 main 的模型凭据使用 SecretRef；装配层提供异步 prepare 时，必须先解析
+        // 候选与回滚快照，不能把持久化 ref 配置直接发布给执行 resolver。
+        if (!onModelsUpdated) {
+          candidateModels = prepareModelsHotUpdate({
+            config: nextConfig,
+            target,
+            models: nextConfig.models,
+          });
+          rollbackModels = prepareModelsHotUpdate({
+            config: previousConfig,
+            target,
+            models: previousConfig.models,
+          });
+        }
+      }
+      if (changes.systemPrompts && prepareSystemPromptOverridesUpdate) {
+        candidateSystemPrompts = prepareSystemPromptOverridesUpdate(nextConfig.systemPrompts ?? {});
+        rollbackSystemPrompts = prepareSystemPromptOverridesUpdate(
+          previousConfig.systemPrompts ?? {},
+        );
+      }
+      if (changes.toolControls && prepareToolControlsUpdate) {
+        candidateToolControls = prepareToolControlsUpdate(nextConfig.toolControls);
+        rollbackToolControls = prepareToolControlsUpdate(previousConfig.toolControls);
+      }
+    } catch (error) {
+      warnConfigReload(error);
+      return false;
+    }
+
+    const finalize = (
+      resolvedCandidateModels?: ModelsHotUpdateCommit,
+      resolvedRollbackModels?: ModelsHotUpdateCommit,
+      resolvedCandidateWebTools?: WebToolsRuntimeUpdateCommit,
+      resolvedRollbackWebTools?: WebToolsRuntimeUpdateCommit,
+      resolvedCandidateStt?: SttRuntimeUpdateCommit,
+      resolvedRollbackStt?: SttRuntimeUpdateCommit,
+    ): boolean => {
+      if (recoveryGate?.isDirty()) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
+      // prepare/SecretVault 期间已被覆盖时，候选尚无副作用，直接丢弃。
+      if (!sameStamp(readStamp(configPath), stamp)) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
+      return finalizeConfigFile({
+        nextConfig,
+        previousConfig,
+        stamp,
+        changes,
+        candidateModels: resolvedCandidateModels ?? candidateModels,
+        rollbackModels: resolvedRollbackModels ?? rollbackModels,
+        candidateSystemPrompts,
+        rollbackSystemPrompts,
+        candidateToolControls,
+        rollbackToolControls,
+        candidateWebTools: resolvedCandidateWebTools,
+        rollbackWebTools: resolvedRollbackWebTools,
+        candidateStt: resolvedCandidateStt,
+        rollbackStt: resolvedRollbackStt,
+      });
+    };
+
+    // 所有纯同步 prepare 已完成后，才启动可能返回 Promise 的门禁与 SecretVault prepare。
+    // 每个 Promise 在启动当下即转为永不 reject 的 outcome，随后统一汇合，避免后续同步
+    // 抛错或兄弟 Promise 提前失败时留下 unhandled rejection。
+    const preparations = [
+      validateConfigReload
+        ? startControlledPreparation(() => validateConfigReload(nextConfig))
+        : { ok: true as const, value: undefined },
+      (changes.models || changes.titleGenerator || changes.guardrail) && onModelsUpdated
+        ? startControlledPreparation(() => onModelsUpdated(nextConfig))
+        : { ok: true as const, value: undefined },
+      (changes.models || changes.titleGenerator || changes.guardrail) && onModelsUpdated
+        ? startControlledPreparation(() => onModelsUpdated(previousConfig))
+        : { ok: true as const, value: undefined },
+      changes.webTools && prepareWebToolsUpdate
+        ? startControlledPreparation(() => prepareWebToolsUpdate(nextConfig.webTools))
+        : { ok: true as const, value: undefined },
+      changes.webTools && prepareWebToolsUpdate
+        ? startControlledPreparation(() => prepareWebToolsUpdate(previousConfig.webTools))
+        : { ok: true as const, value: undefined },
+      changes.stt && prepareSttUpdate
+        ? startControlledPreparation(() => prepareSttUpdate(nextConfig.stt))
+        : { ok: true as const, value: undefined },
+      changes.stt && prepareSttUpdate
+        ? startControlledPreparation(() => prepareSttUpdate(previousConfig.stt))
+        : { ok: true as const, value: undefined },
+    ] as const;
+    const completePreparations = (results: PreparationResults): boolean => {
+      const failed = results.find((result) => !result.ok);
+      if (failed && !failed.ok) {
+        warnConfigReload(failed.error);
+        return false;
+      }
+      return finalize(
+        results[1].ok ? results[1].value : undefined,
+        results[2].ok ? results[2].value : undefined,
+        results[3].ok ? results[3].value : undefined,
+        results[4].ok ? results[4].value : undefined,
+        results[5].ok ? results[5].value : undefined,
+        results[6].ok ? results[6].value : undefined,
+      );
+    };
+
+    if (preparations.some(isPromiseLike)) {
+      pendingConfigStamp = stamp;
+      pendingConfigRefresh = Promise.all(preparations)
+        .then((results) => completePreparations(results as PreparationResults))
+        .catch((error) => {
+          warnConfigReload(error);
+          return false;
+        })
+        .finally(() => {
+          pendingConfigStamp = undefined;
+          pendingConfigRefresh = undefined;
+        });
+      return pendingConfigRefresh;
+    }
+
+    return completePreparations(preparations as PreparationResults);
+  }
+
+  function refreshTenantsFile(): boolean {
+    if (!tenantStore || !tenantsFilePath) return true;
+    const snapshot = readSnapshot(tenantsFilePath);
+    const stamp = snapshot?.stamp;
+    if (sameStamp(stamp, appliedTenantsStamp)) {
+      tenantRefreshNeedsRetry = false;
+      return true;
+    }
+    try {
+      const prepared = snapshot ? tenantStore.prepareReloadSnapshot(snapshot.text) : undefined;
+      if (!sameStamp(stamp, readStamp(tenantsFilePath))) {
+        tenantRefreshNeedsRetry = true;
+        return false;
+      }
+      if (prepared) prepared.commit();
+      else tenantStore.reload();
+      const afterReload = readStamp(tenantsFilePath);
+      if (!sameStamp(stamp, afterReload)) {
+        prepared?.rollback();
+        tenantRefreshNeedsRetry = true;
+        return false;
+      }
+      appliedTenantsStamp = afterReload;
+      tenantRefreshNeedsRetry = false;
+      logger?.info('[SharedConfig] 已提交组织配置两阶段快照（模型白名单/功能开关）');
+      return true;
+    } catch (error) {
+      tenantRefreshNeedsRetry = true;
+      logger?.warn(
+        `[SharedConfig] 组织配置读取失败，保留现有白名单并拒绝本次解析：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+  }
+
+  function acknowledgeStableConfig(expectedConfigText: string): boolean {
+    const snapshot = readSnapshot(configPath);
+    if (dirtyConfigChanges.size > 0) {
+      configRefreshNeedsRetry = true;
+      logger?.warn(`[SharedConfig] 存在脏执行切面，拒绝仅推进配置指纹：${dirtyChangeLabels().join(', ')}`);
+      return false;
+    }
+    if (!snapshot?.stamp.stable || snapshot.text !== expectedConfigText) {
+      configRefreshNeedsRetry = true;
+      appliedConfigStamp = undefined;
+      return false;
+    }
+    appliedConfigStamp = snapshot.stamp;
+    configRefreshNeedsRetry = false;
+    lastCheckedAtMs = now();
+    return true;
   }
 
   return {
-    refreshIfChanged(): void {
+    refreshIfChanged(force = false): boolean | Promise<boolean> {
+      if (recoveryGate?.isDirty()) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
+      if (pendingConfigRefresh) {
+        const tenantsFresh = refreshTenantsFile();
+        return pendingConfigRefresh.then((configFresh) => configFresh && tenantsFresh);
+      }
       const ts = now();
-      if (ts - lastCheckedAtMs < minStatIntervalMs) return;
+      if (
+        !force &&
+        !configRefreshNeedsRetry &&
+        !tenantRefreshNeedsRetry &&
+        ts - lastCheckedAtMs < minStatIntervalMs
+      )
+        return true;
       lastCheckedAtMs = ts;
-      refreshConfigFile();
-      refreshTenantsFile();
+      const configFresh = refreshConfigFile();
+      const tenantsFresh = refreshTenantsFile();
+      return configFresh instanceof Promise
+        ? configFresh.then((fresh) => fresh && tenantsFresh)
+        : configFresh && tenantsFresh;
+    },
+    acknowledgeConfigApplied(expectedConfigText) {
+      if (recoveryGate?.isDirty()) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
+      return acknowledgeStableConfig(expectedConfigText);
+    },
+    acknowledgeRecoveryConfigApplied(expectedConfigText, recoveryPermit) {
+      if (!recoveryGate?.allowsRecoveryCompletion(recoveryPermit)) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
+      return acknowledgeStableConfig(expectedConfigText);
     },
     getAppliedStamps() {
       return { config: appliedConfigStamp, tenants: appliedTenantsStamp };

@@ -46,6 +46,7 @@ function sharedHttpVaults() {
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
   let value = '';
+  let version = 0;
   const oauthRefreshTokens: string[] = [];
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -58,12 +59,14 @@ function sharedHttpVaults() {
       }), { status: 200 });
     }
     const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-    if (url.endsWith('/secrets')) value = String(body.value);
-    if (url.endsWith('/rotate')) value = String(body.value);
-    if (url.endsWith('/secrets/resolve')) {
-      return new Response(JSON.stringify({ value, ref }), { status: 200 });
+    if (url.endsWith('/secrets') || url.endsWith('/rotate')) {
+      value = String(body.value);
+      version += 1;
     }
-    return new Response(JSON.stringify(ref), { status: 200 });
+    if (url.endsWith('/secrets/resolve')) {
+      return new Response(JSON.stringify({ value, ref: { ...ref, version } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ...ref, version }), { status: 200 });
   }) as unknown as typeof fetch;
   const options = { baseUrl: 'https://vault.example.com', authToken: 'test-token', fetchImpl };
   return {

@@ -29,7 +29,7 @@ export async function handleResetCommand(
 // Model Command
 // ============================================
 
-export type ModelResolver = (ref: string) => ResolvedModel | null;
+export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
 export interface ModelCommandDeps {
   getModelRef: (conversationId: string) => string | undefined;
@@ -75,7 +75,7 @@ export async function handleModelCommand(
     return;
   }
 
-  // 通过 modelResolver 验证引用有效
+  // 通过 modelResolver 验证引用有效；执行阶段会再次携带 tenantId 校验白名单
   const result = deps.modelResolver(resolved.ref);
   if (!result) {
     await sendStatus(`模型引用无效: ${resolved.ref}`);

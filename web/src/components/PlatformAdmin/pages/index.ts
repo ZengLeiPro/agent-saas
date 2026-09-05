@@ -4,3 +4,4 @@ export { UsersPage } from "./UsersPage";
 export { SessionsPage } from "./SessionsPage";
 export { SandboxesPage } from "./SandboxesPage";
 export { InfraPage } from "./InfraPage";
+export { ProviderQuotaPage } from "./ProviderQuotaPage";

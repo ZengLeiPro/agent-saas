@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import {
   appendFile,
   mkdir,
@@ -15,42 +17,153 @@ import { basename, dirname, join } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
 
 import { parseAppConfig, type AppConfig } from '../app/config.js';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from './runtimeRecoveryGate.js';
+import {
+  isPreparedConfigRecoveryPublication,
+  type PreparedConfigRecoveryPublication,
+} from '../runtime/configIdentityRuntime.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 import { configFingerprint } from './configDigest.js';
 
 export { configFingerprint };
 
-const LOCK_WAIT_MS = 5_000;
 const LOCK_STALE_MS = 120_000;
 const BACKUP_LIMIT = 20;
 
+interface LockOwner {
+  pid: number;
+  token?: string;
+}
+
+async function readLockOwner(lockPath: string): Promise<LockOwner | undefined> {
+  try {
+    const value = JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')) as unknown;
+    if (!value || typeof value !== 'object') return undefined;
+    const pid = (value as { pid?: unknown }).pid;
+    const token = (value as { token?: unknown }).token;
+    if (!Number.isInteger(pid) || (pid as number) <= 0) return undefined;
+    return {
+      pid: pid as number,
+      ...(typeof token === 'string' && token.length > 0 ? { token } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+class ConfigLockGuardBusyError extends Error {}
+
+async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
+  const child = spawn(
+    'flock',
+    ['--nonblock', path, 'sh', '-c', 'printf "acquired\\n"; cat >/dev/null'],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  await new Promise<void>((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (!settled && stdout.includes('\n')) {
+        settled = true;
+        resolve();
+      }
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+    child.once('exit', (code) => {
+      if (!settled) {
+        settled = true;
+        reject(code === 1
+          ? new ConfigLockGuardBusyError()
+          : new Error(`配置锁 guard 异常退出 (${code ?? 'signal'}): ${stderr.trim()}`));
+      }
+    });
+  });
+  return async () => {
+    if (child.exitCode !== null) return;
+    child.stdin.end();
+    await once(child, 'exit');
+  };
+}
+
 export class ConfigConflictError extends Error {
   readonly code = 'CONFIG_FINGERPRINT_CONFLICT';
-  /** 原始 config.json 的指纹（乐观锁口径），不是有效配置指纹。 */
-  constructor(readonly currentFingerprint: string) {
+  constructor(readonly currentFingerprint: string, readonly currentRevision?: string) {
     super('配置已被其他管理员更新，请刷新后重试');
   }
 }
 
+/** durable/runtime 已提交，但后续 observation/publication 或维护步骤失败。 */
+export class ConfigMutationCommittedError extends Error {
+  readonly code = 'CONFIG_MUTATION_COMMITTED';
+
+  constructor(readonly cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'ConfigMutationCommittedError';
+  }
+}
+
 /**
- * 配置文件已经恢复到变更前，但把运行时也恢复回去的那一步失败了。
- *
- * 这种情况下进程内配置与 config.json 不一致，不能宣称已经安全恢复：调用方
- * 必须停止后续「回滚式」清理（例如撤销本次写入的 Secret，运行进程可能仍在用它）
- * 并要求人工介入。
+ * 磁盘配置已回滚（或正在恢复），但运行时回滚/受信恢复发布未能完成。
+ * 调用方必须停止撤销候选 Secret 等清理，避免仍在运行的候选配置失去凭据。
  */
-export class RuntimeRestoreFailedError extends Error {
-  readonly code = 'CONFIG_RUNTIME_RESTORE_FAILED';
+export class RuntimeRestoreFailedError extends AggregateError {
+  /** 稳定公开错误码，供能力启用事务识别并保留仍可能在用的 Secret。 */
+  readonly code: string = 'CONFIG_RUNTIME_RESTORE_FAILED';
+
   constructor(
     readonly originalError: unknown,
     readonly restoreError: unknown,
+    errors: unknown[] = [originalError, restoreError].filter((error) => error !== undefined),
+    message = '运行时回滚失败，进程内配置与 config.json 可能不一致',
+  ) {
+    super(errors, message);
+    this.name = 'RuntimeRestoreFailedError';
+  }
+}
+
+export class ConfigRuntimeRecoveryError extends RuntimeRestoreFailedError {
+  /** 旧恢复状态语义保留为附加分类；稳定错误码继承 CONFIG_RUNTIME_RESTORE_FAILED。 */
+  readonly recoveryCode = 'CONFIG_RUNTIME_RECOVERY_REQUIRED';
+
+  constructor(
+    readonly originalApplyError: unknown,
+    readonly rollbackError: unknown,
+    readonly recoveryError: unknown,
+    readonly candidateStillOwned: boolean,
+    readonly diskRestored: boolean,
   ) {
     super(
-      `配置已恢复到变更前，但运行时回滚失败，进程内配置与 config.json 可能不一致：${
-        restoreError instanceof Error ? restoreError.message : String(restoreError)
-      }`,
+      originalApplyError,
+      rollbackError ?? recoveryError,
+      [originalApplyError, rollbackError, recoveryError].filter((error) => error !== undefined),
+      '运行时回滚失败或恢复发布未完成，后续配置变更已阻断',
     );
-    this.name = 'RuntimeRestoreFailedError';
+    this.name = 'ConfigRuntimeRecoveryError';
   }
 }
 
@@ -59,12 +172,11 @@ export interface AdminConfigMutationResult {
   previousConfig: AppConfig;
   /** 写入前的原始 config.json 指纹。 */
   beforeFingerprint: string;
-  /**
-   * 写入后的原始 config.json 指纹。这是乐观锁口径（ETag / If-Match），
-   * 与 EffectiveConfigStatus.effectiveConfigFingerprint（解析并补齐默认值后的
-   * AppConfig 指纹）不同源，两者不可互换。
-   */
+  /** 写入后的原始 config.json 指纹（乐观锁口径）。 */
   rawConfigFingerprint: string;
+  /** @deprecated 兼容旧调用方；与 rawConfigFingerprint 相同。 */
+  effectiveConfigFingerprint: string;
+  revision: string;
   appliedAt: string;
 }
 
@@ -72,11 +184,44 @@ interface MutationInput {
   actor: string;
   changedPaths: string[];
   expectedFingerprint?: string;
+  expectedRevision?: string;
+  /** 锁内、任何 secret/候选副作用前确认完整磁盘基线。 */
+  validateBaseline?: (currentText: string, current: AppConfig) => void | Promise<void>;
   buildCandidate: (
     currentText: string,
     currentRaw: Record<string, unknown>,
   ) => string | Promise<string>;
+  /** 写盘前的 Production 安全门禁与异步候选校验。 */
+  validateCandidate?: (next: AppConfig) => void | Promise<void>;
   applyRuntime: (next: AppConfig, previous: AppConfig) => void | Promise<void>;
+  /** durable/runtime commit 后发布调用方观察面；失败不回滚 durable commit。 */
+  onCommitted?: (candidateText: string) => void | Promise<void>;
+}
+
+interface RuntimeRecoveryState {
+  actor: string;
+  changedPaths: string[];
+  beforeFingerprint: string;
+  afterFingerprint: string;
+  backup: string;
+  targetText: string;
+  targetConfig: AppConfig;
+  failedConfig: AppConfig;
+  applyRuntime: MutationInput['applyRuntime'];
+  originalApplyError: unknown;
+  rollbackError: unknown;
+  recoveryError: unknown;
+  candidateStillOwned: boolean;
+  diskRestored: boolean;
+}
+
+function auditError(error: unknown): string | undefined {
+  if (error === undefined) return undefined;
+  return (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).slice(0, 500);
+}
+
+function configRevision(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function parseRaw(text: string): Record<string, unknown> {
@@ -87,15 +232,13 @@ function parseRaw(text: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export class AdminConfigMutationService {
   private readonly stateDir: string;
   private readonly lockPath: string;
+  private readonly lockGuardPath: string;
   private readonly backupDir: string;
   private readonly auditPath: string;
+  private runtimeRecovery?: RuntimeRecoveryState;
 
   constructor(
     private readonly options: {
@@ -103,19 +246,28 @@ export class AdminConfigMutationService {
       processCwd: string;
       environment: RuntimeEnvironment;
       processRole: string;
+      recoveryGate?: ConfigRuntimeRecoveryGate;
       now?: () => Date;
+      /** durable commit 后准备 Runtime 受信 publication；恢复 audit 成功后由 service 同步提交。 */
+      onCommitted?: (
+        candidateText: string,
+        recoveryPermit?: ConfigRuntimeRecoveryPermit,
+      ) => void | PreparedConfigRecoveryPublication
+        | Promise<void | PreparedConfigRecoveryPublication>;
+      /** runtime 与磁盘身份不再可信时，同步撤销当前身份 observation。 */
+      onRuntimeDirty?: () => void;
+      /** audit 故障注入/替代持久化；生产默认使用原生 appendFile。 */
+      auditAppender?: (path: string, line: string) => Promise<void>;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
     this.lockPath = join(this.stateDir, 'config.lock');
+    this.lockGuardPath = join(this.stateDir, 'config.lock.guard');
     this.backupDir = join(this.stateDir, 'backups');
     this.auditPath = join(this.stateDir, 'audit.jsonl');
   }
 
-  /**
-   * 当前 config.json 的原始指纹，即回写时 If-Match 要带的乐观锁令牌。
-   * 与有效配置指纹（解析并补齐默认值后的 AppConfig）不同源，不可互换。
-   */
+  /** 当前 config.json 的原始指纹，即 If-Match 使用的乐观锁令牌。 */
   async readRawFingerprint(): Promise<string> {
     return configFingerprint(parseRaw(await readFile(this.options.configPath, 'utf8')));
   }
@@ -123,29 +275,54 @@ export class AdminConfigMutationService {
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
     const releaseLock = await this.acquireLock();
     try {
+      await this.recoverRuntimeIfDirty(input.actor);
       const currentText = await readFile(this.options.configPath, 'utf8');
       const currentRaw = parseRaw(currentText);
       const previousConfig = parseAppConfig(currentRaw);
       const beforeFingerprint = configFingerprint(currentRaw);
+      const beforeRevision = configRevision(currentText);
       if (input.expectedFingerprint && input.expectedFingerprint !== beforeFingerprint) {
-        throw new ConfigConflictError(beforeFingerprint);
+        throw new ConfigConflictError(beforeFingerprint, beforeRevision);
+      }
+      if (input.expectedRevision && input.expectedRevision !== beforeRevision) {
+        throw new ConfigConflictError(beforeFingerprint, beforeRevision);
+      }
+      await input.validateBaseline?.(currentText, previousConfig);
+      if (await readFile(this.options.configPath, 'utf8') !== currentText) {
+        const latestText = await readFile(this.options.configPath, 'utf8');
+        throw new ConfigConflictError(configFingerprint(parseRaw(latestText)), configRevision(latestText));
       }
       const candidateText = await input.buildCandidate(currentText, currentRaw);
       const candidateRaw = parseRaw(candidateText);
       const config = parseAppConfig(candidateRaw);
+      await input.validateCandidate?.(config);
+      if (await readFile(this.options.configPath, 'utf8') !== currentText) {
+        const latestText = await readFile(this.options.configPath, 'utf8');
+        throw new ConfigConflictError(configFingerprint(parseRaw(latestText)), configRevision(latestText));
+      }
       const rawConfigFingerprint = configFingerprint(candidateRaw);
+      const effectiveConfigFingerprint = rawConfigFingerprint;
       const appliedAt = (this.options.now?.() ?? new Date()).toISOString();
       if (rawConfigFingerprint === beforeFingerprint) {
-        return { config, previousConfig, beforeFingerprint, rawConfigFingerprint, appliedAt };
+        return {
+          config,
+          previousConfig,
+          beforeFingerprint,
+          rawConfigFingerprint,
+          effectiveConfigFingerprint,
+          revision: beforeRevision,
+          appliedAt,
+        };
       }
 
       const backupPath = await this.createBackup(currentText, beforeFingerprint, appliedAt);
       await this.replaceConfig(candidateText);
       try {
         await input.applyRuntime(config, previousConfig);
-        const readbackRaw = parseRaw(await readFile(this.options.configPath, 'utf8'));
-        if (configFingerprint(readbackRaw) !== rawConfigFingerprint) {
-          throw new Error('配置落盘读回指纹不一致');
+        const readbackText = await readFile(this.options.configPath, 'utf8');
+        const readbackRaw = parseRaw(readbackText);
+        if (readbackText !== candidateText || configFingerprint(readbackRaw) !== rawConfigFingerprint) {
+          throw new ConfigConflictError(configFingerprint(readbackRaw), configRevision(readbackText));
         }
         await this.appendAudit({
           at: appliedAt,
@@ -159,80 +336,295 @@ export class AdminConfigMutationService {
           backup: basename(backupPath),
         });
       } catch (error) {
-        await this.replaceConfig(currentText);
-        // 运行时恢复失败不能吞：文件已回到旧值而进程仍在用新值时，调用方继续做
-        // 「回滚式」清理（撤销新 Secret 等）只会让运行实例更坏。
-        let restoreError: unknown;
+        // candidate 已可能污染执行切面；在任何异步磁盘恢复/rollback 前同步关门。
+        this.markRuntimeDirty();
+        const currentDiskText = await readFile(this.options.configPath, 'utf8').catch(() => undefined);
+        const candidateStillOwned = currentDiskText === candidateText;
+        let recoveryError: unknown;
+        if (candidateStillOwned) {
+          try {
+            await this.replaceConfig(currentText);
+          } catch (restoreError) {
+            recoveryError = restoreError;
+          }
+        }
+        const diskRestored = await readFile(this.options.configPath, 'utf8')
+          .then((text) => text === currentText)
+          .catch(() => false);
+        if (!diskRestored && recoveryError === undefined) {
+          recoveryError = new Error('回滚后的磁盘配置未恢复到原版本');
+        }
+        let rollbackError: unknown;
         try {
           await input.applyRuntime(previousConfig, config);
-        } catch (cause) {
-          restoreError = cause;
+        } catch (runtimeRollbackError) {
+          rollbackError = runtimeRollbackError;
         }
+
+        const changedPaths = [...new Set(input.changedPaths)].sort();
+        let postRollbackStarted = false;
+        if (diskRestored && rollbackError === undefined && recoveryError === undefined) {
+          postRollbackStarted = true;
+          let permit: ConfigRuntimeRecoveryPermit | undefined;
+          let rollbackCompleted = false;
+          try {
+            permit = this.options.recoveryGate?.beginRecoveryCompletion();
+            const preparedPublication = await this.options.onCommitted?.(currentText, permit);
+            if (permit && !(isPreparedConfigRecoveryPublication(preparedPublication))) {
+              throw new Error('恢复配置身份发布未返回受信 prepared publication');
+            }
+            await this.appendAudit({
+              at: (this.options.now?.() ?? new Date()).toISOString(),
+              actor: input.actor,
+              environment: this.options.environment,
+              processRole: this.options.processRole,
+              changedPaths,
+              beforeFingerprint,
+              afterFingerprint: rawConfigFingerprint,
+              result: 'rolled_back',
+              backup: basename(backupPath),
+              error: auditError(error),
+              originalApplyError: auditError(error),
+              candidateStillOwned,
+              diskRestored,
+            });
+            if (isPreparedConfigRecoveryPublication(preparedPublication)) {
+              preparedPublication.commit();
+            }
+            if (permit) this.options.recoveryGate?.completeRecovery(permit);
+            rollbackCompleted = true;
+          } catch (postRollbackError) {
+            this.options.recoveryGate?.abortRecovery(permit);
+            recoveryError = postRollbackError;
+          }
+          if (rollbackCompleted) throw error;
+        }
+
+        this.runtimeRecovery = {
+          actor: input.actor,
+          changedPaths,
+          beforeFingerprint,
+          afterFingerprint: rawConfigFingerprint,
+          backup: basename(backupPath),
+          targetText: currentText,
+          targetConfig: previousConfig,
+          failedConfig: config,
+          applyRuntime: input.applyRuntime,
+          originalApplyError: error,
+          rollbackError,
+          recoveryError,
+          candidateStillOwned,
+          diskRestored,
+        };
+        // trusted publish/audit 若在完成前失败，必须再次同步撤销 observation。
+        if (postRollbackStarted) this.markRuntimeDirty();
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: input.actor,
           environment: this.options.environment,
           processRole: this.options.processRole,
-          changedPaths: [...new Set(input.changedPaths)].sort(),
+          changedPaths,
           beforeFingerprint,
           afterFingerprint: rawConfigFingerprint,
-          result: restoreError ? 'runtime_restore_failed' : 'rolled_back',
+          result: 'rollback_failed',
+          runtimeRestore: {
+            result: 'runtime_restore_failed',
+            code: 'CONFIG_RUNTIME_RESTORE_FAILED',
+          },
           backup: basename(backupPath),
-          error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
-          ...(restoreError
-            ? {
-                restoreError:
-                  restoreError instanceof Error
-                    ? restoreError.message.slice(0, 500)
-                    : String(restoreError).slice(0, 500),
-              }
-            : {}),
+          error: auditError(error),
+          originalApplyError: auditError(error),
+          rollbackError: auditError(rollbackError),
+          recoveryError: auditError(recoveryError),
+          candidateStillOwned,
+          diskRestored,
         }).catch(() => undefined);
-        if (restoreError) throw new RuntimeRestoreFailedError(error, restoreError);
-        throw error;
+        throw new ConfigRuntimeRecoveryError(
+          error,
+          rollbackError,
+          recoveryError,
+          candidateStillOwned,
+          diskRestored,
+        );
       }
-      await this.pruneBackups();
-      return { config, previousConfig, beforeFingerprint, rawConfigFingerprint, appliedAt };
+      // 身份/观察面发布失败时响应 fail closed，但 durable/runtime commit 保持，供后续强制刷新收敛。
+      // 用稳定错误类型把该状态暴露给 Secret 等候选副作用的清理方。
+      try {
+        await input.onCommitted?.(candidateText);
+        await this.options.onCommitted?.(candidateText);
+        await this.pruneBackups();
+      } catch (error) {
+        throw new ConfigMutationCommittedError(error);
+      }
+      return {
+        config,
+        previousConfig,
+        beforeFingerprint,
+        rawConfigFingerprint,
+        effectiveConfigFingerprint,
+        revision: configRevision(candidateText),
+        appliedAt,
+      };
     } finally {
       await releaseLock();
     }
   }
 
+  private async recoverRuntimeIfDirty(triggerActor: string): Promise<void> {
+    const recovery = this.runtimeRecovery;
+    if (!recovery) return;
+
+    let recoveryError: unknown;
+    const diskText = await readFile(this.options.configPath, 'utf8').catch((error: unknown) => {
+      recoveryError = error;
+      return undefined;
+    });
+    if (diskText !== recovery.targetText && recoveryError === undefined) {
+      recoveryError = new Error('恢复前磁盘配置已变化');
+    }
+
+    if (recoveryError === undefined) {
+      let permit: ConfigRuntimeRecoveryPermit | undefined;
+      try {
+        // 必须复用失败 mutation 原有 recipe；gate 在 observation commit 与 audit 完成前始终保持 dirty。
+        await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
+        permit = this.options.recoveryGate?.beginRecoveryCompletion();
+        const preparedPublication = await this.options.onCommitted?.(recovery.targetText, permit);
+        if (permit && !(isPreparedConfigRecoveryPublication(preparedPublication))) {
+          throw new Error('恢复配置身份发布未返回受信 prepared publication');
+        }
+        await this.appendAudit({
+          at: (this.options.now?.() ?? new Date()).toISOString(),
+          actor: triggerActor,
+          recoveryForActor: recovery.actor,
+          environment: this.options.environment,
+          processRole: this.options.processRole,
+          changedPaths: recovery.changedPaths,
+          beforeFingerprint: recovery.beforeFingerprint,
+          afterFingerprint: recovery.afterFingerprint,
+          result: 'recovered',
+          backup: recovery.backup,
+          originalApplyError: auditError(recovery.originalApplyError),
+          rollbackError: auditError(recovery.rollbackError),
+          previousRecoveryError: auditError(recovery.recoveryError),
+          candidateStillOwned: recovery.candidateStillOwned,
+          diskRestored: recovery.diskRestored,
+        });
+        if (isPreparedConfigRecoveryPublication(preparedPublication)) {
+          preparedPublication.commit();
+        }
+        if (permit) this.options.recoveryGate?.completeRecovery(permit);
+        this.runtimeRecovery = undefined;
+        return;
+      } catch (error) {
+        this.options.recoveryGate?.abortRecovery(permit);
+        recoveryError = error;
+      }
+    }
+
+    // applyRuntime、prepare、audit 或 observation commit 任一步失败都保持门关闭并撤销 observation。
+    this.markRuntimeDirty();
+    await this.appendAudit({
+      at: (this.options.now?.() ?? new Date()).toISOString(),
+      actor: triggerActor,
+      recoveryForActor: recovery.actor,
+      environment: this.options.environment,
+      processRole: this.options.processRole,
+      changedPaths: recovery.changedPaths,
+      beforeFingerprint: recovery.beforeFingerprint,
+      afterFingerprint: recovery.afterFingerprint,
+      result: 'recovery_failed',
+      backup: recovery.backup,
+      originalApplyError: auditError(recovery.originalApplyError),
+      rollbackError: auditError(recovery.rollbackError),
+      previousRecoveryError: auditError(recovery.recoveryError),
+      recoveryError: auditError(recoveryError),
+      candidateStillOwned: recovery.candidateStillOwned,
+      diskRestored: recovery.diskRestored,
+    }).catch(() => undefined);
+    throw new ConfigRuntimeRecoveryError(
+      recovery.originalApplyError,
+      recovery.rollbackError,
+      recoveryError,
+      recovery.candidateStillOwned,
+      recovery.diskRestored,
+    );
+  }
+
+  private markRuntimeDirty(): void {
+    this.options.recoveryGate?.markDirty();
+    try {
+      this.options.onRuntimeDirty?.();
+    } catch {
+      // gate remains authoritative even if an observer cannot be invalidated.
+    }
+  }
+
   private async acquireLock(): Promise<() => Promise<void>> {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
-    const deadline = Date.now() + LOCK_WAIT_MS;
-    while (true) {
+    let releaseGuard: () => Promise<void>;
+    try {
+      releaseGuard = await acquireFileGuard(this.lockGuardPath);
+    } catch (error) {
+      if (!(error instanceof ConfigLockGuardBusyError)) throw error;
+      const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
+      throw new ConfigConflictError(configFingerprint(parseRaw(currentText)), configRevision(currentText));
+    }
+
+    try {
       try {
         await mkdir(this.lockPath, { mode: 0o700 });
-        await writeFile(
-          join(this.lockPath, 'owner.json'),
-          JSON.stringify({
-            pid: process.pid,
-            createdAt: new Date().toISOString(),
-          }),
-          { flag: 'wx', mode: 0o600 },
-        );
-        return async () => {
-          await rm(this.lockPath, { recursive: true, force: true });
-        };
       } catch (error) {
         if (
           !error ||
           typeof error !== 'object' ||
           (error as NodeJS.ErrnoException).code !== 'EEXIST'
-        )
-          throw error;
+        ) throw error;
         const lockStat = await stat(this.lockPath).catch(() => undefined);
-        if (lockStat && Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
+        const owner = await readLockOwner(this.lockPath);
+        if (
+          lockStat &&
+          Date.now() - lockStat.mtimeMs > LOCK_STALE_MS &&
+          !isProcessAlive(owner?.pid)
+        ) {
           await rm(this.lockPath, { recursive: true, force: true });
-          continue;
+          await mkdir(this.lockPath, { mode: 0o700 });
+        } else {
+          const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
+          throw new ConfigConflictError(
+            configFingerprint(parseRaw(currentText)),
+            configRevision(currentText),
+          );
         }
-        if (Date.now() >= deadline) throw new Error('配置正在由另一个进程更新，请稍后重试');
-        await delay(25);
       }
+
+      const token = randomUUID();
+      await writeFile(
+        join(this.lockPath, 'owner.json'),
+        JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+          token,
+        }),
+        { flag: 'wx', mode: 0o600 },
+      );
+      return async () => {
+        try {
+          const owner = await readLockOwner(this.lockPath);
+          if (owner?.pid === process.pid && owner.token === token) {
+            await rm(this.lockPath, { recursive: true, force: true });
+          }
+        } finally {
+          await releaseGuard();
+        }
+      };
+    } catch (error) {
+      await releaseGuard();
+      throw error;
     }
   }
 
+  // All lock-directory reclamation and release occurs while the OS guard is held.
   private async createBackup(
     text: string,
     fingerprint: string,
@@ -259,10 +651,12 @@ export class AdminConfigMutationService {
   }
 
   private async appendAudit(record: Record<string, unknown>): Promise<void> {
-    await appendFile(this.auditPath, `${JSON.stringify(record)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
+    const line = `${JSON.stringify(record)}\n`;
+    if (this.options.auditAppender) {
+      await this.options.auditAppender(this.auditPath, line);
+      return;
+    }
+    await appendFile(this.auditPath, line, { encoding: 'utf8', mode: 0o600 });
   }
 
   private async pruneBackups(): Promise<void> {

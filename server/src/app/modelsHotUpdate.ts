@@ -17,37 +17,75 @@ import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import { resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
 import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
+import { resolveModelRefStrict } from './models.js';
 
 /** applyModelsHotUpdate 需要写回的运行时切面；抽成最小接口便于测试。 */
 export interface ModelsHotUpdateTarget {
   updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => void;
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** titleGenerator 未配置/被删除时恢复与启动阶段一致的默认标题模型。 */
+  defaultTitleModel?: string;
 }
 
 /**
- * 把一份新的 models 配置应用到当前进程。
+ * 把一份新的 models 配置原子应用到当前进程。
  *
- * 派生链（门禁 / 标题生成）遵循「解析失败就保留原链」——热更新瞬时不应把已经
- * 工作的功能打挂。标题数组原地替换，保证已经持有引用的消费方也能看到新配置。
+ * 派生链（门禁 / 标题生成）必须先完整解析；配置仍引用模型但派生链为空时拒绝
+ * 整次更新，禁止 AppConfig/identity 已前进而执行侧仍保留旧链。
  */
+export type ModelsHotUpdateCommit = () => void;
+
+/**
+ * 先解析所有派生模型链，再返回只做同步赋值的 commit。这样解析异常发生在任何
+ * 运行态改变之前，共享配置刷新器可以与其他切面一起提交。
+ */
+export function prepareModelsHotUpdate(params: {
+  config: AppConfig;
+  target: ModelsHotUpdateTarget;
+  models: ModelsConfig;
+}): ModelsHotUpdateCommit {
+  const { config, target, models } = params;
+  const merged = { ...models, default: models.default };
+  const guardrailRefs = config.guardrail?.model
+    ? [config.guardrail.model, ...(config.guardrail.fallbackModels ?? [])]
+    : [];
+  const unresolvedGuardrailRefs = guardrailRefs.filter((ref) => !resolveModelRefStrict(merged, ref));
+  if (unresolvedGuardrailRefs.length > 0) {
+    throw new Error(`guardrail model chain cannot be resolved after models update: ${unresolvedGuardrailRefs.join(', ')}`);
+  }
+  const nextGuardrail = resolveGuardrailModelConfigs({ models: merged, guardrail: config.guardrail });
+  const titleRefs = config.titleGenerator?.model
+    ? [config.titleGenerator.model, ...(config.titleGenerator.fallbackModels ?? [])]
+    : [];
+  const unresolvedTitleRefs = titleRefs.filter((ref) => !resolveModelRefStrict(merged, ref));
+  if (unresolvedTitleRefs.length > 0) {
+    throw new Error(`title generator model chain cannot be resolved after models update: ${unresolvedTitleRefs.join(', ')}`);
+  }
+  const nextTitleGenerators = resolveTitleGeneratorConfigs({
+    models: merged,
+    titleGenerator: config.titleGenerator,
+    defaultModel: target.defaultTitleModel,
+  });
+
+  return () => {
+    configureModelPricing(models);
+    target.updateGuardrailModelConfigs(nextGuardrail);
+    if (target.titleGeneratorConfigs) {
+      target.titleGeneratorConfigs.splice(
+        0,
+        target.titleGeneratorConfigs.length,
+        ...nextTitleGenerators,
+      );
+    } else {
+      target.titleGeneratorConfigs = nextTitleGenerators;
+    }
+  };
+}
+
 export function applyModelsHotUpdate(params: {
   config: AppConfig;
   target: ModelsHotUpdateTarget;
   models: ModelsConfig;
 }): void {
-  const { config, target, models } = params;
-
-  configureModelPricing(models);
-  const merged = { ...models, default: models.default };
-
-  if (config.guardrail?.model) {
-    const nextGuardrail = resolveGuardrailModelConfigs({ models: merged, guardrail: config.guardrail });
-    if (nextGuardrail.length > 0) target.updateGuardrailModelConfigs(nextGuardrail);
-  }
-
-  const next = resolveTitleGeneratorConfigs({ models: merged, titleGenerator: config.titleGenerator });
-  if (next.length > 0) {
-    if (target.titleGeneratorConfigs) target.titleGeneratorConfigs.splice(0, target.titleGeneratorConfigs.length, ...next);
-    else target.titleGeneratorConfigs = next;
-  }
+  prepareModelsHotUpdate(params)();
 }

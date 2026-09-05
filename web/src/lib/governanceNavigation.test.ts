@@ -31,7 +31,7 @@ describe("governance navigation registry", () => {
     expect(GOVERNANCE_NAVIGATION.organization.map((item) => item.id)).toEqual([
       "overview", "members", "agents", "governance", "settings",
     ]);
-    expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(24);
+    expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(25);
     expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(27);
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
   });
@@ -125,6 +125,7 @@ describe("legacy URL canonical adapters", () => {
     ["/platform-admin/runs/r1", "platform.runtime.runs", "/platform-console/runtime/runs/r1"],
     ["/platform-admin/sandboxes", "platform.runtime.environments", "/platform-console/runtime/environments"],
     ["/platform-admin/infra", "platform.runtime.infra", "/platform-console/runtime/infra"],
+    ["/platform-admin/provider-quota", "platform.runtime.provider-quota", "/platform-console/runtime/provider-quota"],
     ["/platform-admin/audit", "platform.governance.audit", "/platform-console/governance/audit"],
     ["/platform-admin/efficiency", "platform.runtime.efficiency", "/platform-console/runtime/efficiency"],
     ["/platform-admin/settings/tenants", "platform.org-business.tenants", "/platform-console/org-business/tenants"],

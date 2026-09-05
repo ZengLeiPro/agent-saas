@@ -246,6 +246,7 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
           await options.onImageGenToolsUpdated?.(candidate.imageGenTools);
         },
       });
+
       res.json(pricingView(options.config));
     } catch (error) {
       sendConfigMutationError(res, error);

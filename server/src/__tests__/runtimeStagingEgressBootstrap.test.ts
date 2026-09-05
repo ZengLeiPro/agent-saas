@@ -9,13 +9,24 @@ afterEach(async () => {
 });
 
 describe('runtime Staging egress bootstrap', () => {
-  it('routes HTTP Vault reads through fail-closed egress before credentials resolve', async () => {
+  it('routes versioned HTTP Vault reads through fail-closed egress before credentials resolve', async () => {
     const directFetch = vi.fn(async () => {
       throw new Error('direct fetch must not be used');
     }) as unknown as typeof fetch;
     const proxyFetch = vi.fn(
       async () =>
-        new Response(JSON.stringify({ value: 'vault-secret' }), {
+        new Response(JSON.stringify({
+          value: 'vault-secret',
+          ref: {
+            id: 'ref-1',
+            ownerId: '__system__',
+            kind: 'client_daemon',
+            version: 1,
+            metadata: {},
+            createdAt: '2026-08-01T00:00:00.000Z',
+            updatedAt: '2026-08-01T00:00:00.000Z',
+          },
+        }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         }),

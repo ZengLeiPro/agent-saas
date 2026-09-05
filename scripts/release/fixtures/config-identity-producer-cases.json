@@ -1,0 +1,72 @@
+{
+  "valid": {
+    "schemaVersion": 1,
+    "status": "consistent",
+    "releaseId": "release-previous",
+    "expected": {
+      "schemaVersion": 1,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "observed": {
+      "schemaVersion": 1,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "credentialVersionDigest": null,
+      "versionResolution": "resolved",
+      "secretRefCount": 0
+    }
+  },
+  "invalid": {
+    "null": null,
+    "false": false,
+    "zero": 0,
+    "emptyString": "",
+    "emptyObject": {},
+    "digestMismatchRelationship": {
+      "schemaVersion": 1,
+      "status": "unverifiable",
+      "reason": "secret_ref_version_unresolved",
+      "releaseId": "release-previous",
+      "expected": {
+        "schemaVersion": 1,
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "observed": {
+        "schemaVersion": 1,
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "credentialVersionDigest": null,
+        "versionResolution": "unavailable",
+        "secretRefCount": 1
+      }
+    },
+    "schemaMismatchRelationship": {
+      "schemaVersion": 1,
+      "status": "unverifiable",
+      "reason": "secret_ref_version_unresolved",
+      "releaseId": "release-previous",
+      "expected": {
+        "schemaVersion": 2,
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "observed": {
+        "schemaVersion": 1,
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "credentialVersionDigest": null,
+        "versionResolution": "unavailable",
+        "secretRefCount": 1
+      }
+    },
+    "expectedMissingRelationship": {
+      "schemaVersion": 1,
+      "status": "unverifiable",
+      "reason": "secret_ref_version_unresolved",
+      "releaseId": "release-previous",
+      "observed": {
+        "schemaVersion": 1,
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "credentialVersionDigest": null,
+        "versionResolution": "unavailable",
+        "secretRefCount": 1
+      }
+    }
+  }
+}

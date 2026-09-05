@@ -299,7 +299,7 @@ describe('governance access routes', () => {
     expect(platformBody.memberships[0]!.allowedActions.every(action => action.requiresReason)).toBe(true);
   });
 
-  it('成员详情按八类资源（含 DWS 委托）返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
+  it('成员详情按九类资源（含 DWS 委托与定制项目安装实例）返回权威 Assignment 聚合，解析失败则整体 fail closed', async () => {
     const listEffectiveResources = vi.fn().mockImplementation(async (
       _tenantId: string, _userId: string, resourceType: string,
     ) => resourceType === 'skill' ? [{
@@ -333,7 +333,7 @@ describe('governance access routes', () => {
         resources: expect.arrayContaining([expect.objectContaining({ resourceId: 'skill-1' })]),
       }),
     ]));
-    expect(listEffectiveResources).toHaveBeenCalledTimes(8);
+    expect(listEffectiveResources).toHaveBeenCalledTimes(9); // = ASSIGNMENT_RESOURCE_TYPES 长度
     expect(body.usagePolicy).toMatchObject({
       items: [{ userId: 'user-2', monthAttributedCreditsMicro: 125 }],
     });

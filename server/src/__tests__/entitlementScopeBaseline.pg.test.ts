@@ -45,7 +45,7 @@ describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
     await pool.end();
   }, 30_000);
 
-  it('新组织初始化六类 v1 基线，新增三类为空 selected，回滚同步删除', async () => {
+  it('新组织初始化七类 v1 基线，新增四类为空 selected，回滚同步删除', async () => {
     await store.provisionTenantGovernance({
       tenantId: 'tenant-new',
       settings: DEFAULT_TENANT_SETTINGS,
@@ -54,7 +54,12 @@ describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
     const scopes = await store.listResourceScopes('tenant-new');
     expect(scopes.map((item) => item.resourceType)).toEqual([...ENTITLEMENT_RESOURCE_TYPES].sort());
     expect(scopes.every((item) => item.version === 1)).toBe(true);
-    for (const resourceType of ['agent_template', 'skill', 'environment_template']) {
+    for (const resourceType of [
+      'agent_template',
+      'skill',
+      'environment_template',
+      'integrated_system',
+    ]) {
       expect(scopes.find((item) => item.resourceType === resourceType)).toMatchObject({
         mode: 'selected',
         resourceIds: [],

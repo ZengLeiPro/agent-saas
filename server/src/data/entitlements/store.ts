@@ -582,6 +582,7 @@ function completeResourceScopes(settings: TenantSettings): ReturnType<typeof leg
     { resourceType: 'agent_template', mode: 'selected', resourceIds: [] },
     { resourceType: 'skill', mode: 'selected', resourceIds: [] },
     { resourceType: 'environment_template', mode: 'selected', resourceIds: [] },
+    { resourceType: 'integrated_system', mode: 'selected', resourceIds: [] },
   ];
 }
 

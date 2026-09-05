@@ -9,6 +9,8 @@ export const ENTITLEMENT_RESOURCE_TYPES = [
   'agent_template',
   'skill',
   'environment_template',
+  // WP2a：定制项目（集成系统）权益（规范 §8.1）。
+  'integrated_system',
 ] as const;
 export type EntitlementResourceType = typeof ENTITLEMENT_RESOURCE_TYPES[number];
 export type EntitlementScopeMode = 'all' | 'selected';

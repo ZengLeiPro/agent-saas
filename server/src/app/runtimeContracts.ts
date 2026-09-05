@@ -68,6 +68,7 @@ import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { PgAgentResourceStore } from '../data/agentResources/index.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import type { PgSkillPresentationStore } from '../data/skillPresentations/index.js';
+import type { KyAppSystemStore } from '../kyapp/systems/types.js';
 import type {
   GovernanceChangePlanner,
   PgGovernanceChangeJobStore,
@@ -376,6 +377,8 @@ export interface AppRuntime {
   skillGovernanceStore?: PgSkillGovernanceStore;
   /** 技能在能力中心的本地化展示名称、简介与组织覆盖。 */
   skillPresentationStore?: PgSkillPresentationStore;
+  /** WP2a 定制项目系统目录三表（定义 / 版本 / 安装实例）；未配置 kyApp 域时为 undefined。 */
+  kyAppSystemStore?: KyAppSystemStore;
   /** 可重试 Tenant/Delete/Retire/Revoke 治理 Change Job。 */
   governanceChangeJobStore?: PgGovernanceChangeJobStore;
   governanceChangePlanner?: GovernanceChangePlanner;

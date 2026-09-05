@@ -17,7 +17,7 @@ import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationS
 import { governanceTablePrefix } from './governanceTablePrefix.js';
 export { governanceTablePrefix } from './governanceTablePrefix.js';
 
-export const GOVERNANCE_SCHEMA_VERSION = 40;
+export const GOVERNANCE_SCHEMA_VERSION = 41;
 
 export type GovernancePgPool = pg.Pool;
 type GovernanceMigration = {

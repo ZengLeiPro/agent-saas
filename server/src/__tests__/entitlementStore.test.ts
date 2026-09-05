@@ -194,11 +194,12 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
 
     const scopeInserts = queries.filter(item => item.sql.includes('INSERT INTO test_entitlement_resource_scopes'));
     expect(scopeInserts.map(item => item.params?.[1])).toEqual(ENTITLEMENT_RESOURCE_TYPES);
-    expect(scopeInserts.filter(item => ['agent_template', 'skill', 'environment_template'].includes(String(item.params?.[1]))))
+    expect(scopeInserts.filter(item => ['agent_template', 'skill', 'environment_template', 'integrated_system'].includes(String(item.params?.[1]))))
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ params: ['acme', 'agent_template', 'selected', 'platform-1'] }),
         expect.objectContaining({ params: ['acme', 'skill', 'selected', 'platform-1'] }),
         expect.objectContaining({ params: ['acme', 'environment_template', 'selected', 'platform-1'] }),
+        expect.objectContaining({ params: ['acme', 'integrated_system', 'selected', 'platform-1'] }),
       ]));
     expect(queries.some(item => item.sql.includes("'tenant_provisioning'"))).toBe(true);
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(1);
@@ -230,7 +231,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
 
     await expect(store.backfillMissingResourceScopes(input)).resolves.toEqual({
       tenantsScanned: 1,
-      scopesInserted: 3,
+      scopesInserted: ENTITLEMENT_RESOURCE_TYPES.length - 3,
       scopesSkipped: 3,
       tenantsWithErrors: 0,
       issuesRecorded: 0,
@@ -238,12 +239,12 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     await expect(store.backfillMissingResourceScopes(input)).resolves.toEqual({
       tenantsScanned: 1,
       scopesInserted: 0,
-      scopesSkipped: 6,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length,
       tenantsWithErrors: 0,
       issuesRecorded: 0,
     });
     const inserts = queries.filter(item => item.sql.includes('INSERT INTO test_entitlement_resource_scopes'));
-    expect(inserts).toHaveLength(3);
+    expect(inserts).toHaveLength(ENTITLEMENT_RESOURCE_TYPES.length - 3);
     expect(inserts.every(item => !item.sql.includes('DO UPDATE'))).toBe(true);
   });
 

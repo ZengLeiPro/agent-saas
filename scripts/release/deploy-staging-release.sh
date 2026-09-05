@@ -318,7 +318,7 @@ config.artifact = {
   backend: 'local',
   rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
   signedUrlSecret,
-  readUrlTtlSeconds: 900,
+  readUrlTtlSeconds: 300,
   maxBlobBytes: 100 * 1024 * 1024,
   retentionDays: 90,
   gcIntervalMs: 24 * 60 * 60 * 1000,
@@ -488,7 +488,7 @@ if (artifact.backend !== 'local') failures.push('artifact.backend must be local'
 if (artifact.rootDir !== '/mnt/agent-saas-staging/runtime/artifacts') failures.push('artifact.rootDir must use the shared NAS Artifact directory');
 if (typeof artifact.signedUrlSecret !== 'string' || artifact.signedUrlSecret.length < 16) failures.push('artifact.signedUrlSecret must be persistent');
 if (artifact.signedUrlSecret === config.auth?.jwtSecret) failures.push('artifact.signedUrlSecret must be independent from auth.jwtSecret');
-if (artifact.readUrlTtlSeconds !== 900) failures.push('artifact.readUrlTtlSeconds must be 900');
+if (artifact.readUrlTtlSeconds !== 300) failures.push('artifact.readUrlTtlSeconds must be 300');
 if (artifact.maxBlobBytes !== 104857600) failures.push('artifact.maxBlobBytes must be 104857600');
 if (artifact.retentionDays !== 90) failures.push('artifact.retentionDays must be 90');
 if (artifact.gcIntervalMs !== 86400000) failures.push('artifact.gcIntervalMs must be 86400000');

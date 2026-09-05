@@ -495,7 +495,7 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /artifact\.backend must be local/u);
   assert.match(deploy, /artifact\.rootDir must use the shared NAS Artifact directory/u);
   assert.match(deploy, /artifact\.signedUrlSecret must be independent from auth\.jwtSecret/u);
-  assert.match(deploy, /artifact\.readUrlTtlSeconds must be 900/u);
+  assert.match(deploy, /artifact\.readUrlTtlSeconds must be 300/u);
   assert.match(deploy, /artifact\.maxBlobBytes must be 104857600/u);
   assert.match(deploy, /artifact\.retentionDays must be 90/u);
   assert.match(deploy, /artifact\.gcIntervalMs must be 86400000/u);

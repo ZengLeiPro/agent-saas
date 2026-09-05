@@ -20,7 +20,10 @@ export function webDistDir(): string {
   return join(projectRoot(), 'web', 'dist');
 }
 
-/** 本项目自己的迁移目录。 */
+/**
+ * 本项目自己的迁移目录。
+ * 注意从项目根算，不要从当前文件算：`tsc` 不会把 `.sql` 复制进 `server/dist/`。
+ */
 export function migrationsDir(): string {
-  return join(dirname(fileURLToPath(import.meta.url)), 'migrations');
+  return join(projectRoot(), 'server', 'migrations');
 }

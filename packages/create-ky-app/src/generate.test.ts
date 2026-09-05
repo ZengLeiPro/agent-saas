@@ -145,6 +145,29 @@ describe('createProject', () => {
     expect(pkg.devDependencies['@kaiyan/ky-app-cli']).toContain('file:');
   });
 
+  it('--link 非默认时写 pnpm-workspace.yaml 的 overrides（传递依赖也要改道）', async () => {
+    const tarballs = join(workDir, 'tarballs2');
+    await mkdir(tarballs, { recursive: true });
+    for (const name of [...KY_PACKAGES, ...KY_DEV_PACKAGES]) {
+      await writeFile(join(tarballs, `${name.replace('@kaiyan/', 'kaiyan-')}-0.1.0.tgz`), 'x');
+    }
+    const target = await generate(tarballs);
+    const yaml = await readFile(join(target, 'pnpm-workspace.yaml'), 'utf8');
+    expect(yaml).toContain('overrides:');
+    for (const name of [...KY_PACKAGES, ...KY_DEV_PACKAGES]) {
+      expect(yaml).toContain(`'${name}': file:`);
+    }
+  });
+
+  it('默认版本号时只写 onlyBuiltDependencies，不写 overrides', async () => {
+    const target = await generate();
+    const yaml = await readFile(join(target, 'pnpm-workspace.yaml'), 'utf8');
+    expect(yaml).toContain('allowBuilds:');
+    expect(yaml).toContain('esbuild: true');
+    expect(yaml).toContain('onlyBuiltDependencies:');
+    expect(yaml).not.toContain('overrides:');
+  });
+
   it('--link 指向 workspace 根时写 link:', async () => {
     const workspace = join(workDir, 'agent-saas');
     await mkdir(join(workspace, 'packages', 'ky-app-contract'), { recursive: true });

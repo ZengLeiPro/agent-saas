@@ -36,6 +36,8 @@ interface Row {
   allowed: Actor[];
   /** 允许访问时可接受的状态码（业务层可能再报别的错，这里只关心不是 401/403）。 */
   okStatuses?: number[];
+  /** 能力行的逻辑调用 id：必须与 URL / 幂等键里的 lcid 一致。 */
+  lcid?: string;
 }
 
 export async function chapter03(ctx: DoctorContext): Promise<void> {
@@ -63,6 +65,7 @@ export async function chapter03(ctx: DoctorContext): Promise<void> {
     actor: Actor,
     requestId: string,
     capabilityId?: string,
+    lcid?: string,
   ): Promise<string | undefined> {
     switch (actor) {
       case 'public':
@@ -75,7 +78,7 @@ export async function chapter03(ctx: DoctorContext): Promise<void> {
         return ctx.signAgent({
           sub: users.member.sub,
           cap: capabilityId ?? readOnly?.id ?? 'unknown',
-          lcid: `lc_${requestId}`,
+          lcid: lcid ?? `lc_${requestId}`,
           rid: requestId,
         });
       case 'platform':
@@ -133,7 +136,8 @@ export async function chapter03(ctx: DoctorContext): Promise<void> {
       body: { input: firstValidInput(ctx, readOnly.id) },
       headers: { 'X-KY-Idempotency-Key': 'lc_matrix' },
       allowed: ['agent'],
-      okStatuses: [200, 400, 409],
+      okStatuses: [200, 409],
+      lcid: 'lc_matrix',
     });
     rows.push({
       label: `GET /ky/v1/capabilities/${readOnly.id}/executions/{lcid}（agent）`,
@@ -141,6 +145,7 @@ export async function chapter03(ctx: DoctorContext): Promise<void> {
       path: () => `/ky/v1/capabilities/${encodeURIComponent(readOnly.id)}/executions/lc_matrix`,
       allowed: ['agent'],
       okStatuses: [200],
+      lcid: 'lc_matrix',
     });
   }
 
@@ -171,7 +176,7 @@ export async function chapter03(ctx: DoctorContext): Promise<void> {
         async () => {
           const requestId = newRequestId('matrix');
           const capabilityId = readOnly?.id;
-          const token = await tokenFor(actor, requestId, capabilityId);
+          const token = await tokenFor(actor, requestId, capabilityId, row.lcid);
           const result = await ctx.call({
             method: row.method,
             path: row.path(),

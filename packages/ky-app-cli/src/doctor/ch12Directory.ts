@@ -64,6 +64,8 @@ export async function chapter12(ctx: DoctorContext): Promise<void> {
   }
 
   await reporter.check('快照分页逐页应用（pageToken 走完全部页）', async () => {
+    // doctor 启动时已经同步过一轮种子数据，这里先让游标过期，逼消费端整份重拉。
+    directory.expireCursor();
     directory.setSnapshot({
       snapshotSeq: 10,
       groups: [group('g-root', '总部')],
@@ -78,7 +80,9 @@ export async function chapter12(ctx: DoctorContext): Promise<void> {
       .filter((path) => path.startsWith('/api/app-contract/v1/directory/snapshot'));
     assert(pages.length >= 3, `5 个用户按每页 2 条应至少 3 页，实际 ${String(pages.length)} 页`);
     const local = await state();
-    assert(local.users.length === 5, `本地应有 5 个用户，实际 ${String(local.users.length)}`);
+    // 旧用户不会被删，只会标 removed（§3.4 离职数据保留），所以只数在册的。
+    const active = local.users.filter((item) => item.removed !== true);
+    assert(active.length === 5, `本地在册用户应为 5 个，实际 ${String(active.length)}`);
     assert(local.checkpoint === 10, `本地 checkpoint 应为 10，实际 ${String(local.checkpoint)}`);
   });
 

@@ -86,5 +86,8 @@ export function permVersionOf(roles: readonly string[], isTenantAdmin: boolean):
   const permissions = [...permissionsFor(roles, isTenantAdmin)].sort((left, right) =>
     left.localeCompare(right),
   );
-  return `pv_${createHash('sha256').update(permissions.join('|'), 'utf8').digest('hex').slice(0, 12)}`;
+  // 角色与权限点都进哈希：角色一变版本就变（即使这个角色暂时还没绑定权限点），
+  // 壳与浏览器 SDK 据此刷新 /me，宁可多刷一次也不能漏。
+  const material = `${effectiveRoles(roles, isTenantAdmin).join('|')}#${permissions.join('|')}`;
+  return `pv_${createHash('sha256').update(material, 'utf8').digest('hex').slice(0, 12)}`;
 }

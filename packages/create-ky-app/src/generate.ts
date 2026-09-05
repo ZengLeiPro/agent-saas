@@ -189,6 +189,7 @@ export async function createProject(options: CreateProjectOptions): Promise<Crea
   }
 
   await applyPackageJson(targetDir, options, link);
+  written.push(await writePnpmWorkspace(targetDir, link));
   await writeClaudeMd(targetDir, options);
   if (!written.includes('CLAUDE.md')) written.push('CLAUDE.md');
   written.sort((left, right) => left.localeCompare(right));
@@ -219,6 +220,38 @@ async function applyPackageJson(
     parsed.devDependencies[packageName] = specifierFor(link, packageName);
   }
   await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * pnpm 10 起 `overrides` 与 `onlyBuiltDependencies` 都放在 `pnpm-workspace.yaml`
+ * （写在 package.json 里会被忽略并告警）。
+ *
+ * - `onlyBuiltDependencies`：白名单外的 postinstall 一律不执行，`esbuild` 要装平台二进制，
+ *   不放行的话 `vite build` 直接起不来；
+ * - `overrides`：契约包之间互相依赖（cli → server → contract），用 tarball / workspace
+ *   安装时这些**传递依赖**仍写着 `0.1.0`，registry 上并不存在，必须一并改道。
+ */
+async function writePnpmWorkspace(targetDir: string, link: LinkMode): Promise<string> {
+  const lines = [
+    '# pnpm 10 的项目级设置。',
+    'packages: []',
+    '',
+    '# 只放行确实需要的 postinstall（vite 依赖 esbuild 的平台二进制），其余一律不执行。',
+    '# pnpm 11 认 allowBuilds，pnpm 10 认 onlyBuiltDependencies，两个都写上。',
+    'allowBuilds:',
+    '  esbuild: true',
+    'onlyBuiltDependencies:',
+    '  - esbuild',
+  ];
+  if (link.kind !== 'version') {
+    lines.push('', '# 契约包用 tarball / workspace 安装，传递依赖一起改道。', 'overrides:');
+    for (const packageName of [...KY_PACKAGES, ...KY_DEV_PACKAGES]) {
+      lines.push(`  '${packageName}': ${specifierFor(link, packageName)}`);
+    }
+  }
+  lines.push('');
+  await writeFile(join(targetDir, 'pnpm-workspace.yaml'), lines.join('\n'), 'utf8');
+  return 'pnpm-workspace.yaml';
 }
 
 /** `CLAUDE.md` = 项目说明 + contract 生成的 §9.2 契约片段。 */

@@ -118,11 +118,35 @@ export async function runBrowserChapters(ctx: DoctorContext): Promise<void> {
   }
 }
 
-/** 取被测项目所在的子帧。 */
-function appFrame(ctx: DoctorContext, page: PageLike): FrameLike {
-  const frame = page.frames().find((item) => item.url().startsWith(ctx.app.baseUrl));
-  if (frame === undefined) throw new Error('页面里找不到被测项目的 iframe');
-  return frame;
+/**
+ * 取被测项目所在的子帧，并等它把 `window.__kyApp` 挂上。
+ *
+ * iframe 换 `src` 之后旧的 Frame 对象会在很短时间里仍然可见，直接 evaluate 会命中
+ * 上一份文档（或者撞上 "Execution context was destroyed"）。这里统一轮询到位再返回。
+ */
+async function appFrame(ctx: DoctorContext, page: PageLike, timeoutMs = 15_000): Promise<FrameLike> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = '页面里找不到被测项目的 iframe';
+  for (;;) {
+    for (const frame of page.frames()) {
+      // 按 origin 精确比对：端口前缀相同（如 6481 与 64810）会让 startsWith 认错帧。
+      let origin = '';
+      try {
+        origin = new URL(frame.url()).origin;
+      } catch {
+        continue;
+      }
+      if (origin !== new URL(ctx.app.baseUrl).origin) continue;
+      try {
+        if (await frame.evaluate<boolean>('typeof window.__kyApp === "object"')) return frame;
+        lastError = '子帧里还没有 window.__kyApp（模板必须暴露它，见 README）';
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (Date.now() > deadline) throw new Error(`等待被测项目子帧就绪超时：${lastError}`);
+    await SLEEP(100);
+  }
 }
 
 async function mountAndWait(
@@ -208,7 +232,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
     await page.waitForFunction('window.__kyShell.count("ready") >= 1', undefined, {
       timeout: 15_000,
     });
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     await frame.evaluate<void>(
       'window.__kyProbe = { settled: false }; window.__kyApp.fetch("/ky/v1/me").then(function () { window.__kyProbe.settled = true; }, function () { window.__kyProbe.settled = true; }); undefined;',
     );
@@ -218,7 +242,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
     await page.waitForFunction('window.__kyShell.counters.initAck > 0', undefined, {
       timeout: 15_000,
     });
-    const frameAfter = appFrame(ctx, page);
+    const frameAfter = await appFrame(ctx, page);
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (await frameAfter.evaluate<boolean>('window.__kyProbe.settled')) break;
       await SLEEP(100);
@@ -231,7 +255,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
 
   await reporter.check('重复 (type,id) 重放缓存应答，副作用只执行一次', async () => {
     await mountAndWait(page, { path: '/' });
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     const before = await frame.evaluate<number>(
       'window.__kyApp.getState().counters.replayedReplies',
     );
@@ -268,16 +292,31 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
     },
   );
 
-  await reporter.check('F5：子端重载后重新握手（同 nonce 同 attestation 命中缓存）', async () => {
-    const frame = appFrame(ctx, page);
-    await frame.evaluate<void>('window.location.reload(); undefined;');
-    await page.waitForFunction('window.__kyShell.count("ready") >= 2', undefined, {
-      timeout: 15_000,
-    });
-    await page.waitForFunction('window.__kyShell.count("init.ack") >= 2', undefined, {
-      timeout: 15_000,
-    });
-  });
+  await reporter.check(
+    'F5：壳页面刷新后按壳路径重新握手（新 nonce，ready.path 规范化）',
+    async () => {
+      // §5.2 的 F5 语义是「壳页面刷新」：解析壳路径 → 生成 nonce → 设 src → 握手。
+      // 子端自己 location.reload() 不是产品路径，且会把 document.referrer 变成自身 URL，
+      // 子端因此推不出壳 origin（见基线偏差记录 C-05）。
+      const previousNonce = await page.evaluate<string>('window.__kyShell.state.nonce');
+      await page.goto(ctx.shell.shellUrl({ path: '/orders/?b=2&a=1' }), { waitUntil: 'load' });
+      await page.waitForFunction('window.__kyShell && window.__kyShell.config', undefined, {
+        timeout: 15_000,
+      });
+      await page.waitForFunction('window.__kyShell.counters.initAck > 0', undefined, {
+        timeout: 20_000,
+      });
+      const nonce = await page.evaluate<string>('window.__kyShell.state.nonce');
+      assert(nonce !== previousNonce && nonce.length >= 22, 'F5 后应重新生成 ≥128 bit 的 nonce');
+      const readyPath = await page.evaluate<string>(
+        'window.__kyShell.received.filter((m) => m.type === "ready")[0].payload.path',
+      );
+      assert(
+        readyPath === '/orders?a=1&b=2',
+        `F5 后的 ready.path 应为 /orders?a=1&b=2，实际 ${readyPath}`,
+      );
+    },
+  );
 
   await reporter.check(
     '壳签短 TTL 令牌 → 子端主动续期（token.request → token.refresh）',
@@ -291,7 +330,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
 
   await reporter.check('401 → 单飞续期 → 自动重放一次 GET', async () => {
     await mountAndWait(page, { path: '/', tokenSkewSeconds: 120 });
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     const status = await frame.evaluate<number>(
       'window.__kyApp.fetch("/ky/v1/me").then((r) => r.status)',
     );
@@ -302,7 +341,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
 
   await reporter.check('伪造 event.source 的消息被子端丢弃', async () => {
     await mountAndWait(page, { path: '/' });
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     const before = await frame.evaluate<number>('window.__kyApp.getState().counters.droppedSource');
     await page.evaluate<void>(
       'window.__kyShell.forge({ ns: "ky", v: 1, type: "route.navigate", id: "forged-1", payload: { path: "/orders" } }); undefined;',
@@ -317,7 +356,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
   });
 
   await reporter.check('link.open 本地拒绝危险 scheme 与非白名单域名', async () => {
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     const notHttps = await frame.evaluate<{ ok: boolean; reason?: string }>(
       'window.__kyApp.openLink("http://docs.kaiyan.net/a")',
     );
@@ -348,7 +387,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
   await reporter.check('白名单内的 link.open 才会送到壳并拿到 link.result', async () => {
     const hosts = ctx.manifest.externalLinkHosts ?? [];
     assert(hosts.length > 0, 'manifest 没有声明 externalLinkHosts，无法验证白名单放行路径');
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     const outcome = await frame.evaluate<{ ok: boolean }>(
       `window.__kyApp.openLink("https://${hosts[0]}/help")`,
     );
@@ -358,7 +397,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
   });
 
   await reporter.check('agent.open / toast / theme.changed / visibility 通路可用', async () => {
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     await frame.evaluate<void>(
       'window.__kyApp.openAgent({ prompt: "帮我看看这张订单", context: { entity: { type: "order", id: "SO-1", label: "SO-1" } } }); window.__kyApp.toast({ level: "info", message: "测试" }); undefined;',
     );
@@ -444,7 +483,7 @@ async function chapter16(ctx: DoctorContext, page: PageLike): Promise<void> {
     await SLEEP(1500);
     const acks = await page.evaluate<number>('window.__kyShell.count("init.ack")');
     assert(acks === 0, `子端不该回 init.ack，实际收到 ${String(acks)} 条`);
-    const frame = appFrame(ctx, page);
+    const frame = await appFrame(ctx, page);
     const phase = await frame.evaluate<string>('window.__kyApp.getState().phase');
     assert(phase === 'failed', `子端应进入 failed，实际 ${phase}`);
   });

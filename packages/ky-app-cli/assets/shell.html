@@ -202,7 +202,13 @@
           shell.sent.length = 0;
           waiters.length = 0;
           initResends = 0;
-          shell.counters.initAckDropped = 0;
+          // 计数器必须一起清零：否则「等 initAck > 0」会命中上一次挂载的结果，
+          // 后续断言全部落在还没加载完的 iframe 上。
+          for (var counterName in shell.counters) {
+            if (Object.prototype.hasOwnProperty.call(shell.counters, counterName)) {
+              shell.counters[counterName] = 0;
+            }
+          }
           if (initAckTimer) clearTimeout(initAckTimer);
           setPhase('mounting');
           var nonce = await newNonce();
@@ -245,6 +251,9 @@
 
         async function sendInit(replyToId) {
           var token = await fetchToken();
+          // skew 只用于制造「首枚令牌已过期」，续期必须换成正常令牌，
+          // 否则子端 401 → 续期 → 再 401，永远拿不到 200。
+          mountOptions.tokenSkewSeconds = 0;
           shell.state.tokenExp = token.tokenExp;
           var payload = {
             token: token.token,
@@ -307,13 +316,6 @@
                 showError('contract_version_mismatch', '系统版本不兼容');
                 return;
               }
-              // 一致性测试用：先「装作没收到」前几条 ready，逼子端按 §5.4 每 1 s 重发。
-              if (
-                mountOptions.minReadyBeforeInit &&
-                shell.counters.ready < mountOptions.minReadyBeforeInit
-              ) {
-                return;
-              }
               var verdict = await verifyAttestation(data.payload);
               shell.state.verify = verdict;
               if (!verdict.ok) {
@@ -321,6 +323,14 @@
                   'attest_failed',
                   '《' + shell.config.systemName + '》暂时无法加载，已通知技术支持',
                 );
+                return;
+              }
+              // 一致性测试用：校验照做（重复提交同一 attestation 应命中缓存），
+              // 但先「装作没准备好」不发 init，逼子端按 §5.4 每 1 s 重发 ready。
+              if (
+                mountOptions.minReadyBeforeInit &&
+                shell.counters.ready < mountOptions.minReadyBeforeInit
+              ) {
                 return;
               }
               setPhase('init');

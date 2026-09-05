@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * pre-commit 密钥扫描（§8.4）：`.env` 真值、私钥 PEM、`Bearer ` 字面量一律拦下。
+ * pre-commit 密钥扫描（§8.4）：`.env` 真值、私钥 PEM、令牌前缀字面量一律拦下。
  * 与 `ky-app doctor` 第 14 章共用 `@kaiyan/ky-app-cli` 里的同一套规则。
  */
 import { formatFindings, scanSecrets } from '@kaiyan/ky-app-cli';

@@ -68,8 +68,17 @@ export async function chapter13(ctx: DoctorContext): Promise<void> {
     expectStatus(first, 200, '首次投递');
     const second = await ctx.sendEvent(event);
     expectStatus(second, 200, '重复投递');
+    // 只比内容，不比键序：ack 走过一次 JSON 往返后字段顺序可能不同。
+    const normalize = (value: unknown): string =>
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+            left.localeCompare(right),
+          ),
+        ),
+      );
     assert(
-      JSON.stringify(first.json) === JSON.stringify(second.json),
+      normalize(first.json) === normalize(second.json),
       `两次 ack 不一致：${JSON.stringify(first.json)} vs ${JSON.stringify(second.json)}`,
     );
   });

@@ -149,6 +149,14 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('packages/ky-app-contract/src/index.ts'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/check-env-var-count.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('docs/release-manifest-v1.md'), {
     components: [],
     blockingReason: null,

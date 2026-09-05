@@ -21,7 +21,7 @@ import { WebToolProvider } from '../agent/webToolProvider.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { DefaultExecutionTransportRegistry } from '../runtime/inProcessTransport.js';
 import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
-import type { HandRecord, HandStore, RegisterHandInput, HandStatus } from '../runtime/handStore.js';
+import { MemoryHandStore } from './helpers/toolRuntimeHandStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
@@ -40,23 +40,6 @@ function mockExecutionTransport(invoke: ExecutionTransport['invoke']): Execution
   };
 }
 
-class MemoryHandStore implements HandStore {
-  constructor(private readonly hands: HandRecord[]) {}
-  async register(_input: RegisterHandInput): Promise<HandRecord> { throw new Error('not implemented'); }
-  async updateStatus(handId: string, status: HandStatus): Promise<HandRecord | null> {
-    const hand = this.hands.find((item) => item.handId === handId);
-    if (!hand) return null;
-    hand.status = status;
-    hand.updatedAt = new Date().toISOString();
-    return hand;
-  }
-  async claimProvisionRecovery(): Promise<HandRecord | null> { return null; }
-  async completeProvisionAttempt(): Promise<HandRecord | null> { return null; }
-  async completeProvisionRecovery(): Promise<HandRecord | null> { return null; }
-  async get(handId: string): Promise<HandRecord | null> { return this.hands.find((hand) => hand.handId === handId) ?? null; }
-  async listBySession(sessionId: string): Promise<HandRecord[]> { return this.hands.filter((hand) => hand.sessionId === sessionId); }
-  async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return this.hands.filter((hand) => hand.workspaceId === workspaceId); }
-}
 
 const adminContext: ChannelContext = {
   channel: 'web',
@@ -756,7 +739,13 @@ describe('PlatformToolRuntime', () => {
     }
   });
 
-  it('WaitForWorkspaceReady reports the current runtime status without exposing hand details', async () => {
+  it.each([
+    { status: 'provisioning' as const, metadata: {}, expected: 'provisioning' },
+    { status: 'unhealthy' as const, metadata: { dispatchAuthorized: true, reconcileRequired: true, provisionResult: 'result_unknown', provisionDispatchClaim: 'active-claim', provisionDispatchClaimedAt: new Date().toISOString(), invokeTimeoutMs: 600_000 }, expected: 'provisioning' },
+    { status: 'unhealthy' as const, metadata: { dispatchAuthorized: true, reconcileRequired: true, provisionResult: 'result_unknown', provisionDispatchClaim: 'expired-claim', provisionDispatchClaimedAt: new Date(0).toISOString(), invokeTimeoutMs: 600_000 }, expected: 'failed' },
+    { status: 'unhealthy' as const, metadata: { dispatchAuthorized: false, reconcileRequired: true, provisionResult: 'result_unknown' }, expected: 'failed' },
+    { status: 'unhealthy' as const, metadata: { dispatchAuthorized: true, reconcileRequired: true, provisionResult: 'result_unknown', provisionDispatchClaim: 'failed-claim', provisionDispatchClaimedAt: new Date().toISOString(), provisionFailure: 'transport failed' }, expected: 'failed' },
+  ])('WaitForWorkspaceReady 区分启动在途与失败：$expected / $metadata.provisionDispatchClaim', async ({ status, metadata, expected }) => {
     const localInvoke = vi.fn(async () => successResponse('local result'));
     const registry = new DefaultExecutionTransportRegistry([
       ['server-local', mockExecutionTransport(localInvoke)],
@@ -766,12 +755,12 @@ describe('PlatformToolRuntime', () => {
       sessionId: 'session-1',
       workspaceId: 'workspace-tenant',
       type: 'server-remote',
-      status: 'provisioning',
+      status,
       endpoint: 'http://tenant-hand.example',
       capabilities: [],
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
-      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+      metadata: { tenantRemoteHandId: 'agent-saas-acs', ...metadata },
     }]);
     const runtime = new PlatformToolRuntime({ executionTransportRegistry: registry, handStore });
 
@@ -790,7 +779,7 @@ describe('PlatformToolRuntime', () => {
 
     const parsed = JSON.parse(result.content);
     expect(parsed).toMatchObject({
-      status: 'provisioning',
+      status: expected,
       workspaceId: 'workspace-tenant',
       executionTarget: 'server-remote',
     });
@@ -805,12 +794,12 @@ describe('PlatformToolRuntime', () => {
       sessionId: 'session-1',
       workspaceId: 'workspace-tenant',
       type: 'server-remote',
-      status: 'provisioning',
+      status: 'unhealthy',
       endpoint: 'http://tenant-hand.example',
       capabilities: [],
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
-      metadata: { tenantRemoteHandId: 'agent-saas-acs' },
+      metadata: { tenantRemoteHandId: 'agent-saas-acs', dispatchAuthorized: true, reconcileRequired: true, provisionResult: 'result_unknown', provisionDispatchClaim: 'active-claim', provisionDispatchClaimedAt: new Date().toISOString() },
     }]);
     const runtime = new PlatformToolRuntime({ handStore });
     setTimeout(() => {

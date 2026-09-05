@@ -943,6 +943,11 @@ export {
 export type { GroupsEditingState, GroupMenuItem } from './hooks/useGroups';
 export { useGroupedSessions } from './hooks/useGroupedSessions';
 export * from './hooks/useAttachmentUploads';
+export * from './hooks/useMessageBuffer';
+export * from './hooks/useSessionHistoryPaging';
+export * from './hooks/useSessionUsageStats';
+export * from './hooks/useSessionTitleMutations';
+export * from './hooks/useSessionListCacheWriter';
 
 // Store
 export { getChatStore, useChatStore, resetChatStore, INITIAL_BLOCK_STATE } from './store/index';

@@ -6,7 +6,7 @@ import type {
 } from "@/lib/sessionsApi";
 import type { MessageItem } from "@/components/types";
 import type { SessionCallbacks } from "./useSession";
-import type { ContextUsageData, SessionDetailAccessMode, SessionOwnerInfo } from "@agent/shared";
+import type { ContextUsageData, SessionDetailAccessMode, SessionHistoryCursor, SessionOwnerInfo } from "@agent/shared";
 import {
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
@@ -27,12 +27,8 @@ export const SESSION_DETAIL_PAGE_SIZE = 200;
 const SESSION_CACHE_BUDGET_MS = 200;
 const SESSION_DETAIL_TIMEOUT_MS = 15_000;
 
-export interface SessionDetailCursor {
-  historyComplete: boolean;
-  tailCursor?: string;
-  oldestCursor?: string;
-  historyRevision?: string;
-}
+/** 与 shared 历史分页内核共用同一游标形态。 */
+export type SessionDetailCursor = SessionHistoryCursor;
 
 export interface SessionDetailLoadOptions {
   scrollToBottom?: boolean;

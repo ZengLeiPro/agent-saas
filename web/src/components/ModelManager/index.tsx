@@ -15,7 +15,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { CodexSubscriptionCard } from "./CodexSubscriptionCard";
 import { GroupCredentialsFields, normalizeQuotaSourceForSave, type EditableQuotaSource } from "./GroupCredentialsFields";
-import { TitleGeneratorSettings, useTitleGeneratorSettings, type TitleGeneratorAdminFields } from "./TitleGeneratorSettings";
+import { UtilityModelSettings, useUtilityModelSettings, type UtilityModelAdminFields } from "./UtilityModelSettings";
 type ModelProtocol = "chat_completions" | "responses";
 type ResponsesTransport = "openai_compatible" | "codex_subscription";
 type McpLoadingMode = "auto" | "eager" | "deferred";
@@ -117,7 +117,7 @@ type EditableMemoryIndexConfig = {
   };
 };
 
-type AdminModelsResponse = TitleGeneratorAdminFields & {
+type AdminModelsResponse = UtilityModelAdminFields & {
   revision: string; models: EditableModelsConfig;
   memoryIndex: EditableMemoryIndexConfig | null;
   publicModelList: ModelList;
@@ -260,7 +260,7 @@ export function ModelManager() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const titleSettings = useTitleGeneratorSettings();
+  const titleSettings = useUtilityModelSettings();
   const [selectedPanel, setSelectedPanel] = useState<SelectedPanel>({ type: "general" });
   const [draggingItem, setDraggingItem] = useState<DraggingItem>(null);
   const [dragOverItem, setDragOverItem] = useState<DraggingItem>(null);
@@ -976,7 +976,7 @@ export function ModelManager() {
                 </CardContent>
               </Card>
 
-              <TitleGeneratorSettings groups={models.groups} readOnly={platformReadOnly} settings={titleSettings} onDirty={() => setSavedAt(null)} />
+              <UtilityModelSettings groups={models.groups} readOnly={platformReadOnly} settings={titleSettings} onDirty={() => setSavedAt(null)} />
 
               <CodexSubscriptionCard readOnly={platformReadOnly} />
 

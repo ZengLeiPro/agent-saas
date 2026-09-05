@@ -5,7 +5,12 @@ import type {
   TokenUsage,
 } from "@/lib/sessionsApi";
 import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionDetailAccessMode, SessionOwnerInfo } from "@agent/shared";
-import { mergeSessionMessagePage } from "@agent/shared";
+import {
+  useSessionHistoryPaging,
+  useSessionListCacheWriter,
+  useSessionTitleMutations,
+  useSessionUsageStats,
+} from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
 import { removeTabScopedAuth, writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
@@ -24,7 +29,6 @@ import type { MessageItem } from "@/components/types";
 import {
   loadSessionDetailRequest,
   SESSION_DETAIL_PAGE_SIZE,
-  type SessionDetailCursor,
   type SessionDetailLoadOptions,
 } from "./sessionDetailLoader";
 
@@ -152,16 +156,10 @@ export function useSession(
   const [sessions, setSessions] = useState<ApiSessionListItem[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [deleteSessionIds, setDeleteSessionIds] = useState<string[]>([]);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
-  const [contextUsage, setContextUsage] = useState<ContextUsageData | null>(
-    null,
-  );
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
-  const [hasMoreHistory, setHasMoreHistory] = useState(false);
-  const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
@@ -177,9 +175,6 @@ export function useSession(
   const loadDetailPromiseRef = useRef<Promise<void> | null>(null);
   const loadNonceRef = useRef(0);
   const detailAbortRef = useRef<AbortController | null>(null);
-  const detailCursorRef = useRef<Map<string, SessionDetailCursor>>(new Map());
-  // 历史分页锁按会话隔离：A 会话的慢请求不能卡住随后打开的 B 会话。
-  const loadingEarlierSessionIdsRef = useRef<Set<string>>(new Set());
 
   const deleteSessionId = deleteSessionIds[0] ?? null;
   const deleteSessionCount = deleteSessionIds.length;
@@ -189,6 +184,36 @@ export function useSession(
   // Keep callbacks ref fresh to avoid stale closures
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
+
+  const {
+    tokenUsage, setTokenUsage, contextUsage, setContextUsage, fetchTokenUsage, refreshTokenUsage,
+  } = useSessionUsageStats({ authFetch, sessionId });
+
+  const {
+    cursorsRef: detailCursorRef, hasMoreHistory, setHasMoreHistory,
+    isLoadingEarlier, setIsLoadingEarlier, loadEarlierMessages,
+  } = useSessionHistoryPaging({
+    authFetch,
+    pageSize: SESSION_DETAIL_PAGE_SIZE,
+    sessionIdRef,
+    getMessages: () => cbRef.current.getMessages?.() ?? [],
+    mapPage: async (data) => {
+      const owner = data.owner?.username ?? sessionOwner?.username;
+      return (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, owner);
+    },
+    applyPage: (id, merged, cursor) => {
+      cbRef.current.setMessages(merged, { scrollToBottom: false });
+      // Cache remains N-1 compatible; canonical revision is request-fenced in memory.
+      saveSessionMessages(id, merged, {
+        historyComplete: cursor.historyComplete,
+        ...(cursor.tailCursor ? { tailCursor: cursor.tailCursor } : {}),
+        ...(cursor.oldestCursor ? { oldestCursor: cursor.oldestCursor } : {}),
+      });
+    },
+    onHistoryRevisionMismatch: (id) => {
+      void loadSessionDetail(id, { silent: true, preserveTail: true, scrollToBottom: false });
+    },
+  });
 
   // Refs for stable callback closures
   const sessionsRef = useRef(sessions);
@@ -302,24 +327,6 @@ export function useSession(
     }
   }, []);
 
-  const fetchTokenUsage = useCallback(async (id: string) => {
-    try {
-      const response = await authFetch(
-        `/api/sessions/${encodeURIComponent(id)}/stats`,
-      );
-      if (response.ok) {
-        const data = await response.json();
-        const usage = data.tokenUsage
-          ? { ...data.tokenUsage, totalCostUsd: data.totalCostUsd ?? null }
-          : null;
-        setTokenUsage(usage);
-        setContextUsage(data.contextUsage ?? null);
-      }
-    } catch {
-      // silent fail
-    }
-  }, []);
-
   const loadSessionDetail = useCallback(
     (id: string, opts?: SessionDetailLoadOptions) =>
       loadSessionDetailRequest(id, opts, {
@@ -328,75 +335,8 @@ export function useSession(
         setHasMoreHistory, setSessionId, setSessionOwner, setSessionAccessMode: updateSessionAccessMode, setTokenUsage,
         setContextUsage, fetchTokenUsage, removeSession,
       }),
-    [updateSessionAccessMode],
+    [detailCursorRef, fetchTokenUsage, setContextUsage, setHasMoreHistory, setTokenUsage, updateSessionAccessMode],
   );
-
-  const loadEarlierMessages = useCallback(async () => {
-    const id = sessionIdRef.current;
-    const detailState = id ? detailCursorRef.current.get(id) : undefined;
-    if (
-      !id ||
-      !detailState?.oldestCursor ||
-      detailState.historyComplete ||
-      loadingEarlierSessionIdsRef.current.has(id)
-    ) return;
-
-    loadingEarlierSessionIdsRef.current.add(id);
-    setIsLoadingEarlier(true);
-    try {
-      const params = new URLSearchParams({
-        before: detailState.oldestCursor,
-        limit: String(SESSION_DETAIL_PAGE_SIZE),
-        silent: "1",
-      });
-      const response = await authFetch(
-        `/api/sessions/${encodeURIComponent(id)}?${params.toString()}`,
-      );
-      if (!response.ok) {
-        console.error("加载更早消息失败:", response.status, response.statusText);
-        return;
-      }
-      if (sessionIdRef.current !== id) return;
-      const data: ApiSessionDetail = await response.json();
-      if (sessionIdRef.current !== id) return;
-      if (detailState.historyRevision && data.historyRevision
-        && detailState.historyRevision !== data.historyRevision) {
-        // Compaction/replacement invalidated this in-flight old page; refresh a new latest generation.
-        void loadSessionDetail(id, { silent: true, preserveTail: true, scrollToBottom: false });
-        return;
-      }
-
-      const owner = data.owner?.username ?? sessionOwner?.username;
-      const incoming = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, owner);
-      const current = cbRef.current.getMessages?.() ?? [];
-      const merged = data.mode === "before"
-        ? mergeSessionMessagePage(current, incoming)
-        : incoming;
-      const historyComplete = data.hasMore !== undefined ? !data.hasMore : data.historyComplete !== false;
-      const oldestCursor = data.nextCursor ?? data.oldestCursor ?? incoming[0]?.id;
-      const tailCursor = data.cursor ?? detailState.tailCursor;
-
-      cbRef.current.setMessages(merged, { scrollToBottom: false });
-      setHasMoreHistory(!historyComplete);
-      detailCursorRef.current.set(id, {
-        historyComplete,
-        ...(tailCursor ? { tailCursor } : {}),
-        ...(oldestCursor ? { oldestCursor } : {}),
-        ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
-      });
-      // Cache remains N-1 compatible; canonical revision is request-fenced in memory.
-      saveSessionMessages(id, merged, {
-        historyComplete,
-        ...(tailCursor ? { tailCursor } : {}),
-        ...(oldestCursor ? { oldestCursor } : {}),
-      });
-    } catch (err) {
-      console.error("加载更早消息失败:", err);
-    } finally {
-      loadingEarlierSessionIdsRef.current.delete(id);
-      if (sessionIdRef.current === id) setIsLoadingEarlier(false);
-    }
-  }, [loadSessionDetail, sessionOwner?.username]);
 
   const selectSession = useCallback(
     (id: string) => {
@@ -414,7 +354,7 @@ export function useSession(
       cbRef.current.onSandboxProfile?.(id, undefined, true);
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [loadSessionDetail, sessionId, updateSessionAccessMode],
+    [loadSessionDetail, sessionId, setContextUsage, setHasMoreHistory, setIsLoadingEarlier, setTokenUsage, updateSessionAccessMode],
   );
 
   const newSession = useCallback(() => {
@@ -437,7 +377,7 @@ export function useSession(
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
     removeTabScopedAuth(SESSION_STORAGE_KEY);
-  }, [updateSessionAccessMode]);
+  }, [setContextUsage, setHasMoreHistory, setIsLoadingEarlier, setTokenUsage, updateSessionAccessMode]);
 
   const removeSession = useCallback((targetId: string) => {
     ++sessionListRevisionRef.current;
@@ -449,7 +389,7 @@ export function useSession(
     // 本地缓存清理不阻塞已确认的删除，也不能将存储失败误报成删除失败。
     void clearSessionMessages(targetId).catch((err) => console.error("清理会话缓存失败:", err));
     try { localStorage.removeItem(`agentChat.model.${targetId}`); } catch (err) { console.error("清理会话模型缓存失败:", err); }
-  }, [newSession]);
+  }, [detailCursorRef, newSession]);
 
   const confirmDeleteSessions = useCallback((ids: string[]) => {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
@@ -636,71 +576,25 @@ export function useSession(
     [markRecentLocalSession],
   );
 
-  const renameSession = useCallback(
-    async (targetId: string, newTitle: string): Promise<boolean> => {
-      try {
-        const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(targetId)}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: newTitle }),
-          },
-        );
-        if (!response.ok) return false;
-        // 乐观更新本地列表
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.sessionId === targetId
-              ? { ...s, title: newTitle || undefined }
-              : s,
-          ),
-        );
-        return true;
-      } catch (err) {
-        console.error("重命名会话失败:", err);
-        return false;
-      }
+  const { renameSession, autoTitleSession } = useSessionTitleMutations({
+    authFetch,
+    // 乐观更新本地列表；空标题写回 undefined
+    applyTitle: (targetId, title) => {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.sessionId === targetId
+            ? { ...s, title: title || undefined }
+            : s,
+        ),
+      );
     },
-    [],
-  );
-
-  const autoTitleSession = useCallback(
-    async (targetId: string): Promise<boolean> => {
-      try {
-        const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(targetId)}/auto-title`,
-          {
-            method: "POST",
-          },
-        );
-        if (!response.ok) return false;
-        const data = await response.json();
-        if (data.title) {
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.sessionId === targetId ? { ...s, title: data.title } : s,
-            ),
-          );
-        }
-        return true;
-      } catch (err) {
-        console.error("自动命名失败:", err);
-        return false;
-      }
-    },
-    [],
-  );
+  });
 
   const retrySessionLoad = useCallback(() => {
     const id = sessionIdRef.current;
     if (!id) return;
     loadDetailPromiseRef.current = loadSessionDetail(id);
   }, [loadSessionDetail]);
-
-  const refreshTokenUsage = useCallback(async () => {
-    if (sessionId) void fetchTokenUsage(sessionId);
-  }, [fetchTokenUsage, sessionId]);
 
   const setIsNewSession = useCallback((v: boolean) => {
     isNewSessionRef.current = v;
@@ -817,23 +711,12 @@ export function useSession(
       document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [loadSessions]);
 
-  // Debounced session list cache write — 统一写入通道
-  // 无论来源（API / WS sync），sessions 变化后 5s 内无新变化则持久化
-  const debounceSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (sessions.length === 0 && sessionListRevisionRef.current === 0) return;
-    if (debounceSaveRef.current) clearTimeout(debounceSaveRef.current);
-    debounceSaveRef.current = setTimeout(() => {
-      saveSessionListCache(sessions, hasMore, identity);
-      debounceSaveRef.current = null;
-    }, 5000);
-    return () => {
-      if (debounceSaveRef.current) {
-        clearTimeout(debounceSaveRef.current);
-        debounceSaveRef.current = null;
-      }
-    };
-  }, [sessions, hasMore, identity]);
+  // Debounced session list cache write — 统一写入通道（shared 内核）
+  useSessionListCacheWriter(sessions, hasMore, identity, {
+    enabled: !(sessions.length === 0 && sessionListRevisionRef.current === 0),
+    save: (nextSessions, nextHasMore, nextIdentity) =>
+      saveSessionListCache(nextSessions, nextHasMore, nextIdentity),
+  });
 
   // 展开分组时全量加载组内会话，将未在主列表中的会话合并进来
   const loadGroupSessions = useCallback(async (groupId: string) => {

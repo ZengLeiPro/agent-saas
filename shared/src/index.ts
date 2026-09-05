@@ -696,19 +696,19 @@ export type { TokenUsageView, TokenUsageTone } from './lib/tokenUsageView';
 
 // Lib - 消息反馈（点踩）与门禁拒答申诉的端点 / 幂等 / 文案契约
 export {
-  MESSAGE_FEEDBACK_COMMENT_MAX,
+  MESSAGE_FEEDBACK_COMMENT_MAX, DEFAULT_MESSAGE_FEEDBACK_RATING,
   MESSAGE_FEEDBACK_PATH,
   GUARDRAIL_APPEAL_PATH,
   messageFeedbackSessionPath,
   buildMessageFeedbackPayload,
-  parseSubmittedFeedbackHashes,
+  parseSubmittedFeedbackHashes, parseSubmittedFeedbackEntries,
   messageFeedbackOutcome,
   buildGuardrailAppealPayload,
   guardrailAppealOutcome,
   guardrailAppealFailureCopy,
 } from './lib/messageFeedback';
 export type {
-  MessageFeedbackInput,
+  MessageFeedbackInput, MessageFeedbackRating, SubmittedMessageFeedback,
   MessageFeedbackOutcome,
   GuardrailAppealOutcome,
 } from './lib/messageFeedback';
@@ -781,6 +781,7 @@ export {
 export type {
   DetailGroup,
   OutcomeStat,
+  OutcomeStatVerdict,
   StatVerdict,
   StepDetailPart,
 } from './lib/detailSemantics';
@@ -858,8 +859,14 @@ export {
   resolveImageSrc,
   resolveTaskAttachmentSrc,
   getPreviewFileType,
+  truncateTextPreview,
 } from './lib/fileUtils';
-export type { ParsedImage, ParsedToolResult, PreviewFileType } from './lib/fileUtils';
+export type {
+  ParsedImage,
+  ParsedToolResult,
+  PreviewFileType,
+  TextPreviewTruncation,
+} from './lib/fileUtils';
 
 // Lib - file type visual
 export { getFileTypeVisual } from './lib/fileTypeVisual';
@@ -869,7 +876,7 @@ export type { FileTypeCategory, FileTypeVisual } from './lib/fileTypeVisual';
 export {
   DEFAULT_RUNTIME_FAILURE_MESSAGE,
   MODEL_REQUEST_FAILURE_MESSAGE,
-  POLICY_REJECTION_FAILURE_MESSAGE,
+  POLICY_REJECTION_FAILURE_MESSAGE, QUOTA_EXHAUSTED_FAILURE_MESSAGE,
   INSUFFICIENT_CREDITS_FAILURE_MESSAGE,
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
@@ -894,7 +901,7 @@ export {
   GENERIC_FAILURE_MESSAGE,
   POLICY_FAILURE_MESSAGE,
   formatQuotaResetHint,
-  selectClientFailureCopy,
+  selectClientFailureCopy, formatQuotaResetClock,
 } from './lib/clientFailureCopy';
 export type {
   ClientFailureCopy,
@@ -975,3 +982,9 @@ export * from './lib/mcpApi';
 export * from './lib/connectorsApi';
 
 // Governance UI contract and authoritative API clients
+
+// Lib - 定时任务（Cron）：HTTP 封装 / 纯派生 / 表单草稿模型
+// （Web CronManager 与 mobile 任务中心共用同一份；具体导出见各模块）
+export * from './lib/cronApi';
+export * from './lib/cronPresentation';
+export * from './lib/cronJobDraft';

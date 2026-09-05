@@ -30,9 +30,15 @@ interface SessionRowProps {
   agentAvatar?: string;
   agentAvatarVersion?: number;
   agentAvatarUsername?: string;
+  /**
+   * 是否显示头像列（个人偏好 `showSessionListAvatar`，与 Web 同一份偏好）。
+   * 关闭时整列不渲染，得到更紧凑的单行样式；缺省显示（见
+   * `app/settings/appearance-layout.tsx` 里关于默认值差异的说明）。
+   */
+  showAvatar?: boolean;
 }
 
-export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, agentAvatar, agentAvatarVersion, agentAvatarUsername }: SessionRowProps) {
+export const SessionRow = React.memo(function SessionRow({ session, actions, openRowRef, onPress, enableBackGesture, showOwner, selectMode, selected, onSelectToggle, agentAvatar, agentAvatarVersion, agentAvatarUsername, showAvatar = true }: SessionRowProps) {
   const colors = useColors();
 
   const styles = useMemo(() => StyleSheet.create({
@@ -152,9 +158,10 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
 
   const hasAgentAvatar = agentAvatar !== undefined;
   const targetLabel = session.agentTargetSnapshot?.name ?? '绑定不可验证';
-  const separatorLeft = spacing.sm + (selectMode ? 24 + spacing.sm : 0) + 42 + spacing.md;
+  const separatorLeft =
+    spacing.sm + (selectMode ? 24 + spacing.sm : 0) + (showAvatar ? 42 + spacing.md : 0);
 
-  const avatarElement = hasAgentAvatar ? (
+  const avatarElement = !showAvatar ? null : hasAgentAvatar ? (
     <View style={styles.avatarWrap}>
       <AgentAvatar avatar={agentAvatar} username={agentAvatarUsername} size={42} version={agentAvatarVersion} />
     </View>

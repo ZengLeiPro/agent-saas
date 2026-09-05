@@ -1,9 +1,30 @@
+/**
+ * 定时任务的移动端状态层。
+ *
+ * 请求、排序、幂等键等纯逻辑全部在 `@agent/shared` 的 `cronApi` 里
+ * （Web `CronManager/hooks.ts` 与本文件共用同一份），这里只保留 React 状态、
+ * 首屏延迟到 JS 线程空闲后再拉取（避免和导航转场抢帧）这类端侧策略。
+ */
 import { useCallback, useEffect, useState } from 'react';
-import type { CronJob, CronJobCreate, CronJobPatch, CronRunLogEntry, CronServiceStatus } from '@agent/shared';
-import { authFetch, parseJsonResponse } from '@agent/shared';
+import type {
+  CronJob,
+  CronJobCreate,
+  CronJobPatch,
+  CronRunLogEntry,
+  CronServiceStatus,
+  DingtalkSessionSummary,
+} from '@agent/shared';
+import {
+  createCronJob,
+  deleteCronJob as deleteCronJobApi,
+  fetchCronDingtalkSessions,
+  fetchCronJobs,
+  fetchCronRunHistory,
+  fetchCronServiceStatus,
+  runCronJob as runCronJobApi,
+  updateCronJob as updateCronJobApi,
+} from '@agent/shared';
 import { scheduleIdle } from '../lib/ric';
-
-const API = '/api/cron';
 
 export function useCronStatus() {
   const [status, setStatus] = useState<CronServiceStatus | null>(null);
@@ -11,10 +32,10 @@ export function useCronStatus() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await authFetch(`${API}/status`);
-      const data = await parseJsonResponse<CronServiceStatus>(res, '定时任务');
-      setStatus(data);
-    } catch {} finally {
+      setStatus(await fetchCronServiceStatus());
+    } catch {
+      // 状态条是附属信息，拉失败时静默降级为「未知」
+    } finally {
       setLoading(false);
     }
   }, []);
@@ -24,10 +45,6 @@ export function useCronStatus() {
   return { status, loading, refresh };
 }
 
-function sortByNextRun(jobs: CronJob[]): CronJob[] {
-  return [...jobs].sort((a, b) => (a.state.nextRunAtMs ?? Infinity) - (b.state.nextRunAtMs ?? Infinity));
-}
-
 export function useCronJobs() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,9 +52,7 @@ export function useCronJobs() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await authFetch(`${API}/jobs?includeDisabled=true`);
-      const data = await parseJsonResponse<{ jobs?: CronJob[] }>(res, '定时任务');
-      setJobs(sortByNextRun(data.jobs || []));
+      setJobs(await fetchCronJobs());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -46,44 +61,47 @@ export function useCronJobs() {
     }
   }, []);
 
-  // Defer initial fetch until JS thread is idle (after navigation transition)
+  // 首屏拉取推迟到 JS 线程空闲（导航转场结束后）
   useEffect(() => scheduleIdle(() => void refresh()), [refresh]);
 
-  const addJob = async (create: CronJobCreate) => {
-    const res = await authFetch(`${API}/jobs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(create),
-    });
-    await parseJsonResponse(res, '定时任务');
-    await refresh();
-  };
+  const addJob = useCallback(
+    async (create: CronJobCreate) => {
+      await createCronJob(create);
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const updateJob = async (id: string, patch: CronJobPatch) => {
-    const res = await authFetch(`${API}/jobs/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    await parseJsonResponse(res, '定时任务');
-    await refresh();
-  };
+  const updateJob = useCallback(
+    async (id: string, patch: CronJobPatch) => {
+      await updateCronJobApi(id, patch);
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const deleteJob = async (id: string) => {
-    const res = await authFetch(`${API}/jobs/${id}`, { method: 'DELETE' });
-    await parseJsonResponse(res, '定时任务');
-    await refresh();
-  };
+  const deleteJob = useCallback(
+    async (id: string) => {
+      await deleteCronJobApi(id);
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const runJob = async (id: string) => {
-    const res = await authFetch(`${API}/jobs/${id}/run`, { method: 'POST' });
-    await parseJsonResponse(res, '定时任务');
-    await refresh();
-  };
+  const runJob = useCallback(
+    async (id: string) => {
+      await runCronJobApi(id);
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const toggleJob = async (job: CronJob) => {
-    await updateJob(job.id, { enabled: !job.enabled });
-  };
+  const toggleJob = useCallback(
+    async (job: CronJob) => {
+      await updateJob(job.id, { enabled: !job.enabled });
+    },
+    [updateJob],
+  );
 
   return { jobs, loading, error, refresh, addJob, updateJob, deleteJob, runJob, toggleJob };
 }
@@ -91,18 +109,65 @@ export function useCronJobs() {
 export function useRunHistory(jobId: string | null) {
   const [entries, setEntries] = useState<CronRunLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const reload = useCallback(() => setReloadToken((token) => token + 1), []);
 
   useEffect(() => {
-    if (!jobId) { setEntries([]); return; }
+    if (!jobId) {
+      setEntries([]);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
     setLoading(true);
-    return scheduleIdle(() => {
-      authFetch(`${API}/jobs/${jobId}/runs?limit=50`)
-        .then((res) => parseJsonResponse<{ entries?: CronRunLogEntry[] }>(res, '定时任务'))
-        .then((data) => setEntries(data.entries || []))
-        .catch(() => setEntries([]))
-        .finally(() => setLoading(false));
+    const cancelIdle = scheduleIdle(() => {
+      fetchCronRunHistory(jobId)
+        .then((next) => {
+          if (cancelled) return;
+          setEntries(next);
+          setError(null);
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setEntries([]);
+          setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
     });
-  }, [jobId]);
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [jobId, reloadToken]);
 
-  return { entries, loading };
+  return { entries, loading, error, reload };
+}
+
+/** 通知目标候选：已建立的钉钉会话（表单里只在需要钉钉通知时才用得上）。 */
+export function useCronDingtalkSessions(enabled: boolean) {
+  const [sessions, setSessions] = useState<DingtalkSessionSummary[]>([]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const cancelIdle = scheduleIdle(() => {
+      fetchCronDingtalkSessions()
+        .then((next) => {
+          if (!cancelled) setSessions(next);
+        })
+        .catch(() => {
+          if (!cancelled) setSessions([]);
+        });
+    });
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [enabled]);
+
+  return sessions;
 }

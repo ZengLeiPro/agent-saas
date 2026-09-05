@@ -768,7 +768,7 @@ export function processWsEvent(
         if (current?.type === "user" || current?.type === "user-voice") idx = ctx.userMsgIndex;
       }
       // 用户侧只看通俗文案;原始 error 留在 server.log + PG runtime_events 供排查。
-      const userFacing = formatRuntimeFailureMessage(data.error, data.failureKind);
+      const userFacing = formatRuntimeFailureMessage(data.error, data.failureKind, data.quotaResetAt);
       const isBillingBlock = isInsufficientCreditsFailure(data.error);
       if (isBillingBlock) {
         // 余额门禁是可预期的账户状态，消息已经成功送达，不能把用户气泡染成“发送失败”。

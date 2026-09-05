@@ -236,6 +236,7 @@ export async function loadSessionDetailRequest(
         alertContent = formatRuntimeFailureMessage(
           lastRunState.error,
           lastRunState.failureKind,
+          lastRunState.quotaResetAt,
         );
         if (isInsufficientCreditsFailure(lastRunState.error)) severity = "billing";
       } else if (lastRunState.status === "cancelled") {
@@ -258,6 +259,7 @@ export async function loadSessionDetailRequest(
             runId: lastRunState.runId,
             ...(lastRunState.failureKind ? { failureKind: lastRunState.failureKind } : {}),
             ...(lastRunState.recoveryAction ? { recoveryAction: lastRunState.recoveryAction } : {}),
+            ...(lastRunState.quotaResetAt ? { quotaResetAt: lastRunState.quotaResetAt } : {}),
             ...(lastRunState.finishedAt ? { timestamp: Date.parse(lastRunState.finishedAt) || Date.now() } : {}),
           });
         }

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useColors, useTheme } from '../../theme';
+import { useColors, useTheme, spacing, radius, fontScale, fontWeight } from '../../theme';
+import type { ListRowPosition } from '../ui/listRowStyles';
 import { FormRow } from './FormRow';
 
 interface FormDateTimeRowProps {
@@ -12,6 +13,7 @@ interface FormDateTimeRowProps {
   disabled?: boolean;
   minimumDate?: Date;
   maximumDate?: Date;
+  position?: ListRowPosition;
 }
 
 function formatDate(d: Date, mode: 'date' | 'time' | 'datetime'): string {
@@ -31,6 +33,7 @@ export function FormDateTimeRow({
   disabled,
   minimumDate,
   maximumDate,
+  position,
 }: FormDateTimeRowProps) {
   const colors = useColors();
   const { isDark } = useTheme();
@@ -52,7 +55,7 @@ export function FormDateTimeRow({
 
   return (
     <>
-      <FormRow label={label} disabled={disabled} onPress={openPicker}>
+      <FormRow label={label} disabled={disabled} onPress={openPicker} position={position}>
         <View style={styles.valueWrap}>
           <Text style={[styles.value, { color: colors.mutedForeground }]} numberOfLines={1}>
             {display}
@@ -146,7 +149,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   value: {
-    fontSize: 16,
+    ...fontScale.base,
   },
   iosBackdrop: {
     flex: 1,
@@ -154,15 +157,17 @@ const styles = StyleSheet.create({
   },
   iosSheet: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
+    borderTopLeftRadius: radius['2xl'],
+    borderTopRightRadius: radius['2xl'],
+    paddingTop: spacing.sm,
   },
   iosDone: {
-    paddingVertical: 14,
+    paddingVertical: spacing.md,
     alignItems: 'center',
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   iosDoneText: {
-    fontSize: 17,
-    fontWeight: '600',
+    ...fontScale.lg,
+    fontWeight: fontWeight.semibold,
   },
 });

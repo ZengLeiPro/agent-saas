@@ -8,6 +8,7 @@ import {
   guardrailAppealOutcome,
   messageFeedbackOutcome,
   messageFeedbackSessionPath,
+  parseSubmittedFeedbackEntries,
   parseSubmittedFeedbackHashes,
 } from './messageFeedback';
 
@@ -21,12 +22,22 @@ describe('buildMessageFeedbackPayload', () => {
   it('空白评论不进 body', () => {
     expect(
       buildMessageFeedbackPayload({ sessionId: 's', messageId: 'm', content: 'c', comment: '   ' }),
-    ).toEqual({ sessionId: 's', messageId: 'm', content: 'c' });
+    ).toEqual({ sessionId: 's', messageId: 'm', content: 'c', rating: 'down' });
     expect(buildMessageFeedbackPayload({ sessionId: 's', messageId: 'm', content: 'c' })).toEqual({
       sessionId: 's',
       messageId: 'm',
       content: 'c',
+      rating: 'down',
     });
+  });
+
+  it('rating 缺省 down，显式 up 透传（旧服务端会 strip 该字段，语义仍是踩）', () => {
+    expect(
+      buildMessageFeedbackPayload({ sessionId: 's', messageId: 'm', content: 'c', rating: 'up' }).rating,
+    ).toBe('up');
+    expect(
+      buildMessageFeedbackPayload({ sessionId: 's', messageId: 'm', content: 'c', rating: 'down' }).rating,
+    ).toBe('down');
   });
 
   it('评论 trim 后按服务端上限截断', () => {
@@ -97,5 +108,31 @@ describe('guardrail 申诉', () => {
     expect(guardrailAppealFailureCopy('unavailable')).toBe('申诉服务暂不可用');
     expect(guardrailAppealFailureCopy('failed')).toBe('提交失败，请稍后重试');
     expect(guardrailAppealFailureCopy('submitted')).toBeNull();
+  });
+});
+
+describe('parseSubmittedFeedbackEntries', () => {
+  it('回传 rating；旧服务端缺该字段时回落 down', () => {
+    expect(
+      parseSubmittedFeedbackEntries({
+        items: [
+          { contentHash: 'h1', rating: 'up' },
+          { contentHash: 'h2', rating: 'down' },
+          { contentHash: 'h3' },
+          { contentHash: 'h4', rating: 'sideways' },
+        ],
+      }),
+    ).toEqual([
+      { contentHash: 'h1', rating: 'up' },
+      { contentHash: 'h2', rating: 'down' },
+      { contentHash: 'h3', rating: 'down' },
+      { contentHash: 'h4', rating: 'down' },
+    ]);
+  });
+
+  it('脏数据静默丢弃，且 hashes 视图与 entries 一致', () => {
+    const payload = { items: [{ contentHash: '' }, null, 7, { contentHash: 'ok' }] };
+    expect(parseSubmittedFeedbackEntries(payload)).toEqual([{ contentHash: 'ok', rating: 'down' }]);
+    expect(parseSubmittedFeedbackHashes(payload)).toEqual(['ok']);
   });
 });

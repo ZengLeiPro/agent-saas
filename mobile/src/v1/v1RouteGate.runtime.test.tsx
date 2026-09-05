@@ -6,20 +6,26 @@
  *   旧实现只在子页面挂载后的 useEffect 里重定向，延期页面会先渲染并执行副作用
  *   （OAuth handoff 消费、治理请求、页面活动上报）。
  *
- * 本测试在 jsdom 中真实渲染 V1RouteGate + 延期路由组件，断言：
+ * 本测试在 jsdom 中真实渲染 V1RouteGate + 受限路由组件，断言：
  *   1. production 档位（含鉴权 loading / 已登录 / 未登录三种身份状态）下，
  *      受限组件不渲染、安全空壳呈现、副作用函数 0 调用、重定向目标正确；
  *   2. preview 档位（对照组）同一组件正常挂载且副作用被调用--
  *      证明「0 调用」不是 mock 缺位造成的假阴性；
  *   3. production 下允许路由照常挂载（含鉴权 loading 期间）。
+ *
+ * P3-3d 变更：memory-browser / persona-editor / settings/my-permissions 全部进入
+ * allowlist 后，能力清单里已没有延期路由可作样本。受限样本改为「未分类路由」
+ * ——即新页面未登记清单时的 fail closed 行为，这也是清单腐烂时的真实风险面。
+ * 组件仍复用真实屏幕（带挂载期副作用），只是挂在未登记的路由段上。
  */
 import React from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V1RouteGate } from './V1RouteGate';
-import CronListScreen from '../../app/cron/index';
-import ConnectionsScreen from '../../app/settings/connections';
-import * as sharedMod from '@agent/shared';
+import MemoryBrowserScreen from '../../app/memory-browser';
+import MyPermissionsScreen from '../../app/settings/my-permissions';
+
+import * as governanceMod from '@agent/shared/lib/governanceApi';
 
 // ── 可控运行时状态（vi.hoisted 保证先于 mock 工厂执行） ──────────────
 const h = vi.hoisted(() => ({
@@ -28,7 +34,7 @@ const h = vi.hoisted(() => ({
   user: null as null | { username: string },
   authLoading: true as boolean,
   replace: vi.fn(),
-  cronRefresh: vi.fn(async () => {}),
+  memoryRefresh: vi.fn(async () => {}),
 }));
 
 // ── 模块 mocks ────────────────────────────────────────────────────────
@@ -59,7 +65,9 @@ vi.mock('react-native', async () => {
     Pressable: make('button'),
     TouchableOpacity: make('button'),
     ScrollView: make('div'),
+    RefreshControl: make('div'),
     ActivityIndicator: make('div'),
+    Switch: make('input'),
     StyleSheet: { create: (s: unknown) => s, hairlineWidth: 1 },
     Alert: { alert: vi.fn() },
     Linking: { openURL: vi.fn() },
@@ -88,9 +96,13 @@ const COLORS = {
 
 vi.mock('../theme', () => ({
   useColors: () => COLORS,
+  useTheme: () => ({ scheme: 'light', colors: COLORS, isDark: false }),
+  useThemedStyles: (factory: (colors: typeof COLORS) => unknown) => factory(COLORS),
   spacing: new Proxy({}, { get: () => 8 }),
   radius: new Proxy({}, { get: () => 8 }),
   typography: new Proxy({}, { get: () => ({ fontSize: 14 }) }),
+  fontScale: new Proxy({}, { get: () => ({ fontSize: 14, lineHeight: 20 }) }),
+  fontWeight: new Proxy({}, { get: () => '400' }),
 }));
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -126,31 +138,38 @@ vi.mock('@agent/shared', () => ({
   })),
   startMyMcpOAuth: vi.fn(async () => ({ authorizationUrl: 'https://a.example.test' })),
   reportActivity: vi.fn(async () => {}),
+  getPreviewFileType: () => 'markdown',
+  authFetch: vi.fn(async () => new Response('{}', { status: 200 })),
+  isDebugModeAvailable: () => false,
 }));
 
 vi.mock('@agent/shared/lib/governanceApi', () => ({
   governanceAccessApi: {
     listOAuthGrants: vi.fn(async () => ({ grants: [] })),
   },
+  fetchEffectiveResources: vi.fn(async () => []),
 }));
 
-vi.mock('../hooks/useCronJobs', async () => {
+vi.mock('../hooks/useFileList', async () => {
   const React = await import('react');
   return {
-    // 模拟真实 hook 的挂载期 fetch（真实实现经 scheduleIdle 调 refresh）
-    useCronJobs: () => {
+    // 模拟真实 hook 的挂载期 fetch（延期页面不得触发任何数据请求）
+    useFileList: () => {
       React.useEffect(() => {
-        void h.cronRefresh();
+        void h.memoryRefresh();
       }, []);
-      return {
-        jobs: [],
-        loading: false,
-        refresh: h.cronRefresh,
-        toggleJob: async () => {},
-      };
+      return { entries: [], loading: false, refresh: h.memoryRefresh };
     },
   };
 });
+
+vi.mock('../hooks/useFileOpen', () => ({
+  useFileOpen: () => ({ open: vi.fn(async () => {}) }),
+}));
+
+vi.mock('../components/files/FileList', () => ({
+  FileList: () => null,
+}));
 
 vi.mock('../lib/haptics', () => ({
   hapticLight: vi.fn(),
@@ -174,38 +193,49 @@ vi.mock('expo-clipboard', () => ({
   default: { setStringAsync: vi.fn(async () => {}) },
 }));
 
-vi.mock('lucide-react-native', () => ({
-  MoreHorizontal: () => null,
-  Plus: () => null,
-}));
+// 图标一律降级为空组件：`src/lib/icons.ts` 会按名导入几十个图标，
+// 逐个列举既噪声又容易腐烂。只拦截「大写开头的具名导出」，
+// 其余（Symbol / then / __esModule 等模块协议成员）保持 undefined，
+// 否则模块命名空间会被误判成 thenable 而卡死 import。
+vi.mock('lucide-react-native', () => {
+  const isIconName = (prop: string | symbol): prop is string =>
+    typeof prop === 'string' && /^[A-Z]/.test(prop);
+  return new Proxy({} as Record<string, unknown>, {
+    get: (target, prop) => (isIconName(prop) ? () => null : Reflect.get(target, prop)),
+    has: (target, prop) => isIconName(prop) || prop in target,
+    getOwnPropertyDescriptor: (target, prop) =>
+      isIconName(prop)
+        ? { configurable: true, enumerable: true, value: () => null }
+        : Object.getOwnPropertyDescriptor(target, prop),
+  });
+});
 
 vi.mock('@shopify/flash-list', () => ({
   FlashList: () => null,
-}));
-
-vi.mock('../components/cron/JobList', () => ({
-  JobList: () => null,
 }));
 
 // ── 用例 ──────────────────────────────────────────────────────────────
 
 const OAUTH_HANDOFF_CODE = 'A'.repeat(48);
 
-/** 仍存在的延期路由及其挂载期副作用 spies。 */
-const DEFERRED_CASES = [
+/**
+ * 未分类路由样本（P3-3d 起延期清单为空）：组件是真实屏幕（含挂载期请求），
+ * 但路由段没有登记进能力清单——生产必须 fail closed，一行副作用都不许跑。
+ */
+const UNCLASSIFIED_CASES = [
   {
-    name: 'Cron（延期）',
-    segments: ['cron'],
-    params: {},
-    screen: <CronListScreen />,
-    getSyncSpies: () => [vi.mocked(sharedMod.reportActivity), h.cronRefresh],
+    name: '未登记的记忆浏览路由',
+    segments: ['memory-browser-unregistered'],
+    params: { path: 'memory' },
+    screen: <MemoryBrowserScreen />,
+    getSyncSpies: () => [h.memoryRefresh],
   },
   {
-    name: 'Connections 管理（延期）',
-    segments: ['settings', 'connections'],
+    name: '未登记的设置子路由',
+    segments: ['settings', 'my-permissions-unregistered'],
     params: {},
-    screen: <ConnectionsScreen />,
-    getSyncSpies: () => [vi.mocked(sharedMod.fetchMyMcp)],
+    screen: <MyPermissionsScreen />,
+    getSyncSpies: () => [vi.mocked(governanceMod.fetchEffectiveResources)],
   },
 ] as const;
 
@@ -223,8 +253,8 @@ afterEach(() => {
   h.authLoading = true;
 });
 
-describe('M00-01 V1RouteGate 运行时门禁：production 拒绝延期路由', () => {
-  for (const testCase of DEFERRED_CASES) {
+describe('M00-01 V1RouteGate 运行时门禁：production 拒绝未分类路由', () => {
+  for (const testCase of UNCLASSIFIED_CASES) {
     describe(testCase.name, () => {
       it('鉴权 loading 中：不挂载受限组件，副作用 0 调用，重定向登录页', async () => {
         h.segments = [...testCase.segments];
@@ -300,7 +330,7 @@ describe('M00-01 V1RouteGate 运行时门禁：production 拒绝延期路由', (
 });
 
 describe('M00-01 V1RouteGate 对照组：preview 档位不裁剪', () => {
-  for (const testCase of DEFERRED_CASES) {
+  for (const testCase of UNCLASSIFIED_CASES) {
     it(`${testCase.name}：正常挂载且副作用被调用（证明 0 调用断言非假阴性）`, async () => {
       vi.stubEnv('EXPO_PUBLIC_V1_PROFILE', 'preview');
       h.segments = [...testCase.segments];
@@ -377,6 +407,30 @@ describe('M00-01 V1RouteGate：production 允许路由照常挂载', () => {
 
     expect(screen.getByTestId('child-mounted')).toBeTruthy();
     expect(h.replace).toHaveBeenCalledWith('/(tabs)/chat');
+  });
+
+  it('P3-3b/3d：任务中心与设置 8 分区路由在 production 放行', () => {
+    for (const segments of [
+      ['cron'], ['cron', '[jobId]'], ['cron-form'], ['text-editor'],
+      ['memory-browser'], ['persona-editor'],
+      ['settings', 'my-permissions'], ['settings', 'account-security'],
+      ['settings', 'my-agent'], ['settings', 'chat-model'],
+      ['settings', 'appearance-layout'], ['settings', 'files-storage'],
+    ]) {
+      cleanup();
+      h.segments = segments;
+      h.authLoading = false;
+      h.user = { username: 'alice' };
+
+      render(
+        <V1RouteGate>
+          <div data-testid="child-mounted" />
+        </V1RouteGate>,
+      );
+
+      expect(screen.queryByTestId('v1-route-denied-shell'), segments.join('/')).toBeNull();
+      expect(screen.getByTestId('child-mounted')).toBeTruthy();
+    }
   });
 
   it('未分类路由同样 fail closed（新路由未登记清单时拒绝）', () => {

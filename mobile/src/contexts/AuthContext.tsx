@@ -14,7 +14,7 @@ import {
   identityReducer,
   scopedSensitiveKey,
 } from '@agent/shared';
-import type { AuthUser, BoundaryIdentity, IdentityEvent, IdentityState } from '@agent/shared';
+import type { AuthUser, BoundaryIdentity, IdentityEvent, IdentityState, UserPreferences } from '@agent/shared';
 import { mobileSecureStorage, migrateLegacyKeychainItem } from '../platform/mobileSecureStorage';
 import {
   getServiceConfigSnapshot,
@@ -63,6 +63,8 @@ interface AuthContextValue {
   changeServiceOrigin: (origin: string) => Promise<ServiceOriginChangeResult>;
   reloadServiceConfig: () => Promise<MobileServicePolicy>;
   updateAvatar: (avatar: string | undefined, avatarVersion?: number) => void;
+  /** 本地合并个人偏好（乐观更新）；服务端写入由调用方走 shared `saveUserPreferences`。 */
+  updatePreferences: (preferences: UserPreferences) => void;
   /** Re-fetch user info from server (e.g. when returning to foreground to pick up setting changes) */
   refreshUser: () => Promise<void>;
 }
@@ -313,6 +315,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, [cachedUserKey]);
 
+  // 个人偏好乐观更新：与 Web AuthContext.updatePreferences 同语义——
+  // 只改内存中的 user，服务端写入由调用方 `saveUserPreferences` 负责。
+  const updatePreferences = useCallback((preferences: UserPreferences) => {
+    setUser((prev) => prev
+      ? { ...prev, preferences: { ...(prev.preferences ?? {}), ...preferences } }
+      : prev);
+  }, []);
+
   const refreshUser = useCallback(async () => {
     if (!getServiceConfigSnapshot().ready) return;
     const requestGeneration = identityRef.current.generation;
@@ -486,6 +496,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       changeServiceOrigin,
       reloadServiceConfig,
       updateAvatar,
+      updatePreferences,
       refreshUser,
     }}>
       {children}

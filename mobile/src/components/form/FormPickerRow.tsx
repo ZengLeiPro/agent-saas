@@ -1,9 +1,11 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChevronRight, ChevronDown } from 'lucide-react-native';
-import { useColors } from '../../theme';
+import { useColors, spacing, fontScale } from '../../theme';
+import { ICON_SIZE, ICON_STROKE } from '../../lib/icons';
 import { hapticLight } from '../../lib/haptics';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
+import type { ListRowPosition } from '../ui/listRowStyles';
 import { FormRow } from './FormRow';
 
 export interface PickerOption {
@@ -19,8 +21,10 @@ interface FormPickerRowProps {
   disabled?: boolean;
   emptyLabel?: string;
   required?: boolean;
+  position?: ListRowPosition;
 }
 
+/** 单选行：点开锚定在行下方的 DropdownMenu，选中项打勾。 */
 export function FormPickerRow({
   label,
   value,
@@ -29,6 +33,7 @@ export function FormPickerRow({
   disabled,
   emptyLabel = '未选择',
   required,
+  position,
 }: FormPickerRowProps) {
   const colors = useColors();
   const current = options.find((o) => o.value === value);
@@ -38,14 +43,12 @@ export function FormPickerRow({
   const [anchorTop, setAnchorTop] = useState(0);
   const triggerRef = useRef<View>(null);
 
-  const sections: DropdownSection[] = [{
-    id: 'options',
-    actions: options.map((o) => ({
-      id: o.value,
-      label: o.label,
-      checked: o.value === value,
-    })),
-  }];
+  const sections: DropdownSection[] = [
+    {
+      id: 'options',
+      actions: options.map((o) => ({ id: o.value, label: o.label, checked: o.value === value })),
+    },
+  ];
 
   const handleOpen = useCallback(() => {
     if (disabled) return;
@@ -56,29 +59,30 @@ export function FormPickerRow({
     });
   }, [disabled]);
 
-  const handleSelect = useCallback((actionId: string) => {
-    if (disabled) return;
-    onChange(actionId);
-  }, [disabled, onChange]);
-
-  const content = (
-    <View style={styles.row}>
-      <Text style={[styles.value, { color: colors.mutedForeground }]} numberOfLines={1}>
-        {displayLabel}
-      </Text>
-      {Platform.OS === 'ios' ? (
-        <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} style={styles.chevron} />
-      ) : (
-        <ChevronDown size={16} color={colors.mutedForeground} strokeWidth={2} style={styles.chevron} />
-      )}
-    </View>
+  const handleSelect = useCallback(
+    (actionId: string) => {
+      if (disabled) return;
+      onChange(actionId);
+    },
+    [disabled, onChange],
   );
+
+  const Chevron = Platform.OS === 'ios' ? ChevronRight : ChevronDown;
 
   return (
     <>
       <Pressable ref={triggerRef} onPress={handleOpen}>
-        <FormRow label={label} disabled={disabled} required={required}>
-          {content}
+        <FormRow label={label} disabled={disabled} required={required} position={position}>
+          <View style={styles.row}>
+            <Text style={[styles.value, { color: colors.mutedForeground }]} numberOfLines={1}>
+              {displayLabel}
+            </Text>
+            <Chevron
+              size={ICON_SIZE.action}
+              color={colors.mutedForeground}
+              strokeWidth={ICON_STROKE.default}
+            />
+          </View>
         </FormRow>
       </Pressable>
       <DropdownMenu
@@ -98,13 +102,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     justifyContent: 'flex-end',
+    gap: spacing.xs,
   },
   value: {
-    fontSize: 16,
+    ...fontScale.base,
     flexShrink: 1,
     textAlign: 'right',
-  },
-  chevron: {
-    marginLeft: 6,
   },
 });

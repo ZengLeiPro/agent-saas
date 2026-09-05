@@ -2,8 +2,10 @@
  * 引用溯源角标（[CITE] 标记渲染产物），对齐 web `CitationCard` /
  * `MessageCitationCard` / `ContextCitationCard` 三件套：
  *
- * - 文档引用 `{ doc, page?, label }`：点角标直接打开文档——Markdown 走会话内
- *   markdown-preview 路由，其余走 useFileOpen（与文件浏览器同一条下载/分享链路）。
+ * - 文档引用 `{ doc, page?, label }`：doc 指向租户共享知识库（KB）文档，
+ *   与 Web `CitationCard` 一样统一用 `kb://` 伪协议取数（`/api/kb/file`），
+ *   再按 `resolveFilePreviewTarget` 分派到 markdown-preview / 通用预览 / 下载分享。
+ *   此前这里直接把 doc 当工作区路径打 `/api/file/*`，KB 根文档必然 404（P1 缺口）。
  * - Context 引用 `{ contextId, label }`：点角标拉取证据并打开 ContextCitationSheet；
  *   sessionId 只取自当前会话上下文，绝不读 marker payload 里的身份字段。
  *
@@ -16,13 +18,14 @@ import { useRouter } from 'expo-router';
 import { BookOpen } from 'lucide-react-native';
 import {
   authFetch,
+  buildKbPreviewPath,
   contextCitationError,
   contextCitationPath,
-  getPreviewFileType,
   normalizeContextCitationDetail,
   type CitationSegment,
   type ContextCitationDetail,
 } from '@agent/shared';
+import { resolveFilePreviewTarget } from '../../../lib/filePreviewTarget';
 import { useChatAppState } from '../../../contexts/ChatAppStateContext';
 import { useFileOpen } from '../../../hooks/useFileOpen';
 import { useColors, useChatTypography, spacing, radius } from '../../../theme';
@@ -100,31 +103,35 @@ function CitationBadge({
   );
 }
 
-/** 文档引用：Markdown 走会话内预览，其余交给 useFileOpen 下载/分享 */
+/** 文档引用：KB 伪协议取数，按可预览类型分派预览或下载/分享 */
 function DocumentCitationCard({
   doc,
   page,
   label,
-  owner,
 }: {
   doc: string;
   page?: number;
   label: string;
-  owner?: string;
 }) {
   const router = useRouter();
   const { open, downloading } = useFileOpen();
 
   const handlePress = useCallback(() => {
-    if (getPreviewFileType(doc) === 'md') {
+    const kbPath = buildKbPreviewPath(doc, page);
+    const target = resolveFilePreviewTarget(doc);
+    if (target.route === '/chat/markdown-preview') {
+      router.push({ pathname: target.route, params: { filePath: kbPath } });
+      return;
+    }
+    if (target.route === '/files/preview') {
       router.push({
-        pathname: '/chat/markdown-preview',
-        params: { filePath: doc, ...(owner ? { owner } : {}) },
+        pathname: target.route,
+        params: { filePath: kbPath, name: doc.split('/').pop() || doc },
       });
       return;
     }
-    void open({ path: doc, modifiedAt: 0, size: 0, ...(owner ? { owner } : {}) });
-  }, [doc, owner, open, router]);
+    void open({ path: kbPath, modifiedAt: 0, size: 0 });
+  }, [doc, page, open, router]);
 
   return (
     <CitationBadge
@@ -200,13 +207,7 @@ function ContextCitationCard({ contextId, label }: { contextId: string; label: s
 }
 
 /** [CITE] 段的统一入口：按 payload 形态分派到文档引用 / Context 引用 */
-export function MessageCitationCard({
-  citation,
-  owner,
-}: {
-  citation: CitationSegment;
-  owner?: string;
-}) {
+export function MessageCitationCard({ citation }: { citation: CitationSegment }) {
   return 'contextId' in citation ? (
     <ContextCitationCard contextId={citation.contextId} label={citation.label} />
   ) : (
@@ -214,7 +215,6 @@ export function MessageCitationCard({
       doc={citation.doc}
       {...(citation.page ? { page: citation.page } : {})}
       label={citation.label}
-      {...(owner ? { owner } : {})}
     />
   );
 }

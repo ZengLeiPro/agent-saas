@@ -189,7 +189,9 @@ export type {
   CronJobCreate,
   CronJobPatch,
   CronRunLogEntry,
+  CronRunTrigger,
   CronServiceStatus,
+  AgentContextConfig,
 } from "./cron";
 
 export {

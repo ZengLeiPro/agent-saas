@@ -1,22 +1,24 @@
-import React, { useMemo } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  RefreshControl,
-  ActivityIndicator,
-  TouchableOpacity,
-  Switch,
-} from 'react-native';
+/**
+ * 定时任务列表 —— 一行一张卡：状态徽章 + 启停开关常驻，
+ * 「立即运行 / 编辑 / 删除」这类有副作用的动作都收进详情页（与 Web JobList 同一取舍）。
+ */
+import React, { useCallback, useMemo } from 'react';
+import { RefreshControl, StyleSheet, View } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { Clock, CheckCheck, ArrowRight } from 'lucide-react-native';
-import type { CronJob } from '@agent/shared';
-import { useColors, spacing, typography, radius, type ThemeColors } from '../../theme';
+import type { CronJob, ModelList } from '@agent/shared';
+import { cronJobStatusLabel, cronJobStatusTone, cronJobSubtitle } from '@agent/shared';
+import { useColors, spacing } from '../../theme';
+import { EntityIcons } from '../../lib/icons';
 import { hapticLight } from '../../lib/haptics';
+import { EmptyState } from '../ui/EmptyState';
+import { ListRow } from '../ui/ListRow';
+import { Skeleton } from '../ui/Skeleton';
+import { StatusBadge } from '../ui/StatusBadge';
 
 interface JobListProps {
   jobs: CronJob[];
   loading: boolean;
+  modelList?: ModelList | null;
   listRef?: React.RefObject<FlashListRef<CronJob> | null>;
   onRefresh: () => Promise<void>;
   onSelect: (job: CronJob) => void;
@@ -25,219 +27,114 @@ interface JobListProps {
   contentPaddingBottom?: number;
 }
 
-function formatSchedule(job: CronJob): string {
-  const s = job.schedule;
-  if (s.kind === 'every') {
-    const totalSec = Math.round(s.everyMs / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const sec = totalSec % 60;
-    const parts: string[] = [];
-    if (h) parts.push(`${h}h`);
-    if (m) parts.push(`${m}m`);
-    if (sec) parts.push(`${sec}s`);
-    return `每 ${parts.join(' ')}`;
-  }
-  if (s.kind === 'cron') return s.expr;
-  if (s.kind === 'at') return `定时 ${new Date(s.atMs).toLocaleString()}`;
-  return '未知';
-}
+/** 骨架屏行数：够撑满一屏，不至于让首屏闪成空态 */
+const SKELETON_ROWS = 5;
+const SKELETON_ROW_HEIGHT = 72;
 
-function getStatusColor(job: CronJob, colors: ThemeColors): string {
-  if (!job.enabled) return colors.mutedForeground;
-  const state = job.state;
-  if (state.runningAtMs) return colors.statusIcon.info;
-  if (state.lastStatus === 'ok') return colors.statusIcon.success;
-  if (state.lastStatus === 'error') return colors.destructive;
-  return colors.mutedForeground;
-}
-
-function getModelLabel(job: CronJob): string | undefined {
-  if (job.payload.kind === 'agentTurn' && job.payload.model) {
-    const m = job.payload.model;
-    const slash = m.lastIndexOf('/');
-    return slash >= 0 ? m.slice(slash + 1) : m;
-  }
-  return undefined;
-}
-
-function JobCard({
+function JobRow({
   job,
+  modelList,
   onSelect,
   onToggle,
 }: {
   job: CronJob;
+  modelList?: ModelList | null;
   onSelect: (job: CronJob) => void;
   onToggle: (job: CronJob) => Promise<void>;
 }) {
-  const colors = useColors();
-  const statusColor = getStatusColor(job, colors);
+  const running = !!job.state.runningAtMs;
 
-  const styles = useMemo(() => StyleSheet.create({
-    card: {
-      backgroundColor: colors.card,
-      borderRadius: radius.lg,
-      padding: spacing.md,
-      marginBottom: spacing.sm,
-      flexDirection: 'row',
-      alignItems: 'stretch',
-    },
-    cardContent: {
-      flex: 1,
-    },
-    cardContentDisabled: {
-      opacity: 0.5,
-    },
-    cardHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      marginBottom: spacing.xs,
-    },
-    statusDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-    },
-    jobName: {
-      ...typography.subtitle,
-      color: colors.foreground,
-      flex: 1,
-    },
-    textDisabled: {
-      color: colors.mutedForeground,
-    },
-    toggleColumn: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginLeft: spacing.sm,
-    },
-    cardMeta: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      marginTop: 2,
-      paddingLeft: 18,
-    },
-    metaText: {
-      ...typography.caption,
-      color: colors.mutedForeground,
-    },
-    metaSep: {
-      ...typography.caption,
-      color: colors.mutedForeground,
-      marginHorizontal: 2,
-    },
-  }), [colors]);
+  const handleToggle = useCallback(() => {
+    hapticLight();
+    void onToggle(job);
+  }, [job, onToggle]);
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      onPress={() => { hapticLight(); onSelect(job); }}
-    >
-      <View style={styles.card}>
-        <View style={[styles.cardContent, !job.enabled && styles.cardContentDisabled]}>
-          <View style={styles.cardHeader}>
-            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-            <Text style={[styles.jobName, !job.enabled && styles.textDisabled]} numberOfLines={1}>
-              {job.name}
-            </Text>
-          </View>
-          <View style={styles.cardMeta}>
-            <Clock size={14} color={colors.mutedForeground} strokeWidth={2} />
-            <Text style={styles.metaText}>{formatSchedule(job)}</Text>
-            {getModelLabel(job) && (
-              <>
-                <Text style={styles.metaSep}>·</Text>
-                <Text style={styles.metaText} numberOfLines={1}>{getModelLabel(job)}</Text>
-              </>
-            )}
-          </View>
-          {job.state.lastRunAtMs ? (
-            <View style={styles.cardMeta}>
-              <CheckCheck size={14} color={colors.mutedForeground} strokeWidth={2} />
-              <Text style={styles.metaText}>
-                上次: {new Date(job.state.lastRunAtMs).toLocaleString()}
-              </Text>
-            </View>
-          ) : null}
-          {job.state.nextRunAtMs && (
-            <View style={styles.cardMeta}>
-              <ArrowRight size={14} color={colors.mutedForeground} strokeWidth={2} />
-              <Text style={styles.metaText}>
-                下次: {new Date(job.state.nextRunAtMs).toLocaleString()}
-              </Text>
-            </View>
-          )}
-        </View>
-        <View style={styles.toggleColumn}>
-          <Switch
-            value={job.enabled}
-            onValueChange={() => { hapticLight(); void onToggle(job); }}
-            trackColor={{ false: colors.muted, true: colors.success }}
-            thumbColor={colors.card}
-            ios_backgroundColor={colors.muted}
-          />
-        </View>
-      </View>
-    </TouchableOpacity>
+    <ListRow
+      title={job.name}
+      subtitle={cronJobSubtitle(job, { modelList })}
+      titleTestID={`cron-job-${job.id}`}
+      accessory={
+        <StatusBadge status={cronJobStatusTone(job)} label={cronJobStatusLabel(job)} size="sm" />
+      }
+      switchValue={job.enabled}
+      onSwitchChange={handleToggle}
+      // 运行中不给切换：这一轮已经在跑，切开关只会造成「以为停下了」的错觉
+      switchDisabled={running}
+      onPress={() => onSelect(job)}
+      style={styles.row}
+    />
   );
 }
 
-export function JobList({ jobs, loading, listRef, onRefresh, onSelect, onToggle, contentPaddingTop, contentPaddingBottom }: JobListProps) {
+export function JobList({
+  jobs,
+  loading,
+  modelList,
+  listRef,
+  onRefresh,
+  onSelect,
+  onToggle,
+  contentPaddingTop,
+  contentPaddingBottom,
+}: JobListProps) {
   const colors = useColors();
 
-  const styles = useMemo(() => StyleSheet.create({
-    listContent: {
+  const contentContainerStyle = useMemo(
+    () => ({
       padding: spacing.md,
-    },
-    center: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingTop: 100,
-    },
-    emptyText: {
-      ...typography.body,
-      color: colors.mutedForeground,
-    },
-  }), [colors]);
+      ...(contentPaddingTop != null ? { paddingTop: contentPaddingTop } : {}),
+      ...(contentPaddingBottom != null ? { paddingBottom: contentPaddingBottom } : {}),
+    }),
+    [contentPaddingTop, contentPaddingBottom],
+  );
 
   if (loading && jobs.length === 0) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View style={styles.skeletonWrap} testID="cron-job-list-skeleton">
+        {Array.from({ length: SKELETON_ROWS }, (_, index) => (
+          <Skeleton key={index} height={SKELETON_ROW_HEIGHT} style={styles.skeletonRow} />
+        ))}
       </View>
     );
   }
 
   return (
     <FlashList
+      testID="cron-job-list"
       ref={listRef}
       data={jobs}
       drawDistance={250}
       overrideProps={{ initialDrawBatchSize: 10 }}
-      keyExtractor={item => item.id}
+      keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
-        <JobCard
-          job={item}
-          onSelect={onSelect}
-          onToggle={onToggle}
-        />
+        <JobRow job={item} modelList={modelList} onSelect={onSelect} onToggle={onToggle} />
       )}
-      contentContainerStyle={{
-        ...styles.listContent,
-        ...(contentPaddingTop != null && { paddingTop: contentPaddingTop }),
-        ...(contentPaddingBottom != null && { paddingBottom: contentPaddingBottom }),
-      }}
+      contentContainerStyle={contentContainerStyle}
       refreshControl={
         <RefreshControl refreshing={loading} onRefresh={onRefresh} tintColor={colors.primary} />
       }
       ListEmptyComponent={
-        <View style={styles.center}>
-          <Text style={styles.emptyText}>暂无定时任务</Text>
-        </View>
+        <EmptyState
+          icon={EntityIcons.cron}
+          title="暂无定时任务"
+          description="创建定时任务后，Agent 会按计划自动执行并把结果通知你。"
+          testID="cron-job-list-empty"
+        />
       }
     />
   );
 }
+
+const styles = StyleSheet.create({
+  row: {
+    marginBottom: spacing.sm,
+  },
+  skeletonWrap: {
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  skeletonRow: {
+    width: '100%',
+  },
+});

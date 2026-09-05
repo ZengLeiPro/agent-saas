@@ -1,6 +1,8 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
-import { useColors } from '../../theme';
+import { StyleSheet } from 'react-native';
+import { spacing } from '../../theme';
+import { Card } from '../ui/Card';
+import { ListRow } from '../ui/ListRow';
 
 interface FormDestructiveButtonProps {
   label: string;
@@ -8,38 +10,24 @@ interface FormDestructiveButtonProps {
   disabled?: boolean;
 }
 
+/** 表单末尾的危险动作行：卡片底 + 红字，度量与其它表单行一致。 */
 export function FormDestructiveButton({ label, onPress, disabled }: FormDestructiveButtonProps) {
-  const colors = useColors();
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [
-        styles.btn,
-        {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
-          opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
-        },
-      ]}
-    >
-      <Text style={[styles.label, { color: colors.destructive }]}>{label}</Text>
-    </Pressable>
+    <Card flush style={styles.card}>
+      <ListRow
+        title={label}
+        destructive
+        disabled={disabled}
+        showChevron={false}
+        onPress={onPress}
+      />
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  btn: {
-    marginHorizontal: 16,
-    marginBottom: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
+  card: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing['2xl'],
   },
 });

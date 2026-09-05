@@ -5,7 +5,8 @@
   "type": "module",
   "license": "UNLICENSED",
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

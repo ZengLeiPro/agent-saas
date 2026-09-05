@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KY Agent mock 壳（ky-app doctor）</title>
+    <style>
+      body { margin: 0; font: 14px/1.6 system-ui, sans-serif; color: #1f2328; }
+      header { padding: 8px 12px; background: #f6f8fa; border-bottom: 1px solid #d0d7de; }
+      #error { display: none; padding: 12px; margin: 12px; border: 1px solid #cf222e; color: #cf222e; }
+      #error[data-visible='1'] { display: block; }
+      #kyapp { width: 100%; height: 78vh; border: 0; }
+      #forger { display: none; }
+      code { background: #eef; padding: 0 4px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      KY Agent mock 壳 —— 由 <code>ky-app doctor</code> 提供，仅用于本地一致性测试与开发预览。
+      <span id="phase"></span>
+    </header>
+    <div id="error"></div>
+    <iframe
+      id="kyapp"
+      title="定制项目"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals"
+      allow="clipboard-write"
+      referrerpolicy="strict-origin"
+    ></iframe>
+    <iframe id="forger" src="/shell/forger.html" title="伪造来源子帧"></iframe>
+    <script>
+      (function () {
+        'use strict';
+
+        var frame = document.getElementById('kyapp');
+        var errorBox = document.getElementById('error');
+        var phaseBox = document.getElementById('phase');
+
+        var shell = {
+          config: null,
+          state: {
+            phase: 'idle',
+            iid: null,
+            nonce: null,
+            path: '/',
+            error: null,
+            errorText: null,
+            tokenExp: null,
+            verify: null,
+          },
+          received: [],
+          sent: [],
+          counters: {
+            ready: 0,
+            initSent: 0,
+            initAck: 0,
+            initAckDropped: 0,
+            initResends: 0,
+            tokenRequests: 0,
+            routeChanged: 0,
+            permChanged: 0,
+            agentOpen: 0,
+            toast: 0,
+            logout: 0,
+            linkOpen: 0,
+            linkBlocked: 0,
+            droppedOrigin: 0,
+            droppedSource: 0,
+            verifyCalls: 0,
+          },
+        };
+        window.__kyShell = shell;
+
+        var appOrigin = null;
+        var mountOptions = {};
+        var initAckTimer = null;
+        var initResends = 0;
+        var navSeq = 0;
+        var waiters = [];
+
+        function setPhase(phase) {
+          shell.state.phase = phase;
+          phaseBox.textContent = ' 状态：' + phase;
+        }
+
+        function showError(code, text) {
+          shell.state.error = code;
+          shell.state.errorText = text;
+          errorBox.textContent = text;
+          errorBox.setAttribute('data-visible', '1');
+          setPhase('error');
+        }
+
+        function clearError() {
+          shell.state.error = null;
+          shell.state.errorText = null;
+          errorBox.removeAttribute('data-visible');
+        }
+
+        function notifyWaiters() {
+          var pending = waiters;
+          waiters = [];
+          for (var i = 0; i < pending.length; i += 1) {
+            var waiter = pending[i];
+            var hit = find(waiter.type, waiter.id);
+            if (hit) waiter.resolve(hit);
+            else waiters.push(waiter);
+          }
+        }
+
+        function find(type, id) {
+          for (var i = 0; i < shell.received.length; i += 1) {
+            var entry = shell.received[i];
+            if (entry.type !== type) continue;
+            if (id && entry.id !== id) continue;
+            return entry;
+          }
+          return null;
+        }
+
+        /** 等一条子→壳消息；`id` 可选（需应答消息用它关联）。 */
+        shell.waitFor = function (type, timeoutMs, id) {
+          var hit = find(type, id);
+          if (hit) return Promise.resolve(hit);
+          return new Promise(function (resolve, reject) {
+            var waiter = { type: type, id: id, resolve: resolve };
+            waiters.push(waiter);
+            setTimeout(function () {
+              var index = waiters.indexOf(waiter);
+              if (index >= 0) {
+                waiters.splice(index, 1);
+                reject(new Error('等待 ' + type + ' 超时（' + timeoutMs + ' ms）'));
+              }
+            }, timeoutMs || 5000);
+          });
+        };
+
+        /** 计数某种类型的消息条数。 */
+        shell.count = function (type) {
+          var total = 0;
+          for (var i = 0; i < shell.received.length; i += 1) {
+            if (shell.received[i].type === type) total += 1;
+          }
+          return total;
+        };
+
+        function post(type, payload, extra) {
+          var envelope = { ns: 'ky', v: 1, type: type };
+          if (extra && extra.id) envelope.id = extra.id;
+          if (extra && extra.navId) envelope.navId = extra.navId;
+          if (payload !== undefined) envelope.payload = payload;
+          shell.sent.push({ at: Date.now(), envelope: envelope });
+          frame.contentWindow.postMessage(envelope, appOrigin);
+          return envelope;
+        }
+        shell.post = post;
+
+        async function loadConfig() {
+          var response = await fetch('/shell/api/config');
+          shell.config = await response.json();
+          appOrigin = shell.config.appOrigin;
+          shell.state.iid = shell.config.installationId;
+        }
+
+        async function newNonce() {
+          var response = await fetch('/shell/api/nonce', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ iid: shell.state.iid, sub: currentUser().id }),
+          });
+          var body = await response.json();
+          return body.nonce;
+        }
+
+        function currentUser() {
+          return (mountOptions && mountOptions.user) || shell.config.user;
+        }
+
+        async function fetchToken() {
+          var query = new URLSearchParams();
+          query.set('sub', currentUser().id);
+          query.set('tadm', currentUser().isTenantAdmin ? '1' : '0');
+          if (mountOptions.tokenTtlSeconds) query.set('ttl', String(mountOptions.tokenTtlSeconds));
+          if (mountOptions.tokenSkewSeconds) query.set('skew', String(mountOptions.tokenSkewSeconds));
+          var response = await fetch('/shell/api/token?' + query.toString());
+          return response.json();
+        }
+
+        /** §5.2：壳 URL → iframe src，注入 ky / ky_iid / ky_nonce（保留原有 query）。 */
+        function buildSrc(path, nonce) {
+          var url = new URL(path || '/', appOrigin);
+          url.searchParams.set('ky', '1');
+          url.searchParams.set('ky_iid', shell.state.iid);
+          url.searchParams.set('ky_nonce', nonce);
+          return url.toString();
+        }
+
+        shell.mount = async function (options) {
+          mountOptions = options || {};
+          clearError();
+          shell.received.length = 0;
+          shell.sent.length = 0;
+          waiters.length = 0;
+          initResends = 0;
+          shell.counters.initAckDropped = 0;
+          if (initAckTimer) clearTimeout(initAckTimer);
+          setPhase('mounting');
+          var nonce = await newNonce();
+          shell.state.nonce = nonce;
+          shell.state.path = mountOptions.path || '/';
+          shell.state.mountedAt = performance.now();
+          frame.setAttribute('src', buildSrc(shell.state.path, nonce));
+        };
+
+        shell.unmount = function () {
+          frame.removeAttribute('src');
+          setPhase('idle');
+        };
+
+        /** 只改 mount 选项（例如中途把续期改成终止性失败），不重新加载 iframe。 */
+        shell.setOptions = function (patch) {
+          Object.assign(mountOptions, patch || {});
+        };
+
+        shell.getIframeAttributes = function () {
+          return {
+            sandbox: frame.getAttribute('sandbox'),
+            allow: frame.getAttribute('allow'),
+            referrerpolicy: frame.getAttribute('referrerpolicy'),
+            src: frame.getAttribute('src'),
+          };
+        };
+
+        function armInitAckTimer(replyToId) {
+          if (initAckTimer) clearTimeout(initAckTimer);
+          var timeoutMs = mountOptions.initAckTimeoutMs || 5000;
+          initAckTimer = setTimeout(function () {
+            // §5.4-4：壳 5 s 未收到 init.ack 重发 init（≤ 3 次）。
+            if (initResends >= 3) return;
+            initResends += 1;
+            shell.counters.initResends += 1;
+            sendInit(replyToId).catch(function () {});
+          }, timeoutMs);
+        }
+
+        async function sendInit(replyToId) {
+          var token = await fetchToken();
+          shell.state.tokenExp = token.tokenExp;
+          var payload = {
+            token: token.token,
+            tokenExp: token.tokenExp,
+            user: currentUser(),
+            theme: mountOptions.theme || 'light',
+            locale: 'zh-CN',
+            installationId: shell.state.iid,
+            contractVersion: 1,
+          };
+          Object.assign(payload, mountOptions.initOverrides || {});
+          shell.counters.initSent += 1;
+          post('init', payload, { id: replyToId || 'init-' + Date.now() });
+          armInitAckTimer(replyToId);
+        }
+
+        /** §5.4-3：壳交服务端校验安装证明（HS256 + iid/origin + nonce 绑定 + 重复缓存）。 */
+        async function verifyAttestation(payload) {
+          shell.counters.verifyCalls += 1;
+          var response = await fetch('/shell/api/verify', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              nonce: shell.state.nonce,
+              attestation: payload.attestation,
+              installationId: payload.installationId,
+              sub: currentUser().id,
+            }),
+          });
+          return response.json();
+        }
+
+        function checkLink(url) {
+          try {
+            var parsed = new URL(url);
+            if (parsed.protocol !== 'https:') return false;
+            if (parsed.username || parsed.password) return false;
+            var hosts = shell.config.externalLinkHosts || [];
+            return hosts.indexOf(parsed.hostname) >= 0;
+          } catch (error) {
+            return false;
+          }
+        }
+
+        async function handleEnvelope(data) {
+          shell.received.push({
+            at: Date.now(),
+            type: data.type,
+            id: data.id,
+            navId: data.navId,
+            payload: data.payload,
+          });
+          notifyWaiters();
+
+          switch (data.type) {
+            case 'ready': {
+              shell.counters.ready += 1;
+              // §8.3 / §9.3-16：壳只接受 contractVersion=1，其余进错误页。
+              if (!data.payload || data.payload.contractVersion !== 1) {
+                showError('contract_version_mismatch', '系统版本不兼容');
+                return;
+              }
+              // 一致性测试用：先「装作没收到」前几条 ready，逼子端按 §5.4 每 1 s 重发。
+              if (
+                mountOptions.minReadyBeforeInit &&
+                shell.counters.ready < mountOptions.minReadyBeforeInit
+              ) {
+                return;
+              }
+              var verdict = await verifyAttestation(data.payload);
+              shell.state.verify = verdict;
+              if (!verdict.ok) {
+                showError(
+                  'attest_failed',
+                  '《' + shell.config.systemName + '》暂时无法加载，已通知技术支持',
+                );
+                return;
+              }
+              setPhase('init');
+              await sendInit(data.id);
+              return;
+            }
+            case 'init.ack': {
+              if (mountOptions.dropFirstInitAck && shell.counters.initAckDropped === 0) {
+                shell.counters.initAckDropped += 1;
+                return;
+              }
+              shell.counters.initAck += 1;
+              if (initAckTimer) clearTimeout(initAckTimer);
+              setPhase('active');
+              return;
+            }
+            case 'token.request': {
+              shell.counters.tokenRequests += 1;
+              if (mountOptions.tokenErrorReason) {
+                post('token.refresh.error', { reason: mountOptions.tokenErrorReason }, { id: data.id });
+                return;
+              }
+              var refreshed = await fetchToken();
+              shell.state.tokenExp = refreshed.tokenExp;
+              post(
+                'token.refresh',
+                { token: refreshed.token, tokenExp: refreshed.tokenExp },
+                { id: data.id },
+              );
+              return;
+            }
+            case 'link.open': {
+              shell.counters.linkOpen += 1;
+              var ok = checkLink(data.payload && data.payload.url);
+              if (!ok) shell.counters.linkBlocked += 1;
+              post('link.result', { ok: ok }, { id: data.id });
+              return;
+            }
+            case 'route.changed':
+              shell.counters.routeChanged += 1;
+              return;
+            case 'perm.changed':
+              shell.counters.permChanged += 1;
+              return;
+            case 'agent.open':
+              shell.counters.agentOpen += 1;
+              return;
+            case 'toast':
+              shell.counters.toast += 1;
+              return;
+            case 'logout.request':
+              shell.counters.logout += 1;
+              shell.unmount();
+              return;
+            default:
+              return;
+          }
+        }
+
+        /** §9.3-16 壳侧自测：注入一条 contractVersion≠1 的 ready。 */
+        shell.injectReady = function (payload) {
+          return handleEnvelope({ ns: 'ky', v: 1, type: 'ready', id: 'injected', payload: payload });
+        };
+
+        shell.navigate = function (path, timeoutMs) {
+          navSeq += 1;
+          var id = 'nav-' + navSeq;
+          var navId = 'navid-' + navSeq;
+          post('route.navigate', { path: path }, { id: id, navId: navId });
+          return shell.waitFor('route.result', timeoutMs || 5000, id).then(function (entry) {
+            return { payload: entry.payload, navId: entry.navId };
+          });
+        };
+
+        shell.setTheme = function (theme) {
+          post('theme.changed', { theme: theme });
+        };
+
+        shell.setVisibility = function (visible) {
+          post('visibility', { visible: visible });
+        };
+
+        /** 从同源的另一个 iframe 伪造一条消息（event.source 不是子端的 parent）。 */
+        shell.forge = function (envelope) {
+          document.getElementById('forger').contentWindow.forge(envelope, appOrigin);
+        };
+
+        /** §9.3-15：src 设置 → init.ack 的毫秒耗时，重复 count 次。 */
+        shell.measure = async function (count, options) {
+          var samples = [];
+          for (var i = 0; i < count; i += 1) {
+            var startedAt = performance.now();
+            await shell.mount(options || {});
+            await shell.waitFor('init.ack', 10000);
+            samples.push(performance.now() - startedAt);
+          }
+          return samples;
+        };
+
+        window.addEventListener('message', function (event) {
+          if (appOrigin === null) return;
+          if (event.origin !== appOrigin) {
+            shell.counters.droppedOrigin += 1;
+            return;
+          }
+          if (event.source !== frame.contentWindow) {
+            shell.counters.droppedSource += 1;
+            return;
+          }
+          var data = event.data;
+          if (!data || data.ns !== 'ky' || data.v !== 1 || typeof data.type !== 'string') return;
+          handleEnvelope(data).catch(function (error) {
+            showError('shell_internal', String(error && error.message));
+          });
+        });
+
+        shell.ready = loadConfig().then(function () {
+          setPhase('ready');
+          var params = new URLSearchParams(location.search);
+          if (params.get('automount') !== '0') {
+            return shell.mount({ path: params.get('path') || '/' });
+          }
+          return undefined;
+        });
+      })();
+    </script>
+  </body>
+</html>

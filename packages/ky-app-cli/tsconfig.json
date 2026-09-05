@@ -18,7 +18,9 @@
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo",
     "paths": {
       "@kaiyan/ky-app-contract": ["../ky-app-contract/src/index.ts"],
-      "@kaiyan/ky-app-server": ["../ky-app-server/src/index.ts"]
+      "@kaiyan/ky-app-server": ["../ky-app-server/src/index.ts"],
+      "@kaiyan/ky-app-server/hono": ["../ky-app-server/src/hono/index.ts"],
+      "@kaiyan/ky-app-contract/browser": ["../ky-app-contract/src/browser.ts"]
     }
   },
   "include": ["src"]

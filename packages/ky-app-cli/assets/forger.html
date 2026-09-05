@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>伪造来源用的同源子帧</title>
+  </head>
+  <body>
+    <script>
+      // §9.3-10「伪造 event.source」：本页面与壳同源，但它不是被测 iframe 的 window.parent。
+      // 从这里 postMessage 过去，子端收到的 event.origin 与壳一致、event.source 不一致，
+      // 按 §5.3 必须丢弃。
+      window.forge = function (message, targetOrigin) {
+        var frame = window.parent.document.getElementById('kyapp');
+        frame.contentWindow.postMessage(message, targetOrigin);
+      };
+    </script>
+  </body>
+</html>

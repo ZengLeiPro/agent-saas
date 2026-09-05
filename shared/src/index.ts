@@ -968,61 +968,7 @@ export * from './lib/connectorsApi';
 // Governance UI contract and authoritative API clients
 
 // Lib - 定时任务（Cron）：HTTP 封装 / 纯派生 / 表单草稿模型
-export {
-  CRON_API_BASE,
-  CRON_DINGTALK_API_BASE,
-  CRON_RUN_HISTORY_LIMIT,
-  newCronRequestId,
-  fetchCronServiceStatus,
-  fetchCronJobs,
-  createCronJob,
-  updateCronJob,
-  deleteCronJob,
-  runCronJob,
-  fetchCronRunHistory,
-  validateCronExpression,
-  fetchCronDingtalkSessions,
-} from './lib/cronApi';
-export type { CronExprValidation } from './lib/cronApi';
-export {
-  sortCronJobsByNextRun,
-  formatCronSchedule,
-  formatCronNextRun,
-  formatCronRunDuration,
-  cronRunStatusTone,
-  cronRunStatusLabel,
-  cronJobStatusTone,
-  cronJobStatusLabel,
-  cronRunTriggerLabel,
-  cronRunSummary,
-  resolveCronModelLabel,
-  cronJobSubtitle,
-  cronNotifyNeedsDingtalk,
-  isFiveFieldCronExpr,
-  CRON_SCHEDULE_KIND_OPTIONS,
-  CRON_PAYLOAD_KIND_OPTIONS,
-  CRON_NOTIFY_CHANNEL_OPTIONS,
-  CRON_DINGTALK_MODE_OPTIONS,
-  CRON_TIMEZONE_PRESETS,
-  CRON_EXPR_PRESETS,
-} from './lib/cronPresentation';
-export type {
-  CronOption,
-  CronStatusTone,
-  CronScheduleKind,
-  CronPayloadKind,
-  CronDingtalkMode,
-} from './lib/cronPresentation';
-export {
-  CRON_MODEL_DEFAULT_VALUE,
-  CRON_DRAFT_DEFAULT_EVERY_MINUTES,
-  CRON_DRAFT_DEFAULT_CRON_EXPR,
-  CRON_DRAFT_DEFAULT_TZ,
-  CRON_DRAFT_DEFAULT_TIMEOUT_SECONDS,
-  emptyCronJobDraft,
-  cronJobToDraft,
-  buildCronJobCreate,
-  validateCronDingtalkTarget,
-  isCronDraftDirty,
-} from './lib/cronJobDraft';
-export type { CronJobDraft, CronDraftBuildResult } from './lib/cronJobDraft';
+// （Web CronManager 与 mobile 任务中心共用同一份；具体导出见各模块）
+export * from './lib/cronApi';
+export * from './lib/cronPresentation';
+export * from './lib/cronJobDraft';

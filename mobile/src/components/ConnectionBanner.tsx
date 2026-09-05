@@ -18,7 +18,7 @@ const RECONNECTING_OPACITY = 0.8;
 
 /**
  * 顶部连接状态横幅，与 Web `DesktopLayout` / `MobileLayout` 的横幅语义一致：
- *   离线   → warning 实底 +「网络未连接」（Web 原文 "Network disconnected"，移动端统一中文）
+ *   离线   → warning 实底 +「网络未连接」（Web 自 PR #484 起同为中文「网络未连接」）
  *   重连中 → warning 80% + 旋转 Loader2 +「重新连接中...」
  *   已断开 → danger 实底（移动端独有：WS 断开比单纯没网更需要引起注意，Web 无此态）
  *

@@ -22,6 +22,7 @@ const requiredTaskCommands = [
   'pnpm -F "$workspace" test:coverage',
   'src/__tests__/memoryConsolidationStore.pg.test.ts',
   'src/__tests__/pgToolInvocationTerminalGate.pg.test.ts',
+  'pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts',
   'pnpm -F web check:api-boundary',
   'pnpm scenarios:lint',
   'pnpm sanitize-check',

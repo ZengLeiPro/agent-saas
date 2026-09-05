@@ -27,15 +27,17 @@ export interface PgJtiStoreOptions {
   now?: () => number;
 }
 
+// 说明：本类刻意不使用「构造函数参数属性」（`constructor(private pool: Pool)`）。
+// 参数属性不是可擦除语法，Node 的类型擦除无法直接加载，而双进程 jti 测试正是靠
+// `child_process.fork` + 类型擦除直接跑这个文件来验证跨进程原子性。
 export class PgJtiStore implements JtiStore {
-  private lastPurgeAt = 0;
+  private readonly pool: Pool;
   private readonly purgeIntervalMs: number;
   private readonly now: () => number;
+  private lastPurgeAt = 0;
 
-  constructor(
-    private readonly pool: Pool,
-    options: PgJtiStoreOptions = {},
-  ) {
+  constructor(pool: Pool, options: PgJtiStoreOptions = {}) {
+    this.pool = pool;
     this.purgeIntervalMs = options.purgeIntervalMs ?? 60_000;
     this.now = options.now ?? Date.now;
   }

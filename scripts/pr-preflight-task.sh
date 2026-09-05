@@ -54,6 +54,7 @@ case "$task" in
       src/__tests__/pgToolInvocationTerminalGate.pg.test.ts \
       src/__tests__/sandboxScopeActivity.pg.test.ts \
       src/__tests__/taskboardOnReadyTrigger.pg.test.ts
+    pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts
     ;;
 
   web)

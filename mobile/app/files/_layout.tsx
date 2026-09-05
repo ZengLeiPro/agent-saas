@@ -41,6 +41,7 @@ export default function FilesLayout() {
       {/* 标题与会话列表 pill、Web 侧边栏保持同一个词：文件 */}
       <Stack.Screen name="index" options={{ title: '文件' }} />
       <Stack.Screen name="browse" options={{ fullScreenSwipeEnabled: true } as any} />
+      <Stack.Screen name="preview" options={{ title: '预览' }} />
     </Stack>
   );
 }

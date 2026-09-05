@@ -849,8 +849,14 @@ export {
   resolveImageSrc,
   resolveTaskAttachmentSrc,
   getPreviewFileType,
+  truncateTextPreview,
 } from './lib/fileUtils';
-export type { ParsedImage, ParsedToolResult, PreviewFileType } from './lib/fileUtils';
+export type {
+  ParsedImage,
+  ParsedToolResult,
+  PreviewFileType,
+  TextPreviewTruncation,
+} from './lib/fileUtils';
 
 // Lib - file type visual
 export { getFileTypeVisual } from './lib/fileTypeVisual';

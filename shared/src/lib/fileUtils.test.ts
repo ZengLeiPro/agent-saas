@@ -11,7 +11,9 @@ import {
   parseToolResult,
   resolveImageSrc,
   resolveTaskAttachmentSrc,
+  truncateTextPreview,
 } from './fileUtils';
+import { ARTIFACT_TEXT_MAX_BYTES } from './artifactViewModel';
 import { initPlatform } from '../platform/context';
 import type { PlatformDeps } from '../platform/types';
 import { TOKEN_KEY } from './constants';
@@ -166,5 +168,38 @@ describe('resolveImageSrc', () => {
       'http',
     );
     expect(tokenRead).not.toHaveBeenCalled();
+  });
+});
+
+describe('truncateTextPreview', () => {
+  it('未超限时原样返回', () => {
+    const result = truncateTextPreview('hello', 1024);
+    expect(result).toEqual({ text: 'hello', truncated: false, totalBytes: 5, keptBytes: 5 });
+  });
+
+  it('默认上限与 Artifact 文本视图一致', () => {
+    const result = truncateTextPreview('a'.repeat(10));
+    expect(result.truncated).toBe(false);
+    expect(ARTIFACT_TEXT_MAX_BYTES).toBe(2 * 1024 * 1024);
+  });
+
+  it('超限时按字节截断并标记 truncated', () => {
+    const result = truncateTextPreview('abcdef', 3);
+    expect(result).toEqual({ text: 'abc', truncated: true, totalBytes: 6, keptBytes: 3 });
+  });
+
+  it('截断点对齐 UTF-8 字符边界，不产生半个中文字符', () => {
+    // '中' = 3 字节；上限 4 时只能保留一个完整字符
+    const result = truncateTextPreview('中文', 4);
+    expect(result.text).toBe('中');
+    expect(result.keptBytes).toBe(3);
+    expect(result.truncated).toBe(true);
+    expect(result.totalBytes).toBe(6);
+  });
+
+  it('上限非正数时返回空串', () => {
+    expect(truncateTextPreview('abc', 0)).toEqual({
+      text: '', truncated: true, totalBytes: 3, keptBytes: 0,
+    });
   });
 });

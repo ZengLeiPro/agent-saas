@@ -255,13 +255,15 @@ export async function cancelUnstartedDeliveryIntentsForInbox(
   inboxId: string,
   reason: string,
 ): Promise<number> {
+  // Unknown legacy claims are quarantined so no worker can send them after inbox recovery.
   const result = await pool.query(
     `UPDATE ${deliveriesTable}
-    SET delivery_state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+    SET delivery_state=CASE WHEN provider_attempt_phase='before_provider'
+          THEN 'dead_letter' ELSE 'unknown' END,
+        lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
         last_error=$3,completed_at=NOW(),updated_at=NOW()
     WHERE tenant_id=$1 AND inbox_id=$2 AND provider_started_at IS NULL
-      AND (delivery_state='pending'
-        OR (delivery_state='sending' AND provider_attempt_phase='before_provider'))`,
+      AND delivery_state IN ('pending','sending')`,
     [tenantId, inboxId, compactDeliveryError(reason)],
   );
   return result.rowCount ?? 0;
@@ -276,10 +278,12 @@ export async function getReplyRecoveryStateForInbox(
   const result = await pool.query<{ recovery_state: DwsReplyRecoveryState }>(
     `SELECT CASE
       WHEN COUNT(*) FILTER (WHERE delivery_state='unknown'
-        OR (provider_started_at IS NOT NULL AND delivery_state NOT IN ('sent','dead_letter'))
-        OR (delivery_state='dead_letter' AND provider_started_at IS NOT NULL
-          AND COALESCE(last_error,'') NOT LIKE 'ORG_AGENT_PROVIDER_AUTHORIZATION_%')) > 0
-        THEN 'unknown'
+        OR (delivery_state<>'sent' AND NOT (
+          (provider_attempt_phase='before_provider' AND provider_started_at IS NULL)
+          OR (delivery_state='dead_letter' AND provider_attempt_phase='provider_started'
+            AND provider_started_at IS NOT NULL
+            AND COALESCE(last_error,'') LIKE 'ORG_AGENT_PROVIDER_AUTHORIZATION_%')
+        ))) > 0 THEN 'unknown'
       WHEN COUNT(*) FILTER (WHERE delivery_state='sent') > 0 THEN 'sent'
       WHEN COUNT(*) > 0 THEN 'unstarted'
       ELSE 'none'

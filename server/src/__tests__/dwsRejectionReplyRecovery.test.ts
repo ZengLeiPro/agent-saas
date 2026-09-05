@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type {
@@ -6,6 +9,10 @@ import type {
   AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
+import {
+  cancelUnstartedDeliveryIntentsForInbox,
+  getReplyRecoveryStateForInbox,
+} from '../data/orgGroupAgents/deliveryClaims.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 
 const now = new Date().toISOString();
@@ -36,6 +43,8 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
   outcome?: { status: 'unavailable'; reason: string };
   useOutcome?: boolean;
   recoveryState?: 'none' | 'unstarted' | 'sent' | 'unknown';
+  deliveryState?: 'unstarted' | 'sent' | 'provider_started' | 'unknown' | 'legacy_unknown';
+  recoveryStore?: OrgGroupAgentStore;
   cancelCount?: number;
   withDeliveryStore?: boolean;
   authorizationSequence?: Array<{ allowed: boolean; reason?: string }>;
@@ -79,7 +88,7 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
     return { status: 'accepted', acceptedAt: now };
   }) };
   let createdDelivery: Record<string, unknown> | undefined;
-  const orgGroupAgentStore = options.withDeliveryStore
+  const orgGroupAgentStore = options.recoveryStore ?? (options.withDeliveryStore
     ? {
         reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
         claimNextDelivery: vi.fn().mockResolvedValue(null),
@@ -87,7 +96,9 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
           options.cancelCount ?? 1,
         ),
         getReplyRecoveryStateForInbox: vi.fn().mockResolvedValue(
-          options.recoveryState ?? 'unstarted',
+          options.deliveryState === 'sent' ? 'sent'
+            : options.deliveryState === 'unstarted' ? 'unstarted'
+              : options.deliveryState ? 'unknown' : (options.recoveryState ?? 'unstarted'),
         ),
         createDelivery: vi.fn(async (input: Record<string, unknown>) => {
           createdDelivery = { ...input, deliveryId: 'delivery-a', deliveryState: 'pending',
@@ -107,7 +118,7 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
           deliveryState: 'dead_letter' })),
         getDelivery: vi.fn(async () => createdDelivery),
       } as unknown as OrgGroupAgentStore
-    : undefined;
+    : undefined);
   const dispatch = vi.fn();
   const authorizeRequester = vi.fn();
   for (const authorization of options.authorizationSequence ?? [])
@@ -207,17 +218,18 @@ describe('Agent DWS rejection reply recovery', () => {
   });
 
   it.each([
-    ['sent', 'sent', 'complete'],
-    ['provider_started', 'unknown', 'unknown'],
-    ['unknown', 'unknown', 'unknown'],
+    ['sent', 'complete'],
+    ['provider_started', 'unknown'],
+    ['unknown', 'unknown'],
+    ['legacy_unknown', 'unknown'],
   ] as const)('旧 normal 为 %s 时不发送第二条拒绝', async (
-    _deliveryState, recoveryState, expectedInboxState,
+    deliveryState, expectedInboxState,
   ) => {
     const normal = { ...item, eventType: 'user_im_message_receive_o2o_all' as const,
       state: 'reply_pending' as const, replyKind: 'normal' as const,
       responseText: '可能已经出站的正文', replyStartedAt: now };
     const test = setup([normal], { requester: true, requesterAllowed: false,
-      withDeliveryStore: true, recoveryState, cancelCount: 0 });
+      withDeliveryStore: true, deliveryState, cancelCount: 0 });
 
     await expect(test.router.runOnce()).resolves.toBe(true);
 
@@ -384,7 +396,7 @@ describe('Agent DWS rejection reply recovery', () => {
     expect(test.messageStore.blockReply).not.toHaveBeenCalled();
   });
 
-  it('超出 provider 幂等安全窗口时不重复发送拒绝', async () => {
+  it('超出 provider 幂等安全窗口时不重复发送拒绝正文', async () => {
     const expired = { ...item, state: 'reply_pending' as const,
       replyKind: 'access_rejection' as const, attempt: 2,
       responseText: '已持久化拒绝', rejectionReasonCode: 'ASSIGNMENT_DENIED',
@@ -399,5 +411,67 @@ describe('Agent DWS rejection reply recovery', () => {
       'inbox-a', expect.any(String), 1,
       expect.objectContaining({ message: expect.stringContaining('idempotency window expired') }),
     );
+  });
+});
+
+const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
+const describePg = testPgUrl ? describe : describe.skip;
+
+describePg('Agent DWS legacy recovery PostgreSQL 联动', () => {
+  const { Pool } = pg;
+  const table = `router_recovery_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  let pool: InstanceType<typeof Pool>;
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 1 });
+    await pool.query(`CREATE TABLE ${table} (
+      tenant_id TEXT NOT NULL, inbox_id TEXT NOT NULL, delivery_kind TEXT NOT NULL,
+      disposition TEXT NOT NULL, delivery_state TEXT NOT NULL,
+      provider_attempt_phase TEXT NOT NULL, provider_started_at TIMESTAMPTZ,
+      lease_owner TEXT, lease_expires_at TIMESTAMPTZ, next_attempt_at TIMESTAMPTZ,
+      last_error TEXT, completed_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+  });
+
+  afterAll(async () => {
+    if (!pool) return;
+    try {
+      await pool.query(`DROP TABLE IF EXISTS ${table}`);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('Router 通过真实 Store 分类隔离 legacy_unknown，且拒绝 provider 调用为零', async () => {
+    await pool.query(`INSERT INTO ${table}
+      (tenant_id,inbox_id,delivery_kind,disposition,delivery_state,provider_attempt_phase)
+      VALUES ('tenant-a','inbox-a','front_reply','replied','sending','legacy_unknown')`);
+    const recoveryStore = {
+      reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
+      claimNextDelivery: vi.fn().mockResolvedValue(null),
+      cancelUnstartedDeliveriesForInbox: (
+        tenantId: string, inboxId: string, reason: string,
+      ) => cancelUnstartedDeliveryIntentsForInbox(pool, table, tenantId, inboxId, reason),
+      getReplyRecoveryStateForInbox: (tenantId: string, inboxId: string) =>
+        getReplyRecoveryStateForInbox(pool, table, tenantId, inboxId),
+    } as unknown as OrgGroupAgentStore;
+    const normal = { ...item, eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const, replyKind: 'normal' as const,
+      responseText: '可能已经出站的旧正文', replyStartedAt: now };
+    const test = setup([normal], {
+      requester: true, requesterAllowed: false, recoveryStore,
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.messageStore.saveRejectionResult).not.toHaveBeenCalled();
+    expect(test.providerSend).not.toHaveBeenCalled();
+    expect(test.messageStore.markReplyUnknown).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1,
+    );
+    const stored = await pool.query<{ delivery_state: string }>(
+      `SELECT delivery_state FROM ${table}`,
+    );
+    expect(stored.rows[0]?.delivery_state).toBe('unknown');
   });
 });

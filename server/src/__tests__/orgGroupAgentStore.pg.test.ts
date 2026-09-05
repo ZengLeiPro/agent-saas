@@ -292,6 +292,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
       idempotencyKey: 'delivery-a',
     });
     expect(intent.accountIdentity).toEqual(accountIdentity);
+    expect(intent.providerAttemptPhase).toBe('before_provider');
     const claimed = await store.claimDelivery(intent.deliveryId, 'worker-a', 60_000);
     await store.markDeliveryProviderStarted(intent.deliveryId, 'worker-a', claimed.leaseFence);
     await store.markDeliveryUnknown(
@@ -531,7 +532,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
     );
   });
 
-  it('后台 worker 跳过 reply_pending 关联投递，授权拒绝可取消所有 provider 前正文', async () => {
+  it('后台 worker 跳过 reply_pending 关联投递，授权拒绝可取消 provider 前正文', async () => {
     await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
       SET delivery_state='dead_letter',completed_at=NOW()
       WHERE delivery_state='pending'`);

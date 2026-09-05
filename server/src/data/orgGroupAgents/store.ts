@@ -301,10 +301,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       `INSERT INTO ${this.deliveriesTable} AS delivery (
       delivery_id,tenant_id,inbox_id,account_id,conversation_id,work_conversation_id,source,
       agent_id,binding_id,conversation_space_id,policy_revision,visibility,source_work_order_id,source_attempt_id,
-      delivery_kind,disposition,delivery_state,destination_json,content,idempotency_key,
+      delivery_kind,disposition,delivery_state,provider_attempt_phase,destination_json,content,idempotency_key,
       provider_receipt_json,attempt,lease_fence,created_at,updated_at,completed_at,
       account_profile_id,account_corp_id,account_dingtalk_user_id,account_identity_updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending',$17::jsonb,$18,$19,$20::jsonb,0,0,NOW(),NOW(),$21,$22,$23,$24,$25::timestamptz)
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'pending','before_provider',$17::jsonb,$18,$19,$20::jsonb,0,0,NOW(),NOW(),$21,$22,$23,$24,$25::timestamptz)
     ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key=delivery.idempotency_key
     RETURNING delivery.*`,
       [

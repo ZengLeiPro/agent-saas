@@ -55,6 +55,7 @@ export const Linking = {
 
 export const Platform = {
   OS: 'ios' as const,
+  Version: '18.0',
   select: <T,>(obj: Record<string, T>) => obj.ios,
 };
 

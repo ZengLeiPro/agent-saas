@@ -988,3 +988,4 @@ export * from './lib/connectorsApi';
 export * from './lib/cronApi';
 export * from './lib/cronPresentation';
 export * from './lib/cronJobDraft';
+export * from './lib/pushNotificationTarget';

@@ -34,6 +34,8 @@ profile 只能是 `ios`、`store`、`enterprise`。输入树出现 symlink 或 `
 
 Golden 保留 bundle/package ID、URL schemes、权限、entitlements、PrivacyInfo reasons、exported components、network/backup、release signer、distribution、artifact type 与 buildType；仅移除绝对路径、时间、文件顺序等噪音。
 
+iOS entitlement 白名单在 P4（APNs 系统推送）后为 `aps-environment`、`com.apple.developer.associated-domains`、`com.apple.security.application-groups`、`keychain-access-groups`。`aps-environment` 的取值由 release profile 决定并在门禁中强校验：`production` 档位必须是 `production`，其余档位必须是 `development`（不匹配报 `IOS_APS_ENVIRONMENT_MISMATCH`）；真值在 `release-manifest.cjs` 的 `createExpoConfig` 合成，`expo-notifications` 插件只在缺失时补默认值。
+
 政策变更必须在代码审查中显式执行并提交 diff：
 
 ```bash

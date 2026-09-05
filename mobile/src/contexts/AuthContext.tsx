@@ -26,6 +26,7 @@ import {
   type MobileServicePolicy,
 } from '../platform/trustedServiceOrigin';
 import { clearSessionListCache } from '../lib/sessionListCache';
+import { clearAllPushBindings, readPushBinding } from '../lib/pushDevices';
 import { clearAllMessageCache, setMobileMessageCacheIdentity } from '../platform/mobileMessageCache';
 import { clearMobileCacheV2Namespace } from '../platform/mobileCacheAdapter';
 import { fileCacheService } from '../services/fileCacheService';
@@ -110,6 +111,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }),
     {
       fenceGeneration: async () => {
+        // 系统推送解绑要用退出前的身份定位本机绑定，必须在身份翻代之前取。
+        const pushScope = identityRef.current.identity;
         await fenceAuthSideEffects();
         setSensitiveTransportAllowed(false);
         wsClient.freezeSending();
@@ -120,6 +123,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (token && config.ready) void fetch(`${config.apiOrigin}/api/auth/logout`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}` },
         }).catch(() => undefined);
+        // 系统推送：best-effort 解绑本机设备，让旧账号不再收到本机推送；
+        // 与上面的登出请求同一形态（原生 fetch + Bearer，不走全局 401 回调），失败不阻塞登出。
+        if (token && config.ready) {
+          const binding = await readPushBinding(pushScope);
+          if (binding) void fetch(`${config.apiOrigin}/api/apns/devices/${encodeURIComponent(binding.id)}`, {
+            method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+          }).catch(() => undefined);
+        }
       },
       disconnectWs: () => wsClient.disconnect(),
       stopQueue: () => resetChatStore(),
@@ -129,6 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
       clearCache: async () => {
         await clearAllLocalAppLockPolicies();
+        await clearAllPushBindings();
         await cancelNativeOAuthTransaction();
         await AsyncStorage.removeItem(CACHED_USER_KEY);
         const scopedUser = cachedUserKey(identityRef.current.identity);

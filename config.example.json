@@ -188,6 +188,18 @@
     "subject": "mailto:admin@example.com"
   },
 
+  // ── iOS 系统推送（APNs，Token-based 鉴权）─────────────────
+  // 在 Apple Developer 生成 APNs Auth Key（.p8），privateKey 填 PEM 全文（换行写成 \n）。
+  // bundleId 即 apns-topic；environment 是默认投递环境，App 注册设备时可按构建档位覆盖。
+  "apns": {
+    "enabled": false,
+    "teamId": "REPLACE_WITH_APPLE_TEAM_ID",
+    "keyId": "REPLACE_WITH_APNS_KEY_ID",
+    "privateKey": "-----BEGIN PRIVATE KEY-----\nREPLACE\n-----END PRIVATE KEY-----",
+    "bundleId": "com.agentsaas.mobile",
+    "environment": "production"
+  },
+
   // ── 调度引擎 ──────────────────────────────────────────────
   // enabled=false 可快速回退为无中间件模式
   "dispatch": {

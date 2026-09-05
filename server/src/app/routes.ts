@@ -24,7 +24,7 @@ import {
   createHealthRouter,
   createUploadRouter,
   createCronRouter,
-  createWebPushRouter,
+  createPushNotificationRouter,
   createTaskboardRouter,
   createSessionsRouter,
   createTtsRouter,
@@ -492,7 +492,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getConsolidationScannerStatus: runtime.getMemoryConsolidationScannerStatus,
     }),
   );
-  app.use('/api/web-push', createWebPushRouter(runtime.webPushService));
+  app.use('/api', createPushNotificationRouter({ webPush: runtime.webPushService, apns: runtime.apnsService }));
   if (cronRuntime.service) {
     app.use('/api/cron', tenantFeatureGuard(runtime.tenantStore, 'cronEnabled', '定时任务'));
     app.use(

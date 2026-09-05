@@ -2,6 +2,8 @@ import webPush from 'web-push';
 
 import type { WebPushConfig } from '../app/config.js';
 import { createLogger } from '../utils/logger.js';
+import type { PushMessage, PushSendCounters, PushSender } from '../push/sender.js';
+import { emptyPushCounters, normalizePushTargetUrl } from '../push/sender.js';
 import type { WebPushOwner, WebPushSubscriptionInput, WebPushSubscriptionRecord } from './store.js';
 import { PgWebPushStore } from './store.js';
 
@@ -15,12 +17,7 @@ const ALLOWED_ENDPOINT_SUFFIXES = [
 // Chromium may return a regional jmtN.google.com endpoint instead of fcm.googleapis.com.
 const CHROME_PUSH_HOST_PATTERN = /^jmt\d+\.google\.com$/;
 
-export interface WebPushMessage extends WebPushOwner {
-  eventKey: string;
-  taskName: string;
-  status: string;
-  url: string;
-}
+export type WebPushMessage = PushMessage;
 
 export interface WebPushPublicSubscription {
   id: string;
@@ -29,7 +26,7 @@ export interface WebPushPublicSubscription {
   updatedAt: string;
 }
 
-export class WebPushService {
+export class WebPushService implements PushSender {
   readonly publicKey: string;
 
   constructor(
@@ -53,9 +50,9 @@ export class WebPushService {
     return await this.store.delete(owner, subscriptionId);
   }
 
-  async send(message: WebPushMessage): Promise<{ sent: number; failed: number; skipped: number; deferred: number }> {
+  async send(message: WebPushMessage): Promise<PushSendCounters> {
     const subscriptions = await this.store.list(message);
-    const counters = { sent: 0, failed: 0, skipped: 0, deferred: 0 };
+    const counters = emptyPushCounters();
 
     await forEachConcurrent(subscriptions, 4, async (listedSubscription) => {
       const claim = await this.store.claimDelivery(message, listedSubscription, message.eventKey);
@@ -71,7 +68,7 @@ export class WebPushService {
       const payload = JSON.stringify({
         title: message.taskName.slice(0, 120),
         body: message.status.slice(0, 120),
-        url: normalizeTargetUrl(message.url),
+        url: normalizePushTargetUrl(message.url),
         tag: message.eventKey.slice(0, 200),
       });
 
@@ -128,11 +125,6 @@ export function assertSafePushEndpoint(rawEndpoint: string): URL {
     throw new Error('PushSubscription endpoint 不是受支持的浏览器推送服务');
   }
   return endpoint;
-}
-
-function normalizeTargetUrl(rawUrl: string): string {
-  if (!rawUrl.startsWith('/') || rawUrl.startsWith('//') || rawUrl.includes('\\')) return '/';
-  return rawUrl;
 }
 
 function getStatusCode(error: unknown): number | undefined {

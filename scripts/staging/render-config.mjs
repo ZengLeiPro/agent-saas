@@ -38,7 +38,7 @@ export function renderStagingConfig(source, env = process.env) {
   // 功能配置只能来自 Staging 自己的显式 overlay。不得从 Production/source
   // 复制凭据或通过 renderer 硬编码关闭功能来“实现隔离”。
   for (const key of [
-    'models', 'cron', 'dingtalk', 'dingtalkSendMessage', 'webPush', 'alerting',
+    'models', 'cron', 'dingtalk', 'dingtalkSendMessage', 'webPush', 'apns', 'alerting',
     'codexSubscription', 'webTools', 'imageGenTools', 'tts', 'stt', 'memory',
     'systemMonitor', 'runtimeEventRetention', 'integrationV3',
     'integrationV3ControlPlane', 'notification', 'notifications',

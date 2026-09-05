@@ -1,9 +1,9 @@
 import type { UserStore } from '../../data/users/store.js';
-import type { WebPushService } from '../../webPush/service.js';
+import type { PushSender } from '../../push/sender.js';
 import type { NotifyChannel, NotifyChannelSendOptions, NotifySendResult } from '../notifyChannel.js';
 
 export function createWebPushNotifyChannel(deps: {
-  service: WebPushService;
+  service: PushSender;
   userStore?: UserStore;
 }): NotifyChannel {
   return {

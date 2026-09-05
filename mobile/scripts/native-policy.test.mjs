@@ -110,6 +110,7 @@ DEVELOPMENT_TEAM = ${TEAM_ID};
     NSPhotoLibraryUsageDescription: '用于在用户选择图库时选取图片或视频作为附件、头像',
   }));
   write(root, 'ios/AgentSaaS/AgentSaaS.entitlements', plist({
+    'aps-environment': 'production',
     'com.apple.security.application-groups': [APP_GROUP],
     'keychain-access-groups': [`$(AppIdentifierPrefix)${APP_GROUP}`],
   }));
@@ -173,6 +174,8 @@ for (const [name, profile, path, before, after, code] of androidMutations) {
 
 const iosMutations = [
   ['arbitrary loads', 'Info.plist', '</dict></plist>', '<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict></dict></plist>', 'IOS_ATS_ARBITRARY_LOADS'],
+  ['sandbox APNs in a production tree', 'AgentSaaS.entitlements', '<key>aps-environment</key><string>production</string>', '<key>aps-environment</key><string>development</string>', 'IOS_APS_ENVIRONMENT_MISMATCH'],
+  ['missing APNs entitlement', 'AgentSaaS.entitlements', '<key>aps-environment</key><string>production</string>', '', 'IOS_APS_ENVIRONMENT_MISMATCH'],
   ['Always Location', 'Info.plist', '</dict></plist>', '<key>NSLocationAlwaysUsageDescription</key><string>injected</string></dict></plist>', 'IOS_USAGE_LOCATION_ALWAYS'],
   ['PrivacyInfo reason removal', 'PrivacyInfo.xcprivacy', '<string>CA92.1</string>', '', 'IOS_PRIVACY_REASON_MISSING'],
 ];
@@ -227,5 +230,32 @@ test('M60-03 reviewed golden drift exits non-zero with GOLDEN_DRIFT', () => {
     const report = JSON.parse(readFileSync(jsonPath, 'utf8'));
     assert.equal(processResult.status, 1);
     assert.ok(report.findings.some((entry) => entry.code === 'GOLDEN_DRIFT'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('P4 非 production 档位生成的树必须使用 development APNs 环境', () => {
+  const root = createIosFixture();
+  try {
+    // 生成树里是 production 值，按 preview 档位审计必须报错。
+    const mismatch = checkNativeTree({
+      root,
+      profile: 'ios',
+      compareGolden: false,
+      releaseProfile: 'preview',
+      evidence: { classification: 'test-fixture', teamId: TEAM_ID, appGroup: APP_GROUP },
+    });
+    assert.equal(mismatch.ok, false);
+    assert.ok(mismatch.findings.some((entry) => entry.code === 'IOS_APS_ENVIRONMENT_MISMATCH'), JSON.stringify(mismatch.findings));
+
+    const file = join(root, 'ios/AgentSaaS/AgentSaaS.entitlements');
+    writeFileSync(file, readFileSync(file, 'utf8').replace('<string>production</string>', '<string>development</string>'));
+    const matched = checkNativeTree({
+      root,
+      profile: 'ios',
+      compareGolden: false,
+      releaseProfile: 'preview',
+      evidence: { classification: 'test-fixture', teamId: TEAM_ID, appGroup: APP_GROUP },
+    });
+    assert.equal(matched.ok, true, JSON.stringify(matched.findings));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

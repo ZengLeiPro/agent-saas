@@ -820,6 +820,10 @@ function createExpoConfig(staticExpoConfig, options = {}) {
       entitlements: {
         ...(staticExpoConfig.ios?.entitlements ?? {}),
         ...(httpsCallbacks.length ? { 'com.apple.developer.associated-domains': httpsCallbacks.map(url => `applinks:${url.host}`) } : {}),
+        // APNs 环境由 release profile 决定，而不是由 expo-notifications 插件的默认值决定：
+        // 只有 production 档位才写 production（真机 App Store / Enterprise 分发使用的生产网关），
+        // 其余档位一律 development（sandbox 网关）。插件只在缺失时补默认值，因此这里显式写入即为最终值。
+        'aps-environment': context.profile === 'production' ? 'production' : 'development',
       },
     },
     android: {

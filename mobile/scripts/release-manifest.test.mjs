@@ -295,6 +295,29 @@ test('M10-03 development and preview configs generate without external store fac
   }
 });
 
+test('P4 APNs entitlement 的 aps-environment 由 release profile 决定', () => {
+  const { manifest, staticExpoConfig } = loadRepositoryInputs();
+  for (const profile of ['development', 'preview']) {
+    const config = createExpoConfig(staticExpoConfig, {
+      manifest,
+      context: { profile, sourceGitSha: FULL_GIT_SHA },
+    });
+    assert.equal(config.ios.entitlements['aps-environment'], 'development');
+  }
+  const productionConfig = createExpoConfig(staticExpoConfig, {
+    manifest: productionReadyManifest(),
+    context: {
+      profile: 'production',
+      platform: 'ios',
+      distribution: 'enterprise',
+      sourceGitSha: FULL_GIT_SHA,
+    },
+  });
+  assert.equal(productionConfig.ios.entitlements['aps-environment'], 'production');
+  // 静态 app.json 不得自带该 entitlement，避免绕过 profile 判定。
+  assert.equal(staticExpoConfig.ios?.entitlements?.['aps-environment'], undefined);
+});
+
 test('M10-03 generated Expo identity rejects drift from the manifest', () => {
   const { manifest, staticExpoConfig } = loadRepositoryInputs();
   const context = { profile: 'preview', sourceGitSha: FULL_GIT_SHA };

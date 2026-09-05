@@ -21,6 +21,7 @@ import {
 import { looksLikeSecret } from '../security/secretHeuristics.js';
 import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 import { sttConfigSchema, sttPricingSchema } from './sttConfigSchema.js';
+import { apnsConfigSchema, webPushConfigSchema } from './pushConfigSchema.js';
 import { runtimeSchedulerConfigSchema } from './runtimeSchedulerConfigSchema.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import { ttsConfigSchema } from './ttsConfigSchema.js';
@@ -180,31 +181,6 @@ const dingtalkSendMessageConfigSchema = z.object({
   appKey: z.string().optional(),
   appSecret: z.string().optional(),
   robotCode: z.string().optional(),
-});
-
-const webPushConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  publicKey: z.string().min(1).optional(),
-  privateKey: z.string().min(1).optional(),
-  subject: z.string().min(1).optional(),
-}).superRefine((value, ctx) => {
-  if (!value.enabled) return;
-  for (const key of ['publicKey', 'privateKey', 'subject'] as const) {
-    if (!value[key]) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: [key],
-        message: `webPush.enabled=true 时必须配置 ${key}`,
-      });
-    }
-  }
-  if (value.subject && !value.subject.startsWith('mailto:') && !value.subject.startsWith('https://')) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['subject'],
-      message: 'webPush.subject 必须是 mailto: 或 https:// URL',
-    });
-  }
 });
 
 const webDisplayConfigSchema = z.object({
@@ -1204,6 +1180,7 @@ export const appConfigSchema = z.object({
   dingtalk: dingtalkConfigSchema.optional(),
   dingtalkSendMessage: dingtalkSendMessageConfigSchema.optional(),
   webPush: webPushConfigSchema.optional(),
+  apns: apnsConfigSchema.optional(),
   // TTS remains optional and, when present, is still disabled unless enabled=true.
   tts: ttsConfigSchema.optional(),
   stt: sttConfigSchema.optional(),
@@ -1275,6 +1252,7 @@ export type DingtalkRobotConfig = z.infer<typeof dingtalkRobotConfigSchema>;
 export type DingtalkConfig = z.infer<typeof dingtalkConfigSchema>;
 export type DingtalkSendMessageConfig = z.infer<typeof dingtalkSendMessageConfigSchema>;
 export type WebPushConfig = z.infer<typeof webPushConfigSchema>;
+export type ApnsConfig = z.infer<typeof apnsConfigSchema>;
 export type TtsConfig = z.infer<typeof ttsConfigSchema>;
 export type WebMessageDisplayConfig = z.infer<typeof webDisplayConfigSchema>;
 export type DingtalkMessageDisplayConfig = z.infer<typeof dingtalkDisplayConfigSchema>;

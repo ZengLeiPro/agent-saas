@@ -19,6 +19,7 @@ import { useEnterpriseUpdateChecker } from '../src/hooks/useUpdateChecker';
 import { useShareIntentBridge } from '../src/hooks/useShareIntentBridge';
 import { useNativeOAuthCallbackBridge } from '../src/hooks/useNativeOAuthCallbackBridge';
 import { useScenarioDeepLinkBridge } from '../src/hooks/useScenarioDeepLinkBridge';
+import { usePushNotificationBridge } from '../src/hooks/usePushNotificationBridge';
 import { useWsLifecycle } from '../src/hooks/useWsLifecycle';
 import {
   readEnterpriseUpdaterRuntimeConfig,
@@ -51,6 +52,8 @@ function AuthGate() {
   useNativeOAuthCallbackBridge();
   // 场景直达：agent-saas://...?scenario= / ?workflow=&intent=，登录后才消费
   useScenarioDeepLinkBridge(Boolean(user));
+  // 系统推送：令牌保活 + 通知点击落地，同样登录后才消费
+  usePushNotificationBridge(Boolean(user));
   useWsLifecycle(Boolean(user));
 
   return (

@@ -5,6 +5,13 @@
       "baselineSha": "9f8531e697e68f39d07e846872586dad841125ca",
       "files": [
         {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
           "path": "server/src/app/codexSubscriptionConfigSchema.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:4d75952d4a3c65df0c94cbe217b7774ad44e4d1bc7f4ca0903c15138a4b44136",
@@ -14,9 +21,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:7b232ba94234534c80b90be7ca003c071ed3a75d2181f0bb550a5b050f149192",
-          "targetDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
           "classification": "no-schema-change",
-          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移。"
+          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
         },
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
@@ -24,6 +31,13 @@
           "targetDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
           "classification": "no-schema-change",
           "reason": "套餐额度来源的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -66,6 +80,13 @@
           "targetDigest": "sha256:147e65ebcd35b499283ba19d7cb5ef2117d971bf89885813e5f43e5ac5b156b1",
           "classification": "no-schema-change",
           "reason": "权限类型和常量定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/feedback/store.ts",
+          "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
@@ -166,6 +187,13 @@
           "reason": "文件系统孤立元数据处理，无数据库迁移。"
         },
         {
+          "path": "server/src/data/transcripts/parse.ts",
+          "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
+          "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
+          "classification": "no-schema-change",
+          "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
           "path": "server/src/data/usage/pricing.ts",
           "baselineDigest": "sha256:0c872353cc1f0f9687eb6a6a4755860aeed7bbcd782800d0fff281bef939c88c",
           "targetDigest": "sha256:793ecfc742f3aedbcb23194da045581804c1cc19f3826d296cba8208e4f5590a",
@@ -182,9 +210,9 @@
         {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
-          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移。"
+          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移；新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         },
         {
           "path": "server/src/release/environmentSafety.ts",
@@ -220,6 +248,27 @@
           "targetDigest": "sha256:3fbc7a43c887442ebfe1cc6090a820facf18c5e4420f68763d29523ad9d57a4e",
           "classification": "expand",
           "reason": "旧锁表保留 session_id 唯一约束，新增 tenant lease 表及双向互斥触发器；主键调整仍支持旧 ON CONFLICT(session_id)，真实旧锁和新锁互斥、旧版回滚重启通过。"
+        },
+        {
+          "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
+          "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
+          "targetDigest": "sha256:09a8a6c3ec0e046dd100d137c6e2ca3a16207bc259ebf34c45f590aff75b19b9",
+          "classification": "no-schema-change",
+          "reason": "WebSocket 内存连接、字节预算、计时器和恢复约束调整；无 SQL 或数据库结构变更。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesStreamBudget.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:fcb21b682db0be904e79323bd716aa0d3e0f22e0e9ad6ccb8a410b153cf1c164",
+          "classification": "no-schema-change",
+          "reason": "新增纯内存模型事件预算计数器与保护错误；无数据库访问或初始化迁移。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesTransport.ts",
+          "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
+          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "classification": "no-schema-change",
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
         },
         {
           "path": "server/src/runtime/runRecoveryQueries.ts",
@@ -325,41 +374,6 @@
           "targetDigest": "sha256:18381d196676533b7efa392c211e91d3a886ca5f6dfa8bfe9a68a5238285a950",
           "classification": "expand",
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
-        },
-        {
-          "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
-          "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
-          "targetDigest": "sha256:09a8a6c3ec0e046dd100d137c6e2ca3a16207bc259ebf34c45f590aff75b19b9",
-          "classification": "no-schema-change",
-          "reason": "WebSocket 内存连接、字节预算、计时器和恢复约束调整；无 SQL 或数据库结构变更。"
-        },
-        {
-          "path": "server/src/runtime/responses/responsesStreamBudget.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:fcb21b682db0be904e79323bd716aa0d3e0f22e0e9ad6ccb8a410b153cf1c164",
-          "classification": "no-schema-change",
-          "reason": "新增纯内存模型事件预算计数器与保护错误；无数据库访问或初始化迁移。"
-        },
-        {
-          "path": "server/src/runtime/responses/responsesTransport.ts",
-          "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
-          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
-          "classification": "no-schema-change",
-          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
-        },
-        {
-          "path": "server/src/data/feedback/store.ts",
-          "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
-          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
-          "classification": "no-schema-change",
-          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
-        },
-        {
-          "path": "server/src/data/transcripts/parse.ts",
-          "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
-          "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
-          "classification": "no-schema-change",
-          "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
         }
       ],
       "evidence": [
@@ -422,12 +436,58 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
         }
       ]
     },
     {
       "baselineSha": "77592b55171df5ee16516d3fdb5c590b0576c1ed",
       "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/feedback/store.ts",
+          "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
+        },
+        {
+          "path": "server/src/data/transcripts/parse.ts",
+          "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
+          "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
+          "classification": "no-schema-change",
+          "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
         {
           "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
           "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
@@ -448,20 +508,6 @@
           "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
           "classification": "no-schema-change",
           "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
-        },
-        {
-          "path": "server/src/data/feedback/store.ts",
-          "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
-          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
-          "classification": "no-schema-change",
-          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
-        },
-        {
-          "path": "server/src/data/transcripts/parse.ts",
-          "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
-          "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
-          "classification": "no-schema-change",
-          "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
         }
       ],
       "evidence": [
@@ -492,6 +538,10 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
         }
       ]
     },
@@ -499,6 +549,27 @@
       "baselineSha": "eecb62e30551a8e5e53ecfba8943d3b6e4db4735",
       "files": [
         {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -511,6 +582,13 @@
           "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
           "classification": "no-schema-change",
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         }
       ],
       "evidence": [
@@ -525,6 +603,10 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
         }
       ]
     },
@@ -532,6 +614,27 @@
       "baselineSha": "011205c25f4da7bc9383d8e9c10070b7a6cea207",
       "files": [
         {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -544,6 +647,13 @@
           "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
           "classification": "no-schema-change",
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         }
       ],
       "evidence": [
@@ -558,6 +668,139 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        }
+      ]
+    },
+    {
+      "baselineSha": "25ab3a2327be76aace6b6b17bbdcc75952dd0994",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行；Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "server/src/__tests__/apns.test.ts",
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        }
+      ]
+    },
+    {
+      "baselineSha": "c5625dc28d47b3d09bf389ab91ea8b01e9be0e7a",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "server/src/__tests__/apns.test.ts",
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        }
+      ]
+    },
+    {
+      "baselineSha": "e3543efa881f203b9093499a5aa577bcf403baf6",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "server/src/__tests__/apns.test.ts",
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
         }
       ]
     }

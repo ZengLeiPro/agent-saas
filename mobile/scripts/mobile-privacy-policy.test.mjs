@@ -87,6 +87,7 @@ const VALID_IOS_INFO = `<?xml version="1.0"?><plist><dict>
 <key>NSFaceIDUsageDescription</key><string>用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面</string>
 </dict></plist>`;
 const VALID_IOS_ENTITLEMENTS = `<?xml version="1.0"?><plist><dict>
+<key>aps-environment</key><string>production</string>
 <key>com.apple.security.application-groups</key><array><string>group.fixture</string></array>
 <key>keychain-access-groups</key><array><string>$(AppIdentifierPrefix)group.fixture</string></array>
 </dict></plist>`;
@@ -389,6 +390,31 @@ test('M10-05 iOS static gate rejects production exceptions, background audio, en
         }),
       ),
     /missing the reviewed UserDefaults CA92\.1 reason/,
+  );
+  // P4：生产包必须带 aps-environment=production；缺失或 sandbox 取值都 fail closed。
+  assert.throws(
+    () =>
+      verifyProductionIosTexts(
+        validIosArtifacts({
+          entitlements: VALID_IOS_ENTITLEMENTS.replace(
+            '<key>aps-environment</key><string>production</string>\n',
+            '',
+          ),
+        }),
+      ),
+    /missing aps-environment/,
+  );
+  assert.throws(
+    () =>
+      verifyProductionIosTexts(
+        validIosArtifacts({
+          entitlements: VALID_IOS_ENTITLEMENTS.replace(
+            '<string>production</string>',
+            '<string>development</string>',
+          ),
+        }),
+      ),
+    /aps-environment=production/,
   );
 });
 

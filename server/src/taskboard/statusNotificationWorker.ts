@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 
 import type { UserStore } from '../data/users/store.js';
-import type { WebPushService } from '../webPush/service.js';
+import type { PushSender } from '../push/sender.js';
 import { createLogger } from '../utils/logger.js';
 
 const KEY_STATUSES = {
@@ -43,7 +43,7 @@ export interface TaskboardStatusNotificationWorkerOptions {
   tasksTable: string;
   boardsTable: string;
   outboxTable: string;
-  service: WebPushService;
+  service: PushSender;
   userStore?: UserStore;
   pollIntervalMs?: number;
 }
@@ -170,14 +170,14 @@ export class TaskboardStatusNotificationWorker {
           status,
           url,
         });
-        if (result.failed > 0) failures.push(`${userId}: ${result.failed} 个浏览器订阅投递失败`);
+        if (result.failed > 0) failures.push(`${userId}: ${result.failed} 个推送设备投递失败`);
         deferredCount += result.deferred;
       } catch (error) {
         failures.push(`${userId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     if (failures.length > 0) throw new Error(failures.join('; '));
-    if (deferredCount > 0) throw new WebPushDeliveryDeferredError(`${deferredCount} 个浏览器订阅等待重试`);
+    if (deferredCount > 0) throw new WebPushDeliveryDeferredError(`${deferredCount} 个推送设备等待重试`);
   }
 
   private canReadCurrentTask(userId: string, access: CurrentTaskAccess): boolean {

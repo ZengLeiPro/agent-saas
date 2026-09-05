@@ -758,7 +758,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         tablePrefix: config.runtimeEventStore.tablePrefix,
       });
       rawTaskboardStore = store;
-      const retryableService = new RetryableTaskboardService(store, { onReady: () => { taskboardStatusNotificationWorker ??= startTaskboardStatusNotificationWorker(store, runtimeWebPush.service, enableSingletonWorkers, userStore); } });
+      const retryableService = new RetryableTaskboardService(store, { onReady: () => { taskboardStatusNotificationWorker ??= startTaskboardStatusNotificationWorker(store, runtimeWebPush.sender, enableSingletonWorkers, userStore); } });
       taskboardService = retryableService;
       taskboardStoreService = retryableService;
       await retryableService.init().catch((err) => {
@@ -2945,7 +2945,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
     agentOptionsConfig, tokenUsageStore,
-    webPushService: runtimeWebPush.service, billingService,
+    webPushService: runtimeWebPush.service, apnsService: runtimeWebPush.apnsService, billingService,
     governanceAuditStore, membershipStore, entitlementStore, directoryGroupStore, oauthGrantStore,
     assignmentStore, contextStore, contextSourceAuthorizationRegistry, derivedContextStore, credentialStore, connectorCatalogStore,
     environmentStore,

@@ -24,3 +24,8 @@ export * from './directory/staleness.js';
 export * from './directory/client.js';
 export * from './events/store.js';
 export * from './events/handler.js';
+export * from './capabilities/schemaValidator.js';
+export * from './capabilities/executionStore.js';
+export * from './capabilities/define.js';
+export * from './me/build.js';
+export * from './health/index.js';

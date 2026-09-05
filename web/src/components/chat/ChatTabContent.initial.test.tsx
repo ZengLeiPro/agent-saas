@@ -98,6 +98,7 @@ describe("ChatTabContent 初始会话", () => {
     render(<ChatTabContent {...makeProps()} />);
 
     expect(screen.getByText("麦迪文")).toBeTruthy();
+    expect(screen.queryByText("· 个人 Agent")).toBeNull();
     expect(screen.getByText("今天先推进哪件事？")).toBeTruthy();
     expect(screen.queryByText("直接描述目标，或从一个开箱任务开始。")).toBeNull();
     expect(screen.getByPlaceholderText("说清目标，我来拆解并推进")).toBeTruthy();
@@ -158,6 +159,7 @@ describe("ChatTabContent 初始会话", () => {
     const view = render(<ChatTabContent {...makeProps({ orgAgent: expert })} />);
 
     expect(screen.getByText("要让经营分析专家处理什么？")).toBeTruthy();
+    expect(screen.getByText("· 企业专家")).toBeTruthy();
     expect(screen.getByPlaceholderText("交代目标、范围和希望经营分析专家交付的结果")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "使用经营分析专家发起新对话" })).toBeNull();
 

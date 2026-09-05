@@ -27,6 +27,15 @@ export type ModelWireMode =
 /** 模型请求实际采用的上下文传递方式。 */
 export type ModelResponseMode = 'full' | 'relay' | 'fallback_full';
 
+/** 仅大小与工具标识，不保存参数正文。calls 最多保留八项。 */
+export interface ModelStreamBudgetDiagnostic {
+  wireBytes: number;
+  argumentBytes: number;
+  argumentDeltaCount: number;
+  lastProgressAt: number;
+  calls: Array<{ outputIndex: number; bytes: number; high: number; name?: string }>;
+}
+
 export type ModelRequestDiagnostic =
   | {
     type: 'started';
@@ -48,7 +57,8 @@ export type ModelRequestDiagnostic =
     modelRequestId: string;
     attemptId: string;
     attempt: number;
-    stage: 'response_created' | 'terminal_received';
+    stage: 'response_created' | 'terminal_received' | 'stream_progress';
+    streamBudget?: ModelStreamBudgetDiagnostic;
     elapsedMs: number;
     responseIdHash?: string;
     actualModel?: string;
@@ -75,6 +85,7 @@ export type ModelRequestDiagnostic =
       | 'parse_error'
       | 'stream_error';
     durationMs: number;
+    streamBudget?: ModelStreamBudgetDiagnostic;
     httpStatus?: number;
     contentType?: string;
     upstreamRequestId?: string;

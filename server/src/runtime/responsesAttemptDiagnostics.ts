@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { ModelOutputTransactionMode } from '../types/index.js';
+import type { ModelStreamBudgetDiagnostic } from './modelRequestTypes.js';
 import { createLogger } from '../utils/logger.js';
 import type {
   ModelRequestDiagnostic,
@@ -41,6 +42,8 @@ export class ResponsesAttemptDiagnostics {
   private incompleteReason: string | undefined;
   private tailBytes: number | undefined;
   private tailHash: string | undefined;
+  private budgetSnapshot: (() => ModelStreamBudgetDiagnostic) | undefined;
+  private lastProgressCheckpointAt = this.startedAt;
 
   constructor(
     private readonly context: RunContext,
@@ -95,6 +98,20 @@ export class ResponsesAttemptDiagnostics {
 
   observeFrame(): void {
     this.frameCount += 1;
+  }
+
+  observeStreamBudget(snapshot: () => ModelStreamBudgetDiagnostic): void {
+    this.budgetSnapshot = snapshot;
+  }
+
+  async streamProgress(): Promise<void> {
+    if (!this.budgetSnapshot || Date.now() - this.lastProgressCheckpointAt < 30_000) return;
+    this.lastProgressCheckpointAt = Date.now();
+    await this.record({
+      type: 'checkpoint', stage: 'stream_progress', modelRequestId: this.init.modelRequestId,
+      attemptId: this.attemptId, attempt: this.init.attempt,
+      elapsedMs: Date.now() - this.startedAt, streamBudget: this.budgetSnapshot(),
+    });
   }
 
   observeDone(): void {
@@ -177,6 +194,7 @@ export class ResponsesAttemptDiagnostics {
       attempt: this.init.attempt,
       outcome,
       durationMs: Date.now() - this.startedAt,
+      ...(this.budgetSnapshot ? { streamBudget: this.budgetSnapshot() } : {}),
       ...(this.httpStatus !== undefined ? { httpStatus: this.httpStatus } : {}),
       ...(this.contentType ? { contentType: this.contentType } : {}),
       ...(this.upstreamRequestId ? { upstreamRequestId: this.upstreamRequestId } : {}),
@@ -281,4 +299,3 @@ function sanitizeFinishedPatch(patch: FinishedPatch): FinishedPatch {
 function hashOpaqueId(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
 }
-

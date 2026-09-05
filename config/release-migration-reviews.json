@@ -325,6 +325,27 @@
           "targetDigest": "sha256:18381d196676533b7efa392c211e91d3a886ca5f6dfa8bfe9a68a5238285a950",
           "classification": "expand",
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
+        },
+        {
+          "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
+          "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
+          "targetDigest": "sha256:09a8a6c3ec0e046dd100d137c6e2ca3a16207bc259ebf34c45f590aff75b19b9",
+          "classification": "no-schema-change",
+          "reason": "WebSocket 内存连接、字节预算、计时器和恢复约束调整；无 SQL 或数据库结构变更。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesStreamBudget.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:fcb21b682db0be904e79323bd716aa0d3e0f22e0e9ad6ccb8a410b153cf1c164",
+          "classification": "no-schema-change",
+          "reason": "新增纯内存模型事件预算计数器与保护错误；无数据库访问或初始化迁移。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesTransport.ts",
+          "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
+          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "classification": "no-schema-change",
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
         }
       ],
       "evidence": [
@@ -359,6 +380,66 @@
         {
           "path": "server/src/runtime/sessionAutomation.pg.test.ts",
           "digest": "sha256:8de8e478a98d2ff92e094b228071516e47326a9cdc6651fdebef8112ca8703ff"
+        },
+        {
+          "path": "docs/release/模型流修复无结构变更审核-20260905.md",
+          "digest": "sha256:b37a301cb4be2a4c243ab3dd4894d8f645d3d3a9cd45ca9e59b0fe5e8bae3162"
+        },
+        {
+          "path": "server/src/__tests__/responsesStreamBudget.test.ts",
+          "digest": "sha256:efb8f26247e3f2aa7c83df3a86fb8e81f226fa2ea7a9518684f421484c787349"
+        },
+        {
+          "path": "server/src/__tests__/codexResponsesWebSocketPool.test.ts",
+          "digest": "sha256:fbd8e308ec059f2079153310434d60b306a570376674cac395beb942bfc0c826"
+        },
+        {
+          "path": "server/src/__tests__/codexStreamGuardTransport.test.ts",
+          "digest": "sha256:7c9fc4df15f16feaa0f65f58897616684b420a838be8b5de0c4b3a560c37190f"
+        }
+      ]
+    },
+    {
+      "baselineSha": "77592b55171df5ee16516d3fdb5c590b0576c1ed",
+      "files": [
+        {
+          "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
+          "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
+          "targetDigest": "sha256:09a8a6c3ec0e046dd100d137c6e2ca3a16207bc259ebf34c45f590aff75b19b9",
+          "classification": "no-schema-change",
+          "reason": "WebSocket 内存连接、字节预算、计时器和恢复约束调整；无 SQL 或数据库结构变更。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesStreamBudget.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:fcb21b682db0be904e79323bd716aa0d3e0f22e0e9ad6ccb8a410b153cf1c164",
+          "classification": "no-schema-change",
+          "reason": "新增纯内存模型事件预算计数器与保护错误；无数据库访问或初始化迁移。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesTransport.ts",
+          "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
+          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "classification": "no-schema-change",
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/模型流修复无结构变更审核-20260905.md",
+          "digest": "sha256:b37a301cb4be2a4c243ab3dd4894d8f645d3d3a9cd45ca9e59b0fe5e8bae3162"
+        },
+        {
+          "path": "server/src/__tests__/responsesStreamBudget.test.ts",
+          "digest": "sha256:efb8f26247e3f2aa7c83df3a86fb8e81f226fa2ea7a9518684f421484c787349"
+        },
+        {
+          "path": "server/src/__tests__/codexResponsesWebSocketPool.test.ts",
+          "digest": "sha256:fbd8e308ec059f2079153310434d60b306a570376674cac395beb942bfc0c826"
+        },
+        {
+          "path": "server/src/__tests__/codexStreamGuardTransport.test.ts",
+          "digest": "sha256:7c9fc4df15f16feaa0f65f58897616684b420a838be8b5de0c4b3a560c37190f"
         }
       ]
     }

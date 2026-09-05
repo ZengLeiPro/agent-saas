@@ -160,6 +160,8 @@ describe('PgWebPushStore 隔离条件', () => {
 
     await expect(pgStore.claimDelivery(owner, current, 'event-1')).resolves.toEqual({ deferred: true });
     expect(release).toHaveBeenCalledOnce();
+    // updated_at 必须按毫秒比较：PG 微秒 vs JS 毫秒直接等值永远不等（生产 Web Push 曾因此全部 skipped）。
+    expect(String(query.mock.calls[1]![0])).toContain("date_trunc('milliseconds', updated_at)=date_trunc('milliseconds', $5::timestamptz)");
   });
 
   it('查询和删除始终同时携带 tenantId 与 userId', async () => {

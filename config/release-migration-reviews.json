@@ -7,9 +7,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/codexSubscriptionConfigSchema.ts",
@@ -374,6 +374,13 @@
           "targetDigest": "sha256:18381d196676533b7efa392c211e91d3a886ca5f6dfa8bfe9a68a5238285a950",
           "classification": "expand",
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -440,6 +447,14 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -449,9 +464,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -508,6 +523,13 @@
           "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
           "classification": "no-schema-change",
           "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -542,6 +564,14 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -551,9 +581,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -589,6 +619,13 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -607,6 +644,14 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -616,9 +661,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -654,6 +699,13 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -672,6 +724,14 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -681,9 +741,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -705,6 +765,13 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -714,7 +781,15 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -724,9 +799,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -748,6 +823,13 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -757,7 +839,15 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -767,9 +857,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -791,6 +881,13 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -800,7 +897,15 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     }

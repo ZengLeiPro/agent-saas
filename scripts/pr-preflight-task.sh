@@ -105,6 +105,7 @@ case "$task" in
       src/__tests__/sessionShareStore.pg.test.ts \
       src/__tests__/taskboardAttachmentRollback.pg.test.ts \
       src/__tests__/governanceSchemaMigration.pg.test.ts \
+      src/__tests__/releaseMigrationUpgrade.pg.test.ts \
       src/__tests__/governanceProjectionPool.pg.test.ts \
       src/__tests__/pgRunStoreSteering.pg.test.ts \
       src/__tests__/pgToolInvocationTerminalGate.pg.test.ts \

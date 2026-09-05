@@ -177,7 +177,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     expect(test.messageStore.complete).toHaveBeenCalledOnce();
   });
 
-  it('创建 delivery 后崩溃并撤销授权时，router 先取消旧正文且 worker 无法 drain', async () => {
+  it('创建 delivery 后崩溃并撤权时，取消旧正文并恢复安全拒绝', async () => {
     const pendingReply = {
       ...item,
       state: 'reply_pending' as const,
@@ -206,15 +206,23 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       'inbox-a',
       'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED',
     );
-    expect(test.messageStore.blockReply).toHaveBeenCalledWith(
-      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 2, 'ASSIGNMENT_DENIED',
+    expect(test.messageStore.blockReply).not.toHaveBeenCalled();
+    expect(test.messageStore.saveRejectionResult).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 2,
+      '当前请求未通过组织权限检查。请联系管理员确认本群配置和你的访问范围。',
+      'ASSIGNMENT_DENIED', true,
+    );
+    expect(test.sender.send).toHaveBeenCalledWith(
+      account, expect.any(Object),
+      '当前请求未通过组织权限检查。请联系管理员确认本群配置和你的访问范围。',
+      expect.any(String), expect.any(Function),
     );
     expect(await test.orgStore.getDelivery('tenant-a', 'delivery-a')).toMatchObject({
       deliveryState: 'dead_letter',
       lastError: 'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED',
     });
     await expect(test.router.runOnce()).resolves.toBe(false);
-    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.sender.send).toHaveBeenCalledOnce();
   });
 
   it('routing clarification 在 provider 前失败后可从 reply_pending 重领发送', async () => {

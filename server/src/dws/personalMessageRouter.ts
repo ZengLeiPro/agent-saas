@@ -135,6 +135,7 @@ export interface AgentDwsMessageRouterOptions {
     requester: UserIdentity;
     sessionId: string;
     runId: string;
+    phase?: 'dispatch' | 'provider_start';
   }) => Promise<{ allowed: boolean; reason?: string }>;
   auditRequesterRejection: (input: {
     account: AgentDwsAccountRecord;
@@ -663,7 +664,9 @@ export class AgentDwsMessageRouter {
       throw new Error('Agent DWS account identity changed before reply');
     }
     const authorizeBeforeProvider = !shared && requester && !serviceEvent
-      ? () => this.options.authorizeRequester({ account: replyAccount, requester, sessionId, runId })
+      ? () => this.options.authorizeRequester({
+          account: replyAccount, requester, sessionId, runId, phase: 'provider_start',
+        })
       : undefined;
     const sendReply = (phase: 'first' | 'final') => this.visibleReply.send(
       replyAccount, item, responseText, shared, 'front_reply', 'replied', phase,
@@ -676,9 +679,10 @@ export class AgentDwsMessageRouter {
       );
     } catch (error) {
       if (!(error instanceof OrgAgentProviderAuthorizationRevokedError)) throw error;
-      await this.rejectAccess(replyAccount, {
-        ...item, state: 'reply_pending', replyKind: 'normal', responseText,
-      }, error.reason, requester ?? undefined);
+      await this.options.auditRequesterRejection({ account: replyAccount,
+        eventId: item.eventId, ...(requester ? { requester } : {}), reason: error.reason });
+      await this.visibleReply.replacePendingWithAccessRejection(
+        replyAccount, item, rejectionMessage(error.reason), error.reason);
       return;
     }
     if (!(await finalizeReplyDelivery(
@@ -702,16 +706,11 @@ export class AgentDwsMessageRouter {
       ...(requester ? { requester } : {}),
       reason,
     });
-    // 普通 reply_pending 的已持久化正文可能来自旧授权上下文，当前拒绝时必须隔离并转人工核对。
     if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
-      await this.visibleReply.cancelPendingForInbox(
-        item,
-        `ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:${reason}`,
+      await this.visibleReply.replacePendingWithAccessRejection(
+        account, item, rejectionMessage(reason), reason,
       );
-      await this.options.messageStore.blockReply(
-        item.inboxId, this.workerId, item.leaseFence, reason,
-      );
-      this.options.logger?.warn(`Agent DWS pending normal reply blocked account=${item.accountId} event=${item.eventId} reason=${reason}`);
+      this.options.logger?.warn(`Agent DWS pending normal reply replaced account=${item.accountId} event=${item.eventId} reason=${reason}`);
       return;
     }
     // processing 阶段先持久化拒绝正文与类型；拒绝型 reply_pending 重领时直接恢复。

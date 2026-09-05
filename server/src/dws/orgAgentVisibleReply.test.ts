@@ -108,7 +108,7 @@ describe('OrgAgentVisibleReplyService delivery fences', () => {
     )).rejects.toThrow('AGENT_DWS_REPLY_DELIVERY_NOT_SENT:pending');
   });
 
-  it('sender 跨越 transport 边界时持久化 provider phase 并在成功后记录 receipt', async () => {
+  it('sender 跨越 transport 边界时持久化 provider phase 与成功 receipt', async () => {
     const test = harness();
     await test.service.send(account, item, '完成', undefined, 'front_reply', 'replied');
     expect(test.store.markDeliveryProviderStarted).toHaveBeenCalledWith(
@@ -121,6 +121,35 @@ describe('OrgAgentVisibleReplyService delivery fences', () => {
       vi.mocked(test.store.markDeliveryProviderStarted).mock.invocationCallOrder[0],
     ).toBeLessThan(vi.mocked(test.store.markDeliverySent).mock.invocationCallOrder[0]!);
     expect(test.store.markDeliverySent).toHaveBeenCalledOnce();
+  });
+
+  it('direct provider fence 先落盘再最终授权，撤权时终结且不进入 transport/unknown', async () => {
+    const test = harness();
+    const authorize = vi.fn().mockResolvedValue({ allowed: false, reason: 'ASSIGNMENT_DENIED' });
+    const providerInvoke = vi.fn();
+    vi.mocked(test.sender.send).mockImplementationOnce(async (
+      _account, _event, _text, _key, onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      providerInvoke();
+      return { status: 'accepted' };
+    });
+
+    await expect(test.service.send(
+      account, item, '旧授权正文', undefined, 'front_reply', 'replied', 'first',
+      undefined, authorize,
+    )).rejects.toThrow('ORG_AGENT_PROVIDER_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED');
+
+    expect(test.store.markDeliveryProviderStarted).toHaveBeenCalledOnce();
+    expect(test.store.markClaimedDeliveryDeadLetter).toHaveBeenCalledWith(
+      'delivery-a', 'worker-a', 1,
+      'ORG_AGENT_PROVIDER_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED',
+    );
+    expect(vi.mocked(test.store.markDeliveryProviderStarted).mock.invocationCallOrder[0])
+      .toBeLessThan(authorize.mock.invocationCallOrder[0]!);
+    expect(providerInvoke).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).not.toHaveBeenCalled();
   });
 
   it('direct intent 创建后账号切换为 B 时在 provider transport 前 fail-closed', async () => {

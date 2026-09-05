@@ -367,9 +367,28 @@ describe('PgAgentDwsMessageStore', () => {
     });
     const [sql, values] = query.mock.calls[0]!;
     expect(String(sql)).toContain("'replyKind','access_rejection','rejectionReasonCode',$5::text");
-    expect(String(sql)).toContain("WHERE inbox_id=$1 AND state='processing'");
+    expect(String(sql)).toContain("NOT $6 AND state='processing'");
     expect(values).toEqual([
-      'adwsi-1', 'worker-1', 7, '权限不足', 'ASSIGNMENT_DENIED',
+      'adwsi-1', 'worker-1', 7, '权限不足', 'ASSIGNMENT_DENIED', false,
+    ]);
+  });
+
+  it('未出站普通回复可原子替换为独立拒绝回复并重置尝试时间', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'reply_pending', response_text: '安全拒绝', reply_started_at: null,
+      payload_json: { replyKind: 'access_rejection', rejectionReasonCode: 'ASSIGNMENT_DENIED' },
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await store.saveRejectionResult(
+      'adwsi-1', 'worker-1', 7, '安全拒绝', 'ASSIGNMENT_DENIED', true,
+    );
+
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("$6 AND state='reply_pending'");
+    expect(String(sql)).toContain('reply_started_at=CASE WHEN $6 THEN NULL');
+    expect(values).toEqual([
+      'adwsi-1', 'worker-1', 7, '安全拒绝', 'ASSIGNMENT_DENIED', true,
     ]);
   });
 

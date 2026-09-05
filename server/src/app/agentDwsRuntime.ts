@@ -52,6 +52,7 @@ export async function authorizeAgentDwsRequesterAccess(input: {
   requester: UserIdentity;
   sessionId: string;
   runId: string;
+  phase?: 'dispatch' | 'provider_start';
   orgAgentStore: Pick<OrgAgentStore, 'get'>;
   runPreflightService: Pick<RunPreflightService, 'preflight'>;
   auditStore: GovernanceAuditStore;
@@ -74,25 +75,29 @@ export async function authorizeAgentDwsRequesterAccess(input: {
     });
     return decision;
   };
-  const agent = input.orgAgentStore.get(input.account.agentId);
-  if (!agent || !agent.enabled || agent.tenantId !== input.account.tenantId) {
-    return await recordDecision({ allowed: false, reason: 'ORG_AGENT_UNAVAILABLE' });
-  }
-  if (!isAssignedToOrgAgent(agent, input.requester.username)) {
-    return await recordDecision({ allowed: false, reason: 'ORG_AGENT_AUDIENCE_DENIED' });
-  }
-  const preflight = await input.runPreflightService.preflight({
-    phase: 'enqueue',
-    runId: input.runId,
-    sessionId: input.sessionId,
-    userId: input.requester.id,
-    tenantId: input.account.tenantId,
-    orgAgentId: input.account.agentId,
-    skipBilling: true,
-  });
-  return await recordDecision(preflight.accessDecision.verdict === 'allow'
-    ? { allowed: true }
-    : { allowed: false, reason: preflight.accessDecision.reasonCode });
+  const evaluate = async (): Promise<{ allowed: boolean; reason?: string }> => {
+    const agent = input.orgAgentStore.get(input.account.agentId);
+    if (!agent || !agent.enabled || agent.tenantId !== input.account.tenantId)
+      return { allowed: false, reason: 'ORG_AGENT_UNAVAILABLE' };
+    if (!isAssignedToOrgAgent(agent, input.requester.username))
+      return { allowed: false, reason: 'ORG_AGENT_AUDIENCE_DENIED' };
+    const preflight = await input.runPreflightService.preflight({
+      phase: 'enqueue', runId: input.runId, sessionId: input.sessionId,
+      userId: input.requester.id, tenantId: input.account.tenantId,
+      orgAgentId: input.account.agentId, skipBilling: true,
+    });
+    return preflight.accessDecision.verdict === 'allow'
+      ? { allowed: true }
+      : { allowed: false, reason: preflight.accessDecision.reasonCode };
+  };
+  const decision = await evaluate();
+  await recordDecision(decision);
+  if (input.phase !== 'provider_start' || !decision.allowed) return decision;
+  // Audit belongs before the final authority read. An allow returns immediately after this
+  // revalidation, so a slow audit sink cannot extend a stale authorization window.
+  const finalDecision = await evaluate();
+  if (!finalDecision.allowed) await recordDecision(finalDecision);
+  return finalDecision;
 }
 
 export async function createAgentDwsRuntime(options: {

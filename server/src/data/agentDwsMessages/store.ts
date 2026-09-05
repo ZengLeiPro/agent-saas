@@ -430,6 +430,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     fence: number,
     responseText: string,
     reasonCode: string,
+    replacePendingReply = false,
   ): Promise<AgentDwsInboxRecord> {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId, reasonCode);
@@ -442,11 +443,14 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           payload_json=payload_json || jsonb_build_object(
             'replyKind','access_rejection','rejectionReasonCode',$5::text
           ),
+          reply_started_at=CASE WHEN $6 THEN NULL ELSE reply_started_at END,
           last_error=NULL,updated_at=NOW()
-      WHERE inbox_id=$1 AND state='processing' AND lease_owner=$2 AND lease_fence=$3
-        AND lease_expires_at > NOW()
+      WHERE inbox_id=$1
+        AND ((NOT $6 AND state='processing') OR ($6 AND state='reply_pending'
+          AND COALESCE(payload_json->>'replyKind','normal')<>'access_rejection'))
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
       RETURNING *
-    `, [inboxId, owner, fence, responseText, reasonCode]);
+    `, [inboxId, owner, fence, responseText, reasonCode, replacePendingReply]);
   }
 
   async markReplyAttemptStarted(

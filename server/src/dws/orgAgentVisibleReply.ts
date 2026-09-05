@@ -67,6 +67,7 @@ export class OrgAgentVisibleReplyService {
   constructor(
     private readonly options: {
       accountStore: AgentDwsAccountStore;
+      messageStore?: AgentDwsMessageStore;
       orgGroupAgentStore?: OrgGroupAgentStore;
       orgAgentStore?: Pick<OrgAgentStore, 'get'>;
       sender: DwsPersonalMessageSenderLike;
@@ -137,8 +138,11 @@ export class OrgAgentVisibleReplyService {
     sourceOverride?: DwsDeliveryIntent['source'],
     authorizeBeforeProvider?: () => Promise<{ allowed: boolean; reason?: string }>,
   ): Promise<DwsDeliveryIntent | undefined> {
+    const idempotencyPrefix = deliveryKind === 'access_rejection'
+      ? (replyPhase === 'first' ? 'agent-dws-rejection' : 'agent-dws-rejection-final')
+      : (replyPhase === 'first' ? 'agent-dws-reply' : 'agent-dws-final');
     const idempotencyKey = deterministicId(
-      replyPhase === 'first' ? 'agent-dws-reply' : 'agent-dws-final',
+      idempotencyPrefix,
       `${item.accountId}:${item.eventId}`,
     );
     if (!this.options.orgGroupAgentStore) {
@@ -262,6 +266,7 @@ export class OrgAgentVisibleReplyService {
       );
     }
     let providerStarted = false;
+    let providerFenceAborted = false;
     try {
       const receipt = await this.options.sender.send(
         currentAccount,
@@ -269,16 +274,31 @@ export class OrgAgentVisibleReplyService {
         claimed.content,
         claimed.idempotencyKey,
         async () => {
-          const authorization = await authorizeBeforeProvider?.();
-          if (authorization && !authorization.allowed)
-            throw new OrgAgentProviderAuthorizationRevokedError(
-              authorization.reason ?? 'ACCESS_DENIED',
-            );
           await this.options.orgGroupAgentStore!.markDeliveryProviderStarted(
             delivery.deliveryId,
             this.workerId,
             claimed.leaseFence,
           );
+          let authorization: { allowed: boolean; reason?: string } | undefined;
+          try {
+            authorization = await authorizeBeforeProvider?.();
+          } catch (error) {
+            providerFenceAborted = true;
+            await this.options.orgGroupAgentStore!.markClaimedDeliveryDeadLetter(
+              delivery.deliveryId, this.workerId, claimed.leaseFence,
+              `ORG_AGENT_PROVIDER_AUTHORIZATION_FAILED:${compactError(error)}`,
+            );
+            throw error;
+          }
+          if (authorization && !authorization.allowed) {
+            providerFenceAborted = true;
+            const reason = authorization.reason ?? 'ACCESS_DENIED';
+            await this.options.orgGroupAgentStore!.markClaimedDeliveryDeadLetter(
+              delivery.deliveryId, this.workerId, claimed.leaseFence,
+              `ORG_AGENT_PROVIDER_AUTHORIZATION_REVOKED:${reason}`,
+            );
+            throw new OrgAgentProviderAuthorizationRevokedError(reason);
+          }
           providerStarted = true;
         },
       );
@@ -290,6 +310,7 @@ export class OrgAgentVisibleReplyService {
         receipt,
       );
     } catch (error) {
+      if (providerFenceAborted) throw error;
       if (providerStarted)
         return await this.options.orgGroupAgentStore.markDeliveryUnknown(
           delivery.deliveryId,
@@ -309,7 +330,36 @@ export class OrgAgentVisibleReplyService {
     }
   }
 
-  /** Prevents stale direct replies from surviving a newly denied inbound request. */
+  async replacePendingWithAccessRejection(
+    account: AgentDwsAccountRecord,
+    item: AgentDwsInboxRecord,
+    text: string,
+    reason: string,
+  ): Promise<boolean> {
+    const messageStore = this.options.messageStore;
+    if (!messageStore) throw new Error('Agent DWS message store unavailable');
+    await this.cancelPendingForInbox(
+      item, `ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:${reason}`,
+    );
+    const rejection = await messageStore.saveRejectionResult(
+      item.inboxId, this.workerId, item.leaseFence, text, reason, true,
+    );
+    await messageStore.markReplyAttemptStarted(
+      item.inboxId, this.workerId, item.leaseFence,
+    );
+    const delivery = await this.send(
+      account, rejection, text, undefined, 'access_rejection', 'rejected',
+    );
+    if (!(await finalizeReplyDelivery(
+      messageStore, this.workerId, rejection, delivery,
+    ))) return false;
+    await messageStore.reject(
+      item.inboxId, this.workerId, item.leaseFence, reason,
+    );
+    return true;
+  }
+
+  /** Prevents stale direct replies from surviving a newly denied request. */
   async cancelPendingForInbox(item: AgentDwsInboxRecord, reason: string): Promise<void> {
     await this.options.orgGroupAgentStore?.cancelUnstartedDeliveriesForInbox(
       item.tenantId,

@@ -138,12 +138,14 @@ export interface AgentDwsMessageStore {
     fence: number,
     responseText: string,
   ): Promise<AgentDwsInboxRecord>;
+  /** Persists a new rejection or atomically replaces an unsent normal reply. */
   saveRejectionResult(
     inboxId: string,
     owner: string,
     fence: number,
     responseText: string,
     reasonCode: string,
+    replacePendingReply?: boolean,
   ): Promise<AgentDwsInboxRecord>;
   markReplyAttemptStarted(
     inboxId: string,

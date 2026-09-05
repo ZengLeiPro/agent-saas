@@ -16,6 +16,7 @@ function makeRun(
 ): RunRecord {
   const deliveryId = `delivery-${runId}`;
   const event = {
+    id: `terminal:${deliveryId}:0`,
     type: 'run_state_changed',
     runId,
     sessionId: `session-${runId}`,
@@ -49,6 +50,7 @@ function makeRun(
 class DurableRunStore {
   readonly rows = new Map<string, RunRecord>();
   finishFailures = 0;
+  readonly rejectedRenewalTokens = new Set<string>();
 
   constructor(runs: RunRecord[]) {
     for (const run of runs) this.rows.set(run.runId, structuredClone(run));
@@ -114,6 +116,21 @@ class DurableRunStore {
     return run;
   }
 
+  async renewTerminalEventOutboxClaim(
+    runId: string,
+    deliveryId: string,
+    claimToken: string,
+    now: Date,
+  ): Promise<boolean> {
+    if (this.rejectedRenewalTokens.has(claimToken)) return false;
+    const run = this.rows.get(runId);
+    const outbox = run?.metadata.terminalEventOutbox as TerminalEventOutboxRecord | undefined;
+    if (!run || outbox?.deliveryId !== deliveryId || outbox.claimToken !== claimToken || outbox.state !== 'delivering') return false;
+    outbox.claimedAt = now.toISOString();
+    outbox.updatedAt = now.toISOString();
+    return true;
+  }
+
   async finishTerminalEventOutbox(
     runId: string,
     deliveryId: string,
@@ -140,12 +157,15 @@ function makeEventStore(failures = 0) {
       remainingFailures -= 1;
       throw new Error('event store unavailable');
     }
-    const stored = inputs.map((input, index) => ({
-      id: `event-${events.length + index}`,
-      timestamp: new Date().toISOString(),
-      ...input,
-    })) as PlatformEvent[];
-    events.push(...stored);
+    const stored = inputs.map((input, index) => {
+      const existing = input.id ? events.find((event) => event.id === input.id) : undefined;
+      return existing ?? ({
+        id: input.id ?? `event-${events.length + index}`,
+        timestamp: new Date().toISOString(),
+        ...input,
+      } as PlatformEvent);
+    });
+    events.push(...stored.filter((event) => !events.some((existing) => existing.id === event.id)));
     return stored;
   });
   return {
@@ -227,6 +247,72 @@ describe('TerminalEventOutboxDispatcher', () => {
 
     expect(events.appendBatch).toHaveBeenCalledTimes(1);
     expect((runs.rows.get('restart')!.metadata.terminalEventOutbox as TerminalEventOutboxRecord).state).toBe('delivered');
+  });
+
+  it('跨原 claim 过期窗口交错时续租阻止第二 worker，且只留一组 terminal events', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-14T00:00:00.000Z'));
+    const runs = new DurableRunStore([makeRun('lease-interleave')]);
+    const events = makeEventStore();
+    let releaseAppend!: () => void;
+    let appendEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { appendEntered = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    const durableAppend = events.store.append.bind(events.store);
+    events.store.append = vi.fn(async (input, ctx) => {
+      appendEntered();
+      await gate;
+      return durableAppend(input, ctx);
+    });
+    const first = dispatcher(runs, events.store, { claimTtlMs: 100 });
+    const second = dispatcher(runs, events.store, { claimTtlMs: 100 });
+
+    const firstStart = first.start();
+    await entered;
+    await vi.advanceTimersByTimeAsync(101);
+    await second.start();
+    releaseAppend();
+    await firstStart;
+
+    expect(events.events).toHaveLength(1);
+    expect(events.events[0]?.id).toBe('terminal:delivery-lease-interleave:0');
+    expect((runs.rows.get('lease-interleave')!.metadata.terminalEventOutbox as TerminalEventOutboxRecord).state).toBe('delivered');
+  });
+
+  it('旧 worker 失权后与新 claim 交错 append 仍只产生一组事件并由新 worker 收口', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-14T00:00:00.000Z'));
+    const runs = new DurableRunStore([makeRun('fence-interleave')]);
+    const events = makeEventStore();
+    let releaseFirstAppend!: () => void;
+    let firstAppendEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { firstAppendEntered = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseFirstAppend = resolve; });
+    const durableAppend = events.store.append.bind(events.store);
+    let appendCalls = 0;
+    events.store.append = vi.fn(async (input, ctx) => {
+      appendCalls += 1;
+      if (appendCalls === 1) {
+        firstAppendEntered();
+        await gate;
+      }
+      return durableAppend(input, ctx);
+    });
+    const first = dispatcher(runs, events.store, { claimTtlMs: 100 });
+    const second = dispatcher(runs, events.store, { claimTtlMs: 100 });
+
+    const firstStart = first.start();
+    await entered;
+    const oldToken = (runs.rows.get('fence-interleave')!.metadata.terminalEventOutbox as TerminalEventOutboxRecord).claimToken!;
+    runs.rejectedRenewalTokens.add(oldToken);
+    await vi.advanceTimersByTimeAsync(101);
+    await second.start();
+    releaseFirstAppend();
+    await firstStart;
+
+    expect(events.events).toHaveLength(1);
+    expect(events.events[0]?.id).toBe('terminal:delivery-fence-interleave:0');
+    expect((runs.rows.get('fence-interleave')!.metadata.terminalEventOutbox as TerminalEventOutboxRecord).state).toBe('delivered');
   });
 
   it('两个消费者并发扫描时仅 CAS 赢家发布', async () => {

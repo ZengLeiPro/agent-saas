@@ -3,7 +3,7 @@ import type { RunRecord } from '../runStore.js';
 import type { RawRuntimeRunDispatchConfig } from '../rawRuntimeRunDispatch.js';
 import { resolveSessionCatalog } from '../rawRuntimeRunDispatch.js';
 import { sessionIdentity } from './backgroundTaskServiceSupport.js';
-import type { BackgroundCommandTaskMetadata } from './backgroundTaskMetadata.js';
+import { deriveBackgroundRuntimeIsolationRequirement, type BackgroundCommandTaskMetadata } from './backgroundTaskMetadata.js';
 
 export async function invokeBackgroundCommandControl(
   config: RawRuntimeRunDispatchConfig,
@@ -63,6 +63,16 @@ export async function invokeBackgroundCommandControl(
       sessionId: metadata.parentSessionId,
       runId: record.runId,
       toolCallId: `${toolId}-${record.runId}`,
+      ...(metadata.automationFence ? { automationFence: metadata.automationFence } : {}),
+      ...(deriveBackgroundRuntimeIsolationRequirement(metadata, {
+        runId: record.runId,
+        sessionId: record.sessionId,
+        workspaceId: metadata.workspaceId,
+      }) ? { runtimeIsolationRequirement: deriveBackgroundRuntimeIsolationRequirement(metadata, {
+        runId: record.runId,
+        sessionId: record.sessionId,
+        workspaceId: metadata.workspaceId,
+      }) } : {}),
       signal,
     },
   );

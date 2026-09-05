@@ -120,6 +120,7 @@ const taskOne = task("task-1", "TASK-1", "实现任务看板", "backlog", "urgen
 const taskTwo = task("task-2", "TASK-2", "联调接口", "todo", "low");
 
 describe("TaskBoardView", () => {
+  // 选择恢复的存储契约由 boardOrder.test.ts 覆盖。
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -181,6 +182,7 @@ describe("TaskBoardView", () => {
     render(<TaskBoardView />);
 
     await waitFor(() => expect(screen.getByRole("combobox", { name: "选择看板" })).toBeTruthy());
+    expect(window.localStorage.getItem("taskboard:selected-board")).toBe("board-1");
     expect(screen.getAllByRole("region", { name: /列$/ }).map((column) => column.getAttribute("aria-label"))).toEqual([
       "需求池列",
       "待推进列",

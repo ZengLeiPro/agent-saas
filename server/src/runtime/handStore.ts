@@ -64,6 +64,8 @@ export interface WorkspaceRecipe {
   packages?: string[];
   envKeys?: string[];
   setupCommands?: string[];
+  /** Stable transport idempotency key for crash-safe provisioning retries. */
+  provisionKey?: string;
   resources?: { cpu?: string; memoryMb?: number; diskMb?: number; timeoutMs?: number };
   /** ACS execution-plane descriptor. Its `class` is stable even when taskboard details evolve. */
   workload?: SandboxWorkloadWireDescriptor;
@@ -192,6 +194,8 @@ export function pickSoleReadyTenantHandId(hands: ReadonlyArray<HandRecord>): str
 
 export interface RegisterHandInput {
   handId: string;
+  /** Authoritative tenant boundary. PgHandStore rejects registrations without it. */
+  tenantId?: string;
   sessionId?: string;
   workspaceId: string;
   type: ExecutionTargetKind;
@@ -208,36 +212,69 @@ export interface RegisterHandInput {
 }
 
 export const PROVISION_RECOVERY_CLAIM_TTL_MS = 5 * 60_000;
+/** Live transports renew this durable owner lease before scanner takeover is allowed. */
+export const PROVISION_ATTEMPT_LEASE_MS = PROVISION_RECOVERY_CLAIM_TTL_MS;
+export const PROVISION_ATTEMPT_RENEW_INTERVAL_MS = Math.floor(PROVISION_ATTEMPT_LEASE_MS / 3);
 
 export interface HandStore {
   init?(): Promise<void>;
   register(input: RegisterHandInput): Promise<HandRecord>;
-  updateStatus(handId: string, status: HandStatus, metadataPatch?: Record<string, unknown>): Promise<HandRecord | null>;
-  /** Atomically claims an unresolved provision failure for one scanner recovery attempt. */
+  /** Registers a tenant-qualified Client daemon without adopting unverifiable tenant-less legacy metadata. */
+  registerClientDaemon?(input: RegisterHandInput, legacyHandIds: readonly string[]): Promise<HandRecord>;
+  updateStatus(handId: string, status: HandStatus, metadataPatch: Record<string, unknown> | undefined, tenantId: string): Promise<HandRecord | null>;
+  /** Atomically claims recovery; provisioning requires an absent owner or a well-formed expired owner claim. */
   claimProvisionRecovery(
     handId: string,
     recoveryToken: string,
-    metadataPatch?: Record<string, unknown>,
-    expectedUpdatedAt?: string,
-    expectedProvisionGeneration?: string,
+    metadataPatch: Record<string, unknown> | undefined,
+    expectedUpdatedAt: string | undefined,
+    expectedProvisionGeneration: string | undefined,
+    tenantId: string,
   ): Promise<HandRecord | null>;
-  /** Completes a normal provision attempt only while its generation still owns the Hand. */
+  /** Atomically persists durable intent and claims authority for one remote /provision dispatch. */
+  claimProvisionDispatch?(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    expectedUpdatedAt: string,
+    tenantId: string,
+  ): Promise<HandRecord | null>;
+  /** Renews the exact live transport owner's provision lease with a generation/owner CAS. */
+  renewProvisionAttemptLease?(
+    handId: string,
+    provisionGeneration: string,
+    provisionAttemptOwner: string,
+    tenantId: string,
+  ): Promise<HandRecord | null>;
+  /** Completes a claimed remote dispatch only for its exact generation/token and persisted outcome certainty. */
+  completeProvisionDispatch?(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    status: 'ready' | 'unhealthy',
+    metadataPatch: Record<string, unknown> | undefined,
+    tenantId: string,
+  ): Promise<HandRecord | null>;
+  /** Completes a normal provision attempt only while its generation and live owner claim still own the Hand. */
   completeProvisionAttempt(
     handId: string,
     provisionGeneration: string,
     status: HandStatus,
-    metadataPatch?: Record<string, unknown>,
+    metadataPatch: Record<string, unknown> | undefined,
+    tenantId: string,
+    provisionAttemptOwner?: string,
   ): Promise<HandRecord | null>;
   /** Applies a scanner recovery result only while its claim token is still current. */
   completeProvisionRecovery(
     handId: string,
     recoveryToken: string,
     status: HandStatus,
-    metadataPatch?: Record<string, unknown>,
+    metadataPatch: Record<string, unknown> | undefined,
+    tenantId: string,
   ): Promise<HandRecord | null>;
-  get(handId: string): Promise<HandRecord | null>;
-  listBySession(sessionId: string): Promise<HandRecord[]>;
-  listByWorkspace(workspaceId: string): Promise<HandRecord[]>;
+  get(handId: string, tenantId: string): Promise<HandRecord | null>;
+  listBySession(sessionId: string, tenantId: string): Promise<HandRecord[]>;
+  listByWorkspace(workspaceId: string, tenantId: string): Promise<HandRecord[]>;
   /**
    * B4: List all hands of a given execution target kind, optionally filtered by
    * status. Used by the health/lease scanner to find server-remote hands that
@@ -309,9 +346,11 @@ export class PgHandStore implements HandStore {
       SET tenant_id = split_part(substring(workspace_id from 4), '__', 1),
           user_id = split_part(substring(workspace_id from 4), '__', 2)
       WHERE tenant_id IS NULL
+        AND type <> 'client'
         AND workspace_id ~ '^ws_[a-z][a-z0-9-]{1,30}__[A-Za-z0-9_-]{1,80}(__.*)?$'
     `);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_tenant_idx ON ${this.handsTable} (tenant_id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_tenant_session_idx ON ${this.handsTable} (tenant_id, session_id)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_status_idx ON ${this.handsTable} (status)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_provider_idx ON ${this.handsTable} (provider_id, status)`);
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_template_idx ON ${this.handsTable} (template_version_id)`);
@@ -320,8 +359,19 @@ export class PgHandStore implements HandStore {
 
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
+  async registerClientDaemon(input: RegisterHandInput, _legacyHandIds: readonly string[]): Promise<HandRecord> {
+    // Tenant-less Client rows are intentionally immutable quarantine candidates. Neither a
+    // workspace-looking string nor a historical runs snapshot proves who owns their secrets.
+    return await this.register(input);
+  }
+
   async register(input: RegisterHandInput): Promise<HandRecord> {
     const owner = parseWorkspacePrincipal(input.workspaceId);
+    const tenantId = input.tenantId?.trim() ?? owner?.tenantId;
+    if (!tenantId) throw new Error(`Hand tenant is required for ${input.handId}`);
+    if (input.tenantId?.trim() && owner?.tenantId && input.tenantId.trim() !== owner.tenantId) {
+      throw new Error(`Hand tenant mismatch for workspace ${input.workspaceId}`);
+    }
     const result = await this.pool.query<{ row_json: unknown }>(`
       INSERT INTO ${this.handsTable}
         (hand_id, session_id, workspace_id, tenant_id, user_id, type, status, endpoint,
@@ -345,12 +395,13 @@ export class PgHandStore implements HandStore {
         terminated_at = EXCLUDED.terminated_at,
         metadata = ${this.handsTable}.metadata || EXCLUDED.metadata,
         updated_at = now()
+      WHERE ${this.handsTable}.tenant_id = EXCLUDED.tenant_id
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
     `, [
       input.handId,
       input.sessionId ?? null,
       input.workspaceId,
-      owner?.tenantId ?? null,
+      tenantId,
       owner?.kind === 'user' ? owner.userId : null,
       input.type,
       input.status ?? 'ready',
@@ -366,27 +417,36 @@ export class PgHandStore implements HandStore {
         ? { ...input.metadata, workspacePrincipal: { kind: owner.kind, principalId: owner.principalId } }
         : input.metadata ?? {}),
     ]);
-    return normalizeHandRecord(result.rows[0]!.row_json);
+    const row = result.rows[0];
+    if (!row) throw new Error(`Hand tenant fence rejected registration for ${input.handId}`);
+    return normalizeHandRecord(row.row_json);
   }
 
-  async updateStatus(handId: string, status: HandStatus, metadataPatch: Record<string, unknown> = {}): Promise<HandRecord | null> {
+  async updateStatus(handId: string, status: HandStatus, metadataPatch: Record<string, unknown> | undefined, tenantId: string): Promise<HandRecord | null> {
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = $2, metadata = metadata || $3::jsonb, updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND tenant_id = $4
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
-    `, [handId, status, JSON.stringify(metadataPatch)]);
+    `, [handId, status, JSON.stringify(metadataPatch ?? {}), tenantId]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 
   async claimProvisionRecovery(
     handId: string,
     recoveryToken: string,
-    metadataPatch: Record<string, unknown> = {},
-    expectedUpdatedAt?: string,
-    expectedProvisionGeneration?: string,
+    metadataPatch: Record<string, unknown> | undefined,
+    expectedUpdatedAt: string | undefined,
+    expectedProvisionGeneration: string | undefined,
+    tenantId: string,
   ): Promise<HandRecord | null> {
-    const patch = { ...metadataPatch, provisionRecoveryToken: recoveryToken };
+    const patch = {
+      ...(metadataPatch ?? {}),
+      provisionRecoveryToken: recoveryToken,
+      provisionAttemptOwner: null,
+      provisionAttemptClaimedAtMs: null,
+      provisionAttemptLeaseExpiresAtMs: null,
+    };
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = 'unhealthy',
@@ -395,18 +455,30 @@ export class PgHandStore implements HandStore {
           ),
           updated_at = now()
       WHERE hand_id = $1
-        AND status IN ('ready', 'unhealthy')
+        AND tenant_id = $6
+        AND status IN ('provisioning', 'ready', 'unhealthy')
+        AND metadata->'reconcileRequired' IS DISTINCT FROM 'true'::jsonb
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
         AND ($4::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = $4::timestamptz)
         AND ($5::text IS NULL OR metadata->>'provisionGeneration' = $5)
         AND (
-          COALESCE(metadata->>'provisionRecoveryToken', '') = ''
-          OR CASE
-            WHEN jsonb_typeof(metadata->'provisionRecoveryClaimedAtMs') = 'number'
-              THEN (metadata->>'provisionRecoveryClaimedAtMs')::numeric
-                < floor(extract(epoch FROM now()) * 1000)::numeric - $3::numeric
-            ELSE TRUE
-          END
+          (status = 'provisioning' AND (
+            COALESCE(metadata->>'provisionAttemptOwner', '') = ''
+            OR (
+              jsonb_typeof(metadata->'provisionAttemptLeaseExpiresAtMs') = 'number'
+              AND (metadata->>'provisionAttemptLeaseExpiresAtMs')::numeric
+                < floor(extract(epoch FROM now()) * 1000)::numeric
+            )
+          ))
+          OR (status IN ('ready', 'unhealthy') AND (
+            COALESCE(metadata->>'provisionRecoveryToken', '') = ''
+            OR CASE
+              WHEN jsonb_typeof(metadata->'provisionRecoveryClaimedAtMs') = 'number'
+                THEN (metadata->>'provisionRecoveryClaimedAtMs')::numeric
+                  < floor(extract(epoch FROM now()) * 1000)::numeric - $3::numeric
+              ELSE TRUE
+            END
+          ))
         )
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
     `, [
@@ -415,7 +487,97 @@ export class PgHandStore implements HandStore {
       PROVISION_RECOVERY_CLAIM_TTL_MS,
       expectedUpdatedAt ?? null,
       expectedProvisionGeneration ?? null,
+      tenantId,
     ]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async claimProvisionDispatch(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    expectedUpdatedAt: string,
+    tenantId: string,
+  ): Promise<HandRecord | null> {
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = 'unhealthy',
+          metadata = metadata || jsonb_build_object(
+            'provisionDispatchClaim', $3::text,
+            'provisionDispatchClaimedAt', now(),
+            'provisionResult', 'result_unknown',
+            'reconcileRequired', true,
+            'dispatchAuthorized', true
+          ),
+          updated_at = now()
+      WHERE hand_id = $1
+        AND tenant_id = $5
+        AND status = 'provisioning'
+        AND metadata->>'provisionGeneration' = $2
+        AND COALESCE(metadata->>'provisionDispatchClaim', '') = ''
+        AND metadata->'reconcileRequired' IS DISTINCT FROM 'true'::jsonb
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND date_trunc('milliseconds', updated_at) = $4::timestamptz
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, provisionGeneration, dispatchToken, expectedUpdatedAt, tenantId]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async completeProvisionDispatch(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    status: 'ready' | 'unhealthy',
+    metadataPatch: Record<string, unknown> | undefined,
+    tenantId: string,
+  ): Promise<HandRecord | null> {
+    const metadata = metadataPatch ?? {};
+    const patch = {
+      ...metadata,
+      provisionDispatchClaim: null,
+      dispatchAuthorized: false,
+      provisionResult: status === 'ready' ? 'ok' : (metadata.provisionResult ?? 'error'),
+      reconcileRequired: metadata.reconcileRequired ?? status !== 'ready',
+    };
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = $4, metadata = metadata || $5::jsonb, updated_at = now()
+      WHERE hand_id = $1
+        AND tenant_id = $6
+        AND status IN ('provisioning', 'unhealthy')
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND metadata->>'provisionGeneration' = $2
+        AND metadata->>'provisionDispatchClaim' = $3
+        AND metadata->'dispatchAuthorized' = 'true'::jsonb
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, provisionGeneration, dispatchToken, status, JSON.stringify(patch), tenantId]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async renewProvisionAttemptLease(
+    handId: string,
+    provisionGeneration: string,
+    provisionAttemptOwner: string,
+    tenantId: string,
+  ): Promise<HandRecord | null> {
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET metadata = metadata || jsonb_build_object(
+            'provisionAttemptLeaseExpiresAtMs',
+            floor(extract(epoch FROM now()) * 1000)::bigint + $4::bigint
+          ),
+          updated_at = now()
+      WHERE hand_id = $1
+        AND tenant_id = $5
+        AND status = 'provisioning'
+        AND metadata->>'provisionGeneration' = $2
+        AND metadata->>'provisionAttemptOwner' = $3
+        AND jsonb_typeof(metadata->'provisionAttemptLeaseExpiresAtMs') = 'number'
+        AND (metadata->>'provisionAttemptLeaseExpiresAtMs')::numeric
+          > floor(extract(epoch FROM now()) * 1000)::numeric
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, provisionGeneration, provisionAttemptOwner, PROVISION_ATTEMPT_LEASE_MS, tenantId]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 
@@ -423,17 +585,31 @@ export class PgHandStore implements HandStore {
     handId: string,
     provisionGeneration: string,
     status: HandStatus,
-    metadataPatch: Record<string, unknown> = {},
+    metadataPatch: Record<string, unknown> | undefined,
+    tenantId: string,
+    provisionAttemptOwner?: string,
   ): Promise<HandRecord | null> {
+    const patch = {
+      ...(metadataPatch ?? {}),
+      provisionAttemptOwner: null,
+      provisionAttemptClaimedAtMs: null,
+      provisionAttemptLeaseExpiresAtMs: null,
+    };
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
       WHERE hand_id = $1
-        AND status <> 'destroyed'
+        AND tenant_id = $5
+        AND status = 'provisioning'
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
         AND metadata->>'provisionGeneration' = $2
+        AND (($6::text IS NULL AND COALESCE(metadata->>'provisionAttemptOwner', '') = '')
+          OR (metadata->>'provisionAttemptOwner' = $6
+            AND jsonb_typeof(metadata->'provisionAttemptLeaseExpiresAtMs') = 'number'
+            AND (metadata->>'provisionAttemptLeaseExpiresAtMs')::numeric
+              > floor(extract(epoch FROM now()) * 1000)::numeric))
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
-    `, [handId, provisionGeneration, status, JSON.stringify(metadataPatch)]);
+    `, [handId, provisionGeneration, status, JSON.stringify(patch), tenantId, provisionAttemptOwner ?? null]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 
@@ -441,10 +617,11 @@ export class PgHandStore implements HandStore {
     handId: string,
     recoveryToken: string,
     status: HandStatus,
-    metadataPatch: Record<string, unknown> = {},
+    metadataPatch: Record<string, unknown> | undefined,
+    tenantId: string,
   ): Promise<HandRecord | null> {
     const patch = {
-      ...metadataPatch,
+      ...(metadataPatch ?? {}),
       provisionRecoveryToken: null,
       provisionRecoveryClaimedAtMs: null,
     };
@@ -452,34 +629,35 @@ export class PgHandStore implements HandStore {
       UPDATE ${this.handsTable}
       SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
       WHERE hand_id = $1
+        AND tenant_id = $5
         AND status = 'unhealthy'
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
         AND metadata->>'provisionRecoveryToken' = $2
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
-    `, [handId, recoveryToken, status, JSON.stringify(patch)]);
+    `, [handId, recoveryToken, status, JSON.stringify(patch), tenantId]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 
-  async get(handId: string): Promise<HandRecord | null> {
-    const result = await this.pool.query<{ row_json: unknown }>(`SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE hand_id = $1`, [handId]);
+  async get(handId: string, tenantId: string): Promise<HandRecord | null> {
+    const result = await this.pool.query<{ row_json: unknown }>(`SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE hand_id = $1 AND tenant_id = $2`, [handId, tenantId]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 
-  async listBySession(sessionId: string): Promise<HandRecord[]> {
-    const result = await this.pool.query<{ row_json: unknown }>(`SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE session_id = $1 ORDER BY updated_at DESC`, [sessionId]);
+  async listBySession(sessionId: string, tenantId: string): Promise<HandRecord[]> {
+    const result = await this.pool.query<{ row_json: unknown }>(`SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE session_id = $1 AND tenant_id = $2 ORDER BY updated_at DESC`, [sessionId, tenantId]);
     return result.rows.map((r) => normalizeHandRecord(r.row_json));
   }
 
-  async listByWorkspace(workspaceId: string): Promise<HandRecord[]> {
-    const result = await this.pool.query<{ row_json: unknown }>(`SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE workspace_id = $1 ORDER BY updated_at DESC`, [workspaceId]);
+  async listByWorkspace(workspaceId: string, tenantId: string): Promise<HandRecord[]> {
+    const result = await this.pool.query<{ row_json: unknown }>(`SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE workspace_id = $1 AND tenant_id = $2 ORDER BY updated_at DESC`, [workspaceId, tenantId]);
     return result.rows.map((r) => normalizeHandRecord(r.row_json));
   }
 
-  async deleteByWorkspaceIds(workspaceIds: string[]): Promise<number> {
+  async deleteByWorkspaceIds(workspaceIds: string[], tenantId: string): Promise<number> {
     if (workspaceIds.length === 0) return 0;
     const result = await this.pool.query(
-      `DELETE FROM ${this.handsTable} WHERE workspace_id = ANY($1::text[])`,
-      [workspaceIds],
+      `DELETE FROM ${this.handsTable} WHERE workspace_id = ANY($1::text[]) AND tenant_id = $2`,
+      [workspaceIds, tenantId],
     );
     return result.rowCount ?? 0;
   }
@@ -491,10 +669,12 @@ export class PgHandStore implements HandStore {
           SELECT row_to_json(hand.*) AS row_json
           FROM ${this.handsTable} hand
           WHERE hand.type = $1
+            AND hand.tenant_id IS NOT NULL
             AND hand.status = $2
             AND EXISTS (
               SELECT 1 FROM ${this.runsTable} run
               WHERE run.session_id = hand.session_id
+                AND run.tenant_id = hand.tenant_id
                 AND run.status IN ('pending', 'running', 'waiting_hand')
             )
           ORDER BY hand.updated_at DESC
@@ -502,13 +682,13 @@ export class PgHandStore implements HandStore {
         return result.rows.map((r) => normalizeHandRecord(r.row_json));
       }
       const result = await this.pool.query<{ row_json: unknown }>(
-        `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 AND status = $2 ORDER BY updated_at ASC`,
+        `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 AND tenant_id IS NOT NULL AND status = $2 ORDER BY updated_at ASC`,
         [type, opts.status],
       );
       return result.rows.map((r) => normalizeHandRecord(r.row_json));
     }
     const result = await this.pool.query<{ row_json: unknown }>(
-      `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 ORDER BY updated_at ASC`,
+      `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 AND tenant_id IS NOT NULL ORDER BY updated_at ASC`,
       [type],
     );
     return result.rows.map((r) => normalizeHandRecord(r.row_json));

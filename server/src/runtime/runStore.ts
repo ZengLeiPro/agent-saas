@@ -10,8 +10,9 @@ import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
-import { initializePgRunStoreSchema } from './runStoreSchema.js';
+import { contractPgRunStoreTenantSchema, disablePgRunStoreLegacyWriterCapability, initializePgRunStore, recordPgRunStoreDrainEvidence, registerPgRunStoreLegacyWriterCapability, registerPgRunStoreTenantNativeWriterCapability, type PgRunStoreContractGate, type PgRunStoreDrainEvidence, type PgRunStoreLegacyWriterCapability } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
+import { lockRawTenantKey, readSameTenantSubmissionRun, upsertSteeringStopAuthority } from './runStoreTenantRolling.js';
 import {
   activateStagedOrgAgentBackgroundTask,
   claimBackgroundTaskWake,
@@ -25,19 +26,16 @@ const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseAuthority, RunLeaseIdentity, RunLeaseReleaseOptions, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 export class PgRunStore implements RunStore {
-  readonly pool: PgPool;
-  readonly runsTable: string;
-  readonly messageSubmissionsTable: string;
-  readonly steeringInputsTable: string;
-  readonly steeringSessionsTable: string;
-  readonly eventsTable: string;
+  readonly pool: PgPool; readonly runsTable: string;
+  readonly messageSubmissionsTable: string; readonly steeringInputsTable: string;
+  readonly steeringSessionsTable: string; readonly eventsTable: string;
   readonly eventCursorsTable: string;
   readonly toolInvocationsTable: string;
   readonly eventNotifyChannel: string;
-  private readonly ownsPool: boolean;
+  private readonly ownsPool: boolean; readonly writerCapability: PgRunStoreOptions['writerCapability'];
   private readonly queries: PgRunStoreQueries;
   constructor(options: PgRunStoreOptions) {
     if (!options.pool && !options.connectionString) {
@@ -54,6 +52,7 @@ export class PgRunStore implements RunStore {
     this.eventNotifyChannel = `${prefix}_events_notify`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
     this.ownsPool = !options.pool;
+    this.writerCapability = options.writerCapability;
     this.queries = new PgRunStoreQueries(
       this.pool,
       this.runsTable,
@@ -62,12 +61,13 @@ export class PgRunStore implements RunStore {
       this.toolInvocationsTable,
     );
   }
-  async init(): Promise<void> {
-    await initializePgRunStoreSchema(this);
-  }
-
+  async init(): Promise<void> { await initializePgRunStore(this); }
+  async registerTenantNativeWriterCapability(dbRole: string): Promise<void> { await registerPgRunStoreTenantNativeWriterCapability(this, dbRole); }
+  async registerLegacyWriterCapability(capability: PgRunStoreLegacyWriterCapability): Promise<void> { await registerPgRunStoreLegacyWriterCapability(this, capability); }
+  async disableLegacyWriterCapability(dbRole: string): Promise<void> { await disablePgRunStoreLegacyWriterCapability(this, dbRole); }
+  async recordTenantDrainEvidence(evidence: PgRunStoreDrainEvidence): Promise<void> { await recordPgRunStoreDrainEvidence(this, evidence); }
+  async contractTenantSchema(gate: PgRunStoreContractGate): Promise<void> { await contractPgRunStoreTenantSchema(this, gate); }
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
-
   async upsertPending(input: UpsertRunInput): Promise<RunRecord> {
     const now = new Date().toISOString();
     const result = await this.pool.query<{ row_json: RunRecord }>(`
@@ -130,43 +130,36 @@ export class PgRunStore implements RunStore {
   async enqueueSteeringAware(input: UpsertRunInput): Promise<RunRecord> {
     return this.enqueueUserMessage({ ...input, idempotencyKey: input.idempotencyKey ?? input.runId }, 'steer');
   }
-
   async enqueueUserMessage(input: UpsertRunInput, deliveryMode: MessageDeliveryMode): Promise<RunRecord> {
     if (!input.idempotencyKey) throw new Error('User message enqueue requires idempotencyKey');
+    const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        tenantId,
         `${this.runsTable}:message:${input.sessionId}`,
       ]);
       const now = new Date().toISOString();
       const userScope = input.submitterUserId ?? input.userId ?? '__anonymous__';
+      // Serialize expand's global raw key so conflicts become business errors rather than 23505.
+      await lockRawTenantKey(client, `${this.messageSubmissionsTable}:raw-key`,
+        `${userScope}\u001f${input.idempotencyKey}`);
       const submission = await client.query<{ run_id: string }>(`
         INSERT INTO ${this.messageSubmissionsTable}
-          (user_scope, client_message_id, run_id, session_id, delivery_mode, accepted_at)
-        VALUES ($1,$2,$3,$4,$5,$6)
-        ON CONFLICT (user_scope, client_message_id) DO NOTHING
+          (tenant_id, user_scope, client_message_id, run_id, session_id, delivery_mode, accepted_at,
+           tenant_user_scope, tenant_client_message_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ON CONFLICT DO NOTHING
         RETURNING run_id
-      `, [userScope, input.idempotencyKey, input.runId, input.sessionId, deliveryMode, now]);
+      `, [tenantId, userScope, input.idempotencyKey, input.runId, input.sessionId,
+        deliveryMode, now, userScope, input.idempotencyKey]);
       if (!submission.rows[0]) {
-        const existingSubmission = await client.query<{ run_id: string }>(`
-          SELECT run_id
-          FROM ${this.messageSubmissionsTable}
-          WHERE user_scope = $1 AND client_message_id = $2
-        `, [userScope, input.idempotencyKey]);
-        const existingRunId = existingSubmission.rows[0]?.run_id;
-        const existing = existingRunId
-          ? await client.query<{ row_json: RunRecord }>(`
-            SELECT row_to_json(${this.runsTable}.*) AS row_json
-            FROM ${this.runsTable}
-            WHERE run_id = $1
-          `, [existingRunId])
-          : { rows: [] };
-        if (!existing.rows[0]) throw new Error('Message submission exists without run');
+        const existing = await readSameTenantSubmissionRun(client, this, tenantId,
+          userScope, input.idempotencyKey);
         await client.query('COMMIT');
-        return normalizeRunRecord(existing.rows[0].row_json);
+        return normalizeRunRecord(existing);
       }
-
       const acceptedAt = typeof input.metadata?.steeringAcceptedAt === 'string'
         ? input.metadata.steeringAcceptedAt
         : undefined;
@@ -174,32 +167,34 @@ export class PgRunStore implements RunStore {
         const stop = await client.query<{ stopped_at: string | Date | null }>(`
           SELECT stopped_at
           FROM ${this.steeringSessionsTable}
-          WHERE session_id = $1
-        `, [input.sessionId]);
+          WHERE tenant_id = $1 AND tenant_session_id = $2
+        `, [tenantId, input.sessionId]);
         const stoppedAt = stop.rows[0]?.stopped_at;
         if (stoppedAt && Date.parse(acceptedAt) <= new Date(stoppedAt).getTime()) {
           throw new Error('chat was accepted before the latest session stop');
         }
       }
-
       let targetRunId: string | undefined;
       let queuedBehindRunId: string | undefined;
       if (deliveryMode === 'steer') {
         const targetResult = await client.query<{ run_id: string }>(`
           SELECT target.run_id
           FROM ${this.runsTable} target
-          WHERE target.session_id = $1
-            AND target.run_id <> $2
+          WHERE target.tenant_id = $1
+            AND target.session_id = $2
+            AND target.run_id <> $3
             AND target.status IN ${STEERING_TARGET_STATUS_SQL}
             AND target.channel = 'web'
-            AND target.model IS NOT DISTINCT FROM $3::text
-            AND target.execution_target IS NOT DISTINCT FROM $4::text
-            AND target.workspace_id IS NOT DISTINCT FROM $5::text
+            AND target.model IS NOT DISTINCT FROM $4::text
+            AND target.execution_target IS NOT DISTINCT FROM $5::text
+            AND target.workspace_id IS NOT DISTINCT FROM $6::text
             AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
             AND COALESCE(target.metadata->>'backgroundTask', 'false') <> 'true'
             AND NOT EXISTS (
               SELECT 1 FROM ${this.steeringInputsTable} own_input
-              WHERE own_input.source_run_id = target.run_id
+              WHERE own_input.tenant_id = target.tenant_id
+                AND own_input.session_id = target.session_id
+                AND own_input.source_run_id = target.run_id
                 AND own_input.state IN ('pending', 'reserved')
             )
           ORDER BY
@@ -207,19 +202,22 @@ export class PgRunStore implements RunStore {
             target.requested_at ASC
           LIMIT 1
           FOR UPDATE
-        `, [input.sessionId, input.runId, input.model ?? null, input.executionTarget ?? null, input.workspaceId ?? null]);
+        `, [tenantId, input.sessionId, input.runId, input.model ?? null, input.executionTarget ?? null, input.workspaceId ?? null]);
         targetRunId = targetResult.rows[0]?.run_id;
       } else {
         const blockerResult = await client.query<{ run_id: string }>(`
           SELECT candidate.run_id
           FROM ${this.runsTable} candidate
-          WHERE candidate.session_id = $1
-            AND candidate.run_id <> $2
+          WHERE candidate.tenant_id = $1
+            AND candidate.session_id = $2
+            AND candidate.run_id <> $3
             AND candidate.status IN ('pending','running','waiting_hand')
             AND COALESCE(candidate.metadata->>'backgroundTask', 'false') <> 'true'
             AND NOT EXISTS (
               SELECT 1 FROM ${this.steeringInputsTable} own_input
-              WHERE own_input.source_run_id = candidate.run_id
+              WHERE own_input.tenant_id = candidate.tenant_id
+                AND own_input.session_id = candidate.session_id
+                AND own_input.source_run_id = candidate.run_id
                 AND own_input.state IN ('pending', 'reserved')
             )
           ORDER BY
@@ -227,10 +225,9 @@ export class PgRunStore implements RunStore {
             candidate.requested_at ASC
           LIMIT 1
           FOR UPDATE
-        `, [input.sessionId, input.runId]);
+        `, [tenantId, input.sessionId, input.runId]);
         queuedBehindRunId = blockerResult.rows[0]?.run_id;
       }
-
       const metadata = {
         ...(input.metadata ?? {}),
         deliveryMode,
@@ -251,7 +248,7 @@ export class PgRunStore implements RunStore {
         input.runId,
         input.sessionId,
         input.userId ?? null,
-        input.tenantId ?? null,
+        tenantId,
         input.model ?? null,
         input.channel ?? null,
         now,
@@ -266,10 +263,10 @@ export class PgRunStore implements RunStore {
       if (targetRunId) {
         await client.query(`
           INSERT INTO ${this.steeringInputsTable}
-            (input_id, source_run_id, target_run_id, session_id, state, accepted_at)
-          VALUES ($1,$1,$2,$3,'pending',$4)
+            (input_id, tenant_id, source_run_id, target_run_id, session_id, state, accepted_at)
+          VALUES ($1,$2,$1,$3,$4,'pending',$5)
           ON CONFLICT (source_run_id) DO NOTHING
-        `, [input.runId, targetRunId, input.sessionId, now]);
+        `, [input.runId, tenantId, targetRunId, input.sessionId, now]);
       }
       await client.query('COMMIT');
       return normalizeRunRecord(result.rows[0].row_json);
@@ -296,7 +293,14 @@ export class PgRunStore implements RunStore {
              input.state, input.accepted_at, input.reserved_at, input.applied_at,
              row_to_json(source.*) AS row_json
       FROM ${this.steeringInputsTable} input
-      JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
+      JOIN ${this.runsTable} target
+        ON target.tenant_id = input.tenant_id
+       AND target.session_id = input.session_id
+       AND target.run_id = input.target_run_id
+      JOIN ${this.runsTable} source
+        ON source.tenant_id = input.tenant_id
+       AND source.session_id = input.session_id
+       AND source.run_id = input.source_run_id
       WHERE input.target_run_id = $1
         AND input.state IN ('pending', 'reserved')
         AND source.status = 'pending'
@@ -314,15 +318,15 @@ export class PgRunStore implements RunStore {
       sourceRun: normalizeRunRecord(row.row_json),
     }));
   }
-
   async reserveSteeringInputs(targetRunId: string, sourceRunIds: string[]): Promise<string[]> {
+    // targetRunId remains API-compatible; its locked row resolves authoritative tenant/session.
     if (sourceRunIds.length === 0) return [];
     const now = new Date().toISOString();
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const target = await client.query<{ status: RunStatus; metadata: Record<string, unknown> }>(`
-        SELECT status, metadata
+      const target = await client.query<{ status: RunStatus; metadata: Record<string, unknown>; tenant_id: string; session_id: string }>(`
+        SELECT status, metadata, tenant_id, session_id
         FROM ${this.runsTable}
         WHERE run_id = $1
         FOR UPDATE
@@ -336,12 +340,13 @@ export class PgRunStore implements RunStore {
         await client.query('COMMIT');
         return [];
       }
+      const { tenant_id: tenantId, session_id: sessionId } = targetRow;
       const sources = await client.query<{ run_id: string; status: RunStatus }>(`
         SELECT run_id, status
         FROM ${this.runsTable}
-        WHERE run_id = ANY($1::text[])
+        WHERE tenant_id = $1 AND session_id = $2 AND run_id = ANY($3::text[])
         FOR UPDATE
-      `, [sourceRunIds]);
+      `, [tenantId, sessionId, sourceRunIds]);
       const pendingSourceRunIdSet = new Set(
         sources.rows.filter((row) => row.status === 'pending').map((row) => row.run_id),
       );
@@ -352,20 +357,20 @@ export class PgRunStore implements RunStore {
       }
       const reserved = await client.query<{ source_run_id: string }>(`
         UPDATE ${this.steeringInputsTable}
-        SET state = 'reserved', reserved_at = COALESCE(reserved_at, $3::timestamptz)
-        WHERE target_run_id = $1
-          AND source_run_id = ANY($2::text[])
+        SET state = 'reserved', reserved_at = COALESCE(reserved_at, $5::timestamptz)
+        WHERE tenant_id = $1 AND session_id = $2 AND target_run_id = $3
+          AND source_run_id = ANY($4::text[])
           AND state = 'pending'
         RETURNING source_run_id
-      `, [targetRunId, claimableSourceRunIds, now]);
+      `, [tenantId, sessionId, targetRunId, claimableSourceRunIds, now]);
       const reservedRunIdSet = new Set(reserved.rows.map((row) => row.source_run_id));
       const alreadyReserved = await client.query<{ source_run_id: string }>(`
         SELECT source_run_id
         FROM ${this.steeringInputsTable}
-        WHERE target_run_id = $1
-          AND source_run_id = ANY($2::text[])
+        WHERE tenant_id = $1 AND session_id = $2 AND target_run_id = $3
+          AND source_run_id = ANY($4::text[])
           AND state = 'reserved'
-      `, [targetRunId, claimableSourceRunIds]);
+      `, [tenantId, sessionId, targetRunId, claimableSourceRunIds]);
       for (const row of alreadyReserved.rows) reservedRunIdSet.add(row.source_run_id);
       await client.query('COMMIT');
       return sourceRunIds.filter((sourceRunId) => reservedRunIdSet.has(sourceRunId));
@@ -376,7 +381,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async markSteeringInputsApplied(targetRunId: string, sourceRunIds: string[]): Promise<string[]> {
     if (sourceRunIds.length === 0) return [];
     const now = new Date().toISOString();
@@ -453,7 +457,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async applySteeringInputsAtomically(
     targetRunId: string,
     inputs: SteeringApplyInput[],
@@ -466,23 +469,24 @@ export class PgRunStore implements RunStore {
     try {
       await client.query('BEGIN');
       const sessionLookup = await client.query<{ session_id: string }>(`
-        SELECT session_id FROM ${this.runsTable} WHERE run_id = $1
-      `, [targetRunId]);
+        SELECT session_id FROM ${this.runsTable} WHERE tenant_id = $1 AND run_id = $2
+      `, [tenantId, targetRunId]);
       const sessionId = sessionLookup.rows[0]?.session_id;
       if (!sessionId) {
         await client.query('COMMIT');
         return { appliedSourceRunIds: [], events: [] };
       }
-      // 全部 steering 写路径遵循 advisory(session) → target → source(run_id) → input(sequence)。
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      // 全部 steering 写路径遵循 advisory(tenant/session) → target → source(run_id) → input(sequence)。
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        tenantId,
         `${this.runsTable}:message:${sessionId}`,
       ]);
       const target = await client.query<{ status: RunStatus; metadata: Record<string, unknown> }>(`
         SELECT status, metadata
         FROM ${this.runsTable}
-        WHERE run_id = $1
+        WHERE tenant_id = $1 AND session_id = $2 AND run_id = $3
         FOR UPDATE
-      `, [targetRunId]);
+      `, [tenantId, sessionId, targetRunId]);
       const targetRow = target.rows[0];
       if (
         !targetRow
@@ -495,29 +499,28 @@ export class PgRunStore implements RunStore {
       const sources = await client.query<{ run_id: string; status: RunStatus }>(`
         SELECT run_id, status
         FROM ${this.runsTable}
-        WHERE run_id = ANY($1::text[])
+        WHERE tenant_id = $1 AND session_id = $2 AND run_id = ANY($3::text[])
         ORDER BY run_id
         FOR UPDATE
-      `, [sourceRunIds]);
+      `, [tenantId, sessionId, sourceRunIds]);
       const pendingSources = new Set(
         sources.rows.filter((row) => row.status === 'pending').map((row) => row.run_id),
       );
       const reserved = await client.query<{ source_run_id: string }>(`
         SELECT source_run_id
         FROM ${this.steeringInputsTable}
-        WHERE target_run_id = $1
-          AND source_run_id = ANY($2::text[])
+        WHERE tenant_id = $1 AND session_id = $2 AND target_run_id = $3
+          AND source_run_id = ANY($4::text[])
           AND state = 'reserved'
         ORDER BY sequence
         FOR UPDATE
-      `, [targetRunId, sourceRunIds]);
+      `, [tenantId, sessionId, targetRunId, sourceRunIds]);
       const reservedSet = new Set(reserved.rows.map((row) => row.source_run_id));
       const appliedSourceRunIds = sourceRunIds.filter((id) => pendingSources.has(id) && reservedSet.has(id));
       if (appliedSourceRunIds.length === 0) {
         await client.query('COMMIT');
         return { appliedSourceRunIds: [], events: [] };
       }
-
       const { candidateEventInputs, candidateSourceRunIds } = selectSteeringEventCandidates(inputs, appliedSourceRunIds);
       const existingDurableSources = candidateSourceRunIds.length > 0
         ? await client.query<{ source_run_id: string }>(`
@@ -538,11 +541,11 @@ export class PgRunStore implements RunStore {
       const now = new Date().toISOString();
       await client.query(`
         UPDATE ${this.steeringInputsTable}
-        SET state = 'applied', applied_at = $3::timestamptz
-        WHERE target_run_id = $1
-          AND source_run_id = ANY($2::text[])
+        SET state = 'applied', applied_at = $5::timestamptz
+        WHERE tenant_id = $1 AND session_id = $2 AND target_run_id = $3
+          AND source_run_id = ANY($4::text[])
           AND state = 'reserved'
-      `, [targetRunId, appliedSourceRunIds, now]);
+      `, [tenantId, sessionId, targetRunId, appliedSourceRunIds, now]);
       await client.query(`
         UPDATE ${this.runsTable}
         SET status = 'completed',
@@ -556,8 +559,9 @@ export class PgRunStore implements RunStore {
               'steeringAppliedToRunId', $1::text,
               'steeringAppliedAt', $3::text
             )) - 'wakeMessage'
-        WHERE run_id = ANY($2::text[]) AND status = 'pending'
-      `, [targetRunId, appliedSourceRunIds, now]);
+        WHERE tenant_id = $4 AND session_id = $5
+          AND run_id = ANY($2::text[]) AND status = 'pending'
+      `, [targetRunId, appliedSourceRunIds, now, tenantId, sessionId]);
       await client.query('COMMIT');
       await this.notifyRuntimeEvents(client, appended);
       return { appliedSourceRunIds, events: appended };
@@ -568,29 +572,33 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async trySealSteeringInputWindow(targetRunId: string): Promise<boolean> {
-    const sessionResult = await this.pool.query<{ session_id: string }>(
-      `SELECT session_id FROM ${this.runsTable} WHERE run_id = $1`,
+    const sessionResult = await this.pool.query<{ session_id: string; tenant_id: string }>(
+      `SELECT session_id, tenant_id FROM ${this.runsTable} WHERE run_id = $1`,
       [targetRunId],
     );
     const sessionId = sessionResult.rows[0]?.session_id;
-    if (!sessionId) return true;
+    const tenantId = sessionResult.rows[0]?.tenant_id;
+    if (!sessionId || !tenantId) return true;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        tenantId,
         `${this.runsTable}:message:${sessionId}`,
       ]);
       const pending = await client.query(`
         SELECT 1
         FROM ${this.steeringInputsTable} input
-        JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
-        WHERE input.target_run_id = $1
+        JOIN ${this.runsTable} source
+          ON source.tenant_id = input.tenant_id
+         AND source.session_id = input.session_id
+         AND source.run_id = input.source_run_id
+        WHERE input.tenant_id = $1 AND input.session_id = $2 AND input.target_run_id = $3
           AND input.state IN ('pending', 'reserved')
           AND source.status = 'pending'
         LIMIT 1
-      `, [targetRunId]);
+      `, [tenantId, sessionId, targetRunId]);
       if (pending.rowCount && pending.rowCount > 0) {
         await client.query('COMMIT');
         return false;
@@ -610,7 +618,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async releasePendingSteeringForSourceRun(sourceRunId: string): Promise<void> {
     await this.pool.query(`
       WITH released AS (
@@ -625,7 +632,6 @@ export class PgRunStore implements RunStore {
       WHERE run_id = $1 AND metadata->>'steeringState' = 'pending'
     `, [sourceRunId, new Date().toISOString()]);
   }
-
   async cancelPendingUserMessage(runId: string, reason = 'user_withdrew'): Promise<CancelSteeringResult> {
     const existing = await this.get(runId);
     if (!existing) return { ok: false, reason: 'not_found' };
@@ -670,7 +676,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async cancelPendingSteeringSourceRun(sourceRunId: string, reason = 'user_withdrew'): Promise<CancelSteeringResult> {
     const client = await this.pool.connect();
     try {
@@ -730,17 +735,14 @@ export class PgRunStore implements RunStore {
     sessionId: string,
     reason: string,
     targetRunId?: string,
+    tenantId = DEFAULT_TENANT_ID,
   ): Promise<SteeringInputRecord[]> {
-    const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId, undefined, DEFAULT_TENANT_ID);
+    const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId, undefined, tenantId);
     return result.cancelled;
   }
-
   async cancelSteeringBeforeDispatchBySessionWithEvent(
-    sessionId: string,
-    reason: string,
-    targetRunId: string | undefined,
-    event: PlatformEventInput,
-    tenantId: string,
+    sessionId: string, reason: string, targetRunId: string | undefined,
+    event: PlatformEventInput, tenantId: string,
     cleanupGuard?: SandboxCleanupClaimGuard): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
@@ -754,13 +756,9 @@ export class PgRunStore implements RunStore {
       eventCreated: result.eventCreated,
     };
   }
-
   private async cancelSteeringBeforeDispatchInternal(
-    sessionId: string,
-    reason: string,
-    targetRunId: string | undefined,
-    event: PlatformEventInput | undefined,
-    tenantId: string,
+    sessionId: string, reason: string, targetRunId: string | undefined,
+    event: PlatformEventInput | undefined, tenantId: string,
     cleanupGuard?: SandboxCleanupClaimGuard): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
@@ -769,60 +767,60 @@ export class PgRunStore implements RunStore {
     let runCancelEventCreated = false;
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        tenantId,
         `${this.runsTable}:message:${sessionId}`,
       ]);
       if (cleanupGuard && !await acquireSandboxCleanupClaimGuard(client, this.runsTable, cleanupGuard)) {
         await client.query('COMMIT'); return { cancelled: [], targetCancelled: false, eventCreated: false };
       }
       const now = new Date().toISOString();
-      // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。
+      // 固定锁序：advisory(tenant/session/raw key) → target → source(run_id) → input(sequence)。
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后
       // target 并发终态化时，stop 会错误影响后续普通队列/steering。
       if (targetRunId) {
         const target = await client.query<{ status: RunStatus }>(`
           SELECT status
           FROM ${this.runsTable}
-          WHERE session_id = $1 AND run_id = $2
+          WHERE tenant_id = $1 AND session_id = $2 AND run_id = $3
           FOR UPDATE
-        `, [sessionId, targetRunId]);
+        `, [tenantId, sessionId, targetRunId]);
         targetPreviousStatus = target.rows[0]?.status;
         if (targetPreviousStatus && ['completed', 'failed', 'cancelled', 'orphaned'].includes(targetPreviousStatus)) {
           await client.query('COMMIT');
           return { cancelled: [], targetCancelled: false, eventCreated: false };
         }
       }
-      await client.query(`
-        INSERT INTO ${this.steeringSessionsTable} (session_id, stopped_at)
-        VALUES ($1, $2::timestamptz)
-        ON CONFLICT (session_id) DO UPDATE
-        SET stopped_at = GREATEST(${this.steeringSessionsTable}.stopped_at, EXCLUDED.stopped_at)
-      `, [sessionId, now]);
+      await upsertSteeringStopAuthority(client, this, tenantId, sessionId, now);
       const candidateIds = await client.query<{ source_run_id: string }>(`
         SELECT input.source_run_id
         FROM ${this.steeringInputsTable} input
-        JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
-        WHERE input.session_id = $1
+        JOIN ${this.runsTable} source
+          ON source.tenant_id = input.tenant_id
+         AND source.session_id = input.session_id
+         AND source.run_id = input.source_run_id
+        WHERE input.tenant_id = $1
+          AND input.session_id = $2
           AND input.state IN ('pending', 'reserved')
           AND source.status = 'pending'
         ORDER BY input.sequence
-      `, [sessionId]);
+      `, [tenantId, sessionId]);
       const sourceRunIds = candidateIds.rows.map((row) => row.source_run_id);
       if (sourceRunIds.length > 0) {
         await client.query(`
           SELECT run_id
           FROM ${this.runsTable}
-          WHERE run_id = ANY($1::text[])
+          WHERE tenant_id = $1 AND session_id = $2 AND run_id = ANY($3::text[])
           ORDER BY run_id
           FOR UPDATE
-        `, [sourceRunIds]);
+        `, [tenantId, sessionId, sourceRunIds]);
         await client.query(`
           SELECT input_id
           FROM ${this.steeringInputsTable}
-          WHERE source_run_id = ANY($1::text[])
+          WHERE tenant_id = $1 AND session_id = $2 AND source_run_id = ANY($3::text[])
           ORDER BY sequence
           FOR UPDATE
-        `, [sourceRunIds]);
+        `, [tenantId, sessionId, sourceRunIds]);
       }
       const selected = await client.query<{
         input_id: string;
@@ -839,14 +837,18 @@ export class PgRunStore implements RunStore {
                input.state, input.accepted_at, input.reserved_at, input.applied_at,
                row_to_json(source.*) AS row_json
         FROM ${this.steeringInputsTable} input
-        JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
-        WHERE input.session_id = $1
-          AND input.source_run_id = ANY($2::text[])
+        JOIN ${this.runsTable} source
+          ON source.tenant_id = input.tenant_id
+         AND source.session_id = input.session_id
+         AND source.run_id = input.source_run_id
+        WHERE input.tenant_id = $1
+          AND input.session_id = $2
+          AND input.source_run_id = ANY($3::text[])
           AND input.state IN ('pending', 'reserved')
           AND source.status = 'pending'
         ORDER BY input.sequence ASC
         FOR UPDATE OF input, source
-      `, [sessionId, sourceRunIds]);
+      `, [tenantId, sessionId, sourceRunIds]);
       const selectedSourceRunIds = selected.rows.map((row) => row.source_run_id);
       const releasableTaskboardSourceRunIds = selected.rows
         .filter((row) => row.state === 'pending' && row.row_json.metadata?.taskboardContinuation === true)
@@ -854,41 +856,42 @@ export class PgRunStore implements RunStore {
       if (selectedSourceRunIds.length > 0) {
         await client.query(`
           UPDATE ${this.steeringInputsTable}
-          SET state = CASE WHEN source_run_id = ANY($2::text[]) THEN 'released' ELSE 'cancelled' END
-          WHERE session_id = $1 AND source_run_id = ANY($3::text[]) AND state IN ('pending', 'reserved')
-        `, [sessionId, releasableTaskboardSourceRunIds, selectedSourceRunIds]);
+          SET state = CASE WHEN source_run_id = ANY($3::text[]) THEN 'released' ELSE 'cancelled' END
+          WHERE tenant_id = $1 AND session_id = $2
+            AND source_run_id = ANY($4::text[]) AND state IN ('pending', 'reserved')
+        `, [tenantId, sessionId, releasableTaskboardSourceRunIds, selectedSourceRunIds]);
         await client.query(`
           UPDATE ${this.runsTable}
-          SET status = CASE WHEN run_id = ANY($2::text[]) THEN status ELSE 'cancelled' END,
-              status_reason = CASE WHEN run_id = ANY($2::text[]) THEN status_reason ELSE $3 END, updated_at = $4::timestamptz,
-              cancelled_at = CASE WHEN run_id = ANY($2::text[]) THEN cancelled_at ELSE $4::timestamptz END,
-              metadata = CASE WHEN run_id = ANY($2::text[]) THEN (metadata - 'steeringTargetRunId') || jsonb_build_object('steeringState', 'released')
+          SET status = CASE WHEN run_id = ANY($4::text[]) THEN status ELSE 'cancelled' END,
+              status_reason = CASE WHEN run_id = ANY($4::text[]) THEN status_reason ELSE $5 END, updated_at = $6::timestamptz,
+              cancelled_at = CASE WHEN run_id = ANY($4::text[]) THEN cancelled_at ELSE $6::timestamptz END,
+              metadata = CASE WHEN run_id = ANY($4::text[]) THEN (metadata - 'steeringTargetRunId') || jsonb_build_object('steeringState', 'released')
                 ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage' END
-          WHERE run_id = ANY($1::text[]) AND status = 'pending'
-        `, [selectedSourceRunIds, releasableTaskboardSourceRunIds, reason, now]);
+          WHERE tenant_id = $1 AND session_id = $2 AND run_id = ANY($3::text[]) AND status = 'pending'
+        `, [tenantId, sessionId, selectedSourceRunIds, releasableTaskboardSourceRunIds, reason, now]);
       }
       let toolCancelEvents: PlatformEventInput[] = [];
       if (targetRunId) {
         const targetUpdate = await client.query<{ run_id: string; cancelled_at: string | Date }>(`
           UPDATE ${this.runsTable}
           SET status = 'cancelled',
-              status_reason = $3,
+              status_reason = $4,
               updated_at = clock_timestamp(),
               cancelled_at = clock_timestamp(),
               worker_id = NULL,
               lease_expires_at = NULL,
               metadata = metadata - 'wakeMessage'
-          WHERE session_id = $1
-            AND run_id = $2
+          WHERE tenant_id = $1
+            AND session_id = $2
+            AND run_id = $3
             AND status IN ${STOPPABLE_RUN_STATUS_SQL}
           RETURNING run_id, cancelled_at
-        `, [sessionId, targetRunId, reason]);
+        `, [tenantId, sessionId, targetRunId, reason]);
         targetCancelled = targetUpdate.rows.length > 0;
         const targetCancelledAt = targetUpdate.rows[0]?.cancelled_at;
         const targetCancelledAtIso = targetCancelledAt instanceof Date
           ? targetCancelledAt.toISOString()
           : targetCancelledAt ?? now;
-
         if (event && targetCancelled) {
           const cancelRequests = await client.query<{
             invocation_id: string;
@@ -965,35 +968,36 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
-  async listPendingUserMessagesBySession(sessionId: string): Promise<RunRecord[]> {
+  async listPendingUserMessagesBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
       FROM ${this.runsTable} run
-      WHERE run.session_id = $1
+      WHERE run.tenant_id = $1
+        AND run.session_id = $2
         AND run.status = 'pending'
         AND run.channel = 'web'
         AND run.metadata ? 'wakeMessage'
         AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
       ORDER BY run.enqueue_seq ASC
-    `, [sessionId]);
+    `, [tenantId, sessionId]);
     return result.rows.map((row) => normalizeRunRecord(row.row_json));
   }
-
-  async listUserMessagesBySession(sessionId: string): Promise<RunRecord[]> {
+  async listUserMessagesBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
       FROM ${this.messageSubmissionsTable} submission
-      JOIN ${this.runsTable} run ON run.run_id = submission.run_id
-      WHERE submission.session_id = $1
+      JOIN ${this.runsTable} run
+        ON run.tenant_id = submission.tenant_id
+       AND run.run_id = submission.run_id
+      WHERE submission.tenant_id = $1
+        AND submission.session_id = $2
         AND run.channel = 'web'
         AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
       ORDER BY run.enqueue_seq ASC
-    `, [sessionId]);
+    `, [tenantId, sessionId]);
     return result.rows.map((row) => normalizeRunRecord(row.row_json));
   }
-
-  async listPendingSteeringBySession(sessionId: string): Promise<SteeringInputRecord[]> {
+  async listPendingSteeringBySession(sessionId: string, tenantId = DEFAULT_TENANT_ID): Promise<SteeringInputRecord[]> {
     const result = await this.pool.query<{
       input_id: string;
       source_run_id: string;
@@ -1008,12 +1012,16 @@ export class PgRunStore implements RunStore {
              input.state, input.accepted_at, input.applied_at,
              row_to_json(source.*) AS row_json
       FROM ${this.steeringInputsTable} input
-      JOIN ${this.runsTable} source ON source.run_id = input.source_run_id
-      WHERE input.session_id = $1
+      JOIN ${this.runsTable} source
+        ON source.tenant_id = input.tenant_id
+       AND source.session_id = input.session_id
+       AND source.run_id = input.source_run_id
+      WHERE input.tenant_id = $1
+        AND input.session_id = $2
         AND input.state = 'pending'
         AND source.status = 'pending'
       ORDER BY input.sequence ASC
-    `, [sessionId]);
+    `, [tenantId, sessionId]);
     return result.rows.map((row) => ({
       inputId: row.input_id,
       sourceRunId: row.source_run_id,
@@ -1025,7 +1033,6 @@ export class PgRunStore implements RunStore {
       sourceRun: normalizeRunRecord(row.row_json),
     }));
   }
-
   async enqueueBackgroundTask(
     input: UpsertRunInput,
     limits: EnqueueBackgroundTaskLimits,
@@ -1066,7 +1073,6 @@ export class PgRunStore implements RunStore {
       if (tenantActive >= limits.perTenantActive) {
         throw new BackgroundTaskLimitError(`当前组织同时活跃的后台任务已达上限 ${limits.perTenantActive}`);
       }
-
       const now = new Date().toISOString();
       const result = await client.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
@@ -1102,7 +1108,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async listBackgroundTasks(
     parentSessionId: string,
     options: ListBackgroundTasksOptions = {},
@@ -1148,7 +1153,6 @@ export class PgRunStore implements RunStore {
   ): Promise<RunRecord | null> {
     return claimBackgroundTaskWake(this.pool, this.runsTable, runId, claimToken, staleBefore);
   }
-
   async finishBackgroundTaskWake(
     runId: string,
     claimToken: string,
@@ -1159,25 +1163,22 @@ export class PgRunStore implements RunStore {
       this.pool, this.runsTable, runId, claimToken, state, metadataPatch,
     );
   }
-  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); }
-  async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
+  async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatus(runId, status, reason, metadataPatch); } async activateStagedRun(runId: string): Promise<RunRecord | null> { return this.queries.activateStagedRun(runId); }
   async claimPersistedInteractionResume(runId: string, expectedStatuses: readonly RunStatus[], reason: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimPersistedInteractionResume(runId, expectedStatuses, reason, metadataPatch); }
-
   async listStagedPersistedInteractionResumes(limit?: number): Promise<RunRecord[]> { return this.queries.listStagedPersistedInteractionResumes(limit); }
   async activatePersistedInteractionResume(runId: string, claim: Record<string, unknown>, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.activatePersistedInteractionResume(runId, claim, metadataPatch); }
   async rollbackPersistedInteractionResume(runId: string, claim: Record<string, unknown>, waitingStatus: 'waiting_user' | 'waiting_approval', reason?: string): Promise<RunRecord | null> { return this.queries.rollbackPersistedInteractionResume(runId, claim, waitingStatus, reason); }
   async stagePendingRun(runId: string): Promise<RunRecord | null> { return this.queries.stagePendingRun(runId); }
   async cancelPendingTaskboardRun(runId: string, reason: string): Promise<RunRecord | null> { return this.queries.cancelPendingTaskboardRun(runId, reason); }
-  async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch); }
+  async claimStateOnlyTerminalOutbox(runId: string, status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>, reason: string | undefined, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.claimStateOnlyTerminalOutbox(runId, status, reason, metadataPatch); }
+  async markStatusIfCurrent(runId: string, expectedStatuses: readonly RunStatus[], nextStatus: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}, leaseAuthority?: import('./runStoreTypes.js').RunLeaseAuthority): Promise<RunRecord | null> { return this.queries.markStatusIfCurrent(runId, expectedStatuses, nextStatus, reason, metadataPatch, leaseAuthority); }
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> { return this.queries.patchMetadata(runId, metadataPatch); }
   async get(runId: string): Promise<RunRecord | null> { return this.queries.get(runId); }
   async cancelActiveByUser(userId: string, reason: string): Promise<number> { return this.queries.cancelActiveByUser(userId, reason); }
   async cancelActiveByTenant(tenantId: string, reason: string): Promise<number> { return this.queries.cancelActiveByTenant(tenantId, reason); } async listActiveByUser(userId: string): Promise<RunRecord[]> { return this.queries.listActiveByUser(userId); }
   async updateApprovalPolicyForActiveByUser(userId: string, approvalPolicy: Record<string, unknown> | null): Promise<string[]> { return this.queries.updateApprovalPolicyForActiveByUser(userId, approvalPolicy); }
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
-    return this.queries.findByIdempotencyKey(userId, idempotencyKey);
-  }
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(sessionId); }
+  async findByIdempotencyKey(tenantId:string,userId:string|undefined,key:string):Promise<RunRecord|null>{return this.queries.findByIdempotencyKey(tenantId,userId,key);} async findUniqueByIdempotencyKeyAcrossTenants(userId:string,key:string):Promise<RunRecord|null>{return this.queries.findUniqueByIdempotencyKeyAcrossTenants(userId,key);}
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(tenantId, sessionId); }
   async getActiveCounts(): Promise<ActiveRunCounts> { return this.queries.getActiveCounts(); }
   async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
     return this.queries.listBySession(sessionId, options);
@@ -1191,11 +1192,11 @@ export class PgRunStore implements RunStore {
   async cancelStaleWaitingApproval(runId: string, cutoff: Date, reason: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     return this.queries.cancelStaleWaitingApproval(runId, cutoff, reason, metadataPatch);
   }
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission): Promise<RunRecord | null> {
-    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission);
+  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission, identity?: RunLeaseIdentity, leaseToken?: string): Promise<RunRecord | null> {
+    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission, identity, leaseToken);
   }
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker'): Promise<RunRecord | null> {
-    return this.queries.renewLease(runId, workerId, leaseMs, now, source);
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker', leaseToken?: string): Promise<RunRecord | null> {
+    return this.queries.renewLease(runId, workerId, leaseMs, now, source, leaseToken);
   }
   async heartbeatRun(runId: string, workerId: string, leaseMs: number, source: RunHeartbeatSource, now = new Date()): Promise<RunRecord | null> {
     return this.queries.renewLease(runId, workerId, leaseMs, now, source);
@@ -1213,16 +1214,15 @@ export class PgRunStore implements RunStore {
   async cancelUserMessageByClientMsgId(submitterUserId: string | undefined, clientMsgId: string, reason = 'explicit_client_cancel', now = new Date()): Promise<RunRecord | null> {
     return this.queries.cancelUserMessageByClientMsgId(submitterUserId, clientMsgId, reason, now);
   }
-  async updateResponseSessionState(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
-    return this.queries.updateResponseSessionState(runId, patch);
+  async updateResponseSessionState(runId: string, tenantId: string, sessionId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
+    return this.queries.updateResponseSessionState(runId, tenantId, sessionId, patch);
   }
-  async findLatestResponseSessionStateBySession(sessionId: string, now = new Date()): Promise<LatestResponseSessionState | null> {
-    return this.queries.findLatestResponseSessionStateBySession(sessionId, now);
+  async findLatestResponseSessionStateBySession(tenantId: string, sessionId: string, now = new Date()): Promise<LatestResponseSessionState | null> {
+    return this.queries.findLatestResponseSessionStateBySession(tenantId, sessionId, now);
   }
-  async clearResponseSessionStateBySession(sessionId: string): Promise<number> {
-    return this.queries.clearResponseSessionStateBySession(sessionId);
+  async clearResponseSessionStateBySession(tenantId: string, sessionId: string): Promise<number> {
+    return this.queries.clearResponseSessionStateBySession(tenantId, sessionId);
   }
-
   private async appendRuntimeEventsInTransaction(
     client: PgPoolClient,
     events: PlatformEventInput[],
@@ -1267,7 +1267,6 @@ export class PgRunStore implements RunStore {
     }
     return fullEvents;
   }
-
   private async notifyRuntimeEvents(
     client: PgPoolClient,
     events: Array<PlatformEvent & { sequence: number }>,
@@ -1278,12 +1277,11 @@ export class PgRunStore implements RunStore {
       encodePgEventNotifyPayload(events),
     ]).catch(() => undefined);
   }
-
   async releaseLease(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string, options: RunLeaseReleaseOptions = {}): Promise<RunRecord | null> {
     return options.handoff ? this.queries.releaseLeaseForHandoff(runId, workerId, reason ?? 'worker_handoff', options.metadataPatch) : releaseRunLease({
       pool: this.pool,
       runsTable: this.runsTable,
       normalizeRunRecord,
-    }, runId, workerId, finalStatus, reason);
+    }, runId, workerId, finalStatus, reason, options.leaseToken);
   }
 }

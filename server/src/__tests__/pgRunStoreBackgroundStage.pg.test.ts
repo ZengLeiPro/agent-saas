@@ -16,7 +16,11 @@ describePg('PgRunStore v2 background task stage', () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000 });
-    store = new PgRunStore({ pool, tablePrefix: prefix });
+    store = new PgRunStore({
+      pool,
+      tablePrefix: prefix,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
     await store.init();
     await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
   }, 30_000);

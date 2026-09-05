@@ -13,6 +13,7 @@ import { TaskBoardConflictError } from "./api";
 import { ArchivedTasksSheet } from "./ArchivedTasksSheet";
 import { BoardDialog } from "./BoardDialog";
 import { BoardToolbar } from "./BoardToolbar";
+import { loadSelectedBoardId, saveSelectedBoardId } from "./boardOrder";
 import { useBoardTasks, useTaskboardModelList, useTaskBoards } from "./hooks";
 import {
   boardAllows,
@@ -155,9 +156,14 @@ export function TaskBoardView({
       const linkedBoard = deepLinkRef.current.boardId
         ? boards.find((board) => board.id === deepLinkRef.current.boardId)
         : undefined;
-      setSelectedBoardId((linkedBoard ?? boards.find((board) => !board.archivedAt) ?? boards[0]).id);
+      const rememberedBoard = linkedBoard ? undefined : boards.find((board) => board.id === loadSelectedBoardId());
+      setSelectedBoardId((linkedBoard ?? rememberedBoard ?? boards.find((board) => !board.archivedAt) ?? boards[0]).id);
     }
   }, [boards, selectedBoardId]);
+
+  useEffect(() => {
+    if (selectedBoardId) saveSelectedBoardId(selectedBoardId);
+  }, [selectedBoardId]);
 
   useEffect(() => {
     setSelectedDeliveryTaskIds((current) => new Set([...current].filter((id) => tasks.some((task) => (

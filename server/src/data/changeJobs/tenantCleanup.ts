@@ -55,6 +55,11 @@ export class GovernanceTenantCleanup {
       );
       governance[table] = Number(result.rows[0]?.count ?? 0);
     }
+    const presentations = await this.options.pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM ${this.prefix}_skill_presentations
+       WHERE resource_tenant_id=$1 OR audience_tenant_id=$1`, [tenantId],
+    );
+    governance.skill_presentations = Number(presentations.rows[0]?.count ?? 0);
     const audit = await this.options.pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM ${this.prefix}_governance_audit_events
        WHERE (target_tenant_id=$1 OR actor_tenant_id=$1) AND NOT (metadata_json ? 'tenantDeletedAt')`, [tenantId],
@@ -102,6 +107,9 @@ export class GovernanceTenantCleanup {
     const references = `${this.prefix}_resource_references`;
     await this.transaction(async client => {
       await client.query(`DELETE FROM ${references} WHERE tenant_id=$1`, [tenantId]);
+      await client.query(
+        `DELETE FROM ${this.prefix}_skill_presentations WHERE resource_tenant_id=$1 OR audience_tenant_id=$1`, [tenantId],
+      );
       await client.query(`DELETE FROM ${this.prefix}_agent_dws_event_inbox WHERE tenant_id=$1`, [tenantId]);
       await client.query(`DELETE FROM ${this.prefix}_agent_dws_conversation_bindings WHERE tenant_id=$1`, [tenantId]);
       await client.query(`DELETE FROM ${agentDwsAccounts} WHERE tenant_id=$1`, [tenantId]);

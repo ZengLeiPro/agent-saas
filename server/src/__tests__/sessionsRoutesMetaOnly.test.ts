@@ -212,7 +212,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
     }
   });
 
-  it('restores durable queued messages and exposes authoritative status after ACK loss', async () => {
+  it('restores durable queued messages and exposes tenant-scoped authoritative status after ACK loss', async () => {
     const { sessionId } = await writeRuntimeSession({ content: '正在执行的任务' });
     const requestedAt = '2026-08-14T02:00:00.000Z';
     const queuedRun = {
@@ -241,7 +241,7 @@ describe('sessions routes for meta-only runtime sessions', () => {
     };
     const { server, baseUrl } = await startServer(agentCwd, {
       listPendingUserMessagesBySession: async () => [queuedRun],
-      findRunByClientMessageId: async (_userId, clientMessageId) => (
+      findRunByClientMessageId: async (_tenantId, _userId, clientMessageId) => (
         clientMessageId === 'client-queued-1' ? queuedRun : null
       ),
     });

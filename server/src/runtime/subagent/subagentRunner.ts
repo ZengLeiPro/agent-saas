@@ -136,6 +136,23 @@ export interface SubagentOutcome {
   modelUsage?: Record<string, SdkResultModelUsage>;
 }
 
+export function deriveChildAutomationFence(
+  parentFence: ToolCallContext['automationFence'],
+  childRunId: string,
+  parent: { sessionId: string; runId: string },
+): ToolCallContext['automationFence'] {
+  if (!parentFence) return undefined;
+  if (parentFence.runId !== parent.runId) {
+    throw new Error('automation parent fence runId does not match the invoking parent run');
+  }
+  return {
+    ...parentFence,
+    rootSessionId: parentFence.rootSessionId ?? parent.sessionId,
+    rootRunId: parentFence.rootRunId ?? parent.runId,
+    runId: childRunId,
+  };
+}
+
 export interface RunSubagentParams {
   config: RawRuntimeRunDispatchConfig;
   executionTransportRegistry: ExecutionTransportRegistry;
@@ -165,6 +182,18 @@ export interface RunSubagentParams {
     connection: { apiKey?: string; baseUrl?: string },
     providerOptions?: import('../../types/index.js').ModelProviderOptions,
   ) => import('../types.js').ModelAdapter;
+  /** Durable caller-reserved identity. Recovery must pass the same pair instead of creating another child. */
+  preparedChildIdentity?: { childSessionId: string; childRunId: string };
+  /** Atomically consumes the caller's prepared resource before the first child side effect. */
+  acquireChildLaunchAuthority?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Called before and after child session/run/lease/hand/provider side effects to recheck live authority. */
+  beforeChildSideEffects?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Invoked after stale/error cleanup has terminalized the child and destroyed registered Hands. */
+  onChildLaunchError?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Durable fence immediately before a tenant remote provision request leaves the process. */
+  beforeTenantRemoteProvision?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Crash/recovery contract checkpoints; production callers normally leave this unset. */
+  lifecycleCheckpoint?: (checkpoint: 'prepared' | 'session' | 'run' | 'lease' | 'hand' | 'before_active') => Promise<void> | void;
   /** 子 session/run 已建好、即将起跑时回调（AgentToolProvider 用它发 durable subagent_started）。 */
   onChildRunCreated?: (info: { childSessionId: string; childRunId: string; model: string }) => Promise<void> | void;
 }
@@ -270,8 +299,13 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const slot = await limiter.acquire(parentRunId, parentContext.signal);
 
   const startedAt = Date.now();
-  const childSessionId = `sub-${randomUUID()}`;
-  const childRunId = `${Date.now()}-${randomUUID()}`;
+  const childSessionId = params.preparedChildIdentity?.childSessionId ?? `sub-${randomUUID()}`;
+  const childRunId = params.preparedChildIdentity?.childRunId ?? `${Date.now()}-${randomUUID()}`;
+  if (!childSessionId || !childRunId) throw new Error('prepared child identity is incomplete');
+  const childAutomationFence = deriveChildAutomationFence(parentContext.automationFence, childRunId, {
+    sessionId: parentSessionId,
+    runId: parentRunId,
+  });
   const parentWorkspace = parentContext.workspace;
   const childRuntimeIsolationRequirement = deriveRuntimeIsolationRequirement(
     parentContext.runtimeIsolationRequirement,
@@ -287,8 +321,20 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const combinedSignal = parentContext.signal
     ? AbortSignal.any([parentContext.signal, timeoutController.signal])
     : timeoutController.signal;
+  const childIdentity = { childSessionId, childRunId };
+  let launchClaimed = false; // durable resource was consumed before child creation
+  let childSessionCreated = false;
+  let childRunCreated = false;
 
   try {
+    await params.beforeChildSideEffects?.(childIdentity);
+    await params.lifecycleCheckpoint?.('prepared');
+    // Durable launch authority precedes session creation, capacity lease, running
+    // transition and Hand registration. Clear/replace can now always discover a
+    // worker that may still create the fixed child identity.
+    await params.acquireChildLaunchAuthority?.(childIdentity);
+    launchClaimed = true;
+    await params.beforeChildSideEffects?.(childIdentity);
     // ── 子 session/run 落库（D2：hidden session；runStore metadata 挂亲子链） ──
     let childRecord: RuntimeSessionRecord = createRuntimeSessionRecord({
       sessionId: childSessionId,
@@ -313,10 +359,15 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     if (boundProfile && config.agentRuntimeProfileResolver) {
       childRecord = config.agentRuntimeProfileResolver.bindSessionRecord(childRecord, boundProfile);
     }
+    await params.beforeChildSideEffects?.(childIdentity);
     await sessionCatalog.upsert(childRecord);
+    childSessionCreated = true;
+    await params.beforeChildSideEffects?.(childIdentity);
+    await params.lifecycleCheckpoint?.('session');
 
     const baseEventStore = createEventStoreForSession(config, childRecord);
     const eventStore = new RunStateTrackingEventStore(baseEventStore, config.runStore, tenantId);
+    await params.beforeChildSideEffects?.(childIdentity);
     await config.runStore?.upsertPending({
       runId: childRunId,
       sessionId: childSessionId,
@@ -335,6 +386,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         parentToolCallId: parentContext.toolCallId,
         agentType: agentType.id,
         description: request.description,
+        ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
         ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
         ...(parentSession?.orgAgentId ? { executionRole: 'worker' } : {}),
         ...(parentSession?.orgAgentSnapshot?.runtime.executionMode
@@ -348,13 +400,18 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         // 刻意不写 wakeMessage：子 run 是父死子亡语义，绝不允许 scheduler 恢复重放
       },
     });
+    childRunCreated = true;
+    await params.beforeChildSideEffects?.(childIdentity);
+    await params.lifecycleCheckpoint?.('run');
     const billing = config.billingService?.();
     if (billing && tenantId) {
+      await params.beforeChildSideEffects?.(childIdentity);
       const decision = await billing.authorizeRun({
         tenantId,
         userId,
         runId: childRunId,
       });
+      await params.beforeChildSideEffects?.(childIdentity);
       if (!decision.ok) {
         const reason = `[${decision.code}] ${decision.reason}`;
         await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'failed', reason, undefined, { tenantId }).catch(() => undefined);
@@ -365,6 +422,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     // 子 run 与顶层 run 通过同一个 PG advisory capacity lock 准入；容量满时留在父进程内
     // 等待而不交给 scheduler 重放。lease 时长覆盖硬超时 + 余量，短命 run 无需续租。
     try {
+      await params.beforeChildSideEffects?.(childIdentity);
       await acquireSubagentRunLease({
         config,
         parentRun,
@@ -374,6 +432,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         signal: combinedSignal,
       });
       await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'running', undefined, undefined, { tenantId });
+      await params.beforeChildSideEffects?.(childIdentity);
+      await params.lifecycleCheckpoint?.('lease');
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       await markRunState(config.runStore, eventStore, childSessionId, childRunId, combinedSignal.aborted ? 'cancelled' : 'failed', reason, undefined, { tenantId }).catch(() => undefined);
@@ -382,6 +442,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     }
 
     // ── hand 注册（复用父的 workspaceId/mountSubPath → warm sandbox / tenant hand 路由对子生效） ──
+    await params.beforeChildSideEffects?.(childIdentity);
     await ensureRuntimeHandRegistered({
       handStore: config.handStore,
       eventStore,
@@ -407,15 +468,21 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       username,
       userTenantId: config.resolveUserTenantId?.({ userId, username }),
       logger: config.logger,
+      beforeTenantRemoteProvision: async () => {
+        await params.beforeTenantRemoteProvision?.(childIdentity);
+      },
     });
+    await params.beforeChildSideEffects?.(childIdentity);
     await appendResolvedRunSnapshot({
       config,
       runId: childRunId,
       session: childRecord,
       modelRef: refToResolve ?? model,
       executionTarget,
-      hands: config.handStore ? await config.handStore.listBySession(childSessionId) : [],
+      hands: config.handStore ? await config.handStore.listBySession(childSessionId, tenantId) : [],
     });
+    await params.beforeChildSideEffects?.(childIdentity);
+    await params.lifecycleCheckpoint?.('hand');
 
     // ── 工具集派生（关键不变量 5：白名单派生 + 无条件剥夺，见 buildSubagentToolRuntime） ──
     const toolRuntime = buildSubagentToolRuntime({
@@ -464,6 +531,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       handStore: config.handStore,
       runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       runStore: config.runStore,
+      automationGuard: config.sessionAutomationRuntimeGuard,
       toolPolicy: createSubagentToolPolicy(config.orgAgentChannelPolicyEvaluator),
     });
 
@@ -536,6 +604,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         outputTransactionMode: 'terminal_buffered',
       },
       approvalPolicy,
+      ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
       hooks: childHooks,
       signal: combinedSignal,
       ...(billing && tenantId ? {
@@ -551,7 +620,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       } : {}),
     };
 
+    await params.lifecycleCheckpoint?.('before_active');
+    await params.beforeChildSideEffects?.(childIdentity);
     await params.onChildRunCreated?.({ childSessionId, childRunId, model });
+    await params.beforeChildSideEffects?.(childIdentity);
     logger.info(
       `[subagent] start type=${agentType.id} child=${childSessionId} run=${childRunId} `
       + `parent=${parentSessionId}/${parentRunId} model=${model}`,
@@ -563,6 +635,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     // 子 Agent 绕过主 dispatch/buildPrompt，因此在它自己的入站边界固化一次时间戳。
     // modelContent 会持久化这个值；后续 full replay 只能重放，adapter 不再按当前时钟改写。
     const prompt = addTimestampPrefix(request.prompt, parentContext.channelContext.timezone);
+    await params.beforeChildSideEffects?.(childIdentity);
     for await (const event of loop.run(
       {
         message: {
@@ -585,6 +658,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       if (event.type === 'tool_result') toolUseCount += 1;
       else if (event.type === 'error') streamError = event.error;
     }
+    await params.beforeChildSideEffects?.(childIdentity);
 
     // ── 终态判定（关键不变量 4）：信号状态 > onResult subtype，绝不读模型文本 ──
     const durationMs = Date.now() - startedAt;
@@ -663,6 +737,28 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       model,
       ...(modelUsage ? { modelUsage } : {}),
     };
+  } catch (error) {
+    if (launchClaimed || childSessionCreated || childRunCreated) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (childRunCreated) {
+        await config.runStore?.markStatus(
+          childRunId,
+          combinedSignal.aborted ? 'cancelled' : 'failed',
+          reason,
+        ).catch(() => undefined);
+      }
+      if (childSessionCreated) {
+        await sessionCatalog.markStatus(childSessionId, 'error').catch(() => undefined);
+      }
+      if (config.handStore) {
+        const hands = await config.handStore.listBySession(childSessionId, tenantId).catch(() => []);
+        await Promise.all(hands.map(hand => config.handStore!.updateStatus(
+          hand.handId, 'destroyed', { destroyReason: 'subagent_launch_aborted' }, tenantId,
+        ).catch(() => null)));
+      }
+      await Promise.resolve(params.onChildLaunchError?.(childIdentity)).catch(() => undefined);
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutTimer);
     await slot.release();

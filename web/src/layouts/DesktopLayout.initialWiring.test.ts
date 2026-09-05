@@ -3,6 +3,7 @@ import managementContentSource from "@/components/ManagementShell/ManagementWork
 import taskBoardSource from "@/components/TaskBoard/index.tsx?raw";
 import taskDetailSource from "@/components/TaskBoard/TaskDetail.tsx?raw";
 import source from "./DesktopLayout.tsx?raw";
+import mobileSource from "./MobileLayout.tsx?raw";
 import lazySettingsSource from "./lazySettingsComponents.ts?raw";
 
 describe("DesktopLayout 初始会话接线", () => {
@@ -26,6 +27,13 @@ describe("DesktopLayout 初始会话接线", () => {
 
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
+  });
+
+  it("Agent 目录加载期间保留任务中心菜单且不触发错误兜底", () => {
+    for (const layoutSource of [source, mobileSource]) {
+      expect(layoutSource).toContain("if (orgAgentIdentityLoading) return;");
+      expect(layoutSource).toContain("personalAgentEnabled={personalAgentEnabled || orgAgentIdentityLoading}");
+    }
   });
 
   it("任务详情复用外层分栏，并与正式会话统一响应式默认宽度", () => {

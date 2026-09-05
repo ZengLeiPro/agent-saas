@@ -11,8 +11,31 @@ export interface SkillGovernanceInfo {
 
 export interface SkillInfo {
   id: string;
+  /** SKILL.md 的机器标识；运行时契约，不能作为普通员工界面的默认标题。 */
   name: string;
+  /** SKILL.md 的模型触发说明；可能较长或为英文。 */
   description: string;
+  /** 独立于技能包的用户展示信息；旧服务端缺失时客户端回退原字段。 */
+  presentation?: SkillPresentationInfo;
+}
+
+export interface SkillPresentationInfo {
+  displayName: string;
+  summary: string;
+  locale: 'zh-CN';
+  source: 'platform_default' | 'organization_override' | 'organization_default' | 'fallback';
+  revision?: number;
+}
+
+export interface SkillPresentationUpdate {
+  displayName: string;
+  summary: string;
+  expectedRevision: number;
+}
+
+export interface SkillPresentationUpdateResponse {
+  ok: true;
+  presentation: SkillPresentationInfo;
 }
 
 export type PlatformSkillExposure = 'all' | 'allow_tenants' | 'deny_tenants';

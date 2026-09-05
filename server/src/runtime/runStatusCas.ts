@@ -1,4 +1,4 @@
-import type { PgPool, RunRecord, RunStatus } from './runStore.js';
+import type { PgPool, RunLeaseAuthority, RunRecord, RunStatus } from './runStore.js';
 
 interface RunStatusCasStore {
   pool: PgPool;
@@ -87,6 +87,28 @@ export async function markRunStatus(
   return result.rows[0] ? store.normalizeRunRecord(result.rows[0].row_json) : null;
 }
 
+/** Atomically repairs a legacy state-only terminal row exactly once. */
+export async function claimStateOnlyTerminalOutbox(
+  store: RunStatusCasStore,
+  runId: string,
+  status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+  reason: string | undefined,
+  metadataPatch: Record<string, unknown>,
+): Promise<RunRecord | null> {
+  const now = new Date().toISOString();
+  const result = await store.pool.query<{ row_json: RunRecord }>(`
+    UPDATE ${store.runsTable}
+    SET status_reason = COALESCE(status_reason, $3),
+        updated_at = $4,
+        metadata = (metadata || $5::jsonb) - 'wakeMessage'
+    WHERE run_id = $1
+      AND status = $2
+      AND NOT (metadata ? 'terminalEventOutbox')
+    RETURNING row_to_json(${store.runsTable}.*) AS row_json
+  `, [runId, status, reason ?? null, now, JSON.stringify(metadataPatch)]);
+  return result.rows[0] ? store.normalizeRunRecord(result.rows[0].row_json) : null;
+}
+
 /** Implements the single-statement compare-and-set status transition for PgRunStore. */
 export async function markRunStatusIfCurrent(
   store: RunStatusCasStore,
@@ -95,6 +117,7 @@ export async function markRunStatusIfCurrent(
   status: RunStatus,
   reason?: string,
   metadataPatch: Record<string, unknown> = {},
+  leaseAuthority?: RunLeaseAuthority,
 ): Promise<RunRecord | null> {
   if (expectedStatuses.length === 0) return null;
   const result = await store.pool.query<{ row_json: RunRecord }>(`
@@ -159,7 +182,9 @@ export async function markRunStatusIfCurrent(
     FROM transition_time
     WHERE run.run_id = $1
       AND run.status = ANY($2::text[])
+      AND ($6::text IS NULL OR (run.worker_id = $6 AND run.metadata->>'runLeaseToken' = $7))
     RETURNING row_to_json(run.*) AS row_json
-  `, [runId, [...expectedStatuses], status, reason ?? null, JSON.stringify(metadataPatch)]);
+  `, [runId, [...expectedStatuses], status, reason ?? null, JSON.stringify(metadataPatch),
+    leaseAuthority?.workerId ?? null, leaseAuthority?.leaseToken ?? null]);
   return result.rows[0] ? store.normalizeRunRecord(result.rows[0].row_json) : null;
 }

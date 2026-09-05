@@ -383,9 +383,9 @@ describe('WebChannel WebSocket auth-mode structured chat boundary', () => {
       userId: missingUserId,
       status: 'completed',
     } as any);
-    // Model the PG lookup result directly: its tenant default must not turn an anonymous
+    // Model the tenant-scoped PG lookup result directly: its default must not turn an anonymous
     // no-auth run into a tenant-scoped principal.
-    runStore.findByIdempotencyKey = async (_userId, key) => (
+    runStore.findByIdempotencyKey = async (_tenantId, _userId, key) => (
       [...runStore.records.values()].find((record) => record.idempotencyKey === key) ?? null
     );
     const channel = new WebChannel({
@@ -482,7 +482,7 @@ describe('WebChannel WebSocket auth-mode structured chat boundary', () => {
       channel: 'web',
       idempotencyKey: 'owner-replay',
     });
-    runStore.findByIdempotencyKey = async (_userId, key) => (
+    runStore.findByIdempotencyKey = async (_tenantId, _userId, key) => (
       [...runStore.records.values()].find((record) => record.idempotencyKey === key) ?? null
     );
     const channel = new WebChannel({

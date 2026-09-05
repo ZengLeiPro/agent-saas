@@ -1,4 +1,6 @@
 export * from './types/correlation';
+export * from './types/sessionAutomation';
+export * from './lib/sessionAutomationCommands.js';
 export { GOVERNANCE_CAPABILITIES, governanceCapability } from './types/governanceCapability';
 export { GovernanceApiError, governanceApiErrorMessage } from './lib/governanceErrors';
 export * from './mobileV1';
@@ -211,6 +213,9 @@ export type {
   AgentProfile,
   AgentProfileDetail,
   SkillInfo,
+  SkillPresentationInfo,
+  SkillPresentationUpdate,
+  SkillPresentationUpdateResponse,
   PlatformSkillExposure,
   TenantSkillMemberExposure,
   PlatformSkillSettings,
@@ -556,6 +561,11 @@ export {
   deleteTenantOwnSkill,
   promoteSkillToTenant,
   promoteTenantSkillToPool,
+  updatePlatformSkillPresentation,
+  updateTenantPlatformSkillPresentation,
+  deleteTenantPlatformSkillPresentation,
+  updateTenantOwnSkillPresentation,
+  SkillPresentationApiError,
   fetchSkillSyncJob,
   syncSkills as syncSkillsApi,
 } from './lib/skillsApi';

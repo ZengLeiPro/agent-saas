@@ -1,7 +1,7 @@
+import { automationFenceFromMetadata } from './automationFence.js';
 import { randomUUID } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'path';
-
 import type {
   AgentRunDispatch,
   AgentRunHooks,
@@ -118,7 +118,6 @@ import {
   resolveWakePrompt,
   WAKE_EVENT_LIST_TYPES,
 } from './wakeDispatchHelpers.js';
-
 // wake/续跑相关的常量与纯判定函数已迁至 ./wakeDispatchHelpers.ts，这里按既有 import 路径继续对外转发。
 export {
   HIDDEN_WAKE_CONTINUE_PROMPT,
@@ -164,8 +163,20 @@ import {
   createTenantRemoteHandAuthTokenResolver,
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
-import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement, resolveSandboxWorkloadDescriptor, toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
-import { cancelDeletedSessionWake, cancelDeletedSessionWakeIfPresent, deletedSessionResumeError, restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
+import {
+  deriveSandboxScopeId,
+  ensureRuntimeHandRegistered,
+  integrationRuntimeIsolationRequirement,
+  resolveSandboxWorkloadDescriptor,
+  toAcsSandboxWorkloadDescriptor,
+} from './runtimeHandRegistration.js';
+import {
+  cancelDeletedSessionWake,
+  cancelDeletedSessionWakeIfPresent,
+  deletedSessionResumeError,
+  restoreRuntimeSessionForWake,
+} from './runtimeWakeSessionRestore.js';
+import { finalizeWakeTerminalRun, releaseWakeLeaseAfterDispatch } from './wakeTerminalCoordinator.js';
 import { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 export { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 import {
@@ -176,7 +187,7 @@ export { startWakeLeaseRenewal, type RuntimeWakeLease };
 import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
-import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
+import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, finalizeTerminalRun, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
 export {
   failRunningRunForWallClock,
   markRunState,
@@ -204,11 +215,9 @@ import { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
 export { buildTenantRemoteHandWireEnv } from './rawRuntimeWireEnv.js';
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 const logger = createLogger('RawRuntime');
-
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import { serverRemoteHandRegistrationOptions } from './serverRemoteHandRegistration.js';
-
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
  * RFC v1 P0.2：按 modelProviderOptions.protocol 路由 ModelAdapter。
@@ -256,7 +265,6 @@ export function createModelAdapterForProtocol(
     baseUrl: connection.baseUrl ?? DEFAULT_BASE_URL,
   }, modelProviderOptions ?? {});
 }
-
 function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean {
   return options?.responsesTransport !== 'codex_subscription';
 }
@@ -266,7 +274,6 @@ function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean
  * 缝进来。
  */
 const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
-
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
 }
@@ -278,7 +285,6 @@ export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: str
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
   return rel.split(sep).join('/');
 }
-
 function getTenantRemoteHandResolver(
   config: RawRuntimeRunDispatchConfig,
 ): TenantRemoteHandAuthTokenResolver {
@@ -289,13 +295,11 @@ function getTenantRemoteHandResolver(
     logger: config.logger,
   });
 }
-
 export function resolveTenantRemoteHandsSource(
   source: TenantRemoteHandsSource | undefined,
 ): TenantRemoteHandDispatchConfig[] | undefined {
   return typeof source === 'function' ? source() : source;
 }
-
 export class RunStateTrackingEventStore implements EventStore {
   constructor(
     private readonly inner: EventStore,
@@ -323,7 +327,6 @@ export class RunStateTrackingEventStore implements EventStore {
     await this.afterAppend(stored);
     return stored;
   }
-
   async appendBatch(
     events: Parameters<NonNullable<EventStore['appendBatch']>>[0],
     ctx: Parameters<NonNullable<EventStore['appendBatch']>>[1],
@@ -360,7 +363,6 @@ export class RunStateTrackingEventStore implements EventStore {
     });
   }
 }
-
 /**
  * 子 agent 工具的装配依赖（2026-07-06）：executionTransportRegistry 与
  * tenantHandResolver 是各 dispatch 工厂的闭包级对象（非 config 字段），
@@ -387,6 +389,8 @@ export async function collectRuntimeTooling(
   providers: ToolProvider[];
 }> {
   const providers: ToolProvider[] = [];
+  if (config.sessionAutomationProvider) providers.push(config.sessionAutomationProvider);
+  // Session automation provider self-hides unless a trusted host fence is present.
   // Skill 工具：注入 EffectiveSkillsResolver，SkillToolProvider.list(context) 会用它
   // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
   // <available-skills> xml section 已废弃（2026-07-03）。
@@ -399,12 +403,10 @@ export async function collectRuntimeTooling(
       preferredSkillIds,
     )));
   }
-
   // 2. BuiltinTools（TodoWrite/AskUserQuestion；workspace 文件工具由 WorkspaceToolProvider 提供）
   // createBuiltinTools 内部对 undefined 已经走默认全开；这里不再做 if/else 分支区分。
   const builtin = createBuiltinTools(config.builtinTools);
   providers.push(builtin);
-
   // 2.5 UserActivityList（safe 只读，身份只从 context 解析；记忆轮询 + 普通会话通用）
   if (config.userActivityService && isToolEnabled(config.toolControls, 'UserActivityList')) {
     providers.push(new UserActivityToolProvider(config.userActivityService));
@@ -416,7 +418,6 @@ export async function collectRuntimeTooling(
       tenantStore: config.tenantStore,
     }));
   }
-
   // 4. Web 工具（平台托管网络出站，不走 workspace hand / shell）
   if (config.webTools && config.webTools.enabled !== false) {
     const webProvider = new WebToolProvider(config.webTools, config.webFetchImpl ?? fetch);
@@ -446,7 +447,6 @@ export async function collectRuntimeTooling(
       logger: config.logger,
     }));
   }
-
   // 4.6 AudioTranscribe（server 直连，凭据不进入 sandbox）。
   const audioProvider = createAudioTranscribeRuntimeProvider(config);
   if (audioProvider) providers.push(audioProvider);
@@ -454,7 +454,6 @@ export async function collectRuntimeTooling(
   if (config.cronService || config.taskboard) providers.push(new CronToolProvider({
     service: config.cronService ?? (() => undefined), ...(config.sessionCatalog ? { sessionCatalog: config.sessionCatalog } : {}), ...(config.taskboard ? { taskboard: config.taskboard } : {}),
   }));
-
   // 6. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
   if (config.mcpProxy || config.mcpClientManager) {
     const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
@@ -468,7 +467,6 @@ export async function collectRuntimeTooling(
     }
     providers.push(mcpProvider);
   }
-
   // 6.5 durable 后台任务查询/取消。只在 PG background runtime 已装配时暴露；
   // 子 agent runner 会通过无条件剥夺清单再次移除，禁止后台任务嵌套治理。
   if (config.backgroundTasks && isToolEnabled(config.toolControls, 'Agent')) {
@@ -485,18 +483,15 @@ export async function collectRuntimeTooling(
       parentProviders: [...providers], modePolicy: subagentDeps.agentModePolicy ?? 'any',
     }));
   }
-
   return { providers };
 }
 type RuntimeSkillFilter = (skill: SkillEntry) => boolean;
-
 function allowAllRuntimeSkills(): boolean {
   return true;
 }
 function filterRuntimeSkills(skills: SkillEntry[], filter: RuntimeSkillFilter): SkillEntry[] {
   return skills.filter(filter);
 }
-
 /**
  * 构造 Skill resolver。requiredSkillIds 只负责把专职 Agent 固有能力传给底层
  * SkillsDispatchConfig；最终仍会经过 runtime/browser filter 与 Agent 白名单。
@@ -515,7 +510,6 @@ export function buildRuntimeSkillsResolver(
     resolveSkillDir: (skill, ctx) => skills.resolveSkillDir(resolveSkillContextUsername(ctx.channelContext), skill, requiredSkillIds, resolveSkillContextTenantId(ctx.channelContext)),
   };
 }
-
 function prioritizeRuntimeSkills(skills: SkillEntry[], preferredSkillIds: readonly string[]): SkillEntry[] {
   if (preferredSkillIds.length === 0) return skills;
   const priority = new Map(preferredSkillIds.map((id, index) => [id, index]));
@@ -532,7 +526,6 @@ function prioritizeRuntimeSkills(skills: SkillEntry[], preferredSkillIds: readon
 export function composeSkillFilters(...filters: RuntimeSkillFilter[]): RuntimeSkillFilter {
   return (skill) => filters.every((filter) => filter(skill));
 }
-
 /**
  * 将 Agent-local policy 合并进已经固定版本的 shared org_agent Profile。
  * binding/version 身份保持 shared Profile 的不可变 pin；仅本次运行使用合并后的 config。
@@ -557,7 +550,6 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
     && hand.status !== 'destroyed'
   ));
   if (!hasTenantAcsHand) return allowAllRuntimeSkills;
-
   // 门控判据看 capability 声明而非 status==='ready'：capabilities 是注册时静态写入的
   // 配置事实（tenantRemoteHandCapabilities），不是运行期探测结果。而每轮 dispatch 的
   // ensureRuntimeHandRegistered 都会把 ACS hand upsert 回 'provisioning'，随后毫秒级
@@ -573,7 +565,6 @@ export function buildRuntimeSkillFilter(availableHands: HandRecord[]): RuntimeSk
     ))
   ));
   if (hasBrowserCapability) return allowAllRuntimeSkills;
-
   return (skill) => skill.id !== 'browser' && skill.name !== 'browser';
 }
 /**
@@ -598,7 +589,6 @@ export function buildImageGenSkillFilter(
   if (tenantEnabled && toolAvailable) return allowAllRuntimeSkills;
   return (skill) => skill.id !== 'image-gen';
 }
-
 export function resolveSkillContextUsername(context: ChannelContext | undefined): string | undefined {
   return context?.sessionOwner?.username ?? context?.user?.username;
 }
@@ -607,7 +597,6 @@ function resolveContextIsPlatformAdmin(context: ChannelContext | undefined): boo
   const identity = context?.user ?? context?.sessionOwner;
   return identity?.role === 'admin' && identity.tenantId === DEFAULT_TENANT_ID;
 }
-
 function resolveDefaultExecutionTargetForContext(
   executionConfig: ExecutionConfig,
   context: ChannelContext,
@@ -623,7 +612,7 @@ function resolveContextTenantId(
   context: ChannelContext,
   existingSession?: RuntimeSessionRecord | null,
 ): string | undefined {
-  return (context.sessionOwner ?? context.user)?.tenantId ?? existingSession?.tenantId;
+  return existingSession?.tenantId ?? (context.sessionOwner ?? context.user)?.tenantId;
 }
 
 async function authorizeBillingRunStart(
@@ -982,7 +971,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       onLost: (reason) => abortController.abort(reason),
     };
     const lockHandle = config.sessionLock
-      ? await config.sessionLock.tryAcquire(sessionId, sessionLockAcquireOptions)
+      ? await config.sessionLock.tryAcquire(effectiveTenantId ?? DEFAULT_TENANT_ID, sessionId, sessionLockAcquireOptions)
       : null;
     if (config.sessionLock && !lockHandle) {
       yield { type: 'error', error: `Session ${sessionId} 已被另一个 brain 持有，本次 dispatch 退让` };
@@ -1173,7 +1162,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
         runStore: config.runStore,
-        runId,
+        runId, tenantId: tenantIdForRun, sessionId,
         runtimeWorkerId: options.runtimeWorkerId,
         logger: config.logger,
         onLeaseLost: error => abortController.abort(error),
@@ -1224,7 +1213,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     if (typeof message.metadata?.environmentTemplateVersionId === 'string') config.sandboxWarmup?.(sessionId);
-    const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
+    const availableHands = config.handStore ? await config.handStore.listBySession(sessionId, tenantIdForRun) : [];
     await appendResolvedRunSnapshot({
       config,
       runId,
@@ -1313,7 +1302,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, ...(modelProviderOptions?.maxOutputTokens ? { modelMaxOutputTokens: modelProviderOptions.maxOutputTokens } : {}), compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
     // 普通前台 Run 的保守墙钟上限。CAS 只终止当前 running 执行段；
@@ -1346,6 +1335,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         env: runtimeEnv,
         sandboxPolicy,
         workerId: options.runtimeWorkerId,
+        ...(automationFenceFromMetadata(options.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(options.runtimeIsolationMetadata)! } : {}),
         channelContext: context,
         approvalPolicy,
         ...(replaySourceSession ? {
@@ -1369,11 +1359,21 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
             for (const input of queued) {
               const wakeMessage = input.sourceRun.metadata?.wakeMessage;
               if (!isWakeMessage(wakeMessage)) {
-                // 2026-08-04 BUG-8：坏数据不打死健康的目标 run。把坏行标 failed +
+                // 2026-08-04 BUG-8：坏数据不打死健康的目标 run。先持久化 failed outbox +
                 // 回收 steering 行，跳过继续处理其余插话。
                 logger.error(`插话消息 ${input.sourceRunId} 缺少 durable wakeMessage，已跳过并标记 failed`);
-                await config.runStore?.releasePendingSteeringForSourceRun?.(input.sourceRunId).catch(() => undefined);
-                await config.runStore?.markStatus(input.sourceRunId, 'failed', 'missing_wake_message').catch(() => undefined);
+                if (config.runStore) {
+                  await finalizeTerminalRun({
+                    runStore: config.runStore, eventStore: eventStore!, runId: input.sourceRunId,
+                    status: 'failed', reason: 'missing_wake_message',
+                    events: [{ type: 'run_state_changed', runId: input.sourceRunId,
+                      sessionId: input.sourceRun.sessionId, status: 'failed',
+                      previousStatus: input.sourceRun.status, reason: 'missing_wake_message' }],
+                    ctx: { tenantId: tenantIdForRun }, logger: config.logger,
+                  });
+                  // Release steering ownership only after the durable terminal claim.
+                  await config.runStore.releasePendingSteeringForSourceRun?.(input.sourceRunId).catch(() => undefined);
+                }
                 continue;
               }
               const queuedMessage: InboundMessage = {
@@ -1627,10 +1627,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
     const abortController = request.abortController ?? new AbortController();
 
-    // Session-level lock：resume 路径上 sessionId 已知，必须早于 catalog upsert
-    // 和 loop.resumeApproval 占用，避免两个 brain 同时 wake 同一 session。
+    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
+    // Session-level lock：resume 路径上 tenant/session 已知，必须早于 catalog upsert
+    // 和 loop.resumeApproval 占用，避免两个 brain 同时 wake 同一 tenant/session。
     const lockHandle = config.sessionLock
-      ? await config.sessionLock.tryAcquire(request.sessionId, {
+      ? await config.sessionLock.tryAcquire(effectiveTenantId ?? DEFAULT_TENANT_ID, request.sessionId, {
         onLost: (reason) => abortController.abort(reason),
       })
       : null;
@@ -1638,7 +1639,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 approval resume 退让` };
       return;
     }
-    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // 专职 Agent 覆盖（approval resume 同样应用，漏一处 = 审批恢复后越权）。
     // resume 路径 orgAgentId 只信 session meta（existingSession）。
     const orgAgentId = existingSession?.orgAgentId;
@@ -1785,7 +1785,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
         runStore: config.runStore,
-        runId: resumeRunId,
+        runId: resumeRunId, tenantId: sessionRecord.tenantId, sessionId: request.sessionId,
         runtimeWorkerId: request.runtimeWorkerId,
         logger: config.logger,
         onLeaseLost: (error) => abortController.abort(error),
@@ -1829,7 +1829,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       }), runtimeIsolationRequirement,
       logger: config.logger,
     });
-    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId, eventTenantId) : [];
     await appendResolvedRunSnapshot({
       config,
       runId: resumeRunId,
@@ -1938,7 +1938,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, ...(modelProviderOptions?.maxOutputTokens ? { modelMaxOutputTokens: modelProviderOptions.maxOutputTokens } : {}), compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
@@ -1993,7 +1993,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           executionTarget,
           env: resumeEnv,
           sandboxPolicy,
-          workerId: request.runtimeWorkerId,
+          workerId: request.runtimeWorkerId, ...(automationFenceFromMetadata(request.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(request.runtimeIsolationMetadata)! } : {}),
           channelContext: request.context,
           approvalPolicy,
           ...(boundProfile ? {
@@ -2100,8 +2100,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
     const abortController = request.abortController ?? new AbortController();
 
+    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     const lockHandle = config.sessionLock
-      ? await config.sessionLock.tryAcquire(request.sessionId, {
+      ? await config.sessionLock.tryAcquire(effectiveTenantId ?? DEFAULT_TENANT_ID, request.sessionId, {
         onLost: (reason) => abortController.abort(reason),
       })
       : null;
@@ -2109,7 +2110,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 interaction resume 退让` };
       return;
     }
-    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // interaction resume 也应用专职 Agent 覆盖；orgAgentId 只信 session meta。
     const orgAgentId = existingSession?.orgAgentId;
     const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
@@ -2269,7 +2269,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
         runStore: config.runStore,
-        runId: resumeRunId,
+        runId: resumeRunId, tenantId: sessionRecord.tenantId, sessionId: request.sessionId,
         runtimeWorkerId: request.runtimeWorkerId,
         logger: config.logger,
         onLeaseLost: (error) => abortController.abort(error),
@@ -2313,7 +2313,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       }), runtimeIsolationRequirement,
       logger: config.logger,
     });
-    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId, eventTenantId) : [];
     await appendResolvedRunSnapshot({
       config,
       runId: resumeRunId,
@@ -2422,17 +2422,15 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, ...(modelProviderOptions?.maxOutputTokens ? { modelMaxOutputTokens: modelProviderOptions.maxOutputTokens } : {}), compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
-
     const resumeEnv = await buildConnectorRunEnv(config, {
       userId: orgAgent ? undefined : sessionRecord.userId,
       username: orgAgent ? undefined : resumeUsername,
       tenantId: sessionRecord.tenantId,
     });
     stripTaskboardWritableGitCredentials(request.sessionId, resumeEnv);
-
     // approval / ask_user 的每个恢复执行段都重新计算完整墙钟预算。
     armRuntimeRunWallClock({
       runStore: config.runStore,
@@ -2478,7 +2476,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           executionTarget,
           env: resumeEnv,
           sandboxPolicy,
-          workerId: request.runtimeWorkerId,
+          workerId: request.runtimeWorkerId, ...(automationFenceFromMetadata(request.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(request.runtimeIsolationMetadata)! } : {}),
           channelContext: request.context,
           approvalPolicy,
           ...(boundProfile ? {
@@ -2600,8 +2598,8 @@ export async function wakeRuntimeSession(
     )
   ));
   if (cancelRequested) {
-    await options.lease?.release('cancelled', 'cancel_requested_before_wake');
-    await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake', { tenantId: eventTenantId });
+    await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+      status: 'cancelled', reason: 'cancel_requested_before_wake' });
     return;
   }
   // 隐藏记忆审查由 engine 持有写锁与状态；通用 scheduler 不得跨崩溃重放。
@@ -2627,7 +2625,6 @@ export async function wakeRuntimeSession(
       );
     }
   }
-
   const resumeApprovalCandidate = isResumeApprovalMetadata(run.metadata?.resumeApproval) ? run.metadata.resumeApproval : null;
   const resumeApprovalConsumed = resumeApprovalCandidate
     ? isConsumedResume(run.metadata, 'resumeApprovalConsumed', resumeApprovalCandidate.approvalId)
@@ -2681,13 +2678,28 @@ export async function wakeRuntimeSession(
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await options.lease?.release('failed', `workspace_provision_failed:${reason}`);
-      await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'failed', run.status, `workspace_provision_failed:${reason}`, { tenantId: eventTenantId });
+      await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+        status: 'failed', reason: `workspace_provision_failed:${reason}` });
       return;
     }
   }
-
   if (resumeApproval) {
+    const hasInteractionResolved = events.some((event) => (
+      event.type === 'interaction_resolved'
+      && event.sessionId === run.sessionId
+      && event.interactionId === resumeApproval.approvalId
+    ));
+    const hasApprovalResolved = events.some((event) => (
+      event.type === 'approval_resolved'
+      && event.sessionId === run.sessionId
+      && event.approvalId === resumeApproval.approvalId
+    ));
+    if (!hasInteractionResolved || hasApprovalResolved) {
+      await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+        status: hasApprovalResolved ? 'completed' : 'failed',
+        reason: hasApprovalResolved ? 'approval_already_resolved' : 'missing_interaction_resolved_command' });
+      return;
+    }
     if (!await authorizeApprovalResumeWake({
       run, approvalId: resumeApproval.approvalId, events, eventStore, eventTenantId,
       ...(options.lease ? { lease: options.lease } : {}),
@@ -2753,21 +2765,19 @@ export async function wakeRuntimeSession(
         drainHandoff,
         onOutboundEvent: options.onOutboundEvent,
       })) return;
-      const current = await config.runStore?.get(run.runId);
-      if (current) {
-        await options.lease?.release(current.status, current.statusReason ?? 'approval_resume_wake_completed');
-      }
+      await releaseWakeLeaseAfterDispatch({ config, eventStore, run, lease: options.lease,
+        defaultReason: 'approval_resume_wake_completed' });
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
     }
     return;
   }
-
   if (resumeInteraction) {
     const resolution = getInteractionResolution(events, run.sessionId, resumeInteraction.interactionId);
     if (!resolution) {
-      await options.lease?.release('failed', 'missing_interaction_resolved_command');
+      await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+        status: 'failed', reason: 'missing_interaction_resolved_command' });
       return;
     }
     await config.runStore?.markStatus(run.runId, 'running', 'interaction_resume_wake_started', {
@@ -2828,10 +2838,8 @@ export async function wakeRuntimeSession(
         drainHandoff,
         onOutboundEvent: options.onOutboundEvent,
       })) return;
-      const current = await config.runStore?.get(run.runId);
-      if (current) {
-        await options.lease?.release(current.status, current.statusReason ?? 'interaction_resume_wake_completed');
-      }
+      await releaseWakeLeaseAfterDispatch({ config, eventStore, run, lease: options.lease,
+        defaultReason: 'interaction_resume_wake_completed' });
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -2899,10 +2907,8 @@ export async function wakeRuntimeSession(
       drainHandoff,
       onOutboundEvent: options.onOutboundEvent,
     })) return;
-    const current = await config.runStore?.get(run.runId);
-    if (current) {
-      await options.lease?.release(current.status, current.statusReason ?? 'wake_completed');
-    }
+    await releaseWakeLeaseAfterDispatch({ config, eventStore, run, lease: options.lease,
+      defaultReason: 'wake_completed' });
   } finally {
     if (renewTimer) clearInterval(renewTimer);
     runtimeRunController.unregister(run.runId);
@@ -2921,7 +2927,6 @@ async function renewWakeLeaseForActivity(
     await lease.renew('subagent');
   }
 }
-
 export async function releaseWakeLeaseForDrainHandoff(input: {
   config: RawRuntimeRunDispatchConfig;
   eventStore: EventStore;
@@ -2932,7 +2937,6 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
   onOutboundEvent?: WakeRuntimeSessionOptions['onOutboundEvent'];
 }): Promise<boolean> {
   if (!input.drainHandoff.requested || !input.config.runStore || !input.lease) return false;
-
   // renew 是 worker_id CAS：过期 worker 若已被新 worker 接管，会在写 handoff 状态前失败退出。
   await input.lease.renew('worker');
   const current = await input.config.runStore.get(input.run.runId);
@@ -2949,7 +2953,7 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
   );
   const reason = input.drainHandoff.reason ?? 'server_drain_handoff';
   const handedOffAt = new Date().toISOString();
-  // steering 的 durable user_message 可安全重放，但恢复必须有上限；否则同一故障会让
+  // Durable steering user_message 可安全重放，但恢复必须有上限；否则同一故障会让
   // 目标 run 永久 running，并把后续 reserved source 永久挡在 recoverable 集合之外。
   const isSteeringRecovery = reason.startsWith('steering_');
   const previousAttempts = typeof current.metadata?.drainHandoffAttempts === 'number'
@@ -2961,31 +2965,27 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
     drainHandoffWorkerId: input.lease.workerId,
     ...(isSteeringRecovery ? { drainHandoffAttempts: handoffAttempts } : {}),
   };
-
   if (isSteeringRecovery && handoffAttempts >= STEERING_RECOVERY_MAX_HANDOFFS) {
     const handedOff = await input.config.runStore.markStatus(input.run.runId, 'running', reason, handoffMetadata);
     if (!handedOff || isTerminalRunStatus(handedOff.status)) return false;
-    await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId, 'running', current.status, reason, { tenantId: eventTenantId });
-    await input.eventStore.append({
-      type: 'run_finished',
-      runId: input.run.runId,
-      sessionId: input.run.sessionId,
-      subtype: 'error',
-      numTurns: 0,
-      error: STEERING_RECOVERY_FAILURE_MESSAGE,
-    }, { tenantId: eventTenantId });
+    await appendRunStateChanged(input.eventStore, input.run.sessionId, input.run.runId,
+      'running', current.status, reason, { tenantId: eventTenantId });
+    await finalizeTerminalRun({
+      runStore: input.config.runStore, eventStore: input.eventStore, runId: input.run.runId,
+      status: 'failed', reason: STEERING_RECOVERY_FAILURE_MESSAGE,
+      events: [{ type: 'run_state_changed', runId: input.run.runId, sessionId: input.run.sessionId,
+        status: 'failed', previousStatus: handedOff.status, reason: STEERING_RECOVERY_FAILURE_MESSAGE }],
+      ctx: { tenantId: eventTenantId }, logger: input.config.logger,
+    });
     await input.sessionCatalog.markStatus(input.run.sessionId, 'error');
-    await input.onOutboundEvent?.(
-      { type: 'error', error: STEERING_RECOVERY_FAILURE_MESSAGE },
-      { runId: input.run.runId, sessionId: input.run.sessionId },
-    );
-    await input.lease.release('failed', STEERING_RECOVERY_FAILURE_MESSAGE);
+    await input.onOutboundEvent?.({ type: 'error', error: STEERING_RECOVERY_FAILURE_MESSAGE },
+      { runId: input.run.runId, sessionId: input.run.sessionId });
+    await input.lease.release(undefined, STEERING_RECOVERY_FAILURE_MESSAGE);
     input.config.logger?.error(
       `Runtime steering recovery exhausted run=${input.run.runId} session=${input.run.sessionId} reason=${reason} attempts=${handoffAttempts}`,
     );
     return true;
   }
-
   if (!input.lease.handoff) throw new Error(`run lease handoff is unavailable: ${input.run.runId}`);
   await input.sessionCatalog.markStatus(input.run.sessionId, 'running');
   await input.lease.handoff(reason, handoffMetadata);

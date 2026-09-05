@@ -4,6 +4,8 @@ import type { CodexCredentialManager } from '../runtime/responses/codexCredentia
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
+import type { PgSessionAutomationStore } from '../runtime/sessionAutomationStore.js';
+import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
 import type { EventStore } from '../runtime/types.js';
 import type { PgRunStore } from '../runtime/runStore.js';
 import type { PgHandStore } from '../runtime/handStore.js';
@@ -59,6 +61,7 @@ import type { PgConnectorCatalogStore } from '../data/connectorCatalog/index.js'
 import type { PgEnvironmentStore } from '../data/environments/index.js';
 import type { PgAgentResourceStore } from '../data/agentResources/index.js';
 import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
+import type { PgSkillPresentationStore } from '../data/skillPresentations/index.js';
 import type {
   GovernanceChangePlanner,
   PgGovernanceChangeJobStore,
@@ -328,6 +331,8 @@ export interface AppRuntime {
   agentResourceStore?: PgAgentResourceStore;
   /** Platform/Tenant/Personal Skill stable resource、版本与候选审批链。 */
   skillGovernanceStore?: PgSkillGovernanceStore;
+  /** 技能在能力中心的本地化展示名称、简介与组织覆盖。 */
+  skillPresentationStore?: PgSkillPresentationStore;
   /** 可重试 Tenant/Delete/Retire/Revoke 治理 Change Job。 */
   governanceChangeJobStore?: PgGovernanceChangeJobStore;
   governanceChangePlanner?: GovernanceChangePlanner;
@@ -379,6 +384,8 @@ export interface AppRuntime {
    * 运行监测读 API 复用其 pool / eventsTable 做聚合查询，避免另开第二份连接池。
    */
   runtimePgEventStore?: PgEventStore;
+  sessionAutomationStore?: PgSessionAutomationStore;
+  sessionAutomationCommandService?: SessionAutomationCommandService;
   /** 校验平台工具配置，包括 WebSearch SecretVault ref 解析。 */
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
   /** 更新平台工具配置并热写入后续 raw runtime dispatch。 */

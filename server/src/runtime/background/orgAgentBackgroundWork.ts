@@ -25,6 +25,7 @@ import { runtimeRunController } from '../runController.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
 import type { RunRecord, RunStatus } from '../runStore.js';
 import {
+  createEventStoreForSession,
   resolveSessionCatalog,
   type RawRuntimeRunDispatchConfig,
 } from '../rawRuntimeRunDispatch.js';
@@ -334,9 +335,12 @@ export class OrgAgentBackgroundWorkCoordinator {
       return task;
     }
     if (task && !isRunTerminal(task.status)) {
+      const taskSession = await resolveSessionCatalog(this.config).get(task.sessionId);
+      if (!taskSession) throw new Error(`后台任务 session 不存在：${task.sessionId}`);
       const updated = await markBackgroundTaskTerminal(
         this.config.runStore!,
-        task.runId,
+        createEventStoreForSession(this.config, taskSession),
+        task,
         'cancelled',
         message,
         {
@@ -638,9 +642,12 @@ export class OrgAgentBackgroundWorkCoordinator {
       const taskMetadata = parseBackgroundTaskMetadata(task);
       if (!taskMetadata?.workOrderId || taskMetadata.workOrderId !== workOrderId)
         throw new Error('ORG_AGENT_WORK_ORDER_PAUSE_SCOPE_INVALID');
+      const taskSession = await resolveSessionCatalog(this.config).get(task.sessionId);
+      if (!taskSession) throw new Error(`后台任务 session 不存在：${task.sessionId}`);
       const stopped = await markBackgroundTaskTerminal(
         runStore,
-        task.runId,
+        createEventStoreForSession(this.config, taskSession),
+        task,
         'cancelled',
         '组织群任务已暂停',
         {

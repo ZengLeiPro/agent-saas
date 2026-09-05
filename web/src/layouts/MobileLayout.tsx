@@ -69,6 +69,7 @@ export function MobileLayout(props: LayoutProps) {
     sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
+    automation, automationTimeline, automationPending, automationError, controlAutomation,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
@@ -214,9 +215,10 @@ export function MobileLayout(props: LayoutProps) {
   }, [activeWorkflow, input, sendMessage]);
 
   useEffect(() => {
+    if (orgAgentIdentityLoading) return;
     const fallback = legacyRoleFallbackTab({ activeTab, personalAgentEnabled, isAdmin, isPlatformAdmin });
     if (fallback) setActiveTab(fallback);
-  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
+  }, [isAdmin, isPlatformAdmin, personalAgentEnabled, orgAgentIdentityLoading, activeTab, setActiveTab]);
 
   // iOS 键盘适配
   useEffect(() => {
@@ -407,7 +409,7 @@ export function MobileLayout(props: LayoutProps) {
               onLoadGroupSessions={loadGroupSessions}
               onPreviewTrashSession={(id) => { if (id) closeDrawer(); previewTrashSession(id); }}
               trashPreviewSessionId={trashPreviewSessionId}
-              personalAgentEnabled={personalAgentEnabled}
+              personalAgentEnabled={personalAgentEnabled || orgAgentIdentityLoading}
               renderCronManager={() => <Suspense fallback={SuspenseFallback}><CronManager /></Suspense>}
               renderTenantManager={() => <Suspense fallback={SuspenseFallback}><TenantManager /></Suspense>}
               renderFileBrowser={() => (
@@ -489,6 +491,11 @@ export function MobileLayout(props: LayoutProps) {
               onEditQueuedInterjection={editQueuedInterjection}
               onResendQueuedInterjection={resendQueuedInterjection}
               onDismissQueuedInterjection={dismissQueuedInterjection}
+              automation={automation}
+              automationTimeline={automationTimeline}
+              automationPending={automationPending}
+              automationError={automationError}
+              onAutomationControl={controlAutomation}
               onFileSelect={(event) => { void handleFileSelect(event); }}
               onAssetSelect={handleAssetSelect}
               onPaste={(event) => { void handlePaste(event); }}

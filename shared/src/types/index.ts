@@ -69,6 +69,13 @@ export type {
   RuntimeFailureKind,
   RuntimeRecoveryAction,
 } from "./runtimeFailure";
+export type {
+  SessionAutomationKind, SessionAutomationMode, SessionAutomationStatus, SessionAutomationPhase,
+  SessionAutomationBudget, SessionAutomationSpec, SessionAutomationSnapshot,
+  SessionAutomationControlAction, SessionAutomationCommandRequest, SessionAutomationControlRequest,
+  SessionAutomationCommandResponse, SessionAutomationListResponse, SessionAutomationApiErrorBody,
+  ScheduleWakeupInput, UpdateGoalInput,
+} from "./sessionAutomation";
 // Sandbox workload ownership is authored by the Server runtime.
 export type { SandboxWorkloadDescriptor } from "./sandboxWorkload";
 
@@ -300,6 +307,9 @@ export type {
 
 export type {
   SkillInfo,
+  SkillPresentationInfo,
+  SkillPresentationUpdate,
+  SkillPresentationUpdateResponse,
   PlatformSkillExposure,
   TenantSkillMemberExposure,
   PlatformSkillSettings,

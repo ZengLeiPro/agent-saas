@@ -74,12 +74,8 @@ import { assertSandboxReadAllowed, findDeniedPathMention } from './serverLocalSa
 const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
-
 export { MAX_FILE_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BYTES };
-
-export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous';
-export type ToolApprovalMode = 'never' | 'web';
-
+export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous'; export type ToolApprovalMode = 'never' | 'web';
 /**
  * Hand 部署位置维度。
  *
@@ -155,6 +151,8 @@ export interface ToolCallContext {
   env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
+  /** Host-derived immutable fence; present only on a matching session automation Run. */
+  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string; rootSessionId?:string; rootRunId?:string };
   /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
@@ -559,6 +557,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     };
   }
 }
+function toolCallTenantId(context: ToolCallContext): string | undefined { return context.workspace.tenantId ?? context.runtimeIsolationRequirement?.tenantId ?? context.channelContext.user?.tenantId ?? context.channelContext.sessionOwner?.tenantId; }
 
 function workspaceReadyStatusResponse(input: {
   status: 'ready' | 'provisioning' | 'failed' | 'unavailable';
@@ -1079,7 +1078,8 @@ class WorkspaceToolProvider implements ToolProvider {
     const sessionId = context.sessionId ?? context.workspace.sessionId;
     if (!sessionId) return { kind: 'none' };
     try {
-      const hands = await this.handStore.listBySession(sessionId);
+      const tenantId = toolCallTenantId(context); if (!tenantId) return { kind: 'blocked', message: 'RUNTIME_HAND_TENANT_MISSING' };
+      const hands = await this.handStore.listBySession(sessionId, tenantId);
       const decision = selectRuntimeHandRoute(hands, { runId: context.runId, executionTarget: context.workspace.executionTarget, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
       if (decision.kind === 'ready') return { kind: 'ready', handId: decision.handId };
       if (decision.kind === 'blocked') return decision;
@@ -1119,12 +1119,12 @@ class WorkspaceToolProvider implements ToolProvider {
         message: 'No session id is available, so no dedicated workspace runtime can be resolved.',
       });
     }
-
+    const tenantId = toolCallTenantId(context); if (!tenantId) return workspaceReadyStatusResponse({ status: 'unavailable', executionTarget: context.workspace.executionTarget, message: 'Workspace tenant boundary is unavailable.' });
     const deadline = Date.now() + Math.max(0, timeoutMs);
     let lastHands: import('../runtime/handStore.js').HandRecord[] = [];
     do {
       try {
-        lastHands = await this.handStore.listBySession(sessionId);
+        lastHands = await this.handStore.listBySession(sessionId, tenantId);
       } catch (err) {
         return workspaceReadyStatusResponse({
           status: 'unavailable',
@@ -1181,7 +1181,6 @@ class WorkspaceToolProvider implements ToolProvider {
       message: 'Current workspace runtime is still preparing.',
     });
   }
-
   private async transportFor(context: ToolCallContext, handId?: string): Promise<{
     transport: ExecutionTransport;
     workspace?: WorkspaceRef;
@@ -1190,7 +1189,8 @@ class WorkspaceToolProvider implements ToolProvider {
       if (!this.handStore) {
         throw new Error(`handId routing requested but no HandStore is configured: ${handId}`);
       }
-      const hand = await this.handStore.get(handId);
+      const tenantId = toolCallTenantId(context); if (!tenantId) throw new Error('hand routing requires tenant boundary');
+      const hand = await this.handStore.get(handId, tenantId);
       if (!hand) {
         throw new Error(`hand not found: ${handId}`);
       }

@@ -31,21 +31,18 @@ import {
 } from './SystemErrorMessage';
 
 import { ImageLightbox } from './ImageLightbox';
+const AutomationTranscriptBadge = lazy(() => import('@/components/AutomationTranscriptBadge'));
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 import "katex/dist/katex.min.css";
-
 /** 判断是否为外部 URL 或 data URI */
 function isExternalSrc(src: string): boolean {
   return /^(https?:|data:|blob:)/i.test(src);
 }
-
 const VIDEO_EXT_RE = /\.(mp4|mov|webm|m4v|avi)$/i;
-
 /** 视频只在接近视口后挂载 src，避免切换长会话时为屏外视频重复拉 metadata。 */
 function LazyVideo({ src, className }: { src: string; className: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [shouldLoad, setShouldLoad] = useState(() => typeof IntersectionObserver === 'undefined');
-
   useEffect(() => {
     if (shouldLoad) return;
     const element = ref.current;
@@ -62,7 +59,6 @@ function LazyVideo({ src, className }: { src: string; className: string }) {
     observer.observe(element);
     return () => observer.disconnect();
   }, [shouldLoad]);
-
   return (
     <video
       ref={ref}
@@ -74,12 +70,10 @@ function LazyVideo({ src, className }: { src: string; className: string }) {
     />
   );
 }
-
 /** 工作区图片：异步解析路径，支持 lightbox 大图 */
 function AuthImage({ src, alt, owner }: { src: string; alt?: string; owner?: string }) {
   const [resolvedSrc, setResolvedSrc] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState(false);
-
   useEffect(() => {
     let cancelled = false;
     resolveImageSrc(src, owner)
@@ -821,6 +815,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "text") {
+    const automationMessage = message as unknown as { automation?: unknown; automationKind?: unknown };
     const voiceStripped = stripVoiceMarkers(message.content);
     // 流式渲染时抑制尾部未闭合的 [CITE] 半截标记（只裁尾部；FILE 保持现状）
     const displaySource = message.streaming ? stripPartialCiteMarker(voiceStripped) : voiceStripped;
@@ -832,6 +827,9 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div className="flex justify-start">
         <div className="group relative w-full min-w-0">
+          {Boolean(automationMessage.automation || automationMessage.automationKind) && (
+            <Suspense fallback={null}><AutomationTranscriptBadge message={message} /></Suspense>
+          )}
           {message.finalOutput ? (
             <div
               aria-hidden="true"

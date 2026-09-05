@@ -54,3 +54,5 @@ export {
   createSystemPromptsAdminRouter,
   type CreateSystemPromptsAdminRouterOptions,
 } from "./systemPromptsAdmin.js";
+
+export { createSessionAutomationsRouter, type SessionAutomationsRouterOptions } from "./sessionAutomations.js";

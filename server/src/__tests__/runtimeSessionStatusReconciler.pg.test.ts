@@ -28,7 +28,7 @@ describePg('runtime session status reconciliation PostgreSQL contract', () => {
       connectionTimeoutMillis: 5_000,
       max: 6,
     });
-    runStore = new PgRunStore({ pool, tablePrefix: prefix });
+    runStore = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     projectionStore = new PgSessionProjectionStore({ pool, tablePrefix: prefix });
     sessionLock = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'lease' });
     await runStore.init();

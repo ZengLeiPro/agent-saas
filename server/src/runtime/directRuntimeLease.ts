@@ -26,6 +26,8 @@ export class DirectRuntimeLeaseLostError extends Error {
 export async function acquireDirectRuntimeRunLease(input: {
   runStore: RunStore | undefined;
   runId: string;
+  tenantId?: string;
+  sessionId?: string;
   runtimeWorkerId?: string;
   logger?: { warn(message: string): void };
   onLeaseLost?: (error: DirectRuntimeLeaseLostError) => void;
@@ -39,7 +41,8 @@ export async function acquireDirectRuntimeRunLease(input: {
   const workerId = `direct-${process.pid}-${randomUUID()}`;
   let acquired: RunRecord | null;
   try {
-    acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS);
+    acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS, new Date(), undefined, undefined,
+      input.tenantId && input.sessionId ? { tenantId: input.tenantId, sessionId: input.sessionId } : undefined);
   } catch (err) {
     input.logger?.warn(`Direct runtime lease acquire failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
     throw err;

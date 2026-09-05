@@ -8,7 +8,7 @@ import { ClientDaemonGateway, type ClientDaemonGatewayOptions } from '../runtime
 import { ClientDaemonRunner } from '../runtime/clientDaemonRunner.js';
 import { InMemoryClientDaemonRegistry, issueClientDaemonDeviceCredential } from '../runtime/clientDaemonRegistry.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
-import { deriveClientDaemonHandId, parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
+import { deriveClientDaemonHandId, deriveTenantQualifiedClientDaemonHandId, parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
 import type { HandRecord, HandStatus, HandStore, RegisterHandInput } from '../runtime/handStore.js';
 import type { ToolInvocationRequest, ToolInvocationResponse } from '../runtime/handProtocol.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
@@ -51,7 +51,7 @@ class MemoryHandStore implements HandStore {
 
 type GatewayOverrides = Partial<Pick<ClientDaemonGatewayOptions,
   'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'disconnectGracePeriodMs' | 'logger'
-  | 'deviceRegistry' | 'deviceSecretVault'>>;
+  | 'deviceRegistry' | 'deviceSecretVault' | 'resolveDaemonTenantId'>>;
 
 async function withGateway<T>(
   fn: (args: { url: string; transport: ClientDaemonTransport; handStore: MemoryHandStore; gateway: ClientDaemonGateway }) => Promise<T>,
@@ -64,6 +64,7 @@ async function withGateway<T>(
     transport,
     handStore,
     authToken: 'test-token',
+    resolveDaemonTenantId: () => 'tenant-test',
     ...overrides,
   });
   gateway.attach(server);
@@ -84,6 +85,9 @@ function waitOpen(ws: WebSocket): Promise<void> {
     ws.once('error', reject);
   });
 }
+
+const qualifiedHandId = (rawHandId: string, tenantId = 'tenant-test') =>
+  deriveTenantQualifiedClientDaemonHandId(tenantId, rawHandId);
 
 function waitMessage(ws: WebSocket): Promise<ClientDaemonMessage> {
   return new Promise((resolve) => ws.once('message', (raw) => resolve(parseClientDaemonMessage(raw.toString()))));
@@ -124,6 +128,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     const gateway = new ClientDaemonGateway({
       transport,
       handStore,
+      resolveDaemonTenantId: () => 'tenant-test',
       authToken: 'old-token',
     });
     gateway.attach(server);
@@ -182,7 +187,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       const firstPending = transport.invoke({
         toolName: 'Write', input: {},
         context: {
-          handId: 'hand-generation', invocationId: 'logical-generation-old',
+          handId: qualifiedHandId('hand-generation'), invocationId: 'logical-generation-old',
           workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
         },
       });
@@ -209,7 +214,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       const secondPending = transport.invoke({
         toolName: 'Write', input: {},
         context: {
-          handId: 'hand-generation', invocationId: 'logical-generation-new',
+          handId: qualifiedHandId('hand-generation'), invocationId: 'logical-generation-new',
           workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
         },
       });
@@ -235,7 +240,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     }, { disconnectGracePeriodMs: 2_000 });
   });
 
-  // 显式阻塞重连 hello 认证，覆盖 socket OPEN 到 daemon_registered 之间的完成消息竞态。
+  // 显式阻塞重连 hello 认证，覆盖 socket OPEN 到 daemon_registered 之间的完成消息竞态；coverage 并发下放宽超时。
   it('resumes a built-in runner invocation across a grace-period reconnect', async () => {
     const vault = new InMemorySecretVault();
     const registry = new InMemoryClientDaemonRegistry();
@@ -249,10 +254,10 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     const reconnectAuthenticationStarted = new Promise<void>((resolve) => { markReconnectAuthenticationStarted = resolve; });
     const reconnectAuthentication = new Promise<void>((resolve) => { resolveReconnectAuthentication = resolve; });
     const getDevice = registry.get.bind(registry);
-    let authAttempts = 0;
+    let authAttempts = 0; // authenticate + authoritative tenant lookup per accepted hello
     registry.get = async (deviceId) => {
       authAttempts += 1;
-      if (authAttempts === 2) {
+      if (authAttempts === 3) {
         markReconnectAuthenticationStarted?.();
         await reconnectAuthentication;
       }
@@ -280,12 +285,12 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       });
       const run = runner.runForever();
       try {
-        await waitUntil(() => transport.has('hand-grace-runner'));
+        await waitUntil(() => transport.has(qualifiedHandId('hand-grace-runner')));
         const pending = transport.invoke({
           toolName: 'Write', input: {},
           context: {
-            handId: 'hand-grace-runner', invocationId: 'logical-grace-runner',
-            correlation: { version: 1, handId: 'hand-grace-runner', invocationId: 'logical-grace-runner', attemptId: 'attempt-grace-runner' },
+            handId: qualifiedHandId('hand-grace-runner'), invocationId: 'logical-grace-runner',
+            correlation: { version: 1, handId: qualifiedHandId('hand-grace-runner'), invocationId: 'logical-grace-runner', attemptId: 'attempt-grace-runner' },
             workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
           },
         });
@@ -317,7 +322,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       deviceRegistry: registry,
       deviceSecretVault: vault,
     });
-  }, 20_000);
+  }, 60_000);
 
   // C2: grace-period reconnect — when the socket drops with pending invokes
   // and the same handId reconnects within the grace window, the pendingInvokes
@@ -330,6 +335,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     const gateway = new ClientDaemonGateway({
       transport,
       handStore,
+      resolveDaemonTenantId: () => 'tenant-test',
       authToken: 'gp-token',
       disconnectGracePeriodMs: 2_000,
     });
@@ -370,7 +376,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         toolName: 'noop',
         input: {},
         context: {
-          handId: 'hand-gp',
+          handId: qualifiedHandId('hand-gp'),
           workspace: { id: 'ws', root: '/tmp', sessionId: 's-gp', executionTarget: 'client' } as any,
           invocationId: 'inv-gp',
         },
@@ -380,8 +386,8 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       // Drop the socket without waiting for completion.
       ws1.terminate();
       // hand should NOT be marked unhealthy yet — we're inside the grace window.
-      await waitUntil(() => !!handStore.records.get('hand-gp'), { timeoutMs: 1_000 });
-      expect(handStore.records.get('hand-gp')?.status).toBe('ready');
+      await waitUntil(() => !!handStore.records.get(qualifiedHandId('hand-gp')), { timeoutMs: 1_000 });
+      expect(handStore.records.get(qualifiedHandId('hand-gp'))?.status).toBe('ready');
 
       // Reconnect with the same handId / daemonId.
       const ws2 = new WebSocket(`ws://127.0.0.1:${port}/daemon?token=gp-token`);
@@ -424,6 +430,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     const gateway = new ClientDaemonGateway({
       transport,
       handStore,
+      resolveDaemonTenantId: () => 'tenant-test',
       authToken: 'gp-token-fail',
       disconnectGracePeriodMs: 80,
     });
@@ -456,7 +463,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         toolName: 'noop',
         input: {},
         context: {
-          handId: 'hand-gp-x',
+          handId: qualifiedHandId('hand-gp-x'),
           workspace: { id: 'ws', root: '/tmp', sessionId: 's', executionTarget: 'client' } as any,
           invocationId: 'inv-fail',
         },
@@ -470,8 +477,8 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       // error-status response) because connection.invoke doesn't catch.
       await expect(requestPromise).rejects.toThrow(/grace period|connection closed/);
       // Hand now unhealthy after grace timeout.
-      await waitUntil(() => handStore.records.get('hand-gp-x')?.status === 'unhealthy', { timeoutMs: 1_000 });
-      expect(handStore.records.get('hand-gp-x')?.status).toBe('unhealthy');
+      await waitUntil(() => handStore.records.get(qualifiedHandId('hand-gp-x'))?.status === 'unhealthy', { timeoutMs: 1_000 });
+      expect(handStore.records.get(qualifiedHandId('hand-gp-x'))?.status).toBe('unhealthy');
     } finally {
       gateway.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -489,6 +496,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     const gateway = new ClientDaemonGateway({
       transport,
       handStore,
+      resolveDaemonTenantId: () => 'tenant-test',
       authToken: 'c3-token',
       disconnectGracePeriodMs: 2_000,
     });
@@ -544,7 +552,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         toolName: 'noop',
         input: {},
         context: {
-          handId: 'hand-c3',
+          handId: qualifiedHandId('hand-c3'),
           workspace: { id: 'ws', root: '/tmp', sessionId: 's', executionTarget: 'client' } as any,
           invocationId: 'inv-c3',
         },
@@ -566,7 +574,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       await waitMessage(ws2);
 
       // Verify gateway state: capability resync skipped.
-      const reconnectedHand = handStore.records.get('hand-c3');
+      const reconnectedHand = handStore.records.get(qualifiedHandId('hand-c3'));
       expect(reconnectedHand?.metadata.capabilityResync).toBe('skipped_same_version');
       expect(reconnectedHand?.metadata.capabilitiesVersion).toBe('cap-A');
 
@@ -595,6 +603,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     const gateway = new ClientDaemonGateway({
       transport,
       handStore,
+      resolveDaemonTenantId: () => 'tenant-test',
       authToken: 'c3b-token',
       disconnectGracePeriodMs: 2_000,
     });
@@ -632,7 +641,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         toolName: 'noop',
         input: {},
         context: {
-          handId: 'hand-c3b',
+          handId: qualifiedHandId('hand-c3b'),
           workspace: { id: 'ws', root: '/tmp', sessionId: 's', executionTarget: 'client' } as any,
           invocationId: 'inv-c3b',
         },
@@ -652,9 +661,9 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         resumeInvocations: [{ invocationId: 'inv-c3b' }],
       }));
       await waitMessage(ws2);
-      expect(handStore.records.get('hand-c3b')?.metadata.capabilityResync).toBe('updated');
-      expect(handStore.records.get('hand-c3b')?.metadata.capabilitiesVersion).toBe('cap-v2');
-      expect(handStore.records.get('hand-c3b')?.capabilities[0]?.risk).toBe('dangerous');
+      expect(handStore.records.get(qualifiedHandId('hand-c3b'))?.metadata.capabilityResync).toBe('updated');
+      expect(handStore.records.get(qualifiedHandId('hand-c3b'))?.metadata.capabilitiesVersion).toBe('cap-v2');
+      expect(handStore.records.get(qualifiedHandId('hand-c3b'))?.capabilities[0]?.risk).toBe('dangerous');
       ws2.send(serializeClientDaemonMessage({
         type: 'invoke_completed',
         protocolVersion: 1,

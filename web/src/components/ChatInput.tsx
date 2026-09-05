@@ -1,10 +1,11 @@
-import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle, ChevronDown } from "lucide-react";
 
 import AttachmentControls from "@/components/AttachmentControls";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
+import type { SlashCommandDefinition } from "@/lib/slashCommandRegistry";
 import type { ModelList } from "@/types/models";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import {
@@ -19,7 +20,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type { SandboxProfile } from "@/types/sandboxProfile";
 
-interface ChatInputProps {
+export interface ChatInputProps {
   input: string;
   loading?: boolean;
   uploading: boolean;
@@ -51,6 +52,8 @@ interface ChatInputProps {
   topSlot?: React.ReactNode;
   attachedTopSlot?: React.ReactNode;
 }
+
+const SlashCommandMenu = lazy(() => import("@/components/SlashCommandMenu"));
 
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
@@ -106,6 +109,21 @@ export function ChatInput({
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [slashSelection, setSlashSelection] = useState(0);
+  const [slashCommands, setSlashCommands] = useState<readonly SlashCommandDefinition[]>([]);
+  useEffect(() => {
+    let current = true;
+    if (!/^\s*\/\S*$/.test(input)) {
+      setSlashCommands([]);
+      return () => { current = false; };
+    }
+    void import("@/lib/slashCommandRegistry").then(({ matchingSlashCommands }) => {
+      if (current) setSlashCommands(matchingSlashCommands(input));
+    });
+    return () => { current = false; };
+  }, [input]);
+  const slashMenuOpen = !isDisabled && slashCommands.length > 0;
+  const slashCompletionActive = /^\s*\/\S*$/.test(input);
   const isComposingRef = useRef(false);
   const currentSessionIdRef = useRef(sessionId);
   currentSessionIdRef.current = sessionId;
@@ -226,9 +244,34 @@ export function ChatInput({
     }, 0);
   };
 
+  const applySlashCommand = useCallback((index: number) => {
+    const command = slashCommands[index];
+    if (!command) return;
+    onInputChange(`${command.name} `);
+    setSlashSelection(0);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [onInputChange, slashCommands]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isDisabled) return;
     if (e.nativeEvent.isComposing || isComposingRef.current) return;
+    if (slashCompletionActive && slashMenuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      setSlashSelection((current) => e.key === "ArrowDown"
+        ? (current + 1) % slashCommands.length
+        : (current - 1 + slashCommands.length) % slashCommands.length);
+      return;
+    }
+    if (slashCompletionActive && slashMenuOpen && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+      e.preventDefault();
+      applySlashCommand(slashSelection);
+      return;
+    }
+    if (e.key === "Escape" && slashMenuOpen) {
+      e.preventDefault();
+      onInputChange('');
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       onSend();
@@ -416,6 +459,12 @@ export function ChatInput({
             className="relative z-10 flex flex-col rounded-[24px] border border-border bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
+            {slashMenuOpen && (
+              <Suspense fallback={null}>
+                <SlashCommandMenu commands={slashCommands} selection={slashSelection} onSelect={applySlashCommand} />
+              </Suspense>
+            )}
+
             {/* 文本输入区 / 录音指示器 */}
             {voiceRecorder.isRecording ? (
               <div className="flex items-center gap-3 px-4 py-3">

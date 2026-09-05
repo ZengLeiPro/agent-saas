@@ -97,6 +97,11 @@ describe("buildPlatformAdminUrl.formatSearch 各分支", () => {
 });
 
 describe("buildUrl 覆盖各 tab 分支", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.history.replaceState({}, "", "/");
+  });
+
   const cases: Array<[Parameters<typeof buildUrl>[0], string]> = [
     ["cron", "/cron"],
     ["tenants", "/tenants"],
@@ -120,6 +125,14 @@ describe("buildUrl 覆盖各 tab 分支", () => {
   it("chat tab：有 sessionId 编码，无则根路径", () => {
     expect(buildUrl("chat", "s/1")).toBe("/chat/s%2F1");
     expect(buildUrl("chat", null)).toBe("/");
+  });
+
+  it("从侧栏进入任务中心时使用上次停留的独立路径", () => {
+    window.localStorage.setItem("task-center:last-view", "board");
+    expect(buildUrl("cron", null)).toBe("/taskboard");
+
+    window.history.replaceState({}, "", "/cron");
+    expect(buildUrl("cron", null)).toBe("/cron");
   });
 });
 
@@ -150,8 +163,14 @@ describe("parseUrl 常规路径分支", () => {
     expect(parseUrl("/chat/")).toMatchObject({ tab: "chat", sessionId: null });
   });
 
-  it("cron 走一级页面，files 走 settings modal", () => {
+  it("任务中心两个独立路径都走一级页面，旧 query 深链无损收敛到任务看板路径", () => {
     expect(parseUrl("/cron")).toMatchObject({ tab: "cron", settingsSection: null });
+    expect(parseUrl("/taskboard")).toMatchObject({ tab: "cron", settingsSection: null });
+    expect(parseUrl("/cron", "?view=board")).toMatchObject({ tab: "cron", canonicalPath: "/taskboard" });
+    expect(parseUrl("/cron", "?view=board&boardId=board-1&taskId=task-1")).toMatchObject({
+      tab: "cron",
+      canonicalPath: "/taskboard?boardId=board-1&taskId=task-1",
+    });
     expect(parseUrl("/files")).toMatchObject({ tab: "chat", settingsSection: "files-storage", canonicalPath: "/settings/files-storage" });
   });
 
@@ -180,14 +199,16 @@ describe("parseUrl 常规路径分支", () => {
 describe("pushUrl / replaceUrl 写入 history（jsdom）", () => {
   const origin = "http://localhost";
   beforeEach(() => {
+    window.localStorage.clear();
     window.history.replaceState({}, "", "/");
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
     window.history.replaceState({}, "", "/");
   });
 
-  it("pushUrl 目标不同则 pushState", () => {
+  it("pushUrl 目标不同则按记忆路径 pushState", () => {
     const spy = vi.spyOn(window.history, "pushState");
     pushUrl("cron", null);
     expect(spy).toHaveBeenCalledWith({ __appHistoryIndex: 1 }, "", "/cron");

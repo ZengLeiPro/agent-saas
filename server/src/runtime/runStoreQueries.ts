@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
-import { markRunStatus, markRunStatusIfCurrent } from './runStatusCas.js';
-import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus } from './runStoreTypes.js';
+import { claimStateOnlyTerminalOutbox, markRunStatus, markRunStatusIfCurrent } from './runStatusCas.js';
+import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
+import { getActiveRunBySession, listRecoverableRuns } from './runStoreRecoveryQueries.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 import { recoverableRunHandoffSql, releaseRunLeaseForHandoff } from './runLeaseHandoff.js';
 import { UNREADY_BACKGROUND_TASK_SQL } from './background/backgroundTaskRuntime.js';
-import { listRecoverableRuns } from './runRecoveryQueries.js';
 
-/** SQL implementation for authoritative Runtime Run state. */
+/** SQL implementation for authoritative Runtime Run state; all steering joins preserve tenant/session identity. */
 export class PgRunStoreQueries {
   constructor(
     readonly pool: PgPool,
@@ -236,18 +236,32 @@ export class PgRunStoreQueries {
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : this.get(runId);
   }
 
+  async claimStateOnlyTerminalOutbox(
+    runId: string,
+    status: Extract<RunStatus, 'completed' | 'failed' | 'cancelled' | 'orphaned'>,
+    reason: string | undefined,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<RunRecord | null> {
+    return claimStateOnlyTerminalOutbox({
+      pool: this.pool,
+      runsTable: this.runsTable,
+      normalizeRunRecord,
+    }, runId, status, reason, metadataPatch);
+  }
+
   async markStatusIfCurrent(
     runId: string,
     expectedStatuses: readonly RunStatus[],
     status: RunStatus,
     reason?: string,
     metadataPatch: Record<string, unknown> = {},
+    leaseAuthority?: import('./runStoreTypes.js').RunLeaseAuthority,
   ): Promise<RunRecord | null> {
     return markRunStatusIfCurrent({
       pool: this.pool,
       runsTable: this.runsTable,
       normalizeRunRecord,
-    }, runId, expectedStatuses, status, reason, metadataPatch);
+    }, runId, expectedStatuses, status, reason, metadataPatch, leaseAuthority);
   }
 
   async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
@@ -312,57 +326,40 @@ export class PgRunStoreQueries {
     return result.rows.map(row => row.run_id);
   }
 
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     // 只有 message_submissions 中已提交的记录才是“已受理”。仅有 runs.idempotency_key
     // 的预创建/失败记录不能短路新的请求；管理员代操作也必须按认证 submitter 域查询。
     const userScope = userId ?? '__anonymous__';
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
       FROM ${this.messageSubmissionsTable} submission
-      JOIN ${this.runsTable} run ON run.run_id = submission.run_id
-      WHERE submission.user_scope = $1
-        AND submission.client_message_id = $2
+      JOIN ${this.runsTable} run
+        ON run.tenant_id = submission.tenant_id
+       AND run.run_id = submission.run_id
+      WHERE submission.tenant_id = $1
+        AND submission.tenant_user_scope = $2
+        AND submission.tenant_client_message_id = $3
       LIMIT 1
-    `, [userScope, idempotencyKey]);
+    `, [tenantId, userScope, idempotencyKey]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async findUniqueByIdempotencyKeyAcrossTenants(userId: string, idempotencyKey: string): Promise<RunRecord | null> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
-      FROM ${this.runsTable} run
-      WHERE run.session_id = $1
-        AND run.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
-            AND (
-              (
-                input.state = 'reserved'
-                AND target.status NOT IN ('completed','failed','cancelled','orphaned')
-              )
-              OR (
-                input.state = 'pending'
-                AND target.status IN ('pending','running','waiting_hand')
-                AND COALESCE(target.metadata->>'steeringInputWindow', 'open') = 'open'
-              )
-            )
-        )
-      ORDER BY
-        CASE run.status
-          WHEN 'running' THEN 0
-          WHEN 'waiting_approval' THEN 0
-          WHEN 'waiting_user' THEN 0
-          WHEN 'waiting_hand' THEN 0
-          ELSE 1
-        END,
-        run.updated_at DESC
-      LIMIT 1
-    `, [sessionId]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+      FROM ${this.messageSubmissionsTable} submission
+      JOIN ${this.runsTable} run
+        ON run.tenant_id = submission.tenant_id
+       AND run.run_id = submission.run_id
+      WHERE submission.tenant_user_scope = $1
+        AND submission.tenant_client_message_id = $2
+      ORDER BY submission.tenant_id
+      LIMIT 2
+    `, [userId, idempotencyKey]);
+    return result.rows.length === 1 ? normalizeRunRecord(result.rows[0]!.row_json) : null;
   }
+
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> { return getActiveRunBySession(this.pool, this.runsTable, this.steeringInputsTable, tenantId, sessionId); }
 
   async getActiveCounts(): Promise<ActiveRunCounts> {
     const result = await this.pool.query<{
@@ -383,8 +380,13 @@ export class PgRunStoreQueries {
         AND NOT EXISTS (
           SELECT 1
           FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
+          JOIN ${this.runsTable} target
+            ON target.tenant_id = input.tenant_id
+           AND target.session_id = input.session_id
+           AND target.run_id = input.target_run_id
+          WHERE input.tenant_id = run.tenant_id
+            AND input.session_id = run.session_id
+            AND input.source_run_id = run.run_id
             AND (
               (
                 input.state = 'reserved'
@@ -464,9 +466,13 @@ export class PgRunStoreQueries {
    * acquireLease keeps them unclaimable until their durable setup is complete.
    */
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
-    return await listRecoverableRuns({ pool: this.pool, runsTable: this.runsTable,
-      steeringInputsTable: this.steeringInputsTable,
-      toolInvocationsTable: this.toolInvocationsTable, now });
+    return await listRecoverableRuns(
+      this.pool,
+      this.runsTable,
+      this.steeringInputsTable,
+      this.toolInvocationsTable,
+      now,
+    );
   }
 
   async listStaleWaitingApproval(cutoff: Date, limit = 50): Promise<RunRecord[]> {
@@ -513,6 +519,8 @@ export class PgRunStoreQueries {
     now = new Date(),
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
+    identity?: RunLeaseIdentity,
+    leaseToken?: string,
   ): Promise<RunRecord | null> {
     if (maxConcurrentRuns !== undefined && (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1)) {
       throw new Error('maxConcurrentRuns must be a positive integer');
@@ -592,17 +600,21 @@ export class PgRunStoreQueries {
         }
       }
 
-      const candidate = await client.query<{ session_id: string }>(`
-        SELECT session_id FROM ${this.runsTable} WHERE run_id = $1
-      `, [runId]);
+      const candidate = await client.query<{ tenant_id: string; session_id: string }>(`
+        SELECT tenant_id, session_id FROM ${this.runsTable}
+        WHERE run_id = $1
+          AND ($2::text IS NULL OR tenant_id = $2)
+          AND ($3::text IS NULL OR session_id = $3)
+      `, [runId, identity?.tenantId ?? null, identity?.sessionId ?? null]);
+      const tenantId = candidate.rows[0]?.tenant_id;
       const sessionId = candidate.rows[0]?.session_id;
-      if (!sessionId) {
+      if (!tenantId || !sessionId) {
         await client.query('ROLLBACK');
         return null;
       }
       // 数据库级会话闸门：跨进程原子检查“没有其他 executing run”并取得本 run lease。
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `${this.runsTable}:session-dispatch:${sessionId}`,
+        `${this.runsTable}:session-dispatch:${tenantId}:${sessionId}`,
       ]);
       const result = await client.query<{ row_json: RunRecord }>(`
         UPDATE ${this.runsTable} candidate
@@ -616,19 +628,16 @@ export class PgRunStoreQueries {
             liveness_version = COALESCE(candidate.liveness_version, 0) + 1,
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
-            metadata = CASE
-              WHEN $5::boolean THEN jsonb_set(
-                candidate.metadata - 'drainHandoffReady',
-                '{subagentCapacityInherited}', 'true'::jsonb, true
-              )
+            metadata = (CASE
+              WHEN $5::boolean THEN jsonb_set(candidate.metadata - 'drainHandoffReady', '{subagentCapacityInherited}', 'true'::jsonb, true)
               ELSE candidate.metadata - 'subagentCapacityInherited' - 'drainHandoffReady'
-            END
+            END) || CASE WHEN $6::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('runLeaseToken',$6::text) END
         WHERE candidate.run_id = $1
           AND (
             candidate.status = 'pending'
             OR (
               candidate.status = 'running'
-              AND candidate.liveness_version IS NULL
+              AND (candidate.liveness_version IS NULL OR candidate.metadata->>'backgroundTask' = 'true')
               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
             )
             OR ${recoverableRunHandoffSql('candidate', this.toolInvocationsTable)}
@@ -643,7 +652,8 @@ export class PgRunStoreQueries {
             OR NOT EXISTS (
               SELECT 1
               FROM ${this.runsTable} predecessor
-              WHERE predecessor.session_id = candidate.session_id
+              WHERE predecessor.tenant_id = candidate.tenant_id
+                AND predecessor.session_id = candidate.session_id
                 AND predecessor.status = 'pending'
                 AND predecessor.run_id <> candidate.run_id
                 AND predecessor.enqueue_seq < candidate.enqueue_seq
@@ -652,15 +662,21 @@ export class PgRunStoreQueries {
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.runsTable} active
-            WHERE active.session_id = candidate.session_id
+            WHERE active.tenant_id = candidate.tenant_id
+              AND active.session_id = candidate.session_id
               AND active.run_id <> candidate.run_id
               AND active.status IN ('running','waiting_hand')
           )
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.steeringInputsTable} input
-            JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-            WHERE input.source_run_id = candidate.run_id
+            JOIN ${this.runsTable} target
+              ON target.tenant_id = input.tenant_id
+             AND target.session_id = input.session_id
+             AND target.run_id = input.target_run_id
+            WHERE input.tenant_id = candidate.tenant_id
+              AND input.session_id = candidate.session_id
+              AND input.source_run_id = candidate.run_id
               AND (
                 (
                   input.state = 'reserved'
@@ -674,7 +690,7 @@ export class PgRunStoreQueries {
               )
           )
         RETURNING row_to_json(candidate.*) AS row_json
-      `, [runId, workerId, leaseExpiresAt, nowIso, inheritsParentCapacity]);
+      `, [runId, workerId, leaseExpiresAt, nowIso, inheritsParentCapacity, leaseToken ?? null]);
       await client.query('COMMIT');
       return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
     } catch (err) {
@@ -691,8 +707,9 @@ export class PgRunStoreQueries {
     leaseMs: number,
     now = new Date(),
     source: RunHeartbeatSource = 'worker',
+    leaseToken?: string,
   ): Promise<RunRecord | null> {
-    return renewRunLease(this, runId, workerId, leaseMs, now, source);
+    return renewRunLease(this, runId, workerId, leaseMs, now, source, leaseToken);
   }
 
   async releaseLeaseForHandoff(
@@ -851,10 +868,15 @@ export class PgRunStoreQueries {
    * - lastResponseId/lastResponseExpireAt/actualModelSeen：传 undefined 保留原值，传 null 清空，传字符串覆盖
    * - cumulativeInputTokensDelta：累加到 cumulative_input_tokens（绝不允许直接覆盖避免并发丢失）
    */
-  async updateResponseSessionState(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
-    const sets: string[] = ['updated_at = $2'];
-    const params: unknown[] = [runId, new Date().toISOString()];
-    let nextIdx = 3;
+  async updateResponseSessionState(
+    runId: string,
+    tenantId: string,
+    sessionId: string,
+    patch: ResponseSessionStatePatch,
+  ): Promise<RunRecord | null> {
+    const sets: string[] = ['updated_at = $4'];
+    const params: unknown[] = [runId, tenantId, sessionId, new Date().toISOString()];
+    let nextIdx = 5;
     if (patch.lastResponseId !== undefined) {
       sets.push(`last_response_id = $${nextIdx}`);
       params.push(patch.lastResponseId);
@@ -886,11 +908,17 @@ export class PgRunStoreQueries {
       nextIdx++;
     }
     // 只有 updated_at 没东西改，跳过
-    if (sets.length === 1) return this.get(runId);
+    if (sets.length === 1) {
+      const current = await this.pool.query<{ row_json: RunRecord }>(`
+        SELECT row_to_json(run.*) AS row_json FROM ${this.runsTable} run
+        WHERE run_id = $1 AND tenant_id = $2 AND session_id = $3
+      `, [runId, tenantId, sessionId]);
+      return current.rows[0] ? normalizeRunRecord(current.rows[0].row_json) : null;
+    }
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       UPDATE ${this.runsTable}
       SET ${sets.join(', ')}
-      WHERE run_id = $1
+      WHERE run_id = $1 AND tenant_id = $2 AND session_id = $3
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `, params);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
@@ -900,6 +928,7 @@ export class PgRunStoreQueries {
    * RFC v1 P0.4：按 sessionId 查最近一条有 last_response_id 且未过期的 run。
    */
   async findLatestResponseSessionStateBySession(
+    tenantId: string,
     sessionId: string,
     now: Date = new Date(),
   ): Promise<LatestResponseSessionState | null> {
@@ -914,12 +943,13 @@ export class PgRunStoreQueries {
     }>(`
       SELECT run_id, last_response_id, last_response_expire_at, actual_model_seen, last_response_model, last_response_profile_digest, cumulative_input_tokens
       FROM ${this.runsTable}
-      WHERE session_id = $1
+      WHERE tenant_id = $1
+        AND session_id = $2
         AND last_response_id IS NOT NULL
-        AND (last_response_expire_at IS NULL OR last_response_expire_at > $2::timestamptz)
+        AND (last_response_expire_at IS NULL OR last_response_expire_at > $3::timestamptz)
       ORDER BY updated_at DESC
       LIMIT 1
-    `, [sessionId, now.toISOString()]);
+    `, [tenantId, sessionId, now.toISOString()]);
     const row = result.rows[0];
     if (!row) return null;
     const cumulative = typeof row.cumulative_input_tokens === 'string'
@@ -957,12 +987,12 @@ export class PgRunStoreQueries {
     return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
   }
 
-  async clearResponseSessionStateBySession(sessionId: string): Promise<number> {
+  async clearResponseSessionStateBySession(tenantId: string, sessionId: string): Promise<number> {
     const result = await this.pool.query(`
       UPDATE ${this.runsTable}
       SET last_response_id = NULL, last_response_profile_digest = NULL
-      WHERE session_id = $1 AND last_response_id IS NOT NULL
-    `, [sessionId]);
+      WHERE tenant_id = $1 AND session_id = $2 AND last_response_id IS NOT NULL
+    `, [tenantId, sessionId]);
     return result.rowCount ?? 0;
   }
 

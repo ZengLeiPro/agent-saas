@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/ky-app-directory/v1.json",
+  "$comment": "附录 L：组织目录快照与变更流。根 schema 不约束整体，按 $defs 子 schema 分别校验（snapshot / changes / event / error410）。",
+  "$defs": {
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["userId", "displayName", "status", "isTenantAdmin", "groupIds"],
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string", "maxLength": 40 },
+        "employeeNo": { "type": "string", "maxLength": 32 },
+        "status": { "enum": ["active", "disabled"] },
+        "isTenantAdmin": { "type": "boolean" },
+        "groupIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["groupId", "displayName", "status"],
+      "properties": {
+        "groupId": { "type": "string" },
+        "displayName": { "type": "string", "maxLength": 40 },
+        "parentGroupId": { "type": ["string", "null"] },
+        "status": { "enum": ["active", "disabled"] }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshotSeq", "users", "groups"],
+      "properties": {
+        "snapshotSeq": { "type": "integer", "minimum": 0 },
+        "pageToken": { "type": "string" },
+        "users": { "type": "array", "items": { "$ref": "#/$defs/user" } },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["seq", "eventId", "type"],
+      "properties": {
+        "seq": { "type": "integer", "minimum": 1 },
+        "eventId": { "type": "string", "maxLength": 64 },
+        "type": { "enum": ["user.upsert", "user.remove", "group.upsert", "group.remove"] }
+      },
+      "oneOf": [
+        {
+          "properties": { "type": { "const": "user.upsert" }, "user": { "$ref": "#/$defs/user" } },
+          "required": ["user"]
+        },
+        {
+          "properties": { "type": { "const": "user.remove" }, "userId": { "type": "string" } },
+          "required": ["userId"]
+        },
+        {
+          "properties": {
+            "type": { "const": "group.upsert" },
+            "group": { "$ref": "#/$defs/group" }
+          },
+          "required": ["group"]
+        },
+        {
+          "properties": { "type": { "const": "group.remove" }, "groupId": { "type": "string" } },
+          "required": ["groupId"]
+        }
+      ]
+    },
+    "changes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events", "nextSeq", "hasMore"],
+      "properties": {
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+        "nextSeq": { "type": "integer", "minimum": 0 },
+        "hasMore": { "type": "boolean" }
+      }
+    },
+    "error410": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": { "enum": ["snapshot_expired", "cursor_expired"] },
+        "requestId": { "type": "string" }
+      }
+    }
+  }
+}

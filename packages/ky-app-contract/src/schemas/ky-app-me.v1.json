@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/ky-app-me/v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "user", "landing", "menus", "capabilities", "permVersion"],
+  "properties": {
+    "contractVersion": { "const": 1 },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "roles", "isTenantAdmin"],
+      "properties": {
+        "id": { "type": "string" },
+        "displayName": { "type": "string", "maxLength": 40 },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "isTenantAdmin": { "type": "boolean" }
+      }
+    },
+    "landing": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/path" }] },
+    "menus": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/menu" } },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enabled"],
+        "properties": { "id": { "type": "string" }, "enabled": { "type": "boolean" } }
+      }
+    },
+    "permVersion": { "type": "string", "maxLength": 64 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "menus": { "minItems": 1 } } },
+      "then": { "properties": { "landing": { "$ref": "#/$defs/path" } } }
+    },
+    {
+      "if": { "properties": { "menus": { "maxItems": 0 } } },
+      "then": { "properties": { "landing": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "path": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^/(?![/\\\\])(?!.*(?://|\\.\\.|%2[fFeE]|\\\\))[^\\s]*$"
+    },
+    "menu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "path"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9_.-]{1,64}$" },
+        "label": { "type": "string", "maxLength": 20 },
+        "icon": { "type": "string", "maxLength": 40 },
+        "path": { "$ref": "#/$defs/path" },
+        "badge": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "count": { "type": "integer", "minimum": 0 } }
+        },
+        "children": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/menu" } }
+      }
+    }
+  }
+}

@@ -25,6 +25,15 @@ function fixture({ existingLockDirectory = false, wrongDigest = false } = {}) {
   const locks = join(root, 'locks');
   const remote = join(root, 'deployed');
   mkdirSync(source);
+  mkdirSync(join(source, 'artifacts'));
+  writeFileSync(
+    join(source, 'manifest.json'),
+    JSON.stringify({ components: { api: { action: 'keep' }, acs: { action: 'keep' } } }),
+  );
+  writeFileSync(
+    join(source, 'reuse-promotion-artifacts.mjs'),
+    readFileSync(new URL('./reuse-promotion-artifacts.mjs', import.meta.url)),
+  );
   mkdirSync(bin);
   writeFileSync(join(source, 'deploy-production-release.sh'), '#!/bin/bash\nexit 0\n');
   writeFileSync(join(bin, 'ssh'), '#!/bin/bash\nexec bash -c "${@: -1}"\n', { mode: 0o755 });
@@ -40,6 +49,7 @@ function fixture({ existingLockDirectory = false, wrongDigest = false } = {}) {
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
+    PRODUCTION_ALREADY_TARGET: 'false',
     ECS_USER: 'root',
     ECS_HOST: 'isolated-test',
     remote,

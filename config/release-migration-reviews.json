@@ -781,7 +781,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
         },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
@@ -839,7 +839,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
         },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
@@ -897,7 +897,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
         },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
@@ -915,9 +915,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新增独立APNs设备与投递表及索引；init仅幂等建表/建索引和锁，新旧版本不共用这些新表。真实PG并发/重复init及旧反馈数据保留通过。"
+          "reason": "新增独立APNs设备与投递表及索引；init仅幂等建表/建索引和锁，新旧版本不共用这些新表。真实PG并发/重复init及旧反馈数据保留通过；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -939,6 +939,13 @@
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
           "classification": "no-schema-change",
           "reason": "init两端结构完全相同；只扩展既有verdict读写，真实PG旧写入/新写入/旧版重启及列结构对比通过。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -953,6 +960,14 @@
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
           "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     }

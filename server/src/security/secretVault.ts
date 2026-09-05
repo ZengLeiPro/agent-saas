@@ -588,13 +588,17 @@ export class HttpSecretVault implements SecretVault {
   /** metadata-only 远端读取；version 前进会失效 plaintext cache，倒退则 fail closed。 */
   async inspectRef(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null> {
     const id = refId(ref);
-    const known = typeof ref === 'string' ? this.refs.get(ref) : ref;
+    const remembered = this.refs.get(id);
+    const known = remembered ?? (typeof ref === 'string' ? undefined : ref);
     if (known) assertMetadataInspectionAllowed(known, caller);
     else if (!hasConfigIdentityMetadataScope(caller)) {
       this.assertRemoteOperation(ref, caller, 'read');
     }
     const cached = this.readRefMetadata(id);
-    if (cached) return cached;
+    if (cached) {
+      assertMetadataInspectionAllowed(cached, caller);
+      return cached;
+    }
     const invalidationToken = this.refInvalidationTokens.get(id);
     const response = await this.post<unknown | null>('/secrets/inspect', { ref: id, caller });
     this.assertRequestNotInvalidated(id, invalidationToken);
@@ -610,19 +614,23 @@ export class HttpSecretVault implements SecretVault {
     const id = refId(ref);
     const known = typeof ref === 'string' ? this.refs.get(id) : ref;
     this.assertRemoteOperation(ref, caller, 'rotate');
-    const updated = sanitizeRemoteRef(await this.post<unknown>(`/secrets/${encodeURIComponent(id)}/rotate`, {
-      value,
-      caller,
-      ...(known?.version !== undefined ? { expectedVersion: known.version } : {}),
-    }));
+    let response: unknown;
+    try {
+      response = await this.post<unknown>(`/secrets/${encodeURIComponent(id)}/rotate`, {
+        value,
+        caller,
+        ...(known?.version !== undefined ? { expectedVersion: known.version } : {}),
+      });
+    } finally {
+      // 分布式写失败具有歧义：远端可能已提交，任何结束都必须撤销旧本地证据。
+      this.invalidate(id);
+    }
+    const updated = sanitizeRemoteRef(response);
     if (updated.id !== id) throw new Error('HttpSecretVault rotate response ref id mismatch');
     assertAllowed(updated, caller, 'rotate');
     if (known?.version !== undefined && (updated.version ?? 0) <= known.version) {
-      // 远端可能已经改变 secret；即使响应违反版本契约，也必须清除本地 plaintext/metadata cache。
-      this.invalidate(id);
       throw new Error('HttpSecretVault rotate response ref version must advance');
     }
-    this.invalidate(id);
     this.rememberRef(updated);
     return updated;
   }
@@ -630,8 +638,12 @@ export class HttpSecretVault implements SecretVault {
   async revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void> {
     const id = refId(ref);
     this.assertRemoteOperation(ref, caller, 'revoke');
-    await this.post(`/secrets/${encodeURIComponent(id)}/revoke`, { caller });
-    this.invalidate(id);
+    try {
+      await this.post(`/secrets/${encodeURIComponent(id)}/revoke`, { caller });
+    } finally {
+      // 超时/断连/5xx 不能证明远端未撤销，后续读取必须重新校验。
+      this.invalidate(id);
+    }
   }
 
   /**

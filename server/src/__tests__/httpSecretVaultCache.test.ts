@@ -9,6 +9,11 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function requestPath(input: string | URL | Request): string {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  return new URL(url).pathname;
+}
+
 function makeFetch(responder: (path: string, body: any) => unknown) {
   return vi.fn(async (url: string | URL, init?: RequestInit) => {
     const u = typeof url === 'string' ? url : url.toString();
@@ -271,6 +276,155 @@ describe('HttpSecretVault cache (A3)', () => {
     await expect(pendingResolve).rejects.toThrow('response was invalidated while request was in flight');
     await expect(vault.getSecret('ref-a', caller)).resolves.toBe('new');
     expect(resolveCount).toBe(2);
+  });
+
+  it('invalidates plaintext and metadata when rotate commits remotely but returns HTTP 500', async () => {
+    let value = 'old';
+    let version = 1;
+    let resolveCount = 0;
+    let inspectCount = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const path = requestPath(input);
+      if (path === '/secrets/resolve') {
+        resolveCount += 1;
+        return jsonResponse({ value, ref: { ...remoteRef('ref-a'), version } });
+      }
+      if (path === '/secrets/inspect') {
+        inspectCount += 1;
+        return jsonResponse({ ...remoteRef('ref-a'), version });
+      }
+      if (path === '/secrets/ref-a/rotate') {
+        value = 'new';
+        version = 2;
+        return jsonResponse({ error: 'response lost after commit' }, 500);
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local', authToken: 'test-token-xyz', fetchImpl,
+      cacheTtlMs: 60_000, metadataCacheTtlMs: 60_000,
+    });
+
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('old');
+    await expect(vault.rotateSecret('ref-a', 'new', caller)).rejects.toThrow('HTTP 500');
+    await expect(vault.inspectRef('ref-a', caller)).resolves.toMatchObject({ version: 2 });
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('new');
+    expect({ resolveCount, inspectCount }).toEqual({ resolveCount: 2, inspectCount: 1 });
+  });
+
+  it('invalidates caches before validating a malformed rotate response', async () => {
+    let value = 'old';
+    let version = 1;
+    let resolveCount = 0;
+    let inspectCount = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const path = requestPath(input);
+      if (path === '/secrets/resolve') {
+        resolveCount += 1;
+        return jsonResponse({ value, ref: { ...remoteRef('ref-a'), version } });
+      }
+      if (path === '/secrets/inspect') {
+        inspectCount += 1;
+        return jsonResponse({ ...remoteRef('ref-a'), version });
+      }
+      if (path === '/secrets/ref-a/rotate') {
+        value = 'new';
+        version = 2;
+        return jsonResponse({ id: 'ref-a' });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local', authToken: 'test-token-xyz', fetchImpl,
+      cacheTtlMs: 60_000, metadataCacheTtlMs: 60_000,
+    });
+
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('old');
+    await expect(vault.rotateSecret('ref-a', 'new', caller)).rejects.toThrow(/malformed/);
+    await expect(vault.inspectRef('ref-a', caller)).resolves.toMatchObject({ version: 2 });
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('new');
+    expect({ resolveCount, inspectCount }).toEqual({ resolveCount: 2, inspectCount: 1 });
+  });
+
+  it('invalidates caches when revoke commits remotely but its response times out', async () => {
+    let revoked = false;
+    let resolveCount = 0;
+    let inspectCount = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input, init) => {
+      const path = requestPath(input);
+      if (path === '/secrets/resolve') {
+        resolveCount += 1;
+        if (revoked) return jsonResponse({ error: 'revoked' }, 410);
+        return jsonResponse({ value: 'old', ref: remoteRef('ref-a') });
+      }
+      if (path === '/secrets/inspect') {
+        inspectCount += 1;
+        return jsonResponse({
+          ...remoteRef('ref-a'), version: 2,
+          revokedAt: '2026-09-05T00:00:00.000Z',
+        });
+      }
+      if (path === '/secrets/ref-a/revoke') {
+        revoked = true;
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local', authToken: 'test-token-xyz', fetchImpl,
+      requestTimeoutMs: 10, cacheTtlMs: 60_000, metadataCacheTtlMs: 60_000,
+    });
+
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('old');
+    await expect(vault.revokeSecret('ref-a', caller)).rejects.toMatchObject({ name: 'TimeoutError' });
+    await expect(vault.inspectRef('ref-a', caller)).resolves.toMatchObject({ version: 2 });
+    await expect(vault.getSecret('ref-a', caller)).rejects.toThrow('HTTP 410');
+    expect({ resolveCount, inspectCount }).toEqual({ resolveCount: 2, inspectCount: 1 });
+  });
+
+  it('authorizes a metadata cache hit against the actual tenant-owned ref', async () => {
+    const actual = {
+      ...remoteRef('shared-id', 'tenant:tenant-a'),
+      metadata: { probe: 'alice-only' },
+    };
+    const fetchImpl = makeFetch(() => actual);
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local', authToken: 'test-token-xyz', fetchImpl,
+      metadataCacheTtlMs: 60_000,
+    });
+    const tenantA: VaultCaller = {
+      actor: 'mcp_proxy', userId: 'alice', tenantId: 'tenant-a', scopes: ['secret:mcp:read'],
+    };
+    const tenantB: VaultCaller = {
+      actor: 'mcp_proxy', userId: 'bob', tenantId: 'tenant-b', scopes: ['secret:mcp:read'],
+    };
+    const forgedForTenantB = { ...actual, ownerId: 'tenant:tenant-b', metadata: {} };
+
+    await expect(vault.inspectRef('shared-id', tenantA)).resolves.toMatchObject(actual);
+    await expect(vault.inspectRef(forgedForTenantB, tenantB)).rejects.toThrow(/tenant owner mismatch/);
+    await expect(vault.inspectRef('shared-id', {
+      actor: 'system', userId: '__system__', scopes: ['secret:metadata:read'],
+    })).resolves.toMatchObject(actual);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('does not trust a forged owner or kind when a user-owned metadata ref is cached', async () => {
+    const actual = { ...remoteRef('shared-id', 'alice'), metadata: { probe: 'alice-only' } };
+    const fetchImpl = makeFetch(() => actual);
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local', authToken: 'test-token-xyz', fetchImpl,
+      metadataCacheTtlMs: 60_000,
+    });
+    const forgedForBob = { ...actual, ownerId: 'bob', kind: 'connector', metadata: {} };
+    const bob: VaultCaller = {
+      actor: 'connector_proxy', userId: 'bob', scopes: ['secret:connector:read'],
+    };
+
+    await expect(vault.inspectRef('shared-id', caller)).resolves.toMatchObject(actual);
+    await expect(vault.inspectRef(forgedForBob, bob)).rejects.toThrow(/missing secret:mcp:read/);
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('evicts least-recently-used entries when maxCacheEntries is reached', async () => {

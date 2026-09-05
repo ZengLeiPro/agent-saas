@@ -18,6 +18,9 @@ import {
   workOrder,
 } from './dwsOrgGroupMessageRouterFixtures.js';
 
+/** 注入给路由器的固定时钟：夹具时间 now 之后 60 秒，保证幂等窗口判定与真实时间无关。 */
+const injectedNowMs = Date.parse(now) + 60_000;
+
 function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
   const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
   const messageStore = {
@@ -41,11 +44,11 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
         responseText: text,
       })),
     // 真实 store 会把 reply_started_at 写成「当前时间」，路由器据此对齐 DWS 23 小时幂等窗口。
-    // 这里必须同样返回实时时间戳，否则夹具里的固定时间会随真实时钟推移而穿越窗口。
+    // 这里返回相对注入时钟的固定时间戳，测试因此完全确定，不受真实时间推移影响。
     markReplyAttemptStarted: vi.fn().mockImplementation(async () => ({
       ...claimed,
       state: 'reply_pending',
-      replyStartedAt: new Date().toISOString(),
+      replyStartedAt: now,
     })),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
     fail: vi.fn().mockResolvedValue(undefined),
@@ -305,6 +308,7 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       : {}),
     isOrgAgentRuntimeV2Ready: () => true,
     logger,
+    now: () => injectedNowMs,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
     ...(options.frontReplyDeadlineMs ? { frontReplyDeadlineMs: options.frontReplyDeadlineMs } : {}),

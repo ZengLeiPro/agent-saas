@@ -39,11 +39,27 @@ const MAX_ACTIVE_GENERATIONS = 32;
 export class AuthEpochAuthority {
   private state: PersistedAuthEpochState = { version: 1, users: {} };
 
+  /**
+   * 构造期之后追加的订阅者。构造期的 `audit` 回调只有一个位置，
+   * 而 WP2a 的 SAT 停签登记表（`kyapp/sat/suspension.ts`）必须在运行时装配阶段挂上去，
+   * 因此这里提供可叠加的订阅通道，与构造期回调并存、互不影响。
+   */
+  private readonly auditSubscribers: Array<(event: AuthEpochAuditEvent) => void> = [];
+
   constructor(
     private readonly filePath?: string,
     private readonly audit?: (event: AuthEpochAuditEvent) => void,
   ) {
     this.load();
+  }
+
+  /** 追加一个 audit 订阅者；返回取消订阅的函数。订阅者抛错不影响主流程。 */
+  onAudit(listener: (event: AuthEpochAuditEvent) => void): () => void {
+    this.auditSubscribers.push(listener);
+    return () => {
+      const index = this.auditSubscribers.indexOf(listener);
+      if (index >= 0) this.auditSubscribers.splice(index, 1);
+    };
   }
 
   /** 新登录：分配新 generation 并保留其他仍有效的登录，不再驱逐同一用户的其他会话。 */
@@ -139,7 +155,17 @@ export class AuthEpochAuthority {
     const at = new Date().toISOString();
     this.state.users[userId] = { ...record, updatedAt: at };
     this.persist();
-    this.audit?.({ event, userId, authEpoch: record.authEpoch, generation: auditGeneration, reason: record.reason, at });
+    const payload: AuthEpochAuditEvent = {
+      event, userId, authEpoch: record.authEpoch, generation: auditGeneration, reason: record.reason, at,
+    };
+    this.audit?.(payload);
+    for (const listener of this.auditSubscribers) {
+      try {
+        listener(payload);
+      } catch {
+        // 订阅者是旁路观察者，异常不得影响 epoch 写入。
+      }
+    }
   }
 
   private load(): void {

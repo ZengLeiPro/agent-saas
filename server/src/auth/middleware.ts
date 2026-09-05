@@ -10,52 +10,9 @@ import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getEffectivePlatformCapabilities } from "./platformGovernance.js";
 import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 import type { AuthEpochAuthority } from './authEpochAuthority.js';
+import { isPublicRoute } from './publicRoutes.js';
 
 export { isPlatformAdmin } from "./types.js";
-
-// 中间件通过 app.use('/api', ...) 挂载，req.path 不含 /api 前缀。
-const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
-  { method: "POST", path: "/auth/login" },
-  { method: "POST", path: "/auth/sms/send-code" },
-  { method: "POST", path: "/auth/sms/login" },
-  // M30-01 logout verifies bearer inside the router so replay remains idempotent after fencing.
-  { method: 'POST', path: '/auth/logout' },
-  // 自助注册试用（官网联动）：status/send-code/register 均免登录；
-  // enabled 开关与频控在 routes/signup.ts 内收口
-  { path: /^\/signup\// },
-  { path: "/health" },
-  { path: "/healthz" },
-  { path: "/healthz/drain" },
-  // 蓝绿部署探针（2026-07-15）：live=进程存活，ready=可接流量（部署门禁在
-  // 新色端口上等它 200 再切流）。与 /healthz 同口径公开，只暴露 warmup 进度。
-  { path: "/healthz/live" },
-  { path: "/healthz/ready" },
-  { path: "/config" },
-  { method: "POST", path: "/internal/acs-alerts" },
-  { method: "GET", path: "/app/version" },
-  { path: /^\/dingtalk\/webhook\// },
-  { method: "GET", path: /^\/auth\/avatar\// },
-  { method: "GET", path: /^\/agents\/avatar\// },
-  // 企业专家图片头像：<img> 加载不带鉴权头，与 agents/avatar 同口径公开（204 防枚举在路由内）
-  { method: "GET", path: /^\/org-agents\/avatar\// },
-  { method: "GET", path: "/mcp/oauth/callback" },
-  { method: "GET", path: "/connectors/oauth/callback" },
-  { method: "GET", path: "/mcp/oauth/client-metadata" },
-  { method: "GET", path: /^\/artifacts\/[^/]+\/content$/ },
-  { method: "GET", path: /^\/share\/artifacts\/[^/]+$/ },
-  { method: "GET", path: /^\/share\/artifacts\/[^/]+\/content$/ },
-  { method: "HEAD", path: /^\/share\/artifacts\/[^/]+\/content$/ },
-  { method: "GET", path: /^\/share\/sessions\/[^/]+$/ },
-  { path: /^\/share\/sessions\/[^/]+\/file$/ },
-];
-
-function isPublicRoute(req: Request): boolean {
-  return PUBLIC_ROUTES.some(({ method, path }) => {
-    if (method && req.method !== method) return false;
-    if (typeof path === "string") return req.path === path;
-    return path.test(req.path);
-  });
-}
 
 /** Token 剩余有效期不足此阈值时自动续期（7 天） */
 const RENEWAL_THRESHOLD_SECONDS = 7 * 24 * 60 * 60;

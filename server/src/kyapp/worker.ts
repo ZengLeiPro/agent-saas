@@ -39,11 +39,70 @@ export interface KyAppWorkerOptions {
   keys: KyAppSigningKeyService;
   nonces: KyAppNonceStore;
   suspensions: KyAppSuspensionRegistry;
-  alertNotifier?: AlertNotifier;
+  alerts: KyAppAlertSink;
   logger?: KyAppWorkerLogger;
   dispatchIntervalMs?: number;
   probeIntervalMs?: number;
   maintenanceIntervalMs?: number;
+}
+
+/**
+ * 告警出口。单独成型而不是挂在 worker 上：dispatcher / prober 在装配期就要拿到回调，
+ * 而它们又是 worker 的输入，挂在 worker 上会形成构造循环。
+ */
+export interface KyAppAlertSink {
+  onEventAbandoned: (alert: KyAppDispatchAlert) => void;
+  onHealthAlert: (alert: KyAppHealthAlert) => void;
+  notifyCredentialExpiring: (installationId: string) => void;
+}
+
+export function createKyAppAlertSink(
+  alertNotifier?: AlertNotifier,
+  logger?: KyAppWorkerLogger,
+): KyAppAlertSink {
+  const notify = (item: {
+    kind: string;
+    severity: 'high';
+    title: string;
+    occurredAt: string;
+    dedupeKey: string;
+  }): void => {
+    void alertNotifier?.notifyExternal(KY_APP_ALERT_SOURCE, [item]).catch((error: unknown) => {
+      logger?.warn(`KyAppWorker alert failed: ${errorMessage(error)}`);
+    });
+  };
+  return {
+    onEventAbandoned(alert) {
+      notify({
+        kind: 'ky_app_installation_unhealthy',
+        severity: 'high',
+        title: `定制项目事件投递放弃：实例 ${alert.installationId} 的 ${alert.type} 超过 24 小时未送达（${alert.reason}）`,
+        occurredAt: new Date().toISOString(),
+        dedupeKey: `ky_app_event_abandoned:${alert.installationId}:${alert.eventId}`,
+      });
+    },
+    onHealthAlert(alert) {
+      const recovered = alert.kind === 'ky_app_installation_recovered';
+      notify({
+        kind: alert.kind,
+        severity: 'high',
+        title: recovered
+          ? `定制项目实例 ${alert.installationId}（${alert.systemId}）已恢复：${alert.detail}`
+          : `定制项目实例 ${alert.installationId}（${alert.systemId}）连续 ${alert.consecutiveFailures} 次探测失败：${alert.detail}`,
+        occurredAt: new Date().toISOString(),
+        dedupeKey: `${alert.kind}:${alert.installationId}`,
+      });
+    },
+    notifyCredentialExpiring(installationId) {
+      notify({
+        kind: 'ky_app_installation_unhealthy',
+        severity: 'high',
+        title: `定制项目实例 ${installationId} 的服务凭据将在 14 天内到期，请安排重叠轮换`,
+        occurredAt: new Date().toISOString(),
+        dedupeKey: `ky_app_credential_expiring:${installationId}`,
+      });
+    },
+  };
 }
 
 /** 与 `runtime.ts:288` 的 `enableSingletonWorkers` 同口径。 */
@@ -92,31 +151,6 @@ export class KyAppWorker {
     this.options.logger?.info('KyAppWorker stopped');
   }
 
-  /** 事件被彻底放弃（超过 24 小时重试窗口）时的告警。 */
-  readonly onEventAbandoned = (alert: KyAppDispatchAlert): void => {
-    void this.notify({
-      kind: 'ky_app_installation_unhealthy',
-      severity: 'high',
-      title: `定制项目事件投递放弃：实例 ${alert.installationId} 的 ${alert.type} 超过 24 小时未送达（${alert.reason}）`,
-      occurredAt: new Date().toISOString(),
-      dedupeKey: `ky_app_event_abandoned:${alert.installationId}:${alert.eventId}`,
-    });
-  };
-
-  /** 健康探测的故障与恢复通知。 */
-  readonly onHealthAlert = (alert: KyAppHealthAlert): void => {
-    const recovered = alert.kind === 'ky_app_installation_recovered';
-    void this.notify({
-      kind: alert.kind,
-      severity: 'high',
-      title: recovered
-        ? `定制项目实例 ${alert.installationId}（${alert.systemId}）已恢复：${alert.detail}`
-        : `定制项目实例 ${alert.installationId}（${alert.systemId}）连续 ${alert.consecutiveFailures} 次探测失败：${alert.detail}`,
-      occurredAt: new Date().toISOString(),
-      dedupeKey: `${alert.kind}:${alert.installationId}`,
-    });
-  };
-
   private schedule(intervalMs: number, run: () => Promise<void>): ReturnType<typeof setInterval> {
     const timer = setInterval(() => {
       void run();
@@ -149,31 +183,10 @@ export class KyAppWorker {
       this.options.suspensions.prune();
       for (const installation of await this.options.directory.listLive()) {
         const due = await this.options.credentials.listRotationDue(installation.installationId);
-        if (due.length === 0) continue;
-        void this.notify({
-          kind: 'ky_app_installation_unhealthy',
-          severity: 'high',
-          title: `定制项目实例 ${installation.installationId} 的服务凭据将在 14 天内到期，请安排重叠轮换`,
-          occurredAt: new Date().toISOString(),
-          dedupeKey: `ky_app_credential_expiring:${installation.installationId}`,
-        });
+        if (due.length > 0) this.options.alerts.notifyCredentialExpiring(installation.installationId);
       }
     } catch (error) {
       this.options.logger?.warn(`KyAppWorker maintenance failed: ${errorMessage(error)}`);
-    }
-  }
-
-  private async notify(item: {
-    kind: string;
-    severity: 'high';
-    title: string;
-    occurredAt: string;
-    dedupeKey: string;
-  }): Promise<void> {
-    try {
-      await this.options.alertNotifier?.notifyExternal(KY_APP_ALERT_SOURCE, [item]);
-    } catch (error) {
-      this.options.logger?.warn(`KyAppWorker alert failed: ${errorMessage(error)}`);
     }
   }
 }

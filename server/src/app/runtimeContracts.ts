@@ -185,6 +185,8 @@ export interface AppRuntime {
   tenantDeletionShutdown?: () => Promise<void>;
   /** MCP 客户端 manager 关闭（关闭 stdio 子进程 + HTTP 连接，δ 阶段新增） */
   mcpClientShutdown?: () => Promise<void>;
+  /** WP2a 定制项目后台循环（事件投递 + 健康探测）停止钩子；由 kyAppRoutes 注册时挂上。 */
+  kyAppShutdown?: () => void;
   mcpClientManager?: McpClientManager;
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;

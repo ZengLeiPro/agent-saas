@@ -395,6 +395,7 @@ async function shutdownCleanup(): Promise<void> {
     runtime?.codexWebSocketShutdown?.();
     // MCP shutdown 必须在 pkill -TERM 之前调用，让 client.close() 走协议级
     // disconnect；pkill 是兜底，防止某些 transport 没正确收 close。
+    runtime?.kyAppShutdown?.();
     await runtime?.mcpClientShutdown?.();
     await runtime?.auditProjectionShutdown?.();
     await runtime?.artifactShutdown?.();

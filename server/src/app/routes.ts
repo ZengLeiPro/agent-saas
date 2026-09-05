@@ -48,7 +48,8 @@ import { createSignupRouters } from '../routes/signup.js';
 import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { createAgentsRouter } from '../routes/agents.js';
-import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
+import { createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
+import { registerOrgAgentRoutes } from './orgAgentRoutes.js'; import { registerKyAppRoutes } from './kyAppRoutes.js';
 import { createKbFilesRouter } from '../routes/kbFiles.js';
 import { createOrgQaRouter } from '../routes/orgQa.js';
 import { registerAgentDwsRoutes } from './routesAgentDws.js';
@@ -1102,21 +1103,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       );
     }
     // 公司级专职 Agent（组织管理员配置、员工使用；2026-07 唯恩批次）
-    if (runtime.orgAgentStore) {
-      app.use(
-        '/api/org-agents',
-        createOrgAgentsRouter({
-          orgAgentStore: runtime.orgAgentStore,
-          tenantStore: runtime.tenantStore!,
-          orgAgentAvatarsDir: resolve(processCwd, './data/org-agent-avatars'),
-          getGuardrailModelConfigs: runtime.getGuardrailModelConfigs,
-          billingService: runtime.billingService,
-          legacyWriteGate,
-          onSkillAssignmentsChanged: runtime.skillConfigStore
-            ? () => runtime.skillConfigStore!.touchConfigVersion()
-            : undefined,
-        }),
-      );
-    }
+    registerOrgAgentRoutes(app, runtime, {
+      orgAgentAvatarsDir: resolve(processCwd, './data/org-agent-avatars'), legacyWriteGate,
+    });
+    // WP2a 定制项目对接：kyApp 未配置时整体不注册（registerKyAppRoutes 内部判定）。
+    registerKyAppRoutes(app, runtime);
   }
 }

@@ -11,8 +11,16 @@ import {
 } from './artifact-lib.mjs';
 import {
   ADMIN_RUNNER_ENTRIES,
+  GOVERNANCE_BOOTSTRAP_ENTRY,
+  LAUNCHER_ENTRY,
+  LAUNCHER_SOURCE,
   MANIFEST_KIND,
+  MANIFEST_SCHEMA_VERSION,
+  RUNTIME_GUARD_ENTRY,
+  adminBanner,
+  adminGovernanceBootstrapSource,
   adminRuntimeGuardSource,
+  validateAdminRunnerGovernance,
 } from '../../server/scripts/build-admin-runner.mjs';
 import {
   createRuntimeDependencyIdentity,
@@ -123,8 +131,47 @@ export async function assertAdminRunnerShipped(
       `Admin Runner manifest missing at server/dist/admin/manifest.json; one-off operations scripts must ship with every release`,
     );
   }
-  if (manifest.schemaVersion !== 1 || manifest.kind !== manifestKind)
+  if (manifest.schemaVersion !== MANIFEST_SCHEMA_VERSION || manifest.kind !== manifestKind)
     throw new Error('Admin Runner manifest is not a recognized agent-saas-admin-runner document');
+  // 与 launcher 的严格解析（server/src/release/adminRunner/manifest.ts）保持同一键集：
+  // 出包放行、运行拒绝会让整批运维命令在生产不可用。
+  const assertExactKeys = (value, keys, label) => {
+    const actual = Object.keys(value ?? {}).sort();
+    const expected = [...keys].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected))
+      throw new Error(
+        `Admin Runner manifest ${label} keys drifted: expected [${expected.join(', ')}] got [${actual.join(', ')}]`,
+      );
+  };
+  assertExactKeys(
+    manifest,
+    [
+      'schemaVersion',
+      'kind',
+      'dependencyContractDigest',
+      'runtimeDependencyGuard',
+      'governanceBootstrap',
+      'launcher',
+      'commands',
+    ],
+    'document',
+  );
+  assertExactKeys(
+    manifest.runtimeDependencyGuard,
+    ['entry', 'digest', 'size'],
+    'runtimeDependencyGuard',
+  );
+  assertExactKeys(manifest.governanceBootstrap, ['entry', 'digest', 'size'], 'governanceBootstrap');
+  assertExactKeys(manifest.launcher, ['entry', 'source', 'digest', 'size'], 'launcher');
+  for (const command of manifest.commands ?? []) {
+    assertExactKeys(
+      command,
+      ['command', 'entry', 'source', 'description', 'governance', 'digest', 'size'],
+      `command ${command?.command}`,
+    );
+    if (typeof command.description !== 'string' || !command.description.trim())
+      throw new Error(`Admin Runner command ${command.command} lacks description`);
+  }
   if (
     expectedDependencyContractDigest &&
     manifest.dependencyContractDigest !== expectedDependencyContractDigest
@@ -139,28 +186,66 @@ export async function assertAdminRunnerShipped(
     throw new Error(
       `Admin Runner command set drifted: expected [${expected.join(', ')}] but built [${actual.join(', ')}]`,
     );
-  const guardPath = join(serverRoot, 'dist', 'runtime-dependency-admin-guard.mjs');
-  await stat(guardPath);
-  if ((await readFile(guardPath, 'utf8')) !== adminRuntimeGuardSource())
-    throw new Error('Admin Runner runtime dependency guard content drifted');
-  const guardDetails = await digestFile(guardPath);
-  if (
-    manifest.runtimeDependencyGuard?.entry !== '../runtime-dependency-admin-guard.mjs' ||
-    manifest.runtimeDependencyGuard.digest !== guardDetails.digest ||
-    manifest.runtimeDependencyGuard.size !== guardDetails.size
-  )
-    throw new Error('Admin Runner runtime dependency guard does not match its manifest digest');
+  const assertSealedFile = async (declared, entry, relativeToAdmin, expectedSource, label) => {
+    if (declared?.entry !== entry) throw new Error(`Admin Runner ${label} entry drifted`);
+    const path = join(serverRoot, 'dist', 'admin', relativeToAdmin);
+    await stat(path);
+    if (expectedSource !== undefined && (await readFile(path, 'utf8')) !== expectedSource)
+      throw new Error(`Admin Runner ${label} content drifted`);
+    const details = await digestFile(path);
+    if (declared.digest !== details.digest || declared.size !== details.size)
+      throw new Error(`Admin Runner ${label} does not match its manifest digest`);
+    return path;
+  };
+  await assertSealedFile(
+    manifest.runtimeDependencyGuard,
+    RUNTIME_GUARD_ENTRY,
+    RUNTIME_GUARD_ENTRY,
+    adminRuntimeGuardSource(),
+    'runtime dependency guard',
+  );
+  await assertSealedFile(
+    manifest.governanceBootstrap,
+    GOVERNANCE_BOOTSTRAP_ENTRY,
+    GOVERNANCE_BOOTSTRAP_ENTRY,
+    adminGovernanceBootstrapSource(),
+    'governance bootstrap',
+  );
+  if (manifest.launcher?.source !== LAUNCHER_SOURCE)
+    throw new Error('Admin Runner launcher source drifted');
+  await stat(join(serverRoot, LAUNCHER_SOURCE));
+  const launcherPath = await assertSealedFile(
+    manifest.launcher,
+    LAUNCHER_ENTRY,
+    LAUNCHER_ENTRY,
+    undefined,
+    'launcher',
+  );
+  // banner 由 esbuild 放在文件首行（源码带 shebang 时 shebang 在 banner 之前）；剥掉可选 shebang 后
+  // 用 startsWith 而非 includes，注释里的伪 import 不算。
+  const stripShebang = (body) => (body.startsWith('#!') ? body.replace(/^#![^\n]*\n/u, '') : body);
+  const launcherBody = stripShebang(await readFile(launcherPath, 'utf8'));
+  if (!launcherBody.startsWith(adminBanner({ bootstrap: false })))
+    throw new Error('Admin Runner launcher bypasses the runtime dependency guard');
+  if (launcherBody.includes(`import '${GOVERNANCE_BOOTSTRAP_ENTRY}'`))
+    throw new Error('Admin Runner launcher must not import the governance bootstrap');
+  const entriesByCommand = new Map(entries.map((entry) => [entry.command, entry]));
   for (const command of commands) {
     if (command.entry !== `${command.command}.mjs`)
       throw new Error(`Admin Runner command ${command.command} has an unexpected entry file`);
+    const entry = entriesByCommand.get(command.command);
+    if (command.source !== entry.source)
+      throw new Error(`Admin Runner command ${command.command} source drifted`);
+    validateAdminRunnerGovernance(command.command, command.governance);
+    if (JSON.stringify(command.governance) !== JSON.stringify(entry.governance))
+      throw new Error(`Admin Runner command ${command.command} governance metadata drifted`);
     await stat(join(serverRoot, command.source));
     const entryPath = join(serverRoot, 'dist', 'admin', command.entry);
-    if (
-      !(await readFile(entryPath, 'utf8')).includes(
-        "import '../runtime-dependency-admin-guard.mjs'",
-      )
-    )
+    const body = stripShebang(await readFile(entryPath, 'utf8'));
+    if (!body.startsWith(`import '${RUNTIME_GUARD_ENTRY}';`))
       throw new Error(`Admin Runner entry ${command.entry} bypasses the runtime dependency guard`);
+    if (!body.startsWith(adminBanner()))
+      throw new Error(`Admin Runner entry ${command.entry} bypasses the governance bootstrap`);
     const details = await digestFile(entryPath);
     if (details.digest !== command.digest || details.size !== command.size)
       throw new Error(`Admin Runner entry ${command.entry} does not match its manifest digest`);

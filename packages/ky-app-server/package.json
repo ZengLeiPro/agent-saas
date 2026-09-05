@@ -5,7 +5,8 @@
   "type": "module",
   "license": "UNLICENSED",
   "files": [
-    "dist"
+    "dist",
+    "sql"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,6 +14,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono/index.d.ts",
+      "import": "./dist/hono/index.js"
     },
     "./package.json": "./package.json"
   },

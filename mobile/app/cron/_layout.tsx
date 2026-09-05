@@ -22,8 +22,9 @@ export default function CronLayout() {
         headerShadowVisible: false,
       }}
     >
-      <Stack.Screen name="index" options={{ title: '定时' }} />
-      <Stack.Screen name="[jobId]" />
+      {/* 标题与会话列表 pill、Web 侧边栏保持同一个词：任务中心 */}
+      <Stack.Screen name="index" options={{ title: '任务中心' }} />
+      <Stack.Screen name="[jobId]" options={{ title: '任务详情' }} />
     </Stack>
   );
 }

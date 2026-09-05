@@ -1,18 +1,26 @@
-import React, { useRef, useState, useMemo, useCallback } from 'react';
-import { View, Text, TouchableOpacity, Alert } from 'react-native';
+/**
+ * 定时任务的创建 / 编辑页（查看走 `/cron/[jobId]` 详情页）。
+ *
+ * 提交由 header 的 ✓ 通过 imperative ref 触发；关闭时若草稿已脏，
+ * 先用 ActionSheet 做一次「放弃修改」确认。
+ */
+import React, { useRef, useMemo, useCallback } from 'react';
+import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { X, Check } from 'lucide-react-native';
 import type { CronJob, CronJobCreate } from '@agent/shared';
 import { useCronJobs } from '../src/hooks/useCronJobs';
 import { CronJobForm, type CronJobFormRef } from '../src/components/cron/CronJobForm';
+import { showActionMenu } from '../src/lib/prompt';
 import { useColors } from '../src/theme';
+import { ICON_SIZE, ICON_STROKE } from '../src/lib/icons';
 import { glassFree } from '../src/lib/headerItems';
 
 export default function CronFormScreen() {
   const colors = useColors();
   const router = useRouter();
-  const params = useLocalSearchParams<{ jobId?: string; jobJson?: string; mode?: string }>();
-  const { addJob, updateJob, deleteJob, runJob, toggleJob } = useCronJobs();
+  const params = useLocalSearchParams<{ jobId?: string; jobJson?: string }>();
+  const { addJob, updateJob } = useCronJobs();
   const formRef = useRef<CronJobFormRef>(null);
 
   const initialJob = useMemo(() => {
@@ -25,130 +33,65 @@ export default function CronFormScreen() {
   }, [params.jobJson]);
 
   const isEditing = !!params.jobId;
-  const cameFromView = params.mode === 'view';
-  const [currentMode, setCurrentMode] = useState<'view' | 'edit'>(
-    cameFromView ? 'view' : 'edit',
+
+  const handleSubmit = useCallback(
+    async (data: CronJobCreate) => {
+      if (isEditing && params.jobId) {
+        await updateJob(params.jobId, data);
+      } else {
+        await addJob(data);
+      }
+      router.back();
+    },
+    [isEditing, params.jobId, addJob, updateJob, router],
   );
 
-  const handleSubmit = useCallback(async (data: CronJobCreate) => {
-    if (isEditing && params.jobId) {
-      await updateJob(params.jobId, data);
-    } else {
-      await addJob(data);
+  const handleClose = useCallback(() => {
+    if (!formRef.current?.isDirty) {
+      router.back();
+      return;
     }
-    router.back();
-  }, [isEditing, params.jobId, addJob, updateJob, router]);
+    showActionMenu({
+      title: '放弃修改？',
+      message: '你有未保存的修改，返回后将丢失。',
+      actions: [{ label: '放弃修改', destructive: true, onPress: () => router.back() }],
+      cancelText: '继续编辑',
+    });
+  }, [router]);
 
-  const handleRun = useCallback(() => {
-    if (!initialJob) return;
-    Alert.alert('立即执行', `确定要立即执行"${initialJob.name}"吗？`, [
-      { text: '取消', style: 'cancel' },
-      { text: '执行', onPress: () => void runJob(initialJob.id) },
-    ]);
-  }, [initialJob, runJob]);
+  const closeButton = (
+    <TouchableOpacity
+      onPress={handleClose}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel="关闭"
+      testID="cron-form-close"
+    >
+      <X size={ICON_SIZE.feature} color={colors.foreground} strokeWidth={ICON_STROKE.default} />
+    </TouchableOpacity>
+  );
 
-  const handleToggleEnabled = useCallback(async () => {
-    if (initialJob) await toggleJob(initialJob);
-  }, [initialJob, toggleJob]);
-
-  const handleDelete = useCallback(() => {
-    if (!initialJob || !params.jobId) return;
-    Alert.alert('删除任务', `确定要删除"${initialJob.name}"吗？`, [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteJob(params.jobId!);
-          router.back();
-        },
-      },
-    ]);
-  }, [initialJob, params.jobId, deleteJob, router]);
-
-  const handleCloseEdit = useCallback(() => {
-    const exitEdit = () => {
-      if (cameFromView) {
-        setCurrentMode('view');
-      } else {
-        router.back();
-      }
-    };
-
-    const dirty = formRef.current?.isDirty ?? false;
-    if (dirty) {
-      Alert.alert('放弃修改？', '你有未保存的修改，确定要放弃吗？', [
-        { text: '继续编辑', style: 'cancel' },
-        { text: '放弃', style: 'destructive', onPress: exitEdit },
-      ]);
-    } else {
-      exitEdit();
-    }
-  }, [cameFromView, router]);
-
-  const isViewMode = currentMode === 'view';
-
-  const title = isViewMode
-    ? (initialJob?.name ?? '任务详情')
-    : (isEditing ? '编辑任务' : '新建任务');
-
-  const headerLeft = isViewMode
-    ? () => (
-        <TouchableOpacity onPress={handleRun} activeOpacity={0.7}>
-          <Text style={{ fontSize: 17, color: colors.foreground }}>立即执行</Text>
-        </TouchableOpacity>
-      )
-    : () => (
-        <TouchableOpacity onPress={handleCloseEdit} activeOpacity={0.7}>
-          <X size={24} color={colors.foreground} strokeWidth={2} />
-        </TouchableOpacity>
-      );
-
-  const headerRight = isViewMode
-    ? () => (
-        <TouchableOpacity onPress={() => setCurrentMode('edit')} activeOpacity={0.7}>
-          <Text style={{ fontSize: 17, color: colors.foreground }}>编辑</Text>
-        </TouchableOpacity>
-      )
-    : () => (
-        <TouchableOpacity onPress={() => formRef.current?.submit()} activeOpacity={0.7}>
-          <Check size={24} color={colors.foreground} strokeWidth={2} />
-        </TouchableOpacity>
-      );
-
-  const headerLeftItems = isViewMode
-    ? () => [glassFree(
-        <TouchableOpacity onPress={handleRun} activeOpacity={0.7}>
-          <Text style={{ fontSize: 17, color: colors.foreground }}>立即执行</Text>
-        </TouchableOpacity>
-      )]
-    : () => [glassFree(
-        <TouchableOpacity onPress={handleCloseEdit} activeOpacity={0.7}>
-          <X size={24} color={colors.foreground} strokeWidth={2} />
-        </TouchableOpacity>
-      )];
-
-  const headerRightItems = isViewMode
-    ? () => [glassFree(
-        <TouchableOpacity onPress={() => setCurrentMode('edit')} activeOpacity={0.7}>
-          <Text style={{ fontSize: 17, color: colors.foreground }}>编辑</Text>
-        </TouchableOpacity>
-      )]
-    : () => [glassFree(
-        <TouchableOpacity onPress={() => formRef.current?.submit()} activeOpacity={0.7}>
-          <Check size={24} color={colors.foreground} strokeWidth={2} />
-        </TouchableOpacity>
-      )];
+  const submitButton = (
+    <TouchableOpacity
+      onPress={() => formRef.current?.submit()}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel="保存"
+      testID="cron-form-submit"
+    >
+      <Check size={ICON_SIZE.feature} color={colors.foreground} strokeWidth={ICON_STROKE.default} />
+    </TouchableOpacity>
+  );
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.container}>
       <Stack.Screen
         options={{
-          title,
-          headerLeft,
-          unstable_headerLeftItems: headerLeftItems,
-          headerRight,
-          unstable_headerRightItems: headerRightItems,
+          title: isEditing ? '编辑任务' : '新建任务',
+          headerLeft: () => closeButton,
+          unstable_headerLeftItems: () => [glassFree(closeButton)],
+          headerRight: () => submitButton,
+          unstable_headerRightItems: () => [glassFree(submitButton)],
         }}
       />
       <CronJobForm
@@ -156,10 +99,13 @@ export default function CronFormScreen() {
         key={params.jobId ?? 'new'}
         initialJob={initialJob}
         onSubmit={handleSubmit}
-        readOnly={isViewMode}
-        onToggleEnabled={handleToggleEnabled}
-        onDelete={isEditing ? handleDelete : undefined}
       />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

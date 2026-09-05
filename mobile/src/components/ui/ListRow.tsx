@@ -27,7 +27,7 @@ export interface ListRowProps {
   titleTestID?: string;
   /** 右侧值文字（accessory / switch 未提供时生效） */
   value?: string;
-  /** 右侧自定义控件（徽章、状态点等），优先级最高 */
+  /** 右侧自定义控件（徽章、状态点等）；可与开关并存 */
   accessory?: React.ReactNode;
   /** 提供后右侧渲染开关；此时不显示 chevron */
   switchValue?: boolean;
@@ -100,21 +100,23 @@ export function ListRow({
         ) : null}
       </View>
       <View style={styles.right}>
-        {accessory ??
-          (hasSwitch ? (
-            <Switch
-              value={switchValue}
-              disabled={switchDisabled || disabled}
-              onValueChange={onSwitchChange}
-              trackColor={{ false: colors.muted, true: colors.success }}
-              thumbColor={colors.card}
-              ios_backgroundColor={colors.muted}
-            />
-          ) : value ? (
-            <Text style={[styles.value, { color: colors.mutedForeground }]} numberOfLines={1}>
-              {value}
-            </Text>
-          ) : null)}
+        {/* accessory 与开关可以并存（如「状态徽章 + 启停开关」）；value 只在两者都没有时兜底 */}
+        {accessory}
+        {hasSwitch ? (
+          <Switch
+            value={switchValue}
+            disabled={switchDisabled || disabled}
+            onValueChange={onSwitchChange}
+            trackColor={{ false: colors.muted, true: colors.success }}
+            thumbColor={colors.card}
+            ios_backgroundColor={colors.muted}
+          />
+        ) : null}
+        {!accessory && !hasSwitch && value ? (
+          <Text style={[styles.value, { color: colors.mutedForeground }]} numberOfLines={1}>
+            {value}
+          </Text>
+        ) : null}
         {chevron ? (
           <ChevronRight
             size={ICON_SIZE.action}

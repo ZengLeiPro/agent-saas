@@ -71,8 +71,8 @@ assert.equal(
 );
 assert.equal(
   (registry.match(/surface:\s*'analytics',\s*area:\s*'platform'/g) ?? []).length,
-  8,
-  '平台分析页必须是 8 项',
+  9,
+  '平台分析页必须是 9 项',
 );
 
-console.log('管理后台契约检查通过：单壳、单滚动、无旧成员入口、41 个真实管理页面。');
+console.log('管理后台契约检查通过：单壳、单滚动、无旧成员入口、42 个真实管理页面。');

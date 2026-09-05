@@ -19,6 +19,8 @@ import { resolveListRowPosition, resolveListRowShape, type ListRowPosition } fro
 export interface ListRowProps {
   title: string;
   subtitle?: string;
+  /** 副标题最多显示的行数（默认 2；多行明细如权限解释可放宽） */
+  subtitleLines?: number;
   /** 左侧语义图标（取自 `src/lib/icons.ts`） */
   icon?: ButtonIcon;
   /** 左侧自定义节点（头像等），优先于 icon */
@@ -50,6 +52,7 @@ export interface ListRowProps {
 export function ListRow({
   title,
   subtitle,
+  subtitleLines = 2,
   icon: Icon,
   leading,
   value,
@@ -94,7 +97,10 @@ export function ListRow({
           {title}
         </Text>
         {subtitle ? (
-          <Text style={[styles.subtitle, { color: colors.mutedForeground }]} numberOfLines={2}>
+          <Text
+            style={[styles.subtitle, { color: colors.mutedForeground }]}
+            numberOfLines={subtitleLines}
+          >
             {subtitle}
           </Text>
         ) : null}

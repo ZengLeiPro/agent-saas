@@ -760,6 +760,49 @@
           "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
         }
       ]
+    },
+    {
+      "baselineSha": "e3543efa881f203b9093499a5aa577bcf403baf6",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
+          "classification": "no-schema-change",
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/移动端P4推送迁移审核-20260905.md",
+          "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "server/src/__tests__/apns.test.ts",
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        }
+      ]
     }
   ]
 }

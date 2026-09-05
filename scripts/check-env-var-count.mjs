@@ -21,6 +21,7 @@ export const DOMAIN_ROOTS = Object.freeze({
   'shared/runtime': ['shared/src', 'workspace-shared'],
   'web build-time': ['web/src', 'web/scripts', 'web/vite.config.ts', 'web/vite.config.js'],
   'deployment/scripts': ['scripts', 'server/scripts', 'server/stryker.conf.mjs'],
+  packages: ['packages'],
 });
 export const DOMAINS = Object.freeze(Object.keys(DOMAIN_ROOTS));
 const ALL_ROOTS = [...new Set(Object.values(DOMAIN_ROOTS).flat())];
@@ -96,13 +97,21 @@ export function snapshotEnv(collection, reason) {
   };
 }
 
-export function parseEnvBaseline(text, source = BASELINE_PATH) {
+export function parseEnvBaseline(text, source = BASELINE_PATH, { backfillNewDomains = false } = {}) {
   const value = JSON.parse(text);
   if (value.schemaVersion !== 1 || typeof value.reason !== 'string' || !value.reason.trim() || typeof value.updatedAt !== 'string') {
     throw new Error(`${source} must contain schemaVersion=1, reason, and updatedAt`);
   }
+  if (!value.domains || typeof value.domains !== 'object') throw new Error(`${source} has no domains object`);
   for (const domain of DOMAINS) {
-    const entry = value.domains?.[domain];
+    const entry = value.domains[domain];
+    // 新增一个治理域时，merge-base 快照里必然还没有这个域。只有读取 merge-base 快照
+    // 才允许回填成空预算：该域此后拿到的每个名字都算相对 merge-base 的扩张，
+    // 依旧要求 baseline 里写下新的显式理由，棘轮语义不被削弱。
+    if (!entry && backfillNewDomains) {
+      value.domains[domain] = { budget: 0, names: [] };
+      continue;
+    }
     if (!entry || !Number.isSafeInteger(entry.budget) || entry.budget < 0 || !Array.isArray(entry.names)) {
       throw new Error(`${source} has invalid domain ${domain}`);
     }
@@ -185,7 +194,10 @@ export function runEnvRatchet(root = process.cwd(), argv = []) {
 
   const resolvedBase = resolveBase(root, optionValue(argv, '--base'));
   const baseText = readFileAtCommit(root, resolvedBase.sha, BASELINE_PATH);
-  const baseBaseline = baseText === null ? null : parseEnvBaseline(baseText, `${resolvedBase.sha}:${BASELINE_PATH}`);
+  const baseBaseline =
+    baseText === null
+      ? null
+      : parseEnvBaseline(baseText, `${resolvedBase.sha}:${BASELINE_PATH}`, { backfillNewDomains: true });
   const result = evaluateEnv({ collection, baseline, baseBaseline, prune });
   if (result.errors.length) throw new Error(result.errors.join('\n'));
   if (prune) {

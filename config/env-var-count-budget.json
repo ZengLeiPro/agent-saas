@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "Admin Runner 治理层：launcher 回执目录必须由部署环境显式注入且不得落入密封 release 树；每次调用 nonce 由 launcher 注入子进程供 governance bootstrap 拒绝直跑",
+  "reason": "Admin Runner 治理层：launcher 回执目录必须由部署环境显式注入且不得落入密封 release 树；每次调用 nonce 由 launcher 注入子进程供 governance bootstrap 拒绝直跑；WP1 ky-app-cli/create-ky-app：doctor 与模板的数据库、端口与测试开关",
   "updatedAt": "2026-09-05",
   "domains": {
     "server": {
@@ -193,6 +193,28 @@
         "STRYKER_MODULE",
         "TASKBOARD_TABLE_PREFIX",
         "VERIFY_WS_MODEL"
+      ]
+    },
+    "packages": {
+      "budget": 17,
+      "names": [
+        "DATABASE_URL",
+        "KY_DIRECTORY_URL",
+        "KY_ENV",
+        "KY_INSTALLATION_ID",
+        "KY_INSTALLATION_KEY",
+        "KY_INSTALLATION_KEY_PREVIOUS",
+        "KY_INSTALLATION_KEY_PREVIOUS_VERSION",
+        "KY_INSTALLATION_KEY_VERSION",
+        "KY_JWKS_URL",
+        "KY_LOCAL_LOGIN_ENABLED",
+        "KY_ORIGIN",
+        "KY_SERVICE_CREDENTIAL",
+        "KY_SHELL_ORIGIN",
+        "KY_SYSTEM_ID",
+        "KY_TENANT_ID",
+        "PORT",
+        "TEST_DATABASE_URL"
       ]
     }
   }

@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/ky-app-conformance/v1.json",
+  "$comment": "附录 J：ky-app.conformance.json 夹具。规范只给了示例，此处按示例与 §9.3 的用法写成正式 schema。夹具不进 manifest、不进模型。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "users", "capabilities", "endpoints"],
+  "properties": {
+    "contractVersion": {
+      "const": 1
+    },
+    "users": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admin", "member", "norole"],
+      "properties": {
+        "admin": {
+          "$ref": "#/$defs/testUser"
+        },
+        "member": {
+          "$ref": "#/$defs/testUser"
+        },
+        "norole": {
+          "$ref": "#/$defs/testUser"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.]{1,31}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/capabilityFixture"
+      }
+    },
+    "endpoints": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "menuApis": {
+      "$comment": "§9.3-8「无权用户访问每个菜单接口 → 403」需要知道菜单叶子对应的页面接口；/me 的 schema 里没有这个字段，故在夹具里声明。",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-zA-Z0-9_.-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["method", "path"],
+        "properties": {
+          "method": {
+            "enum": ["GET", "POST"]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "testUser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sub"],
+      "properties": {
+        "sub": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "tadm": {
+          "type": "boolean"
+        },
+        "roles": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        }
+      }
+    },
+    "capabilityFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validInputs"],
+      "properties": {
+        "validInputs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["input"],
+            "properties": {
+              "input": {
+                "type": "object"
+              },
+              "expect": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "invalidInputs": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["input", "expectCode"],
+            "properties": {
+              "input": {
+                "type": "object"
+              },
+              "expectCode": {
+                "$ref": "https://agent.kaiyan.net/schemas/ky-app-error/v1.json#/$defs/appErrorCode"
+              }
+            }
+          }
+        },
+        "cleanup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capabilityId", "input"],
+          "properties": {
+            "capabilityId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.]{1,31}$"
+            },
+            "input": {
+              "type": "object"
+            }
+          }
+        },
+        "pageApiEquivalence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "path", "idField", "capabilityInput"],
+          "properties": {
+            "method": {
+              "enum": ["GET", "POST"]
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "query": {
+              "type": "object"
+            },
+            "idField": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "capabilityInput": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  }
+}

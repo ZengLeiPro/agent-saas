@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# 提交前先扫一遍密钥（§8.4：09-04 的 .env 真值入仓不得重演）。
+node scripts/secret-scan.mjs

@@ -36,6 +36,8 @@ const PATH_COMPONENTS = Object.freeze([
   ['config/', []],
   ['mobile/', []],
   ['assets/', []],
+  // 契约包（@kaiyan/ky-app-*、create-ky-app）以 tarball 发布给定制项目，不随任何生产组件部署。
+  ['packages/', []],
 ]);
 
 const NON_RUNTIME_FILES = new Set([
@@ -56,6 +58,7 @@ const NON_RUNTIME_FILES = new Set([
   'docker-compose.yml',
   'eas.json',
   'eslint.config.mjs',
+  'scripts/check-env-var-count.mjs',
   'scripts/check-max-lines-ratchet.mjs',
   'scripts/ratchets.test.mjs',
   'scripts/ci-plan.mjs',

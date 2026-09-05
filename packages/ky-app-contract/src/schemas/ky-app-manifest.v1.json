@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/ky-app-manifest/v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "systemId", "name", "roles", "pathPrefixes", "capabilities"],
+  "properties": {
+    "contractVersion": { "const": 1 },
+    "systemId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{2,23}$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "description": { "type": "string", "maxLength": 200 },
+    "icon": { "type": "string", "maxLength": 40 },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adminRole"],
+      "properties": { "adminRole": { "type": "string", "minLength": 1, "maxLength": 40 } }
+    },
+    "pathPrefixes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "admin"],
+      "properties": {
+        "user": { "$ref": "#/$defs/prefixes" },
+        "admin": { "$ref": "#/$defs/prefixes" }
+      }
+    },
+    "externalLinkHosts": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "pattern": "^[a-z0-9.-]+$" }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "routeSync": { "type": "boolean" }, "theme": { "type": "boolean" } }
+    },
+    "capabilities": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/capability" } },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": { "path": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "prefixes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "pattern": "^/(?!ky/|ky-local/|internal/)[a-z0-9_-]+(/[a-z0-9_-]+)*/$"
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "description",
+        "riskLevel",
+        "approval",
+        "safeToRetry",
+        "inputSchema",
+        "outputSchema"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_.]{1,31}$" },
+        "name": { "type": "string", "maxLength": 40 },
+        "description": { "type": "string", "maxLength": 300 },
+        "riskLevel": { "enum": ["read_only", "external_write"] },
+        "approval": { "enum": ["none", "required"] },
+        "safeToRetry": { "type": "boolean" },
+        "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 15000 },
+        "inputSchema": { "type": "object" },
+        "outputSchema": { "type": "object" },
+        "resultLink": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["path", "label"],
+          "properties": {
+            "path": { "type": "string", "maxLength": 200 },
+            "label": { "type": "string", "maxLength": 40 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["riskLevel"],
+            "properties": { "riskLevel": { "const": "external_write" } }
+          },
+          "then": {
+            "properties": { "approval": { "const": "required" }, "safeToRetry": { "const": false } }
+          }
+        },
+        {
+          "if": {
+            "required": ["riskLevel"],
+            "properties": { "riskLevel": { "const": "read_only" } }
+          },
+          "then": { "properties": { "safeToRetry": { "const": true } } }
+        }
+      ]
+    }
+  }
+}

@@ -11,6 +11,10 @@ const serverPackage = JSON.parse(readFileSync(new URL('../server/package.json', 
 test('分片脚本保留原 PR preflight 的全部门禁', () => {
   for (const command of [
     'pnpm check:ratchets',
+    "pnpm -r --filter './packages/*' typecheck",
+    "pnpm -r --filter './packages/*' test",
+    "pnpm -r --filter './packages/*' build",
+    'pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts',
     'pnpm test:release-contracts',
     'pnpm check:runtime-dependencies',
     'pnpm -F server typecheck',

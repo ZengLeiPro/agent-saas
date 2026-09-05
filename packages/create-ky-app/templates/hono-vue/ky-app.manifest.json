@@ -1,0 +1,115 @@
+{
+  "contractVersion": 1,
+  "systemId": "__SYSTEM_ID__",
+  "name": "__SYSTEM_NAME__",
+  "description": "订单查询与创建的示例系统，供 KY Agent 通过契约调用",
+  "icon": "package",
+  "roles": { "adminRole": "admin" },
+  "pathPrefixes": { "user": ["/api/app/"], "admin": ["/api/admin/"] },
+  "externalLinkHosts": ["docs.kaiyan.net"],
+  "ui": { "routeSync": true, "theme": true },
+  "capabilities": [
+    {
+      "id": "order.search",
+      "name": "查询订单",
+      "description": "按客户名或订单号查询销售订单；返回订单号、客户、金额、状态，最多 10 条，可翻页",
+      "riskLevel": "read_only",
+      "approval": "none",
+      "safeToRetry": true,
+      "timeoutMs": 12000,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "keyword": { "type": "string", "description": "客户名或订单号" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "cursor": { "type": "string" }
+        },
+        "required": ["keyword"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "orderId": { "type": "string" },
+                "customer": { "type": "string" },
+                "amount": { "type": "number" },
+                "status": { "type": "string" }
+              },
+              "required": ["orderId"],
+              "additionalProperties": false
+            }
+          },
+          "hasMore": { "type": "boolean" },
+          "nextCursor": { "type": "string" }
+        },
+        "required": ["items", "hasMore"],
+        "additionalProperties": false
+      },
+      "resultLink": { "path": "/orders/{data.orderId}", "label": "在系统中打开订单" }
+    },
+    {
+      "id": "order.create",
+      "name": "创建订单",
+      "description": "为指定客户创建销售订单草稿；返回订单号",
+      "riskLevel": "external_write",
+      "approval": "required",
+      "safeToRetry": false,
+      "timeoutMs": 15000,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "customerId": { "type": "string" },
+          "lines": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "properties": {
+                "sku": { "type": "string" },
+                "qty": { "type": "integer", "minimum": 1 }
+              },
+              "required": ["sku", "qty"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["customerId", "lines"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": { "orderId": { "type": "string" } },
+        "required": ["orderId"],
+        "additionalProperties": false
+      },
+      "resultLink": { "path": "/orders/{data.orderId}", "label": "在系统中打开订单" }
+    },
+    {
+      "id": "order.cancel",
+      "name": "取消订单",
+      "description": "把某个客户名下尚未取消的销售订单全部置为已取消；返回本次取消的条数",
+      "riskLevel": "external_write",
+      "approval": "required",
+      "safeToRetry": false,
+      "timeoutMs": 15000,
+      "inputSchema": {
+        "type": "object",
+        "properties": { "customerId": { "type": "string" } },
+        "required": ["customerId"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": { "cancelled": { "type": "integer", "minimum": 0 } },
+        "required": ["cancelled"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "skills": [{ "path": "skills/order-review/SKILL.md" }]
+}

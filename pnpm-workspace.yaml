@@ -5,6 +5,7 @@ packages:
   - mobile
   - hand-server
   - acs-orchestrator
+  - 'packages/*'
 
 injectWorkspacePackages: true
 

@@ -1,0 +1,68 @@
+{
+  "contractVersion": 1,
+  "users": {
+    "admin": { "sub": "test-admin", "tadm": true },
+    "member": { "sub": "test-member", "roles": ["sales"] },
+    "norole": { "sub": "test-norole" }
+  },
+  "capabilities": {
+    "order.search": {
+      "validInputs": [
+        { "input": { "keyword": "C-DEMO" }, "expect": { "hasMore": false } },
+        { "input": { "keyword": "SO-DEMO-1", "limit": 1 }, "expect": { "hasMore": false } }
+      ],
+      "invalidInputs": [
+        { "input": {}, "expectCode": "invalid_input" },
+        { "input": { "keyword": "C-DEMO", "limit": 99 }, "expectCode": "invalid_input" },
+        { "input": { "keyword": 1 }, "expectCode": "invalid_input" },
+        { "input": { "keyword": "C-DEMO", "unknown": true }, "expectCode": "invalid_input" }
+      ],
+      "pageApiEquivalence": {
+        "method": "GET",
+        "path": "/api/app/orders",
+        "query": { "keyword": "C-DEMO" },
+        "idField": "orderId",
+        "capabilityInput": { "keyword": "C-DEMO" }
+      }
+    },
+    "order.create": {
+      "validInputs": [
+        { "input": { "customerId": "C-DOCTOR", "lines": [{ "sku": "A-1", "qty": 2 }] } },
+        { "input": { "customerId": "C-DOCTOR", "lines": [{ "sku": "B-2", "qty": 1 }] } }
+      ],
+      "invalidInputs": [
+        { "input": {}, "expectCode": "invalid_input" },
+        { "input": { "customerId": "C-DOCTOR" }, "expectCode": "invalid_input" },
+        {
+          "input": { "customerId": "C-DOCTOR", "lines": [{ "sku": "A-1", "qty": 0 }] },
+          "expectCode": "invalid_input"
+        }
+      ],
+      "cleanup": { "capabilityId": "order.cancel", "input": { "customerId": "C-DOCTOR" } }
+    },
+    "order.cancel": {
+      "validInputs": [
+        { "input": { "customerId": "C-DOCTOR" } },
+        { "input": { "customerId": "C-DOCTOR-2" } }
+      ],
+      "invalidInputs": [
+        { "input": {}, "expectCode": "invalid_input" },
+        { "input": { "customerId": 1 }, "expectCode": "invalid_input" }
+      ],
+      "cleanup": { "capabilityId": "order.cancel", "input": { "customerId": "C-DOCTOR" } }
+    }
+  },
+  "menuApis": {
+    "orders": { "method": "GET", "path": "/api/app/orders" },
+    "settings.roles": { "method": "GET", "path": "/api/admin/roles" }
+  },
+  "endpoints": [
+    "/",
+    "/index.html",
+    "/orders",
+    "/settings/roles",
+    "/ky/v1/health/live",
+    "/api/app/orders",
+    "/api/admin/roles"
+  ]
+}

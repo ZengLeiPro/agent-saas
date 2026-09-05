@@ -12,6 +12,9 @@ require_test_database() {
 case "$task" in
   checks)
     pnpm check:ratchets
+    pnpm -r --filter './packages/*' typecheck
+    pnpm -r --filter './packages/*' test
+    pnpm -r --filter './packages/*' build
     pnpm test:release-contracts
     bash -n scripts/release/production-deploy-rollback.sh
     bash scripts/release/production-deploy-rollback.test.sh
@@ -111,6 +114,7 @@ case "$task" in
       src/__tests__/pgToolInvocationTerminalGate.pg.test.ts \
       src/__tests__/sandboxScopeActivity.pg.test.ts \
       src/__tests__/taskboardOnReadyTrigger.pg.test.ts
+    pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts
     ;;
 
   web)

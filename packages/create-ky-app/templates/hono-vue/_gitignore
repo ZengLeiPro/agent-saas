@@ -1,0 +1,12 @@
+# 凭据绝不入仓（§8.4）：只提交 .env.example
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+server/dist/
+web/dist/
+coverage/
+*.log
+.DS_Store

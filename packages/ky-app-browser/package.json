@@ -1,0 +1,33 @@
+{
+  "name": "@kaiyan/ky-app-browser",
+  "version": "0.1.0",
+  "description": "定制项目前端 SDK：握手状态机、令牌单飞续期、fetch 包装、路由同步与壳消息（无框架依赖）",
+  "type": "module",
+  "license": "UNLICENSED",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@kaiyan/ky-app-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.18"
+  }
+}

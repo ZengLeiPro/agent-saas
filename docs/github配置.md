@@ -448,7 +448,7 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 
 要求：
 
-- 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、`GIT_CLONE` 日志与 image metadata，不得写入或删除镜像。
+- 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、build-record 日志与 image metadata，不得写入或删除镜像。
 - ACR repository 的 tag 写权限只能授予受控自动构建身份，必须移除人工账号及其他自动化的 tag 覆盖权限。build-record API 不返回该 record 的产物 digest；因此全分页、完整 SHA 与稳定 digest 读回不能替代这项现场权限前提，未完成权限审计时禁止触发 ACS Production compatibility。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
   `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读。

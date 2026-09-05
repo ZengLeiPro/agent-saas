@@ -1,6 +1,10 @@
+import type { ActivityStatusTone } from "@agent/shared";
+
 import { cn } from "@/lib/utils";
 
-export type ActivityStatusTone = "active" | "pending" | "success" | "warning" | "danger" | "neutral";
+// 语气枚举与耗时格式化已下沉 shared（PR #476），本文件只保留 Tailwind class 映射。
+export { formatActivityDuration } from "@agent/shared";
+export type { ActivityStatusTone };
 
 const toneStyles: Record<ActivityStatusTone, { icon: string; text: string; badge: string }> = {
   active: {
@@ -49,18 +53,4 @@ export function activityStatusBadgeClass(tone: ActivityStatusTone, className?: s
     toneStyles[tone].badge,
     className,
   );
-}
-
-export function formatActivityDuration(ms?: number): string | null {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
-  if (ms < 1000) return `${ms}ms`;
-
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(ms < 10_000 ? 1 : 0)}s`;
-
-  const minutes = seconds / 60;
-  if (minutes < 60) return `${minutes.toFixed(minutes < 10 ? 1 : 0).replace(/\.0$/, "")}m`;
-
-  const hours = minutes / 60;
-  return `${hours.toFixed(hours < 10 ? 1 : 0).replace(/\.0$/, "")}h`;
 }

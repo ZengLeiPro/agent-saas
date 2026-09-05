@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 import { ArrowRight, ChevronRight } from "lucide-react";
 import {
+  RECOMMENDATION_COUNT,
   buildScenarioPrompt,
+  pickRoleTopScenarios,
+  resolveScenarioActionMeta,
   sanitizeScenario,
   type CatalogScenarioPublic,
   type ScenarioItem,
@@ -26,15 +29,6 @@ interface EmptyChatRecommendCardsProps {
   onViewAll: () => void;
 }
 
-const ahaScore: Record<NonNullable<ScenarioItem["firstAhaMode"]>, number> = {
-  zero_input_example: 4,
-  paste_then_result: 3,
-  upload_then_result: 2,
-  voice_then_result: 1,
-};
-
-const RECOMMENDATION_COUNT = 3;
-
 type SuggestionTone = "success" | "primary" | "warning" | "muted";
 
 const toneClass: Record<SuggestionTone, string> = {
@@ -48,26 +42,8 @@ function safeScenario(scenario: ScenarioItem): ScenarioItem {
   return sanitizeScenario({ ...scenario }).scenario as ScenarioItem;
 }
 
-export function pickRoleTop3(
-  scenarios: readonly ScenarioItem[],
-  roleId: string | null,
-  count = RECOMMENDATION_COUNT,
-): ScenarioItem[] {
-  const sortCandidates = (candidates: readonly ScenarioItem[]) => [...candidates].sort((a, b) => {
-    const ahaDelta = (ahaScore[b.firstAhaMode ?? "zero_input_example"] ?? 0) - (ahaScore[a.firstAhaMode ?? "zero_input_example"] ?? 0);
-    if (ahaDelta !== 0) return ahaDelta;
-    if (a.mode !== b.mode) return a.mode === "recurring" ? -1 : 1;
-    const depA = a.dataDependencyLevel === "zero" ? 0 : 1;
-    const depB = b.dataDependencyLevel === "zero" ? 0 : 1;
-    if (depA !== depB) return depA - depB;
-    return a.id.localeCompare(b.id);
-  });
-  if (!roleId) return sortCandidates(scenarios).slice(0, count);
-
-  const roleCandidates = sortCandidates(scenarios.filter((scenario) => scenario.role === roleId));
-  const fallbackCandidates = sortCandidates(scenarios.filter((scenario) => scenario.role !== roleId));
-  return [...roleCandidates, ...fallbackCandidates].slice(0, count);
-}
+// v2 推荐卡的 aha 打分排序已下沉 shared，保留 pickRoleTop3 这个既有导出名。
+export { pickRoleTopScenarios as pickRoleTop3 } from "@agent/shared";
 
 function SuggestionCard({
   title,
@@ -262,7 +238,7 @@ export function EmptyChatRecommendCards({
   const matchedRoleId = user?.preferences?.activeRoleId && library.roles.some((role) => role.id === user?.preferences?.activeRoleId)
     ? user.preferences.activeRoleId
     : matchRoleIdByPosition(library.roles, user?.position);
-  const roleTopScenarios = pickRoleTop3(pool, matchedRoleId);
+  const roleTopScenarios = pickRoleTopScenarios(pool, matchedRoleId);
   const recommended = roleTopScenarios.length > 0
     ? roleTopScenarios
     : pickRecommendedScenarios(pool, RECOMMENDATION_COUNT, matchedRoleId);
@@ -270,15 +246,18 @@ export function EmptyChatRecommendCards({
 
   return (
     <SuggestionGrid onViewAll={onViewAll}>
-      {cards.map((scenario) => (
-        <SuggestionCard
-          key={scenario.id}
-          title={scenario.title}
-          action={scenario.dataDependencyLevel === "zero" || !scenario.dataDependencyLevel ? "直接试" : "预填任务"}
-          tone={scenario.dataDependencyLevel === "zero" || !scenario.dataDependencyLevel ? "success" : "muted"}
-          onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
-        />
-      ))}
+      {cards.map((scenario) => {
+        const actionMeta = resolveScenarioActionMeta(scenario);
+        return (
+          <SuggestionCard
+            key={scenario.id}
+            title={scenario.title}
+            action={actionMeta.label}
+            tone={actionMeta.tone}
+            onClick={() => onTryScenario(buildScenarioPrompt(scenario), scenario)}
+          />
+        );
+      })}
     </SuggestionGrid>
   );
 }

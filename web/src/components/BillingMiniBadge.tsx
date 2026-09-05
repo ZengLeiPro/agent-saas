@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
+import {
+  billingAllowanceLabel,
+  billingModeLabel,
+  budgetBarRatio,
+  budgetStatusLabel,
+  isBillingBadgeVisible,
+  resolveBillingBadgeTone,
+  type BillingBadgeTone,
+  type MemberBudgetStatus,
+} from "@agent/shared";
 import { EntityIcons } from "@/lib/icons";
 import { authFetch } from "@/lib/authFetch";
 import {
@@ -25,8 +35,6 @@ interface SessionBillingSummary {
   revenueYuan: number;
   childSessionCount?: number;
 }
-
-type MemberBudgetStatus = "unset" | "normal" | "attention" | "warning" | "over";
 
 interface MyMemberBudget extends MemberBudgetAllowance {
   monthUsedCredits: number;
@@ -57,32 +65,9 @@ function formatDetailedCredits(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function billingModeLabel(mode: string): string {
-  switch (mode) {
-    case "prepaid":
-      return "预付费";
-    case "postpaid":
-      return "后付费";
-    case "trial":
-      return "试用";
-    case "internal":
-      return "内部";
-    default:
-      return mode || "未配置";
-  }
-}
-
 function formatUsageRatio(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "-";
   return `${(value / 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-}
-
-function budgetStatusLabel(status: MemberBudgetStatus): string {
-  if (status === "over") return "已超预算";
-  if (status === "warning") return "临近预算";
-  if (status === "attention") return "需要关注";
-  if (status === "normal") return "正常";
-  return "未设置";
 }
 
 function budgetStatusClass(status: MemberBudgetStatus): string {
@@ -102,22 +87,7 @@ function budgetBarClass(status: MemberBudgetStatus): string {
   return "bg-muted-foreground/30";
 }
 
-function budgetBarWidth(value: number | null): number {
-  if (value === null || !Number.isFinite(value)) return 0;
-  return Math.min(100, Math.max(0, value / 100));
-}
-
-/**
- * 触发按钮的告警等级：余额不足或已超个人预算=danger，临近预算=warn，其余保持无色。
- * 颜色只承载状态，不做常态装饰——常态下按钮与右上角其他 ghost 控件同重量。
- */
-function badgeTone(lowBalance: boolean, status: MemberBudgetStatus | undefined, blocked = false): "none" | "warn" | "danger" {
-  if (lowBalance || blocked || status === "over") return "danger";
-  if (status === "warning") return "warn";
-  return "none";
-}
-
-const BADGE_TONE_CLASS: Record<"none" | "warn" | "danger", string> = {
+const BADGE_TONE_CLASS: Record<BillingBadgeTone, string> = {
   none: "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
   warn: "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200 dark:hover:bg-amber-950/50",
   danger: "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-200 dark:hover:bg-rose-950/50",
@@ -232,13 +202,13 @@ export function BillingMiniBadge({
     currentMonthCreditsUsed: 0,
     currentMonthRevenueYuan: 0,
   } : null);
-  if (!displaySummary || !displaySummary.billingEnabled || displaySummary.billingMode === "internal") return null;
+  if (!displaySummary || !isBillingBadgeVisible(displaySummary)) return null;
 
-  const tone = badgeTone(displaySummary.lowBalance, memberBudget?.status, memberBudget?.canStartRun === false);
+  const tone = resolveBillingBadgeTone(displaySummary.lowBalance, memberBudget?.status, memberBudget?.canStartRun === false);
   const allowance = memberBudget
     ? resolveBillingAllowance(displaySummary, memberBudget)
     : fallbackAllowance ?? resolveBillingAllowance(displaySummary, null);
-  const allowanceLabel = allowance.source === "member" ? "个人剩余额度" : "组织可用积分";
+  const allowanceLabel = billingAllowanceLabel(allowance.source);
   const menuVariant = variant === "menu";
 
   return (
@@ -321,7 +291,7 @@ export function BillingMiniBadge({
                   <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
                     <div
                       className={`h-full rounded-full transition-[width] ${budgetBarClass(memberBudget.status)}`}
-                      style={{ width: `${budgetBarWidth(memberBudget.usageRatioBps)}%` }}
+                      style={{ width: `${budgetBarRatio(memberBudget.usageRatioBps) * 100}%` }}
                     />
                   </div>
                 )}

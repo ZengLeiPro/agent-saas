@@ -66,6 +66,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/feishu/store.ts',
   'server/src/memory/consolidation/scannerStatus.ts',
   'server/src/memory/consolidation/store.ts',
+  'server/src/quota/providerQuotaSnapshotStore.ts',
   'server/src/runtime/alertStateStore.ts',
   'server/src/runtime/artifactShareStore.ts',
   'server/src/runtime/artifactStore.ts',

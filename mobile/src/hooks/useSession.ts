@@ -12,7 +12,6 @@ import {
   authFetch,
   mapSessionDetailToMessages,
   mergeServerMessagesWithLocalTail,
-  mergeSessionMessagePage,
   projectPendingInteractionSnapshot,
   SESSION_STORAGE_KEY,
   registerRefresh,
@@ -27,6 +26,10 @@ import {
   selectSessionListItems,
   tombstoneSessionListItem,
   upsertSessionListItem,
+  useSessionHistoryPaging,
+  useSessionListCacheWriter,
+  useSessionTitleMutations,
+  useSessionUsageStats,
   type SessionListInteractionEvent,
   type SessionListPage,
 } from "@agent/shared";
@@ -150,15 +153,9 @@ export function useSession(
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsHydrated, setSessionsHydrated] = useState(false);
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
-  const [contextUsage, setContextUsage] = useState<ContextUsageData | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [hasMoreHistory, setHasMoreHistory] = useState(false);
-  const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
-  const historyCursorRef = useRef(new Map<string, { nextCursor?: string; hasMore: boolean; historyRevision?: string }>());
-  const loadingEarlierSessionIdsRef = useRef(new Set<string>());
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
@@ -176,11 +173,42 @@ export function useSession(
   const cbRef = useRef(callbacks);
   cbRef.current = callbacks;
 
+  // stats 同时绑定 identity 与当前会话，避免慢响应覆盖新会话头部。
+  const {
+    tokenUsage, setTokenUsage, contextUsage, setContextUsage, fetchTokenUsage, refreshTokenUsage,
+  } = useSessionUsageStats({
+    authFetch,
+    sessionId,
+    createGuard: (id) => {
+      const requestIdentityKey = identityKeyRef.current;
+      return () => identityKeyRef.current === requestIdentityKey && sessionIdRef.current === id;
+    },
+  });
+
+  const {
+    cursorsRef: historyCursorRef, hasMoreHistory, setHasMoreHistory,
+    isLoadingEarlier, setIsLoadingEarlier, loadEarlierMessages, resetHistoryPaging,
+  } = useSessionHistoryPaging({
+    authFetch,
+    pageSize: 50,
+    sessionIdRef,
+    getMessages: () => cbRef.current.getMessages?.() ?? [],
+    mapPage: (data) => injectCompactionMessages(
+      data.blocks,
+      mapSessionDetailToMessages(data, data.owner?.username ?? sessionOwner?.username),
+    ),
+    applyPage: (_id, merged) => cbRef.current.setMessages(merged),
+    onHistoryRevisionMismatch: (id) => loadSessionDetail(id, { silent: true, preserveTail: true }),
+    createGuard: () => {
+      const requestIdentityKey = identityKeyRef.current;
+      return () => identityKeyRef.current === requestIdentityKey;
+    },
+  });
+
   useEffect(() => {
     loadNonceRef.current += 1;
     pagerRef.current = createSessionListPagerState();
-    historyCursorRef.current.clear();
-    loadingEarlierSessionIdsRef.current.clear();
+    resetHistoryPaging();
     cbRef.current.cancelActiveStream();
     cbRef.current.resetMessages();
     setSessionId(options?.initialSessionId ?? null);
@@ -202,7 +230,7 @@ export function useSession(
       }
       cbRef.current.cancelActiveStream();
     };
-  }, [identityKey]); // identity generation 是强制内存边界
+  }, [identityKey, resetHistoryPaging, setContextUsage, setHasMoreHistory, setIsLoadingEarlier, setTokenUsage]); // identity generation 是强制内存边界
 
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
@@ -289,32 +317,6 @@ export function useSession(
     }
   }, [commitPager]);
 
-  // stats 同时绑定 identity 与当前会话，避免慢响应覆盖新会话头部。
-  const fetchTokenUsage = useCallback(async (id: string) => {
-    const requestIdentityKey = identityKeyRef.current;
-    const isCurrentIdentity = () => identityKeyRef.current === requestIdentityKey;
-    try {
-      const response = await authFetch(
-        `/api/sessions/${encodeURIComponent(id)}/stats`,
-      );
-      if (response.ok && isCurrentIdentity()) {
-        const data = (await response.json()) as {
-          tokenUsage?: TokenUsage;
-          contextUsage?: ContextUsageData;
-          totalCostUsd?: number | null;
-        };
-        if (!isCurrentIdentity() || sessionIdRef.current !== id) return;
-        const usage = data.tokenUsage
-          ? { ...data.tokenUsage, totalCostUsd: data.totalCostUsd ?? null }
-          : null;
-        setTokenUsage(usage);
-        setContextUsage(data.contextUsage ?? null);
-      }
-    } catch {
-      /* silent */
-    }
-  }, []);
-
   const loadSessionDetail = useCallback(
     async (id: string, opts?: { silent?: boolean; preserveTail?: boolean }) => {
       const nonce = ++loadNonceRef.current;
@@ -380,8 +382,8 @@ export function useSession(
           const pageHasMore = data.hasMore !== undefined ? data.hasMore : data.historyComplete === false;
           const nextHistoryCursor = data.nextCursor ?? data.oldestCursor;
           historyCursorRef.current.set(id, {
-            hasMore: pageHasMore,
-            ...(nextHistoryCursor ? { nextCursor: nextHistoryCursor } : {}),
+            historyComplete: !pageHasMore,
+            ...(nextHistoryCursor ? { oldestCursor: nextHistoryCursor } : {}),
             ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
           });
           setHasMoreHistory(pageHasMore);
@@ -428,45 +430,8 @@ export function useSession(
         if (!isStale()) setIsLoadingMessages(false);
       }
     },
-    [fetchTokenUsage, messageCache],
+    [fetchTokenUsage, historyCursorRef, messageCache, setHasMoreHistory, setTokenUsage],
   );
-
-  const loadEarlierMessages = useCallback(async () => {
-    const requestIdentityKey = identityKeyRef.current;
-    const isCurrentIdentity = () => identityKeyRef.current === requestIdentityKey;
-    const id = sessionIdRef.current;
-    const cursorState = id ? historyCursorRef.current.get(id) : undefined;
-    if (!id || !cursorState?.hasMore || !cursorState.nextCursor
-      || loadingEarlierSessionIdsRef.current.has(id)) return;
-    loadingEarlierSessionIdsRef.current.add(id);
-    setIsLoadingEarlier(true);
-    try {
-      const params = new URLSearchParams({ before: cursorState.nextCursor, limit: '50', silent: '1' });
-      const response = await authFetch(`/api/sessions/${encodeURIComponent(id)}?${params.toString()}`);
-      if (!response.ok || sessionIdRef.current !== id || !isCurrentIdentity()) return;
-      const data = await response.json() as ApiSessionDetail;
-      if (!isCurrentIdentity()) return;
-      if (cursorState.historyRevision && data.historyRevision
-        && cursorState.historyRevision !== data.historyRevision) {
-        await loadSessionDetail(id, { silent: true, preserveTail: true });
-        return;
-      }
-      const owner = data.owner?.username ?? sessionOwner?.username;
-      const incoming = injectCompactionMessages(data.blocks, mapSessionDetailToMessages(data, owner));
-      cbRef.current.setMessages(mergeSessionMessagePage(cbRef.current.getMessages?.() ?? [], incoming));
-      const hasMore = data.hasMore !== undefined ? data.hasMore : data.historyComplete === false;
-      const nextCursor = data.nextCursor ?? data.oldestCursor;
-      historyCursorRef.current.set(id, {
-        hasMore,
-        ...(nextCursor ? { nextCursor } : {}),
-        ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
-      });
-      setHasMoreHistory(hasMore);
-    } finally {
-      loadingEarlierSessionIdsRef.current.delete(id);
-      if (sessionIdRef.current === id && isCurrentIdentity()) setIsLoadingEarlier(false);
-    }
-  }, [loadSessionDetail, sessionOwner?.username]);
 
   const confirmDeleteSession = useCallback(
     (id: string) => setDeleteSessionId(id),
@@ -541,7 +506,7 @@ export function useSession(
       setTokenUsage(null);
       void getPlatform().storage.removeItem(SESSION_STORAGE_KEY);
     }
-  }, [commitPager]);
+  }, [commitPager, setTokenUsage]);
 
   /** 插入或更新会话（其他设备创建的新会话无需 HTTP 请求） */
   const upsertSession = useCallback(
@@ -573,48 +538,10 @@ export function useSession(
     [],
   );
 
-  const renameSession = useCallback(
-    async (targetId: string, newTitle: string): Promise<boolean> => {
-      try {
-        const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(targetId)}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: newTitle }),
-          },
-        );
-        if (!response.ok) return false;
-        updateSessionTitle(targetId, newTitle || '');
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [updateSessionTitle],
-  );
-
-  const autoTitleSession = useCallback(
-    async (targetId: string): Promise<boolean> => {
-      try {
-        const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(targetId)}/auto-title`,
-          {
-            method: "POST",
-          },
-        );
-        if (!response.ok) return false;
-        const data = (await response.json()) as { title?: string };
-        if (data.title) {
-          updateSessionTitle(targetId, data.title);
-        }
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [updateSessionTitle],
-  );
+  const { renameSession, autoTitleSession } = useSessionTitleMutations({
+    authFetch,
+    applyTitle: (targetId, title) => updateSessionTitle(targetId, title || ''),
+  });
 
   const newSession = useCallback((options?: { preserveComposer?: boolean }) => {
     // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
@@ -632,7 +559,7 @@ export function useSession(
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
     void getPlatform().storage.removeItem(SESSION_STORAGE_KEY);
-  }, []);
+  }, [setHasMoreHistory, setIsLoadingEarlier, setTokenUsage]);
 
   const selectSession = useCallback(
     (id: string) => {
@@ -649,7 +576,7 @@ export function useSession(
       // Opening a session does not mark it read; the visible-at-bottom callback owns that commit.
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [loadSessionDetail, sessionId],
+    [loadSessionDetail, sessionId, setHasMoreHistory, setIsLoadingEarlier, setTokenUsage],
   );
 
   const markSessionRead = useCallback(async (id: string) => {
@@ -666,10 +593,6 @@ export function useSession(
       await loadSessions(true, { fresh: true });
     }
   }, [commitPager, loadSessions]);
-
-  const refreshTokenUsage = useCallback(async () => {
-    if (sessionId) void fetchTokenUsage(sessionId);
-  }, [fetchTokenUsage, sessionId]);
 
   const setIsNewSession = useCallback((v: boolean) => {
     isNewSessionRef.current = v;
@@ -739,23 +662,12 @@ export function useSession(
     return () => unregisterRefresh("sessions");
   }, [loadSessions]);
 
-  // Debounced session list cache write — 统一写入通道
-  // 无论来源（API / WS sync），sessions 变化后 5s 内无新变化则持久化
-  const debounceSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (sessions.length === 0) return;
-    if (debounceSaveRef.current) clearTimeout(debounceSaveRef.current);
-    debounceSaveRef.current = setTimeout(() => {
-      saveSessionListCache(sessions, hasMore, viewAsParamRef.current, identity);
-      debounceSaveRef.current = null;
-    }, 5000);
-    return () => {
-      if (debounceSaveRef.current) {
-        clearTimeout(debounceSaveRef.current);
-        debounceSaveRef.current = null;
-      }
-    };
-  }, [sessions, hasMore, identity]);
+  // Debounced session list cache write — 统一写入通道（shared 内核）
+  useSessionListCacheWriter(sessions, hasMore, identity, {
+    enabled: sessions.length > 0,
+    save: (nextSessions, nextHasMore, nextIdentity) =>
+      saveSessionListCache(nextSessions, nextHasMore, viewAsParamRef.current, nextIdentity),
+  });
 
   return {
     sessionId,

@@ -34,7 +34,7 @@ import {
 } from "lucide-react-native";
 import { launchPhotoLibraryForUserAction } from "../../platform/jitMediaPermissions";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useColors, spacing, typography, radius } from "../../theme";
+import { useColors, spacing, typography, radius, fontScale, fontWeight } from "../../theme";
 import { useAuth } from "../../contexts/AuthContext";
 import { AgentAvatar } from "../AgentAvatar";
 import {
@@ -75,7 +75,7 @@ export function AgentProfileEditor({
   const v1Profile = getV1BuildProfile();
   const showPersonaEditor = isV1RouteAllowed("persona-editor", v1Profile);
   const showSkills =
-    customSkillsEnabled && isV1RouteAllowed("settings/skills", v1Profile);
+    customSkillsEnabled && isV1RouteAllowed("capabilities/skills", v1Profile);
   const username = targetUsername || user?.username;
 
   const [name, setName] = useState("");
@@ -225,7 +225,7 @@ export function AgentProfileEditor({
       key: "skills",
       Icon: Puzzle,
       label: "技能",
-      onPress: () => router.push("/settings/skills"),
+      onPress: () => router.push("/capabilities/skills"),
     });
   }
   // Hidden for now — may re-enable later
@@ -252,9 +252,9 @@ export function AgentProfileEditor({
         },
         displayName: {
           ...typography.subtitle,
+          ...fontScale.xl,
           color: colors.foreground,
-          fontWeight: "600",
-          fontSize: 20,
+          fontWeight: fontWeight.semibold,
           marginTop: spacing.sm,
         },
         signatureText: {

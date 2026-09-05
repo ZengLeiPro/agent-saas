@@ -22,6 +22,7 @@ import {
 } from "@/lib/chatSubmissionAdapter";
 import { canonicalChatAttachmentToDisplay, createChatClientState, interactionKey, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
+import { runtimeTerminalAlert } from "@/lib/runtimeFailureAlert";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import { saveSessionMessages } from "@/lib/messageCache";
@@ -1218,6 +1219,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     runId?: string;
     streamId?: string;
     reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅配额型终态：绝对重置时刻（ISO），由服务端从上游结构化字段解析后下发 */
+    quotaResetAt?: string;
     refresh?: boolean;
   }) => {
     patchSessionRuntime(args.sessionId, {
@@ -1234,20 +1237,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     finalizeStreamingMessages(msgRef.current);
     finalizeRunningSubagents(msgRef.current);
 
-    let alertContent: string | null = null;
-    let severity: 'error' | 'cancelled' | 'billing' = 'error';
-    if (args.status === 'failed' || args.status === 'orphaned') {
-      alertContent = formatRuntimeFailureMessage(args.reason, args.failureKind);
-      if (isInsufficientCreditsFailure(args.reason)) severity = 'billing';
-    } else if (args.status === 'cancelled') {
-      alertContent = '会话已停止';
-      severity = 'cancelled';
-    }
+    const { content: alertContent, severity } = runtimeTerminalAlert(args);
     if (alertContent) {
       const msgs = msgRef.current.messagesRef.current;
       const last = msgs[msgs.length - 1];
       if (!(last?.type === 'system-error' && isSameRunMessage(last, args.runId, alertContent) && last.failureKind === args.failureKind && last.recoveryAction === args.recoveryAction)) {
-        msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, runId: args.runId, ...(args.failureKind ? { failureKind: args.failureKind } : {}), ...(args.recoveryAction ? { recoveryAction: args.recoveryAction } : {}), timestamp: Date.now() });
+        msgRef.current.addMessage({ type: 'system-error', content: alertContent, severity, runId: args.runId, ...(args.failureKind ? { failureKind: args.failureKind } : {}), ...(args.recoveryAction ? { recoveryAction: args.recoveryAction } : {}), ...(args.quotaResetAt ? { quotaResetAt: args.quotaResetAt } : {}), timestamp: Date.now() });
       }
     }
 
@@ -1316,6 +1311,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       status: lastRunState.status,
       runId: lastRunState.runId,
       reason: lastRunState.error, failureKind: lastRunState.failureKind, recoveryAction: lastRunState.recoveryAction,
+      ...(lastRunState.quotaResetAt ? { quotaResetAt: lastRunState.quotaResetAt } : {}),
       refresh: false,
     });
   }, [finalizeTerminalRuntime, patchSessionRuntime]);
@@ -1718,7 +1714,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           scheduleTerminalRuntimeProbe({
             sessionId: d.sessionId, status: d.status,
             ...(d.runId ? { runId: d.runId } : {}), ...(d.streamId ? { streamId: d.streamId } : {}),
-            ...(d.reason ? { reason: d.reason } : {}), ...(d.failureKind ? { failureKind: d.failureKind } : {}), ...(d.recoveryAction ? { recoveryAction: d.recoveryAction } : {}),
+            ...(d.reason ? { reason: d.reason } : {}), ...(d.failureKind ? { failureKind: d.failureKind } : {}), ...(d.recoveryAction ? { recoveryAction: d.recoveryAction } : {}), ...(d.quotaResetAt ? { quotaResetAt: d.quotaResetAt } : {}),
           });
         }
         return;
@@ -2031,7 +2027,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             //   通俗的 text 兜底（mobile 等不支持 system-error 的客户端也能看到）。
             //   web 端要升级成红边 system-error,所以扫尾 N 条找那条 text,有则就地替换、无则追加。
             // dedupe：若最末已是相同 content 的 system-error（重复 done 事件）则跳过。
-            const alertContent = formatRuntimeFailureMessage(doneEvent.error, doneEvent.failureKind);
+            const alertContent = formatRuntimeFailureMessage(doneEvent.error, doneEvent.failureKind, doneEvent.quotaResetAt);
             const alertSeverity = isInsufficientCreditsFailure(doneEvent.error) ? 'billing' : 'error';
             const msgs = msgRef.current.messagesRef.current;
             const last = msgs[msgs.length - 1];
@@ -2050,14 +2046,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                   id: m.id,
                   type: 'system-error',
                   content: alertContent,
-                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
+                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}), ...(doneEvent.quotaResetAt ? { quotaResetAt: doneEvent.quotaResetAt } : {}),
                   timestamp: Date.now(),
                 }));
               } else {
                 msgRef.current.addMessage({
                   type: 'system-error',
                   content: alertContent,
-                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
+                  severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}), ...(doneEvent.quotaResetAt ? { quotaResetAt: doneEvent.quotaResetAt } : {}),
                   timestamp: Date.now(),
                 });
               }
@@ -2083,7 +2079,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           sessionRef.current.refreshCurrentSession();
         }
         if (latestSid && runtimeStillActive && currentDoneBelongsToRuntime) {
-          scheduleTerminalRuntimeProbe({ sessionId: latestSid, status: doneEvent.error ? 'failed' : stoppingRef.current ? 'cancelled' : 'completed', ...(doneEvent.runId ? { runId: doneEvent.runId } : {}), ...(doneEvent.streamId ? { streamId: doneEvent.streamId } : {}), ...(doneEvent.error ? { reason: doneEvent.error } : {}), ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}) });
+          scheduleTerminalRuntimeProbe({ sessionId: latestSid, status: doneEvent.error ? 'failed' : stoppingRef.current ? 'cancelled' : 'completed', ...(doneEvent.runId ? { runId: doneEvent.runId } : {}), ...(doneEvent.streamId ? { streamId: doneEvent.streamId } : {}), ...(doneEvent.error ? { reason: doneEvent.error } : {}), ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}), ...(doneEvent.quotaResetAt ? { quotaResetAt: doneEvent.quotaResetAt } : {}) });
         }
         finalizeRunningSubagents(msgRef.current);
         wsAttachedRef.current = false;

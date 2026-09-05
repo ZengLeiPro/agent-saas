@@ -686,6 +686,33 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     });
   });
 
+  it("keeps stat.verdict and drops unknown verdict values", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")])),
+      todo("t2", todos([
+        step("a", "completed", {
+          outcome: {
+            text: "17/18 张通过",
+            stat: [
+              { label: "通过", value: "17/18", verdict: "pass" },
+              { label: "退回", value: "1", verdict: "fail" },
+              { label: "待复核", value: "3", verdict: "neutral" },
+              { label: "未知", value: "1", verdict: "green" },
+            ],
+          },
+        }),
+      ])),
+    ], false);
+
+    const completeEvent = result.events.find((event) => event.kind === "complete");
+    expect(completeEvent?.todo?.outcome?.stat).toEqual([
+      { label: "通过", value: "17/18", verdict: "pass" },
+      { label: "退回", value: "1", verdict: "fail" },
+      { label: "待复核", value: "3", verdict: "neutral" },
+      { label: "未知", value: "1" },
+    ]);
+  });
+
   it("drops outcome without text and invalid tone", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress")])),

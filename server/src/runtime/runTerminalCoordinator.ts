@@ -512,6 +512,7 @@ export async function coordinateRunFinishedEvent(input: {
     ...(reason ? { reason } : {}),
     ...(input.event.failureKind ? { failureKind: input.event.failureKind } : {}),
     ...(input.event.recoveryAction ? { recoveryAction: input.event.recoveryAction } : {}),
+    ...(input.event.quotaResetAt ? { quotaResetAt: input.event.quotaResetAt } : {}),
   };
   const result = await finalizeTerminalRun({
     runStore: input.runStore,

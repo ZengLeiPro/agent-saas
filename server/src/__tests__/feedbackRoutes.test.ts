@@ -42,7 +42,8 @@ class MemoryFeedbackStore implements MessageFeedbackStore {
         && r.userId === item.userId && r.contentHash === item.contentHash,
     );
     if (exists) return { duplicated: true };
-    this.records.push({ ...item, id: String(++this.seq), verdict: 'down', createdAt: new Date().toISOString() });
+    const rating = item.rating ?? 'down';
+    this.records.push({ ...item, id: String(++this.seq), rating, verdict: rating, createdAt: new Date().toISOString() });
     return { duplicated: false };
   }
 
@@ -54,7 +55,7 @@ class MemoryFeedbackStore implements MessageFeedbackStore {
   async listBySessionUser(tenantId: string, sessionId: string, userId: string) {
     return this.records
       .filter((r) => r.tenantId === tenantId && r.sessionId === sessionId && r.userId === userId)
-      .map((r) => ({ contentHash: r.contentHash, ...(r.comment ? { comment: r.comment } : {}), createdAt: r.createdAt }));
+      .map((r) => ({ contentHash: r.contentHash, rating: r.rating, ...(r.comment ? { comment: r.comment } : {}), createdAt: r.createdAt }));
   }
 }
 
@@ -100,6 +101,7 @@ describe('/api/feedback routes', () => {
 
   /** transcript 中真实存在的 assistant 回答（F7 服务端校验以此为准） */
   const ASSISTANT_TEXT = '这是一段专职 Agent 的回答文本';
+  const ASSISTANT_TEXT_2 = '这是第二段专职 Agent 的回答文本';
   const USER_PROMPT = '这个连接器怎么选';
 
   beforeEach(async () => {
@@ -114,6 +116,7 @@ describe('/api/feedback routes', () => {
     await writeFile(join(transcriptDir, `${ORG_SESSION}.jsonl`), [
       JSON.stringify({ type: 'user', message: { content: USER_PROMPT } }),
       JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: ASSISTANT_TEXT }] } }),
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: ASSISTANT_TEXT_2 }] } }),
     ].join('\n') + '\n');
     await writeMeta(transcriptDir, PERSONAL_SESSION, {
       userId: owner.sub, username: owner.username, tenantId: 'tenant-a',
@@ -231,6 +234,45 @@ describe('/api/feedback routes', () => {
       body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content: USER_PROMPT }),
     });
     expect(promptAsContent.status).toBe(400);
+    expect(store.records).toHaveLength(0);
+  });
+
+  it('rating: 缺省落 down（旧客户端兼容），显式 up 落库并经 GET 回传', async () => {
+    const { server, baseUrl } = await startServer(store, transcriptDir, owner);
+    servers.push(server);
+
+    // 旧客户端 body 不带 rating → zod default 兜底为 down
+    const legacy = await fetch(`${baseUrl}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content: ASSISTANT_TEXT }),
+    });
+    expect(legacy.status).toBe(200);
+    expect(store.records[0].rating).toBe('down');
+
+    // 新客户端显式 up
+    const up = await fetch(`${baseUrl}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-2', content: ASSISTANT_TEXT_2, rating: 'up' }),
+    });
+    expect(up.status).toBe(200);
+    expect(store.records[1].rating).toBe('up');
+
+    const list = await fetch(`${baseUrl}/api/feedback/session/${ORG_SESSION}`);
+    const items = ((await list.json()) as { items: Array<{ rating: string }> }).items;
+    expect(items.map((item) => item.rating)).toEqual(['down', 'up']);
+  });
+
+  it('rating: 非法枚举值 → 400（不静默回落）', async () => {
+    const { server, baseUrl } = await startServer(store, transcriptDir, owner);
+    servers.push(server);
+    const res = await fetch(`${baseUrl}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: ORG_SESSION, messageId: 'msg-1', content: ASSISTANT_TEXT, rating: 'meh' }),
+    });
+    expect(res.status).toBe(400);
     expect(store.records).toHaveLength(0);
   });
 });

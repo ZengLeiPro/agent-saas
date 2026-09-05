@@ -408,6 +408,7 @@ function projectRuntimePlatformEventLegacy(
               ...(event.reason ? { reason: event.reason } : {}),
               ...(event.failureKind ? { failureKind: event.failureKind } : {}),
               ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
+              ...(event.quotaResetAt ? { quotaResetAt: event.quotaResetAt } : {}),
             },
             {
               type: 'done',
@@ -418,6 +419,7 @@ function projectRuntimePlatformEventLegacy(
               ...(terminalError ? { error: terminalError } : {}),
               ...(event.failureKind ? { failureKind: event.failureKind } : {}),
               ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
+              ...(event.quotaResetAt ? { quotaResetAt: event.quotaResetAt } : {}),
             },
           ],
           terminal: true,
@@ -456,6 +458,7 @@ function projectRuntimePlatformEventLegacy(
             error: terminalError,
             ...(event.failureKind ? { failureKind: event.failureKind } : {}),
             ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
+            ...(event.quotaResetAt ? { quotaResetAt: event.quotaResetAt } : {}),
           }],
           terminal: true,
           sessionStatus: 'failed',

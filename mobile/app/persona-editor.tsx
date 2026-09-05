@@ -8,7 +8,6 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { X, Check } from 'lucide-react-native';
@@ -16,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import Markdown from 'react-native-markdown-display';
 import { cjkMarkdownIt } from '../src/lib/markdownIt';
-import { useColors, spacing, typography } from '../src/theme';
+import { useColors, spacing, typography, fontScale, monoFamily } from '../src/theme';
 import { createMarkdownStyles } from '../src/components/chat/markdownStyles';
 import { createMarkdownRules } from '../src/components/chat/markdownRules';
 import {
@@ -116,7 +115,7 @@ export default function PersonaEditorScreen() {
     })();
   }, [username, config]);
 
-  const handleSave = useCallback(async () => {
+  const persistDoc = useCallback(async () => {
     if (!username) return;
     setSaving(true);
     try {
@@ -130,6 +129,22 @@ export default function PersonaEditorScreen() {
       setSaving(false);
     }
   }, [username, body, hint, config]);
+
+  // P3-3d：人格 / MEMORY.md 直接影响后续所有会话，保存前统一二次确认
+  // （Web 的 AgentDocEditor 没有这一步，移动端误触成本更高）。
+  const handleSave = useCallback(() => {
+    if (!username || saving) return;
+    Alert.alert(
+      config.editTitle,
+      mode === 'memory'
+        ? '将覆盖 Agent 自行维护的 MEMORY.md，新会话生效。确定保存吗？'
+        : '将覆盖当前人格定义，新会话生效。确定保存吗？',
+      [
+        { text: '取消', style: 'cancel' },
+        { text: '保存', onPress: () => { void persistDoc(); } },
+      ],
+    );
+  }, [config.editTitle, mode, persistDoc, saving, username]);
 
   const handleCloseEdit = useCallback(() => {
     const exitEdit = () => {
@@ -159,7 +174,7 @@ export default function PersonaEditorScreen() {
   const headerRight = isViewMode
     ? () => (
         <TouchableOpacity onPress={() => setCurrentMode('edit')} activeOpacity={0.7}>
-          <Text style={{ fontSize: 17, color: colors.foreground }}>编辑</Text>
+          <Text style={{ ...fontScale.base, color: colors.foreground }}>编辑</Text>
         </TouchableOpacity>
       )
     : () => (
@@ -189,11 +204,9 @@ export default function PersonaEditorScreen() {
       marginBottom: spacing.lg,
     },
     textArea: {
-      ...typography.body,
+      ...typography.mono,
       color: colors.foreground,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      fontSize: 13,
-      lineHeight: 20,
+      fontFamily: monoFamily,
       flex: 1,
       textAlignVertical: 'top',
       padding: 0,

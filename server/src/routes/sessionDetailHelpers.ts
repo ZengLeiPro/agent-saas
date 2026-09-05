@@ -10,6 +10,7 @@ import type { SessionShareSnapshot } from '../data/sessionShares/store.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
 import type { RunLiveness } from '../runtime/runLiveness.js';
+import type { RuntimeFailureKind } from '../types/index.js';
 import type { SessionDetailAccessMode } from '@agent/shared';
 
 const SESSION_DETAIL_DELTA_OVERLAP_BLOCKS = 32;
@@ -155,8 +156,10 @@ export interface LastRunState {
   runId: string;
   status: string;
   error?: string;
-  failureKind?: 'policy_rejection';
+  failureKind?: RuntimeFailureKind;
   recoveryAction?: 'switch_model';
+  /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+  quotaResetAt?: string;
   finishedAt?: string;
   liveness?: RunLiveness;
 }
@@ -193,6 +196,7 @@ export async function getLastRunState(
       ...(last.reason ? { error: last.reason } : {}),
       ...(last.failureKind ? { failureKind: last.failureKind } : {}),
       ...(last.recoveryAction ? { recoveryAction: last.recoveryAction } : {}),
+      ...(last.quotaResetAt ? { quotaResetAt: last.quotaResetAt } : {}),
       ...(last.timestamp ? { finishedAt: last.timestamp } : {}),
     };
   } catch {

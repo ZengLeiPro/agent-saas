@@ -249,7 +249,7 @@ export type WsDownstreamEvent =
     | { type: 'title_updated'; sessionId: string; title: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
-    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
+    | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; quotaResetAt?: string; finalOutput?: boolean }
     | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
@@ -260,7 +260,7 @@ export type WsDownstreamEvent =
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; version?: number; order?: number; status?: 'resolved' | 'rejected' | 'failed' | 'cancelled' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean }
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: MessageAttachmentDisplay[] }
-    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
+    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; quotaResetAt?: string }
     | { type: 'groups_changed' }
     // ── SDK 0.2.112+ 新增系统事件 ──
     | { type: 'context_usage'; contextUsage: ContextUsageData }

@@ -1,5 +1,5 @@
 /**
- * 消息反馈 Context（专职 Agent 会话点「踩」，2026-07 唯恩批次）
+ * 消息反馈 Context（专职 Agent 会话点「赞/踩」，2026-07 唯恩批次；2026-09 加 rating）
  *
  * - Provider 恒挂载（App.tsx），JSX 树形状恒定防 Layout 重挂（2026-07 审查 F8）；
  *   仅当前会话绑定 orgAgentId 时提供实值，否则 context=null，
@@ -15,7 +15,8 @@ import {
   buildMessageFeedbackPayload,
   messageFeedbackOutcome,
   messageFeedbackSessionPath,
-  parseSubmittedFeedbackHashes,
+  parseSubmittedFeedbackEntries,
+  type MessageFeedbackRating,
 } from '@agent/shared';
 import { authFetch } from '@/lib/authFetch';
 
@@ -23,8 +24,15 @@ export interface MessageFeedbackContextValue {
   enabled: boolean;
   /** 该消息内容 hash 是否已提交过反馈（防连点 + 刷新恢复） */
   isSubmitted: (contentHash: string) => boolean;
+  /** 已提交的评分；未提交返回 null，用于赞/踩两个按钮区分高亮 */
+  submittedRating: (contentHash: string) => MessageFeedbackRating | null;
   /** 提交反馈；成功返回 true 并将 hash 记入已提交集合 */
-  submit: (args: { messageId: string; content: string; comment?: string }) => Promise<boolean>;
+  submit: (args: {
+    messageId: string;
+    content: string;
+    rating?: MessageFeedbackRating;
+    comment?: string;
+  }) => Promise<boolean>;
 }
 
 const MessageFeedbackContext = createContext<MessageFeedbackContextValue | null>(null);
@@ -43,12 +51,12 @@ export async function sha256Hex(text: string): Promise<string> {
 }
 
 export function MessageFeedbackProvider({ sessionId, children }: { sessionId: string | null; children: ReactNode }) {
-  const [submittedHashes, setSubmittedHashes] = useState<ReadonlySet<string>>(new Set());
+  const [submittedHashes, setSubmittedHashes] = useState<ReadonlyMap<string, MessageFeedbackRating>>(new Map());
   const [enabled, setEnabled] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    setSubmittedHashes(new Set());
+    setSubmittedHashes(new Map());
     setEnabled(true);
     if (!sessionId) return;
     authFetch(messageFeedbackSessionPath(sessionId))
@@ -60,9 +68,9 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
           return;
         }
         if (outcome !== 'ok') return;
-        const hashes = parseSubmittedFeedbackHashes(await res.json());
+        const entries = parseSubmittedFeedbackEntries(await res.json());
         if (cancelled) return;
-        setSubmittedHashes(new Set(hashes));
+        setSubmittedHashes(new Map(entries.map((entry) => [entry.contentHash, entry.rating])));
       })
       .catch(() => { /* 加载失败保持空集合，提交仍幂等 */ });
     return () => { cancelled = true; };
@@ -73,7 +81,17 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
     [submittedHashes],
   );
 
-  const submit = useCallback(async (args: { messageId: string; content: string; comment?: string }) => {
+  const submittedRating = useCallback(
+    (contentHash: string) => submittedHashes.get(contentHash) ?? null,
+    [submittedHashes],
+  );
+
+  const submit = useCallback(async (args: {
+    messageId: string;
+    content: string;
+    rating?: MessageFeedbackRating;
+    comment?: string;
+  }) => {
     if (!sessionId) return false;
     try {
       const res = await authFetch(MESSAGE_FEEDBACK_PATH, {
@@ -83,6 +101,7 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
           sessionId,
           messageId: args.messageId,
           content: args.content,
+          ...(args.rating ? { rating: args.rating } : {}),
           ...(args.comment !== undefined ? { comment: args.comment } : {}),
         })),
       });
@@ -94,9 +113,10 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
       if (outcome !== 'ok') return false;
       const data = await res.json() as { contentHash?: string };
       if (data.contentHash) {
+        const rating = args.rating ?? 'down';
         setSubmittedHashes((prev) => {
-          const next = new Set(prev);
-          next.add(data.contentHash!);
+          const next = new Map(prev);
+          next.set(data.contentHash!, rating);
           return next;
         });
       }
@@ -109,7 +129,7 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
   // JSX 树形状恒定（2026-07 审查 F8）：Provider 元素恒渲染，仅 value 在 null/实值间切换。
   // 无 org 会话或数据面不可用（file backend 503）→ value=null，按钮零渲染红线不变。
   const value: MessageFeedbackContextValue | null =
-    sessionId && enabled ? { enabled, isSubmitted, submit } : null;
+    sessionId && enabled ? { enabled, isSubmitted, submittedRating, submit } : null;
   return (
     <MessageFeedbackContext.Provider value={value}>
       {children}

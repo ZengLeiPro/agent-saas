@@ -17,15 +17,23 @@ import {
   buildMessageFeedbackPayload,
   messageFeedbackOutcome,
   messageFeedbackSessionPath,
-  parseSubmittedFeedbackHashes,
+  parseSubmittedFeedbackEntries,
+  type MessageFeedbackRating,
 } from '@agent/shared';
 
 export interface MessageFeedbackContextValue {
   enabled: boolean;
   /** 该消息内容 hash 是否已提交过反馈（防连点 + 重载恢复） */
   isSubmitted: (contentHash: string) => boolean;
+  /** 已提交的评分；未提交返回 null，用于赞/踩两个按钮区分高亮 */
+  submittedRating: (contentHash: string) => MessageFeedbackRating | null;
   /** 提交反馈；成功返回 true 并把 hash 记入已提交集合 */
-  submit: (args: { messageId: string; content: string; comment?: string }) => Promise<boolean>;
+  submit: (args: {
+    messageId: string;
+    content: string;
+    rating?: MessageFeedbackRating;
+    comment?: string;
+  }) => Promise<boolean>;
 }
 
 const MessageFeedbackContext = createContext<MessageFeedbackContextValue | null>(null);
@@ -46,12 +54,12 @@ export function MessageFeedbackProvider({
   sessionId: string | null;
   children: React.ReactNode;
 }) {
-  const [submittedHashes, setSubmittedHashes] = useState<ReadonlySet<string>>(new Set());
+  const [submittedHashes, setSubmittedHashes] = useState<ReadonlyMap<string, MessageFeedbackRating>>(new Map());
   const [enabled, setEnabled] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    setSubmittedHashes(new Set());
+    setSubmittedHashes(new Map());
     setEnabled(true);
     if (!sessionId) return;
     authFetch(messageFeedbackSessionPath(sessionId))
@@ -63,8 +71,10 @@ export function MessageFeedbackProvider({
           return;
         }
         if (outcome !== 'ok') return;
-        const hashes = parseSubmittedFeedbackHashes(await res.json());
-        if (!cancelled) setSubmittedHashes(new Set(hashes));
+        const entries = parseSubmittedFeedbackEntries(await res.json());
+        if (!cancelled) {
+          setSubmittedHashes(new Map(entries.map((entry) => [entry.contentHash, entry.rating])));
+        }
       })
       .catch(() => {
         /* 加载失败保持空集合，提交侧仍然幂等 */
@@ -79,8 +89,18 @@ export function MessageFeedbackProvider({
     [submittedHashes],
   );
 
+  const submittedRating = useCallback(
+    (contentHash: string) => submittedHashes.get(contentHash) ?? null,
+    [submittedHashes],
+  );
+
   const submit = useCallback(
-    async (args: { messageId: string; content: string; comment?: string }) => {
+    async (args: {
+      messageId: string;
+      content: string;
+      rating?: MessageFeedbackRating;
+      comment?: string;
+    }) => {
       if (!sessionId) return false;
       try {
         const res = await authFetch(MESSAGE_FEEDBACK_PATH, {
@@ -96,7 +116,8 @@ export function MessageFeedbackProvider({
         if (outcome !== 'ok') return false;
         const data = (await res.json()) as { contentHash?: string };
         const hash = data.contentHash || sha256Hex(args.content);
-        setSubmittedHashes((prev) => new Set(prev).add(hash));
+        const rating = args.rating ?? 'down';
+        setSubmittedHashes((prev) => new Map(prev).set(hash, rating));
         return true;
       } catch {
         return false;
@@ -107,8 +128,8 @@ export function MessageFeedbackProvider({
 
   // 树形状恒定：Provider 元素恒渲染，只有 value 在 null / 实值间切换。
   const value = useMemo<MessageFeedbackContextValue | null>(
-    () => (sessionId && enabled ? { enabled, isSubmitted, submit } : null),
-    [sessionId, enabled, isSubmitted, submit],
+    () => (sessionId && enabled ? { enabled, isSubmitted, submittedRating, submit } : null),
+    [sessionId, enabled, isSubmitted, submittedRating, submit],
   );
 
   return (

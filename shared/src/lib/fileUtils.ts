@@ -1,6 +1,7 @@
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
 import { getFileTypeVisual } from './fileTypeVisual';
+import { ARTIFACT_TEXT_MAX_BYTES } from './artifactViewModel';
 
 /** 判断 src 是否为外部 URL 或 data URI */
 function isExternalSrc(src: string): boolean {
@@ -148,4 +149,48 @@ export function parseToolResult(result: string): ParsedToolResult {
   }
 
   return { images: [], text: result };
+}
+
+/** 文本预览截断结果 */
+export interface TextPreviewTruncation {
+  /** 截断后的文本（未超限时与入参一致） */
+  text: string;
+  truncated: boolean;
+  /** 原文 UTF-8 字节数 */
+  totalBytes: number;
+  /** 保留的 UTF-8 字节数 */
+  keptBytes: number;
+}
+
+/**
+ * 按 UTF-8 字节上限截断文本预览（默认上限 = `ARTIFACT_TEXT_MAX_BYTES`，
+ * 与 Artifact 文本视图同一口径）。
+ *
+ * 移动端把整份文件读进内存渲染，超大文本会直接把 JS 线程拖垮，
+ * 因此代码/纯文本预览统一走这里截断并在 UI 上提示「已截断」。
+ * 截断点对齐 UTF-8 字符边界，不会产生半个多字节字符。
+ */
+export function truncateTextPreview(
+  text: string,
+  maxBytes: number = ARTIFACT_TEXT_MAX_BYTES,
+): TextPreviewTruncation {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  const totalBytes = bytes.length;
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+    return { text: '', truncated: totalBytes > 0, totalBytes, keptBytes: 0 };
+  }
+  if (totalBytes <= maxBytes) {
+    return { text, truncated: false, totalBytes, keptBytes: totalBytes };
+  }
+  // 回退到最近的 UTF-8 字符起始字节（0b10xxxxxx 是续接字节）
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0b1100_0000) === 0b1000_0000) end -= 1;
+  const kept = bytes.subarray(0, end);
+  return {
+    text: new TextDecoder().decode(kept),
+    truncated: true,
+    totalBytes,
+    keptBytes: end,
+  };
 }

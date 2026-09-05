@@ -7,12 +7,12 @@ import {
   Pressable,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import { Check, Folder, Image, FileText, FileCode, File, type LucideIcon } from 'lucide-react-native';
+import { Check } from 'lucide-react-native';
 import { formatFileSize, formatShortDate } from '@agent/shared';
 import type { FileEntry } from '@agent/shared';
 import { SwipeableRow, type SwipeAction, type Swipeable } from '../SwipeableRow';
-import { SkeletonList } from '../SkeletonList';
 import { useColors, spacing, typography, type ThemeColors } from '../../theme';
+import { FileIconTile } from './FileIconTile';
 
 interface FileListProps {
   entries: FileEntry[];
@@ -27,18 +27,6 @@ interface FileListProps {
   selectMode?: boolean;
   selectedPaths?: Set<string>;
   onSelectToggle?: (path: string) => void;
-}
-
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
-const TEXT_EXTS = new Set(['.md', '.txt', '.html', '.htm', '.csv', '.log']);
-const CODE_EXTS = new Set(['.json', '.js', '.ts', '.jsx', '.tsx', '.css', '.py', '.sh']);
-
-function getIconInfo(entry: FileEntry, colors: ThemeColors): { Icon: LucideIcon; color: string } {
-  if (entry.isDirectory) return { Icon: Folder, color: colors.statusIcon.info };
-  if (IMAGE_EXTS.has(entry.extension)) return { Icon: Image, color: colors.statusIcon.success };
-  if (TEXT_EXTS.has(entry.extension)) return { Icon: FileText, color: colors.statusIcon.purple };
-  if (CODE_EXTS.has(entry.extension)) return { Icon: FileCode, color: colors.link };
-  return { Icon: File, color: colors.mutedForeground };
 }
 
 function getParentFolder(path: string): string {
@@ -58,7 +46,6 @@ function FileRow({ entry, onPress, onDelete, openRowRef, colors, showPath, enabl
   selected?: boolean;
   onSelectToggle?: () => void;
 }) {
-  const icon = getIconInfo(entry, colors);
   const parentFolder = showPath ? getParentFolder(entry.path) : '';
 
   const rightText = showPath && parentFolder
@@ -67,7 +54,7 @@ function FileRow({ entry, onPress, onDelete, openRowRef, colors, showPath, enabl
       ? formatShortDate(entry.modifiedAt)
       : `${formatFileSize(entry.size)} · ${formatShortDate(entry.modifiedAt)}`;
 
-  const separatorLeft = spacing.sm + (selectMode ? 24 + spacing.sm : 0) + 24 + spacing.md;
+  const separatorLeft = spacing.md + (selectMode ? 24 + spacing.sm : 0) + ICON_TILE_PX + spacing.md;
 
   const actions: SwipeAction[] = useMemo(() => {
     if (!onDelete) return [];
@@ -103,7 +90,7 @@ function FileRow({ entry, onPress, onDelete, openRowRef, colors, showPath, enabl
         </View>
       )}
       <View style={styles.iconContainer}>
-        <icon.Icon size={20} color={icon.color} strokeWidth={2} />
+        <FileIconTile entry={entry} size="sm" />
       </View>
       <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
         {entry.name}
@@ -139,18 +126,8 @@ export function FileList({ entries, loading, onRefresh, onPress, onDelete, conte
     },
   }), [contentPaddingBottom]);
 
-  if (loading && entries.length === 0) {
-    return <SkeletonList />;
-  }
-
-  if (!loading && entries.length === 0) {
-    return (
-      <View style={[styles.center, { flex: 1, backgroundColor: colors.card }]}>
-        <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>暂无文件</Text>
-      </View>
-    );
-  }
-
+  // 骨架 / 空态由 `FileBrowserBody` 统一owner（与 Web FileBrowser 一致），
+  // 这里只负责列表本体。
   return (
     <FlashList
       key={selectMode ? 'select' : 'list'}
@@ -184,6 +161,9 @@ export function FileList({ entries, loading, onRefresh, onPress, onDelete, conte
   );
 }
 
+/** 与 FileIconTile size="sm" 的 tile 尺寸保持一致（分隔线缩进要对齐） */
+const ICON_TILE_PX = 36;
+
 const styles = StyleSheet.create({
   swipeContainer: {
     overflow: 'hidden',
@@ -191,7 +171,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 44,
+    height: 56,
     paddingLeft: spacing.md,
     paddingRight: spacing.md,
   },
@@ -205,7 +185,7 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   iconContainer: {
-    width: 24,
+    width: ICON_TILE_PX,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.md,
@@ -225,12 +205,5 @@ const styles = StyleSheet.create({
     bottom: 0,
     right: 0,
     height: StyleSheet.hairlineWidth,
-  },
-  center: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  emptyText: {
-    ...typography.body,
   },
 });

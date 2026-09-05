@@ -249,7 +249,7 @@ export function TextMessage({
       }
       if (seg.type === 'citation') {
         return (
-          <MessageCitationCard key={i} citation={seg} {...(message.owner ? { owner: message.owner } : {})} />
+          <MessageCitationCard key={i} citation={seg} />
         );
       }
       if (!allowFileCards) return null;

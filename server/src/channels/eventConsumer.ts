@@ -49,6 +49,7 @@ export interface RuntimeErrorEventMetadata {
   runId?: OutboundEvent['runId'];
   failureKind?: OutboundEvent['failureKind'];
   recoveryAction?: OutboundEvent['recoveryAction'];
+  quotaResetAt?: OutboundEvent['quotaResetAt'];
 }
 
 export interface EventHandler {
@@ -307,6 +308,7 @@ export class EventConsumer implements ToolTracker {
                 ...(this.runId ? { runId: this.runId } : {}),
                 ...(event.failureKind ? { failureKind: event.failureKind } : {}),
                 ...(event.recoveryAction ? { recoveryAction: event.recoveryAction } : {}),
+                ...(event.quotaResetAt ? { quotaResetAt: event.quotaResetAt } : {}),
               });
             } catch (e) { logger.warn('handler.onError failed:', e); }
             try { await handler.onDone?.(); } catch (e) { logger.warn('handler.onDone after error failed:', e); }

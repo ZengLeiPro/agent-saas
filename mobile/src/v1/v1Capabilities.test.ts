@@ -21,7 +21,9 @@ import {
   resolveV1GateDecision,
 } from './v1Capabilities';
 
-const ALL_TABS = ['chat', 'files', 'settings'];
+// P3-3c 后 `app/(tabs)/_layout.tsx` 只剩两个 Tab（文件中心改 Stack 路由）；
+// 这里保留一个假想的第三 Tab，用来证明生产裁剪确实在过滤而不是恰好相等。
+const ALL_TABS = ['chat', 'settings', 'unlisted-tab'];
 
 describe('V1 capability manifest 基础不变量', () => {
   it('清单版本存在且 Tab 快照为 对话/设置', () => {
@@ -50,6 +52,12 @@ describe('V1 capability manifest 基础不变量', () => {
     expect(deleted).toContain('settings/agent-profile/[username]');
     expect(deleted).toContain('settings/skills-admin');
     expect(deleted).toContain('settings/skills-tenant-admin');
+    // P3-3a：技能与连接管理并入能力中心后，旧路由物理删除
+    expect(deleted).toContain('settings/skills');
+    expect(deleted).toContain('settings/connections');
+    // P3-3c：文件中心迁出 Tab 后，旧 Tab 路由记墓碑
+    expect(deleted).toContain('(tabs)/files');
+    expect(deleted).toContain('(tabs)/files/browse');
     for (const route of deleted) {
       expect(V1_ALLOWED_ROUTES.includes(route)).toBe(false);
       expect(V1_DEFERRED_ROUTES[route]).toBeUndefined();
@@ -78,16 +86,57 @@ describe('classifyV1Route', () => {
     expect(classifyV1Route('+not-found')).toBe('allowed');
   });
 
-  it('分类延期路由为 deferred', () => {
-    expect(classifyV1Route('(tabs)/files')).toBe('deferred');
-    expect(classifyV1Route('cron')).toBe('deferred');
-    expect(classifyV1Route('settings/skills')).toBe('deferred');
+  it('P3-3d 后延期清单已清空：曾经的延期路由全部 allowed', () => {
+    // 延期清单本身保留（未来新页面仍可先登记理由），但当前必须为空
+    expect(Object.keys(V1_DEFERRED_ROUTES)).toEqual([]);
+    for (const route of ['memory-browser', 'persona-editor', 'settings/my-permissions']) {
+      expect(classifyV1Route(route), route).toBe('allowed');
+    }
     expect(classifyV1Route('chat/html-preview')).toBe('unclassified');
-    expect(classifyV1Route('settings/connections')).toBe('deferred');
     expect(classifyV1Route('oauth/callback')).toBe('allowed');
+    // P3-3a：旧技能/连接页已删除，重新出现即为未分类（生产 fail closed）
+    expect(classifyV1Route('settings/skills')).toBe('unclassified');
+    expect(classifyV1Route('settings/connections')).toBe('unclassified');
     // 09-04 已物理删除的管理类路由：落回 unclassified（生产 fail closed）
     expect(classifyV1Route('settings/users')).toBe('unclassified');
     expect(classifyV1Route('settings/all-agents')).toBe('unclassified');
+  });
+
+  it('P3-3b：任务中心（含文本编辑器）已从延期转为 allowed', () => {
+    for (const route of ['cron', 'cron/[jobId]', 'cron-form', 'text-editor']) {
+      expect(classifyV1Route(route), route).toBe('allowed');
+      expect(V1_DEFERRED_ROUTES[route], `${route} 不应再留在延期清单`).toBeUndefined();
+    }
+  });
+
+  it('P3-3d：设置 8 分区的 Stack 路由全部 allowed', () => {
+    for (const route of [
+      'settings/account-security',
+      'settings/my-agent',
+      'settings/chat-model',
+      'settings/appearance-layout',
+      'settings/files-storage',
+      'settings/my-permissions',
+      // 「连接与授权」落能力中心连接器 Tab；「回收站」是页内浮层，无独立路由
+      'capabilities/connectors',
+    ]) {
+      expect(classifyV1Route(route), route).toBe('allowed');
+      expect(isV1RouteAllowed(route, 'production'), route).toBe(true);
+    }
+    // 分区 ID 不等于路由：不存在 `settings/connections` / `settings/trash`
+    expect(classifyV1Route('settings/connections')).toBe('unclassified');
+    expect(classifyV1Route('settings/trash')).toBe('unclassified');
+  });
+
+  it('P3-3c：文件中心三条 Stack 路由 allowed，旧 Tab 路由落墓碑', () => {
+    for (const route of ['files', 'files/browse', 'files/preview']) {
+      expect(classifyV1Route(route), route).toBe('allowed');
+      expect(V1_DEFERRED_ROUTES[route], `${route} 不应留在延期清单`).toBeUndefined();
+    }
+    // 旧 Tab 路由重新出现即为未分类 -> 生产 fail closed
+    expect(classifyV1Route('(tabs)/files')).toBe('unclassified');
+    expect(classifyV1Route('(tabs)/files/browse')).toBe('unclassified');
+    expect(isV1RouteAllowed('(tabs)/files', 'production')).toBe(false);
   });
 
   it('未分类路由返回 unclassified（fail closed 依据）', () => {
@@ -126,6 +175,21 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('(tabs)/settings', 'production')).toBe(true);
     expect(isV1RouteAllowed('share-target', 'production')).toBe(true);
     expect(isV1RouteAllowed('change-password', 'production')).toBe(true);
+    // P3-3a 能力中心四 Tab 与入口
+    expect(isV1RouteAllowed('capabilities', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/workflows', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/skills', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/connectors', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/experts', 'production')).toBe(true);
+    // P3-3b 任务中心三条路由 + 文本编辑器
+    expect(isV1RouteAllowed('cron', 'production')).toBe(true);
+    expect(isV1RouteAllowed('cron/[jobId]', 'production')).toBe(true);
+    expect(isV1RouteAllowed('cron-form', 'production')).toBe(true);
+    expect(isV1RouteAllowed('text-editor', 'production')).toBe(true);
+    // P3-3c 文件中心三条路由
+    expect(isV1RouteAllowed('files', 'production')).toBe(true);
+    expect(isV1RouteAllowed('files/browse', 'production')).toBe(true);
+    expect(isV1RouteAllowed('files/preview', 'production')).toBe(true);
   });
 
   it('生产：全部延期路由与未分类路由 fail closed', () => {
@@ -135,7 +199,8 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('unknown-route', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/users', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/connections', 'production')).toBe(false);
-    expect(isV1RouteAllowed('cron-form', 'production')).toBe(false);
+    expect(isV1RouteAllowed('settings/skills', 'production')).toBe(false);
+    expect(isV1RouteAllowed('settings/unregistered-page', 'production')).toBe(false);
     for (const route of Object.keys(V1_DELETED_ROUTES)) {
       expect(isV1RouteAllowed(route, 'production'), route).toBe(false);
     }
@@ -144,6 +209,7 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
   it('development / preview 不裁剪', () => {
     for (const profile of ['development', 'preview'] as const) {
       expect(isV1RouteAllowed('(tabs)/files', profile)).toBe(true);
+      expect(isV1RouteAllowed('brand-new-page', profile)).toBe(true);
       expect(isV1RouteAllowed('settings/users', profile)).toBe(true);
       expect(isV1RouteAllowed('unknown-route', profile)).toBe(true);
     }
@@ -156,15 +222,28 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1SegmentsAllowed([], 'production')).toBe(true); // app/index.tsx
     expect(isV1SegmentsAllowed(['settings', 'users'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['settings', 'connections'], 'production')).toBe(false);
-    expect(isV1SegmentsAllowed(['cron'], 'production')).toBe(false);
+    expect(isV1SegmentsAllowed(['capabilities', 'workflows'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['capabilities'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['cron'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['cron', '[jobId]'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['files'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['files', 'preview'], 'production')).toBe(true);
+    // 旧 Tab 深链 fail closed
+    expect(isV1SegmentsAllowed(['(tabs)', 'files'], 'production')).toBe(false);
+    // P3-3d：memory-browser / 设置 8 分区已放行
+    expect(isV1SegmentsAllowed(['memory-browser'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['persona-editor'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['settings', 'my-permissions'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['settings', 'account-security'], 'production')).toBe(true);
     expect(isV1SegmentsAllowed(['webview-spike'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['settings', 'users'], 'preview')).toBe(true);
   });
 });
 
 describe('getV1VisibleTabs（生产菜单快照）', () => {
-  it('生产只保留 对话/设置，移除文件 Tab', () => {
+  it('生产只保留 对话/设置（文件中心不再是 Tab）', () => {
     expect(getV1VisibleTabs('production', ALL_TABS)).toEqual(['chat', 'settings']);
+    expect([...V1_PRODUCTION_TABS]).not.toContain('files');
   });
 
   it('development / preview 保留全部 Tab', () => {
@@ -174,10 +253,11 @@ describe('getV1VisibleTabs（生产菜单快照）', () => {
 });
 
 describe('resolveV1GateDecision（根路由门禁决策，M00-01 返工）', () => {
+  // P3-3d 后延期清单为空，这里的样本全部来自墓碑 / 未分类路由
   const deferredRoutes: string[][] = [
     ['chat', 'html-preview'],
-    ['cron'],
     ['settings', 'users'],
+    ['settings', 'connections'],
     ['webview-spike'], // 墓碑路由
     ['brand-new-page'], // 未分类路由
   ];

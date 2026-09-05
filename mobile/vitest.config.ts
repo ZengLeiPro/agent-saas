@@ -20,6 +20,9 @@ export default defineConfig({
     jsx: 'automatic',
   },
   resolve: {
+    // shared/src 里的 React hook 经 alias 直接源码加载，必须与 mobile 的 react 同一实例，
+    // 否则 renderHook 下会撞上「两个 React」（useState 读到 null）。
+    dedupe: ['react', 'react-dom'],
     alias: [
       { find: /^@agent\/shared$/, replacement: resolve(__dirname, '../shared/src/index.ts') },
       { find: 'react-native', replacement: resolve(__dirname, './src/test/reactNativeStub.tsx') },

@@ -10,6 +10,7 @@ import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
 import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
 import { ResponsesApiAdapter } from '../runtime/responsesApiAdapter.js';
+import { ResponsesStreamGuardError } from '../runtime/responses/responsesStreamBudget.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { OutboundEvent } from '../types/index.js';
 import type { ModelAdapter, ModelEvent, ModelRequest, RunContext } from '../runtime/types.js';
@@ -55,7 +56,7 @@ describe('RawAgentLoop taskboard completion transaction', () => {
     for (const dir of cleanupDirs) await rm(dir, { recursive: true, force: true });
     cleanupDirs.clear();
   });
-  it('Taskboard 模型 attempt 中断后只执行成功 attempt 的 tool call 一次', async () => {
+  it.each(['network', 'guard', 'guard_failure'])('Taskboard 模型 attempt %s 中断后只执行成功 attempt 的 tool call 一次', async (kind) => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-retry-tool-'));
     cleanupDirs.add(cwd);
     const sessionId = 'session-taskboard-retry-tool';
@@ -94,8 +95,12 @@ describe('RawAgentLoop taskboard completion transaction', () => {
         frame('response.function_call_arguments.delta', {
           type: 'response.function_call_arguments.delta', output_index: 0, delta: '{"path"',
         }),
-      ], interrupted))
-      .mockResolvedValueOnce(response([
+        ...(kind !== 'network' ? Array.from({ length: 3 }, () => frame('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta', output_index: 0, delta: 'x'.repeat(800_000),
+        })) : []),
+      ], kind === 'network' ? interrupted : undefined))
+      .mockResolvedValueOnce(kind === 'guard_failure'
+        ? response([], new ResponsesStreamGuardError('MODEL_TOOL_ARGUMENT_LIMIT', 'second failure')) : response([
         frame('response.created', { type: 'response.created', response: { id: 'resp_tool_ok' } }),
         frame('response.output_item.done', {
           type: 'response.output_item.done',
@@ -151,6 +156,15 @@ describe('RawAgentLoop taskboard completion transaction', () => {
       approvalPolicy: { autoApproveTools: true },
     }));
 
+    if (kind === 'guard_failure') {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+      expect(durable.filter(event => event.type === 'assistant_tool_calls' || event.type === 'tool_result')).toHaveLength(0);
+      expect(durable.filter(event => event.type === 'run_finished')).toMatchObject([
+        { subtype: 'error', error: expect.stringContaining('MODEL_TOOL_ARGUMENT_LIMIT') },
+      ]);
+      return;
+    }
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(outbound.at(-1)).toEqual({ type: 'done' });
     expect(readFileSync(join(cwd, 'retry-once.txt'), 'utf-8')).toBe('ONCE');

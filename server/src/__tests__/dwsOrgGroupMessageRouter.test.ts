@@ -40,9 +40,13 @@ function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
         state: 'reply_pending',
         responseText: text,
       })),
-    markReplyAttemptStarted: vi
-      .fn()
-      .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
+    // 真实 store 会把 reply_started_at 写成「当前时间」，路由器据此对齐 DWS 23 小时幂等窗口。
+    // 这里必须同样返回实时时间戳，否则夹具里的固定时间会随真实时钟推移而穿越窗口。
+    markReplyAttemptStarted: vi.fn().mockImplementation(async () => ({
+      ...claimed,
+      state: 'reply_pending',
+      replyStartedAt: new Date().toISOString(),
+    })),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
     fail: vi.fn().mockResolvedValue(undefined),
     defer: vi.fn().mockResolvedValue(undefined),

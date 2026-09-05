@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "reason": "WP1 契约包：定制项目部署配置 KY_* 与测试环境变量",
+  "reason": "WP1 ky-app-server：定制项目部署配置 KY_* 只在 config 模块集中读取",
   "updatedAt": "2026-09-05",
   "domains": {
     "server": {
@@ -28,8 +28,8 @@
         "AGENT_TRANSCRIPTS_ROOT",
         "AZEROTH_API_URL",
         "AZEROTH_PROXY_BASE_URL",
-        "AZEROTH_TOKEN_METADATA_VERIFY",
         "AZEROTH_TOKENS_FILE",
+        "AZEROTH_TOKEN_METADATA_VERIFY",
         "CONFIG_JSON_PATH",
         "CONNECTOR_OAUTH_CALLBACK_URL",
         "FEISHU_CONNECTOR_APP_ID",
@@ -194,8 +194,21 @@
       ]
     },
     "packages": {
-      "budget": 0,
-      "names": []
+      "budget": 12,
+      "names": [
+        "KY_ENV",
+        "KY_INSTALLATION_ID",
+        "KY_INSTALLATION_KEY",
+        "KY_INSTALLATION_KEY_PREVIOUS",
+        "KY_INSTALLATION_KEY_PREVIOUS_VERSION",
+        "KY_INSTALLATION_KEY_VERSION",
+        "KY_JWKS_URL",
+        "KY_LOCAL_LOGIN_ENABLED",
+        "KY_ORIGIN",
+        "KY_SERVICE_CREDENTIAL",
+        "KY_SYSTEM_ID",
+        "KY_TENANT_ID"
+      ]
     }
   }
 }

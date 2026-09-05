@@ -498,15 +498,15 @@ export interface HttpSecretVaultOptions {
   requestTimeoutMs?: number;
   /**
    * A3: 本地 plaintext cache TTL（毫秒）。默认 30_000；设 0 或负数关闭 cache。
-   * 命中条件：未过期 + 未被 invalidate / rotate / revoke。cache key 绑定 refId
+   * 命中条件：elapsed 有限、非负且未到期，并且未被 invalidate / rotate / revoke。cache key 绑定 refId
    * 与完整 caller 授权上下文，禁止不同 tenant/user/scope 共享 plaintext。
    */
   cacheTtlMs?: number;
   /** Cache 最大条目数（默认 256）。命中 / 写入按 Map 插入顺序做 LRU 淘汰。 */
   maxCacheEntries?: number;
-  /** metadata-only inspect cache TTL（默认 5 秒）；到期后重检远端 version。 */
+  /** metadata-only inspect cache TTL（默认 5 秒）；到期或时钟回拨后重检远端 version。 */
   metadataCacheTtlMs?: number;
-  /** 注入当前时间（毫秒），用于测试 TTL 行为。 */
+  /** 注入当前时间（毫秒），用于 TTL 与时钟异常测试。 */
   nowMs?: () => number;
 }
 
@@ -517,7 +517,7 @@ const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 20_000;
 
 interface CacheEntry {
   value: string;
-  expiresAt: number;
+  cachedAt: number;
 }
 
 /** Production adapter for an external KMS/secret-manager proxy. */
@@ -531,7 +531,7 @@ export class HttpSecretVault implements SecretVault {
   private readonly nowMs: () => number;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly refs = new Map<string, SecretRef>();
-  private readonly refMetadataExpiresAt = new Map<string, number>();
+  private readonly refMetadataCachedAt = new Map<string, number>();
 
   constructor(private readonly options: HttpSecretVaultOptions) {
     if (!options.authToken || options.authToken.length < 8) throw new Error('HttpSecretVault authToken is required');
@@ -636,7 +636,7 @@ export class HttpSecretVault implements SecretVault {
   invalidate(ref: SecretRef | string): void {
     const id = refId(ref);
     this.invalidateCache(id);
-    this.refMetadataExpiresAt.delete(id);
+    this.refMetadataCachedAt.delete(id);
   }
 
   private rememberRef(ref: SecretRef): void {
@@ -649,16 +649,18 @@ export class HttpSecretVault implements SecretVault {
     }
     this.refs.set(ref.id, ref);
     if (this.metadataCacheTtlMs > 0) {
-      this.refMetadataExpiresAt.set(ref.id, this.nowMs() + this.metadataCacheTtlMs);
+      this.refMetadataCachedAt.set(ref.id, this.nowMs());
     } else {
-      this.refMetadataExpiresAt.delete(ref.id);
+      this.refMetadataCachedAt.delete(ref.id);
     }
   }
 
   private readRefMetadata(id: string): SecretRef | undefined {
-    const expiresAt = this.refMetadataExpiresAt.get(id);
-    if (expiresAt === undefined || expiresAt <= this.nowMs()) {
-      this.refMetadataExpiresAt.delete(id);
+    const cachedAt = this.refMetadataCachedAt.get(id);
+    if (cachedAt === undefined) return undefined;
+    const elapsedMs = this.nowMs() - cachedAt;
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= this.metadataCacheTtlMs) {
+      this.refMetadataCachedAt.delete(id);
       return undefined;
     }
     return this.refs.get(id);
@@ -695,7 +697,8 @@ export class HttpSecretVault implements SecretVault {
     if (this.cacheTtlMs <= 0) return undefined;
     const entry = this.cache.get(id);
     if (!entry) return undefined;
-    if (entry.expiresAt <= this.nowMs()) {
+    const elapsedMs = this.nowMs() - entry.cachedAt;
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs >= this.cacheTtlMs) {
       this.cache.delete(id);
       return undefined;
     }
@@ -708,7 +711,7 @@ export class HttpSecretVault implements SecretVault {
   private writeCache(id: string, value: string): void {
     if (this.cacheTtlMs <= 0) return;
     if (this.cache.has(id)) this.cache.delete(id);
-    this.cache.set(id, { value, expiresAt: this.nowMs() + this.cacheTtlMs });
+    this.cache.set(id, { value, cachedAt: this.nowMs() });
     while (this.cache.size > this.maxCacheEntries) {
       const firstKey = this.cache.keys().next().value;
       if (firstKey === undefined) break;

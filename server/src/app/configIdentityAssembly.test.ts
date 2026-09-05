@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { InMemorySecretVault } from '../security/secretVault.js';
+import { HttpSecretVault, InMemorySecretVault } from '../security/secretVault.js';
 import { projectRuntimeWorkerReadyFile } from '../runtime/runtimeWorkerReadiness.js';
 import {
   buildCanonicalConfigProjection,
@@ -58,13 +58,22 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
     const snapshotPath = join(root, 'config-identity.json');
     const workerReadyPath = join(root, 'worker.ready');
     try {
-      const vault = new InMemorySecretVault();
-      const caller = {
-        actor: 'system' as const,
-        userId: '__system__',
-        scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:read'],
-      };
-      const ref = await vault.putSecret('global', 'tenant-hand', 'v1', caller);
+      let remoteVersion = 1;
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+        id: 'remote-ref-id',
+        ownerId: 'global',
+        kind: 'tenant-hand',
+        version: remoteVersion,
+        metadata: {},
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+      })));
+      const vault = new HttpSecretVault({
+        baseUrl: 'https://vault.example.com',
+        authToken: 'bootstrap-token',
+        fetchImpl: fetchImpl as typeof fetch,
+        metadataCacheTtlMs: 5_000,
+      });
       const config = parseAppConfig({
         agent: { cwd: '/srv/agent' },
         server: {},
@@ -73,7 +82,7 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
           connectionString: 'postgresql://u:p@db.internal:5432/runtime',
         },
         tenantRemoteHands: {
-          hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: ref.id }],
+          hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: 'remote-ref-id' }],
         },
       });
       const deployTime = await computeObservedConfigIdentity(config, vault, root);
@@ -102,10 +111,7 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
       );
       expect(existsSync(workerReadyPath)).toBe(true);
 
-      await vault.rotateSecret(ref.id, 'v2', {
-        ...caller,
-        scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
-      });
+      remoteVersion = 2;
       vi.setSystemTime(new Date(0));
       expect(assembly.getSummary().status).toBe('consistent');
       expect(JSON.parse(readFileSync(snapshotPath, 'utf8'))).toMatchObject({
@@ -125,6 +131,7 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
         4321,
       );
       expect(existsSync(workerReadyPath)).toBe(false);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -319,7 +319,7 @@ describe('HttpSecretVault metadata-only version inspection（TASK-318）', () =>
     await expect(vault.inspectRef!('remote-ref-id', HTTP_CALLER)).resolves.toMatchObject({ version: 9 });
   });
 
-  it('metadata TTL 到期或 invalidate 后重检并更新远端 version，且不解析 secret 明文', async () => {
+  it('metadata TTL 到期、时钟回拨或 invalidate 后重检远端 version', async () => {
     let now = 10_000;
     let remoteVersion = 4;
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -353,14 +353,19 @@ describe('HttpSecretVault metadata-only version inspection（TASK-318）', () =>
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
     remoteVersion = 5;
-    now += 5_001;
+    now = 0;
     expect((await vault.inspectRef!('remote-ref-id', CALLER))?.version).toBe(5);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
 
     remoteVersion = 6;
-    vault.invalidate('remote-ref-id');
+    now += 5_001;
     expect((await vault.inspectRef!('remote-ref-id', CALLER))?.version).toBe(6);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+    remoteVersion = 7;
+    vault.invalidate('remote-ref-id');
+    expect((await vault.inspectRef!('remote-ref-id', CALLER))?.version).toBe(7);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it('inspect 发现外部 version 前进时失效 plaintext cache，下一次读取获取新 Secret', async () => {

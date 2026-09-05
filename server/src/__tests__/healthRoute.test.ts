@@ -3,12 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import { computeObservedConfigIdentity } from '../release/configIdentity.js';
 import { createHealthRouter } from '../routes/health.js';
-import { InMemorySecretVault } from '../security/secretVault.js';
+import { HttpSecretVault, InMemorySecretVault } from '../security/secretVault.js';
 import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
 import type { ActiveRunCounts } from '../runtime/runStore.js';
 import {
@@ -673,14 +673,25 @@ describe('health router', () => {
     }
   });
 
-  it('TASK-318：SecretVault 轮换且 wall-clock 回拨后的首次 readiness fail closed', async () => {
-    const vault = new InMemorySecretVault();
-    const caller = {
-      actor: 'system' as const,
-      userId: '__system__',
-      scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:read'],
-    };
-    const ref = await vault.putSecret('global', 'tenant-hand', 'v1', caller);
+  it('TASK-318：Production HttpSecretVault 外部轮换且时钟回拨后 readiness fail closed', async () => {
+    let remoteVersion = 1;
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      id: 'remote-ref-id',
+      ownerId: 'global',
+      kind: 'tenant-hand',
+      version: remoteVersion,
+      metadata: {},
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-01T00:00:00.000Z',
+    })));
+    let clock = 10_000;
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+      metadataCacheTtlMs: 5_000,
+      nowMs: () => clock,
+    });
     const config = parseAppConfig({
       agent: { cwd: '/srv/agent' },
       server: {},
@@ -689,15 +700,14 @@ describe('health router', () => {
         connectionString: 'postgresql://u:p@db.internal:5432/runtime',
       },
       tenantRemoteHands: {
-        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: ref.id }],
+        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: 'remote-ref-id' }],
       },
     });
     const deployTime = await computeObservedConfigIdentity(config, vault, '/srv/server');
-    let clock = 10_000;
     const runtime = createConfigIdentityRuntime({
       config,
       secretVault: vault,
-      environment: 'test',
+      environment: 'production',
       processCwd: '/srv/server',
       expected: {
         schemaVersion: 1,
@@ -711,13 +721,11 @@ describe('health router', () => {
     servers.push(server);
     expect((await server.request('/api/healthz/ready')).status).toBe(200);
 
-    await vault.rotateSecret(ref.id, 'v2', {
-      ...caller,
-      scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
-    });
+    remoteVersion = 2;
     clock = 0;
     expect((await server.request('/api/healthz/ready')).status).toBe(503);
     expect(runtime.getSummary().status).toBe('drifted');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('TASK-318：已绑定 expected 的 drift 在匿名 readiness 只表现为 503', async () => {

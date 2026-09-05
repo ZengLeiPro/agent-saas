@@ -38,7 +38,7 @@ const caller = {
 };
 
 describe('HttpSecretVault cache (A3)', () => {
-  it('caches getSecret plaintext within TTL and refetches after expiry', async () => {
+  it('caches plaintext only within nonnegative TTL and refetches after clock rollback or expiry', async () => {
     let now = 1_000_000;
     let fetchCount = 0;
     const fetchImpl = makeFetch((path, body) => {
@@ -58,9 +58,12 @@ describe('HttpSecretVault cache (A3)', () => {
     expect(await vault.getSecret('ref-a', caller)).toBe('v1-ref-a');
     expect(await vault.getSecret('ref-a', caller)).toBe('v1-ref-a');
     expect(fetchCount).toBe(1);
-    now += 5_001;
+    now = 0;
     expect(await vault.getSecret('ref-a', caller)).toBe('v2-ref-a');
     expect(fetchCount).toBe(2);
+    now += 5_001;
+    expect(await vault.getSecret('ref-a', caller)).toBe('v3-ref-a');
+    expect(fetchCount).toBe(3);
   });
 
   it('cacheTtlMs=0 disables cache entirely', async () => {

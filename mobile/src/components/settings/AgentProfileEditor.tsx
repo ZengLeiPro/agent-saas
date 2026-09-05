@@ -75,7 +75,7 @@ export function AgentProfileEditor({
   const v1Profile = getV1BuildProfile();
   const showPersonaEditor = isV1RouteAllowed("persona-editor", v1Profile);
   const showSkills =
-    customSkillsEnabled && isV1RouteAllowed("settings/skills", v1Profile);
+    customSkillsEnabled && isV1RouteAllowed("capabilities/skills", v1Profile);
   const username = targetUsername || user?.username;
 
   const [name, setName] = useState("");
@@ -225,7 +225,7 @@ export function AgentProfileEditor({
       key: "skills",
       Icon: Puzzle,
       label: "技能",
-      onPress: () => router.push("/settings/skills"),
+      onPress: () => router.push("/capabilities/skills"),
     });
   }
   // Hidden for now — may re-enable later

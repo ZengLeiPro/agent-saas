@@ -17,7 +17,16 @@ const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/legacy-api-promotion-retries.json', import.meta.url)),
 );
 
-function runPhase(phase, { keepApi = false, drift = false } = {}) {
+function runPhase(
+  phase,
+  {
+    keepApi = false,
+    drift = false,
+    privateSnapshot = false,
+    inconsistent = false,
+    wrongRelease = false,
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), 'promotion-phase-config-'));
   const manifest = structuredClone(fixture.manifest);
   manifest.productionBaseline = Object.fromEntries(
@@ -33,6 +42,9 @@ function runPhase(phase, { keepApi = false, drift = false } = {}) {
   const { productionState } = fixture.retries.find(({ failedStage }) => failedStage === phase);
   const state = structuredClone(productionState);
   if (drift) state.components.web.artifactDigest = `sha256:${'f'.repeat(64)}`;
+  const snapshot = privateSnapshot ? structuredClone(state.configIdentity) : undefined;
+  if (snapshot && inconsistent) snapshot.status = 'mismatch';
+  if (snapshot && wrongRelease) snapshot.releaseId = 'other-release';
   const manifestPath = join(root, 'manifest.json');
   writeFileSync(manifestPath, JSON.stringify(manifest));
   const readerPath = join(root, 'reader.mjs');
@@ -42,15 +54,18 @@ function runPhase(phase, { keepApi = false, drift = false } = {}) {
     `
 import { writeFileSync } from 'node:fs';
 import { selectLiveConfigIdentity } from ${JSON.stringify(liveReader)};
+import { validateExpectedConfigIdentityObservers } from ${JSON.stringify(new URL('./read-production-state.mjs', import.meta.url).href)};
 const state = ${JSON.stringify(state)};
 const args = process.argv.slice(2);
 const index = args.indexOf('--config-identity-stage');
-selectLiveConfigIdentity({
-  privateConfigIdentity: undefined,
+const stage = index < 0 ? 'steady-state' : args[index + 1];
+const configIdentity = selectLiveConfigIdentity({
+  privateConfigIdentity: ${JSON.stringify(snapshot)},
   publicConfigIdentity: undefined,
   apiReleaseId: state.apiReleaseId,
-  configIdentityStage: index < 0 ? 'steady-state' : args[index + 1],
+  configIdentityStage: stage,
 });
+validateExpectedConfigIdentityObservers(undefined, configIdentity, { configIdentityStage: stage });
 writeFileSync(args[args.indexOf('--output') + 1], JSON.stringify(state));
 `,
   );
@@ -94,7 +109,7 @@ test('Web 阶段和 API 保持原样的发布仍拒绝缺失私有快照', () =>
     assert.notEqual(result.status, 0);
     assert.match(
       result.stderr,
-      /Private Production ConfigIdentity snapshot is required during steady-state/,
+      /Private Production ConfigIdentity snapshot is required during (steady-state|candidate-readback)/,
     );
   }
 });
@@ -107,4 +122,16 @@ test('阶段或 API/Worker 动作非法时不能选择兼容模式', () => {
   const manifest = structuredClone(fixture.manifest);
   manifest.components.runtimeWorker.action = 'keep';
   assert.throws(() => promotionPhaseConfigIdentityStage(manifest, 'acs'), /actions must match/);
+});
+
+test('Web 允许已升级的私有身份先于 trusted 提交，并继续拒绝错误身份和组件漂移', () => {
+  const valid = runPhase('web', { privateSnapshot: true });
+  assert.equal(valid.status, 0, valid.stderr);
+  for (const option of ['inconsistent', 'wrongRelease', 'drift']) {
+    const result = runPhase('web', { privateSnapshot: true, [option]: true });
+    assert.notEqual(result.status, 0, option);
+  }
+  const keep = runPhase('web', { privateSnapshot: true, keepApi: true });
+  assert.notEqual(keep.status, 0);
+  assert.match(keep.stderr, /missing from trusted runtime identity/);
 });

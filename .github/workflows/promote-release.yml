@@ -900,8 +900,8 @@ jobs:
           api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
           config_identity_readback_stage=steady-state
           [ "$api_action" = deploy ] && config_identity_readback_stage=candidate-readback
-          identity_lock_ready="/tmp/promotion-identity-lock-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.ready"
-          identity_lock_release="/tmp/promotion-identity-lock-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.release"
+          identity_lock_ready="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-identity-lock.ready"
+          identity_lock_release="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-identity-lock.release"
           identity_lock_log="$RUNNER_TEMP/identity-lock.log"
           identity_lock_pid=''
           identity_lock_ready_confirmed=false

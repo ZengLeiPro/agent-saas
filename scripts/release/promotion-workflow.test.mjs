@@ -260,7 +260,7 @@ test('remote workspaces and approval attestations are isolated by run attempt', 
   ]);
   assert.match(
     workflow,
-    /promotion-identity-lock-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\.ready/u,
+    /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-identity-lock\.ready/u,
   );
   assert.match(workflow, /--operation "approval:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u);
   assert.doesNotMatch(workflow, /--operation "approval:\$GITHUB_RUN_ID"/u);
@@ -472,7 +472,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.doesNotMatch(readbackBlock, /mkdir -p|scp -i/u);
   assert.match(
     readbackBlock,
-    /\/tmp\/promotion-identity-lock-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT\.ready/u,
+    /\/tmp\/agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-identity-lock\.ready/u,
   );
   assert.doesNotMatch(readbackBlock, /\$PROMOTION_REMOTE\/identity-lock/u);
   assert.match(readbackBlock, /WEB_LOCK_TIMEOUT_SECONDS=900/u);
@@ -519,7 +519,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /promotion-config-identity-state\.mjs plan/u);
   assert.match(workflow, /reader="\$\(printf '%s' "\$baseline_plan" \| jq -r \.reader\)"/u);
-  assert.match(workflow, /reader_stage="\$\(printf '%s' "\$baseline_plan" \| jq -r \.configIdentityStage\)"/u);
+  assert.match(
+    workflow,
+    /reader_stage="\$\(printf '%s' "\$baseline_plan" \| jq -r \.configIdentityStage\)"/u,
+  );
   assert.match(
     workflow,
     /node '\$remote\/\$reader' --config-identity-stage '\$reader_stage' --output '\$remote\/production-before\.json/u,
@@ -601,13 +604,42 @@ test('both Production Web shell entrypoints satisfy the real deploy script param
     GITHUB_RUN_ATTEMPT: '2',
   };
   for (const entrypoint of entrypoints) {
+    const lockValues = [...entrypoint.matchAll(/WEB_LOCK_(READY|RELEASE)='\$(\w+)'/gu)];
+    assert.equal(lockValues.length, 2);
+    const assignments = lockValues.map(([, , variable]) => {
+      const line = workflow.split('\n').find((line) => line.trimStart().startsWith(variable + '='));
+      assert.ok(line, variable);
+      return line.trim();
+    });
+    const resolveLocks = spawnSync(
+      'bash',
+      [
+        '-c',
+        [
+          'set -euo pipefail',
+          ...assignments,
+          ...lockValues.map(([, , variable]) => "printf '%s\\n' \"$" + variable + '"'),
+        ].join('\n'),
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, ...values, PROMOTION_REMOTE: '/tmp/agent-saas-promotion-123456-2' },
+      },
+    );
+    assert.equal(resolveLocks.status, 0, resolveLocks.stderr);
+    const paths = resolveLocks.stdout.trim().split('\n');
+    const actualValues = { ...values };
+    lockValues.forEach(([, key], index) => {
+      actualValues['WEB_LOCK_' + key] = paths[index];
+    });
     const assigned = new Set(
       [...entrypoint.matchAll(/\b([A-Z][A-Z0-9_]*)=(?:'[^']*'|web)(?=\s|$)/gu)].map(
         (match) => match[1],
       ),
     );
     const env = { ...process.env };
-    for (const [key, value] of Object.entries(values)) if (assigned.has(key)) env[key] = value;
+    for (const [key, value] of Object.entries(actualValues))
+      if (assigned.has(key)) env[key] = value;
     const result = spawnSync('bash', [deployPath.pathname], { encoding: 'utf8', env });
     assert.notEqual(result.status, 0);
     assert.doesNotMatch(
@@ -823,11 +855,12 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
 
   const appDeployStart = deploy.indexOf('deploy_app() {');
   const appCleanupStart = deploy.indexOf('  cleanup_app_failure() {', appDeployStart);
-  const appCleanupEnd = deploy.indexOf('  arm_deploy_rollback cleanup_app_failure', appCleanupStart);
-  const appCleanup = deploy.slice(appCleanupStart, appCleanupEnd);
-  const oldApiRestart = appCleanup.indexOf(
-    'systemctl restart "agent-saas-server@$api_active"',
+  const appCleanupEnd = deploy.indexOf(
+    '  arm_deploy_rollback cleanup_app_failure',
+    appCleanupStart,
   );
+  const appCleanup = deploy.slice(appCleanupStart, appCleanupEnd);
+  const oldApiRestart = appCleanup.indexOf('systemctl restart "agent-saas-server@$api_active"');
   const rollbackWorkerCall = appCleanup.indexOf('commit_rollback_worker_authority');
   const rollbackApiCall = appCleanup.indexOf('commit_rollback_api_authority');
   const atomicMarkerCommit = appCleanup.indexOf('commit_app_active_colors');
@@ -844,10 +877,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   const workerRollbackStart = deploy.indexOf('commit_rollback_worker_authority() {');
   const workerRollbackEnd = deploy.indexOf('restore_candidate_worker_authority() {');
   const workerRollback = deploy.slice(workerRollbackStart, workerRollbackEnd);
-  assert.match(
-    workerRollback,
-    /systemctl restart "agent-saas-runtime-worker@\$active_color"/u,
-  );
+  assert.match(workerRollback, /systemctl restart "agent-saas-runtime-worker@\$active_color"/u);
   assert.match(
     workerRollback,
     /systemctl disable --now "agent-saas-runtime-worker@\$candidate_color"/u,
@@ -861,10 +891,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   const apiRollbackEnd = deploy.indexOf('restore_candidate_api_authority() {');
   const apiRollback = deploy.slice(apiRollbackStart, apiRollbackEnd);
   assert.match(apiRollback, /nginx -t/u);
-  assert.match(
-    apiRollback,
-    /systemctl disable --now "agent-saas-server@\$candidate_color"/u,
-  );
+  assert.match(apiRollback, /systemctl disable --now "agent-saas-server@\$candidate_color"/u);
   assert.ok(
     apiRollback.indexOf('Rollback old API final ConfigIdentity') <
       apiRollback.indexOf('commit_api_active_color'),
@@ -936,7 +963,10 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   );
   assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
   assert.match(deploy, /runtime_data_root\/config-governance\/config\.lock/u);
-  assert.match(deploy, /acquire_config_governance_fence \\\n\s+"\$\{AGENT_SAAS_RUNTIME_DATA_ROOT:-\/mnt\/agent-saas\/server-data\}"/u);
+  assert.match(
+    deploy,
+    /acquire_config_governance_fence \\\n\s+"\$\{AGENT_SAAS_RUNTIME_DATA_ROOT:-\/mnt\/agent-saas\/server-data\}"/u,
+  );
   assert.match(deploy, /Candidate App final API ConfigIdentity/u);
   assert.match(deploy, /Candidate App final Worker ConfigIdentity/u);
   assert.match(deploy, /Rollback Worker final ConfigIdentity/u);
@@ -1101,7 +1131,6 @@ test('App cleanup after Worker drain restores both sides before the success rece
   assert.ok(cleanup.indexOf('commit_rollback_api_authority') >= 0);
   assert.ok(cleanup.indexOf('commit_app_active_colors') >= 0);
   assert.ok(
-    cleanup.lastIndexOf('record_rollback_success') >
-      cleanup.indexOf('commit_app_active_colors'),
+    cleanup.lastIndexOf('record_rollback_success') > cleanup.indexOf('commit_app_active_colors'),
   );
 });

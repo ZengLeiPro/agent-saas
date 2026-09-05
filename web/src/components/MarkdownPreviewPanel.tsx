@@ -83,40 +83,40 @@ import "katex/dist/katex.min.css";
 
 const LazyMarkdownRenderer = lazy(async () => {
   const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
-  return {
-    default: ({ content, owner, referrer }: { content: string; owner?: string; referrer?: string }) => {
-      const mdComponents = useMemo<import("react-markdown").Components>(() => ({
-        a: ({ children, href, ...props }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
-        ),
-        table: ({ children, ...props }) => (
-          <div className="max-w-full overflow-x-auto">
-            <table {...props}>{children}</table>
-          </div>
-        ),
-        // td/th 注入 min-width = ⌈文本宽度 / 4⌉，保证自然换行不超过 4 行
-        td: ({ children, style, ...props }) => (
-          <td style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</td>
-        ),
-        th: ({ children, style, ...props }) => (
-          <th style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</th>
-        ),
-        img: ({ src, alt, ...props }) => {
-          if (!src || isExternalSrc(src)) {
-            if (src && VIDEO_EXT_RE.test(src)) {
-              return <video src={src} controls playsInline preload="metadata" className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
-            }
-            return <img src={src} alt={alt} {...props} />;
+  // 具名组件：匿名的 `default:` 箭头函数会让 react-hooks/rules-of-hooks 无法识别这是 React 组件
+  const MarkdownRuntimeRenderer = ({ content, owner, referrer }: { content: string; owner?: string; referrer?: string }) => {
+    const mdComponents = useMemo<import("react-markdown").Components>(() => ({
+      a: ({ children, href, ...props }) => (
+        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+      ),
+      table: ({ children, ...props }) => (
+        <div className="max-w-full overflow-x-auto">
+          <table {...props}>{children}</table>
+        </div>
+      ),
+      // td/th 注入 min-width = ⌈文本宽度 / 4⌉，保证自然换行不超过 4 行
+      td: ({ children, style, ...props }) => (
+        <td style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</td>
+      ),
+      th: ({ children, style, ...props }) => (
+        <th style={getTableCellStyle(extractTextFromChildren(children), style)} {...props}>{children}</th>
+      ),
+      img: ({ src, alt, ...props }) => {
+        if (!src || isExternalSrc(src)) {
+          if (src && VIDEO_EXT_RE.test(src)) {
+            return <video src={src} controls playsInline preload="metadata" className="max-h-80 max-w-full rounded-lg border border-border shadow-sm" />;
           }
-          if (VIDEO_EXT_RE.test(src)) {
-            return <PreviewVideo src={src} owner={owner} referrer={referrer} />;
-          }
-          return <PreviewImage src={src} alt={alt ?? ''} owner={owner} referrer={referrer} />;
-        },
-      }), [owner, referrer]);
-      return <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>{content}</Markdown>;
-    },
+          return <img src={src} alt={alt} {...props} />;
+        }
+        if (VIDEO_EXT_RE.test(src)) {
+          return <PreviewVideo src={src} owner={owner} referrer={referrer} />;
+        }
+        return <PreviewImage src={src} alt={alt ?? ''} owner={owner} referrer={referrer} />;
+      },
+    }), [owner, referrer]);
+    return <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>{content}</Markdown>;
   };
+  return { default: MarkdownRuntimeRenderer };
 });
 
 interface MarkdownPreviewPanelProps {

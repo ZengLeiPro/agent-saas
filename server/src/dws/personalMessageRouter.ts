@@ -151,6 +151,8 @@ export interface AgentDwsMessageRouterOptions {
   leaseRenewMs?: number;
   maxConcurrency?: number;
   frontReplyDeadlineMs?: number;
+  /** 可注入时钟（毫秒），默认 Date.now；测试用于让幂等窗口判定确定化。 */
+  now?: () => number;
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -194,6 +196,11 @@ export class AgentDwsMessageRouter {
     if (this.leaseRenewMs >= this.leaseTtlMs) {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
+  }
+
+  /** 真实时钟读取统一走这里，便于测试注入固定时间。 */
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
   }
 
   start(): void {
@@ -652,7 +659,7 @@ export class AgentDwsMessageRouter {
     );
     if (!replyAttempt.replyStartedAt)
       throw new Error('Agent DWS reply attempt timestamp is missing');
-    if (Date.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
+    if (this.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
       throw new Error('Agent DWS reply idempotency window expired; manual reconciliation required');
     }
     const replyAccount = await this.options.accountStore.getForTenant(

@@ -68,6 +68,11 @@ const item: AgentDwsInboxRecord = {
   updatedAt: '2026-08-14T00:00:00.000Z',
 };
 
+/** 夹具基准时间（与 item.createdAt 对齐）。 */
+const fixtureNowIso = '2026-08-14T00:00:00.000Z';
+/** 注入给路由器的固定时钟：基准时间之后 60 秒，让 DWS 幂等窗口判定与真实时间无关。 */
+const injectedNowMs = Date.parse(fixtureNowIso) + 60_000;
+
 function setup(input: {
   claimed?: AgentDwsInboxRecord | AgentDwsInboxRecord[];
   dispatch?: AgentRunDispatch;
@@ -140,7 +145,8 @@ function setup(input: {
       return {
         ...entry,
         state: 'reply_pending',
-        replyStartedAt: entry.replyStartedAt ?? new Date().toISOString(),
+        // 相对注入时钟的固定时间戳；真实 store 写的是「当前时间」，这里等价且确定。
+        replyStartedAt: entry.replyStartedAt ?? fixtureNowIso,
       };
     }),
     defer: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
@@ -189,6 +195,7 @@ function setup(input: {
     ...(input.recoveredEvents ? {
       eventStore: { listByRun: vi.fn().mockResolvedValue(input.recoveredEvents) },
     } : {}),
+    now: () => injectedNowMs,
     pollMs: input.pollMs ?? 60_000,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
@@ -754,7 +761,8 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       attempt: 2,
       runId: 'run-a',
       responseText: '已生成的回复',
-      replyStartedAt: new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString(),
+      // 相对注入时钟回拨 24 小时，越过 23 小时幂等窗口。
+      replyStartedAt: new Date(injectedNowMs - 24 * 60 * 60 * 1_000).toISOString(),
     };
     const { router, messageStore, sender } = setup({ claimed });
 

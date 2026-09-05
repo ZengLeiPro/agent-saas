@@ -93,6 +93,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # 迁移审核必须使用真实生产基线的 Git 对象。
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
@@ -108,6 +111,9 @@ jobs:
 
       - name: Run static checks
         run: bash scripts/pr-preflight-task.sh checks
+
+      - name: Verify reviewed production migration baselines
+        run: node scripts/release/check-reviewed-migrations.mjs
 
   # 每个分片是独立 Runner：server 4 片、web 2 片、shared 1 片。
   # 覆盖率以 blob 形式上传，由 Build & Check 用 vitest --merge-reports 合并。
@@ -208,6 +214,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm

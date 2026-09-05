@@ -125,6 +125,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       firstPrepared.input, token.accessToken, token.accountId,
       token.credentialRef ?? `account:${hashAccountBinding(token.accountId)}`, token.generation,
     );
+    if (input.recoveryAttempt) return firstResult;
     if (firstResult.response.status !== 401) {
       if (await isCodexAccountUnavailableResponse(firstResult.response)) {
         await firstResult.response.body?.cancel().catch(() => undefined);
@@ -245,6 +246,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           cacheAffinityId: input.promptCacheKey ?? input.context.sessionId,
           clientRequestId: input.clientRequestId,
           signal: input.signal,
+          recoveryAttempt: input.recoveryAttempt,
         });
         this.credentials.recordWireRequest({
           mode: result.wireMode,
@@ -253,6 +255,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
         });
         return {
           response: result.response,
+          invalidate: result.invalidate,
           continuationBinding: binding,
           wireMode: result.wireMode,
           wireRequestBodyBytes: result.wireRequestBodyBytes,
@@ -265,6 +268,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           );
         }
         if (!(error instanceof CodexWebSocketUnavailableError)) throw error;
+        if (input.recoveryAttempt || input.signal?.aborted) throw error;
         this.credentials.recordWireRequest({
           mode: 'http_sse_full',
           logicalRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),

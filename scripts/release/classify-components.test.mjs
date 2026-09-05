@@ -127,7 +127,7 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
-  assert.deepEqual(classifyPath('scripts/coverage-workspace-plan.mjs'), {
+  assert.deepEqual(classifyPath('scripts/ci-plan.mjs'), {
     components: [],
     blockingReason: null,
   });
@@ -183,6 +183,38 @@ test('classifies the exact paths that blocked automatic release evidence for PR 
       blockingReasons: [],
     },
   );
+});
+
+test('发布分类接纳已删除的覆盖率脚本与部署顺序测试', () => {
+  const result = classifyComponents({
+    baseline: SHA_A,
+    target: SHA_B,
+    execFileSync: () =>
+      'D\tscripts/coverage-workspace-plan.mjs\nM\tscripts/runtime-worker-rollout-order.test.mjs\nM\tserver/src/index.ts\n',
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.blockingReasons, []);
+  assert.deepEqual(result.components, ['api', 'runtimeWorker', 'acs']);
+  assert.ok(result.changedFiles.includes('scripts/coverage-workspace-plan.mjs'));
+});
+
+test('未知脚本的新增、删除和重命名均阻断发布分类', () => {
+  for (const change of [
+    'A\tscripts/unknown-release-input.mjs\n',
+    'D\tscripts/unknown-release-input.mjs\n',
+    'R100\tscripts/unknown-release-input.mjs\tscripts/ci-plan.mjs\n',
+  ]) {
+    const result = classifyComponents({
+      baseline: SHA_A,
+      target: SHA_B,
+      execFileSync: () => change,
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.blockingReasons, [
+      'Changed path is not mapped to a release component: scripts/unknown-release-input.mjs',
+    ]);
+  }
 });
 
 test('unknown paths fail closed while retaining mapped components', () => {

@@ -92,6 +92,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
       route("platform", "runtime", "execution-providers", "执行提供方", ["platform-console", "runtime", "execution-providers"], { entity: "optional" }),
       route("platform", "runtime", "environments", "沙箱与环境实例", ["platform-console", "runtime", "environments"], { entity: "optional" }),
       route("platform", "runtime", "infra", "系统资源", ["platform-console", "runtime", "infra"]),
+      route("platform", "runtime", "provider-quota", "套餐额度", ["platform-console", "runtime", "provider-quota"]),
       route("platform", "runtime", "efficiency", "执行效率", ["platform-console", "runtime", "efficiency"]),
     ],
   },
@@ -220,6 +221,7 @@ const PLATFORM_LEGACY: Readonly<Record<string, string>> = {
   sandboxes: "platform.runtime.environments",
   runtime: "platform.runtime.environments",
   infra: "platform.runtime.infra",
+  "provider-quota": "platform.runtime.provider-quota",
   audit: "platform.governance.audit",
   efficiency: "platform.runtime.efficiency",
 };

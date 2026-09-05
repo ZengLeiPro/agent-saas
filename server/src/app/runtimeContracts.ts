@@ -6,6 +6,7 @@ import type {
 } from '../config/runtimeRecoveryGate.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
+import type { ProviderQuotaService } from '../quota/providerQuotaService.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
 import type { PreparedConfigRecoveryPublication } from '../runtime/configIdentityRuntime.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
@@ -186,6 +187,8 @@ export interface AppRuntime {
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
   codexDeviceAuthService: CodexDeviceAuthService;
+  /** 套餐额度采集/读取（仅 PG runtime 装配；ws-only 只读+按需刷新，Worker 跑周期采集）。 */
+  providerQuotaService?: ProviderQuotaService;
   codexWebSocketShutdown?: () => void;
   codexWebSocketCredentialShutdown?: (credentialRefs: readonly string[]) => void;
   userStore?: UserStore;

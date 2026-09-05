@@ -14,6 +14,7 @@ import { SettingsTwoColumn } from "@/components/SettingsCenter/SettingsTwoColumn
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { CodexSubscriptionCard } from "./CodexSubscriptionCard";
+import { GroupCredentialsFields, normalizeQuotaSourceForSave, type EditableQuotaSource } from "./GroupCredentialsFields";
 import { TitleGeneratorSettings, useTitleGeneratorSettings, type TitleGeneratorAdminFields } from "./TitleGeneratorSettings";
 type ModelProtocol = "chat_completions" | "responses";
 type ResponsesTransport = "openai_compatible" | "codex_subscription";
@@ -69,6 +70,8 @@ type EditableGroup = {
   input_modalities?: Array<"text" | "image">;
   mcp_loading_mode?: McpLoadingMode;
   tool_search_protocol?: ToolSearchProtocol;
+  /** 套餐用量查询来源（管控面凭据）；GET 只回 hasQuotaSecret */
+  quotaSource?: EditableQuotaSource;
   models: EditableModel[];
 };
 
@@ -621,6 +624,8 @@ export function ModelManager() {
         };
         if (!nextGroup.apiKey) delete nextGroup.apiKey;
         if (!nextGroup.baseUrl) delete nextGroup.baseUrl;
+        nextGroup.quotaSource = normalizeQuotaSourceForSave(nextGroup.quotaSource);
+        if (!nextGroup.quotaSource) delete nextGroup.quotaSource;
         if (!nextGroup.disable_response_chaining) delete nextGroup.disable_response_chaining;
         if (!nextGroup.disable_prompt_cache_key) delete nextGroup.disable_prompt_cache_key;
         if (nextGroup.extraBody === undefined) delete nextGroup.extraBody;
@@ -1060,16 +1065,7 @@ export function ModelManager() {
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5"><Label>ID</Label><Input value={selectedGroup.id} onChange={(e) => updateGroupId(selectedGroup.id, e.target.value)} /></div>
                 <div className="space-y-1.5"><Label>显示名称</Label><Input value={selectedGroup.name} onChange={(e) => updateGroup(selectedGroup.id, { name: e.target.value })} /></div>
-                {selectedGroupHasOpenAiCompatible ? (
-                  <>
-                    <div className="space-y-1.5"><Label>API Key</Label><Input type="password" autoComplete="new-password" passwordManager="ignore" value={selectedGroup.apiKey ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { apiKey: e.target.value })} placeholder={selectedGroup.hasApiKey ? "已配置，留空则保留现有 Key" : "未配置"} /></div>
-                    <div className="space-y-1.5"><Label>Base URL</Label><Input value={selectedGroup.baseUrl ?? ""} onChange={(e) => updateGroup(selectedGroup.id, { baseUrl: e.target.value })} placeholder="例如 http://127.0.0.1:8317" /></div>
-                  </>
-                ) : (
-                  <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground md:col-span-2">
-                    Codex 订阅分组直接使用上方已授权账号，不读取 API Key 或 Base URL；现有值会保留，切回 API Key transport 时可继续使用。
-                  </div>
-                )}
+                <GroupCredentialsFields group={selectedGroup} readOnly={platformReadOnly} hasOpenAiCompatible={selectedGroupHasOpenAiCompatible} onChange={(patch) => updateGroup(selectedGroup.id, patch)} />
                 <div className="space-y-1.5">
                   <Label>协议类型 protocol</Label>
                   <select

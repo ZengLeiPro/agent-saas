@@ -6,6 +6,7 @@ import {
   AgentDwsMessageInvariantError,
   DWS_INBOX_V1_IDENTITY_UNPROVABLE,
   type AgentDwsConversationBindingRecord,
+  type AgentDwsCurrentAccountIdentity,
   type AgentDwsLegacyAccountIdentityCandidate,
   type AgentDwsInboxRecord,
   type AgentDwsIngestResult,
@@ -78,17 +79,51 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     tenantId: string,
     accountId: string,
     limit = 50,
+    identity?: AgentDwsCurrentAccountIdentity,
   ): Promise<AgentDwsInboxRecord[]> {
     assertTexts(tenantId, accountId);
+    if (identity) assertCurrentIdentity(identity);
     const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const identityFilter = identity
+      ? `AND created_at >= $4::timestamptz
+          AND payload_json->'accountIdentity'->>'profileId'=$5
+          AND payload_json->'accountIdentity'->>'corpId'=$6
+          AND payload_json->'accountIdentity'->>'dingtalkUserId'=$7`
+      : '';
     const result = await this.pool.query(`
       SELECT *
       FROM ${this.inboxTable}
-      WHERE tenant_id=$1 AND account_id=$2
+      WHERE tenant_id=$1 AND account_id=$2 ${identityFilter}
       ORDER BY created_at DESC,inbox_id DESC
       LIMIT $3
-    `, [tenantId, accountId, boundedLimit]);
+    `, identity
+      ? [tenantId, accountId, boundedLimit, identity.identityUpdatedAt,
+          identity.profileId, identity.corpId, identity.dingtalkUserId]
+      : [tenantId, accountId, boundedLimit]);
     return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
+  }
+
+  async hasObservedGroup(
+    tenantId: string,
+    accountId: string,
+    conversationId: string,
+    identity: AgentDwsCurrentAccountIdentity,
+  ): Promise<boolean> {
+    assertTexts(tenantId, accountId, conversationId);
+    assertCurrentIdentity(identity);
+    const result = await this.pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM ${this.inboxTable}
+        WHERE tenant_id=$1 AND account_id=$2 AND conversation_id=$3
+          AND event_type='user_im_message_receive_at'
+          AND created_at >= $4::timestamptz
+          AND payload_json->'accountIdentity'->>'profileId'=$5
+          AND payload_json->'accountIdentity'->>'corpId'=$6
+          AND payload_json->'accountIdentity'->>'dingtalkUserId'=$7
+      ) AS observed
+    `, [tenantId, accountId, conversationId, identity.identityUpdatedAt,
+      identity.profileId, identity.corpId, identity.dingtalkUserId]);
+    return booleanValue((result.rows[0] as Record<string, unknown> | undefined)?.observed);
   }
 
   async listActiveForAccount(
@@ -122,9 +157,10 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           WHERE (
             item.state='pending'
             OR (item.state='retry_wait' AND item.next_attempt_at <= NOW())
-            OR (item.state='reply_pending' AND (
-              item.lease_expires_at IS NULL OR item.lease_expires_at <= NOW()
-            ))
+            OR (item.state='reply_pending'
+              AND (item.next_attempt_at IS NULL OR item.next_attempt_at <= NOW())
+              AND (item.lease_expires_at IS NULL OR item.lease_expires_at <= NOW())
+            )
             OR (item.state='processing' AND item.lease_expires_at <= NOW())
           )
           AND NOT EXISTS (
@@ -379,11 +415,42 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     }
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
-      SET state='reply_pending',response_text=$4,last_error=NULL,updated_at=NOW()
+      SET state='reply_pending',response_text=$4,
+          payload_json=payload_json || jsonb_build_object('replyKind','normal'),
+          last_error=NULL,updated_at=NOW()
       WHERE inbox_id=$1 AND state='processing' AND lease_owner=$2 AND lease_fence=$3
         AND lease_expires_at > NOW()
       RETURNING *
     `, [inboxId, owner, fence, responseText]);
+  }
+
+  async saveRejectionResult(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    responseText: string,
+    reasonCode: string,
+    replacePendingReply = false,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId, reasonCode);
+    if (typeof responseText !== 'string') {
+      throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+    }
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='reply_pending',response_text=$4,
+          payload_json=payload_json || jsonb_build_object(
+            'replyKind','access_rejection','rejectionReasonCode',$5::text
+          ),
+          reply_started_at=CASE WHEN $6 THEN NULL ELSE reply_started_at END,
+          last_error=NULL,updated_at=NOW()
+      WHERE inbox_id=$1
+        AND ((NOT $6 AND state='processing') OR ($6 AND state='reply_pending'
+          AND COALESCE(payload_json->>'replyKind','normal')<>'access_rejection'))
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence, responseText, reasonCode, replacePendingReply]);
   }
 
   async markReplyAttemptStarted(
@@ -439,6 +506,69 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     `, [inboxId, owner, fence]);
   }
 
+  async reject(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId, reasonCode);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='completed',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+          payload_json=payload_json || jsonb_build_object(
+            'disposition','rejected','rejectionReasonCode',$4::text
+          ),
+          last_error=NULL,completed_at=NOW(),updated_at=NOW()
+      WHERE inbox_id=$1 AND state='reply_pending'
+        AND payload_json->>'replyKind'='access_rejection'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence, reasonCode]);
+  }
+
+  async blockReply(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId, reasonCode);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+          payload_json=payload_json || jsonb_build_object(
+            'disposition','reply_blocked','rejectionReasonCode',$4::text
+          ),
+          last_error='AGENT_DWS_REPLY_AUTHORIZATION_CHANGED:' || $4::text,
+          completed_at=NOW(),updated_at=NOW()
+      WHERE inbox_id=$1 AND state='reply_pending'
+        AND COALESCE(payload_json->>'replyKind','normal')<>'access_rejection'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence, reasonCode]);
+  }
+
+  async markReplyUnknown(
+    inboxId: string,
+    owner: string,
+    fence: number,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId);
+    return await this.updateWithLease(`
+      UPDATE ${this.inboxTable}
+      SET state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+          payload_json=payload_json || jsonb_build_object('disposition','delivery_unknown'),
+          last_error='AGENT_DWS_REPLY_DELIVERY_UNKNOWN',completed_at=NOW(),updated_at=NOW()
+      WHERE inbox_id=$1 AND state='reply_pending'
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
+      RETURNING *
+    `, [inboxId, owner, fence]);
+  }
+
   async fail(
     inboxId: string,
     owner: string,
@@ -455,7 +585,11 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     }
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
-      SET state=CASE WHEN attempt>=max_attempts THEN 'dead_letter' ELSE 'retry_wait' END,
+      SET state=CASE
+            WHEN attempt>=max_attempts THEN 'dead_letter'
+            WHEN response_text IS NOT NULL THEN 'reply_pending'
+            ELSE 'retry_wait'
+          END,
           lease_owner=NULL,lease_expires_at=NULL,
           next_attempt_at=CASE
             WHEN attempt>=max_attempts THEN NULL
@@ -508,6 +642,16 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
 }
 
 function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
+  const payload = parsePayload(row.payload_json);
+  const replyKind = payload.replyKind === 'normal' || payload.replyKind === 'access_rejection'
+    ? payload.replyKind
+    : undefined;
+  const disposition = payload.disposition === 'rejected'
+    || payload.disposition === 'reply_blocked'
+    || payload.disposition === 'delivery_unknown'
+    ? payload.disposition
+    : undefined;
+  const rejectionReasonCode = optionalText(payload.rejectionReasonCode);
   return {
     inboxId: String(row.inbox_id),
     tenantId: String(row.tenant_id),
@@ -521,7 +665,10 @@ function mapInboxRow(row: Record<string, unknown>): AgentDwsInboxRecord {
       : {}),
     content: String(row.content),
     ...(row.event_timestamp ? { eventTimestamp: iso(row.event_timestamp) } : {}),
-    payload: parsePayload(row.payload_json),
+    payload,
+    ...(replyKind ? { replyKind } : {}),
+    ...(disposition ? { disposition } : {}),
+    ...(rejectionReasonCode ? { rejectionReasonCode } : {}),
     ...(optionalText(row.work_conversation_id)
       ? { workConversationId: optionalText(row.work_conversation_id) } : {}),
     state: row.state as AgentDwsInboxRecord['state'],
@@ -698,6 +845,19 @@ function assertEvent(event: AgentDwsNormalizedEvent): void {
   optionalDate(event.eventTimestamp);
 }
 
+function assertCurrentIdentity(identity: AgentDwsCurrentAccountIdentity): void {
+  assertTexts(
+    identity.profileId,
+    identity.corpId,
+    identity.dingtalkUserId,
+    identity.identityUpdatedAt,
+  );
+  if (identity.profileId !== `${identity.corpId}:${identity.dingtalkUserId}`
+    || !Number.isFinite(Date.parse(identity.identityUpdatedAt))) {
+    throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+  }
+}
+
 function assertOwnerFence(owner: string, fence: number, requireFence = true): void {
   assertTexts(owner);
   if (requireFence && (!Number.isSafeInteger(fence) || fence < 1)) {
@@ -706,7 +866,7 @@ function assertOwnerFence(owner: string, fence: number, requireFence = true): vo
 }
 
 function assertTexts(...values: string[]): void {
-  if (values.some(value => typeof value !== 'string' || !value.trim())) {
+  if (values.some((value) => typeof value !== 'string' || !value.trim())) {
     throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
   }
 }

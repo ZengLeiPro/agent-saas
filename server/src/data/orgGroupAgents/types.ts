@@ -81,6 +81,12 @@ export interface OrgAgentChannelBinding {
   conversationSpaceId: string;
   serviceSessionId: string;
   workspaceId: string;
+  accountIdentity?: {
+    profileId: string;
+    corpId: string;
+    dingtalkUserId: string;
+    identityUpdatedAt: string;
+  };
   policy: OrgAgentChannelPolicy;
   effectiveConfig: OrgAgentEffectiveConfig;
   revision: number;
@@ -101,11 +107,19 @@ export interface OrgAgentWorkConversation {
 }
 
 export type DwsDeliveryState = 'pending' | 'sending' | 'sent' | 'unknown' | 'dead_letter';
+export type DwsReplyRecoveryState = 'none' | 'unstarted' | 'sent' | 'unknown';
+export interface DwsDeliveryAccountIdentity {
+  profileId: string;
+  corpId: string;
+  dingtalkUserId: string;
+  identityUpdatedAt: string;
+}
 export interface DwsDeliveryIntent {
   deliveryId: string;
   tenantId: string;
   inboxId?: string;
   accountId: string;
+  accountIdentity?: DwsDeliveryAccountIdentity;
   conversationId: string;
   agentId?: string;
   bindingId?: string;
@@ -141,8 +155,8 @@ export interface DwsDeliveryIntent {
 export type DwsDeliveryIntentCreate = Omit<
   DwsDeliveryIntent,
   'deliveryId' | 'deliveryState' | 'attempt' | 'leaseFence' | 'providerAttemptPhase'
-    | 'createdAt' | 'updatedAt'
->;
+    | 'createdAt' | 'updatedAt' | 'accountIdentity'
+> & { accountIdentity: DwsDeliveryAccountIdentity };
 
 export type OrgAgentWorkOrderState =
   'queued' | 'running' | 'waiting_input' | 'paused' | 'completed' | 'failed' | 'cancelled';
@@ -249,6 +263,12 @@ export interface OrgGroupAgentStore {
     conversationId: string;
     channelKind: 'group' | 'direct';
     workspaceId: string;
+    accountIdentity: {
+      profileId: string;
+      corpId: string;
+      dingtalkUserId: string;
+      identityUpdatedAt: string;
+    };
   }): Promise<OrgAgentChannelBinding>;
   getBinding(
     tenantId: string,
@@ -295,7 +315,17 @@ export interface OrgGroupAgentStore {
   createDelivery(input: DwsDeliveryIntentCreate): Promise<DwsDeliveryIntent>;
   claimDelivery(deliveryId: string, owner: string, ttlMs: number): Promise<DwsDeliveryIntent>;
   claimNextDelivery(owner: string, ttlMs: number): Promise<DwsDeliveryIntent | null>;
+  cancelUnstartedDeliveriesForInbox(
+    tenantId: string,
+    inboxId: string,
+    reason: string,
+  ): Promise<number>;
+  getReplyRecoveryStateForInbox(
+    tenantId: string,
+    inboxId: string,
+  ): Promise<DwsReplyRecoveryState>;
   reconcileAllExpiredDeliveries(limit?: number): Promise<number>;
+  /** Crosses the durable boundary immediately before provider transport invocation. */
   markDeliveryProviderStarted(
     deliveryId: string,
     owner: string,

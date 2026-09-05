@@ -7,6 +7,7 @@ import {
 } from '../data/agentDwsAccounts/index.js';
 import type { OrgAgentStore } from '../data/orgAgents/store.js';
 import type { UserStore } from '../data/users/store.js';
+import { bindingMatchesCurrentAccountIdentity } from '../dws/agentDwsAccountIdentity.js';
 import { authorizeSharedGroupDwsRequester } from '../dws/sharedGroupDwsLiveAuthorizer.js';
 
 export function createOrgAgentChannelPolicyEvaluator(
@@ -29,6 +30,7 @@ export function createOrgAgentChannelPolicyEvaluator(
       || binding.conversationId !== input.conversationId || !account || account.status !== 'active'
       || account.accountId !== input.accountId || account.tenantId !== input.tenantId
       || !hasExactAgentDwsProfile(account)
+      || !bindingMatchesCurrentAccountIdentity(binding, account)
       || account.agentId !== input.agentId || !agent || !agent.enabled || agent.tenantId !== input.tenantId) {
       return { allowed: false, reason: 'ChannelBinding principal chain is stale or mismatched' };
     }

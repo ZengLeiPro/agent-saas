@@ -106,6 +106,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain('FOR UPDATE OF item SKIP LOCKED');
     expect(sql).toContain("item.state='retry_wait' AND item.next_attempt_at <= NOW()");
     expect(sql).toContain("item.state='reply_pending'");
+    expect(sql).toContain('item.next_attempt_at IS NULL OR item.next_attempt_at <= NOW()');
     expect(sql).toContain("item.state='processing' AND item.lease_expires_at <= NOW()");
     expect(sql).toContain('active.account_id=item.account_id');
     expect(sql).toContain('active.conversation_id=item.conversation_id');
@@ -199,7 +200,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(query.mock.calls[1]?.[1]).toEqual(['inbox-2', 'worker-1', 4]);
   });
 
-  it('按租户和账号读取最新 inbox，并限制诊断页大小', async () => {
+  it('未提供身份过滤时按租户和账号读取诊断 inbox，并限制页大小', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'retry_wait', attempt: 2 })] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
 
@@ -209,6 +210,25 @@ describe('PgAgentDwsMessageStore', () => {
     expect(records[0]).toMatchObject({ state: 'retry_wait', attempt: 2 });
     expect(String(query.mock.calls[0]?.[0])).toContain('WHERE tenant_id=$1 AND account_id=$2');
     expect(query.mock.calls[0]?.[1]).toEqual(['tenant-1', 'account-1', 100]);
+  });
+
+  it('群观测列表在 SQL limit 前按当前精确身份和身份纪元过滤', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+    const identity = {
+      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      identityUpdatedAt: '2026-09-04T00:00:00.000Z',
+    };
+
+    await store.listForAccount('tenant-1', 'account-1', 100, identity);
+
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain('created_at >= $4::timestamptz');
+    expect(String(sql)).toContain("payload_json->'accountIdentity'->>'dingtalkUserId'=$7");
+    expect(values).toEqual([
+      'tenant-1', 'account-1', 100, identity.identityUpdatedAt,
+      identity.profileId, identity.corpId, identity.dingtalkUserId,
+    ]);
   });
 
   it('审批定位读取账号全部活跃 inbox，不受诊断页 100 条窗口限制', async () => {
@@ -285,7 +305,28 @@ describe('PgAgentDwsMessageStore', () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('状态写入均校验 owner/fence/有效 lease，状态与 Date/string 正确映射', async () => {
+  it('按 tenant、account、conversation 精确确认已观测群，不受列表窗口限制', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [{ observed: true }] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    const identity = {
+      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      identityUpdatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    await expect(store.hasObservedGroup('tenant-1', 'account-1', 'group-101', identity))
+      .resolves.toBe(true);
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("event_type='user_im_message_receive_at'");
+    expect(String(sql)).toContain('conversation_id=$3');
+    expect(String(sql)).toContain("payload_json->'accountIdentity'->>'profileId'=$5");
+    expect(String(sql)).toContain('created_at >= $4::timestamptz');
+    expect(values).toEqual([
+      'tenant-1', 'account-1', 'group-101', identity.identityUpdatedAt,
+      identity.profileId, identity.corpId, identity.dingtalkUserId,
+    ]);
+  });
+
+  it('普通回复持久化 replyKind 并校验 owner/fence/有效 lease', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [inboxRow({
         state: 'reply_pending', response_text: '', lease_owner: 'worker-1', lease_fence: 7,
@@ -301,6 +342,7 @@ describe('PgAgentDwsMessageStore', () => {
     });
     const sql = String(query.mock.calls[0]?.[0]);
     expect(sql).toContain("SET state='reply_pending'");
+    expect(sql).toContain("jsonb_build_object('replyKind','normal')");
     expect(sql).toContain('lease_owner=$2 AND lease_fence=$3');
     expect(sql).toContain('lease_expires_at > NOW()');
 
@@ -308,6 +350,108 @@ describe('PgAgentDwsMessageStore', () => {
       .rejects.toEqual(expect.objectContaining<Partial<AgentDwsMessageInvariantError>>({
         code: 'AGENT_DWS_MESSAGE_LEASE_LOST',
       }));
+  });
+
+  it('拒绝回复在 processing 阶段持久化正文与原因后进入 reply_pending', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'reply_pending', response_text: '权限不足',
+      payload_json: { replyKind: 'access_rejection', rejectionReasonCode: 'ASSIGNMENT_DENIED' },
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.saveRejectionResult(
+      'adwsi-1', 'worker-1', 7, '权限不足', 'ASSIGNMENT_DENIED',
+    )).resolves.toMatchObject({
+      state: 'reply_pending', replyKind: 'access_rejection', responseText: '权限不足',
+      rejectionReasonCode: 'ASSIGNMENT_DENIED',
+    });
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("'replyKind','access_rejection','rejectionReasonCode',$5::text");
+    expect(String(sql)).toContain("NOT $6 AND state='processing'");
+    expect(values).toEqual([
+      'adwsi-1', 'worker-1', 7, '权限不足', 'ASSIGNMENT_DENIED', false,
+    ]);
+  });
+
+  it('未出站普通回复可原子替换为独立拒绝回复并重置尝试时间', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'reply_pending', response_text: '安全拒绝', reply_started_at: null,
+      payload_json: { replyKind: 'access_rejection', rejectionReasonCode: 'ASSIGNMENT_DENIED' },
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await store.saveRejectionResult(
+      'adwsi-1', 'worker-1', 7, '安全拒绝', 'ASSIGNMENT_DENIED', true,
+    );
+
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("$6 AND state='reply_pending'");
+    expect(String(sql)).toContain('reply_started_at=CASE WHEN $6 THEN NULL');
+    expect(values).toEqual([
+      'adwsi-1', 'worker-1', 7, '安全拒绝', 'ASSIGNMENT_DENIED', true,
+    ]);
+  });
+
+  it('普通 reply_pending 在授权变化时进入可诊断人工核对终态', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'dead_letter', payload_json: {
+        replyKind: 'normal', disposition: 'reply_blocked',
+        rejectionReasonCode: 'ASSIGNMENT_DENIED',
+      }, last_error: 'AGENT_DWS_REPLY_AUTHORIZATION_CHANGED:ASSIGNMENT_DENIED',
+      completed_at: new Date(NOW),
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.blockReply('adwsi-1', 'worker-1', 7, 'ASSIGNMENT_DENIED'))
+      .resolves.toMatchObject({ state: 'dead_letter', replyKind: 'normal',
+        disposition: 'reply_blocked', rejectionReasonCode: 'ASSIGNMENT_DENIED' });
+    const [sql] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("COALESCE(payload_json->>'replyKind','normal')<>'access_rejection'");
+    expect(String(sql)).toContain("'disposition','reply_blocked','rejectionReasonCode',$4::text");
+  });
+
+  it('provider 已开始后的发送歧义进入 delivery_unknown 人工核对终态', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'dead_letter', payload_json: {
+        replyKind: 'normal', disposition: 'delivery_unknown',
+      }, last_error: 'AGENT_DWS_REPLY_DELIVERY_UNKNOWN', completed_at: new Date(NOW),
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.markReplyUnknown('adwsi-1', 'worker-1', 7)).resolves.toMatchObject({
+      state: 'dead_letter', disposition: 'delivery_unknown',
+    });
+    const [sql] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("'disposition','delivery_unknown'");
+    expect(String(sql)).toContain("WHERE inbox_id=$1 AND state='reply_pending'");
+  });
+
+  it('拒绝终态在兼容 payload 中记录 disposition 与稳定 reasonCode', async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [inboxRow({
+      state: 'completed',
+      payload_json: {
+        normalized: true,
+        disposition: 'rejected',
+        rejectionReasonCode: 'REQUESTER_IDENTITY_UNMAPPED',
+      },
+      completed_at: new Date(NOW),
+    })] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.reject(
+      'adwsi-1', 'worker-1', 7, 'REQUESTER_IDENTITY_UNMAPPED',
+    )).resolves.toMatchObject({
+      state: 'completed',
+      disposition: 'rejected',
+      rejectionReasonCode: 'REQUESTER_IDENTITY_UNMAPPED',
+    });
+    const [sql, values] = query.mock.calls[0]!;
+    expect(String(sql)).toContain("'disposition','rejected','rejectionReasonCode',$4::text");
+    expect(String(sql)).toContain("WHERE inbox_id=$1 AND state='reply_pending'");
+    expect(String(sql)).toContain("payload_json->>'replyKind'='access_rejection'");
+    expect(values).toEqual([
+      'adwsi-1', 'worker-1', 7, 'REQUESTER_IDENTITY_UNMAPPED',
+    ]);
   });
 
   it('续租、首次回复时间与 active run defer 都受同一 fence 保护', async () => {
@@ -378,6 +522,7 @@ describe('PgAgentDwsMessageStore', () => {
     });
     const sql = String(query.mock.calls[0]?.[0]);
     expect(sql).toContain("attempt>=max_attempts THEN 'dead_letter'");
+    expect(sql).toContain("WHEN response_text IS NOT NULL THEN 'reply_pending'");
     expect(sql).toContain("ELSE 'retry_wait'");
     expect(sql).toContain('POWER(2,LEAST(attempt-1,8))');
     expect(sql).not.toContain('response_text=NULL');

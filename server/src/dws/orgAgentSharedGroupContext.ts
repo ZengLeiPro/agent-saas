@@ -8,10 +8,10 @@ import {
   type OrgAgentWorkOrder,
   type OrgGroupAgentStore,
 } from '../data/orgGroupAgents/index.js';
-import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
 import type { UserIdentity } from '../types/index.js';
 import { ORG_AGENT_ROUTING_FIELD_NAMES } from './orgAgentInboxRouting.js';
 import { resolveOrgAgentConversationRouteHint } from './orgAgentConversationRouting.js';
+import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 
 export interface SharedGroupContext {
   binding: OrgAgentChannelBinding;
@@ -50,14 +50,10 @@ export async function resolveSharedGroupContext(
   if (!options.orgGroupAgentStore || item.eventType !== 'user_im_message_receive_at')
     return { state: 'legacy' };
   const store = options.orgGroupAgentStore;
-  const binding = await store.ensureShadowBinding({
-    tenantId: account.tenantId,
-    accountId: account.accountId,
-    agentId: account.agentId,
-    conversationId: item.conversationId,
-    channelKind: 'group',
-    workspaceId: deriveAgentWorkspaceId(account.tenantId, account.agentId),
-  });
+  const binding = await store.getBinding(account.tenantId, account.accountId, item.conversationId);
+  if (!binding) return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_UNCONFIGURED' };
+  if (!bindingMatchesCurrentAccountIdentity(binding, account))
+    return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_ACCOUNT_IDENTITY_CHANGED' };
   if (binding.policy.liveDeny) return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_LIVE_DENY' };
   if (binding.activationState === 'disabled')
     return { state: 'denied', reason: 'ORG_AGENT_CHANNEL_DISABLED' };

@@ -24,6 +24,13 @@ import {
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import {
+  assertQuotaSourcesComplete,
+  persistSubmittedQuotaSecrets,
+  redactGroupQuotaSource,
+  restoreGroupQuotaSourceSecret,
+  submittedQuotaSecretGroups,
+} from './modelsAdminQuotaSource.js';
 
 export interface CreateModelsAdminRouterOptions {
   processCwd: string;
@@ -77,7 +84,7 @@ function redactModels(models: ModelsConfig): unknown {
   return {
     ...models,
     groups: models.groups.map((group) => {
-      const { apiKey, apiKeyRef: _apiKeyRef, ...rest } = group;
+      const { apiKey, apiKeyRef: _apiKeyRef, ...rest } = redactGroupQuotaSource(group);
       return { ...rest, hasApiKey: Boolean(apiKey || group.apiKeyRef) };
     }),
   };
@@ -135,8 +142,12 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
     );
     next.models = {
       ...modelsRecord,
-      groups: (modelsRecord.groups as unknown[]).map((groupRaw) => {
-        if (!isRecord(groupRaw)) return groupRaw;
+      groups: (modelsRecord.groups as unknown[]).map((groupRawInput) => {
+        if (!isRecord(groupRawInput)) return groupRawInput;
+        const groupRaw = restoreGroupQuotaSourceSecret(
+          groupRawInput,
+          typeof groupRawInput.id === 'string' ? config.models?.groups.find((g) => g.id === groupRawInput.id) : undefined,
+        );
         const { hasApiKey: _ignored, ...group } = groupRaw;
         const inlineKey = typeof group.apiKey === 'string' ? group.apiKey : undefined;
         if (inlineKey && inlineKey.length > 0) return group;
@@ -330,6 +341,7 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
       if (!available.has(ref)) throw new Error(`门禁模型引用不存在：${ref}`);
     }
   }
+  assertQuotaSourcesComplete(parsed.models);
   return {
     candidateConfig: parsed,
     models: parsed.models,
@@ -406,6 +418,17 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
               replacedRefs,
               previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.apiKeyRef])),
               allowInlineWithoutVault: Boolean(options.validateConfigReload),
+            }),
+          };
+          nextUpdate = {
+            ...nextUpdate,
+            models: await persistSubmittedQuotaSecrets({
+              models: nextUpdate.models,
+              submittedGroups: submittedQuotaSecretGroups(req.body, persisted.models),
+              secretVault: options.secretVault,
+              createdRefs,
+              replacedRefs,
+              previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.quotaSource?.secretAccessKeyRef])),
             }),
           };
           nextUpdate = {

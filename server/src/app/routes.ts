@@ -88,7 +88,7 @@ import {
 } from './governanceOffboarding.js';
 import { archivePersonalWorkspace } from './governancePersonalDataRetention.js';
 import { createModelsAdminRouter } from '../routes/modelsAdmin.js';
-import { createCodexSubscriptionAdminRouter } from '../routes/codexSubscriptionAdmin.js';
+import { registerModelProviderAdminRoutes } from './modelProviderAdminRoutes.js';
 import { createTenantRemoteHandsAdminRouter } from '../routes/tenantRemoteHandsAdmin.js';
 import { createRuntimeOperationsAdminRouter } from '../routes/runtimeOperationsAdmin.js';
 import { createToolControlsAdminRouter } from '../routes/toolControlsAdmin.js';
@@ -391,19 +391,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-  app.use(
-    '/api/admin/codex-subscription',
-    createCodexSubscriptionAdminRouter({
-      processCwd,
-      config,
-      configMutationService,
-      credentialManager: runtime.codexCredentialManager,
-      deviceAuthService: runtime.codexDeviceAuthService,
-      closeWebSockets: (refs) => refs && runtime.codexWebSocketCredentialShutdown
-        ? runtime.codexWebSocketCredentialShutdown(refs)
-        : runtime.codexWebSocketShutdown?.(),
-    }),
-  );
+  registerModelProviderAdminRoutes(app, runtime, { processCwd, config, configMutationService });
   app.use(
     '/api/admin/tenant-remote-hands',
     createTenantRemoteHandsAdminRouter({

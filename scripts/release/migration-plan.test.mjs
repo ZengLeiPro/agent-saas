@@ -10,6 +10,7 @@ import {
   isProductionStartupSchemaRootSource,
   PRODUCTION_STARTUP_SCHEMA_ROOTS,
 } from './migration-plan.mjs';
+import { migrationSourceDigest, MIGRATION_REVIEWS_PATH } from './migration-reviews.mjs';
 
 const BASELINE = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
@@ -2687,8 +2688,9 @@ test('real repository closure uses the PR base or a deterministic target-only fa
     baseline,
     target,
   });
+  // PR 允许携带已审核登记为 expand 的迁移：门禁只拒 contract 与 !ok，不把 expand 当失败。
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
-  assert.equal(result.migrationPlan.phase, 'none');
+  assert.notEqual(result.migrationPlan.phase, 'contract');
 });
 
 test('classifies destructive SQL when only a statically imported JSON resource changes', () => {
@@ -2905,4 +2907,170 @@ test('ignores function-scoped runtime fs member selection as a repository depend
   });
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.equal(result.migrationPlan.phase, 'none');
+});
+
+// —— 2026-09-05 修订：PR 允许携带已审核的 expand；无 SQL 变化的依赖模块自动判 no-schema-change ——
+
+const REVIEW_EVIDENCE_PATH = 'docs/release/迁移门禁修订审核.md';
+const REVIEW_EVIDENCE_SOURCE = '真实 PG 升级与回滚用例已跑通。';
+
+function reviewDocument(files) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    reviews: [
+      {
+        baselineSha: BASELINE,
+        files,
+        evidence: [
+          { path: REVIEW_EVIDENCE_PATH, digest: migrationSourceDigest(REVIEW_EVIDENCE_SOURCE) },
+        ],
+      },
+    ],
+  });
+}
+
+test('完全合规的白名单 ADD COLUMN 变更可以随 PR 进入，相位是 expand 而不是阻断', () => {
+  const statement = "ALTER TABLE runs ADD COLUMN IF NOT EXISTS label text DEFAULT 'unknown'";
+  const before = `// release-migration: expand\nconst createRuns = ${JSON.stringify('CREATE TABLE IF NOT EXISTS runs (id text)')};`;
+  const addedLine = `const addLabel = ${JSON.stringify(statement)};`;
+  const after = `${before}\n${addedLine}`;
+  const result = plan(after, `@@ -2,0 +3 @@\n+${addedLine}`, {
+    baselines: { [PATH]: before },
+    targets: { [PATH]: after },
+    nameStatus: `M\t${PATH}`,
+  });
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.equal(result.migrationPlan.phase, 'expand');
+  assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
+});
+
+test('已审核登记为 expand 的迁移随 PR 进入时 ok，登记为 contract 的仍然阻断', () => {
+  const before = `// release-migration: expand\nconst createRuns = ${JSON.stringify('CREATE TABLE IF NOT EXISTS runs (id text)')};`;
+  const expandLine = `const addLabel = ${JSON.stringify("ALTER TABLE runs ADD COLUMN IF NOT EXISTS label text DEFAULT 'unknown'")};`;
+  const contractLine = `const dropLabel = ${JSON.stringify('ALTER TABLE runs DROP COLUMN label')};`;
+  for (const [classification, changedLine, expected] of [
+    ['expand', expandLine, true],
+    ['contract', contractLine, false],
+  ]) {
+    const after = `${before}\n${changedLine}`;
+    const document = reviewDocument([
+      {
+        path: PATH,
+        baselineDigest: migrationSourceDigest(before),
+        targetDigest: migrationSourceDigest(after),
+        classification,
+        reason: '人工审核结论。',
+      },
+    ]);
+    const result = createMigrationPlan({
+      changedPaths: [PATH],
+      baseline: BASELINE,
+      target: TARGET,
+      execFileSync: gitFixture({
+        baselines: { [PATH]: before },
+        targets: {
+          [PATH]: after,
+          [REVIEW_EVIDENCE_PATH]: REVIEW_EVIDENCE_SOURCE,
+          [MIGRATION_REVIEWS_PATH]: document,
+        },
+        diffs: { [PATH]: `@@ -2,0 +3 @@\n+${changedLine}` },
+        nameStatus: `M\t${PATH}`,
+      }),
+    });
+    assert.equal(result.ok, expected, `${classification}: ${result.blockingReasons.join('\n')}`);
+    assert.equal(result.migrationPlan.phase, 'expand', classification);
+    if (!expected) assert.match(result.blockingReasons.join('\n'), /reviewed contract/u);
+  }
+});
+
+function rewrittenDiff(baselineLines, targetLines) {
+  return [
+    `@@ -1,${baselineLines.length} +1,${targetLines.length} @@`,
+    ...baselineLines.map((line) => `-${line}`),
+    ...targetLines.map((line) => `+${line}`),
+  ].join('\n');
+}
+
+const CLOSURE_ROOT = 'server/src/data/governance-schema/migrations.ts';
+const CLOSURE_DEPENDENCY = 'server/src/data/governance-schema/parse.ts';
+const CLOSURE_ROOT_SOURCE = [
+  "import { toBlocks } from './parse.js';",
+  "export async function run(db) { await db.query('CREATE TABLE IF NOT EXISTS blocks (id text)'); toBlocks(db); }",
+].join('\n');
+
+function dependencyPlan(baselineSource, targetSource) {
+  const baselineLines = baselineSource.split('\n');
+  const targetLines = targetSource.split('\n');
+  return createMigrationPlan({
+    changedPaths: [CLOSURE_DEPENDENCY],
+    baseline: BASELINE,
+    target: TARGET,
+    execFileSync: gitFixture({
+      baselines: { [CLOSURE_ROOT]: CLOSURE_ROOT_SOURCE, [CLOSURE_DEPENDENCY]: baselineSource },
+      targets: { [CLOSURE_ROOT]: CLOSURE_ROOT_SOURCE, [CLOSURE_DEPENDENCY]: targetSource },
+      diffs: { [CLOSURE_DEPENDENCY]: rewrittenDiff(baselineLines, targetLines) },
+      nameStatus: `M\t${CLOSURE_DEPENDENCY}`,
+    }),
+  });
+}
+
+test('闭包依赖模块的纯类型抽出没有 SQL 变化，自动判定为 no-schema-change', () => {
+  const interfaceLines = [
+    'export interface TranscriptBlock {',
+    ...Array.from({ length: 80 }, (_, index) => `  field${index}?: string;`),
+    '}',
+  ];
+  const baselineSource = [...interfaceLines, 'export function toBlocks(db) { return db; }'].join(
+    '\n',
+  );
+  const targetSource = [
+    "export type { TranscriptBlock } from './parseBlockTypes.js';",
+    'export function toBlocks(db) { return db; }',
+  ].join('\n');
+  const result = dependencyPlan(baselineSource, targetSource);
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.equal(result.migrationPlan.phase, 'none');
+});
+
+test('闭包依赖模块改动 INSERT 列清单属于 SQL 变化，仍然阻断', () => {
+  const baselineSource = [
+    'export function toBlocks(db, row) {',
+    '  return db.query(`INSERT INTO blocks (id, title) VALUES ($1, $2)`, [row.id, row.title]);',
+    '}',
+  ].join('\n');
+  const targetSource = [
+    'export function toBlocks(db, row) {',
+    '  return db.query(`INSERT INTO blocks (id, title, rating) VALUES ($1, $2, $3)`, [row.id, row.title, row.rating]);',
+    '}',
+  ].join('\n');
+  const result = dependencyPlan(baselineSource, targetSource);
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), new RegExp(CLOSURE_DEPENDENCY, 'u'));
+});
+
+test('闭包依赖模块新增 CREATE TABLE 字面量属于 SQL 变化，仍然阻断', () => {
+  const baselineSource = 'export function toBlocks(db) { return db; }';
+  const targetSource = [
+    `const extraSchema = ${JSON.stringify('CREATE TABLE IF NOT EXISTS extra (id text)')};`,
+    'export function toBlocks(db) { return extraSchema && db; }',
+  ].join('\n');
+  const result = dependencyPlan(baselineSource, targetSource);
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), new RegExp(CLOSURE_DEPENDENCY, 'u'));
+});
+
+test('迁移根文件即使只删一行也不享受自动 no-schema-change', () => {
+  const baselineLines = [
+    '// release-migration: expand',
+    `const createRuns = ${JSON.stringify('CREATE TABLE IF NOT EXISTS runs (id text)')};`,
+    `const createSteps = ${JSON.stringify('CREATE TABLE IF NOT EXISTS steps (id text)')};`,
+  ];
+  const targetLines = baselineLines.slice(0, 2);
+  const result = plan(targetLines.join('\n'), rewrittenDiff(baselineLines, targetLines), {
+    baselines: { [PATH]: baselineLines.join('\n') },
+    targets: { [PATH]: targetLines.join('\n') },
+    nameStatus: `M\t${PATH}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /deletes or replaces baseline content/u);
 });

@@ -2309,6 +2309,13 @@ test('recognizes every authoritative repository migration entry', () => {
     assert.equal(isMigrationPath(path), true, path);
   }
   assert.equal(isMigrationPath('server/src/data/users/store.ts'), false);
+  // 契约包内的 SQL 与模板迁移面向定制项目自己的数据库，不是 agent-saas 生产迁移。
+  for (const path of [
+    'packages/ky-app-server/sql/001_ky_app_server.sql',
+    'packages/create-ky-app/templates/hono-vue/server/migrations/002_demo.sql',
+  ]) {
+    assert.equal(isMigrationPath(path), false, path);
+  }
 });
 
 test('requires standalone expand metadata and accepts only whitelisted expand statements', () => {

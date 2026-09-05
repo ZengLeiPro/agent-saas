@@ -134,6 +134,9 @@ const ALLOWED_CREATE_TYPE_MODIFIERS = new Set([
 export function isMigrationPath(path) {
   if (typeof path !== 'string') return false;
   const normalized = path.replaceAll('\\', '/');
+  // packages/ 下是发给定制项目的契约包（含其模板与 SQL），作用于客户自己的数据库，
+  // 不属于 agent-saas 生产迁移，不进发布迁移计划。
+  if (normalized.startsWith('packages/')) return false;
   return MIGRATION_PATHS.some((pattern) => pattern.test(normalized));
 }
 

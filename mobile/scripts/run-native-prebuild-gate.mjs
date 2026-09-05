@@ -128,6 +128,8 @@ function runProfile(profile, options, artifactDirectory) {
       profile,
       compareGolden: options.updateGolden ? false : true,
       jsonPath,
+      // 三个 profile 的原生树都由 EXPO_PUBLIC_V1_PROFILE=production 生成（见 environmentFor）。
+      releaseProfile: 'production',
       evidence: { classification: 'test-fixture', teamId: TEST_TEAM_ID, appGroup: TEST_APP_GROUP },
     });
     if (options.updateGolden) {
@@ -137,6 +139,7 @@ function runProfile(profile, options, artifactDirectory) {
         profile,
         compareGolden: true,
         jsonPath,
+        releaseProfile: 'production',
         evidence: { classification: 'test-fixture', teamId: TEST_TEAM_ID, appGroup: TEST_APP_GROUP },
       });
       process.stdout.write(`${humanSummary(verified)}\n`);

@@ -31,6 +31,8 @@ const ALLOWED_ANDROID_PERMISSIONS = new Set([
   INSTALL_PERMISSION,
 ]);
 const ALLOWED_IOS_ENTITLEMENTS = new Set([
+  // APNs 推送环境；本脚本只校验 production 生成树，因此取值必须是 production。
+  'aps-environment',
   'com.apple.developer.associated-domains',
   'com.apple.security.application-groups',
   'keychain-access-groups',
@@ -187,10 +189,18 @@ export function verifyProductionIosTexts({ infoPlist, entitlements, privacyInfo,
   if (unexpectedEntitlements.length) {
     fail(`main App entitlements contain unexpected keys: ${unexpectedEntitlements.join(', ')}`);
   }
-  for (const requiredKey of ['com.apple.security.application-groups', 'keychain-access-groups']) {
+  for (const requiredKey of [
+    'aps-environment',
+    'com.apple.security.application-groups',
+    'keychain-access-groups',
+  ]) {
     if (!entitlementKeys.includes(requiredKey)) {
       fail(`main App entitlements are missing ${requiredKey}`);
     }
+  }
+  // 生产包只能带生产 APNs 环境：sandbox 令牌会让真机推送在生产网关上静默失败。
+  if (!/<key>aps-environment<\/key>\s*<string>production<\/string>/.test(entitlements)) {
+    fail('production main App entitlements must set aps-environment=production');
   }
 
   if (

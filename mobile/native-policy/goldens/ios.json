@@ -5,6 +5,7 @@
       {
         "path": "ios/<app>/AgentSaaS.entitlements",
         "values": {
+          "aps-environment": "production",
           "com.apple.security.application-groups": ["group.test-fixture.com.agentsaas.mobile"],
           "keychain-access-groups": [
             "$(AppIdentifierPrefix)group.test-fixture.com.agentsaas.mobile"

@@ -64,14 +64,21 @@ const IOS_LOCATION_KEYS = Object.freeze([
   'NSLocationWhenInUseUsageDescription',
 ]);
 const APPROVED_ENTITLEMENTS = new Set([
+  'aps-environment',
   'com.apple.developer.associated-domains',
   'com.apple.security.application-groups',
   'keychain-access-groups',
 ]);
 const ENTITLEMENT_VALUE_KEYS = new Set([
+  'aps-environment',
   'com.apple.security.application-groups',
   'keychain-access-groups',
 ]);
+const APS_ENVIRONMENT_KEY = 'aps-environment';
+/** APNs 推送环境：production 档位走生产网关，其余档位一律 sandbox（development）。 */
+function expectedApsEnvironment(releaseProfile) {
+  return releaseProfile === 'production' ? 'production' : 'development';
+}
 
 function decodeXml(value) {
   return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_, token) => {
@@ -591,7 +598,7 @@ function pbxAssignments(source, key) {
   return sortedUnique(values);
 }
 
-function parseIos(root, policy, evidence, findings) {
+function parseIos(root, policy, evidence, findings, releaseProfile) {
   const iosRoot = join(root, 'ios');
   if (!existsSync(iosRoot)) {
     findings.push(finding('INPUT_FILE_MISSING', 'ios', 'generated iOS directory is missing'));
@@ -661,6 +668,18 @@ function parseIos(root, policy, evidence, findings) {
       entitlements.push({ path: rel, values: stable(parsed) });
     } catch (error) {
       findings.push(finding('IOS_ENTITLEMENTS_PARSE', rel, error.message));
+    }
+  }
+  // 推送 entitlement：必须存在且取值与 release profile 严格一致，
+  // 防止把 sandbox 令牌打进生产包（反之则生产设备收不到任何通知）。
+  const expectedAps = expectedApsEnvironment(releaseProfile);
+  const apsEntries = entitlements.filter((entry) => Object.hasOwn(entry.values, APS_ENVIRONMENT_KEY));
+  if (entitlementPaths.length && !apsEntries.length) {
+    findings.push(finding('IOS_APS_ENVIRONMENT_MISMATCH', `ios/${projectName}`, `${APS_ENVIRONMENT_KEY} is missing; expected ${expectedAps}`));
+  }
+  for (const entry of apsEntries) {
+    if (entry.values[APS_ENVIRONMENT_KEY] !== expectedAps) {
+      findings.push(finding('IOS_APS_ENVIRONMENT_MISMATCH', entry.path, `${APS_ENVIRONMENT_KEY} must be ${expectedAps}`));
     }
   }
   const groupSets = entitlements.map((entry) => entry.values['com.apple.security.application-groups']).filter(Array.isArray);
@@ -760,6 +779,8 @@ export function goldenPath(profile) {
 export function checkNativeTree(options) {
   const profile = options.profile;
   if (!PROFILES.includes(profile)) throw new Error(`profile must be one of ${PROFILES.join(', ')}`);
+  // 原生门禁只审计「按某个 release profile 生成的树」；调用方（prebuild gate）始终生成 production。
+  const releaseProfile = options.releaseProfile ?? 'production';
   const rootArgument = options.root;
   const root = resolve(rootArgument);
   const findings = [];
@@ -776,7 +797,7 @@ export function checkNativeTree(options) {
   if (assertSafeTree(root, rootArgument, findings)) {
     const policy = releasePolicy(evidence);
     normalized = profile === 'ios'
-      ? { schemaVersion: 1, profile, ios: parseIos(root, policy, evidence, findings) }
+      ? { schemaVersion: 1, profile, ios: parseIos(root, policy, evidence, findings, releaseProfile) }
       : { schemaVersion: 1, profile, android: parseAndroid(root, profile, policy, findings) };
   }
   normalized = stable(normalized);

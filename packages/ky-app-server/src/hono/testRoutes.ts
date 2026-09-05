@@ -1,7 +1,8 @@
 /**
  * §3.8 `/ky/v1/test/*`：**仅 `KY_ENV=test`** 开放，非 test 环境不得注册。
  *
- * 三件事：预置角色（`provision`，§9.3-7）、驱动兜底模式（`break-glass`）、时钟偏移（`clock`）。
+ * 四件事：预置角色（`provision`，§9.3-7）、驱动兜底模式（`break-glass`）、
+ * 驱动目录消费（`directory`，§9.3-12）、时钟偏移（`clock`）。
  * 这些端点公开可达（一致性测试只打隔离测试环境），因此路由注册本身就受 `KY_ENV` 约束。
  */
 import { KyAppError } from '../errors.js';
@@ -37,6 +38,16 @@ export function registerTestRoutes(app: KyAppRouter, runtime: KyAppRuntime): voi
     }
     throw new KyAppError('invalid_input', {
       message: '默认实现只支持 action=disable，启用请走 /ky-local/enable 或自定义钩子',
+    });
+  });
+
+  app.post('/ky/v1/test/directory', async (c) => {
+    if (hooks.directory === undefined) {
+      throw new KyAppError('not_found', { message: '未提供 directory 钩子' });
+    }
+    return c.json({
+      ok: true,
+      result: await hooks.directory(await c.req.json().catch(() => null)),
     });
   });
 

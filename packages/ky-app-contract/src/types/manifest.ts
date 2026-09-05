@@ -118,4 +118,9 @@ export interface ConformanceFixture {
   users: { admin: ConformanceUser; member: ConformanceUser; norole: ConformanceUser };
   capabilities: Record<string, ConformanceCapabilityFixture>;
   endpoints: string[];
+  /**
+   * 菜单叶子 → 页面接口。§9.3-8 要求「无权用户访问每个菜单接口 → 403」，
+   * 而附录 C 的 `/me` 里只有前端 path、没有接口地址，故在夹具里显式声明。
+   */
+  menuApis?: Record<string, { method: 'GET' | 'POST'; path: string }>;
 }

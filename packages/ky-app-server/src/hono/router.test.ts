@@ -341,6 +341,14 @@ describe('/ky/v1/test/*（仅 KY_ENV=test）', () => {
     expect(harness.runtime.clockOffset()).toBe(1000);
   });
 
+  it('test 环境下开放 directory 钩子（§9.3-12）', async () => {
+    const response = await request('public', 'POST', '/ky/v1/test/directory', {
+      body: { action: 'sync' },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, result: { echoed: { action: 'sync' } } });
+  });
+
   it('非 test 环境不注册 /ky/v1/test/*', async () => {
     const prod = await createHarness({ env: 'prod' });
     const response = await prod.router.request('https://app.test.invalid/ky/v1/test/clock', {

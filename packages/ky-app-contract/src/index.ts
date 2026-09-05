@@ -13,4 +13,5 @@ export * from './errors.js';
 export * from './manifest.js';
 export * from './me.js';
 export * from './claims.js';
+export * from './claudeMd.js';
 export * from './vectors.js';

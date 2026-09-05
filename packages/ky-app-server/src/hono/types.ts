@@ -58,6 +58,11 @@ export interface KyAppTestHooks {
   provision?: (input: unknown) => Promise<unknown>;
   /** 驱动兜底模式（不需要恢复因子）。 */
   breakGlass?: (input: unknown) => Promise<unknown>;
+  /**
+   * 驱动组织目录消费（§9.3-12）：一致性测试需要在外部触发一轮 `sync()`、
+   * 读回本地目录快照与陈旧度。没有这个钩子就只能靠轮询等，测试无法确定。
+   */
+  directory?: (input: unknown) => Promise<unknown>;
 }
 
 export interface KyAppRouterConfig {

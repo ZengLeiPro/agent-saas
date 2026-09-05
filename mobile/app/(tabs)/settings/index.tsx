@@ -27,6 +27,7 @@ import {
 import type { AgentProfile } from "@agent/shared";
 import { fetchMyGovernanceSummary, type MyGovernanceSummary } from "@agent/shared/lib/governanceApi";
 import { showTextPrompt } from "../../../src/lib/prompt";
+import { isFilesEntryVisible } from "../../../src/lib/filesEntry";
 import { isV1RouteAllowed } from "../../../src/v1/v1Capabilities";
 import { getV1BuildProfile } from "../../../src/v1/v1Runtime";
 
@@ -60,6 +61,11 @@ export default function SettingsScreen() {
   const showCron = isV1RouteAllowed("cron", v1Profile);
   const showGovernance = isV1RouteAllowed("settings/my-permissions", v1Profile);
   const showConnections = isV1RouteAllowed("capabilities/connectors", v1Profile);
+  // P3-3c：文件中心与会话列表 pill 共用同一入口口径（租户开关 ∩ V1 allowlist）。
+  const showFiles = isFilesEntryVisible({
+    filesEnabled: tenantFeatures.filesEnabled,
+    routeAllowed: isV1RouteAllowed("files", v1Profile),
+  });
 
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
   const [governanceSummary, setGovernanceSummary] = useState<MyGovernanceSummary | null>(null);
@@ -281,7 +287,13 @@ export default function SettingsScreen() {
                   onPress={() => router.push("/capabilities/connectors")}
                 />
               ) : null}
-              <ListRow title="文件与存储" value="只读迁移态" />
+              {showFiles ? (
+                <ListRow
+                  title="文件与存储"
+                  value="文件中心"
+                  onPress={() => router.push("/files")}
+                />
+              ) : null}
               <ListRow title="治理身份" value={governanceSummary?.label ?? "权威摘要不可用"} />
               {governanceSummary && governanceSummary.persona !== "member" ? (
                 <ListRow

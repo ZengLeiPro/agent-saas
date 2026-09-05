@@ -1,19 +1,38 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Pressable, Alert } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { MoreHorizontal, ChevronLeft, Trash2 } from 'lucide-react-native';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
+import { MoreHorizontal, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DropdownMenu, type DropdownSection } from '../../../src/components/overlays/DropdownMenu';
-import { FILE_SORT_LABELS, authFetch, getPreviewFileType } from '@agent/shared';
+import { DropdownMenu, type DropdownSection } from '../../src/components/overlays/DropdownMenu';
+import SegmentedControl from '@react-native-segmented-control/segmented-control';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { FILE_SORT_LABELS, authFetch, getPreviewFileType, reportActivity } from '@agent/shared';
 import type { FileEntry, FileSortKey, FileSortOrder } from '@agent/shared';
-import { useFileList } from '../../../src/hooks/useFileList';
-import { useFileOpen } from '../../../src/hooks/useFileOpen';
-import { FileList } from '../../../src/components/files/FileList';
-import { useColors, useTheme, spacing } from '../../../src/theme';
-import { useTabBar } from '../../../src/contexts/TabBarContext';
-import { useAuth } from '../../../src/contexts/AuthContext';
-import { hapticLight } from '../../../src/lib/haptics';
-import { glassFree } from '../../../src/lib/headerItems';
+import { useFileList } from '../../src/hooks/useFileList';
+import { useFileOpen } from '../../src/hooks/useFileOpen';
+import { FileList } from '../../src/components/files/FileList';
+import { useColors, useTheme, spacing } from '../../src/theme';
+import { useTabBar } from '../../src/contexts/TabBarContext';
+import { useAuth } from '../../src/contexts/AuthContext';
+import { useUsers } from '../../src/hooks/useUsers';
+import { hapticLight } from '../../src/lib/haptics';
+import { glassFree } from '../../src/lib/headerItems';
+
+type ViewMode = 'folder' | 'all';
+const VIEW_MODES: ViewMode[] = ['all', 'folder'];
+const VIEW_LABELS = ['全部', '文件夹'];
+
+const SORT_STORAGE_KEY = 'files.sort';
+
+interface SortPrefs {
+  folder: { key: FileSortKey; order: FileSortOrder };
+  all: { key: FileSortKey; order: FileSortOrder };
+}
+
+const DEFAULT_SORT: SortPrefs = {
+  folder: { key: 'modifiedAt', order: 'desc' },
+  all: { key: 'modifiedAt', order: 'desc' },
+};
 
 function sortEntries(entries: FileEntry[], sortKey: FileSortKey, sortOrder: FileSortOrder): FileEntry[] {
   const sorted = [...entries];
@@ -31,17 +50,25 @@ function sortEntries(entries: FileEntry[], sortKey: FileSortKey, sortOrder: File
   return sorted;
 }
 
-export default function BrowseFolderScreen() {
-  const { path, owner, root } = useLocalSearchParams<{ path: string; owner?: string; root?: string }>();
+export default function FilesScreen() {
+  useFocusEffect(useCallback(() => { reportActivity('page_viewed', { detail: '文件管理' }); }, []));
   const colors = useColors();
   const { isDark } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { setTabBarHidden } = useTabBar();
   const { user: authUser } = useAuth();
-  const ownerFilter = owner ?? null;
-  const [sortKey, setSortKey] = useState<FileSortKey>('name');
-  const [sortOrder, setSortOrder] = useState<FileSortOrder>('asc');
+  const isAdmin = authUser?.role === 'admin';
+  const { users } = useUsers();
+  const [ownerFilter, setOwnerFilter] = useState<string | null>(authUser?.username ?? null);
+  // authUser 异步加载完成后同步默认值
+  useEffect(() => {
+    if (authUser?.username && ownerFilter === null) {
+      setOwnerFilter(authUser.username);
+    }
+  }, [authUser?.username]);
+  const [viewMode, setViewMode] = useState<ViewMode>('all');
+  const [sortPrefs, setSortPrefs] = useState<SortPrefs>(DEFAULT_SORT);
 
   // Multi-select state
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -49,16 +76,38 @@ export default function BrowseFolderScreen() {
   const selectedCount = selectedPaths.size;
   const hasSelection = selectedCount > 0;
 
+  // 启动时从 AsyncStorage 恢复排序偏好
+  useEffect(() => {
+    AsyncStorage.getItem(SORT_STORAGE_KEY).then(raw => {
+      if (raw) {
+        try {
+          const saved = JSON.parse(raw) as Partial<SortPrefs>;
+          setSortPrefs(prev => ({
+            folder: { ...prev.folder, ...saved.folder },
+            all: { ...prev.all, ...saved.all },
+          }));
+        } catch { /* ignore */ }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const sortKey = sortPrefs[viewMode].key;
+  const sortOrder = sortPrefs[viewMode].order;
+
+  const updateSort = useCallback((mode: ViewMode, key: FileSortKey, order: FileSortOrder) => {
+    setSortPrefs(prev => {
+      const next = { ...prev, [mode]: { key, order } };
+      AsyncStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
   const { open: openFile } = useFileOpen();
 
-  // 非 admin 用户即使通过 deep link 传入 root=true 也退化为普通模式
-  const isRootMode = root === 'true' && authUser?.role === 'admin';
-  const folderPath = path || 'assets';
   const { entries: rawEntries, loading, refresh } = useFileList(
-    folderPath,
-    undefined,
-    ownerFilter ?? undefined,
-    isRootMode ? true : undefined,
+    'assets',
+    viewMode === 'all',
+    isAdmin ? (ownerFilter ?? undefined) : undefined,
   );
 
   const entries = useMemo(
@@ -66,13 +115,11 @@ export default function BrowseFolderScreen() {
     [rawEntries, sortKey, sortOrder],
   );
 
-  const folderName = (isRootMode && folderPath === '.') ? '根目录' : (folderPath.split('/').pop() || '文件');
-
-  const toggleSelect = useCallback((p: string) => {
+  const toggleSelect = useCallback((path: string) => {
     setSelectedPaths(prev => {
       const next = new Set(prev);
-      if (next.has(p)) next.delete(p);
-      else next.add(p);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
       return next;
     });
   }, []);
@@ -140,7 +187,7 @@ export default function BrowseFolderScreen() {
   // Workspace HTML never enters an in-app renderer; Artifact delivery is the supported path.
   const handleEntryPress = useCallback(async (entry: FileEntry) => {
     if (entry.isDirectory) {
-      router.push({ pathname: '/(tabs)/files/browse', params: { path: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
+      router.push({ pathname: '/files/browse', params: { path: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}) } });
       return;
     }
 
@@ -150,7 +197,7 @@ export default function BrowseFolderScreen() {
       return;
     }
     if (previewType === 'md') {
-      router.push({ pathname: '/chat/markdown-preview', params: { filePath: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
+      router.push({ pathname: '/chat/markdown-preview', params: { filePath: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}) } });
       return;
     }
 
@@ -159,9 +206,8 @@ export default function BrowseFolderScreen() {
       modifiedAt: entry.modifiedAt,
       size: entry.size,
       owner: ownerFilter ?? undefined,
-      root: isRootMode || undefined,
     });
-  }, [router, ownerFilter, openFile, isRootMode]);
+  }, [router, ownerFilter, openFile]);
 
   const containerStyle = useMemo(() => ({
     flex: 1,
@@ -182,7 +228,7 @@ export default function BrowseFolderScreen() {
 
   const menuSections = useMemo<DropdownSection[]>(() => {
     const keys: FileSortKey[] = ['name', 'modifiedAt', 'size', 'extension'];
-    return [{
+    const sortSection: DropdownSection = {
       id: '_sort_section',
       label: `排序 (${sortOrder === 'asc' ? '升序' : '降序'})`,
       actions: keys.map(k => {
@@ -194,18 +240,50 @@ export default function BrowseFolderScreen() {
           checked: isActive,
         };
       }),
-    }];
-  }, [sortKey, sortOrder]);
+    };
+
+    const sections: DropdownSection[] = [sortSection];
+
+    if (isAdmin) {
+      sections.push({
+        id: '_nav_section',
+        actions: [{ id: '_root', label: '根目录' }],
+      });
+    }
+
+    if (isAdmin && users.length > 0) {
+      sections.push({
+        id: '_owner_section',
+        actions: users.map(u => ({
+          id: `_owner:${u.username}`,
+          label: u.realName || u.username,
+          checked: ownerFilter === u.username,
+        })),
+      });
+    }
+
+    return sections;
+  }, [sortKey, sortOrder, isAdmin, users, ownerFilter]);
 
   const handleMenuSelect = useCallback((actionId: string) => {
+    if (actionId === '_root') {
+      router.push({ pathname: '/files/browse', params: { path: '.', root: 'true' } });
+      return;
+    }
+
+    if (actionId.startsWith('_owner:')) {
+      const username = actionId.slice('_owner:'.length);
+      setOwnerFilter(username || null);
+      return;
+    }
+
     const key = actionId as FileSortKey;
     if (key === sortKey) {
-      setSortOrder(o => o === 'asc' ? 'desc' : 'asc');
+      updateSort(viewMode, key, sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
-      setSortKey(key);
-      setSortOrder(key === 'modifiedAt' ? 'desc' : 'asc');
+      updateSort(viewMode, key, key === 'modifiedAt' ? 'desc' : 'asc');
     }
-  }, [sortKey]);
+  }, [sortKey, sortOrder, viewMode, updateSort, router]);
 
   const headerTextStyle = { fontSize: 17, color: colors.foreground };
 
@@ -213,7 +291,40 @@ export default function BrowseFolderScreen() {
     <View style={containerStyle}>
       <Stack.Screen
         options={{
-          title: folderName,
+          title: '',
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={isSelectMode ? exitSelectMode : enterSelectMode}
+              activeOpacity={0.7}
+            >
+              <Text style={headerTextStyle}>
+                {isSelectMode ? '完成' : '选择'}
+              </Text>
+            </TouchableOpacity>
+          ),
+          unstable_headerLeftItems: () => [glassFree(
+            <TouchableOpacity
+              onPress={isSelectMode ? exitSelectMode : enterSelectMode}
+              activeOpacity={0.7}
+            >
+              <Text style={headerTextStyle}>
+                {isSelectMode ? '完成' : '选择'}
+              </Text>
+            </TouchableOpacity>
+          )],
+          headerTitle: () =>
+            isSelectMode ? (
+              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.foreground }}>
+                {hasSelection ? `已选择 ${selectedCount} 项` : '选择项目'}
+              </Text>
+            ) : (
+              <SegmentedControl
+                values={VIEW_LABELS}
+                selectedIndex={VIEW_MODES.indexOf(viewMode)}
+                onChange={(e) => setViewMode(VIEW_MODES[e.nativeEvent.selectedSegmentIndex])}
+                style={{ width: 160, height: 40, marginTop: -8}}
+              />
+            ),
           headerRight: () =>
             isSelectMode ? (
               <TouchableOpacity onPress={handleToggleAll} activeOpacity={0.7}>
@@ -239,62 +350,17 @@ export default function BrowseFolderScreen() {
                   <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
                 </Pressable>
               )],
-          headerBackVisible: false,
-          headerLeft: isRootMode
-            ? () => (
-                <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                  <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                </TouchableOpacity>
-              )
-            : () => isSelectMode ? (
-                <TouchableOpacity onPress={exitSelectMode} activeOpacity={0.7}>
-                  <Text style={headerTextStyle}>完成</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                    <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={enterSelectMode} activeOpacity={0.7}>
-                    <Text style={headerTextStyle}>选择</Text>
-                  </TouchableOpacity>
-                </View>
-              ),
-          unstable_headerLeftItems: isRootMode
-            ? () => [glassFree(
-                <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                  <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                </TouchableOpacity>
-              )]
-            : () => isSelectMode
-              ? [glassFree(
-                  <TouchableOpacity onPress={exitSelectMode} activeOpacity={0.7}>
-                    <Text style={headerTextStyle}>完成</Text>
-                  </TouchableOpacity>
-                )]
-              : [
-                  glassFree(
-                    <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                      <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                    </TouchableOpacity>
-                  ),
-                  glassFree(
-                    <TouchableOpacity onPress={enterSelectMode} activeOpacity={0.7}>
-                      <Text style={headerTextStyle}>选择</Text>
-                    </TouchableOpacity>
-                  ),
-                ],
         }}
       />
       <FileList
-        key={`${sortKey}-${sortOrder}${isSelectMode ? '-select' : ''}`}
+        key={`${viewMode}-${sortKey}-${sortOrder}${isSelectMode ? '-select' : ''}`}
         entries={entries}
         loading={loading}
         onRefresh={refresh}
         onPress={(entry) => { void handleEntryPress(entry); }}
-        onDelete={isRootMode ? undefined : handleDelete}
+        onDelete={handleDelete}
         contentPaddingBottom={isSelectMode ? insets.bottom + 70 : insets.bottom}
-        enableBackGesture
+        showPath={viewMode === 'all'}
         selectMode={isSelectMode}
         selectedPaths={selectedPaths}
         onSelectToggle={toggleSelect}

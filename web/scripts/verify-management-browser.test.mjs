@@ -43,8 +43,8 @@ try {
   await page.getByTestId('unified-settings-sidebar').waitFor();
   await page.getByRole('button', { name: '模型', exact: true }).click();
   await page.getByTestId('management-shell').waitFor();
-  if ((await page.getByTestId('management-scroll-container').count()) !== 1) {
-    throw new Error('管理工作区不是单一滚动容器');
+  if ((await page.locator('[data-scroll-container="true"]').count()) !== 1) {
+    throw new Error('管理工作区不是单一外层滚动容器');
   }
   if ((await page.getByRole('heading', { name: '模型', exact: true }).count()) !== 1) {
     throw new Error('平台模型页标题不唯一');
@@ -76,7 +76,7 @@ try {
   await mobilePage.getByTestId('management-shell').waitFor();
   if (
     (await mobilePage.getByTestId('management-shell').count()) !== 1 ||
-    (await mobilePage.getByTestId('management-scroll-container').count()) !== 1
+    (await mobilePage.locator('[data-scroll-container="true"]').count()) !== 1
   ) {
     throw new Error('移动端没有复用单一管理壳和滚动容器');
   }

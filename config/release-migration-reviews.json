@@ -1203,6 +1203,95 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
+    },
+    {
+      "baselineSha": "bb035b45c02e649ecc2a3ef6bc9d6cb7029aac6e",
+      "files": [
+        {
+          "path": "server/src/agent/workspaceHandTools.ts",
+          "baselineDigest": "sha256:ac35263948410bf16fee54f0c93eebb14bd1fc8bd0833ac0af48b08738ce438c",
+          "targetDigest": "sha256:da6609e61bb421f36365a97406a58bca0f6d57119f77dd5126da6efa01416171",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
+          "targetDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/cron/memoryPoll.ts",
+          "baselineDigest": "sha256:d40dbb2b83dc964497ac3dce73e955fa22fb41017db3b5969ab86e488714db5c",
+          "targetDigest": "sha256:1ec3f2b4fc5745e9d7022a599b7be8eca67da14fbd8b1980680cd218addd1209",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/draft.ts",
+          "baselineDigest": "sha256:7bb57df579d0f28fde2703030c2aa6283a172f968c28f95c90f98d11244ea037",
+          "targetDigest": "sha256:3e81396a6a9a39d0d93ff3e94c484372f255cf314764b32e3dc356b5d1bbf5cd",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/engine.ts",
+          "baselineDigest": "sha256:1e0315f2c0233f2ffc0f21e9b5cdd467af5a65ce9d3307a20401fbf879b40b8d",
+          "targetDigest": "sha256:eb54b88688f4dca40210b0686275b0195a898df480a47bd2daca6c970c28856d",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/engineSupport.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f5e82090975fd77810af5f5434a295e3151ff617eb4bd9a82d46a9917053a089",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        }
+      ]
     }
   ]
 }

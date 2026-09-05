@@ -961,41 +961,8 @@ export {
   debouncedLoadSessions,
 } from './store/actions/sessionLoader';
 
-export {
-  fetchMcpTemplates,
-  fetchMyMcp,
-  updateMyMcpSelections,
-  bindMyMcpSecret,
-  bindAdminMcpSecret,
-  diagnoseMyMcp,
-  fetchMcpAdminServers,
-  upsertMcpServer,
-  deleteMcpServer,
-  upsertMyMcpServer,
-  deleteMyMcpServer,
-  startMyMcpOAuth,
-  disconnectMyMcpOAuth,
-} from './lib/mcpApi';
+export * from './lib/mcpApi';
 
-export {
-  setNativeConnectorRuntimeEnabled,
-  type NativeRuntimeConnectorId,
-  fetchGithubConnection,
-  connectGithub,
-  disconnectGithub,
-  fetchXConnection,
-  connectX,
-  disconnectX,
-  fetchNotionConnection,
-  fetchNotionAuthSession,
-  startNotionAuthSession,
-  disconnectNotion,
-  fetchGoogleWorkspaceConnection,
-  startGoogleWorkspaceOAuth,
-  disconnectGoogleWorkspace,
-  fetchAliyunConnection,
-  connectAliyun,
-  disconnectAliyun,
-} from './lib/connectorsApi';
+export * from './lib/connectorsApi';
 
 // Governance UI contract and authoritative API clients

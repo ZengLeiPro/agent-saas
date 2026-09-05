@@ -651,7 +651,7 @@ describe('health router', () => {
     expect(JSON.stringify(body)).not.toContain('must-not-leak');
   });
 
-  it('TASK-318：配置身份无变化时跨多个刷新周期 readiness 持续 200', async () => {
+  it('TASK-318：正常递增时钟下配置无变化跨多个刷新周期 readiness 持续 200', async () => {
     const config = parseAppConfig({ agent: { cwd: '/srv/agent' }, server: {} });
     const deployTime = await computeObservedConfigIdentity(config, undefined, '/srv/server');
     let clock = 0;
@@ -673,7 +673,7 @@ describe('health router', () => {
     }
   });
 
-  it('TASK-318：SecretVault 轮换后的首次 readiness 等待强一致刷新并 fail closed', async () => {
+  it('TASK-318：SecretVault 轮换且 wall-clock 回拨后的首次 readiness fail closed', async () => {
     const vault = new InMemorySecretVault();
     const caller = {
       actor: 'system' as const,
@@ -693,7 +693,7 @@ describe('health router', () => {
       },
     });
     const deployTime = await computeObservedConfigIdentity(config, vault, '/srv/server');
-    let clock = 0;
+    let clock = 10_000;
     const runtime = createConfigIdentityRuntime({
       config,
       secretVault: vault,
@@ -715,7 +715,7 @@ describe('health router', () => {
       ...caller,
       scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
     });
-    clock = 6_000;
+    clock = 0;
     expect((await server.request('/api/healthz/ready')).status).toBe(503);
     expect(runtime.getSummary().status).toBe('drifted');
   });

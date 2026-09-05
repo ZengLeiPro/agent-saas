@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InMemorySecretVault } from '../security/secretVault.js';
+import { projectRuntimeWorkerReadyFile } from '../runtime/runtimeWorkerReadiness.js';
 import {
   buildCanonicalConfigProjection,
   calculateConfigIdentityDigest,
@@ -50,11 +51,12 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
     expect(assembly.getSummary().observed?.digest).toBe(expectedDigest);
   });
 
-  it('Production 强一致读取等待轮换重算，并原子发布 drifted 私有快照', async () => {
+  it('Production 在 wall-clock 回拨后重算轮换身份，并撤销 Worker 门禁', async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(0));
+    vi.setSystemTime(new Date(10_000));
     const root = mkdtempSync(join(tmpdir(), 'config-identity-periodic-'));
     const snapshotPath = join(root, 'config-identity.json');
+    const workerReadyPath = join(root, 'worker.ready');
     try {
       const vault = new InMemorySecretVault();
       const caller = {
@@ -91,12 +93,20 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
         logger: { info: vi.fn(), warn: vi.fn() },
       });
       expect(assembly.getSummary().status).toBe('consistent');
+      projectRuntimeWorkerReadyFile(
+        workerReadyPath,
+        { state: 'healthy', admitting: true },
+        assembly.getSummary(),
+        assembly.isPrivateSummaryCurrent(),
+        4321,
+      );
+      expect(existsSync(workerReadyPath)).toBe(true);
 
       await vault.rotateSecret(ref.id, 'v2', {
         ...caller,
         scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
       });
-      vi.setSystemTime(new Date(6_000));
+      vi.setSystemTime(new Date(0));
       expect(assembly.getSummary().status).toBe('consistent');
       expect(JSON.parse(readFileSync(snapshotPath, 'utf8'))).toMatchObject({
         status: 'consistent',
@@ -107,6 +117,14 @@ describe('initializeRuntimeConfigIdentityAssembly', () => {
         status: 'drifted',
       });
       expect(assembly.isPrivateSummaryCurrent()).toBe(true);
+      projectRuntimeWorkerReadyFile(
+        workerReadyPath,
+        { state: 'healthy', admitting: true },
+        assembly.getSummary(),
+        assembly.isPrivateSummaryCurrent(),
+        4321,
+      );
+      expect(existsSync(workerReadyPath)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

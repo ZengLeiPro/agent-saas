@@ -596,7 +596,7 @@ describe('createConfigIdentityRuntime', () => {
     expect(runtime.getSummary().status).toBe('drifted');
   });
 
-  it('轮换后稳定读取保留旧快照，强一致读取等待重算并返回 drifted', async () => {
+  it('轮换并 wall-clock 回拨后，稳定读取保留快照但强一致读取返回 drifted', async () => {
     const vault = new InMemorySecretVault();
     const caller = {
       actor: 'system' as const,
@@ -611,7 +611,7 @@ describe('createConfigIdentityRuntime', () => {
       },
     });
     const deployTime = await observe(config, vault);
-    let clock = 0;
+    let clock = 10_000;
     const published: Array<{ status: string }> = [];
     const runtime = createConfigIdentityRuntime({
       config,
@@ -632,10 +632,10 @@ describe('createConfigIdentityRuntime', () => {
       ...caller,
       scopes: [...caller.scopes, 'secret:tenant-hand:rotate'],
     });
-    clock = 6_000;
+    clock = 0;
     expect(runtime.getSummary().status).toBe('consistent');
 
-    expect((await runtime.refreshSummary('readiness')).status).toBe('drifted');
+    expect((await runtime.refreshSummary('readiness_clock_rollback')).status).toBe('drifted');
     expect(runtime.getSummary().status).toBe('drifted');
     expect(published.at(-1)?.status).toBe('drifted');
     expect(published.some((summary) => summary.status === 'not_collected')).toBe(false);
@@ -757,7 +757,7 @@ describe('createConfigIdentityRuntime', () => {
     expect(runtime.getSummary().observed?.digest).toBe(currentDigest);
   });
 
-  it('无变化跨多个刷新周期时稳定读取与强一致读取持续 consistent', async () => {
+  it('正常递增时钟下无变化跨多个刷新周期仍持续 consistent', async () => {
     const config = baseConfig();
     let clock = 0;
     const published: Array<{ status: string }> = [];

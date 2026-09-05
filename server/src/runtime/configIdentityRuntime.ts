@@ -102,7 +102,7 @@ export interface ConfigIdentityRuntime {
   notifyConfigChanged(reason: string): void;
   /** 同步等待一次重算（测试与显式刷新用）。 */
   refresh(reason?: string): Promise<void>;
-  /** 强一致读取：过期时等待重算，失败则撤销旧 observation。 */
+  /** 强一致读取：过期或时钟异常时等待重算，失败则撤销旧 observation。 */
   refreshSummary(reason?: string): Promise<ConfigIdentitySummary>;
   /** 稳定只读脱敏摘要；不会因读取本身制造瞬时 not_collected。 */
   getSummary(): ConfigIdentitySummary;
@@ -361,9 +361,12 @@ export function createConfigIdentityRuntime(
     // 已应用配置或 Vault 的瞬时刷新失败则允许下一次强一致读取自动恢复。
     if (observationInvalidated && !strongRetryAllowedAfterInvalidation) return buildSummary();
 
+    const elapsedMs = currentMs - lastComputedAtMs;
     const isFresh =
       observation !== undefined &&
-      currentMs - lastComputedAtMs < SUMMARY_RECOMPUTE_MIN_INTERVAL_MS;
+      Number.isFinite(elapsedMs) &&
+      elapsedMs >= 0 &&
+      elapsedMs < SUMMARY_RECOMPUTE_MIN_INTERVAL_MS;
     if (isFresh) return buildSummary();
 
     const promise = refresh(reason);

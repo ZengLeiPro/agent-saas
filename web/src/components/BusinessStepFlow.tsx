@@ -8,10 +8,18 @@ import {
   Loader2,
   TriangleAlert,
 } from "lucide-react";
+import {
+  businessStepOverallStatus,
+  isEndedWithoutTerminal,
+  migrateLegacySectionVerdicts,
+  outcomeToneMeta,
+  todoAccessibleStatus,
+  todoStatusMeta,
+} from "@agent/shared";
 import type {
   BusinessStepEventItem,
-  DetailLine,
-  RecordsBlock,
+  BusinessStepIcon,
+  BusinessStepOverallStatus,
   TodoItem,
   TodoOutcome,
 } from "@agent/shared";
@@ -32,14 +40,29 @@ import {
   type BusinessStepSelection,
 } from "./businessStepViewModel";
 
-const OUTCOME_TONE_META: Record<NonNullable<TodoOutcome["tone"]>, {
-  textClass: string;
-  Icon: typeof TriangleAlert | null;
-  iconClass: string;
-}> = {
-  ok: { textClass: "text-foreground", Icon: null, iconClass: "" },
-  warn: { textClass: "text-warning", Icon: TriangleAlert, iconClass: "text-warning" },
-  fail: { textClass: "text-destructive", Icon: CircleX, iconClass: "text-destructive" },
+/**
+ * 语气位由 shared `outcomeToneMeta` 裁定，这里只做 Web 的渲染映射。
+ *
+ * 注意 ok（tone=neutral）用的是正文色 text-foreground，而不是
+ * activityStatusTextClass("neutral") 的 text-muted-foreground——一句业务结果是
+ * 正文而非辅助信息，故保留本地 class 表而不复用活动状态色板。
+ */
+type OutcomeTone = Extract<ActivityStatusTone, "neutral" | "warning" | "danger">;
+
+const OUTCOME_TONE_CLASS: Record<OutcomeTone, { textClass: string; iconClass: string }> = {
+  neutral: { textClass: "text-foreground", iconClass: "" },
+  warning: { textClass: "text-warning", iconClass: "text-warning" },
+  danger: { textClass: "text-destructive", iconClass: "text-destructive" },
+};
+
+/** shared 的图标语义位 → lucide 组件。两端各自挑实现，语义键一致。 */
+const STEP_ICONS: Record<BusinessStepIcon, typeof Circle> = {
+  progress: Loader2,
+  clock: Clock3,
+  alert: TriangleAlert,
+  check: CircleCheck,
+  x: CircleX,
+  circle: Circle,
 };
 
 function StatChip({ stat }: { stat: OutcomeStat }) {
@@ -59,8 +82,9 @@ function StatChip({ stat }: { stat: OutcomeStat }) {
 }
 
 function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeStat[] }) {
-  const meta = OUTCOME_TONE_META[outcome.tone ?? "ok"];
-  const Icon = meta.Icon;
+  const { tone, icon } = outcomeToneMeta(outcome);
+  const meta = OUTCOME_TONE_CLASS[tone as OutcomeTone];
+  const Icon = icon ? STEP_ICONS[icon] : null;
   return (
     <div className="space-y-2">
       <p className={cn("flex items-start gap-2 text-sm leading-5", meta.textClass)}>
@@ -74,69 +98,6 @@ function OutcomeLine({ outcome, stats }: { outcome: TodoOutcome; stats: OutcomeS
       ) : null}
     </div>
   );
-}
-
-const VERDICT_RECORD_TONE = {
-  pass: "success",
-  fail: "danger",
-  warn: "warn",
-  pending: "muted",
-} as const;
-
-type SectionDetailLine = Extract<DetailLine, { section: string }>;
-type VerdictDetailLine = Extract<DetailLine, { verdict: string }>;
-
-type StepDetailPart =
-  | { kind: "detail"; lines: DetailLine[] }
-  | { kind: "records"; block: RecordsBlock };
-
-function isSectionDetailLine(line: DetailLine | undefined): line is SectionDetailLine {
-  return typeof line === "object" && line !== null && "section" in line;
-}
-
-function isVerdictDetailLine(line: DetailLine | undefined): line is VerdictDetailLine {
-  return typeof line === "object" && line !== null && "verdict" in line;
-}
-
-function migrateLegacySectionVerdicts(detail: DetailLine[] | undefined): StepDetailPart[] {
-  if (!detail?.length) return [];
-  const parts: StepDetailPart[] = [];
-  let plainLines: DetailLine[] = [];
-  const flushPlainLines = () => {
-    if (!plainLines.length) return;
-    parts.push({ kind: "detail", lines: plainLines });
-    plainLines = [];
-  };
-
-  for (let index = 0; index < detail.length;) {
-    const section = detail[index];
-    if (!isSectionDetailLine(section) || !isVerdictDetailLine(detail[index + 1])) {
-      plainLines.push(section);
-      index += 1;
-      continue;
-    }
-
-    flushPlainLines();
-    index += 1;
-    const items: RecordsBlock["items"] = [];
-    while (true) {
-      const verdict = detail[index];
-      if (!isVerdictDetailLine(verdict)) break;
-      items.push({
-        label: verdict.text,
-        tone: VERDICT_RECORD_TONE[verdict.verdict],
-        ...(verdict.note ? { note: verdict.note } : {}),
-      });
-      index += 1;
-    }
-    parts.push({
-      kind: "records",
-      block: { kind: "records", layout: "checklist", title: section.section, items },
-    });
-  }
-
-  flushPlainLines();
-  return parts;
 }
 
 // 详情侧栏使用独立容器断点；主会话里的 PresentationBlocks 保持原布局。
@@ -196,71 +157,19 @@ export function BusinessStepEvidence({ todo }: { todo: TodoItem }) {
   );
 }
 
-function statusMeta(todo: TodoItem): {
-  label: string;
-  tone: ActivityStatusTone;
-  Icon: typeof Circle;
-  spin?: boolean;
-} {
-  if (todo.status === "completed" && todo.outcome?.tone === "fail") {
-    return { label: "完成结果异常", tone: "danger", Icon: CircleX };
-  }
-  switch (todo.status) {
-    case "in_progress":
-      return { label: "进行中", tone: "active", Icon: Loader2, spin: true };
-    case "waiting":
-      return { label: "等待中", tone: "pending", Icon: Clock3 };
-    case "blocked":
-      return { label: "已阻断", tone: "danger", Icon: TriangleAlert };
-    case "completed":
-      return { label: "已完成", tone: "success", Icon: CircleCheck };
-    case "failed":
-      return { label: "失败", tone: "danger", Icon: CircleX };
-    default:
-      return { label: "待处理", tone: "neutral", Icon: Circle };
-  }
-}
-
 export function BusinessStepStatusIcon({ todo, className }: { todo: TodoItem; className?: string }) {
-  const meta = statusMeta(todo);
+  const meta = todoStatusMeta(todo);
+  const Icon = STEP_ICONS[meta.icon];
   return (
     <span className="inline-flex shrink-0" aria-label={meta.label}>
-      <meta.Icon aria-hidden="true" className={activityStatusIconClass(meta.tone, cn("size-4", meta.spin && "animate-spin", className))} />
+      <Icon aria-hidden="true" className={activityStatusIconClass(meta.tone, cn("size-4", meta.spin && "animate-spin", className))} />
     </span>
   );
 }
 
-export interface BusinessStepOverallStatus {
-  completed: number;
-  label: "运行中" | "已阻断" | "有失败" | "等待中" | "已完成" | "已结束" | "待处理";
-  tone: ActivityStatusTone;
-}
-
-export function businessStepOverallStatus(
-  todos: TodoItem[],
-  planClosed = false,
-): BusinessStepOverallStatus {
-  const completed = todos.filter((todo) => todo.status === "completed").length;
-  if (!planClosed && todos.some((todo) => todo.status === "in_progress")) {
-    return { completed, label: "运行中", tone: "active" };
-  }
-  if (todos.some((todo) => todo.status === "blocked")) {
-    return { completed, label: "已阻断", tone: "danger" };
-  }
-  if (todos.some((todo) => todo.status === "failed")) {
-    return { completed, label: "有失败", tone: "danger" };
-  }
-  if (todos.some((todo) => todo.status === "waiting")) {
-    return { completed, label: "等待中", tone: "pending" };
-  }
-  if (todos.length > 0 && completed === todos.length) {
-    return { completed, label: "已完成", tone: "success" };
-  }
-  if (planClosed) {
-    return { completed, label: "已结束", tone: "neutral" };
-  }
-  return { completed, label: "待处理", tone: "neutral" };
-}
+// 步骤状态语义已下沉 shared；保留此处导出，既有调用点与单测的导入路径不变。
+export { businessStepOverallStatus };
+export type { BusinessStepOverallStatus };
 
 function PlanTodoRow({
   todo,
@@ -298,9 +207,9 @@ function PlanTodoRow({
   );
   const selectionKey = businessStepSelectionKey(selection);
   const isSelected = selected?.planId === planId && selected.todoKey === selection.todoKey;
-  const endedWithoutTerminal = planClosed && todo.status === "in_progress";
+  const endedWithoutTerminal = isEndedWithoutTerminal(todo, planClosed);
   const isCurrent = !planClosed && todo.status === "in_progress";
-  const accessibleStatus = endedWithoutTerminal ? "已结束" : statusMeta(todo).label;
+  const accessibleStatus = todoAccessibleStatus(todo, planClosed);
 
   return (
     <li

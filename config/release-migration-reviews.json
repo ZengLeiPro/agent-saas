@@ -350,9 +350,9 @@
         {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
-          "targetDigest": "sha256:7008eb2f8fd6ad8c1e24ad4a747db450cb90d2b5b8b6ab23dad0a2d769558792",
-          "classification": "expand",
-          "reason": "消息反馈新增评分列：ALTER TABLE ADD COLUMN IF NOT EXISTS verdict TEXT DEFAULT 'down'（可空+静态默认，不 DROP/不回填/不加 NOT NULL），INSERT 增列；N/N+1 兼容。"
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -413,7 +413,7 @@
         },
         {
           "path": "docs/release/移动端P3契约扩展迁移审核-20260905.md",
-          "digest": "sha256:159630d40a54b02677288e3bd6d2747c28f0d0dc2a07b7352a569f6303f80bd2"
+          "digest": "sha256:25b1ab7922cf5c1420e50d064809aec62acb4d5fb0f8c1c5ba9510b95fa3cde8"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
@@ -452,9 +452,9 @@
         {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
-          "targetDigest": "sha256:7008eb2f8fd6ad8c1e24ad4a747db450cb90d2b5b8b6ab23dad0a2d769558792",
-          "classification": "expand",
-          "reason": "消息反馈新增评分列：ALTER TABLE ADD COLUMN IF NOT EXISTS verdict TEXT DEFAULT 'down'（可空+静态默认，不 DROP/不回填/不加 NOT NULL），INSERT 增列；N/N+1 兼容。"
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -483,7 +483,7 @@
         },
         {
           "path": "docs/release/移动端P3契约扩展迁移审核-20260905.md",
-          "digest": "sha256:159630d40a54b02677288e3bd6d2747c28f0d0dc2a07b7352a569f6303f80bd2"
+          "digest": "sha256:25b1ab7922cf5c1420e50d064809aec62acb4d5fb0f8c1c5ba9510b95fa3cde8"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
@@ -501,9 +501,9 @@
         {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
-          "targetDigest": "sha256:7008eb2f8fd6ad8c1e24ad4a747db450cb90d2b5b8b6ab23dad0a2d769558792",
-          "classification": "expand",
-          "reason": "消息反馈新增评分列：ALTER TABLE ADD COLUMN IF NOT EXISTS verdict TEXT DEFAULT 'down'（可空+静态默认，不 DROP/不回填/不加 NOT NULL），INSERT 增列；N/N+1 兼容。"
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -516,7 +516,7 @@
       "evidence": [
         {
           "path": "docs/release/移动端P3契约扩展迁移审核-20260905.md",
-          "digest": "sha256:159630d40a54b02677288e3bd6d2747c28f0d0dc2a07b7352a569f6303f80bd2"
+          "digest": "sha256:25b1ab7922cf5c1420e50d064809aec62acb4d5fb0f8c1c5ba9510b95fa3cde8"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",

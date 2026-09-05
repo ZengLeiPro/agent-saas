@@ -1,8 +1,8 @@
 /**
  * 消息反馈（message_feedback）PG 存储（2026-07 唯恩批次）
  *
- * 员工对专职 Agent 回答点「赞/踩」+ 可选评论。评分落 verdict 列（2026-09 起
- * 由客户端显式给出，缺省仍是 'down'）。消息 id 跨刷新不稳定（流式=客户端
+ * 员工对专职 Agent 回答点「赞/踩」+ 可选评论。评分落既有 verdict 列（2026-09 起
+ * 由客户端显式给出，缺省仍是 'down'；列自建表起即存在，无结构变更）。消息 id 跨刷新不稳定（流式=客户端
  * 随机 id，刷新后=line-N），因此以 **content_hash（sha256(消息全文)）为幂等键**：
  * UNIQUE (tenant_id, session_id, user_id, content_hash)，重复提交 ON CONFLICT
  * DO NOTHING 返回 duplicated。
@@ -113,10 +113,6 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
           UNIQUE (tenant_id, session_id, user_id, content_hash)
         )
       `);
-      // expand-only 迁移（2026-09）：老库若缺 verdict 列则补加。加可空语义列 + 默认值，
-      // 不 DROP、不回填、不加 NOT NULL 约束——旧版本服务端不写该列时由默认值兜底，
-      // 新旧两个版本可同时连同一套库（N/N+1）。
-      await client.query(`ALTER TABLE ${this.feedbackTable} ADD COLUMN IF NOT EXISTS verdict TEXT DEFAULT 'down'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.feedbackTable}_tenant_idx ON ${this.feedbackTable} (tenant_id, created_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.feedbackTable}_org_agent_idx ON ${this.feedbackTable} (tenant_id, org_agent_id, created_at DESC)`);
     } finally {
@@ -208,7 +204,7 @@ export class PgMessageFeedbackStore implements MessageFeedbackStore {
   }
 }
 
-/** 老行 verdict 可能为 NULL（expand-only 迁移前写入），一律回落 'down' */
+/** verdict 非法/缺失时一律回落 'down' */
 function normalizeRating(value: unknown): MessageFeedbackRating {
   return value === 'up' ? 'up' : 'down';
 }

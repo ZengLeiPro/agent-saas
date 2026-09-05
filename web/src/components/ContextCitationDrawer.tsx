@@ -1,4 +1,6 @@
 import { ExternalLink, FileSearch, Loader2, RefreshCw } from 'lucide-react';
+import { formatContextCitationTime, safeContextCitationUrl } from '@agent/shared';
+import type { ContextCitationDetail, ContextCitationEvidence } from '@agent/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -8,48 +10,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-
-export interface ContextCitationEvidence {
-  quote: string;
-  author: string | null;
-  nativeUrl: string | null;
-}
-
-export interface ContextCitationDetail {
-  source: string;
-  occurredAt: string | null;
-  freshness: string;
-  freshnessAsOf: string | null;
-  derived: boolean;
-  degraded: boolean;
-  evidence: ContextCitationEvidence[];
-}
-
-export function safeContextCitationUrl(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return '未提供';
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return value;
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).format(new Date(timestamp));
-}
 
 function EvidenceItem({ item }: { item: ContextCitationEvidence }) {
   const nativeUrl = safeContextCitationUrl(item.nativeUrl);
@@ -132,14 +92,14 @@ export function ContextCitationDrawer({
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">原文时间</dt>
-                    <dd className="mt-1 tabular-nums">{formatDateTime(detail.occurredAt)}</dd>
+                    <dd className="mt-1 tabular-nums">{formatContextCitationTime(detail.occurredAt)}</dd>
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">Freshness</dt>
                     <dd className="mt-1">
                       <Badge variant="outline">{detail.freshness}</Badge>
                       {detail.freshnessAsOf ? (
-                        <span className="ml-2 text-xs text-muted-foreground">截至 {formatDateTime(detail.freshnessAsOf)}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">截至 {formatContextCitationTime(detail.freshnessAsOf)}</span>
                       ) : null}
                     </dd>
                   </div>

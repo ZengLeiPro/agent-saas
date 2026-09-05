@@ -192,6 +192,8 @@ export function useSession(
   const isLoadingMoreRef = useRef(isLoadingMore);
   isLoadingMoreRef.current = isLoadingMore;
   const recentLocalSessionIdsRef = useRef<Map<string, number>>(new Map());
+  const sessionListRevisionRef = useRef(0);
+  const deletingRef = useRef(false);
 
   const markRecentLocalSession = useCallback((targetId: string) => {
     recentLocalSessionIdsRef.current.set(targetId, Date.now());
@@ -204,6 +206,7 @@ export function useSession(
       silent?: boolean;
       skipMerge?: boolean;
     }) => {
+      const listRevision = sessionListRevisionRef.current;
       try {
         if (!opts?.silent) setIsLoadingSessions(true);
         const freshParam = opts?.fresh ? "&fresh=1" : "";
@@ -212,6 +215,7 @@ export function useSession(
         );
         if (response.ok) {
           const data = await response.json();
+          if (listRevision !== sessionListRevisionRef.current) return;
           const freshSessions: ApiSessionListItem[] = data.sessions || [];
           const freshHasMore: boolean = data.hasMore ?? false;
 
@@ -266,6 +270,7 @@ export function useSession(
   );
 
   const loadMoreSessions = useCallback(async () => {
+    const listRevision = sessionListRevisionRef.current;
     if (!hasMoreRef.current || isLoadingMoreRef.current) return;
     const lastSession = sessionsRef.current[sessionsRef.current.length - 1];
     if (!lastSession) return;
@@ -277,6 +282,7 @@ export function useSession(
       );
       if (response.ok) {
         const data = await response.json();
+        if (listRevision !== sessionListRevisionRef.current) return;
         const newSessions: ApiSessionListItem[] = data.sessions || [];
         const updated = [...sessionsRef.current, ...newSessions];
         setSessions(updated);
@@ -405,6 +411,40 @@ export function useSession(
     [loadSessionDetail, sessionId],
   );
 
+  const newSession = useCallback(() => {
+    // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
+    // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
+    // 只有新建会话路径原先漏了）。
+    ++loadNonceRef.current;
+    detailAbortRef.current?.abort();
+    detailAbortRef.current = null;
+    cbRef.current.cancelActiveStream();
+    cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
+    isNewSessionRef.current = true;
+    setSessionId(sessionIdRef.current = null);
+    setSessionOwner(null);
+    sessionAccessModeRef.current = "owner";
+    setTokenUsage(null);
+    setContextUsage(null);
+    setIsLoadingMessages(false);
+    setSessionLoadError(null);
+    setHasMoreHistory(false);
+    setIsLoadingEarlier(false);
+    removeTabScopedAuth(SESSION_STORAGE_KEY);
+  }, []);
+
+  const removeSession = useCallback((targetId: string) => {
+    ++sessionListRevisionRef.current;
+    recentLocalSessionIdsRef.current.delete(targetId);
+    detailCursorRef.current.delete(targetId);
+    sessionsRef.current = sessionsRef.current.filter((s) => s.sessionId !== targetId);
+    setSessions((prev) => prev.filter((s) => s.sessionId !== targetId));
+    if (sessionIdRef.current === targetId) newSession();
+    // 本地缓存清理不阻塞已确认的删除，也不能将存储失败误报成删除失败。
+    void clearSessionMessages(targetId).catch((err) => console.error("清理会话缓存失败:", err));
+    try { localStorage.removeItem(`agentChat.model.${targetId}`); } catch (err) { console.error("清理会话模型缓存失败:", err); }
+  }, [newSession]);
+
   const confirmDeleteSessions = useCallback((ids: string[]) => {
     const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
     if (uniqueIds.length === 0) return;
@@ -420,10 +460,10 @@ export function useSession(
   }, []);
 
   const handleDeleteSession = useCallback(async () => {
-    if (deleteSessionIds.length === 0) {
+    if (deleteSessionIds.length === 0 || deletingRef.current) {
       return;
     }
-
+    deletingRef.current = true;
     try {
       const deletedIds = new Set<string>();
       let failedCount = 0;
@@ -443,10 +483,8 @@ export function useSession(
             continue;
           }
 
-          await clearSessionMessages(targetId);
-          detailCursorRef.current.delete(targetId);
-          localStorage.removeItem(`agentChat.model.${targetId}`);
           deletedIds.add(targetId);
+          removeSession(targetId);
         } catch (err) {
           console.error("删除会话失败:", targetId, err);
           failedCount += 1;
@@ -459,31 +497,17 @@ export function useSession(
       }
 
       setDeleteSessionIds([]);
-      await loadSessions({ fresh: true, skipMerge: true });
 
       if (failedCount > 0) {
         alert(`${failedCount} 个会话删除失败`);
       }
-
-      if (!sessionId || !deletedIds.has(sessionId)) {
-        return;
-      }
-
-      const remainingSessions = sessions.filter(
-        (item) => !deletedIds.has(item.sessionId),
-      );
-      if (remainingSessions.length > 0) {
-        selectSession(remainingSessions[0].sessionId); await loadDetailPromiseRef.current;
-      } else {
-        setSessionId(null);
-        removeTabScopedAuth(SESSION_STORAGE_KEY);
-        cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
-      }
     } catch (err) {
       console.error("删除会话失败:", err);
       alert("删除失败");
+    } finally {
+      deletingRef.current = false;
     }
-  }, [deleteSessionIds, loadSessions, selectSession, sessionId, sessions]);
+  }, [deleteSessionIds, removeSession]);
 
   const updateSessionTitle = useCallback((targetId: string, title: string) => {
     setSessions((prev) =>
@@ -520,20 +544,6 @@ export function useSession(
     },
     [],
   );
-
-  const removeSession = useCallback((targetId: string) => {
-    setSessions((prev) => prev.filter((s) => s.sessionId !== targetId));
-    void clearSessionMessages(targetId);
-    localStorage.removeItem(`agentChat.model.${targetId}`);
-    if (sessionIdRef.current === targetId) {
-      cbRef.current.cancelActiveStream();
-      cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
-      setSessionId(null);
-      setTokenUsage(null);
-      setContextUsage(null);
-      removeTabScopedAuth(SESSION_STORAGE_KEY);
-    }
-  }, []);
 
   /** 插入或更新会话（其他设备创建的新会话无需 HTTP 请求） */
   const upsertSession = useCallback(
@@ -676,28 +686,6 @@ export function useSession(
     [],
   );
 
-  const newSession = useCallback(() => {
-    // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
-    // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
-    // 只有新建会话路径原先漏了）。
-    ++loadNonceRef.current;
-    detailAbortRef.current?.abort();
-    detailAbortRef.current = null;
-    cbRef.current.cancelActiveStream();
-    cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
-    isNewSessionRef.current = true;
-    setSessionId(sessionIdRef.current = null);
-    setSessionOwner(null);
-    sessionAccessModeRef.current = "owner";
-    setTokenUsage(null);
-    setContextUsage(null);
-    setIsLoadingMessages(false);
-    setSessionLoadError(null);
-    setHasMoreHistory(false);
-    setIsLoadingEarlier(false);
-    removeTabScopedAuth(SESSION_STORAGE_KEY);
-  }, []);
-
   const retrySessionLoad = useCallback(() => {
     const id = sessionIdRef.current;
     if (!id) return;
@@ -754,6 +742,7 @@ export function useSession(
   // Load sessions on mount — cache-first + 消费预取结果
   useEffect(() => {
     let cancelled = false;
+    const listRevision = sessionListRevisionRef.current;
 
     // Step 1: 先从本地缓存加载，实现即时展示
     const cached = loadSessionListCache(identity);
@@ -770,7 +759,7 @@ export function useSession(
     if (!sessionsPreloadConsumed) {
       sessionsPreloadConsumed = true;
       sessionsPreload.then((preloaded) => {
-        if (cancelled) return;
+        if (cancelled || listRevision !== sessionListRevisionRef.current) return;
         if (preloaded) {
           const freshSessions = preloaded.sessions as ApiSessionListItem[];
           const freshHasMore = preloaded.hasMore;
@@ -826,7 +815,7 @@ export function useSession(
   // 无论来源（API / WS sync），sessions 变化后 5s 内无新变化则持久化
   const debounceSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (sessions.length === 0) return;
+    if (sessions.length === 0 && sessionListRevisionRef.current === 0) return;
     if (debounceSaveRef.current) clearTimeout(debounceSaveRef.current);
     debounceSaveRef.current = setTimeout(() => {
       saveSessionListCache(sessions, hasMore, identity);
@@ -842,8 +831,10 @@ export function useSession(
 
   // 展开分组时全量加载组内会话，将未在主列表中的会话合并进来
   const loadGroupSessions = useCallback(async (groupId: string) => {
+    const listRevision = sessionListRevisionRef.current;
     try {
       const groupSessions = await fetchGroupSessions(groupId);
+      if (listRevision !== sessionListRevisionRef.current) return;
       if (groupSessions.length === 0) return;
       setSessions((prev) => {
         const existingIds = new Set(prev.map((s) => s.sessionId));

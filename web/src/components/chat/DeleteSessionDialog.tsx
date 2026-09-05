@@ -1,10 +1,11 @@
+import { useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
 interface DeleteSessionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   isAdmin?: boolean;
   count?: number;
 }
@@ -18,10 +19,23 @@ export function DeleteSessionDialog({
 }: DeleteSessionDialogProps) {
   const isBatch = count > 1;
   const targetText = isBatch ? `这 ${count} 个会话` : "这个会话";
+  const [isDeleting, setIsDeleting] = useState(false);
+  const deletingRef = useRef(false);
+  const confirm = async () => {
+    if (deletingRef.current) return;
+    deletingRef.current = true;
+    setIsDeleting(true);
+    try {
+      await onConfirm();
+    } finally {
+      deletingRef.current = false;
+      setIsDeleting(false);
+    }
+  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onConfirm(); } }}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!deletingRef.current) onOpenChange(nextOpen); }}>
+      <DialogContent onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void confirm(); } }}>
         <DialogHeader>
           <DialogTitle>{isAdmin ? "移至回收站" : "删除会话"}</DialogTitle>
           <DialogDescription>
@@ -31,11 +45,11 @@ export function DeleteSessionDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={isDeleting} onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button variant="destructive" onClick={onConfirm}>
-            {isAdmin ? "移至回收站" : "删除"}
+          <Button variant="destructive" disabled={isDeleting} onClick={() => { void confirm(); }}>
+            {isDeleting ? "删除中…" : isAdmin ? "移至回收站" : "删除"}
           </Button>
         </DialogFooter>
       </DialogContent>

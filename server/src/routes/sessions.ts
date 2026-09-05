@@ -403,7 +403,7 @@ export interface SessionsRouterOptions {
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
   sandboxWarmup?: (sessionId: string) => void; sandboxCleanupRequired?: boolean; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<Exclude<SandboxSessionDeletionResult, 'deleted'>>;
-  sandboxSessionDeletion?: (sessionId: string) => Promise<SandboxSessionDeletionResult>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
+  sandboxSessionDeletion?: (sessionId: string, options?: { waitForDeletion?: boolean }) => Promise<SandboxSessionDeletionResult>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
   /**
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
@@ -3248,7 +3248,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
-        const cleanup = await options.sandboxSessionDeletion?.(sessionId); if (cleanup === "blocked") throw new Error("Sandbox cleanup commit blocked"); return newlyDeleted;
+        const cleanup = await options.sandboxSessionDeletion?.(sessionId, { waitForDeletion: false }); if (cleanup === "blocked") throw new Error("Sandbox cleanup commit blocked"); return newlyDeleted;
       };
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)

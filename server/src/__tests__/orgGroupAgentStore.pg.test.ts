@@ -482,7 +482,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
     });
     await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
       SET delivery_state='sending',attempt=attempt+1,lease_owner='old-worker',lease_fence=1,
-        lease_expires_at=NOW()-INTERVAL '1 second'
+        lease_expires_at=NOW()-INTERVAL '1 second',provider_attempt_phase='legacy_unknown'
       WHERE delivery_id=$1`, [legacyWriter.deliveryId]);
     await expect(store.reconcileAllExpiredDeliveries()).resolves.toBe(1);
     await expect(store.getDelivery('tenant-a', legacyWriter.deliveryId)).resolves.toMatchObject({
@@ -532,7 +532,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
     );
   });
 
-  it('后台 worker 跳过 reply_pending 关联投递，授权拒绝可取消 provider 前正文', async () => {
+  it('后台 worker 跳过 reply_pending 关联投递，授权拒绝可取消所有 provider 前正文', async () => {
     await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
       SET delivery_state='dead_letter',completed_at=NOW()
       WHERE delivery_state='pending'`);

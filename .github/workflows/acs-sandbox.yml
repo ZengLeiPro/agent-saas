@@ -634,8 +634,8 @@ jobs:
                   --region "$ACR_REGION_ID" \
                   --InstanceId "$ACR_INSTANCE_ID" \
                   --BuildRecordId "$brecord_id" \
-                  --Offset 0 --PageSize 100 > "$logs_file"
-                node scripts/release/verify-acr-build-revision.mjs "$logs_file" "$GITHUB_SHA"
+                  --Offset 0 > "$logs_file"
+                node scripts/release/verify-acr-build-revision.mjs "$logs_file" "$GITHUB_SHA" main
                 echo "image_tag=$btag" >> "$GITHUB_OUTPUT"
                 echo "build_record_id=$brecord_id" >> "$GITHUB_OUTPUT"
                 exit 0

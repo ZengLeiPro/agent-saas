@@ -26,7 +26,7 @@ server/src/__tests__/webChannelReconnect.test.ts	856	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
 server/src/agent/toolRuntime.ts	1404	production
-server/src/app/config.ts	1406	production
+server/src/app/config.ts	1384	production
 server/src/app/routes.ts	1122	production
 server/src/app/runtime.ts	3011	production
 server/src/app/runtimeGovernanceConnectors.ts	1234	production

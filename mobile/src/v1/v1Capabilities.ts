@@ -55,8 +55,16 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
   'settings/agent-profile',
   'settings/user-detail/[userId]',
   'change-password',
-  // OAuth callback 保留最小安全回跳；Connections 管理页本身延期。
+  // OAuth callback 保留最小安全回跳。
   'oauth/callback',
+  // 能力中心（P3-3a）：工作流 / 技能 / 连接器 / 专家四 Tab，
+  // 与 Web `/capabilities/*` 同一信息架构；旧的 settings/skills 与
+  // settings/connections 已并入此处并记墓碑。
+  'capabilities',
+  'capabilities/workflows',
+  'capabilities/skills',
+  'capabilities/connectors',
+  'capabilities/experts',
   // 系统分享附件入口（§2.1 #8）
   'share-target',
 ];
@@ -76,6 +84,8 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
   'settings/agent-profile/[username]': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
   'settings/skills-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
   'settings/skills-tenant-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/skills': 'P3-3a：员工技能页并入能力中心 capabilities/skills，旧路由删除',
+  'settings/connections': 'P3-3a：MCP/OAuth 连接管理并入能力中心 capabilities/connectors，旧路由删除',
 };
 
 /**
@@ -91,9 +101,7 @@ export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
   'memory-browser': '§2.2 Memory 浏览与编辑 UI 延期（Gate A）',
   'persona-editor': '§1.3 V1 最小设置：Agent 人格/记忆编辑不在信息架构内（M30-03 后评估）',
   'text-editor': '仅被延期的 Cron/Memory 流程使用（§2.2）',
-  'settings/skills': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
   'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',
-  'settings/connections': '§2.2 Connections/OAuth 原生管理入口延期；仅保留最小 OAuth callback（Gate A）',
 };
 
 /** 路由分类结果。 */

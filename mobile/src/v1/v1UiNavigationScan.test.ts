@@ -38,6 +38,15 @@ const PRODUCTION_REACHABLE_UI: readonly string[] = [
   'app/settings/user-detail/[userId].tsx',
   'app/settings/agent-profile/index.tsx',
   'src/components/settings/AgentProfileEditor.tsx',
+  // P3-3a 能力中心：四 Tab 路由、Tab 切换与会话列表入口
+  'app/capabilities/index.tsx',
+  'app/capabilities/workflows.tsx',
+  'app/capabilities/skills.tsx',
+  'app/capabilities/connectors.tsx',
+  'app/capabilities/experts.tsx',
+  'src/components/capabilities/CapabilityTabBar.tsx',
+  'src/components/sessions/SessionPillRow.tsx',
+  'src/hooks/useCapabilityContext.ts',
   // 路由门禁本身也是生产可达代码（其 replace 目标为动态值，不受字符串扫描影响，
   // 行为由 v1RouteGate.runtime.test.tsx 运行时守卫覆盖）
   'src/v1/V1RouteGate.tsx',
@@ -119,6 +128,9 @@ describe('M00-01 生产界面导航扫描', () => {
     // 由 v1RouteGate.runtime.test.tsx 运行时断言；此处抽查静态导航样本）
     expect(findings.some((f) => f.target === '(tabs)/chat')).toBe(true);
     expect(findings.some((f) => f.target === 'settings/agent-profile')).toBe(true);
+    // P3-3a：会话列表 pill 与 Tab 切换的导航目标都必须被扫到
+    expect(findings.some((f) => f.target === 'capabilities')).toBe(true);
+    expect(findings.some((f) => f.target === 'capabilities/experts')).toBe(true);
   });
 
   it('所有导航目标都能被能力清单解析（无未分类路由）', () => {

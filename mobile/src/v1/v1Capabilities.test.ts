@@ -50,6 +50,9 @@ describe('V1 capability manifest 基础不变量', () => {
     expect(deleted).toContain('settings/agent-profile/[username]');
     expect(deleted).toContain('settings/skills-admin');
     expect(deleted).toContain('settings/skills-tenant-admin');
+    // P3-3a：技能与连接管理并入能力中心后，旧路由物理删除
+    expect(deleted).toContain('settings/skills');
+    expect(deleted).toContain('settings/connections');
     for (const route of deleted) {
       expect(V1_ALLOWED_ROUTES.includes(route)).toBe(false);
       expect(V1_DEFERRED_ROUTES[route]).toBeUndefined();
@@ -81,10 +84,11 @@ describe('classifyV1Route', () => {
   it('分类延期路由为 deferred', () => {
     expect(classifyV1Route('(tabs)/files')).toBe('deferred');
     expect(classifyV1Route('cron')).toBe('deferred');
-    expect(classifyV1Route('settings/skills')).toBe('deferred');
     expect(classifyV1Route('chat/html-preview')).toBe('unclassified');
-    expect(classifyV1Route('settings/connections')).toBe('deferred');
     expect(classifyV1Route('oauth/callback')).toBe('allowed');
+    // P3-3a：旧技能/连接页已删除，重新出现即为未分类（生产 fail closed）
+    expect(classifyV1Route('settings/skills')).toBe('unclassified');
+    expect(classifyV1Route('settings/connections')).toBe('unclassified');
     // 09-04 已物理删除的管理类路由：落回 unclassified（生产 fail closed）
     expect(classifyV1Route('settings/users')).toBe('unclassified');
     expect(classifyV1Route('settings/all-agents')).toBe('unclassified');
@@ -126,6 +130,12 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('(tabs)/settings', 'production')).toBe(true);
     expect(isV1RouteAllowed('share-target', 'production')).toBe(true);
     expect(isV1RouteAllowed('change-password', 'production')).toBe(true);
+    // P3-3a 能力中心四 Tab 与入口
+    expect(isV1RouteAllowed('capabilities', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/workflows', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/skills', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/connectors', 'production')).toBe(true);
+    expect(isV1RouteAllowed('capabilities/experts', 'production')).toBe(true);
   });
 
   it('生产：全部延期路由与未分类路由 fail closed', () => {
@@ -135,6 +145,7 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('unknown-route', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/users', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/connections', 'production')).toBe(false);
+    expect(isV1RouteAllowed('settings/skills', 'production')).toBe(false);
     expect(isV1RouteAllowed('cron-form', 'production')).toBe(false);
     for (const route of Object.keys(V1_DELETED_ROUTES)) {
       expect(isV1RouteAllowed(route, 'production'), route).toBe(false);
@@ -156,6 +167,8 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1SegmentsAllowed([], 'production')).toBe(true); // app/index.tsx
     expect(isV1SegmentsAllowed(['settings', 'users'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['settings', 'connections'], 'production')).toBe(false);
+    expect(isV1SegmentsAllowed(['capabilities', 'workflows'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['capabilities'], 'production')).toBe(true);
     expect(isV1SegmentsAllowed(['cron'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['webview-spike'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['settings', 'users'], 'preview')).toBe(true);

@@ -63,6 +63,12 @@ describe('M00-01 路由清单完整性', () => {
     expect(routes.length).toBeGreaterThan(10);
     expect(routes).toContain('login');
     expect(routes).toContain('(tabs)/chat');
+    // P3-3a 能力中心四 Tab 必须出现在路由清单里
+    expect(routes).toContain('capabilities');
+    expect(routes).toContain('capabilities/workflows');
+    expect(routes).toContain('capabilities/skills');
+    expect(routes).toContain('capabilities/connectors');
+    expect(routes).toContain('capabilities/experts');
   });
 
   it('每个真实路由都已分类：未分类路由一律 fail closed，不得混入', () => {
@@ -101,6 +107,9 @@ describe('M00-01 路由清单完整性', () => {
       'settings/agent-profile/[username].tsx',
       'settings/skills-admin.tsx',
       'settings/skills-tenant-admin.tsx',
+      // P3-3a：并入能力中心后删除
+      'settings/skills.tsx',
+      'settings/connections.tsx',
     ];
     for (const rel of deletedRouteFiles) {
       expect(existsSync(join(APP_DIR, rel)), rel).toBe(false);
@@ -113,6 +122,8 @@ describe('M00-01 路由清单完整性', () => {
       'settings/agent-profile/[username]',
       'settings/skills-admin',
       'settings/skills-tenant-admin',
+      'settings/skills',
+      'settings/connections',
     ]) {
       expect(routes, route).not.toContain(route);
       expect(V1_DELETED_ROUTES[route], `${route} 缺少墓碑理由`).toBeTruthy();

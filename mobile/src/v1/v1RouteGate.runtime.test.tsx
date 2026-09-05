@@ -18,8 +18,9 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V1RouteGate } from './V1RouteGate';
 import CronListScreen from '../../app/cron/index';
-import ConnectionsScreen from '../../app/settings/connections';
+import MyPermissionsScreen from '../../app/settings/my-permissions';
 import * as sharedMod from '@agent/shared';
+import * as governanceMod from '@agent/shared/lib/governanceApi';
 
 // ── 可控运行时状态（vi.hoisted 保证先于 mock 工厂执行） ──────────────
 const h = vi.hoisted(() => ({
@@ -59,6 +60,7 @@ vi.mock('react-native', async () => {
     Pressable: make('button'),
     TouchableOpacity: make('button'),
     ScrollView: make('div'),
+    RefreshControl: make('div'),
     ActivityIndicator: make('div'),
     StyleSheet: { create: (s: unknown) => s, hairlineWidth: 1 },
     Alert: { alert: vi.fn() },
@@ -132,6 +134,7 @@ vi.mock('@agent/shared/lib/governanceApi', () => ({
   governanceAccessApi: {
     listOAuthGrants: vi.fn(async () => ({ grants: [] })),
   },
+  fetchEffectiveResources: vi.fn(async () => []),
 }));
 
 vi.mock('../hooks/useCronJobs', async () => {
@@ -201,11 +204,12 @@ const DEFERRED_CASES = [
     getSyncSpies: () => [vi.mocked(sharedMod.reportActivity), h.cronRefresh],
   },
   {
-    name: 'Connections 管理（延期）',
-    segments: ['settings', 'connections'],
+    // P3-3a：Connections 管理已并入能力中心（allowlist），改用仍延期的「我的权限」作对照
+    name: '我的权限（延期）',
+    segments: ['settings', 'my-permissions'],
     params: {},
-    screen: <ConnectionsScreen />,
-    getSyncSpies: () => [vi.mocked(sharedMod.fetchMyMcp)],
+    screen: <MyPermissionsScreen />,
+    getSyncSpies: () => [vi.mocked(governanceMod.fetchEffectiveResources)],
   },
 ] as const;
 

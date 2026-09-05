@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 351116,
-    "startupCssGzipBytes": 34760,
-    "startupJsBrotliBytes": 280138,
-    "startupCssBrotliBytes": 27533,
-    "largestJsGzipBytes": 351116,
-    "largestCssGzipBytes": 34760,
-    "largestJsBrotliBytes": 280138,
-    "largestCssBrotliBytes": 27533,
-    "largestJs": "assets/index-BaAYw09Y.js",
-    "largestCss": "assets/index-Bsod5qDS.css"
+    "startupJsGzipBytes": 352537,
+    "startupCssGzipBytes": 34963,
+    "startupJsBrotliBytes": 281108,
+    "startupCssBrotliBytes": 27673,
+    "largestJsGzipBytes": 352537,
+    "largestCssGzipBytes": 34963,
+    "largestJsBrotliBytes": 281108,
+    "largestCssBrotliBytes": 27673,
+    "largestJs": "assets/index-DJD9CuKm.js",
+    "largestCss": "assets/index-CDFZj6l4.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "web 改为消费 shared 已下沉的纯函数（零行为变化），删掉约 750 行重复实现，启动 JS 降约 3.1KB gzip / 2.4KB Brotli，据此向下棘紧；CSS 各项未动（本次改动不涉及样式，现有 CSS 与基线的差值本就在 1024B 容差内）",
+  "reason": "P5-1 附件上传状态机下沉 shared useAttachmentUploads：Web useFileUpload 改为消费共享 hook，启动包 +1.4KB gzip（同一状态机不再两端各一份）",
   "updatedAt": "2026-09-05"
 }

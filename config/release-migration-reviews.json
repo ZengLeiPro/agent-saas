@@ -21,9 +21,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:7b232ba94234534c80b90be7ca003c071ed3a75d2181f0bb550a5b050f149192",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/modelQuotaSourceSchema.ts",
@@ -374,6 +374,27 @@
           "targetDigest": "sha256:18381d196676533b7efa392c211e91d3a886ca5f6dfa8bfe9a68a5238285a950",
           "classification": "expand",
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -440,6 +461,18 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -456,9 +489,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -508,6 +541,27 @@
           "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
           "classification": "no-schema-change",
           "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -542,6 +596,18 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -558,9 +624,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -589,6 +655,27 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -607,6 +694,18 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -623,9 +722,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -654,6 +753,27 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -672,6 +792,18 @@
         {
           "path": "docs/release/移动端P4推送迁移审核-20260905.md",
           "digest": "sha256:9a1d2927980622878c6f1fcf77c692a27deacb30a3120267a1deceff93c0b567"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -688,9 +820,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填；webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -705,6 +837,27 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -715,6 +868,18 @@
         {
           "path": "server/src/__tests__/apns.test.ts",
           "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -731,9 +896,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -748,6 +913,27 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -758,6 +944,18 @@
         {
           "path": "server/src/__tests__/apns.test.ts",
           "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -774,9 +972,9 @@
         {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
-          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
           "classification": "no-schema-change",
-          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。"
+          "reason": "webPushConfigSchema 原样抽到 pushConfigSchema.ts（行数棘轮），新增 apns 配置域；无 SQL、建表或回填。 本批仅将 memory.polling.maxTurns 校验上限改为 1000；无 SQL 或启动回填。"
         },
         {
           "path": "server/src/app/pushConfigSchema.ts",
@@ -791,6 +989,27 @@
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         }
       ],
       "evidence": [
@@ -801,6 +1020,18 @@
         {
           "path": "server/src/__tests__/apns.test.ts",
           "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        },
+        {
+          "path": "docs/release/记忆运行修复审核-20260905.md",
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
+          "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
+        },
+        {
+          "path": "server/src/__tests__/memoryHealthTools.test.ts",
+          "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         }
       ]
     },
@@ -881,7 +1112,7 @@
       "evidence": [
         {
           "path": "docs/release/记忆运行修复审核-20260905.md",
-          "digest": "sha256:320308f96d3e6527a84ce5b0ad57e7fdf5e306298af37a0b19cf246c9d131ef1"
+          "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",

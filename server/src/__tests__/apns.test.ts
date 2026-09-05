@@ -315,6 +315,12 @@ describe('PgApnsDeviceStore 隔离条件', () => {
 
     await store.list(owner);
     expect(query.mock.calls[0]![0]).toContain('WHERE tenant_id=$1 AND user_id=$2');
+
+    const claimQuery = vi.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [], rowCount: 0 }));
+    const claimStore = new RealPgApnsDeviceStore({ pool: { connect: vi.fn().mockResolvedValue({ query: claimQuery, release: vi.fn() }) } as never, tablePrefix: 'agent_saas' });
+    await claimStore.claimDelivery(owner, { id: 'd', tenantId: 'tenant-a', userId: 'user-a', token: 't', tokenHash: 'h', environment: 'production', deviceName: 'n', appVersion: null, createdAt: 'c', updatedAt: '2026-09-06T00:00:00.000Z' }, 'e');
+    // updated_at 必须按毫秒比较：PG 微秒 vs JS 毫秒直接等值永远不等。
+    expect(String(claimQuery.mock.calls[1]![0])).toContain("date_trunc('milliseconds', updated_at)=date_trunc('milliseconds', $5::timestamptz)");
     expect(query.mock.calls[0]![1]).toEqual(['tenant-a', 'user-a']);
 
     await expect(store.delete(owner, 'device-1')).resolves.toBe(true);

@@ -249,11 +249,13 @@ export class PgApnsDeviceStore {
 
     try {
       await client.query('BEGIN');
+      // updated_at 在 PG 是微秒精度，经 pg 驱动转 JS Date 后只剩毫秒；直接等值比较永远不等，
+      // 会让每次投递都被判成「记录已变更」而跳过。这里两侧都截到毫秒再比。
       const current = await client.query<DeviceRow>(
         `
         SELECT ${DEVICE_COLUMNS}
         FROM ${this.devicesTable}
-        WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND token_hash=$4 AND updated_at=$5::timestamptz
+        WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND token_hash=$4 AND date_trunc('milliseconds', updated_at)=date_trunc('milliseconds', $5::timestamptz)
         FOR UPDATE
       `,
         [expected.id, owner.tenantId, owner.userId, expected.tokenHash, expected.updatedAt],

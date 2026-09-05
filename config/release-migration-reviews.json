@@ -7,9 +7,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/codexSubscriptionConfigSchema.ts",
@@ -59,6 +59,13 @@
           "targetDigest": "sha256:ef9925bd775254757216de406c799e9ad319abf3ef47e89cb359003c47b4d928",
           "classification": "no-schema-change",
           "reason": "消息身份和回执类型定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
           "path": "server/src/data/billing/pgBillingStore.ts",
@@ -199,6 +206,20 @@
           "targetDigest": "sha256:793ecfc742f3aedbcb23194da045581804c1cc19f3826d296cba8208e4f5590a",
           "classification": "no-schema-change",
           "reason": "价格换算纯函数调整，无数据库迁移。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
@@ -376,25 +397,11 @@
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
         },
         {
-          "path": "server/src/data/agentProfiles/builtins.ts",
-          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
-          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
-        },
-        {
-          "path": "server/src/memory/consolidation/store.ts",
-          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
-          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
-        },
-        {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -473,6 +480,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -482,9 +497,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -501,6 +516,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -513,6 +535,20 @@
           "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
           "classification": "no-schema-change",
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
           "path": "server/src/release/configIdentity.ts",
@@ -543,25 +579,11 @@
           "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
         },
         {
-          "path": "server/src/data/agentProfiles/builtins.ts",
-          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
-          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
-        },
-        {
-          "path": "server/src/memory/consolidation/store.ts",
-          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
-          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
-        },
-        {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -608,6 +630,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -617,9 +647,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -636,6 +666,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -650,16 +687,9 @@
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
         },
         {
-          "path": "server/src/release/configIdentity.ts",
-          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
-          "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
-        },
-        {
-          "path": "server/src/data/agentProfiles/builtins.ts",
-          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
-          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
@@ -671,11 +701,18 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -706,6 +743,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -715,9 +760,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -734,6 +779,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -748,16 +800,9 @@
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
         },
         {
-          "path": "server/src/release/configIdentity.ts",
-          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
-          "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
-        },
-        {
-          "path": "server/src/data/agentProfiles/builtins.ts",
-          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
-          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
@@ -769,11 +814,18 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -804,6 +856,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -813,9 +873,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -832,16 +892,16 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行；Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
-          "path": "server/src/release/configIdentity.ts",
-          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
-          "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
-        },
-        {
           "path": "server/src/data/agentProfiles/builtins.ts",
           "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
           "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
@@ -853,11 +913,18 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -867,7 +934,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "docs/release/记忆运行修复审核-20260905.md",
@@ -880,6 +947,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -889,9 +964,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -908,16 +983,16 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
-          "path": "server/src/release/configIdentity.ts",
-          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
-          "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
-        },
-        {
           "path": "server/src/data/agentProfiles/builtins.ts",
           "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
           "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
@@ -929,11 +1004,18 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -943,7 +1025,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "docs/release/记忆运行修复审核-20260905.md",
@@ -956,6 +1038,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -965,9 +1055,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法。"
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；advisory lock 串行 init，重复启动通过。DELETE/UPDATE/INSERT 均是运行期注册、注销与投递 claim 方法；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -984,16 +1074,16 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
-          "path": "server/src/release/configIdentity.ts",
-          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
-          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
-          "classification": "no-schema-change",
-          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
-        },
-        {
           "path": "server/src/data/agentProfiles/builtins.ts",
           "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
           "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+        },
+        {
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
@@ -1005,11 +1095,18 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
+          "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -1019,7 +1116,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "docs/release/记忆运行修复审核-20260905.md",
@@ -1032,6 +1129,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -1044,6 +1149,13 @@
           "targetDigest": "sha256:da6609e61bb421f36365a97406a58bca0f6d57119f77dd5126da6efa01416171",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -1088,13 +1200,6 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
-          "path": "server/src/memory/consolidation/store.ts",
-          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
-          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
-        },
-        {
           "path": "server/src/memory/consolidation/engineSupport.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:f5e82090975fd77810af5f5434a295e3151ff617eb4bd9a82d46a9917053a089",
@@ -1107,6 +1212,20 @@
           "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -1121,6 +1240,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -1130,9 +1257,9 @@
         {
           "path": "server/src/apns/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
           "classification": "expand",
-          "reason": "新增独立APNs设备与投递表及索引；init仅幂等建表/建索引和锁，新旧版本不共用这些新表。真实PG并发/重复init及旧反馈数据保留通过。"
+          "reason": "新增独立APNs设备与投递表及索引；init仅幂等建表/建索引和锁，新旧版本不共用这些新表。真实PG并发/重复init及旧反馈数据保留通过；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
           "path": "server/src/app/config.ts",
@@ -1149,6 +1276,13 @@
           "reason": "新建Zod配置校验模块，无SQL或初始化副作用。"
         },
         {
+          "path": "server/src/data/agentProfiles/builtins.ts",
+          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
+          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -1156,9 +1290,9 @@
           "reason": "init两端结构完全相同；只扩展既有verdict读写，真实PG旧写入/新写入/旧版重启及列结构对比通过。"
         },
         {
-          "path": "server/src/data/agentProfiles/builtins.ts",
-          "baselineDigest": "sha256:f75534a66c7cc1c823255352f0f79057a16a59b9fea9d983ff74a32839c77ae7",
-          "targetDigest": "sha256:16c0ccc600092a828bd7e5e6e9f5b23afe73f7b226d71337277435d792eb0092",
+          "path": "server/src/memory/consolidation/reconcile.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
@@ -1170,11 +1304,11 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
-          "path": "server/src/memory/consolidation/reconcile.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -1184,7 +1318,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
@@ -1201,6 +1335,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -1215,6 +1357,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
+        },
+        {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
           "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
@@ -1257,13 +1406,6 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
-          "path": "server/src/memory/consolidation/store.ts",
-          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
-          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
-        },
-        {
           "path": "server/src/memory/consolidation/engineSupport.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:f5e82090975fd77810af5f5434a295e3151ff617eb4bd9a82d46a9917053a089",
@@ -1276,6 +1418,20 @@
           "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -1290,6 +1446,14 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     },
@@ -1304,6 +1468,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
+        },
+        {
           "path": "server/src/app/config.ts",
           "baselineDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
           "targetDigest": "sha256:a41ef03aa91c0450d3bdc2be05825cfd95bdc9ec4a1e21cfa86b379003982436",
@@ -1346,13 +1517,6 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
-          "path": "server/src/memory/consolidation/store.ts",
-          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
-          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
-          "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
-        },
-        {
           "path": "server/src/memory/consolidation/engineSupport.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:f5e82090975fd77810af5f5434a295e3151ff617eb4bd9a82d46a9917053a089",
@@ -1365,6 +1529,20 @@
           "targetDigest": "sha256:a892280965178b8ba9b26e367396b8c7075b82bbfee6608d27c49adb3de33287",
           "classification": "no-schema-change",
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/memory/consolidation/store.ts",
+          "baselineDigest": "sha256:120c75d728d168fa6f709dad06c22bb858a5d404d6430183461e84eabcdae975",
+          "targetDigest": "sha256:a04f17549fd6fc40e62ba6e07dd5df5f45fceda8274fb3aaa94c6c1fc76babff",
+          "classification": "no-schema-change",
+          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
         }
       ],
       "evidence": [
@@ -1379,6 +1557,101 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        }
+      ]
+    },
+    {
+      "baselineSha": "0934f1b4bd208900bf02714381dedd05dc729033",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        }
+      ]
+    },
+    {
+      "baselineSha": "6024c85ef342186fd78afabc5f018ff3d9da6ca2",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        }
+      ]
+    },
+    {
+      "baselineSha": "c7f26fa5514d44c650c7c7a18252e84979aa52d1",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
     }

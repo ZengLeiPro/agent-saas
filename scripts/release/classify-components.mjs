@@ -58,7 +58,7 @@ const NON_RUNTIME_FILES = new Set([
   'eslint.config.mjs',
   'scripts/check-max-lines-ratchet.mjs',
   'scripts/ratchets.test.mjs',
-  'scripts/coverage-workspace-plan.mjs',
+  'scripts/ci-plan.mjs',
   'scripts/format-new-staged-files.mjs',
   'scripts/generate-dws-command-policy.mjs',
   'scripts/pr-preflight-contract.test.mjs',

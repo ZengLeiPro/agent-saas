@@ -384,7 +384,7 @@ describe('ACS deployment and classifier contract', () => {
       'utf-8',
     );
     expect(ciWorkflow).toContain(
-      'workspace: ${{ fromJSON(needs.coverage_scope.outputs.workspaces) }}',
+      'include: ${{ fromJSON(needs.ci_plan.outputs.test_matrix) }}',
     );
     expect(ciWorkflow).toContain(
       "image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}",
@@ -392,9 +392,7 @@ describe('ACS deployment and classifier contract', () => {
     expect(ciWorkflow).toContain(
       'TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test',
     );
-    expect(ciWorkflow).toContain(
-      'bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"',
-    );
+    expect(ciWorkflow).toContain('bash scripts/pr-preflight-task.sh test');
     expect(ciWorkflow).toContain('bash scripts/pr-preflight-task.sh postgres');
     expect(preflight).toContain('src/__tests__/sandboxScopeActivity.pg.test.ts');
   });

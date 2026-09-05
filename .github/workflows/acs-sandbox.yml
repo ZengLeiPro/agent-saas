@@ -81,7 +81,7 @@ jobs:
 
       - name: Setup pnpm
         if: steps.impact.outputs.required == 'true'
-        uses: pnpm/action-setup@v6
+        uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
         if: steps.impact.outputs.required == 'true'
@@ -233,7 +233,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -313,7 +313,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -777,7 +777,7 @@ jobs:
 
       - name: Setup pnpm
         if: steps.necessity.outputs.deploy_needed == 'true'
-        uses: pnpm/action-setup@v6
+        uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
         if: steps.necessity.outputs.deploy_needed == 'true'

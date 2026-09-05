@@ -1444,10 +1444,80 @@ NODE
 other_color() { [ "$1" = blue ] && echo green || echo blue; }
 port_for_color() { [ "$1" = blue ] && echo 3200 || echo 3201; }
 
+# 蓝绿 idle 槽位在上一次交接后可能仍被后台 drain 的旧进程占用。发布前等待其自然退出
+# （durable run 的交棒/收尾由进程自身的 drain deadline 决定），绝不强停；等待发生在
+# governance fence 与任何生产写入之前，超时即 fail closed，不留下半提交状态。
+IDLE_SLOT_DRAIN_WAIT_SECONDS=1800
+wait_for_idle_app_slots() {
+  local api_idle="$1" worker_idle="$2"
+  local run_root="${AGENT_SAAS_WORKER_RUN_ROOT:-/run}"
+  local waited=0 unit marker busy
+  while :; do
+    busy=""
+    if systemctl is-active --quiet "agent-saas-server@$api_idle"; then
+      busy="$busy agent-saas-server@$api_idle"
+    fi
+    if systemctl is-active --quiet "agent-saas-runtime-worker@$worker_idle"; then
+      busy="$busy agent-saas-runtime-worker@$worker_idle"
+    fi
+    [ -n "$busy" ] || break
+    for unit in $busy; do
+      case "$unit" in
+        agent-saas-server@*) marker="$run_root/agent-saas-server-$api_idle.draining" ;;
+        *) marker="$run_root/agent-saas-runtime-worker-$worker_idle.draining" ;;
+      esac
+      if [ ! -e "$marker" ]; then
+        echo "ERROR: idle unit $unit is active without a drain marker; refusing to reuse the slot" >&2
+        return 1
+      fi
+      if [ $((waited % 30)) -eq 0 ]; then
+        echo "idle slot still draining from the previous handoff (waited=${waited}s): $unit marker=$(tr -d '\n' <"$marker" 2>/dev/null || echo unreadable)"
+      fi
+    done
+    if [ "$waited" -ge "$IDLE_SLOT_DRAIN_WAIT_SECONDS" ]; then
+      echo "ERROR: idle slot still draining after ${IDLE_SLOT_DRAIN_WAIT_SECONDS}s:$busy; refusing to interrupt durable work" >&2
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  systemctl reset-failed "agent-saas-server@$api_idle" >/dev/null 2>&1 || true
+  systemctl reset-failed "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
+  [ "$waited" -eq 0 ] || echo "idle slots free after ${waited}s"
+}
+
+# 旧 generation 交接：写 drain marker（unit 的 ExecCondition 据此拒绝重新拉起）、取消开机
+# 自启、SIGUSR2 让进程在安全边界交棒/排空后自退。不等待也不 --now 强停：等待会把发布
+# 时长绑在最长 durable run 上（旧入口实测 905～935s 贴着超时回滚），强停会把在途 run
+# 变成 orphaned。下一次发布在 wait_for_idle_app_slots 里等它腾出槽位。
+hand_off_retired_authority() {
+  local unit="$1" marker="$2" pidfile="$3" pid
+  if ! systemctl is-active --quiet "$unit"; then
+    systemctl disable "$unit" >/dev/null 2>&1 || true
+    echo "$unit already inactive; boot ownership revoked"
+    return 0
+  fi
+  install -m 0644 /dev/null "$marker"
+  if ! systemctl disable "$unit" >/dev/null 2>&1; then
+    echo "WARN: failed to disable $unit; drain marker still blocks restarts" >&2
+  fi
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -USR2 "$pid" 2>/dev/null; then
+    echo "$unit draining in background (pid $pid); durable work exits at its own safe boundary"
+  else
+    echo "WARN: $unit pidfile missing or signal failed; leaving the unit to its drain guard" >&2
+  fi
+}
+
 deploy_app() {
-  local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle old_api_pid old_worker_pid
+  local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle
   local api_idle_previous worker_idle_previous api_env worker_env rollback_root server_unit worker_unit
   local had_api_env=false had_worker_env=false had_nginx=false nginx_changed=false app_committed=false
+  local planned_api_active planned_worker_active
+  planned_api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
+  planned_worker_active="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
+  case "$planned_api_active:$planned_worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac
+  wait_for_idle_app_slots "$(other_color "$planned_api_active")" "$(other_color "$planned_worker_active")"
   begin_app_deploy_transaction
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
@@ -1470,6 +1540,10 @@ deploy_app() {
   api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
   worker_active="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac
+  if [ "$api_active" != "$planned_api_active" ] || [ "$worker_active" != "$planned_worker_active" ]; then
+    echo 'Active colors changed while waiting for idle slots; refusing to continue' >&2
+    exit 1
+  fi
   api_idle="$(other_color "$api_active")"
   worker_idle="$(other_color "$worker_active")"
   api_idle_port="$(port_for_color "$api_idle")"
@@ -1802,18 +1876,14 @@ EOF
     exit 1
   fi
 
-  old_worker_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
-  if [ -n "$old_worker_pid" ]; then
-    install -m 0644 /dev/null "/run/agent-saas-runtime-worker-$worker_active.draining"
-    kill -USR2 "$old_worker_pid"
-  fi
-  old_api_pid="$(cat "/run/agent-saas-server-$api_active.pid" 2>/dev/null || true)"
-  if [ -n "$old_api_pid" ]; then
-    install -m 0644 /dev/null "/run/agent-saas-server-$api_active.draining"
-    kill -USR2 "$old_api_pid"
-  fi
-  retire_systemd_authority "agent-saas-server@$api_active"
-  retire_systemd_authority "agent-saas-runtime-worker@$worker_active"
+  # 交接点：authority 已提交给候选，从这里起任何失败都不再回滚到旧 generation。
+  DEPLOY_APP_ROLLBACK_COMMITTED=true
+  hand_off_retired_authority "agent-saas-runtime-worker@$worker_active" \
+    "/run/agent-saas-runtime-worker-$worker_active.draining" \
+    "/run/agent-saas-runtime-worker-$worker_active.pid"
+  hand_off_retired_authority "agent-saas-server@$api_active" \
+    "/run/agent-saas-server-$api_active.draining" \
+    "/run/agent-saas-server-$api_active.pid"
   validate_api_release_boundary "$api_idle" "$config_identity" \
     'Committed candidate App final API ConfigIdentity'
   validate_worker_release_boundary "$worker_idle" "$worker_env" - - \

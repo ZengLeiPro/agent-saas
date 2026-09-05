@@ -1,0 +1,82 @@
+name: Setup pnpm (pinned standalone binary)
+description: >-
+  Install the exact pnpm version pinned by package.json `packageManager` from the
+  pnpm GitHub Release standalone binary. Never touches the npm registry, verifies
+  a repository-pinned sha256 and caches the binary per version.
+runs:
+  using: composite
+  steps:
+    - name: Resolve pinned pnpm version
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="$(sed -nE 's/^[[:space:]]*"packageManager":[[:space:]]*"pnpm@([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' package.json | head -n1)"
+        if [ -z "$version" ]; then
+          echo "::error title=setup-pnpm::package.json packageManager must pin pnpm@<major.minor.patch>"
+          exit 1
+        fi
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64) asset=pnpm-linux-x64 ;;
+          Linux-aarch64|Linux-arm64) asset=pnpm-linux-arm64 ;;
+          Darwin-arm64) asset=pnpm-macos-arm64 ;;
+          Darwin-x86_64) asset=pnpm-macos-x64 ;;
+          *) echo "::error title=setup-pnpm::unsupported runner platform $(uname -s)-$(uname -m)"; exit 1 ;;
+        esac
+        expected="$(awk -v key="$asset@$version" '$2 == key { print $1 }' .github/pnpm-standalone.sha256 | head -n1)"
+        if [ -z "$expected" ]; then
+          echo "::error title=setup-pnpm::.github/pnpm-standalone.sha256 has no pinned digest for $asset@$version; add it when bumping packageManager"
+          exit 1
+        fi
+        dir="$RUNNER_TOOL_CACHE/pnpm-standalone/$version/$asset"
+        {
+          echo "version=$version"
+          echo "asset=$asset"
+          echo "expected=$expected"
+          echo "dir=$dir"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached pnpm binary
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.resolve.outputs.dir }}
+        key: pnpm-standalone-v1-${{ runner.os }}-${{ steps.resolve.outputs.asset }}-${{ steps.resolve.outputs.version }}
+
+    - name: Download pnpm standalone binary from GitHub Releases
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PNPM_VERSION: ${{ steps.resolve.outputs.version }}
+        PNPM_ASSET: ${{ steps.resolve.outputs.asset }}
+        PNPM_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$PNPM_DIR"
+        url="https://github.com/pnpm/pnpm/releases/download/v${PNPM_VERSION}/${PNPM_ASSET}"
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
+          -o "$PNPM_DIR/pnpm.download" "$url"
+        mv "$PNPM_DIR/pnpm.download" "$PNPM_DIR/pnpm"
+        chmod 0755 "$PNPM_DIR/pnpm"
+
+    - name: Verify digest and expose pnpm on PATH
+      shell: bash
+      env:
+        PNPM_VERSION: ${{ steps.resolve.outputs.version }}
+        PNPM_EXPECTED_SHA256: ${{ steps.resolve.outputs.expected }}
+        PNPM_DIR: ${{ steps.resolve.outputs.dir }}
+      run: |
+        set -euo pipefail
+        actual="$(sha256sum "$PNPM_DIR/pnpm" | awk '{ print $1 }')"
+        if [ "$actual" != "$PNPM_EXPECTED_SHA256" ]; then
+          rm -rf "$PNPM_DIR"
+          echo "::error title=setup-pnpm::pnpm binary digest mismatch: expected $PNPM_EXPECTED_SHA256 got $actual"
+          exit 1
+        fi
+        echo "$PNPM_DIR" >> "$GITHUB_PATH"
+        installed="$("$PNPM_DIR/pnpm" --version)"
+        if [ "$installed" != "$PNPM_VERSION" ]; then
+          echo "::error title=setup-pnpm::pnpm reported $installed, expected $PNPM_VERSION"
+          exit 1
+        fi
+        echo "pnpm $installed ready from $PNPM_DIR (cache-hit=${{ steps.cache.outputs.cache-hit || 'false' }})"

@@ -10,6 +10,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { message, parseTombstoneSnapshot, sameTombstoneSnapshot, readHiddenRunUsage } from './engineSupport.js';
 
 import type { AgentRunDispatch } from '../../agent/types.js';
 import type { ChannelContext, InboundMessage, OutboundEvent } from '../../types/index.js';
@@ -106,6 +107,7 @@ export interface MemoryConsolidationEngineOptions {
   agentCwd: string;
   getConfig(): MemoryConsolidationResolvedConfig;
   onScannerStatus?: (status: MemoryConsolidationScannerStatus) => void | Promise<void>;
+  onCommitted?: (workspaceDir: string) => void;
   logger?: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -355,6 +357,7 @@ export class MemoryConsolidationEngine {
         now: new Date().toISOString(),
         limit: config.workerConcurrency,
         leaseSeconds: config.leaseSeconds,
+        reconcile: { debounceMinutes: config.debounceMinutes },
       });
       if (claimed.length > 0) {
         await Promise.all(claimed.map((state) => this.processState(state, config)));
@@ -390,6 +393,16 @@ export class MemoryConsolidationEngine {
 
       const projection = await this.options.projectionStore.get(state.sessionId);
       if (!projection) {
+        const deleted = await this.options.projectionStore.get(state.sessionId, { includeDeleted: true });
+        const pendingSince = state.firstPendingAt ?? state.lastActivityAt;
+        if (deleted || (pendingSince && Date.parse(now) - Date.parse(pendingSince) >= MISSING_PROJECTION_GRACE_MS)) {
+          await this.options.store.markIneligible({
+            tenantId: state.tenantId, sessionId: state.sessionId,
+            ...(state.leaseOwner ? { leaseOwner: state.leaseOwner } : {}),
+          });
+          log?.info(`consolidation retired unavailable projection session=${state.sessionId}`);
+          return;
+        }
         await this.options.store.markFailed({
           tenantId: state.tenantId,
           sessionId: state.sessionId,
@@ -561,6 +574,7 @@ export class MemoryConsolidationEngine {
                 effectiveCwd,
                 preparedUsage.commitJournal,
               );
+              this.notifyCommitted(effectiveCwd);
               await fenceResult.fence.finalizeApplied({
                 idempotencyKey: preparedRecord.idempotencyKey,
                 toSequence: to,
@@ -581,6 +595,7 @@ export class MemoryConsolidationEngine {
             effectiveCwd,
             preparedUsage.commitJournal,
           );
+          if (rolledBack > 0) this.notifyCommitted(effectiveCwd);
           await fenceResult.fence.retireJournalAndRequeue({
             idempotencyKey: preparedRecord.idempotencyKey,
             now: new Date().toISOString(),
@@ -735,7 +750,7 @@ export class MemoryConsolidationEngine {
 
     const preparedDraft = await (async () => {
       try {
-        const usage = await this.readHiddenRunUsage(state.tenantId, hiddenSessionId);
+        const usage = await readHiddenRunUsage(this.options.eventStore, state.tenantId, hiddenSessionId);
         const draftPlan = await inspectMemoryConsolidationDraft(hiddenSessionId);
         const preparedUsage = {
           inputTokens: usage.inputTokens,
@@ -814,6 +829,7 @@ export class MemoryConsolidationEngine {
           }
           await commitMemoryConsolidationDraft(hiddenSessionId);
           filesCommitted = true;
+          this.notifyCommitted(effectiveCwd);
           await commitFence.finalizeApplied({
             idempotencyKey,
             toSequence: to,
@@ -907,6 +923,14 @@ export class MemoryConsolidationEngine {
     }
   }
 
+  private notifyCommitted(workspaceDir: string): void {
+    try {
+      this.options.onCommitted?.(workspaceDir);
+    } catch (error) {
+      this.options.logger?.warn(`consolidation index enqueue failed: ${message(error)}`);
+    }
+  }
+
   private async failRun(
     state: ConsolidationState,
     config: MemoryConsolidationResolvedConfig,
@@ -917,7 +941,7 @@ export class MemoryConsolidationEngine {
     commitJournal?: unknown,
     tombstoneIds?: string[],
   ): Promise<void> {
-    const usage = hiddenSessionId ? await this.readHiddenRunUsage(state.tenantId, hiddenSessionId) : undefined;
+    const usage = hiddenSessionId ? await readHiddenRunUsage(this.options.eventStore, state.tenantId, hiddenSessionId) : undefined;
     if (!state.leaseOwner) return;
     await this.options.store.failRunAndState({
       idempotencyKey,
@@ -948,52 +972,4 @@ export class MemoryConsolidationEngine {
     });
   }
 
-  private async readHiddenRunUsage(tenantId: string, hiddenSessionId: string): Promise<{
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    modelActual?: string;
-  }> {
-    const rows = await this.options.eventStore.listSessionRange(tenantId, hiddenSessionId, {
-      fromExclusive: 0,
-      toInclusive: Number.MAX_SAFE_INTEGER,
-      limit: 2_000,
-    }).catch(() => []);
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let modelActual: string | undefined;
-    for (const { event } of rows) {
-      if (event.type !== 'assistant_message' && event.type !== 'assistant_tool_calls') continue;
-      const usage = event.usage;
-      if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
-        const values = usage as Record<string, unknown>;
-        inputTokens += numberOrZero(values.inputTokens);
-        outputTokens += numberOrZero(values.outputTokens);
-        cacheReadTokens += numberOrZero(values.cacheReadInputTokens);
-      }
-      if (typeof event.model === 'string') modelActual = event.model;
-    }
-    return { inputTokens, outputTokens, cacheReadTokens, ...(modelActual ? { modelActual } : {}) };
-  }
-}
-
-function parseTombstoneSnapshot(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string')) return null;
-  const sorted = [...value].sort();
-  return new Set(sorted).size === sorted.length ? sorted : null;
-}
-
-function sameTombstoneSnapshot(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  const sortedRight = [...right].sort();
-  return left.every((id, index) => id === sortedRight[index]);
-}
-
-function numberOrZero(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

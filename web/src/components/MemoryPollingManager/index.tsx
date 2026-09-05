@@ -35,7 +35,7 @@ const EMPTY_DRAFT: MemoryPollingDraft = {
   hoursSpan: 4,
   timezone: "Asia/Shanghai",
   lookbackHours: 48,
-  maxTurns: 30,
+  maxTurns: 1000,
   timeoutSeconds: 900,
   model: "",
 };
@@ -63,7 +63,7 @@ function validateDraft(draft: MemoryPollingDraft): string | null {
     return "请输入有效的 IANA 时区，例如 Asia/Shanghai";
   }
   if (!Number.isInteger(draft.lookbackHours) || draft.lookbackHours < 1 || draft.lookbackHours > 168) return "活动回看范围必须是 1–168 小时";
-  if (!Number.isInteger(draft.maxTurns) || draft.maxTurns < 1 || draft.maxTurns > 100) return "最大轮数必须是 1–100";
+  if (!Number.isInteger(draft.maxTurns) || draft.maxTurns < 1 || draft.maxTurns > 1000) return "最大轮数必须是 1–1000";
   if (!Number.isInteger(draft.timeoutSeconds) || draft.timeoutSeconds < 1 || draft.timeoutSeconds > 3600) return "执行超时必须是 1–3600 秒";
   return null;
 }
@@ -246,8 +246,8 @@ export function MemoryPollingManager() {
             <Field label="活动回看范围（小时）" description="1–168；同时决定无活动跳过的判断窗口。">
               <Input aria-label="活动回看范围（小时）" type="number" min={1} max={168} value={draft.lookbackHours} onChange={(event) => updateDraft({ lookbackHours: Number(event.target.value) })} />
             </Field>
-            <Field label="最大轮数" description="1–100；限制一次记忆整理最多运行多少个 Agent turn。">
-              <Input aria-label="最大轮数" type="number" min={1} max={100} value={draft.maxTurns} onChange={(event) => updateDraft({ maxTurns: Number(event.target.value) })} />
+            <Field label="最大轮数" description="1–1000；限制一次记忆整理最多运行多少轮。">
+              <Input aria-label="最大轮数" type="number" min={1} max={1000} value={draft.maxTurns} onChange={(event) => updateDraft({ maxTurns: Number(event.target.value) })} />
             </Field>
             <Field label="执行超时（秒）" description="1–3600；超时后本轮按失败结束，下一日仍会继续。">
               <Input aria-label="执行超时（秒）" type="number" min={1} max={3600} value={draft.timeoutSeconds} onChange={(event) => updateDraft({ timeoutSeconds: Number(event.target.value) })} />

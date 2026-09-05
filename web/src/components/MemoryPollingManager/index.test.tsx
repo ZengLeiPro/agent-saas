@@ -75,6 +75,8 @@ describe("MemoryPollingManager", () => {
     const lookbackInput = screen.getByLabelText("活动回看范围（小时）");
     await user.clear(lookbackInput);
     await user.type(lookbackInput, "72");
+    await user.clear(screen.getByLabelText("最大轮数"));
+    await user.type(screen.getByLabelText("最大轮数"), "1000");
     await user.selectOptions(screen.getByLabelText("执行模型"), "openai/gpt-5.5");
     await user.click(screen.getByRole("button", { name: "保存配置" }));
 
@@ -89,7 +91,7 @@ describe("MemoryPollingManager", () => {
         hoursSpan: 4,
         timezone: "Asia/Shanghai",
         lookbackHours: 72,
-        maxTurns: 30,
+        maxTurns: 1000,
         timeoutSeconds: 900,
         model: "openai/gpt-5.5",
       },

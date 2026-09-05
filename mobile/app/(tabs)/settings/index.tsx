@@ -59,7 +59,7 @@ export default function SettingsScreen() {
   const v1Profile = getV1BuildProfile();
   const showCron = isV1RouteAllowed("cron", v1Profile);
   const showGovernance = isV1RouteAllowed("settings/my-permissions", v1Profile);
-  const showConnections = isV1RouteAllowed("settings/connections", v1Profile);
+  const showConnections = isV1RouteAllowed("capabilities/connectors", v1Profile);
 
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
   const [governanceSummary, setGovernanceSummary] = useState<MyGovernanceSummary | null>(null);
@@ -278,7 +278,7 @@ export default function SettingsScreen() {
                 <ListRow
                   title="连接与授权"
                   value="Google Workspace 与 MCP"
-                  onPress={() => router.push("/settings/connections")}
+                  onPress={() => router.push("/capabilities/connectors")}
                 />
               ) : null}
               <ListRow title="文件与存储" value="只读迁移态" />

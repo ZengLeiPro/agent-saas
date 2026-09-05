@@ -31,7 +31,7 @@ const harness = vi.hoisted(() => {
     },
     session: {
       sessionId: null as string | null, sessions: [],
-      accessRef: { current: "owner" as "owner" | "read_only" | "unknown" },
+      sessionAccessMode: "owner" as "owner" | "read_only" | "unknown", accessRef: { current: "owner" as "owner" | "read_only" | "unknown" },
       isLoadingSessions: false,
       isLoadingMessages: false,
       hasMoreHistory: false,

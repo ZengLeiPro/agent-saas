@@ -1993,6 +1993,8 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     return resolveDescriptorFactoryExpression(returned, new Set(visited).add('return:call'));
   };
   resolveDescriptorFactoryName = (name, visited = new Set()) => {
+    // 文件没有 descriptor factory 时，普通变量的别名图不可能解析出 factory。
+    if (descriptorFactories.size === 0 && unprovenDescriptorFactories.size === 0) return undefined;
     if (descriptorFactories.has(name) || unprovenDescriptorFactories.has(name)) return name;
     if (visited.has(name)) return undefined;
     const writes = descriptorFactoryAliasWrites.get(name) ?? [];
@@ -2244,6 +2246,8 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     return { owner: reference.owner, member: reference.members.join('.') };
   };
   const addCalledMember = (owner, member) => {
+    // 动态成员已经表示任意路径；继续拼接会在别名环中无限生成 *.*。
+    if (member.split('.').includes('*')) member = '*';
     const members = calledMemberBindings.get(owner) ?? new Set();
     if (members.has(member)) return false;
     members.add(member);

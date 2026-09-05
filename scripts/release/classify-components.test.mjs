@@ -195,6 +195,24 @@ test('unknown paths fail closed while retaining mapped components', () => {
   ]);
 });
 
+test('classifies the six paths from RC run 33944630537 without ignoring unknown scripts', () => {
+  for (const filePath of ['scripts/check-max-lines-ratchet.mjs', 'scripts/ratchets.test.mjs']) {
+    assert.deepEqual(classifyPath(filePath), { components: [], blockingReason: null });
+  }
+  assert.deepEqual(classifyPath('scripts/deploy-acs-orchestrator.sh'), {
+    components: ['acs'],
+    blockingReason: null,
+  });
+  for (const filePath of [
+    'scripts/deploy-recovery-web.sh',
+    'scripts/rollback-recovery-web.sh',
+    'scripts/rollback-web-oss.sh',
+  ]) {
+    assert.deepEqual(classifyPath(filePath), { components: ['web'], blockingReason: null });
+  }
+  assert.equal(classifyChangedPaths(['scripts/unknown-release-input.sh']).ok, false);
+});
+
 test('reads changed paths and retains both sides of cross-component renames', () => {
   const calls = [];
   const execFileSync = (...args) => {

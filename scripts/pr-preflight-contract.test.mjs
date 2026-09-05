@@ -200,6 +200,28 @@ test('CI 并行任务、分片矩阵与 Build & Check 汇总门禁完整连接',
   assert.doesNotMatch(workflow, /coverage:diff|Comment PR diff coverage|pull-requests: write/u);
 });
 
+test('PR 计划先检查真实变更路径的发布分类，失败传递到汇总门禁', () => {
+  const plan = workflow.slice(
+    workflow.indexOf('\n  ci_plan:\n'),
+    workflow.indexOf('\n  preflight_checks:\n'),
+  );
+  assert.match(plan, /fetch-depth: 0/u);
+  assert.match(plan, /if: github\.event_name == 'pull_request'/u);
+  assert.ok(
+    plan.indexOf('node scripts/release/classify-components.mjs') <
+      plan.indexOf('node scripts/ci-plan.mjs'),
+  );
+  for (const marker of [
+    'RELEASE_BASE_SHA: ${{ github.event.pull_request.base.sha }}',
+    'RELEASE_TARGET_SHA: ${{ github.event.pull_request.head.sha }}',
+    '--baseline "$RELEASE_BASE_SHA" --target "$RELEASE_TARGET_SHA"',
+  ]) {
+    assert.ok(plan.includes(marker), `missing release classification wiring: ${marker}`);
+  }
+  assert.doesNotMatch(plan, /continue-on-error|\|\| true/u);
+  assert.ok(workflow.includes('"ci_plan=$CI_PLAN_RESULT=true"'));
+});
+
 test('pnpm 只从固定二进制安装，不再经过 npm registry 自举', () => {
   assert.doesNotMatch(workflow, /pnpm\/action-setup/u);
   assert.match(workflow, /uses: \.\/\.github\/actions\/setup-pnpm/u);

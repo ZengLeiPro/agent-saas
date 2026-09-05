@@ -66,6 +66,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify release component mapping for PR changes
+        if: github.event_name == 'pull_request'
+        env:
+          RELEASE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RELEASE_TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node scripts/release/classify-components.mjs \
+            --baseline "$RELEASE_BASE_SHA" --target "$RELEASE_TARGET_SHA"
+
       - name: Plan affected gates and test shards
         id: plan
         run: >-

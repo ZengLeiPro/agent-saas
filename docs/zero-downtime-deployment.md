@@ -135,18 +135,19 @@ deploy-ecs 远端脚本（ci.yml「Deploy and restart」step 内嵌，编号与�
 | 3 | 解包 release 到 `releases/<sha>`，`server/data` 软链到 NAS，以 `node-linker=isolated`、低 CPU/IO 优先级和受限并发安装 server/shared 依赖；保留 pnpm store 热缓存，并刷新 Web/worker systemd unit（只 daemon-reload，不重启 active） | 同上 |
 | 4 | idle 色残留处理：上次部署的旧色可能还在 drain，最多等 600s，超时 `systemctl stop` 强停 | 同上 |
 | 5 | 更新 symlink：只动 `color/<idle>` → 新 release；`current`/`previous` 仅作 bookkeeping | 同上 |
-| 6 | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s | `rollback_idle_and_exit`：stop idle 色 + 还原 current/previous/idle 色 symlink + 删除当次 release/上传包，nginx/active-color 全程未动 |
+| 5.5 | 若分类命中 Runtime Worker：启动候选并以 pidfile=readyfile 门禁，排空旧 Worker 后更新 worker active-color；全部发生在 Web ready/切流前 | 统一 rollback 先恢复旧 Worker marker/guard/unit 与 readiness，再停止候选并还原 symlink |
+| 6 | `systemctl start agent-saas-server@<idle>` + **ready 硬门禁**：等 `/api/healthz/ready` 200，最长 180s；随后严格校验本机私有 ConfigIdentity 快照的 schema/status/releaseId | 统一 rollback：stop idle 色、恢复 Web/Worker ownership、runtime identity 与全部 symlink；切流前 nginx/active-color 尚未动 |
 | 7 | **warmup 软门禁**：等 ready 载荷 `warmup.state=done`，最长 420s；`failed`/超时降级为警告继续（dispatch 时增量同步兜底，见 §7） | 不失败，仅告警 |
-| 8 | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON | `rollback_idle_and_exit` |
-| 8.5 | 若分类命中 Runtime Worker：解析 worker idle 色、等待上次排水实例退出，只准备 idle worker symlink；切流前不启动、不 claim run | `rollback_idle_and_exit` 还原 worker symlink |
-| 9 | 切流：安装受版本管理的 API 站点配置（`/api/upload` 请求体直通、NAS fallback 临时目录）+ 重写 `/etc/nginx/conf.d/agent-saas-upstream.conf`（新色 primary、旧色 backup）→ `nginx -t` → `systemctl reload nginx` → 经 `https://127.0.0.1`（Host: api.agent.kaiyan.net）验证，最多重试 10 次 | `nginx -t` 失败同时还原站点与 upstream conf；reload 后验证失败把 nginx 翻回旧色再 `rollback_idle_and_exit` |
-| 10 | 更新 `/etc/agent-saas/active-color` 为新色 | — |
-| 10.5 | 启动 worker 候选并以 pidfile=readyfile 做硬门禁；成功后更新 worker active-color，SIGUSR2 排空旧 worker。纯 Web 发布整步跳过 | 候选失败时旧 worker（或首次迁移时旧 all 进程）仍继续执行 run；发布判红但不产生 run 失败 |
+| 8 | 冒烟：idle 端口 `/api/healthz` 200 且 `/api/healthz/drain` 返回合法 JSON | 统一 rollback，旧色继续服务 |
+| 9 | 切流：备份 API 站点与 upstream 双配置，写新色 primary → `nginx -t` → `systemctl reload nginx` → 经本机 HTTPS 验证 | 写盘、`nginx -t`、reload 或验证任一步失败都进入统一 rollback：恢复双配置并重新 `nginx -t && reload`，确认旧流量后再停候选 |
+| 10 | 更新 `/etc/agent-saas/active-color` 并 disable 旧 Web unit | 任一步失败统一恢复旧 marker、旧 unit ownership 与 nginx 流量 |
+| 10.5 | 断言 Runtime Worker 已在切流前完成接管；纯 Web 发布跳过 | guard 失败进入同一 rollback，恢复旧 Worker 后再停候选 |
+| 10.6 | 从活动 API/Worker/Web/ACS 与私有 ConfigIdentity 快照重建 trusted Production identity，并重新读取 Production State | 收敛失败恢复 runtime identity、Web/Worker ownership、active-color 与 nginx 流量 |
 | 11 | 重新生成 Web/API `/opt/agent-saas-app/rollback.sh`（蓝绿语义，幂等覆盖，见 §9.1；不隐式切换 Runtime Worker） | — |
 | 12 | drain 旧色：`kill -USR2 $(cat /run/agent-saas-server-<旧色>.pid)` 精确送 node 主进程；pidfile 缺失/kill 失败则降级 `systemctl stop`（SIGTERM，可能打断活跃流）。观察 60s，未退不算失败（后台继续排空，下次部署最多等 600s） | — |
 | 13 | 收尾：保留 pnpm store 热缓存供下次隔离安装复用，只删除上传包 | — |
 
-核心设计：**门禁前移**。步骤 6-8 的所有校验都发生在切流（步骤 9）之前，此时
+核心设计：**门禁前移**。步骤 5.5-8 的所有校验都发生在切流（步骤 9）之前，此时
 公网流量 100% 在老色上；所以「部署失败」对用户是不可见事件，只是这次发版没发出去。
 
 > 为什么 drain 不能用 `systemctl kill`：默认按 cgroup 广播信号，SIGUSR2 对无
@@ -170,7 +171,7 @@ CI 侧还有两个配套 step（不在远端脚本内）：
 | --- | --- | --- | --- |
 | `/api/healthz` | nginx/LB 轻量探针；CI 零停机公网探测；远端脚本冒烟 | 纯文本 `ok` / `draining` | draining 时 |
 | `/api/healthz/live` | liveness：systemd/监控判「要不要拉起/告警」 | 200 `ok` | 永不——进程在即 200，不反映可服务状态 |
-| `/api/healthz/ready` | readiness：部署门禁在新色端口上等它 200 才切流 | JSON `{status, draining, warmup}`；`warmup` 含 `state/totalUsers/processedUsers/syncedUsers/...` | draining 时。注意 warmup **不** gate ready（未完成时 dispatch 侧版本化同步兜底正确性），是否等 `warmup.state=done` 由部署脚本自行决定 |
+| `/api/healthz/ready` | readiness：部署门禁在新色端口上等它 200 才切流 | JSON `{status, draining, warmup, release}`；不返回 ConfigIdentity 摘要 | draining、运行准入暂停、集成未 ready、安全证明失败，或已绑定 expected 的 ConfigIdentity 非 `consistent` 时。warmup **不** gate ready，部署脚本另行等待 |
 | `/api/healthz/drain` | 发布脚本判断实例是否排空/可切 release | JSON `{status, draining, activeStreams, activeRuns{pending,running,waitingApproval,waitingUser,waitingHand,blocking,total}, idle}`；`idle = !draining && activeStreams==0 && activeRuns.blocking==0` | draining 时；或 activeRuns 查询失败（此时 `status:"error"`） |
 
 另有面向人的 `/api/health`：未认证仅回 `{status}`，认证用户附带 uptime、内存、

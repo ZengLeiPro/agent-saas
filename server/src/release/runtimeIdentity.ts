@@ -1,3 +1,9 @@
+import {
+  CONFIG_IDENTITY_SCHEMA_VERSION,
+  readExpectedConfigIdentity,
+  type ExpectedConfigIdentity,
+} from './configIdentity.js';
+
 export type RuntimeEnvironment = 'staging' | 'production' | 'development' | 'test';
 
 export interface RuntimeIdentity {
@@ -9,6 +15,12 @@ export interface RuntimeIdentity {
   acsOrchestratorDigest?: string;
   acsSandboxImageDigest?: string;
   safetyAttested: boolean;
+  /**
+   * Release expected config identity（TASK-318，显式版本化新增字段；旧字段语义不变）。
+   * 部署脚本在发布时计算并写入 `.release.env`；staging 必须提供，production
+   * 提供时必须格式合法（缺失显示为「不可验证」而不是拒启，兼容紧急回滚路径）。
+   */
+  expectedConfigIdentity?: ExpectedConfigIdentity;
 }
 
 const FULL_SHA = /^[a-fA-F0-9]{40}$/;
@@ -37,6 +49,8 @@ export function readRuntimeIdentity(env: NodeJS.ProcessEnv = process.env): Runti
   const webDigest = optionalTrimmed(env, 'AGENT_SAAS_WEB_DIGEST');
   const acsOrchestratorDigest = optionalTrimmed(env, 'AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST');
   const acsSandboxImageDigest = optionalTrimmed(env, 'AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST');
+  // 抛错语义：提供但格式非法 -> fail closed（两边一致）；完全缺失 -> undefined。
+  const expectedConfigIdentity = readExpectedConfigIdentity(env);
   if (rawEnvironment === 'staging') {
     if (
       !releaseId ||
@@ -48,6 +62,16 @@ export function readRuntimeIdentity(env: NodeJS.ProcessEnv = process.env): Runti
     ) {
       throw new Error(
         'Staging requires release ID, full SHA, Server/Web digests, and both ACS Orchestrator/Sandbox digests',
+      );
+    }
+    if (!expectedConfigIdentity) {
+      throw new Error(
+        'Staging requires a release-bound config identity (AGENT_SAAS_CONFIG_IDENTITY_DIGEST)',
+      );
+    }
+    if (expectedConfigIdentity.schemaVersion !== CONFIG_IDENTITY_SCHEMA_VERSION) {
+      throw new Error(
+        `Staging requires config identity schema version ${CONFIG_IDENTITY_SCHEMA_VERSION}`,
       );
     }
     if (!FULL_SHA.test(releaseSha))
@@ -69,6 +93,7 @@ export function readRuntimeIdentity(env: NodeJS.ProcessEnv = process.env): Runti
     ...(webDigest ? { webDigest } : {}),
     ...(acsOrchestratorDigest ? { acsOrchestratorDigest } : {}),
     ...(acsSandboxImageDigest ? { acsSandboxImageDigest } : {}),
+    ...(expectedConfigIdentity ? { expectedConfigIdentity } : {}),
     safetyAttested: true,
   };
 }

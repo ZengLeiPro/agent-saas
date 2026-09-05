@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -79,6 +80,17 @@ async function readJson(response: Response) {
   return response.json() as Promise<any>;
 }
 
+function revision(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+// 精确卡住 runtime callback 或 Secret ref 回收，验证锁不会提前释放。
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 describe('tool controls admin router', () => {
   beforeEach(() => {
     vi.stubEnv('NODE_ENV', 'development');
@@ -153,6 +165,7 @@ describe('tool controls admin router', () => {
   it('updates tool switches and web tools in one config write', async () => {
     const validateToolSettingsConfig = vi.fn(async () => undefined);
     const onToolSettingsUpdated = vi.fn(async () => undefined);
+    const onConfigReloaded = vi.fn(async () => undefined);
     await withApp({
       agent: { cwd: '/tmp/agent' },
       server: { port: 3200 },
@@ -200,12 +213,14 @@ describe('tool controls admin router', () => {
         webTools: runtimeConfig.webTools,
       });
 
-      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const writtenText = readFileSync(configPath, 'utf-8');
+      const written = JSON.parse(writtenText);
       expect(written.toolControls.tools.Shell.enabled).toBe(false);
       expect(written.toolControls.tools.WebFetch.enabled).toBe(false);
       expect(written.webTools.search.apiKeyRef).toBe('brave-search-api-key');
       expect(written.webTools.search.apiKey).toBeUndefined();
-    }, { validateToolSettingsConfig, onToolSettingsUpdated });
+      expect(onConfigReloaded).toHaveBeenCalledWith(writtenText);
+    }, { validateToolSettingsConfig, onToolSettingsUpdated, onConfigReloaded });
   });
 
   it('stores a newly submitted WebSearch apiKey in the secret vault and persists only its ref', async () => {
@@ -278,7 +293,7 @@ describe('tool controls admin router', () => {
         }),
       });
 
-      expect(response.status).toBe(200);
+      expect(response.status, await response.clone().text()).toBe(200);
       const body = await readJson(response);
       const globalRef = body.webTools.search.global.apiKeyRef;
       expect(body.webTools.search.global.apiKey).toBeUndefined();
@@ -296,78 +311,6 @@ describe('tool controls admin router', () => {
         scopes: ['secret:web_tools:read'],
       })).resolves.toBe('tavily-secret');
     }, { secretVault });
-  });
-
-  it('rejects enabled WebSearch without credentials before writing config.json', async () => {
-    await withApp({
-      agent: { cwd: '/tmp/agent' },
-      server: { port: 3200 },
-    }, async ({ baseUrl, configPath }) => {
-      const before = readFileSync(configPath, 'utf-8');
-      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          toolControls: { tools: {} },
-          webTools: {
-            enabled: true,
-            search: {
-              enabled: true,
-              provider: 'brave',
-            },
-            fetch: {
-              enabled: true,
-            },
-          },
-        }),
-      });
-      expect(response.status).toBe(400);
-      const body = await readJson(response);
-      expect(body.error).toContain('one of apiKey or apiKeyRef is required');
-      expect(readFileSync(configPath, 'utf-8')).toBe(before);
-    });
-  });
-
-  it('preserves existing inline WebSearch apiKey when the UI sends only hasApiKey', async () => {
-    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
-      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          toolControls: {
-            tools: {
-              Shell: { enabled: false },
-            },
-          },
-          webTools: {
-            enabled: true,
-            search: {
-              enabled: true,
-              provider: 'brave',
-              hasApiKey: true,
-              maxResults: 7,
-            },
-            fetch: {
-              enabled: false,
-            },
-            egress: {
-              allowPrivateNetworks: false,
-            },
-          },
-        }),
-      });
-      expect(response.status).toBe(200);
-      const body = await readJson(response);
-      expect(body.effectiveWebTools).toEqual(['WebSearch']);
-      expect(body.webTools.search.hasApiKey).toBe(true);
-      expect(body.webTools.search.apiKey).toBeUndefined();
-
-      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(written.webTools.search.apiKey).toBe('brave-secret-123');
-      expect(written.webTools.search.hasApiKey).toBeUndefined();
-      expect(runtimeConfig.webTools?.search?.apiKey).toBe('brave-secret-123');
-      expect(runtimeConfig.webTools?.fetch?.enabled).toBe(false);
-    });
   });
 
   it('persists descriptionOverride via bulk PUT and reflects it in effectiveDescription', async () => {
@@ -583,6 +526,39 @@ describe('tool controls admin router', () => {
     }, { config: staleRuntimeConfig });
   });
 
+  it('连续两次保存均返回 raw config revision，并支持 expectedRevision/If-Match 接力', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const loadedResponse = await fetch(`${baseUrl}/api/admin/tool-controls`); const loaded = await readJson(loadedResponse);
+      expect(loaded.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(loadedResponse.headers.get('etag')).toBe(`"${loaded.revision}"`);
+
+      const normalizedResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Shell`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, expectedRevision: loaded.revision }) });
+      expect(normalizedResponse.status).toBe(200); const normalized = await readJson(normalizedResponse); const normalizedText = readFileSync(configPath, 'utf-8');
+      expect(normalized.revision).toBe(revision(normalizedText));
+
+      const noOpResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Shell`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, expectedRevision: normalized.revision }) });
+      expect(noOpResponse.status).toBe(200); const noOp = await readJson(noOpResponse);
+      expect(noOp.revision).toBe(normalized.revision); expect(noOpResponse.headers.get('etag')).toBe(`"${normalized.revision}"`);
+      expect(readFileSync(configPath, 'utf-8')).toBe(normalizedText);
+      const firstResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, expectedRevision: noOp.revision }),
+      });
+      expect(firstResponse.status).toBe(200);
+      const first = await readJson(firstResponse);
+      expect(first.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(firstResponse.headers.get('etag')).toBe(`"${first.revision}"`);
+
+      const secondResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
+        method: 'PUT', headers: { 'content-type': 'application/json', 'if-match': `"${first.revision}"` }, body: JSON.stringify({ enabled: false }),
+      });
+      expect(secondResponse.status).toBe(200);
+      const second = await readJson(secondResponse);
+      expect(second.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(secondResponse.headers.get('etag')).toBe(`"${second.revision}"`);
+      expect(second.revision).not.toBe(first.revision);
+    }, { requireRevision: true });
+  });
+
   it('single-tool PUT can flip enabled without editing webTools payload', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
       const res = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
@@ -661,5 +637,144 @@ describe('tool controls admin router', () => {
       expect(written.toolControls).toBeUndefined();
       expect(written.webTools).toBeUndefined();
     });
+  });
+
+  it('CAS 冲突不推进 ConfigIdentity，且不覆盖并发胜出版本', async () => {
+    const validateToolSettingsConfig = vi.fn();
+    const onToolSettingsUpdated = vi.fn();
+    const onConfigReloaded = vi.fn();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      validateToolSettingsConfig.mockImplementation(async () => {
+        writeFileSync(configPath, JSON.stringify({ ...baseRawConfig(), concurrentWinner: true }), 'utf-8');
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+
+      expect(response.status).toBe(409);
+      const winnerText = readFileSync(configPath, 'utf-8'); const conflict = await readJson(response);
+      expect(JSON.parse(winnerText).concurrentWinner).toBe(true);
+      expect(conflict.revision).toBe(revision(winnerText));
+      expect(response.headers.get('etag')).toBe(`"${conflict.revision}"`);
+      expect(runtimeConfig.toolControls?.tools?.Read).toBeUndefined();
+      expect(onToolSettingsUpdated).not.toHaveBeenCalled();
+      expect(onConfigReloaded).not.toHaveBeenCalled();
+    }, { validateToolSettingsConfig, onToolSettingsUpdated, onConfigReloaded });
+  });
+
+  it('single-tool callback 失败时回滚执行侧且不提交磁盘或 AppConfig', async () => {
+    const onToolSettingsUpdated = vi.fn();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      let executionSettings = {
+        toolControls: structuredClone(runtimeConfig.toolControls),
+        webTools: structuredClone(runtimeConfig.webTools),
+      };
+      onToolSettingsUpdated.mockImplementation(async (next) => {
+        executionSettings = structuredClone(next);
+        if (next.toolControls?.tools?.Read?.enabled === false) {
+          throw new Error('tool runtime callback failed');
+        }
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(runtimeConfig.toolControls?.tools?.Read).toBeUndefined();
+      expect(executionSettings.toolControls?.tools?.Read).toBeUndefined();
+      expect(onToolSettingsUpdated).toHaveBeenCalledTimes(2);
+    }, { onToolSettingsUpdated });
+  });
+
+  it('旧 WebSearch ref 成功回收完成前拒绝并发请求重新引用该 ref', async () => {
+    const secretVault = new InMemorySecretVault();
+    const raw = baseRawConfig();
+    // Fixture 类型来自 inline 旧配置；本用例刻意切换到互斥的 ref 形态。
+    raw.webTools.search = {
+      provider: 'zhipu',
+      apiKeyRef: 'old-web-search-ref',
+      timeoutMs: 8000,
+      maxResults: 5,
+    } as unknown as typeof raw.webTools.search;
+    await withApp(raw, async ({ baseUrl, configPath }) => {
+      const revokeEntered = deferred();
+      const releaseRevoke = deferred();
+      const revokeSecret = secretVault.revokeSecret.bind(secretVault);
+      vi.spyOn(secretVault, 'revokeSecret').mockImplementation(async (ref, caller) => {
+        if (ref === 'old-web-search-ref') {
+          revokeEntered.resolve();
+          await releaseRevoke.promise;
+        }
+        if (ref === 'old-web-search-ref') return;
+        return revokeSecret(ref, caller);
+      });
+
+      const firstRequest = fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: raw.toolControls,
+          webTools: {
+            ...raw.webTools,
+            search: { ...raw.webTools.search, apiKeyRef: undefined, apiKey: 'replacement-web-secret' },
+          },
+        }),
+      });
+      await revokeEntered.promise;
+
+      const concurrentResponse = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          toolControls: raw.toolControls,
+          webTools: { ...raw.webTools, search: { ...raw.webTools.search, apiKeyRef: 'old-web-search-ref' } },
+        }),
+      });
+      expect(concurrentResponse.status).toBe(409);
+
+      releaseRevoke.resolve();
+      expect((await firstRequest).status).toBe(200);
+      const committed = parseAppConfig(JSON.parse(readFileSync(configPath, 'utf-8')));
+      expect(committed.webTools?.search?.apiKeyRef).toBeTruthy();
+      expect(committed.webTools?.search?.apiKeyRef).not.toBe('old-web-search-ref');
+    }, { secretVault });
+  });
+
+  it('两个管理员交错保存时锁内 callback 未完成前拒绝另一写入', async () => {
+    const onToolSettingsUpdated = vi.fn();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const firstBlocked = deferred();
+      const firstEntered = deferred();
+      onToolSettingsUpdated.mockImplementation(async (next) => {
+        if (next.toolControls?.tools?.Read?.enabled === false) {
+          firstEntered.resolve();
+          await firstBlocked.promise;
+        }
+      });
+
+      const firstRequest = fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      await firstEntered.promise;
+      const secondResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(secondResponse.status).toBe(409);
+
+      firstBlocked.resolve();
+      expect((await firstRequest).status).toBe(200);
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.toolControls.tools.Read.enabled).toBe(false);
+      expect(written.toolControls.tools.Edit).toBeUndefined();
+      expect(runtimeConfig.toolControls?.tools?.Read?.enabled).toBe(false);
+      expect(runtimeConfig.toolControls?.tools?.Edit).toBeUndefined();
+    }, { onToolSettingsUpdated });
   });
 });

@@ -106,6 +106,7 @@ import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
 import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
+import { initializeRuntimeConfigIdentityAssembly } from './configIdentityAssembly.js';
 import { resolveServerRemoteDispatchConfig } from './serverRemoteConfig.js';
 import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
@@ -188,7 +189,7 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
-import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
+import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js'; import { createVoiceTranscriptionConfigRefresher } from './voiceConfigRefresh.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
@@ -281,7 +282,7 @@ import type {
   SkillsWarmupStatus,
 } from './runtimeContracts.js';
 export async function createRuntime(options: CreateRuntimeOptions = {}): Promise<AppRuntime> {
-  const processCwd = options.processCwd ?? process.cwd();
+  const processCwd = options.processCwd ?? process.cwd(); // ConfigIdentity 也必须复用这个真实 cwd。
   const processRole = options.processRole ?? 'all';
   const enableSchedulerWorker = processRole !== 'ws-only';
   const enableHttpListeners = processRole === 'all' || processRole === 'ws-only';
@@ -383,10 +384,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSharedEnv,
     sharedDir,
   };
-  const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
+  const titleGeneratorDefaultModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini'; const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
     models: config.models,
     titleGenerator: config.titleGenerator,
-    defaultModel: process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+    defaultModel: titleGeneratorDefaultModel,
     logger: serverLogger,
   });
   // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
@@ -670,7 +671,19 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedFeishuConnector,
     feishuConnectorScopes,
   } = await initializeRuntimeGovernanceCredentials(config, processCwd);
-  const voiceTranscriptionService = new VoiceTranscriptionService({ uploadManager, sttConfig: resolvedSttRuntimeConfig.sttConfig });
+  const voiceTranscriptionOptions = {
+    uploadManager,
+    ...(resolvedSttRuntimeConfig.sttConfig
+      ? { sttConfig: resolvedSttRuntimeConfig.sttConfig }
+      : {}),
+  };
+  const voiceTranscriptionService = new VoiceTranscriptionService(voiceTranscriptionOptions);
+  const configIdentityAssembly = await initializeRuntimeConfigIdentityAssembly({
+    config,
+    secretVault,
+    processCwd,
+    logger: serverLogger.child('ConfigIdentity'),
+  });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -1509,27 +1522,33 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const resolvedModels = await resolveModelsConfig(config.models, secretVault);
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   configureImageGenPricing(config.imageGenTools?.pricing);
-  // 模型解析器会对齐磁盘配置，让 runtime-worker 感知 ws-only 进程写入。
+  // 模型解析器：如果配置了 models，则绑定到 RawRuntime、WebChannel 与 Cron。
+  // 安全入口解析前先对齐磁盘，让 runtime-worker 感知 ws-only 写入（见 modelResolvers.ts）。
+  let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>;
+  let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
+  let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
-    processCwd,
+    processCwd, recoveryGate: configIdentityAssembly.recoveryGate,
     tenantStore,
     tenantsFilePath,
-    logger: serverLogger,
-    titleGeneratorConfigs,
+    logger: serverLogger, titleGeneratorConfigs, defaultTitleModel: titleGeneratorDefaultModel,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
-    onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
-    // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
-    onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
-    // STT 凭据更新失败只告警，不中断其他共享配置刷新。
-    onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
-    onCodexSubscriptionUpdated: (refs) => { if (refs) codexWebSocketPool.closeCredentialRefs(refs); else codexWebSocketPool.close(); },
+    prepareSystemPromptOverridesUpdate: (next) => systemPromptRegistry.prepareReplaceOverrides(next),
+    prepareToolControlsUpdate: (next) => prepareToolControlsRuntimeUpdate(next),
+    prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
+    prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
+    onCodexSubscriptionUpdated: (refs) => {
+      if (refs) codexWebSocketPool.closeCredentialRefs(refs);
+      else codexWebSocketPool.close();
+    },
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
     resolveRuntimeModels: (next) => resolveModelsConfig(next, secretVault).then((value) => {
       if (!value) throw new Error('models 未配置');
       return value;
-    }),
-  }); sessionAutomationFlagSource.attachRefresh(sharedConfigRefresher.refreshIfChanged);
+    }), ...configIdentityAssembly.modelResolverHooks,
+  });
+  sessionAutomationFlagSource.attachRefresh(sharedConfigRefresher.refreshIfChanged);
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
     userStore,
@@ -1612,7 +1631,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       providerOptions,
       { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
     ),
-    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => { sharedConfigRefresher.refreshIfChanged(); rawRuntimeConfig.toolControls = config.toolControls; },
+    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true),
     agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
@@ -1629,7 +1648,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     ...createOrgAgentChannelPolicyRuntimeOptions(orgGroupAgentStore, agentDwsAccountStore, orgAgentStore, userStore, membershipStore, assignmentStore),
     environmentStore,
-    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
+    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
@@ -1761,6 +1780,20 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('RawRuntime'),
   };
   const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
+  prepareToolControlsRuntimeUpdate = createToolControlsRuntimeUpdatePreparer(rawRuntimeConfig);
+  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({
+    target: rawRuntimeConfig,
+    secretVault,
+    logger: serverLogger,
+  });
+  prepareSttRuntimeUpdate = createSttRuntimeUpdatePreparer({
+    target: rawRuntimeConfig,
+    webChannelTarget: voiceTranscriptionOptions,
+    secretVault,
+  }); const refreshVoiceTranscriptionConfig = createVoiceTranscriptionConfigRefresher({ config, secretVault, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true), prepareSttUpdate: prepareSttRuntimeUpdate });
+  if (!await sharedConfigRefresher.refreshIfChanged(true)) {
+    throw new Error('共享配置启动对齐失败');
+  }
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };
@@ -1768,11 +1801,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     config.imageGenTools = imageGenTools; const resolved = await resolveImageGenToolsConfig(imageGenTools, secretVault);
     if (resolved) rawRuntimeConfig.imageGenTools = resolved; else delete rawRuntimeConfig.imageGenTools;
   };
-  const validateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => { await resolveSttRuntimeConfig(stt, secretVault); };
-  const updateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => {
-    config.stt = stt; const resolved = await resolveSttRuntimeConfig(stt, secretVault);
-    if (resolved.audioTranscribeConfig) rawRuntimeConfig.audioTranscribeTools = resolved.audioTranscribeConfig;
-    else delete rawRuntimeConfig.audioTranscribeTools;
+  const validateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => { await resolveSttRuntimeConfig(stt, secretVault); }; const updateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => {
+    const commit = await prepareSttRuntimeUpdate(stt); commit();
+    if (stt) config.stt = stt; else delete config.stt;
   };
   const updateMemoryIndexConfig = async (
     memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined,
@@ -2518,9 +2549,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs, titleModelAdapterFactory,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
-    sttConfig: resolvedSttRuntimeConfig.sttConfig,
     voiceTranscriptionService,
-    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret, authEpochAuthority } : { authEnabled: false }),
+    ...(config.auth?.enabled
+      ? { authEnabled: true, jwtSecret: config.auth.jwtSecret, authEpochAuthority }
+      : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
     uploadManager,
@@ -2857,45 +2889,32 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       })
     : undefined;
   return {
-    config,
-    processRole,
-    processCwd,
-    sessionBasePath,
-    agentCwd,
+    config, processRole, processCwd,
+    sessionBasePath, agentCwd,
     sandboxWarmupService, ...(sandboxLifecycleService ? { sandboxLifecycleService } : {}),
-    sharedDir,
-    tenantSkillsRootDir,
-    uploadsDir,
-    uploadManager, voiceTranscriptionService, sessionCatalog,
-    channelManager,
-    dispatchMetricsStore,
-    dingtalkDeps,
-    cronRuntime,
+    sharedDir, tenantSkillsRootDir,
+    uploadsDir, uploadManager, voiceTranscriptionService,
+    sessionCatalog, channelManager, dispatchMetricsStore, dingtalkDeps,
+    cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary,
+    refreshConfigIdentitySummary: configIdentityAssembly.refreshSummary, isPrivateConfigIdentitySummaryCurrent: configIdentityAssembly.isPrivateSummaryCurrent,
+    configRuntimeRecoveryGate: configIdentityAssembly.recoveryGate,
     getMemoryIndexService: () => memoryIndexServiceRef.current,
     getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,
-    memoryIndexShutdown,
-    auditProjectionShutdown,
-    runtimeEventStoreShutdown,
-    mcpClientShutdown,
-    mcpClientManager,
-    secretVault,
-    codexCredentialManager,
-    codexDeviceAuthService,
-    codexWebSocketShutdown: () => codexWebSocketPool.close(), codexWebSocketCredentialShutdown: refs => codexWebSocketPool.closeCredentialRefs(refs),
-    userStore,
-    authEpochAuthority,
-    dwsConnectionStore,
-    dwsAuthFlowService,
-    agentDwsAccountStore,
-    agentDwsMessageStore, orgGroupAgentStore, orgAgentApprovalService: agentDwsRuntime?.approvalService,
+    memoryIndexShutdown, auditProjectionShutdown, runtimeEventStoreShutdown,
+    mcpClientShutdown, mcpClientManager,
+    secretVault, codexCredentialManager, codexDeviceAuthService,
+    codexWebSocketShutdown: () => codexWebSocketPool.close(),
+    codexWebSocketCredentialShutdown: refs => codexWebSocketPool.closeCredentialRefs(refs),
+    userStore, authEpochAuthority,
+    dwsConnectionStore, dwsAuthFlowService,
+    agentDwsAccountStore, agentDwsMessageStore,
+    orgGroupAgentStore, orgAgentApprovalService: agentDwsRuntime?.approvalService,
     agentDwsAuthFlowService: agentDwsRuntime?.authFlowService, agentDwsMessageRouter: agentDwsRuntime?.messageRouter,
     dwsPersonalEventGateway: agentDwsRuntime?.eventGateway, agentDwsContextPolicyUpdated: agentDwsRuntime?.onContextPolicyUpdated,
     agentDwsGroupBindingUpdated: agentDwsRuntime?.onGroupBindingUpdated,
     agentDwsEnabledChanged: agentDwsRuntime?.onEnabledChanged, notionAuthFlowService,
     isOrgAgentRuntimeV2Ready: agentDwsRuntime?.isOrgAgentRuntimeV2Ready,
-    getNotionConnection,
-    disconnectNotionConnection,
-    googleWorkspaceOAuthService,
+    getNotionConnection, disconnectNotionConnection, googleWorkspaceOAuthService,
     notionAuthFlowShutdown: notionAuthFlowService ? () => notionAuthFlowService?.stop() : undefined,
     contextPlaneShutdown,
     dwsAuthKeepaliveShutdown: dwsAuthKeepaliveService || dwsAuthFlowService || agentDwsRuntime
@@ -2905,49 +2924,33 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           await agentDwsRuntime?.stop();
         }
       : undefined,
-    feishuConnectionStore,
-    feishuAuthFlowService,
+    feishuConnectionStore, feishuAuthFlowService,
     feishuAuthKeepaliveShutdown: feishuAuthKeepaliveService || feishuAuthFlowService
       ? () => {
           feishuAuthFlowService?.stop();
           feishuAuthKeepaliveService?.stop();
         }
       : undefined,
-    tenantStore,
-    getTenantMemoryFeatureStatus,
-    agentStore,
-    skillConfigStore,
-    mcpConfigStore,
-    connectorConnectionStore,
-    aliyunConnectorService,
-    mcpOAuthService,
-    signupConfigStore,
-    egressConfigStore,
-    refreshEgressProxyCredential,
-    groupStore,
-    authMiddleware,
-    titleGeneratorConfigs, titleModelAdapterFactory,
-    refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
-    updateModelsConfig,
+    tenantStore, getTenantMemoryFeatureStatus,
+    agentStore, skillConfigStore, mcpConfigStore,
+    connectorConnectionStore, aliyunConnectorService, mcpOAuthService,
+    signupConfigStore, egressConfigStore, refreshEgressProxyCredential,
+    groupStore, authMiddleware,
+    titleGeneratorConfigs, titleModelAdapterFactory, defaultTitleModel: titleGeneratorDefaultModel,
+    refreshSharedConfig: sharedConfigRefresher.refreshIfChanged, refreshVoiceTranscriptionConfig, updateModelsConfig,
+    ...(configIdentityAssembly.modelResolverHooks.validateConfigReload ? { validateSharedConfigCandidate: configIdentityAssembly.modelResolverHooks.validateConfigReload } : {}),
+    invalidateSharedConfigIdentity: configIdentityAssembly.invalidate, notifySharedConfigChanged: configIdentityAssembly.modelResolverHooks.onConfigReloaded, acknowledgeSharedConfigApplied: sharedConfigRefresher.acknowledgeConfigApplied, acknowledgeRecoveryConfigApplied: sharedConfigRefresher.acknowledgeRecoveryConfigApplied, prepareSharedConfigIdentityPublication: configIdentityAssembly.prepareRecoveryPublication,
     orgAgentStore,
     backgroundTasks: rawRuntimeConfig.backgroundTasks,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
-    guardrailEventStore,
-    messageFeedbackStore,
-    appealStore,
+    guardrailEventStore, messageFeedbackStore, appealStore,
     taskboardService, taskboardExecutionStore: taskboardStoreService,
     taskboardExecutionService: taskboardExecutionCoordinator,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => { guardrailModelConfigs = next; },
-    agentOptionsConfig,
-    tokenUsageStore,
-    webPushService: runtimeWebPush.service,
-    billingService,
-    governanceAuditStore,
-    membershipStore,
-    entitlementStore,
-    directoryGroupStore,
-    oauthGrantStore,
+    agentOptionsConfig, tokenUsageStore,
+    webPushService: runtimeWebPush.service, billingService,
+    governanceAuditStore, membershipStore, entitlementStore, directoryGroupStore, oauthGrantStore,
     assignmentStore, contextStore, contextSourceAuthorizationRegistry, derivedContextStore, credentialStore, connectorCatalogStore,
     environmentStore,
     agentResourceStore,
@@ -2956,23 +2959,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     governanceChangeJobStore, governanceChangePlanner, governanceMigrationControlStore,
     governanceWriteGate, governanceShadowComparator, contentAccessGrantStore,
     governanceProjectionOutboxStore, governanceProjectionReconciler,
-    resourceReferenceStore,
-    credentialBroker,
-    flushGovernanceShadowProjections,
-    runtimeAuditQuery,
-    runtimeRunStore: pgRunStore,
-    runtimeSchedulerCapacity,
+    resourceReferenceStore, credentialBroker, flushGovernanceShadowProjections,
+    runtimeAuditQuery, runtimeRunStore: pgRunStore, runtimeSchedulerCapacity,
     ...(runtimeAdmissionGuard
       ? { getRuntimeAdmissionSnapshot: () => runtimeAdmissionGuard!.getSnapshot() } : {}),
     runtimePerformanceSnapshot,
     runtimeSessionProjectionStore: pgSessionProjectionStore,
-    sessionReadStateStore: sessionReadStateStore!,
-    runtimeToolInvocationStore: pgToolInvocationStore,
+    sessionReadStateStore: sessionReadStateStore!, runtimeToolInvocationStore: pgToolInvocationStore,
     runtimeHandStore: pgHandStore,
-    systemMetricsStore,
-    systemMetricsCollector,
-    alertStateStore,
-    alertNotifier,
+    systemMetricsStore, systemMetricsCollector, alertStateStore, alertNotifier,
     runtimePgEventStore: pgEventStore,
     sessionAutomationStore,
     sessionAutomationCommandService,

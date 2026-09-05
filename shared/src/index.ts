@@ -343,6 +343,14 @@ export type {
   ReleaseManifestV2,
   CanonicalJsonValue,
 } from './schemas/releaseManifest';
+// Release-bound Config Identity（TASK-318）：根入口仅导出类型，运行时 schema 按需直引，避免污染 Web 首屏。
+export type {
+  ConfigIdentityStatus,
+  ConfigIdentityVersionResolution,
+  ConfigIdentityUnverifiableReason,
+  ConfigIdentitySide,
+  ConfigIdentitySummary,
+} from './schemas/configIdentity';
 export type { ResolvedScenarioSlug } from './security/projectWorkflowPublic';
 export {
   cronWizardSubmitSchema,

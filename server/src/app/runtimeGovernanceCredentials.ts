@@ -11,6 +11,7 @@ import {
 import type { ResolvedWebToolsConfig } from '../agent/webToolProvider.js';
 import type { WebSearchProviderConfig } from '../agent/web/searchProviderTypes.js';
 import type { ResolvedImageGenToolsConfig } from '../agent/imageGenToolProvider.js';
+import { CredentialResolutionError } from '../security/credentialResolutionError.js';
 import {
   installRuntimeStagingEgressBootstrap,
   type RuntimeStagingEgressBootstrapOptions,
@@ -88,10 +89,8 @@ export async function initializeRuntimeGovernanceCredentials(
           userId: '__system__',
           scopes: ['secret:client_daemon:read'],
         });
-      } catch (err) {
-        throw new Error(
-          `clientDaemon.authTokenRef "${cd.authTokenRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-        );
+      } catch {
+        throw new CredentialResolutionError('clientDaemon.authTokenRef');
       }
     }
     return cd.authToken;
@@ -126,10 +125,8 @@ export async function initializeRuntimeGovernanceCredentials(
         return undefined;
       }
       return { appId, appSecret };
-    } catch (err) {
-      serverLogger.warn(
-        `Feishu connector disabled: app secret resolution failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    } catch {
+      serverLogger.warn('Feishu connector disabled: app secret resolution failed');
       return undefined;
     }
   })();
@@ -216,10 +213,8 @@ export async function resolveModelsConfig(
           scopes: ['secret:models:read'],
         });
         return { ...group, apiKey };
-      } catch (error) {
-        throw new Error(
-          `models.${group.id}.apiKeyRef 解析失败: ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        throw new CredentialResolutionError('models.groups[].apiKeyRef');
       }
     })),
   };
@@ -240,17 +235,15 @@ export async function resolveMemoryIndexConfig(
       ...memoryIndex,
       embedding: { ...memoryIndex.embedding, apiKey },
     };
-  } catch (error) {
-    throw new Error(
-      `memory.index.embedding.apiKeyRef 解析失败: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  } catch {
+    throw new CredentialResolutionError('memory.index.embedding.apiKeyRef');
   }
 }
 
 async function resolveSearchApiKey(
   credential: { apiKey?: string; apiKeyRef?: string },
   secretVault: SecretVault,
-  label: string,
+  label: 'webTools.search.apiKeyRef' | 'webTools.search.global.apiKeyRef',
 ): Promise<string | undefined> {
   if (!credential.apiKeyRef) return credential.apiKey;
   try {
@@ -259,10 +252,8 @@ async function resolveSearchApiKey(
       userId: '__system__',
       scopes: ['secret:web_tools:read'],
     });
-  } catch (err) {
-    throw new Error(
-      `${label} "${credential.apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-    );
+  } catch {
+    throw new CredentialResolutionError(label);
   }
 }
 
@@ -291,10 +282,8 @@ export async function resolveImageGenToolsConfig(
           userId: '__system__',
           scopes: ['secret:image_gen_tools:read'],
         });
-      } catch (err) {
-        throw new Error(
-          `imageGenTools.${key}.apiKeyRef "${apiKeyRef}" 解析失败: ${err instanceof Error ? err.message : String(err)}`,
-        );
+      } catch {
+        throw new CredentialResolutionError(`imageGenTools.${key}.apiKeyRef`);
       }
     }
     resolved[key] = {

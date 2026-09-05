@@ -6,6 +6,7 @@ import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
+import type { ConfigIdentitySummary } from '@agent/shared';
 import type { EffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
 import { isTtsCapabilityEnabled } from '../integrations/tts/capability.js';
 
@@ -25,6 +26,8 @@ export interface HealthRouteOptions {
   getRuntimeAdmissionSnapshot?: () => RuntimeAdmissionSnapshot | undefined;
   /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
   getRuntimeIdentity?: () => RuntimeIdentity;
+  /** TASK-318：只读脱敏配置身份摘要。 */
+  getConfigIdentitySummary?: () => ConfigIdentitySummary | null | Promise<ConfigIdentitySummary | null>;
   getEnvironmentSafetyAttested?: () => boolean;
   /** Non-sensitive effective configuration identity for deployment readback. */
   getEffectiveConfigStatus?: () => EffectiveConfigStatus;
@@ -51,6 +54,19 @@ const ZERO_ACTIVE_RUN_COUNTS: ActiveRunCounts = {
   blocking: 0,
   total: 0,
 };
+
+function buildPublicReleaseIdentity(release: RuntimeIdentity, safetyAttested: boolean) {
+  return {
+    environment: release.environment,
+    releaseId: release.releaseId,
+    releaseSha: release.releaseSha,
+    serverDigest: release.serverDigest,
+    webDigest: release.webDigest,
+    acsOrchestratorDigest: release.acsOrchestratorDigest,
+    acsSandboxImageDigest: release.acsSandboxImageDigest,
+    safetyAttested,
+  };
+}
 
 /**
  * 创建健康检查和配置路由
@@ -101,9 +117,9 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     res.status(200).send('ok');
   });
 
-  // ready：可以接流量才 200（draining / runtime admission paused → 503）。
+  // ready：可以接流量才 200（draining / runtime admission paused / identity unavailable → 503）。
   // 蓝绿部署门禁在新色端口上等它变 200 再切流。warmup 进度随载荷暴露但不
-  // gate ready——skills 物化未完成时 dispatch 路径的版本化同步兜底正确性，
+  // gate ready——skills 物化未完成时，dispatch 路径的版本化同步兜底正确性，
   // 部署脚本自行决定是否等 warmup.state=done 再切流。
   router.get('/healthz/ready', async (_req, res) => {
     const draining = options.getIsDraining?.() ?? false;
@@ -113,6 +129,23 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
     const safetyAttested =
       release?.safetyAttested !== false && (options.getEnvironmentSafetyAttested?.() ?? true);
+    let configIdentity: ConfigIdentitySummary | null | undefined;
+    try {
+      configIdentity = await options.getConfigIdentitySummary?.() ?? undefined;
+    } catch {
+      res.status(503).json({
+        status: 'not_ready',
+        draining,
+        warmup,
+        ...(runtimeAdmission ? { runtimeAdmission } : {}),
+        ...(release ? { release: buildPublicReleaseIdentity(release, safetyAttested) } : {}),
+        error: 'config_identity_unavailable',
+      });
+      return;
+    }
+    // 新版 release 已绑定 expected 时，readiness 直接把一致性作为门禁；legacy 未绑定
+    // expected 仍兼容。摘要本身只走平台管理员 API / 私有运行态快照，不进匿名响应。
+    const configIdentityReady = !configIdentity?.expected || configIdentity.status === 'consistent';
     let integrationV3: IntegrationV3HealthStatus | undefined;
     try {
       integrationV3 = await options.getIntegrationV3Health?.();
@@ -132,13 +165,14 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
       return;
     }
     const releaseReady = integrationV3?.releaseReady !== false;
+    const ready = !draining && runtimeReady && releaseReady && safetyAttested && configIdentityReady;
     const effectiveConfig = options.getEffectiveConfigStatus?.();
-    res.status(draining || !runtimeReady || !releaseReady || !safetyAttested ? 503 : 200).json({
-      status: draining ? 'draining' : runtimeReady && releaseReady && safetyAttested ? 'ok' : 'not_ready',
+    res.status(ready ? 200 : 503).json({
+      status: draining ? 'draining' : ready ? 'ok' : 'not_ready',
       draining,
       warmup,
       ...(runtimeAdmission ? { runtimeAdmission } : {}),
-      ...(release ? { release: { ...release, safetyAttested } } : {}),
+      ...(release ? { release: buildPublicReleaseIdentity(release, safetyAttested) } : {}),
       ...(effectiveConfig ? {
         configSchemaVersion: effectiveConfig.configSchemaVersion,
         effectiveConfigFingerprint: effectiveConfig.effectiveConfigFingerprint,

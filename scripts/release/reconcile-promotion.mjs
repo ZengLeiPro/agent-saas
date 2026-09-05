@@ -115,18 +115,28 @@ export function reconcilePromotion(input) {
     };
   }
   if (matrixEquals(observed, target)) {
-    return { outcome: 'completed', reason: 'all components match the Manifest target' };
-  }
-  if (input.externalSideEffects === 'unknown') {
+    if (input.configIdentityConfirmed !== true) {
+      return {
+        outcome: 'needs_human',
+        reason:
+          'component convergence lacks complete ConfigIdentity and trusted identity confirmation',
+      };
+    }
     return {
-      outcome: 'needs_human',
-      reason: 'promotion has non-reversible or unknown side effects',
+      outcome: 'completed',
+      reason: 'all components match the Manifest target with confirmed ConfigIdentity',
     };
   }
   if (matrixEquals(observed, before)) {
     return {
       outcome: 'failed_before_change',
       reason: 'no production component changed before the failure',
+    };
+  }
+  if (input.externalSideEffects === 'unknown') {
+    return {
+      outcome: 'needs_human',
+      reason: 'promotion has non-reversible or unknown side effects',
     };
   }
   return {

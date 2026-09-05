@@ -1,6 +1,7 @@
 import type { AppConfig, SttPricingConfig } from '../app/config.js';
 import type { ResolvedAudioTranscribeConfig } from '../agent/audioTranscribeToolProvider.js';
 import type { SttConfig } from '../integrations/stt/sttClient.js';
+import { CredentialResolutionError } from '../security/credentialResolutionError.js';
 import type { SecretVault } from '../security/secretVault.js';
 
 const DEFAULT_BUCKET = 'ky-azeroth-upload';
@@ -94,7 +95,7 @@ export async function resolveSttRuntimeConfig(
 async function resolveCredential(
   inlineValue: string | undefined,
   ref: string | undefined,
-  field: string,
+  field: 'apiKeyRef' | 'ossAccessKeyIdRef' | 'ossAccessKeySecretRef',
   vault: SecretVault,
 ): Promise<string | undefined> {
   if (ref) {
@@ -104,10 +105,8 @@ async function resolveCredential(
         userId: '__system__',
         scopes: ['secret:stt:read'],
       });
-    } catch (error) {
-      throw new Error(
-        `stt.${field} "${ref}" 解析失败: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      throw new CredentialResolutionError(`stt.${field}`);
     }
   }
   return inlineValue?.trim() ? inlineValue : undefined;

@@ -153,6 +153,7 @@ export class SystemPromptRegistry {
   private readonly sharedDir: string;
   private overrides: SystemPromptOverrides;
 
+
   constructor(sharedDir: string, overrides: SystemPromptOverrides = {}) {
     this.sharedDir = sharedDir;
     this.definitions = new Map(DEFINITIONS_META.map((meta) => [meta.id, meta]));
@@ -176,8 +177,15 @@ export class SystemPromptRegistry {
     });
   }
 
+  prepareReplaceOverrides(overrides: SystemPromptOverrides): () => void {
+    const normalized = normalizeOverrides(overrides);
+    return () => {
+      this.overrides = normalized;
+    };
+  }
+
   replaceOverrides(overrides: SystemPromptOverrides): void {
-    this.overrides = normalizeOverrides(overrides);
+    this.prepareReplaceOverrides(overrides)();
   }
 
   private getDefault(id: SystemPromptId): string {

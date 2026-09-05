@@ -4,10 +4,30 @@ import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 
 const RELEASE_ID_PATTERN = /^rc-[0-9]{8}-[0-9]{2,}$/u;
 
-export function buildCompatibilityAppEnvironment({ identity, releaseId, sourceSha, serverDigest }) {
+export function buildCompatibilityAppEnvironment({
+  identity,
+  releaseId,
+  sourceSha,
+  serverDigest,
+  configIdentityDigest,
+  configIdentitySchemaVersion = 1,
+  configIdentityCredentialVersionDigest,
+}) {
   if (!RELEASE_ID_PATTERN.test(releaseId ?? '')) throw new Error('Release ID is invalid');
   if (!SHA_PATTERN.test(sourceSha ?? '')) throw new Error('Source SHA must be complete');
   if (!DIGEST_PATTERN.test(serverDigest ?? '')) throw new Error('Server digest is invalid');
+  if (!DIGEST_PATTERN.test(configIdentityDigest ?? '')) {
+    throw new Error('Config identity digest is invalid');
+  }
+  if (!Number.isSafeInteger(configIdentitySchemaVersion) || configIdentitySchemaVersion <= 0) {
+    throw new Error('Config identity schema version is invalid');
+  }
+  if (
+    configIdentityCredentialVersionDigest !== undefined &&
+    !DIGEST_PATTERN.test(configIdentityCredentialVersionDigest)
+  ) {
+    throw new Error('Config identity credential version digest is invalid');
+  }
   const webDigest = identity?.components?.web?.artifactDigest;
   const acsOrchestratorDigest = identity?.components?.acs?.orchestratorArtifactDigest;
   const acsSandboxImageDigest = identity?.components?.acs?.sandboxImageDigest;
@@ -25,6 +45,14 @@ export function buildCompatibilityAppEnvironment({ identity, releaseId, sourceSh
     AGENT_SAAS_WEB_DIGEST: webDigest,
     AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: acsOrchestratorDigest,
     AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: acsSandboxImageDigest,
+    AGENT_SAAS_CONFIG_IDENTITY_DIGEST: configIdentityDigest,
+    AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: String(configIdentitySchemaVersion),
+    ...(configIdentityCredentialVersionDigest
+      ? {
+          AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST:
+            configIdentityCredentialVersionDigest,
+        }
+      : {}),
   };
 }
 
@@ -56,6 +84,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     'release-id',
     'sha',
     'server-digest',
+    'config-identity-digest',
   ];
   if (required.some((name) => !options[name])) {
     throw new Error(`Missing required option: ${required.find((name) => !options[name])}`);
@@ -65,6 +94,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     releaseId: options['release-id'],
     sourceSha: options.sha,
     serverDigest: options['server-digest'],
+    configIdentityDigest: options['config-identity-digest'],
+    configIdentitySchemaVersion: options['config-identity-schema-version']
+      ? Number(options['config-identity-schema-version'])
+      : 1,
+    ...(options['config-identity-credential-version-digest']
+      ? {
+          configIdentityCredentialVersionDigest:
+            options['config-identity-credential-version-digest'],
+        }
+      : {}),
   });
   writeEnvironment(options['api-output'], environment);
   writeEnvironment(options['worker-output'], environment);

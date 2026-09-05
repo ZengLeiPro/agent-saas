@@ -348,6 +348,157 @@ describe('platform observability router', () => {
     expect(String(runSql)).toContain('sandboxCleanupCarrier');
     expect(String(sessionSql)).toContain("AT TIME ZONE 'Asia/Shanghai'");
   });
+
+  // ── TASK-318：overview snapshot 的 configIdentity 字段 ──
+
+  const consistentIdentity: import('@agent/shared').ConfigIdentitySummary = {
+    schemaVersion: 1,
+    status: 'consistent',
+    expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+    observed: {
+      schemaVersion: 1,
+      digest: `sha256:${'a'.repeat(64)}`,
+      credentialVersionDigest: null,
+      versionResolution: 'resolved',
+      secretRefCount: 0,
+    },
+    releaseId: 'rc-20260829-01',
+    lastObservedAt: '2026-08-29T12:00:00.000Z',
+  };
+
+  it('overview snapshot 等待异步 configIdentity 刷新，一致时不产生待关注项', async () => {
+    await withApp(
+      PLATFORM_ADMIN,
+      {
+        getConfigIdentitySummary: async () => consistentIdentity,
+      },
+      async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/admin/overview/snapshot`);
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as any;
+        expect(body.configIdentity).toEqual(consistentIdentity);
+        expect(
+          body.attention.filter((item: any) => item.kind.startsWith('config_identity')),
+        ).toEqual([]);
+      },
+    );
+  });
+
+  it('configIdentity drifted -> snapshot 返回 drift 并追加高优待关注项', async () => {
+    const drifted: import('@agent/shared').ConfigIdentitySummary = {
+      ...consistentIdentity,
+      status: 'drifted',
+      observed: {
+        schemaVersion: 1,
+        digest: `sha256:${'b'.repeat(64)}`,
+        credentialVersionDigest: null,
+        versionResolution: 'resolved',
+        secretRefCount: 0,
+      },
+      lastChangedAt: '2026-08-29T12:30:00.000Z',
+    };
+    await withApp(
+      PLATFORM_ADMIN,
+      {
+        getConfigIdentitySummary: () => drifted,
+      },
+      async (baseUrl) => {
+        const body = (await (await fetch(`${baseUrl}/api/admin/overview/snapshot`)).json()) as any;
+        expect(body.configIdentity.status).toBe('drifted');
+        const attention = body.attention.filter(
+          (item: any) => item.kind === 'config_identity_drift',
+        );
+        expect(attention).toHaveLength(1);
+        expect(attention[0].severity).toBe('high');
+        expect(attention[0].occurredAt).toBe('2026-08-29T12:30:00.000Z');
+      },
+    );
+  });
+
+  it('configIdentity unverifiable -> 返回不可验证并追加待关注项', async () => {
+    const unverifiable: import('@agent/shared').ConfigIdentitySummary = {
+      ...consistentIdentity,
+      status: 'unverifiable',
+      reason: 'expected_not_bound',
+      expected: undefined,
+    };
+    await withApp(
+      PLATFORM_ADMIN,
+      {
+        getConfigIdentitySummary: () => unverifiable,
+      },
+      async (baseUrl) => {
+        const body = (await (await fetch(`${baseUrl}/api/admin/overview/snapshot`)).json()) as any;
+        expect(body.configIdentity.status).toBe('unverifiable');
+        expect(
+          body.attention.some((item: any) => item.kind === 'config_identity_unverifiable'),
+        ).toBe(true);
+      },
+    );
+  });
+
+  it('后端未接入（无 getConfigIdentitySummary）时 snapshot.configIdentity 为 null 且不产生待关注项', async () => {
+    await withApp(PLATFORM_ADMIN, {}, async (baseUrl) => {
+      const body = (await (await fetch(`${baseUrl}/api/admin/overview/snapshot`)).json()) as any;
+      expect(body.configIdentity).toBeNull();
+      expect(body.attention.filter((item: any) => item.kind.startsWith('config_identity'))).toEqual(
+        [],
+      );
+    });
+  });
+
+  it('configIdentity 载荷不合法时降级为 null 并追加告警待关注项，而不是 500', async () => {
+    await withApp(
+      PLATFORM_ADMIN,
+      {
+        // 旧 schema / 缺字段 / 伪造结构：wire 契约校验必须拒绝。
+        getConfigIdentitySummary: () => ({ schemaVersion: 99, status: 'weird' }) as any,
+      },
+      async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/admin/overview/snapshot`);
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as any;
+        expect(body.configIdentity).toBeNull();
+        const attention = body.attention.filter(
+          (item: any) => item.kind === 'config_identity_invalid_payload',
+        );
+        expect(attention).toHaveLength(1);
+        expect(attention[0].title).toContain('配置身份');
+      },
+    );
+  });
+
+  it('非 admin 用户访问 overview snapshot -> 403，看不到 configIdentity', async () => {
+    const notAdmin = { ...PLATFORM_ADMIN, role: 'user' } as any;
+    await withApp(
+      notAdmin,
+      {
+        getConfigIdentitySummary: async () => consistentIdentity,
+      },
+      async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/admin/overview/snapshot`);
+        expect(res.status).toBe(403);
+      },
+    );
+  });
+
+  it('configIdentity 摘要绝不含 secret / 路径 / 连接串（wire 契约禁入）', async () => {
+    const withSecretProbe = {
+      ...consistentIdentity,
+      plaintextSecret: 'plaintext-secret-probe',
+    };
+    await withApp(
+      PLATFORM_ADMIN,
+      {
+        getConfigIdentitySummary: () => withSecretProbe as any,
+      },
+      async (baseUrl) => {
+        const body = (await (await fetch(`${baseUrl}/api/admin/overview/snapshot`)).json()) as any;
+        expect(body.configIdentity).toBeNull();
+        expect(JSON.stringify(body)).not.toContain('plaintext-secret-probe');
+      },
+    );
+  });
 });
 
 function sessionRecord(input: { tenantId: string }): RuntimeSessionProjectionRecord {

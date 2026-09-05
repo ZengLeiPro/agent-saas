@@ -7,6 +7,14 @@ on:
         description: '发版说明'
         required: false
         type: string
+      production_config_identity_stage:
+        description: 'Production ConfigIdentity 基线协议（首次升级前仅可显式选择 legacy）'
+        required: true
+        type: choice
+        default: steady-state
+        options:
+          - steady-state
+          - legacy-pre-upgrade-baseline
 
 permissions:
   contents: write
@@ -50,8 +58,23 @@ jobs:
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       RELEASE_EVIDENCE_SCHEMA_VERSION: '2'
       RELEASE_SHA: ${{ github.sha }}
+      PRODUCTION_CONFIG_IDENTITY_STAGE: ${{ inputs.production_config_identity_stage }}
 
     steps:
+      - name: Select auditable Production ConfigIdentity baseline protocol
+        run: |
+          set -euo pipefail
+          case "$PRODUCTION_CONFIG_IDENTITY_STAGE" in
+            steady-state|legacy-pre-upgrade-baseline) ;;
+            *) echo 'Unknown Production ConfigIdentity baseline protocol' >&2; exit 1 ;;
+          esac
+          {
+            echo '### Production ConfigIdentity baseline protocol'
+            echo
+            echo "- Selected stage: \`$PRODUCTION_CONFIG_IDENTITY_STAGE\`"
+            echo '- Default remains `steady-state`; the legacy stage accepts only complete absence from both observers.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Verify Evidence Writer configuration
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
@@ -322,7 +345,7 @@ jobs:
             scripts/release/read-runtime-identity.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
           ssh -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/read-production-state.mjs' --output '$remote/production.json' >/dev/null"
+            "node '$remote/read-production-state.mjs' --config-identity-stage '$PRODUCTION_CONFIG_IDENTITY_STAGE' --output '$remote/production.json' >/dev/null"
           scp -i ~/.ssh/production_evidence_key "$ECS_USER@$ECS_HOST:$remote/production.json" \
             "$RUNNER_TEMP/production.json"
           test "$(jq -r .environment "$RUNNER_TEMP/production.json")" = production
@@ -811,17 +834,19 @@ jobs:
       - name: Deploy exact Staging API, Worker and ACS artifacts
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
+          # The deploy gate imports the shared strict private ConfigIdentity contract.
           scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-staging-release.sh scripts/release/verify-installed-release.mjs \
+            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/artifact-lib.mjs \
             daemon-packaging/systemd/agent-saas-server-staging.service.template \
             daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template \
             daemon-packaging/systemd/agent-saas-acs-orchestrator-staging.service.template \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
-            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
+            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote/deploy-staging-release.sh'"
 
       - name: Publish exact Staging Web artifact last
         run: |
@@ -863,7 +888,7 @@ jobs:
       - name: Verify migrations and isolated Integration fixture
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           scp -i ~/.ssh/staging_key scripts/staging/ensure-integration-fixture.mjs \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
@@ -882,7 +907,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${STAGING_ISOLATION_EVIDENCE_URL:?Missing staging variable}"
-          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           scp -i ~/.ssh/staging_key infra/staging/resource-plan.json \
             scripts/staging/collect-isolation-host.mjs \
             scripts/staging/publish-isolation-evidence.mjs \

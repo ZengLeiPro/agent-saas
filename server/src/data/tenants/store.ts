@@ -148,6 +148,8 @@ function nextUpdatedAt(previous: string): string {
 
 export class TenantStore {
   private tenants: TenantRecord[] = [];
+  /** 文件一旦成功读取/写入，后续消失必须按存储故障处理，不能降级成空租户。 */
+  private sourceWasPresent = false;
   private readonly filePath: string;
   private readonly options: TenantStoreOptions;
   private postPersistObserver?: () => void;
@@ -162,6 +164,7 @@ export class TenantStore {
   private load(strict = false): void {
     try {
       if (!existsSync(this.filePath)) {
+        if (strict && this.sourceWasPresent) throw new Error('tenants file disappeared after a successful load');
         mkdirSync(dirname(this.filePath), { recursive: true });
         this.tenants = [];
         return;
@@ -172,9 +175,11 @@ export class TenantStore {
         throw new Error('Invalid tenants file structure');
       }
       this.tenants = data.tenants;
+      this.sourceWasPresent = true;
     } catch (err) {
       authLogger.warn(`Failed to load tenants from ${this.filePath}: ${err}`);
       if (strict) {
+        // 严格读取不得把解析失败降级成空租户（空租户会放开模型白名单）。
         throw storeUnavailable(
           `Failed to read tenant store: ${err instanceof Error ? err.message : String(err)}`,
           'TENANT_STORE_READ_FAILED',
@@ -185,13 +190,34 @@ export class TenantStore {
     }
   }
 
-  /** 重新读取共享 tenants.json，供多进程后台执行器刷新组织开关。 */
+  /** 严格重读共享 tenants.json；损坏时保留旧内存并让调用方 fail closed。 */
   reload(): void {
-    this.load();
+    this.load(true);
   }
 
+  /** 解析精确文本快照但不改内存；调用方完成版本复核后再 commit，失败可 rollback。 */
+  prepareReloadSnapshot(raw: string): { commit: () => void; rollback: () => void } {
+    try {
+      const data: TenantsFileData = JSON.parse(raw);
+      if (data.version !== 1 || !Array.isArray(data.tenants)) throw new Error('Invalid tenants file structure');
+      const previousTenants = this.tenants;
+      const previousSourceWasPresent = this.sourceWasPresent;
+      return {
+        commit: () => { this.tenants = data.tenants; this.sourceWasPresent = true; },
+        rollback: () => { this.tenants = previousTenants; this.sourceWasPresent = previousSourceWasPresent; },
+      };
+    } catch (error) {
+      throw storeUnavailable(`Failed to read tenant store snapshot: ${error instanceof Error ? error.message : String(error)}`, 'TENANT_STORE_READ_FAILED', error);
+    }
+  }
+
+  reloadSnapshot(raw: string): void {
+    this.prepareReloadSnapshot(raw).commit();
+  }
+
+  /** 所有普通读取都严格重读；磁盘损坏时禁止降级为空租户。 */
   private refreshForRead(): void {
-    this.load();
+    this.load(true);
   }
 
   setPostPersistObserver(observer: (() => void) | undefined): void {
@@ -205,6 +231,7 @@ export class TenantStore {
     try {
       await writeFile(tmpPath, JSON.stringify(data, null, 2), { mode: 0o600 });
       await rename(tmpPath, this.filePath);
+      this.sourceWasPresent = true;
     } catch (err) {
       await unlink(tmpPath).catch(() => {});
       throw storeUnavailable('Failed to persist tenant store', 'TENANT_STORE_WRITE_FAILED', err);

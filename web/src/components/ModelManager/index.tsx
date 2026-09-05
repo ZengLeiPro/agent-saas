@@ -115,7 +115,7 @@ type EditableMemoryIndexConfig = {
 };
 
 type AdminModelsResponse = TitleGeneratorAdminFields & {
-  models: EditableModelsConfig;
+  revision: string; models: EditableModelsConfig;
   memoryIndex: EditableMemoryIndexConfig | null;
   publicModelList: ModelList;
 };
@@ -252,7 +252,7 @@ export function ModelManager() {
   // 只读平台 admin：保存并生效与分组/模型的增删等 draft 写操作全部 disabled
   const { platformReadOnly } = useAuth();
   const [models, setModels] = useState<EditableModelsConfig | null>(null);
-  const [memoryIndex, setMemoryIndex] = useState<EditableMemoryIndexConfig | null>(null);
+  const [revision, setRevision] = useState(""); const [memoryIndex, setMemoryIndex] = useState<EditableMemoryIndexConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -299,8 +299,8 @@ export function ModelManager() {
     try {
       const res = await authFetch("/api/admin/models");
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string };
-      if (!res.ok || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
-      setModels(data.models);
+      if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
+      setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
       titleSettings.applyResponse(data as AdminModelsResponse);
       setSelectedPanel((prev) => {
@@ -655,15 +655,15 @@ export function ModelManager() {
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      const payload = buildPayload();
+      const payload = buildPayload(); if (!revision) throw new Error("配置版本尚未加载，请先刷新");
       const res = await authFetch("/api/admin/models", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, expectedRevision: revision }),
       });
       const data = (await res.json().catch(() => ({}))) as Partial<AdminModelsResponse> & { error?: string };
-      if (!res.ok || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
-      setModels(data.models);
+      if (!res.ok || !data.revision || !data.models || !data.titleGenerator || !data.titleSystemPrompt) throw new Error(data.error || `HTTP ${res.status}`);
+      setRevision(data.revision); setModels(data.models);
       setMemoryIndex(data.memoryIndex ?? null);
       titleSettings.applyResponse(data as AdminModelsResponse);
       hydrateAdvancedText(data.models);
@@ -675,7 +675,7 @@ export function ModelManager() {
     } finally {
       setSaving(false);
     }
-  }, [buildPayload, hydrateAdvancedText, titleSettings.applyResponse]);
+  }, [buildPayload, hydrateAdvancedText, revision, titleSettings.applyResponse]);
 
   if (loading && !models) {
     return <div className="flex flex-1 items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;

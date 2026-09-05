@@ -28,7 +28,7 @@ import {
   queryHandFailures1h,
   type SandboxSummary,
 } from '../runtime/attention.js';
-import { queryPlatformRunHealth } from './platformRunHealth.js';
+import { queryPlatformRunHealth } from './platformRunHealth.js'; import { appendConfigIdentityAttention, type ConfigIdentityPayload } from './configIdentityOverview.js';
 
 const RUN_ID_RE = /^\d{13}-[0-9a-fA-F-]{36}$/;
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
@@ -109,7 +109,7 @@ export interface PlatformObservabilityRouterOptions {
   eventStore?: PgEventStore;
   toolInvocationStore?: PgToolInvocationStore;
   systemMetricsStore?: PgSystemMetricsStore;
-  getDispatchMetrics?: () => DispatchMetricsSnapshot;
+  getDispatchMetrics?: () => DispatchMetricsSnapshot; getConfigIdentitySummary?: () => ConfigIdentityPayload | Promise<ConfigIdentityPayload>;
 }
 
 interface SearchMatch {
@@ -409,7 +409,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         dailyCostThresholdYuan: options.config.alerting?.dailyCostThresholdYuan,
         sandboxes,
         handFailures,
-      });
+      }); const configIdentity = appendConfigIdentityAttention(await options.getConfigIdentitySummary?.(), attention);
 
       res.json({
         generatedAt: new Date().toISOString(),
@@ -425,7 +425,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
           sessionMetaProjection: getSessionMetaProjectionStats(),
           handFailures1h: handFailures.length,
           storage: storageHealth,
-        },
+        }, ...(configIdentity ? { configIdentity } : { configIdentity: null }),
         attention: canReadFinance
           ? attention
           : attention.filter((item) => item.kind !== 'cost_daily_high'),

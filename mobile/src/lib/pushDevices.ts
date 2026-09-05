@@ -137,7 +137,7 @@ export function normalizePushDeviceStatus(body: unknown): PushDeviceStatus {
 async function readError(response: Response, fallback: string): Promise<string> {
   try {
     const body = (await response.json()) as { error?: string; code?: string };
-    if (body.code === 'APNS_NOT_CONFIGURED') return '服务端尚未开启系统推送，暂时无法绑定本机。';
+    if (body.code === 'APNS_NOT_CONFIGURED') return '平台尚未开启系统推送，暂时无法绑定本机。';
     return body.error || fallback;
   } catch {
     return fallback;

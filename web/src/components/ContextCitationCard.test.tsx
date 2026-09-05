@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { ContextCitationCard, contextCitationError, normalizeContextCitationDetail } from './ContextCitationCard';
-import { safeContextCitationUrl } from './ContextCitationDrawer';
+import {
+  contextCitationError,
+  normalizeContextCitationDetail,
+  safeContextCitationUrl,
+} from '@agent/shared';
+import { ContextCitationCard } from './ContextCitationCard';
 import { authFetch } from '@/lib/authFetch';
 
 vi.mock('@/lib/authFetch', () => ({

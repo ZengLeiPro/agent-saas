@@ -3,15 +3,15 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 354195,
+    "startupJsGzipBytes": 351116,
     "startupCssGzipBytes": 34760,
-    "startupJsBrotliBytes": 282574,
+    "startupJsBrotliBytes": 280138,
     "startupCssBrotliBytes": 27533,
-    "largestJsGzipBytes": 354195,
+    "largestJsGzipBytes": 351116,
     "largestCssGzipBytes": 34760,
-    "largestJsBrotliBytes": 282574,
+    "largestJsBrotliBytes": 280138,
     "largestCssBrotliBytes": 27533,
-    "largestJs": "assets/index-DdKf9WSv.js",
+    "largestJs": "assets/index-BaAYw09Y.js",
     "largestCss": "assets/index-Bsod5qDS.css"
   },
   "tolerance": {
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "TASK-395 批次集成 TASK-393、TASK-390、TASK-391：消息去重、治理设置修复与任务会话只读授权进入启动图，组合后启动 JS 增加约 1.1KB Brotli；仍低于 600KB 绝对上限",
-  "updatedAt": "2026-09-04"
+  "reason": "web 改为消费 shared 已下沉的纯函数（零行为变化），删掉约 750 行重复实现，启动 JS 降约 3.1KB gzip / 2.4KB Brotli，据此向下棘紧；CSS 各项未动（本次改动不涉及样式，现有 CSS 与基线的差值本就在 1024B 容差内）",
+  "updatedAt": "2026-09-05"
 }

@@ -14,6 +14,13 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Flag } from 'lucide-react';
+import {
+  GUARDRAIL_APPEAL_PATH,
+  MESSAGE_FEEDBACK_COMMENT_MAX,
+  buildGuardrailAppealPayload,
+  guardrailAppealFailureCopy,
+  guardrailAppealOutcome,
+} from '@agent/shared';
 import { cn } from '@/lib/utils';
 import { authFetch } from '@/lib/authFetch';
 import { useMessageFeedback } from '@/contexts/MessageFeedbackContext';
@@ -94,26 +101,20 @@ export function GuardrailAppealButton({ guardrailEventId }: GuardrailAppealButto
     setSubmitting(true);
     setErrorMsg(null);
     try {
-      const res = await authFetch('/api/appeals', {
+      const res = await authFetch(GUARDRAIL_APPEAL_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          guardrailEventId,
-          ...(reason.trim() ? { appealReason: reason.trim() } : {}),
-        }),
+        body: JSON.stringify(buildGuardrailAppealPayload({ guardrailEventId, appealReason: reason })),
       });
-      // 409 表示同 guardrailEventId 已申诉（幂等）：视为成功状态。
-      if (res.ok || res.status === 409) {
+      // 409 表示同 guardrailEventId 已申诉（幂等）：与 2xx 同样落到已申诉态。
+      const outcome = guardrailAppealOutcome(res.status);
+      if (outcome === 'submitted') {
         markSubmitted(guardrailEventId);
         setOpen(false);
         setReason('');
         return;
       }
-      if (res.status === 503) {
-        setErrorMsg('申诉服务暂不可用');
-        return;
-      }
-      setErrorMsg('提交失败，请稍后重试');
+      setErrorMsg(guardrailAppealFailureCopy(outcome));
     } catch {
       setErrorMsg('网络错误，请稍后重试');
     } finally {
@@ -151,7 +152,7 @@ export function GuardrailAppealButton({ guardrailEventId }: GuardrailAppealButto
             autoComplete="off"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            maxLength={500}
+            maxLength={MESSAGE_FEEDBACK_COMMENT_MAX}
             rows={3}
             placeholder="您认为为什么应该在范围内？（可选）"
             className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:border-foreground/30 focus:ring-0"

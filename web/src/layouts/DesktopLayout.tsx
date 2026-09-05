@@ -501,7 +501,7 @@ export function DesktopLayout(props: LayoutProps) {
 
         {!isOnline && (
           <div className="shrink-0 bg-warning px-4 py-1.5 text-center text-xs font-medium text-foreground">
-            Network disconnected
+            网络未连接
           </div>
         )}
         {connectionState === 'reconnecting' && (

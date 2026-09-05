@@ -5,10 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "./ChatInput";
 
-const authFetchMock = vi.hoisted(() => vi.fn());
+// warmupSessionSandbox 的 URL / method / 转义由 shared sandboxWarmupApi.test.ts 守卫；
+// 这里只关心 ChatInput 的触发时机（每会话首次有效输入一次）。
+const warmupMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/authFetch", () => ({
-  authFetch: authFetchMock,
+vi.mock("@/lib/sessionsApi", () => ({
+  warmupSessionSandbox: warmupMock,
 }));
 
 vi.mock("@/hooks/useVoiceRecorder", () => ({
@@ -50,8 +52,8 @@ function ControlledInput({
 }
 
 beforeEach(() => {
-  authFetchMock.mockReset();
-  authFetchMock.mockResolvedValue(new Response(null, { status: 202 }));
+  warmupMock.mockReset();
+  warmupMock.mockResolvedValue(undefined);
 });
 
 describe("ChatInput Sandbox 预热", () => {
@@ -70,7 +72,7 @@ describe("ChatInput Sandbox 预热", () => {
     await user.type(textarea, "  ");
     fireEvent.keyDown(textarea, { key: "ArrowLeft" });
 
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(warmupMock).not.toHaveBeenCalled();
   });
 
   it("第一次有效输入触发一次，连续输入不重复", async () => {
@@ -80,11 +82,8 @@ describe("ChatInput Sandbox 预热", () => {
 
     await user.type(textarea, "abc");
 
-    expect(authFetchMock).toHaveBeenCalledOnce();
-    expect(authFetchMock).toHaveBeenCalledWith(
-      "/api/sessions/warmup-typing/warmup",
-      { method: "POST" },
-    );
+    expect(warmupMock).toHaveBeenCalledOnce();
+    expect(warmupMock).toHaveBeenCalledWith("warmup-typing");
     expect((textarea as HTMLTextAreaElement).value).toBe("abc");
   });
 
@@ -96,12 +95,8 @@ describe("ChatInput Sandbox 预热", () => {
     fireEvent.change(textarea, { target: { value: "   " } });
     fireEvent.change(textarea, { target: { value: "第二轮" } });
 
-    expect(authFetchMock).toHaveBeenCalledTimes(2);
-    expect(authFetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/sessions/warmup-next-round/warmup",
-      { method: "POST" },
-    );
+    expect(warmupMock).toHaveBeenCalledTimes(2);
+    expect(warmupMock).toHaveBeenNthCalledWith(2, "warmup-next-round");
   });
 
   it("已有草稿继续输入不会冒充空白到有效文本的首字变化", () => {
@@ -110,7 +105,7 @@ describe("ChatInput Sandbox 预热", () => {
 
     fireEvent.change(textarea, { target: { value: "已有草稿继续" } });
 
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(warmupMock).not.toHaveBeenCalled();
     expect((textarea as HTMLTextAreaElement).value).toBe("已有草稿继续");
   });
 
@@ -120,12 +115,12 @@ describe("ChatInput Sandbox 预热", () => {
 
     fireEvent.compositionStart(textarea);
     fireEvent.change(textarea, { target: { value: "中" } });
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(warmupMock).not.toHaveBeenCalled();
 
     fireEvent.compositionEnd(textarea, { data: "中" });
     fireEvent.change(textarea, { target: { value: "中文" } });
 
-    await waitFor(() => expect(authFetchMock).toHaveBeenCalledOnce());
+    await waitFor(() => expect(warmupMock).toHaveBeenCalledOnce());
     expect((textarea as HTMLTextAreaElement).value).toBe("中文");
   });
 
@@ -141,11 +136,8 @@ describe("ChatInput Sandbox 预热", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     fireEvent.change(screen.getByPlaceholderText("输入消息..."), { target: { value: "新" } });
 
-    expect(authFetchMock).toHaveBeenCalledOnce();
-    expect(authFetchMock).toHaveBeenCalledWith(
-      "/api/sessions/warmup-ime-new/warmup",
-      { method: "POST" },
-    );
+    expect(warmupMock).toHaveBeenCalledOnce();
+    expect(warmupMock).toHaveBeenCalledWith("warmup-ime-new");
   });
 
   it("粘贴有效文本可以触发", async () => {
@@ -156,7 +148,7 @@ describe("ChatInput Sandbox 预热", () => {
     await user.click(textarea);
     await user.paste("粘贴内容");
 
-    expect(authFetchMock).toHaveBeenCalledOnce();
+    expect(warmupMock).toHaveBeenCalledOnce();
     expect((textarea as HTMLTextAreaElement).value).toBe("粘贴内容");
   });
 
@@ -171,10 +163,10 @@ describe("ChatInput Sandbox 预热", () => {
       target: { value: "B" },
     });
 
-    expect(authFetchMock).toHaveBeenCalledTimes(2);
-    expect(authFetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/api/sessions/warmup-switch-a/warmup",
-      "/api/sessions/warmup-switch-b/warmup",
+    expect(warmupMock).toHaveBeenCalledTimes(2);
+    expect(warmupMock.mock.calls.map(([id]) => id)).toEqual([
+      "warmup-switch-a",
+      "warmup-switch-b",
     ]);
   });
 
@@ -193,11 +185,11 @@ describe("ChatInput Sandbox 预热", () => {
       target: { value: "第二次" },
     });
 
-    expect(authFetchMock).toHaveBeenCalledOnce();
+    expect(warmupMock).toHaveBeenCalledOnce();
   });
 
   it("warmup API 失败不影响输入和消息发送", async () => {
-    authFetchMock.mockRejectedValueOnce(new Error("network down"));
+    warmupMock.mockRejectedValueOnce(new Error("network down"));
     const user = userEvent.setup();
     const onSend = vi.fn();
     render(<ControlledInput sessionId="warmup-failure" onSend={onSend} />);

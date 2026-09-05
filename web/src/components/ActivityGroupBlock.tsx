@@ -6,181 +6,12 @@ import { ToolBlock, ToolResultBlock } from './ToolBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { RuntimeStatusBlock } from './RuntimeStatusBlock';
 import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
-import { activityStatusIconClass, activityStatusTextClass, formatActivityDuration, type ActivityStatusTone } from './activityStatusStyles';
+import { activityStatusIconClass, activityStatusTextClass, formatActivityDuration } from './activityStatusStyles';
 import { cn } from '@/lib/utils';
-import { POLICY_REJECTION_FAILURE_MESSAGE } from '@agent/shared';
-
-interface GroupSummaryInfo {
-  text: string;
-  tone: ActivityStatusTone;
-  durationMs?: number;
-  progress?: string;
-  active: boolean;
-}
-
-function getRuntimeStatusLabel(status: Extract<MessageItem, { type: 'runtime_status' }>['status']): string {
-  switch (status) {
-    case 'queued':
-      return '排队中';
-    case 'running':
-      return '处理中';
-    case 'waiting_approval':
-      return '待处理';
-    case 'waiting_user':
-      return '待补充';
-    default:
-      return '执行中';
-  }
-}
-
-function isWaitingForUserAction(item: MessageItem): boolean {
-  return item.type === 'runtime_status' && (item.status === 'waiting_approval' || item.status === 'waiting_user');
-}
-
-function isActiveActivity(item: MessageItem): boolean {
-  if (item.type === 'runtime_status') return true;
-  if (item.type === 'thinking') return Boolean(item.streaming);
-  if (item.type === 'subagent') return item.status === 'running';
-  if (item.type === 'tool_use') {
-    if (item.executionStatus === 'running' || item.streaming) return true;
-    return !item.resultReady && item.executionStatus !== 'completed' && item.executionStatus !== 'failed' && item.executionStatus !== 'cancelled';
-  }
-  return false;
-}
-
-function getActiveItemIndex(items: MessageItem[]): number {
-  for (let i = items.length - 1; i >= 0; i--) {
-    if (isWaitingForUserAction(items[i])) return i;
-  }
-  for (let i = items.length - 1; i >= 0; i--) {
-    if (isActiveActivity(items[i])) return i;
-  }
-  return -1;
-}
-
-function getActivityDurationMs(items: MessageItem[]): number | undefined {
-  let total = 0;
-  let hasDuration = false;
-  for (const item of items) {
-    if ((item.type === 'thinking' || item.type === 'tool_use' || item.type === 'subagent') && typeof item.durationMs === 'number') {
-      total += item.durationMs;
-      hasDuration = true;
-    }
-  }
-  return hasDuration ? total : undefined;
-}
+import { selectActivityGroupSummary } from '@agent/shared';
 
 function hasPresentation(item: MessageItem): boolean {
   return (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && !!item.presentation;
-}
-
-function getCompletedGroupTitle(items: MessageItem[]): string {
-  const titles = items.flatMap((item) => (
-    (item.type === 'tool_use' || item.type === 'tool_result' || item.type === 'subagent') && item.presentation?.title
-      ? [item.presentation.title]
-      : []
-  )).filter((title, index, all) => all.indexOf(title) === index);
-  if (titles.length === 0) return '已运行';
-
-  const shown: string[] = [];
-  for (const title of titles) {
-    if (shown.length > 0 && [...shown, title].join('、').length > 42) break;
-    shown.push(title);
-  }
-  return `${shown.join('、')}${shown.length < titles.length ? ' 等' : ''}`;
-}
-
-function getActiveGroupSummary(items: MessageItem[]): GroupSummaryInfo {
-  const index = getActiveItemIndex(items);
-  if (index < 0) {
-    return {
-      text: '处理中',
-      tone: 'active',
-      active: true,
-    };
-  }
-  const item = items[index];
-  const progress = `${index + 1}/${items.length}`;
-
-  if (item.type === 'runtime_status') {
-    if (item.status === 'waiting_approval' || item.status === 'waiting_user') {
-      return {
-        text: getRuntimeStatusLabel(item.status),
-        tone: 'warning',
-        progress,
-        active: false,
-      };
-    }
-    if (item.status === 'queued') {
-      return {
-        text: getRuntimeStatusLabel(item.status),
-        tone: 'pending',
-        progress,
-        active: false,
-      };
-    }
-    return {
-      text: getRuntimeStatusLabel(item.status),
-      tone: 'active',
-      progress,
-      active: true,
-    };
-  }
-
-  if (item.type === 'thinking') {
-    return {
-      text: '思考中',
-      tone: 'active',
-      progress,
-      active: true,
-    };
-  }
-
-  return {
-    text: '执行中',
-    tone: 'active',
-    progress,
-    active: true,
-  };
-}
-
-function getGroupSummary(items: MessageItem[], isActive: boolean, debugMode: boolean): GroupSummaryInfo {
-  if (isActive) return getActiveGroupSummary(items);
-
-  const hasPolicyRejection = items.some((item) => (
-    item.type === 'subagent'
-    && item.failureKind === 'policy_rejection'
-    && item.recoveryAction === 'switch_model'
-  ));
-  if (hasPolicyRejection) {
-    return {
-      text: POLICY_REJECTION_FAILURE_MESSAGE,
-      tone: 'danger',
-      durationMs: getActivityDurationMs(items),
-      active: false,
-    };
-  }
-
-  const cancelledCount = items.filter(item => (
-    (item.type === 'tool_use' && item.executionStatus === 'cancelled')
-    || (item.type === 'subagent' && item.status === 'cancelled')
-  )).length;
-  if (cancelledCount > 0) {
-    return {
-      text: `已取消 ${cancelledCount} 条 · 共 ${items.length} 条`,
-      tone: 'neutral',
-      durationMs: getActivityDurationMs(items),
-      active: false,
-    };
-  }
-
-  // 非调试视图只展示固定状态，不能把自动生成的工具标题误当成业务摘要。
-  return {
-    text: debugMode ? getCompletedGroupTitle(items) : '已运行',
-    tone: 'success',
-    durationMs: getActivityDurationMs(items),
-    active: false,
-  };
 }
 
 function ActivityItem({ item, debugMode = true, rawPresentationMode = debugMode, onSwitchModel }: { item: MessageItem; debugMode?: boolean; rawPresentationMode?: boolean; onSwitchModel?: () => void }) {
@@ -246,7 +77,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
     );
   }
 
-  const summary = getGroupSummary(items, isActive, debugMode);
+  const summary = selectActivityGroupSummary(items, isActive, debugMode);
   const state: AgentActivityState = summary.tone === 'active'
     ? 'running'
     : summary.tone === 'warning'

@@ -1,5 +1,6 @@
 import { memo, useState, type ComponentType } from "react";
 import { ChevronRight, Circle, CircleCheck, CircleX, Copy, ExternalLink, TriangleAlert } from "lucide-react";
+import { PRESENTATION_TONE_TO_ACTIVITY } from "@agent/shared";
 import type {
   BlockAction,
   CalloutBlock,
@@ -18,7 +19,6 @@ import {
   activityStatusBadgeClass,
   activityStatusIconClass,
   activityStatusTextClass,
-  type ActivityStatusTone,
 } from "@/components/activityStatusStyles";
 
 /**
@@ -30,14 +30,8 @@ import {
  * 继续走 MessageItem 已有的消息级懒加载。
  */
 
-const TONE_MAP: Record<PresentationTone, ActivityStatusTone> = {
-  neutral: "neutral",
-  info: "active",
-  success: "success",
-  warn: "warning",
-  danger: "danger",
-  muted: "pending",
-};
+// 呈现块语气 → 活动状态语气的映射已下沉 shared（两端同一份色彩层级）。
+const TONE_MAP = PRESENTATION_TONE_TO_ACTIVITY;
 
 const CHECKLIST_ICON_MAP: Record<PresentationTone, typeof Circle> = {
   neutral: Circle,

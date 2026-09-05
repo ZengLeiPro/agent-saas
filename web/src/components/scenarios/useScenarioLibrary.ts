@@ -10,7 +10,6 @@ import { authFetch } from "@/lib/authFetch";
 import {
   workflowLibraryPublicV3Schema,
   type CatalogScenarioPublic,
-  type ScenarioItem,
   type ScenarioLibraryResponse,
   type WorkflowLibraryPublicV3,
 } from "@agent/shared";
@@ -133,59 +132,8 @@ export function useScenarioLibrary(): UseScenarioLibraryResult {
   };
 }
 
-export function matchRoleIdByPosition(
-  roles: readonly { id: string; name: string }[],
-  position?: string | null,
-): string | null {
-  const p = position?.trim();
-  if (!p) return null;
-  for (const role of roles) {
-    const segments = role.name.split("/").map((s) => s.trim()).filter(Boolean);
-    if (segments.some((segment) => p.includes(segment) || (p.length >= 2 && segment.includes(p)))) {
-      return role.id;
-    }
-  }
-  return null;
-}
-
-const CURATED_RECOMMEND_IDS = [
-  "boss-competitor-daily",
-  "sales-customer-profile",
-  "hr-meeting-minutes",
-];
-
-export function pickRecommendedScenarios(
-  scenarios: ScenarioItem[],
-  count = 3,
-  preferredRoleId?: string | null,
-): ScenarioItem[] {
-  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
-  const picked: ScenarioItem[] = [];
-  if (preferredRoleId) {
-    for (const item of scenarios) {
-      if (picked.length >= Math.min(2, count)) break;
-      if (item.role === preferredRoleId) picked.push(item);
-    }
-  }
-  for (const id of CURATED_RECOMMEND_IDS) {
-    const item = byId.get(id);
-    if (item && !picked.includes(item)) picked.push(item);
-    if (picked.length >= count) return picked.slice(0, count);
-  }
-  const rest = [...scenarios].sort((left, right) => left.id.localeCompare(right.id));
-  const usedRoles = new Set(picked.map((item) => item.role));
-  for (const item of rest) {
-    if (picked.length >= count) break;
-    if (picked.includes(item) || usedRoles.has(item.role)) continue;
-    picked.push(item);
-    usedRoles.add(item.role);
-  }
-  for (const item of rest) {
-    if (picked.length >= count) break;
-    if (!picked.includes(item)) picked.push(item);
-  }
-  return picked;
-}
+// 岗位匹配与 v1 起手行精选已下沉 shared（PR #476），保留本模块的既有导出路径。
+export { matchRoleIdByPosition, pickRecommendedScenarios } from "@agent/shared";
 
 /** V3 推荐顺序完全来自产品源声明顺序，不在 Web 写死旧 ID。 */
 export function pickRecommendedWorkflowScenarios(

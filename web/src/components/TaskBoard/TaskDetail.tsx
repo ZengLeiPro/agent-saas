@@ -278,7 +278,7 @@ export function TaskDetail({
       });
   }, [latestExecution, mergeServerDraft, onTaskLoaded, open, refreshComments, taskId]);
 
-  const useConflictCurrent = (caught: unknown) => {
+  const applyConflictCurrent = (caught: unknown) => {
     if (caught instanceof api.TaskBoardConflictError && caught.current) {
       const next = caught.current as TaskBoardTask;
       setCurrentTask(next);
@@ -342,7 +342,7 @@ export function TaskDetail({
       hydrateDraft(next);
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "保存任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -363,7 +363,7 @@ export function TaskDetail({
       hydrateDraft(next);
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "升级交付任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -384,7 +384,7 @@ export function TaskDetail({
       mergeServerDraft(next);
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "移动任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -401,7 +401,7 @@ export function TaskDetail({
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       setCurrentTask(next); mergeServerDraft(next); onTaskLoaded(next);
     } catch (caught) {
-      if (!isCurrentOperation(requestId, operationTask.id)) return; useConflictCurrent(caught); void refreshExecutions();
+      if (!isCurrentOperation(requestId, operationTask.id)) return; applyConflictCurrent(caught); void refreshExecutions();
       setError(caught instanceof Error ? caught.message : "完成任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -423,7 +423,7 @@ export function TaskDetail({
       mergeServerDraft(next);
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : nextArchived ? "归档任务失败" : "恢复任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -458,7 +458,7 @@ export function TaskDetail({
       await refreshExecutions();
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "终止 Agent 执行失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -490,7 +490,7 @@ export function TaskDetail({
       }
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "恢复任务失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
@@ -543,7 +543,7 @@ export function TaskDetail({
       await refreshExecutions();
     } catch (caught) {
       if (!isCurrentOperation(requestId, operationTask.id)) return;
-      useConflictCurrent(caught);
+      applyConflictCurrent(caught);
       setError(caught instanceof Error ? caught.message : "启动 Agent 执行失败");
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);

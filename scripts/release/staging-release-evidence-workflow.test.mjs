@@ -87,6 +87,19 @@ test('Staging evidence stage safely reuses or creates one immutable same-SHA rec
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
 });
 
+test('both migration planning failures print diagnostics and stop before evidence use', async () => {
+  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  const checks = [
+    ...workflow.matchAll(/if ! node scripts\/release\/migration-plan\.mjs[\s\S]*?\n          fi/gu),
+  ];
+  assert.equal(checks.length, 2);
+  for (const [check] of checks) {
+    const output = check.match(/> "(\$RUNNER_TEMP\/migration(?:-plan)?\.json)"; then/u)?.[1];
+    assert.ok(output);
+    assert.ok(check.includes(`cat "${output}" >&2\n            exit 1`));
+  }
+});
+
 test('Staging and Promotion verify component-scoped selected runtime identities', async () => {
   const [staging, promotion] = await Promise.all([
     readFile(stagingWorkflowPath, 'utf8'),

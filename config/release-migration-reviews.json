@@ -527,6 +527,39 @@
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
         }
       ]
+    },
+    {
+      "baselineSha": "011205c25f4da7bc9383d8e9c10070b7a6cea207",
+      "files": [
+        {
+          "path": "server/src/data/feedback/store.ts",
+          "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
+        },
+        {
+          "path": "server/src/data/transcripts/parse.ts",
+          "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
+          "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
+          "classification": "no-schema-change",
+          "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/移动端P3契约扩展迁移审核-20260905.md",
+          "digest": "sha256:25b1ab7922cf5c1420e50d064809aec62acb4d5fb0f8c1c5ba9510b95fa3cde8"
+        },
+        {
+          "path": "server/src/__tests__/feedbackRoutes.test.ts",
+          "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
+        },
+        {
+          "path": "server/src/__tests__/runtimeFailure.test.ts",
+          "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        }
+      ]
     }
   ]
 }

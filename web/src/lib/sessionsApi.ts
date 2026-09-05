@@ -10,14 +10,5 @@ export type {
   SessionSearchResponse,
   SearchSessionsParams,
 } from '@agent/shared';
-export { formatTokenCount, searchSessions } from '@agent/shared';
-
-import { authFetch } from '@/lib/authFetch';
-
-export async function warmupSessionSandbox(sessionId: string): Promise<void> {
-  const response = await authFetch(
-    `/api/sessions/${encodeURIComponent(sessionId)}/warmup`,
-    { method: 'POST' },
-  );
-  if (!response.ok) throw new Error(`Sandbox warmup failed: HTTP ${response.status}`);
-}
+// warmupSessionSandbox 已下沉 shared（与 mobile 同一份实现），保留此处导出路径。
+export { formatTokenCount, searchSessions, warmupSessionSandbox } from '@agent/shared';

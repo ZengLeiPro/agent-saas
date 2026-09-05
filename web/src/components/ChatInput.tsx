@@ -18,6 +18,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  SANDBOX_PROFILE_OPTIONS,
+  isSandboxProfileLocked,
+  resolveLockedModelGroupId,
+  resolveSelectedModelName,
+  sandboxProfileLabel,
+  selectableModelGroups as pickSelectableModelGroups,
+} from "@agent/shared";
 import type { SandboxProfile } from "@/types/sandboxProfile";
 
 export interface ChatInputProps {
@@ -285,33 +293,24 @@ export function ChatInput({
   // M50-04: Web may replay existing attachmentId voice, but creating Web recordings is out of scope.
   const showVoice = false;
 
-  // 会话已开始时锁定组
-  const lockedGroupId = useMemo(() => {
-    if (!sessionId || !selectedModel || !modelList || modelList.allowCrossGroupSwitch) {
-      return null;
-    }
-    const slashIdx = selectedModel.indexOf('/');
-    return slashIdx >= 0 ? selectedModel.slice(0, slashIdx) : null;
-  }, [sessionId, selectedModel, modelList]);
+  // 锁组 / 展示名 / 可选分组三条纯规则由 shared modelSelection 裁定，两端同源。
+  const lockedGroupId = useMemo(
+    () => resolveLockedModelGroupId({ sessionId, selectedModel, modelList }),
+    [sessionId, selectedModel, modelList],
+  );
 
-  const selectedModelName = useMemo(() => {
-    if (!modelList || !selectedModel) return null;
-    const slashIdx = selectedModel.indexOf('/');
-    if (slashIdx < 0) return null;
-    const groupId = selectedModel.slice(0, slashIdx);
-    const modelId = selectedModel.slice(slashIdx + 1);
-    const group = modelList.groups.find((g) => g.id === groupId);
-    const model = group?.models.find((m) => m.id === modelId);
-    return model?.name ?? null;
-  }, [modelList, selectedModel]);
+  const selectedModelName = useMemo(
+    () => resolveSelectedModelName(modelList, selectedModel),
+    [modelList, selectedModel],
+  );
 
-  const selectableModelGroups = useMemo(() => {
-    if (!modelList) return [];
-    return modelList.groups.filter((g) => !lockedGroupId || g.id === lockedGroupId);
-  }, [modelList, lockedGroupId]);
+  const selectableModelGroups = useMemo(
+    () => pickSelectableModelGroups(modelList, lockedGroupId),
+    [modelList, lockedGroupId],
+  );
 
-  const profileLocked = !!sessionId || isDisabled || loading;
-  const profileLabel = sandboxProfile === "coding" ? "编程" : "日常";
+  const profileLocked = isSandboxProfileLocked({ sessionId, loading, disabled: isDisabled });
+  const profileLabel = sandboxProfileLabel(sandboxProfile);
   const handleProfileKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (profileLocked) return;
     let next: SandboxProfile | null = null;
@@ -578,10 +577,7 @@ export function ChatInput({
                   <PopoverContent side="top" align="start" sideOffset={8} className="w-36 rounded-xl p-1.5 shadow-xl">
                     <div className="px-2.5 pb-1 pt-1 text-[11px] text-muted-foreground">运行环境</div>
                     <div role="radiogroup" aria-label="运行环境" onKeyDown={handleProfileKeyDown}>
-                      {([
-                        { value: "daily" as const, label: "日常" },
-                        { value: "coding" as const, label: "编程" },
-                      ]).map((option) => {
+                      {SANDBOX_PROFILE_OPTIONS.map((option) => {
                         const checked = sandboxProfile === option.value;
                         return (
                           <PopoverClose asChild key={option.value}>

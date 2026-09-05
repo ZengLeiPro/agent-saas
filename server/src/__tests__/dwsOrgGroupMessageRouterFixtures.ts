@@ -3,7 +3,8 @@ import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
 import type { DwsDeliveryIntent, OrgAgentChannelBinding } from '../data/orgGroupAgents/index.js';
 import type { DwsRequesterResolution } from '../dws/requesterIdentityResolver.js';
 
-export const now = '2026-09-04T00:00:00.000Z';
+// 普通回复使用本轮时间，避免固定日期跨过 DWS 幂等窗口后整组测试失效。
+export const now = new Date().toISOString();
 
 export interface DwsOrgGroupRouterHarnessOptions {
   liveDeny?: boolean;

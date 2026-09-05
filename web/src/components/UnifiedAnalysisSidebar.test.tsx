@@ -29,13 +29,13 @@ function renderSidebar(currentAccess: ManagementSettingsAccess, routeId = "platf
 }
 
 describe("统一分析侧栏", () => {
-  it("平台管理员按平台、组织顺序展示 8 + 4 个页面", () => {
+  it("平台管理员按平台、组织顺序展示 9 + 4 个页面", () => {
     renderSidebar(access(true, true));
 
     const navigation = screen.getByLabelText("分析导航");
     expect(screen.getByText("平台分析")).toBeTruthy();
     expect(screen.getByText("组织分析")).toBeTruthy();
-    expect(navigation.querySelectorAll("button")).toHaveLength(12);
+    expect(navigation.querySelectorAll("button")).toHaveLength(13);
     expect(navigation.textContent?.indexOf("平台分析")).toBeLessThan(navigation.textContent?.indexOf("组织分析") ?? 0);
     expect(screen.getByRole("button", { name: "运行追踪" }).getAttribute("aria-current")).toBe("page");
   });

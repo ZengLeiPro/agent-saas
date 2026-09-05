@@ -40,6 +40,7 @@ const PLATFORM_ADMIN_SECTIONS = [
   'runs',
   'sandboxes',
   'infra',
+  'provider-quota',
   'audit',
   'efficiency',
 ] as const;
@@ -125,6 +126,7 @@ const PLATFORM_SECTION_BY_ROUTE: Readonly<Record<string, PlatformAdminSection>> 
   'platform.runtime.runs': 'runs',
   'platform.runtime.environments': 'sandboxes',
   'platform.runtime.infra': 'infra',
+  'platform.runtime.provider-quota': 'provider-quota',
   'platform.runtime.efficiency': 'efficiency',
   'platform.governance.audit': 'audit',
 };

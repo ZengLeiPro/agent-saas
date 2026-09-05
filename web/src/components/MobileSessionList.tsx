@@ -19,12 +19,7 @@ import { TOKEN_KEY } from "@/lib/constants";
 import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { useGroupedSessions } from "@/hooks/useGroupedSessions";
 import { useGroups } from "@/hooks/useGroups";
-import {
-  getSortedGroupItems,
-  resolveSwipeSelectGuard,
-  selectGroupUnreadMap,
-  shouldLoadMoreOnScroll,
-} from "@agent/shared";
+import { getSortedGroupItems, resolveSwipeSelectGuard, selectGroupUnreadMap, shouldLoadMoreOnScroll } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel } from "@/types/sidebar";
@@ -153,13 +148,8 @@ export function MobileSessionList({
     const viewport = el.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
     if (!viewport) return;
     const onScroll = () => {
-      if (shouldLoadMoreOnScroll({
-        contentHeight: viewport.scrollHeight,
-        offsetY: viewport.scrollTop,
-        viewportHeight: viewport.clientHeight,
-      })) {
-        onLoadMore();
-      }
+      const { scrollHeight: contentHeight, scrollTop: offsetY, clientHeight: viewportHeight } = viewport;
+      if (shouldLoadMoreOnScroll({ contentHeight, offsetY, viewportHeight })) onLoadMore();
     };
     viewport.addEventListener("scroll", onScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", onScroll);
@@ -211,24 +201,16 @@ export function MobileSessionList({
     setSwipeOpenId(id);
   }, []);
 
-  // 滑开态点击只收起；收回后 300ms 内不执行选择（判定见 shared resolveSwipeSelectGuard）
-  const swipeSelectGuard = useCallback(
-    () => resolveSwipeSelectGuard({
-      hasOpenRow: !!swipeOpenIdRef.current,
-      dismissedAt: swipeDismissedAt.current,
-      now: Date.now(),
-    }),
-    [],
-  );
+  // 滑开态点击只收起；收回后 300ms 内不执行选择（判定全部落在 shared resolveSwipeSelectGuard）
+  const swipeSelectGuard = useCallback(() => resolveSwipeSelectGuard({
+    hasOpenRow: !!swipeOpenIdRef.current, dismissedAt: swipeDismissedAt.current, now: Date.now(),
+  }), []);
 
   const handleSelect = useCallback(
     (id: string) => {
       if (isLoading && !activeSessionIdRef.current) return;
       const guard = swipeSelectGuard();
-      if (guard === "close-open-row") {
-        setSwipeOpenId(null);
-        return;
-      }
+      if (guard === "close-open-row") { setSwipeOpenId(null); return; }
       if (guard === "suppress") return;
       onSelect(id);
     },
@@ -239,10 +221,7 @@ export function MobileSessionList({
   const handleGroupClick = useCallback(
     (groupKey: string) => {
       const guard = swipeSelectGuard();
-      if (guard === "close-open-row") {
-        setSwipeOpenId(null);
-        return;
-      }
+      if (guard === "close-open-row") { setSwipeOpenId(null); return; }
       if (guard === "suppress") return;
       setExpandedGroupKey(groupKey);
       onLoadGroupSessions?.(groupKey);

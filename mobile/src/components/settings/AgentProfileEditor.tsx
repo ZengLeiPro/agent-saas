@@ -34,7 +34,7 @@ import {
 } from "lucide-react-native";
 import { launchPhotoLibraryForUserAction } from "../../platform/jitMediaPermissions";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useColors, spacing, typography, radius } from "../../theme";
+import { useColors, spacing, typography, radius, fontScale, fontWeight } from "../../theme";
 import { useAuth } from "../../contexts/AuthContext";
 import { AgentAvatar } from "../AgentAvatar";
 import {
@@ -252,9 +252,9 @@ export function AgentProfileEditor({
         },
         displayName: {
           ...typography.subtitle,
+          ...fontScale.xl,
           color: colors.foreground,
-          fontWeight: "600",
-          fontSize: 20,
+          fontWeight: fontWeight.semibold,
           marginTop: spacing.sm,
         },
         signatureText: {

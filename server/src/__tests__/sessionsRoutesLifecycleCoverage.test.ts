@@ -345,7 +345,7 @@ describe('sessions routes lifecycle coverage', () => {
     expect(meta?.deletedBy).toBe(OWNER.username);
     expect(revokeBySession).toHaveBeenCalledWith(sessionId, OWNER.id);
     expect(sandboxSessionDeletionIntent).toHaveBeenCalledWith(sessionId);
-    expect(sandboxSessionDeletion).toHaveBeenCalledWith(sessionId);
+    expect(sandboxSessionDeletion).toHaveBeenCalledWith(sessionId, { waitForDeletion: false });
 
     // 重复删除 → 幂等 200，并重试 durable cleanup；store 负责保留 active claim。
     const again = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
@@ -406,7 +406,7 @@ describe('sessions routes lifecycle coverage', () => {
     servers.push(restarted.server);
     const retried = await fetch(`${restarted.baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(retried.status).toBe(200);
-    expect(resumedCleanup).toHaveBeenCalledWith(sessionId);
+    expect(resumedCleanup).toHaveBeenCalledWith(sessionId, { waitForDeletion: false });
   });
 
   it('cleanup enqueue 失败时 tombstone 已持久化，进程重启后重复 DELETE 可续跑', async () => {
@@ -429,7 +429,7 @@ describe('sessions routes lifecycle coverage', () => {
     const retried = await fetch(`${restarted.baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(retried.status).toBe(200);
     expect((await retried.json() as { softDeleted: boolean }).softDeleted).toBe(true);
-    expect(resumedCleanup).toHaveBeenCalledWith(sessionId);
+    expect(resumedCleanup).toHaveBeenCalledWith(sessionId, { waitForDeletion: false });
   });
 
   it('同进程 cleanup 重试成功后清理列表并补偿删除事件', async () => {

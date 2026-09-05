@@ -110,6 +110,43 @@ describe("ModelManager 排序", () => {
     });
   });
 
+  it.each([undefined, "", "   ", " new-embedding-key "])("保存记忆索引 Key %j 时省略空值、保留新凭据", async (apiKey) => {
+    const originalFetch = vi.mocked(authFetch).getMockImplementation()!;
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      const response = await originalFetch(path, init);
+      if (path !== "/api/admin/models" || init?.method === "PUT") return response;
+      return jsonResponse({
+        ...await response.json(),
+        memoryIndex: {
+          enabled: true,
+          embedding: {
+            baseUrl: "https://embedding.example.invalid/v1",
+            model: "test-embedding",
+            dimensions: 1024,
+            hasApiKey: true,
+          },
+        },
+      });
+    });
+    const user = userEvent.setup();
+    render(<ModelManager />);
+    const keyInput = await screen.findByPlaceholderText("已配置，留空则保留现有 Key");
+    if (apiKey !== undefined) {
+      fireEvent.change(keyInput, { target: { value: "临时输入" } });
+      fireEvent.change(keyInput, { target: { value: apiKey } });
+    }
+    await user.click(screen.getByRole("button", { name: "保存并生效" }));
+    await waitFor(() => {
+      const putCall = vi.mocked(authFetch).mock.calls.find((call) => call[0] === "/api/admin/models" && call[1]?.method === "PUT");
+      expect(putCall).toBeTruthy();
+      const payload = JSON.parse(String(putCall?.[1]?.body));
+      expect(payload.memoryIndex.embedding).toEqual({
+        baseUrl: "https://embedding.example.invalid/v1", model: "test-embedding", dimensions: 1024,
+        ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
+      });
+    });
+  });
+
   it("将分组与组内模型的新顺序保存为平台全局顺序", async () => {
     const user = userEvent.setup();
     render(<ModelManager />);

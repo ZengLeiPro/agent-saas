@@ -164,7 +164,8 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
     const embeddingRaw = next.memoryIndex.embedding as Record<string, unknown>;
     const { hasApiKey: _ignored, ...embedding } = embeddingRaw;
     const inlineKey = typeof embedding.apiKey === 'string' ? embedding.apiKey : undefined;
-    if (!inlineKey || inlineKey.length === 0) {
+    if (!inlineKey || inlineKey.trim().length === 0) {
+      delete embedding.apiKey;
       const currentEmbedding = config.memory?.index?.embedding;
       if (currentEmbedding?.apiKeyRef) {
         next.memoryIndex = { ...next.memoryIndex, embedding: { ...embedding, apiKeyRef: currentEmbedding.apiKeyRef } };

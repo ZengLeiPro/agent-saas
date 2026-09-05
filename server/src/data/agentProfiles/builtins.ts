@@ -92,11 +92,11 @@ const SHELL_FIRST_PROFILE_PUBLISHED_AT = '2026-07-24T17:04:00.000Z';
 const TENANT_INSTRUCTIONS_PROFILE_PUBLISHED_AT = '2026-07-25T04:10:00.000Z';
 const TOOL_CONSOLIDATION_PROFILE_PUBLISHED_AT = '2026-08-02T19:00:00.000Z';
 
-function memoryPollConfig(tools: string[], shell: boolean, allowedTargets: AgentRuntimeProfileConfig['execution']['allowedTargets']): AgentRuntimeProfileConfig {
+function memoryPollConfig(tools: string[], shell: boolean, allowedTargets: AgentRuntimeProfileConfig['execution']['allowedTargets'], maxTurns = 30): AgentRuntimeProfileConfig {
   return baseConfig({
     context: { systemInstructions: '', modules: [] },
     memory: { scope: 'maintenance' },
-    limits: { maxTurns: 30 },
+    limits: { maxTurns },
     capabilities: {
       shell,
       backgroundTasks: false,
@@ -175,13 +175,17 @@ export const BUILTIN_AGENT_PROFILES: readonly BuiltinAgentProfileDefinition[] = 
     name: '记忆轮询',
     description: '记忆维护专用预设；Write/Edit 继续强制记忆路径 guard，Shell 固定在隔离运行时执行。',
     purpose: '每日记忆轮询与记忆维护 hook',
-    versionNumber: 2,
+    versionNumber: 3,
     previousVersions: [{
       versionNumber: 1,
       config: memoryPollConfig(MEMORY_TOOLS_V1, false, null),
+    }, {
+      versionNumber: 2,
+      config: memoryPollConfig(MEMORY_TOOLS, true, ['server-remote']),
+      publishedAt: SHELL_FIRST_PROFILE_PUBLISHED_AT,
     }],
-    publishedAt: SHELL_FIRST_PROFILE_PUBLISHED_AT,
-    config: memoryPollConfig(MEMORY_TOOLS, true, ['server-remote']),
+    publishedAt: '2026-09-05T15:34:00.000Z',
+    config: memoryPollConfig(MEMORY_TOOLS, true, ['server-remote'], 1000),
   },
   {
     profileId: 'arp_system_memory_consolidate',

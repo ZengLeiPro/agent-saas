@@ -343,7 +343,7 @@ const memoryPollingSchema = z.object({
   timezone: z.string().min(1).optional(),
   /** 用户活动回看窗口（小时，默认 48；也是「无活动跳过」的判定窗口） */
   lookbackHours: z.number().int().min(1).max(168).optional(),
-  maxTurns: z.number().int().positive().max(100).optional(),
+  maxTurns: z.number().int().positive().max(1000).optional(),
   timeoutSeconds: z.number().int().positive().max(3600).optional(),
   /** 模型覆盖（group/model）；缺省跟随各租户默认模型 */
   model: z.string().min(1).optional(),

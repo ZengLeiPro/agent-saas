@@ -32,7 +32,7 @@ export const MEMORY_POLL_DEFAULTS = {
   hoursSpan: 4,
   timezone: 'Asia/Shanghai',
   lookbackHours: 48,
-  maxTurns: 30,
+  maxTurns: 1000,
   timeoutSeconds: 900,
 } as const;
 

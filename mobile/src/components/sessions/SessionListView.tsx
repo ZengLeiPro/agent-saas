@@ -44,7 +44,7 @@ export interface SessionListViewProps {
   /** 列表顶部固定区（pill 行） */
   header?: React.ReactElement | null;
   contentBottomPadding: number;
-  /** eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- FlashList ref 类型随泛型变化，这里只透传
   listRef?: React.MutableRefObject<any>;
   onListLoad?: () => void;
   onScrollBeginDrag?: () => void;

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { link, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { canonicalJson, digestFile } from './artifact-lib.mjs';
 import {
   createRuntimeDependencyIdentity,
@@ -232,3 +233,73 @@ test('keeps the explicit historical v1 verification path free of Runtime fields'
   });
   assert.equal(verified.schemaVersion, 1);
 });
+
+test('rejects a tar process failure after it has emitted the member listing', async () => {
+  const value = await fixture();
+  const archive = join(value.selected, 'acs-orchestrator.tgz');
+  const bytes = await readFile(archive);
+  bytes[bytes.length - 8] ^= 1; // 破坏 gzip CRC，tar 可输出成员但最终退出失败。
+  await writeFile(archive, bytes);
+  value.manifest.artifacts.acsOrchestrator = await digestFile(archive);
+  await writeFile(value.manifestPath, JSON.stringify(value.manifest));
+  await assert.rejects(
+    verifySelectedReleaseArtifacts({ manifestPath: value.manifestPath, directory: value.selected }),
+    /Unable to list selected archive/u,
+  );
+});
+
+// 直接生成零字节成员，覆盖真实依赖包规模而不创建上万个临时文件。
+function emptyTarMember(name) {
+  const header = Buffer.alloc(512);
+  header.write(name, 0, 100);
+  header.write('0000644\0', 100);
+  header.write('0000000\0', 108);
+  header.write('0000000\0', 116);
+  header.write('00000000000\0', 124);
+  header.write('00000000000\0', 136);
+  header.write('        ', 148);
+  header.write('0', 156);
+  header.write('ustar\0', 257);
+  header.write('00', 263);
+  const checksum = header.reduce((total, byte) => total + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148);
+  return header;
+}
+
+for (const duplicateAtEnd of [false, true]) {
+  test(`streams a listing larger than 1 MiB and ${duplicateAtEnd ? 'rejects a trailing duplicate' : 'verifies the archive'}`, async () => {
+    const value = await fixture({ acsSha: SHA });
+    const archive = join(value.selected, 'acs-orchestrator.tgz');
+    const original = gunzipSync(await readFile(archive));
+    let end = original.length;
+    const zeroBlock = Buffer.alloc(512);
+    while (original.subarray(end - 512, end).equals(zeroBlock)) end -= 512;
+    const names = Array.from(
+      { length: 16000 },
+      (_, index) => `acs-orchestrator/node_modules/${'x'.repeat(50)}/${index}.js`,
+    );
+    assert.ok(Buffer.byteLength(names.join('\n')) > 1024 * 1024);
+    const members = names.map(emptyTarMember);
+    if (duplicateAtEnd) {
+      members.push(emptyTarMember('acs-orchestrator/./runtime-dependencies.json'));
+    }
+    await writeFile(
+      archive,
+      gzipSync(Buffer.concat([original.subarray(0, end), ...members, Buffer.alloc(1024)])),
+    );
+    value.manifest.artifacts.acsOrchestrator = await digestFile(archive);
+    await writeFile(value.manifestPath, JSON.stringify(value.manifest));
+    const verification = verifySelectedReleaseArtifacts({
+      manifestPath: value.manifestPath,
+      directory: value.selected,
+    });
+    if (duplicateAtEnd) {
+      await assert.rejects(
+        verification,
+        /duplicate normalized member acs-orchestrator\/runtime-dependencies\.json/u,
+      );
+    } else {
+      await assert.doesNotReject(verification);
+    }
+  });
+}

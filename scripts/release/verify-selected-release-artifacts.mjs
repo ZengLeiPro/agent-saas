@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import { digestBuffer, digestFile } from './artifact-lib.mjs';
 import { verifyRuntimeDependencyIdentity } from './runtime-dependency.mjs';
 
@@ -43,24 +44,35 @@ function normalizeArchiveMember(member) {
   return segments.length ? segments.join('/') : null;
 }
 
-function extractRegularArchiveFile(archivePath, componentPath) {
-  const listing = execFileSync('tar', ['-tzf', archivePath], {
-    encoding: 'utf8',
+async function extractRegularArchiveFile(archivePath, componentPath) {
+  // 完整清单按行消费，避免大型依赖包触发 execFileSync 的输出缓冲区上限。
+  const child = spawn('tar', ['-tzf', archivePath], {
     stdio: ['ignore', 'pipe', 'ignore'],
   });
-  const members = listing
-    .split('\n')
-    .filter(Boolean)
-    .map((raw) => ({ raw, normalized: normalizeArchiveMember(raw) }))
-    .filter((member) => member.normalized !== null);
+  const completed = new Promise((resolve) => {
+    child.once('error', (error) => resolve({ error }));
+    child.once('close', (code) => resolve({ code }));
+  });
   const seen = new Set();
-  for (const member of members) {
-    if (seen.has(member.normalized)) {
-      throw new Error(`Selected archive contains duplicate normalized member ${member.normalized}`);
+  const matches = [];
+  try {
+    for await (const raw of createInterface({ input: child.stdout, crlfDelay: Infinity })) {
+      const normalized = normalizeArchiveMember(raw);
+      if (normalized === null) continue;
+      if (seen.has(normalized)) {
+        throw new Error(`Selected archive contains duplicate normalized member ${normalized}`);
+      }
+      seen.add(normalized);
+      if (normalized === componentPath) matches.push({ raw });
     }
-    seen.add(member.normalized);
+  } catch (error) {
+    child.kill();
+    await completed;
+    throw error;
   }
-  const matches = members.filter((member) => member.normalized === componentPath);
+  const result = await completed;
+  if (result.error) throw result.error;
+  if (result.code !== 0) throw new Error(`Unable to list selected archive: ${archivePath}`);
   if (matches.length !== 1) {
     throw new Error(`Selected archive must contain exactly one ${componentPath}`);
   }
@@ -105,7 +117,7 @@ async function verifyRuntime({ directory, descriptor, component, archiveName, em
   ) {
     throw new Error(`${component} Runtime Dependency Identity disagrees with the Manifest`);
   }
-  const embedded = extractRegularArchiveFile(join(directory, archiveName), embeddedPath);
+  const embedded = await extractRegularArchiveFile(join(directory, archiveName), embeddedPath);
   if (!embedded.equals(standalone) || digestBuffer(embedded) !== descriptor.digest) {
     throw new Error(`${component} archive embeds a different Runtime Dependency Identity`);
   }
@@ -142,12 +154,15 @@ export async function verifySelectedReleaseArtifacts({ manifestPath, directory }
   // keep 组件沿用不可变兼容基线且不会安装 unit；仅 deploy 组件要求 RC-bound unit。
   if (manifest.components?.api?.action === 'deploy') {
     for (const controlPath of SERVER_CONTROL_FILES.slice(1)) {
-      extractRegularArchiveFile(join(selectedDirectory, SELECTED_FILES.serverBundle), controlPath);
+      await extractRegularArchiveFile(
+        join(selectedDirectory, SELECTED_FILES.serverBundle),
+        controlPath,
+      );
     }
   }
   if (manifest.components?.acs?.action === 'deploy') {
     for (const controlPath of ACS_CONTROL_FILES.slice(1)) {
-      extractRegularArchiveFile(
+      await extractRegularArchiveFile(
         join(selectedDirectory, SELECTED_FILES.acsOrchestrator),
         controlPath,
       );

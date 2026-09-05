@@ -127,11 +127,7 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
 
 export { selectConfigIdentitySummary };
 
-const LIVE_CONFIG_IDENTITY_STAGES = new Set([
-  'candidate-readback',
-  'legacy-api-upgrade-retry-baseline',
-  'steady-state',
-]);
+const LIVE_CONFIG_IDENTITY_STAGES = new Set(['candidate-readback', 'steady-state']);
 
 export function validateLiveConfigIdentityStage(stage) {
   if (!LIVE_CONFIG_IDENTITY_STAGES.has(stage)) {
@@ -142,7 +138,6 @@ export function validateLiveConfigIdentityStage(stage) {
 
 export function selectLiveConfigIdentity({
   privateConfigIdentity,
-  publicConfigIdentity,
   apiReleaseId,
   configIdentityStage,
 }) {
@@ -150,14 +145,12 @@ export function selectLiveConfigIdentity({
   if (typeof apiReleaseId !== 'string' || !apiReleaseId.trim()) {
     throw new Error('Active Production API releaseId is required');
   }
-  if (stage !== 'legacy-api-upgrade-retry-baseline' && privateConfigIdentity === undefined) {
+  if (privateConfigIdentity === undefined) {
     throw new Error(`Private Production ConfigIdentity snapshot is required during ${stage}`);
   }
-  const selected = selectConfigIdentitySummary(
-    privateConfigIdentity,
-    stage === 'legacy-api-upgrade-retry-baseline' ? publicConfigIdentity : undefined,
-    { allowCompletelyMissing: stage === 'legacy-api-upgrade-retry-baseline' },
-  );
+  const selected = selectConfigIdentitySummary(privateConfigIdentity, undefined, {
+    allowCompletelyMissing: false,
+  });
   if (selected !== undefined && selected.releaseId !== apiReleaseId) {
     throw new Error(
       'Selected Production ConfigIdentity releaseId disagrees with active API release identity',
@@ -248,13 +241,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'Live component identity does not match independently recomputed installed bytes',
     );
   }
-  // retry baseline is the sole live-read exception: a legacy API may have neither a private
-  // snapshot nor a public summary, but the workflow has already proven this Manifest deploys API.
-  // Candidate/steady-state convergence requires the root-only private snapshot and never falls
-  // back to an anonymous API field.
+  // 正常发布和中断恢复均要求私有配置快照，不回退到匿名 API 摘要。
   const configIdentity = selectLiveConfigIdentity({
     privateConfigIdentity,
-    publicConfigIdentity: api.configIdentity,
     apiReleaseId: api.release.releaseId,
     configIdentityStage,
   });
@@ -274,8 +263,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     environment: 'production',
     observedAt: new Date().toISOString(),
     components,
-    // Undefined is serialized only for the explicit legacy API upgrade retry baseline.
-    ...(configIdentity ? { configIdentity } : {}),
+    configIdentity,
     topology: {
       api: { color: apiUnit.color, unit: apiUnit.unit },
       runtimeWorker: { color: workerUnit.color, unit: workerUnit.unit },

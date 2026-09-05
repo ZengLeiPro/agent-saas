@@ -62,7 +62,7 @@ export function promotionPhaseConfigIdentityStage(manifest, phase) {
   }
   // App 部署后，私有快照已生效，整套 trusted identity 要等 Web 收敛后才提交。
   if (api === 'keep') return 'steady-state';
-  return phase === 'web' ? 'candidate-readback' : 'legacy-api-upgrade-retry-baseline';
+  return 'candidate-readback';
 }
 
 function allowedPhaseMatrices(manifest, phase) {

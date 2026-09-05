@@ -25,6 +25,7 @@ import {
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
 import { classifyModelFailure, parseQuotaResetAt, quotaExhaustedReasonCode } from './runtimeFailure.js';
+import { matchesLegacyQuotaExhaustedText } from './providerErrorParsing.js';
 
 const logger = createLogger('Cache');
 const CHAT_COMPLETIONS_RETRY_DELAYS_MS = [250, 1_000] as const;
@@ -579,8 +580,7 @@ async function fetchChatCompletions(
   const parsed = parseChatCompletionsError(text);
   // 结构化错误码优先（含 usage_limit_reached）；文本正则只作遗留兜底，且只影响重试决策。
   const quotaExhausted = response.status === 429
-    && (!!quotaExhaustedReasonCode(parsed.code)
-      || /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i.test(text));
+    && (!!quotaExhaustedReasonCode(parsed.code) || matchesLegacyQuotaExhaustedText(text));
   throw new ChatCompletionsHttpError(
     response.status,
     RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES.has(response.status) && !quotaExhausted,

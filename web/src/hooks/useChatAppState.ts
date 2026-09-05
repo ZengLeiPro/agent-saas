@@ -22,6 +22,7 @@ import {
 } from "@/lib/chatSubmissionAdapter";
 import { canonicalChatAttachmentToDisplay, createChatClientState, interactionKey, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
+import { runtimeTerminalAlert } from "@/lib/runtimeFailureAlert";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import { saveSessionMessages } from "@/lib/messageCache";
@@ -1236,15 +1237,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     finalizeStreamingMessages(msgRef.current);
     finalizeRunningSubagents(msgRef.current);
 
-    let alertContent: string | null = null;
-    let severity: 'error' | 'cancelled' | 'billing' = 'error';
-    if (args.status === 'failed' || args.status === 'orphaned') {
-      alertContent = formatRuntimeFailureMessage(args.reason, args.failureKind, args.quotaResetAt);
-      if (isInsufficientCreditsFailure(args.reason)) severity = 'billing';
-    } else if (args.status === 'cancelled') {
-      alertContent = '会话已停止';
-      severity = 'cancelled';
-    }
+    const { content: alertContent, severity } = runtimeTerminalAlert(args);
     if (alertContent) {
       const msgs = msgRef.current.messagesRef.current;
       const last = msgs[msgs.length - 1];

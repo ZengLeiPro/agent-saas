@@ -389,23 +389,7 @@ export interface ModelAdapter {
   stream(request: ModelRequest, context: RunContext): AsyncIterable<ModelEvent>;
 }
 
-/** 发流前 provider 失败的结构化错误；避免在 adapter 边界退化成不可审计字符串。 */
-export class ModelProviderError extends Error {
-  readonly name = 'ModelProviderError';
-
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly code: string,
-    readonly modelRequestId: string,
-    readonly attemptId: string,
-    readonly emittedOutputCount: number, readonly failureKind?: RuntimeFailureKind, readonly recoveryAction?: RuntimeRecoveryAction, readonly partialContent?: string,
-    /** 仅 failureKind='quota_exhausted'：上游结构化字段给出的配额重置时刻（ISO） */
-    readonly quotaResetAt?: string,
-  ) {
-    super(message);
-  }
-}
+export { ModelProviderError } from './failureTypes.js';
 
 export interface AgentLoop {
   run(input: RunInput, context: RunContext): AsyncIterable<OutboundEvent>;

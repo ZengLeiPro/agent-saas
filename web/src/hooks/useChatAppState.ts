@@ -2,7 +2,6 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { AgentTarget, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
-import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
@@ -24,7 +23,10 @@ import { canonicalChatAttachmentToDisplay, createChatClientState, interactionKey
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { runtimeTerminalAlert } from "@/lib/runtimeFailureAlert";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
-import type { AgentProfile, SessionParticipants } from "@agent/shared";
+import {
+  applyReplayedSessionMetadata, markMessageBubbleFailed, useAgentProfile, useForkFromMessage,
+  useModelSelection, useSessionParticipants, useStreamWatchdog,
+} from "@agent/shared";
 import { saveSessionMessages } from "@/lib/messageCache";
 import {
   getComposerDraftScope,
@@ -101,16 +103,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const approvalTier = resolveApprovalTier(user?.preferences);
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
-  // ---- Agent Profile ----
-  const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
-  useEffect(() => {
-    if (!user) { setAgentProfile(null); return; }
-    fetchAgentProfile(user.username)
-      .then(setAgentProfile)
-      .catch(() => setAgentProfile(null));
-  }, [user]);
-  // ---- Session Participants ----
-  const [sessionParticipants, setSessionParticipants] = useState<SessionParticipants | null>(null);
+  // ---- Agent Profile（shared 内核）----
+  const agentProfile = useAgentProfile({ username: user?.username ?? null, fetchAgentProfile, revision: user });
   // ---- File preview ----
   const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
   const [explicitPreviewOwner, setExplicitPreviewOwner] = useState<string | undefined>(undefined);
@@ -298,27 +292,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const voiceCallbackRef = useRef(options?.onVoiceEvent);
   voiceCallbackRef.current = options?.onVoiceEvent;
   // ---- Model selection (with retry on WS reconnect) ----
-  const [modelList, setModelList] = useState<ModelList | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const { modelList, selectedModel, setSelectedModel, modelListRef, selectedModelRef, fetchModelList } = useModelSelection({
+    authFetch,
+    selectOnLoad: (prev, data) => (sessionIdRef.current ? (prev || data.default) : data.default),
+  });
   const [autoApproveRunShell, setAutoApproveRunShellState] = useState(false);
   // full / low-risk 档本身已自动批准工具；ask 档由会话级开关决定。
   const effectiveAutoApproveRunShell = approvalTier !== "ask" || autoApproveRunShell;
-  const modelListRef = useRef(modelList);
-  modelListRef.current = modelList;
-  const fetchModelList = useCallback(() => {
-    authFetch("/api/models")
-      .then((r) => {
-        if (r.ok) return r.json();
-        return null;
-      })
-      .then((data: ModelList | null) => {
-        if (data) {
-          setModelList(data);
-          setSelectedModel((prev) => sessionIdRef.current ? (prev || data.default) : data.default);
-        }
-      })
-      .catch(() => { });
-  }, []);
   useEffect(() => {
     fetchModelList();
   }, [fetchModelList]);
@@ -345,7 +325,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const stoppingRef = useRef(stopping); stoppingRef.current = stopping;
   const uploadedFilesRef = useRef(fileUpload.uploadedFiles); uploadedFilesRef.current = fileUpload.uploadedFiles;
   const uploadingRef = useRef(fileUpload.uploading); uploadingRef.current = fileUpload.uploading;
-  const selectedModelRef = useRef(selectedModel); selectedModelRef.current = selectedModel;
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const approvalTierRef = useRef(approvalTier); approvalTierRef.current = approvalTier;
   const msgRef = useRef(msg); msgRef.current = msg;
@@ -753,25 +732,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return session.sessions.find(s => s.sessionId === session.sessionId)?.owner?.username;
   }, [explicitPreviewOwner, session.sessionId, session.sessions]);
   const sessionOwnerRef = useRef(previewFileOwner); sessionOwnerRef.current = previewFileOwner;
-  // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile ----
-  useEffect(() => {
-    const owner = session.sessionOwner;
-    if (!owner || owner.username === user?.username) {
-      setSessionParticipants(null);
-      return;
-    }
-    // 立即设置 owner 信息（头像/名字可用），agent 异步加载后补充
-    setSessionParticipants({ owner, agent: null });
-    let cancelled = false;
-    fetchAgentProfile(owner.username)
-      .then(agent => {
-        if (!cancelled) setSessionParticipants({ owner, agent });
-      })
-      .catch(() => {
-        // agent 已为 null，无需额外处理
-      });
-    return () => { cancelled = true; };
-  }, [session.sessionOwner, user?.username]);
+  // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile（shared 内核）----
+  const [sessionParticipants, setSessionParticipants] = useSessionParticipants({
+    sessionOwner: session.sessionOwner, currentUsername: user?.username, fetchAgentProfile,
+  });
   sessionIdRef.current = session.sessionId; uploadSessionIdRef.current = immediateSessionIdRef.current ?? session.sessionId;
   refreshTokenUsageRef.current = session.refreshTokenUsage; loadSessionDetailRef.current = session.loadSessionDetail;
   useEffect(() => {
@@ -1168,40 +1132,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath, mutateQueuedInterjections]);
 
-  // ---- 运行态 watchdog：防止 done 丢失时 loading 永久锁定 ----
-  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastStreamEventAtRef = useRef(0);
-
-  const clearWatchdog = useCallback(() => {
-    if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null; }
-    lastStreamEventAtRef.current = 0;
-  }, []);
-
-  const resetWatchdog = useCallback(() => {
-    if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
-    if (!loadingRef.current) return;
-    const timeout = lastStreamEventAtRef.current > 0 ? 45_000 : 60_000;
-    watchdogTimerRef.current = setTimeout(async () => {
-      watchdogTimerRef.current = null;
-      if (!loadingRef.current) return;
-      const sid = sessionIdRef.current;
+  // ---- 运行态 watchdog：防止 done 丢失时 loading 永久锁定（shared 内核）----
+  const { clearWatchdog, resetWatchdog, touchWatchdog } = useStreamWatchdog({
+    authFetch,
+    isLoading: () => loadingRef.current,
+    getSessionId: () => sessionIdRef.current,
+    createStaleGuard: (sid) => {
       const watchdogNonce = streamNonceRef.current;
       const watchdogRuntimeVersion = sid ? runtimeVersionBySessionRef.current.get(sid) ?? 0 : 0;
-      const watchdogIsStale = () => sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce || Boolean(sid && (runtimeVersionBySessionRef.current.get(sid) ?? 0) !== watchdogRuntimeVersion);
-      if (sid) {
-        try {
-          const res = await authFetch(`/api/sessions/${sid}/stream-status`);
-          if (watchdogIsStale()) return;
-          if (res.ok) {
-            const { active } = await res.json() as { active: boolean };
-            if (watchdogIsStale()) return;
-            if (active) { resetWatchdog(); return; } // Agent 还活着
-          }
-        } catch {
-          if (watchdogIsStale()) return;
-        }
-      }
-      if (watchdogIsStale()) return;
+      return () => sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce || Boolean(sid && (runtimeVersionBySessionRef.current.get(sid) ?? 0) !== watchdogRuntimeVersion);
+    },
+    onExpired: (sid) => {
       if (sid) patchSessionRuntime(sid, { status: 'idle', streamId: null, runId: null, lastEventId: null, attached: false });
       finalizeStreamingMessages(msgRef.current);
       finalizeRunningSubagents(msgRef.current);
@@ -1210,8 +1151,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setStopping(false);
       dispatchConnection('complete');
       sessionRef.current.refreshCurrentSession();
-    }, timeout);
-  }, [dispatchConnection, patchSessionRuntime]);
+    },
+  });
 
   const finalizeTerminalRuntime = useCallback((args: {
     sessionId: string;
@@ -1582,18 +1523,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             || e.type === 'ask_user' || e.type === 'interaction_resolved') {
             projectRecoveredInteraction(e);
           }
-          if (e.type === 'title_updated') sessionRef.current.updateSessionTitle(e.sessionId, e.title);
-          else if (e.type === 'session_updated') {
-            if ((e as any).isNew && sessionRef.current.upsertSession) {
-              sessionRef.current.upsertSession({ sessionId: e.sessionId, preview: e.preview, updatedAtMs: e.updatedAtMs, title: (e as any).title, model: (e as any).model, username: (e as any).username });
-            } else {
-              sessionRef.current.updateSessionMeta(e.sessionId, {
-                preview: e.preview,
-                updatedAtMs: e.updatedAtMs,
-                ...((e as any).title !== undefined ? { title: (e as any).title } : {}),
-              });
-            }
-          }
+          if (applyReplayedSessionMetadata(sessionRef.current, e)) { /* title_updated / session_updated 已写入列表 */ }
           else if (e.type === 'session_deleted') {
             if ((immediateSessionIdRef.current ?? sessionIdRef.current) === e.sessionId) {
               immediateSessionIdRef.current = null; sessionIdRef.current = null; queuedSessionIdRef.current = null; wsLatestSessionIdRef.current = { value: null };
@@ -1806,8 +1736,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (wsAttachedRef.current && data.type !== 'title_updated' && data.type !== 'session_updated'
         && data.type !== 'session_deleted' && data.type !== 'interaction_resolved'
         && data.type !== 'pending_interactions') {
-        lastStreamEventAtRef.current = Date.now();
-        resetWatchdog();
+        touchWatchdog();
       }
 
       // ── 上下文压缩黑箱化（2026-07）：compaction_status 专用事件，不进 processWsEvent ──
@@ -2094,26 +2023,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return unsub;
   }, [dispatchConnection, scheduleTerminalRuntimeProbe]);
 
-  /** 内部：标记 bubble 为 failed（按 clientMsgId 或回退到 userMsgIndex） */
+  /** 内部：标记 bubble 为 failed（按 clientMsgId 或回退到 userMsgIndex；shared 实现） */
   const markBubbleFailed = useCallback((clientMsgId: string | undefined, fallbackIndex: number, reason: string) => {
-    const msgs = msgRef.current.messagesRef.current;
-    let idx = -1;
-    if (clientMsgId) {
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if ((m.type === 'user' || m.type === 'user-voice') && 'clientMsgId' in m && m.clientMsgId === clientMsgId) {
-          idx = i;
-          break;
-        }
-      }
-    }
-    if (idx < 0) idx = fallbackIndex;
-    if (idx < 0) return;
-    msgRef.current.updateMessageAt(idx, (m) => {
-      if (m.type === 'user') return { ...m, status: 'failed' as const, failedReason: reason };
-      if (m.type === 'user-voice') return { ...m, status: 'failed' as const, failedReason: reason };
-      return m;
-    });
+    markMessageBubbleFailed(msgRef.current, clientMsgId, fallbackIndex, reason);
   }, []);
 
   /** ACK 超时后查询服务端权威状态；网络不明时保持 verifying，绝不直接开放重试。 */
@@ -2871,33 +2783,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     dismissQueuedEntry(clientMsgId, mutateQueuedInterjections);
   }, [mutateQueuedInterjections]);
 
-  // ---- Fork from message (从此编辑) ----
-  const forkFromMessage = useCallback(async (message: MessageItem) => {
-    if (message.type !== 'user') return;
-    const sourceSessionId = sessionIdRef.current;
-    if (!sourceSessionId) return;
-
-    try {
-      const res = await authFetch(`/api/sessions/${encodeURIComponent(sourceSessionId)}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blockId: message.id }),
-      });
-      if (!res.ok) {
-        console.error('Fork failed:', res.status);
-        return;
-      }
-      const { newSessionId, forkMessage } = await res.json();
-
+  // ---- Fork from message (从此编辑；shared 内核) ----
+  const forkFromMessage = useForkFromMessage({
+    authFetch,
+    getSourceSessionId: () => sessionIdRef.current,
+    onForked: async (newSessionId, forkMessage) => {
       selectSessionWithUrl(newSessionId);
       await sessionRef.current.loadDetailPromiseRef.current;
       setInput(forkMessage);
       // 刷新会话列表，确保新会话出现在侧边栏
       void sessionRef.current.loadSessions({ fresh: true });
-    } catch (err) {
-      console.error('Fork failed:', err);
-    }
-  }, [setInput, selectSessionWithUrl]);
+    },
+  });
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、

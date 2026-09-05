@@ -19,7 +19,7 @@ import { TOKEN_KEY } from "@/lib/constants";
 import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { useGroupedSessions } from "@/hooks/useGroupedSessions";
 import { useGroups } from "@/hooks/useGroups";
-import { getSortedGroupItems } from "@agent/shared";
+import { getSortedGroupItems, resolveSwipeSelectGuard, selectGroupUnreadMap, shouldLoadMoreOnScroll } from "@agent/shared";
 import type { ChatSessionIndexItem, AppTab } from "@/types/sidebar";
 import type { SettingsSectionId } from "@/types/settings";
 import { getSidebarNavItems, formatShortDate, getSessionWaitingLabel } from "@/types/sidebar";
@@ -148,9 +148,8 @@ export function MobileSessionList({
     const viewport = el.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
     if (!viewport) return;
     const onScroll = () => {
-      if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 200) {
-        onLoadMore();
-      }
+      const { scrollHeight: contentHeight, scrollTop: offsetY, clientHeight: viewportHeight } = viewport;
+      if (shouldLoadMoreOnScroll({ contentHeight, offsetY, viewportHeight })) onLoadMore();
     };
     viewport.addEventListener("scroll", onScroll, { passive: true });
     return () => viewport.removeEventListener("scroll", onScroll);
@@ -167,16 +166,10 @@ export function MobileSessionList({
   const groupedEntries = useGroupedSessions(sessions, query, groupsHook.groups);
 
   // 分组折叠行的聚合未读红点来自服务端同步后的会话列表。
-  const unreadByGroupId = useMemo(() => {
-    const map = new Map<string, boolean>();
-    for (const g of groupsHook.groups) {
-      map.set(
-        g.id,
-        sessions.some((session) => g.sessionIds.includes(session.id) && session.hasUnreadAiReply),
-      );
-    }
-    return map;
-  }, [groupsHook.groups, sessions]);
+  const unreadByGroupId = useMemo(
+    () => selectGroupUnreadMap(groupsHook.groups, sessions),
+    [groupsHook.groups, sessions],
+  );
 
   // 展开的分组对象
   const expandedGroup = useMemo<SessionGroup | null>(() => {
@@ -208,36 +201,32 @@ export function MobileSessionList({
     setSwipeOpenId(id);
   }, []);
 
-  // 有行刚收回时（300ms 内），点击任意位置不执行选择
+  // 滑开态点击只收起；收回后 300ms 内不执行选择（判定全部落在 shared resolveSwipeSelectGuard）
+  const swipeSelectGuard = useCallback(() => resolveSwipeSelectGuard({
+    hasOpenRow: !!swipeOpenIdRef.current, dismissedAt: swipeDismissedAt.current, now: Date.now(),
+  }), []);
+
   const handleSelect = useCallback(
     (id: string) => {
       if (isLoading && !activeSessionIdRef.current) return;
-      if (swipeOpenIdRef.current) {
-        setSwipeOpenId(null);
-        return;
-      }
-      if (Date.now() - swipeDismissedAt.current < 300) {
-        return;
-      }
+      const guard = swipeSelectGuard();
+      if (guard === "close-open-row") { setSwipeOpenId(null); return; }
+      if (guard === "suppress") return;
       onSelect(id);
     },
-    [isLoading, onSelect],
+    [isLoading, onSelect, swipeSelectGuard],
   );
 
   // 点击分组（带防误触）
   const handleGroupClick = useCallback(
     (groupKey: string) => {
-      if (swipeOpenIdRef.current) {
-        setSwipeOpenId(null);
-        return;
-      }
-      if (Date.now() - swipeDismissedAt.current < 300) {
-        return;
-      }
+      const guard = swipeSelectGuard();
+      if (guard === "close-open-row") { setSwipeOpenId(null); return; }
+      if (guard === "suppress") return;
       setExpandedGroupKey(groupKey);
       onLoadGroupSessions?.(groupKey);
     },
-    [onLoadGroupSessions],
+    [onLoadGroupSessions, swipeSelectGuard],
   );
 
   useEffect(() => {

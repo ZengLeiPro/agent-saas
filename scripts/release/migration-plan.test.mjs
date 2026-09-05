@@ -3067,3 +3067,36 @@ test('迁移根文件即使只删一行也不享受自动 no-schema-change', () 
   assert.equal(result.ok, false);
   assert.match(result.blockingReasons.join('\n'), /deletes or replaces baseline content/u);
 });
+
+test('启动建表根模块只改控制流也不享受自动 no-schema-change，仍需人工审核', () => {
+  const startupRoot = PRODUCTION_STARTUP_SCHEMA_ROOTS.find((path) => path.endsWith('/store.ts'));
+  assert.ok(startupRoot, '需要至少一个 store.ts 形态的启动建表根');
+  const schema = 'CREATE TABLE IF NOT EXISTS feedback (id text)';
+  const baselineSource = [
+    'export class Store {',
+    `  async init(db) { await db.query(${JSON.stringify(schema)}); }`,
+    '  label(row) { return row.verdict; }',
+    '}',
+  ].join('\n');
+  const targetSource = [
+    'export class Store {',
+    `  async init(db) { await db.query(${JSON.stringify(schema)}); }`,
+    "  label(row) { return row.verdict === 'up' ? 'up' : 'down'; }",
+    '}',
+  ].join('\n');
+  const baselineLines = baselineSource.split('\n');
+  const targetLines = targetSource.split('\n');
+  const result = createMigrationPlan({
+    changedPaths: [startupRoot],
+    baseline: BASELINE,
+    target: TARGET,
+    execFileSync: gitFixture({
+      baselines: { [startupRoot]: baselineSource },
+      targets: { [startupRoot]: targetSource },
+      diffs: { [startupRoot]: rewrittenDiff(baselineLines, targetLines) },
+      nameStatus: `M\t${startupRoot}`,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), new RegExp(startupRoot, 'u'));
+});

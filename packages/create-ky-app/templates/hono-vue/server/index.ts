@@ -6,7 +6,18 @@ import { buildApp } from './app.js';
 import { loadConfig } from './config.js';
 
 const config = loadConfig();
-const built = await buildApp(config);
+
+/** 装配失败（多半是数据库连不上）就打印原因并退出，不留一个半死不活的进程。 */
+async function build(): Promise<Awaited<ReturnType<typeof buildApp>>> {
+  try {
+    return await buildApp(config);
+  } catch (error) {
+    console.error(`启动失败：${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+}
+
+const built = await build();
 
 const server = serve({ fetch: built.app.fetch, port: config.port, hostname: '0.0.0.0' }, (info) => {
   console.log(

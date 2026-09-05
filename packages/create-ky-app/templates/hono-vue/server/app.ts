@@ -33,7 +33,7 @@ import {
 import type { Pool } from 'pg';
 
 import { createCapabilityRuntime, buildContext, type CapabilityDeps } from './capabilities.js';
-import { createPool, runMigrations } from './db.js';
+import { createPool, runMigrations, waitForDatabase } from './db.js';
 import { PERMISSION_TABLE, effectiveRoles, permVersionOf, permissionsFor } from './permissions.js';
 import { projectRoot, webDistDir } from './paths.js';
 import { registerPageApi } from './routes/pageApi.js';
@@ -71,6 +71,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const digest = manifestDigest(manifest);
 
   const pool = createPool(config.databaseUrl);
+  // 数据库容器可能刚起来，首连给有限重试（连接类错误才重试）。
+  await waitForDatabase(pool);
   await runMigrations(pool);
 
   const jtiStore = new PgJtiStore(pool);

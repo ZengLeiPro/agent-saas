@@ -61,6 +61,11 @@ export interface IssuePlatformSatInput {
   systemId: string;
   rid: string;
   dig?: string;
+  /**
+   * 指定签名密钥（仅 `jwks.probe` 用）：探针 SAT 必须由待切换的 `next` 密钥签名，
+   * 定制项目回的 `verifiedKid` 才构成 §8.4 的切换证据。缺省用当前 active。
+   */
+  signWithKid?: string;
 }
 
 export type IssueSatInput = IssueUserSatInput | IssueAgentSatInput | IssuePlatformSatInput;
@@ -97,7 +102,11 @@ export interface KyAppUserSatGuard {
 
 export interface KyAppSatIssuerOptions {
   config: KyAppPlatformConfig;
-  keys: { getActiveSigningKey(): Promise<ActiveSigningKey> };
+  keys: {
+    getActiveSigningKey(): Promise<ActiveSigningKey>;
+    /** 仅 `jwks.probe` 需要；未提供时 `signWithKid` 会被拒。 */
+    getSigningKeyByKid?(kid: string): Promise<ActiveSigningKey>;
+  };
   guard: KyAppUserSatGuard;
   suspensions: KyAppSuspensionRegistry;
   /** 毫秒时钟，默认 `Date.now`。 */
@@ -136,11 +145,19 @@ export class KyAppSatIssuer {
       );
     }
 
-    const { kid, privateKey } = await this.options.keys.getActiveSigningKey();
+    const { kid, privateKey } = await this.resolveSigningKey(input);
     const token = await new SignJWT({ ...claims })
       .setProtectedHeader({ alg: 'ES256', typ: JWT_TYP.sat, kid })
       .sign(privateKey);
     return { token, expiresAt: claims.exp, kid, jti: claims.jti };
+  }
+
+  private async resolveSigningKey(input: IssueSatInput): Promise<ActiveSigningKey> {
+    const requested = input.act === 'platform' ? input.signWithKid : undefined;
+    if (requested === undefined) return this.options.keys.getActiveSigningKey();
+    const byKid = this.options.keys.getSigningKeyByKid;
+    if (!byKid) throw new KyAppSatDeniedError('签名密钥服务不支持按 kid 签发', 'kid_unavailable');
+    return byKid.call(this.options.keys, requested);
   }
 
   private buildClaims(input: IssueSatInput, nowSeconds: number, ttl: number): SatClaims {

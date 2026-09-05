@@ -91,6 +91,20 @@ export class KyAppSigningKeyService {
   }
 
   /**
+   * 按 `kid` 取签发密钥。只服务 `jwks.probe`：探针 SAT 必须用**待切换的 next 密钥**签名，
+   * 否则定制项目验的就不是那把新键，`verifiedKid` 也就不构成切换证据（§8.4）。
+   * 已 `revoked` 的密钥一律不再签发。
+   */
+  async getSigningKeyByKid(kid: string): Promise<ActiveSigningKey> {
+    const record = await this.options.store.get(kid);
+    if (!record) throw new KyAppSigningKeyError(`未知签名密钥 kid ${kid}`);
+    if (record.status === 'revoked') {
+      throw new KyAppSigningKeyError(`签名密钥 ${kid} 已撤销，不能再签发`);
+    }
+    return { kid: record.kid, privateKey: await this.loadPrivateKey(record) };
+  }
+
+  /**
    * 生成下一把密钥并加入 JWKS（状态 `next`）。已存在 next 时幂等返回它的 kid，
    * 避免重复轮换把 JWKS 撑大。
    */

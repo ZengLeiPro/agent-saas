@@ -6,12 +6,17 @@
  *   旧实现只在子页面挂载后的 useEffect 里重定向，延期页面会先渲染并执行副作用
  *   （OAuth handoff 消费、治理请求、页面活动上报）。
  *
- * 本测试在 jsdom 中真实渲染 V1RouteGate + 延期路由组件，断言：
+ * 本测试在 jsdom 中真实渲染 V1RouteGate + 受限路由组件，断言：
  *   1. production 档位（含鉴权 loading / 已登录 / 未登录三种身份状态）下，
  *      受限组件不渲染、安全空壳呈现、副作用函数 0 调用、重定向目标正确；
  *   2. preview 档位（对照组）同一组件正常挂载且副作用被调用--
  *      证明「0 调用」不是 mock 缺位造成的假阴性；
  *   3. production 下允许路由照常挂载（含鉴权 loading 期间）。
+ *
+ * P3-3d 变更：memory-browser / persona-editor / settings/my-permissions 全部进入
+ * allowlist 后，能力清单里已没有延期路由可作样本。受限样本改为「未分类路由」
+ * ——即新页面未登记清单时的 fail closed 行为，这也是清单腐烂时的真实风险面。
+ * 组件仍复用真实屏幕（带挂载期副作用），只是挂在未登记的路由段上。
  */
 import React from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
@@ -62,6 +67,7 @@ vi.mock('react-native', async () => {
     ScrollView: make('div'),
     RefreshControl: make('div'),
     ActivityIndicator: make('div'),
+    Switch: make('input'),
     StyleSheet: { create: (s: unknown) => s, hairlineWidth: 1 },
     Alert: { alert: vi.fn() },
     Linking: { openURL: vi.fn() },
@@ -90,9 +96,13 @@ const COLORS = {
 
 vi.mock('../theme', () => ({
   useColors: () => COLORS,
+  useTheme: () => ({ scheme: 'light', colors: COLORS, isDark: false }),
+  useThemedStyles: (factory: (colors: typeof COLORS) => unknown) => factory(COLORS),
   spacing: new Proxy({}, { get: () => 8 }),
   radius: new Proxy({}, { get: () => 8 }),
   typography: new Proxy({}, { get: () => ({ fontSize: 14 }) }),
+  fontScale: new Proxy({}, { get: () => ({ fontSize: 14, lineHeight: 20 }) }),
+  fontWeight: new Proxy({}, { get: () => '400' }),
 }));
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -129,6 +139,8 @@ vi.mock('@agent/shared', () => ({
   startMyMcpOAuth: vi.fn(async () => ({ authorizationUrl: 'https://a.example.test' })),
   reportActivity: vi.fn(async () => {}),
   getPreviewFileType: () => 'markdown',
+  authFetch: vi.fn(async () => new Response('{}', { status: 200 })),
+  isDebugModeAvailable: () => false,
 }));
 
 vi.mock('@agent/shared/lib/governanceApi', () => ({
@@ -181,10 +193,22 @@ vi.mock('expo-clipboard', () => ({
   default: { setStringAsync: vi.fn(async () => {}) },
 }));
 
-vi.mock('lucide-react-native', () => ({
-  MoreHorizontal: () => null,
-  Plus: () => null,
-}));
+// 图标一律降级为空组件：`src/lib/icons.ts` 会按名导入几十个图标，
+// 逐个列举既噪声又容易腐烂。只拦截「大写开头的具名导出」，
+// 其余（Symbol / then / __esModule 等模块协议成员）保持 undefined，
+// 否则模块命名空间会被误判成 thenable 而卡死 import。
+vi.mock('lucide-react-native', () => {
+  const isIconName = (prop: string | symbol): prop is string =>
+    typeof prop === 'string' && /^[A-Z]/.test(prop);
+  return new Proxy({} as Record<string, unknown>, {
+    get: (target, prop) => (isIconName(prop) ? () => null : Reflect.get(target, prop)),
+    has: (target, prop) => isIconName(prop) || prop in target,
+    getOwnPropertyDescriptor: (target, prop) =>
+      isIconName(prop)
+        ? { configurable: true, enumerable: true, value: () => null }
+        : Object.getOwnPropertyDescriptor(target, prop),
+  });
+});
 
 vi.mock('@shopify/flash-list', () => ({
   FlashList: () => null,
@@ -194,20 +218,21 @@ vi.mock('@shopify/flash-list', () => ({
 
 const OAUTH_HANDOFF_CODE = 'A'.repeat(48);
 
-/** 仍存在的延期路由及其挂载期副作用 spies。 */
-const DEFERRED_CASES = [
+/**
+ * 未分类路由样本（P3-3d 起延期清单为空）：组件是真实屏幕（含挂载期请求），
+ * 但路由段没有登记进能力清单——生产必须 fail closed，一行副作用都不许跑。
+ */
+const UNCLASSIFIED_CASES = [
   {
-    // P3-3b：任务中心已进入 allowlist，改用仍延期的「记忆浏览」作延期样本
-    name: '记忆浏览（延期）',
-    segments: ['memory-browser'],
+    name: '未登记的记忆浏览路由',
+    segments: ['memory-browser-unregistered'],
     params: { path: 'memory' },
     screen: <MemoryBrowserScreen />,
     getSyncSpies: () => [h.memoryRefresh],
   },
   {
-    // P3-3a：Connections 管理已并入能力中心（allowlist），改用仍延期的「我的权限」作对照
-    name: '我的权限（延期）',
-    segments: ['settings', 'my-permissions'],
+    name: '未登记的设置子路由',
+    segments: ['settings', 'my-permissions-unregistered'],
     params: {},
     screen: <MyPermissionsScreen />,
     getSyncSpies: () => [vi.mocked(governanceMod.fetchEffectiveResources)],
@@ -228,8 +253,8 @@ afterEach(() => {
   h.authLoading = true;
 });
 
-describe('M00-01 V1RouteGate 运行时门禁：production 拒绝延期路由', () => {
-  for (const testCase of DEFERRED_CASES) {
+describe('M00-01 V1RouteGate 运行时门禁：production 拒绝未分类路由', () => {
+  for (const testCase of UNCLASSIFIED_CASES) {
     describe(testCase.name, () => {
       it('鉴权 loading 中：不挂载受限组件，副作用 0 调用，重定向登录页', async () => {
         h.segments = [...testCase.segments];
@@ -305,7 +330,7 @@ describe('M00-01 V1RouteGate 运行时门禁：production 拒绝延期路由', (
 });
 
 describe('M00-01 V1RouteGate 对照组：preview 档位不裁剪', () => {
-  for (const testCase of DEFERRED_CASES) {
+  for (const testCase of UNCLASSIFIED_CASES) {
     it(`${testCase.name}：正常挂载且副作用被调用（证明 0 调用断言非假阴性）`, async () => {
       vi.stubEnv('EXPO_PUBLIC_V1_PROFILE', 'preview');
       h.segments = [...testCase.segments];
@@ -384,8 +409,14 @@ describe('M00-01 V1RouteGate：production 允许路由照常挂载', () => {
     expect(h.replace).toHaveBeenCalledWith('/(tabs)/chat');
   });
 
-  it('P3-3b：任务中心路由在 production 放行（列表 / 详情 / 创建编辑）', () => {
-    for (const segments of [['cron'], ['cron', '[jobId]'], ['cron-form'], ['text-editor']]) {
+  it('P3-3b/3d：任务中心与设置 8 分区路由在 production 放行', () => {
+    for (const segments of [
+      ['cron'], ['cron', '[jobId]'], ['cron-form'], ['text-editor'],
+      ['memory-browser'], ['persona-editor'],
+      ['settings', 'my-permissions'], ['settings', 'account-security'],
+      ['settings', 'my-agent'], ['settings', 'chat-model'],
+      ['settings', 'appearance-layout'], ['settings', 'files-storage'],
+    ]) {
       cleanup();
       h.segments = segments;
       h.authLoading = false;

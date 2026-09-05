@@ -51,11 +51,23 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
   // 会话详情与 Markdown 产物查看（§2.1 #5/#6/#11）
   'chat/[sessionId]',
   'chat/markdown-preview',
-  // 设置 Tab：当前账号与当前 Agent、必要偏好、退出
+  // 设置 Tab（P3-3d）：主页按 Web `unifiedSettingsRegistry` 的 8 个个人分区重排，
+  // 分区 ID 与 Web `/settings/<id>` 一一对应（`connections` 落能力中心连接器 Tab、
+  // `trash` 是页内 TrashSheet，两者没有独立路由）。
   '(tabs)/settings',
+  'settings/account-security',
+  'settings/my-agent',
+  'settings/chat-model',
+  'settings/appearance-layout',
+  'settings/files-storage',
+  // 个人治理：服务端权威有效资源视图（P3-3d 起进入生产 IA）
+  'settings/my-permissions',
   'settings/agent-profile',
   'settings/user-detail/[userId]',
   'change-password',
+  // 我的 Agent → 记忆：memory 目录浏览与人格 / MEMORY.md 编辑（P3-3d 解锁）
+  'memory-browser',
+  'persona-editor',
   // OAuth callback 保留最小安全回跳。
   'oauth/callback',
   // 能力中心（P3-3a）：工作流 / 技能 / 连接器 / 专家四 Tab，
@@ -112,9 +124,10 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
  * 理由文案是发布 Gate A 审计证据的一部分，不得留空。
  */
 export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
-  'memory-browser': '§2.2 Memory 浏览与编辑 UI 延期（Gate A）',
-  'persona-editor': '§1.3 V1 最小设置：Agent 人格/记忆编辑不在信息架构内（M30-03 后评估）',
-  'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',
+  // P3-3d 起为空：设置 8 分区落地后，memory-browser / persona-editor /
+  // settings/my-permissions 全部转入 allowlist。清单保留是为了
+  // 「未来新增页面可以先登记延期理由再上线」；空对象不改变 fail closed 语义
+  // ——未分类路由仍然被生产 allowlist 拒绝。
 };
 
 /** 路由分类结果。 */

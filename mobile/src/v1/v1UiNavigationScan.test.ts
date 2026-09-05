@@ -38,6 +38,17 @@ const PRODUCTION_REACHABLE_UI: readonly string[] = [
   'app/settings/user-detail/[userId].tsx',
   'app/settings/agent-profile/index.tsx',
   'src/components/settings/AgentProfileEditor.tsx',
+  // P3-3d 设置 8 分区：主页跳转由 personalSettingsSections 注册表驱动
+  // （落点分类由 src/lib/settings/personalSettingsSections.test.ts 断言），
+  // 这里覆盖 5 个详情页自身的静态导航目标。
+  'app/settings/account-security.tsx',
+  'app/settings/my-agent.tsx',
+  'app/settings/chat-model.tsx',
+  'app/settings/appearance-layout.tsx',
+  'app/settings/files-storage.tsx',
+  'app/settings/my-permissions.tsx',
+  'app/memory-browser.tsx',
+  'app/persona-editor.tsx',
   // P3-3a 能力中心：四 Tab 路由、Tab 切换与会话列表入口
   'app/capabilities/index.tsx',
   'app/capabilities/workflows.tsx',
@@ -155,6 +166,12 @@ describe('M00-01 生产界面导航扫描', () => {
     expect(findings.some((f) => f.target === 'files/browse')).toBe(true);
     expect(findings.some((f) => f.target === 'files/preview')).toBe(true);
     expect(findings.some((f) => f.target === 'chat/markdown-preview')).toBe(true);
+    // P3-3d：设置分区详情页的导航目标（人格/记忆编辑、记忆浏览、账号自助）
+    expect(findings.some((f) => f.target === 'persona-editor')).toBe(true);
+    expect(findings.some((f) => f.target === 'memory-browser')).toBe(true);
+    expect(findings.some((f) => f.target === 'change-password')).toBe(true);
+    expect(findings.some((f) => f.target === 'settings/user-detail/[userId]')).toBe(true);
+    expect(findings.some((f) => f.target === 'settings/account-security')).toBe(true);
   });
 
   it('所有导航目标都能被能力清单解析（无未分类路由）', () => {
@@ -167,6 +184,7 @@ describe('M00-01 生产界面导航扫描', () => {
     ).toEqual([]);
   });
 
+  // P3-3d 起延期清单为空，本用例退化为「一旦重新出现延期路由，导航必须显式门控」
   it('延期路由目标必须被同文件 isV1RouteAllowed("<route>") 显式门控', () => {
     const offenders: string[] = [];
     for (const finding of findings) {
@@ -196,14 +214,44 @@ describe('M00-01 生产界面导航扫描', () => {
     }
   });
 
-  it('设置页保留的生产菜单快照（对话/设置 + 账号/Agent/通用/退出）', () => {
+  it('设置主页保留 E2E 契约锚点（settings-screen / account-username / logout-button）', () => {
     const settings = readFileSync(
       join(MOBILE_ROOT, 'app/(tabs)/settings/index.tsx'),
       'utf8',
     );
-    // V1 IA（方案 §1.3）：当前账号与当前 Agent / 字体与必要偏好 / 退出登录。
-    for (const label of ['账户', 'Agent', '字体大小', '退出登录']) {
-      expect(settings.includes(label), `设置页缺少 V1 信息架构菜单：${label}`).toBe(true);
+    // Maestro 02-identity-boundary + helpers/logout 依赖这三个 testID 与退出确认文案
+    for (const anchor of [
+      'testID="settings-screen"',
+      'titleTestID="account-username"',
+      'testID="logout-button"',
+      '确定要退出吗？',
+    ]) {
+      expect(settings.includes(anchor), `设置主页缺少 E2E 锚点：${anchor}`).toBe(true);
     }
+  });
+
+  it('设置主页按 Web 的 8 个个人分区渲染，字体设置落到外观与布局分区', () => {
+    const registry = readFileSync(
+      join(MOBILE_ROOT, 'src/lib/settings/personalSettingsSections.ts'),
+      'utf8',
+    );
+    for (const label of [
+      '账户与安全',
+      '我的 Agent',
+      '对话与模型',
+      '外观与布局',
+      '我的权限',
+      '连接与授权',
+      '文件与存储',
+      '回收站',
+    ]) {
+      expect(registry.includes(label), `设置分区注册表缺少：${label}`).toBe(true);
+    }
+    // 字号档位与 Web 一样落在「外观与布局」，不再挂在设置主页
+    const appearance = readFileSync(
+      join(MOBILE_ROOT, 'app/settings/appearance-layout.tsx'),
+      'utf8',
+    );
+    expect(appearance.includes('字体大小')).toBe(true);
   });
 });

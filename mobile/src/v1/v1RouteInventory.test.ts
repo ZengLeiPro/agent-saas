@@ -77,6 +77,19 @@ describe('M00-01 路由清单完整性', () => {
     expect(routes).toContain('files');
     expect(routes).toContain('files/browse');
     expect(routes).toContain('files/preview');
+    // P3-3d 设置 8 分区的详情路由（connections / trash 无独立路由）
+    for (const route of [
+      'settings/account-security',
+      'settings/my-agent',
+      'settings/chat-model',
+      'settings/appearance-layout',
+      'settings/files-storage',
+      'settings/my-permissions',
+      'memory-browser',
+      'persona-editor',
+    ]) {
+      expect(routes, route).toContain(route);
+    }
   });
 
   it('每个真实路由都已分类：未分类路由一律 fail closed，不得混入', () => {

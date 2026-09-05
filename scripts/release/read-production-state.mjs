@@ -238,14 +238,7 @@ export function validateExpectedConfigIdentityObservers(
   apiConfigIdentityInput,
   { configIdentityStage = 'steady-state' } = {},
 ) {
-  if (
-    ![
-      'candidate-readback',
-      'legacy-api-upgrade-retry-baseline',
-      'legacy-pre-upgrade-baseline',
-      'steady-state',
-    ].includes(configIdentityStage)
-  ) {
+  if (!['candidate-readback', 'steady-state'].includes(configIdentityStage)) {
     throw new Error(`Unknown Production ConfigIdentity stage: ${configIdentityStage}`);
   }
   const trustedExpected = trustedExpectedInput
@@ -260,31 +253,18 @@ export function validateExpectedConfigIdentityObservers(
     if (apiConfigIdentity?.status !== 'consistent' || !apiExpected) {
       throw new Error('Candidate readback requires a consistent API expected ConfigIdentity');
     }
-    // Final readback still requires a consistent, release-bound private summary; trusted identity
-    // is committed afterward and may therefore still carry the old expected or no expected.
-    return;
-  }
-  if (configIdentityStage === 'legacy-api-upgrade-retry-baseline') {
-    if (!trustedExpected && apiConfigIdentity === undefined) return;
-    if (apiConfigIdentity?.status !== 'consistent' || !apiExpected) {
+    if (!trustedExpected) {
       throw new Error(
-        'Legacy API upgrade retry requires either complete observer absence or a consistent API expected ConfigIdentity',
+        'Production expected ConfigIdentity is missing from trusted runtime identity during candidate-readback',
       );
     }
-    // API+Worker may already have switched before a later component failed. The private summary is
-    // then authoritative for the active release while trusted identity is committed only after
-    // complete convergence, so trusted expected may still be absent or identify the old release.
+    // 分阶段切换允许 trusted 暂时保留旧身份，但首次升级完成后不再允许其缺失。
     return;
   }
   if (!trustedExpected && !apiExpected) {
     const completelyAbsent = apiConfigIdentity === undefined;
-    if (configIdentityStage === 'legacy-pre-upgrade-baseline' && completelyAbsent) {
-      return;
-    }
     if (completelyAbsent) {
-      throw new Error(
-        'Production ConfigIdentity is completely absent outside the legacy pre-upgrade baseline',
-      );
+      throw new Error('Production ConfigIdentity is completely absent during steady-state');
     }
     throw new Error(
       `Production expected ConfigIdentity is missing from both observers during ${configIdentityStage}`,
@@ -307,7 +287,7 @@ export function validateProductionObservations(
   { runtime, api, web, acs },
   { configIdentityStage = 'steady-state' } = {},
 ) {
-  if (!['legacy-pre-upgrade-baseline', 'steady-state'].includes(configIdentityStage)) {
+  if (configIdentityStage !== 'steady-state') {
     throw new Error(`Unknown Production ConfigIdentity stage: ${configIdentityStage}`);
   }
   const identity = required(runtime, 'Trusted runtime identity');
@@ -433,13 +413,20 @@ export async function readReleaseConfigIdentityBinding(envPath) {
   const releaseId = entries.get('AGENT_SAAS_RELEASE_ID');
   if (!releaseId) throw new Error('Release env is missing AGENT_SAAS_RELEASE_ID');
   const schemaVersion = Number(entries.get('AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION'));
-  const expectedConfigIdentity = configIdentitySide({
-    schemaVersion,
-    digest: entries.get('AGENT_SAAS_CONFIG_IDENTITY_DIGEST'),
-    ...(entries.has('AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST')
-      ? { credentialVersionDigest: entries.get('AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST') }
-      : {}),
-  }, 'Release env expected configIdentity');
+  const expectedConfigIdentity = configIdentitySide(
+    {
+      schemaVersion,
+      digest: entries.get('AGENT_SAAS_CONFIG_IDENTITY_DIGEST'),
+      ...(entries.has('AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST')
+        ? {
+            credentialVersionDigest: entries.get(
+              'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST',
+            ),
+          }
+        : {}),
+    },
+    'Release env expected configIdentity',
+  );
   return { releaseId, expectedConfigIdentity };
 }
 
@@ -555,14 +542,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     resolvePrivateConfigIdentity(options),
   ]);
   const configIdentityStage = options['config-identity-stage'] ?? 'steady-state';
-  if (!['legacy-pre-upgrade-baseline', 'steady-state'].includes(configIdentityStage)) {
+  if (configIdentityStage !== 'steady-state') {
     throw new Error(`Unknown --config-identity-stage: ${configIdentityStage}`);
   }
   const { configIdentity: publicConfigIdentity, ...apiWithoutConfigIdentity } = publicApi;
   const selectedConfigIdentity = selectConfigIdentitySummary(
     privateConfigIdentity,
     publicConfigIdentity,
-    { allowCompletelyMissing: configIdentityStage === 'legacy-pre-upgrade-baseline' },
+    { allowCompletelyMissing: false },
   );
   const api = {
     ...apiWithoutConfigIdentity,

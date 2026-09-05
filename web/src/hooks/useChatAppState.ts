@@ -2951,7 +2951,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     input,
     loading: effectiveLoading, sandboxProfile, setSandboxProfile,
     sessionId: session.sessionId,
-    sessions: session.sessions,
+    sessions: session.sessions, sessionAccessMode: session.sessionAccessMode,
     activeTab,
     governanceRoute: governanceRouteState,
     platformAdminSection,

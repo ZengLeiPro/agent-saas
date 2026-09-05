@@ -2,7 +2,7 @@ import type { ChangeEvent, ClipboardEvent, DragEvent, ReactNode, RefObject } fro
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem, TokenUsage } from "@/lib/sessionsApi";
 import type { AgentTarget } from "@agent/shared";
-import type { AskUserAnswers, ContextUsageData, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
+import type { AskUserAnswers, ContextUsageData, MemoryRecallData, NotificationData, PluginInstallData, SessionDetailAccessMode, SessionRuntimeStatus } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
@@ -23,6 +23,8 @@ export interface ChatAppState {
   loading: boolean;
   sessionId: string | null;
   sessions: ApiSessionListItem[];
+  /** 服务端返回的当前会话访问模式；unknown = 详情尚未返回，界面按只读处理。 */
+  sessionAccessMode: SessionDetailAccessMode | "unknown";
   activeTab: AppTab;
   /** 当前 V2 治理/设置稳定路由；保持 AppTab 外部合同不变。 */
   governanceRoute: GovernanceRouteState | null;

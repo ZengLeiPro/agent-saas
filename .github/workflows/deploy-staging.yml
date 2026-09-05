@@ -7,14 +7,6 @@ on:
         description: '发版说明'
         required: false
         type: string
-      production_config_identity_stage:
-        description: 'Production ConfigIdentity 基线协议（首次升级前仅可显式选择 legacy）'
-        required: true
-        type: choice
-        default: steady-state
-        options:
-          - steady-state
-          - legacy-pre-upgrade-baseline
 
 permissions:
   contents: write
@@ -58,23 +50,9 @@ jobs:
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       RELEASE_EVIDENCE_SCHEMA_VERSION: '2'
       RELEASE_SHA: ${{ github.sha }}
-      PRODUCTION_CONFIG_IDENTITY_STAGE: ${{ inputs.production_config_identity_stage }}
+      PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state
 
     steps:
-      - name: Select auditable Production ConfigIdentity baseline protocol
-        run: |
-          set -euo pipefail
-          case "$PRODUCTION_CONFIG_IDENTITY_STAGE" in
-            steady-state|legacy-pre-upgrade-baseline) ;;
-            *) echo 'Unknown Production ConfigIdentity baseline protocol' >&2; exit 1 ;;
-          esac
-          {
-            echo '### Production ConfigIdentity baseline protocol'
-            echo
-            echo "- Selected stage: \`$PRODUCTION_CONFIG_IDENTITY_STAGE\`"
-            echo '- Default remains `steady-state`; the legacy stage accepts only complete absence from both observers.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Verify Evidence Writer configuration
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}

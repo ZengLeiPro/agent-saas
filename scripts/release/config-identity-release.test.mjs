@@ -141,14 +141,17 @@ test('read-production-state rejects configIdentity without releaseId', () => {
   );
 });
 
-test('read-production-state keeps working without configIdentity only for legacy baseline', () => {
-  const state = validateProductionObservations(baseObservations(), {
-    configIdentityStage: 'legacy-pre-upgrade-baseline',
-  });
-  assert.equal(state.configIdentity, undefined);
+test('read-production-state rejects missing ConfigIdentity after the first upgrade', () => {
   assert.throws(
     () => validateProductionObservations(baseObservations()),
-    /completely absent outside the legacy pre-upgrade baseline/,
+    /completely absent during steady-state/,
+  );
+  assert.throws(
+    () =>
+      validateProductionObservations(baseObservations(), {
+        configIdentityStage: 'legacy-pre-upgrade-baseline',
+      }),
+    /Unknown Production ConfigIdentity stage/,
   );
 });
 
@@ -249,7 +252,7 @@ test('read-production-state rejects both directions of unilateral expected Confi
     const observations = baseObservations();
     if (sides.runtimeExpected) observations.runtime.configIdentity = sides.runtimeExpected;
     if (sides.apiSummary) observations.api.configIdentity = sides.apiSummary;
-    for (const configIdentityStage of ['legacy-pre-upgrade-baseline', 'steady-state']) {
+    for (const configIdentityStage of ['steady-state']) {
       assert.throws(
         () => validateProductionObservations(observations, { configIdentityStage }),
         /expected ConfigIdentity is missing from/,
@@ -259,7 +262,7 @@ test('read-production-state rejects both directions of unilateral expected Confi
   }
 });
 
-test('legacy baseline rejects a partially migrated API summary without expected binding', () => {
+test('steady-state rejects a partially migrated API summary without expected binding', () => {
   const observations = baseObservations();
   observations.api.configIdentity = {
     schemaVersion: 1,
@@ -269,9 +272,10 @@ test('legacy baseline rejects a partially migrated API summary without expected 
     observed: validConfigIdentity.observed,
   };
   assert.throws(
-    () => validateProductionObservations(observations, {
-      configIdentityStage: 'legacy-pre-upgrade-baseline',
-    }),
+    () =>
+      validateProductionObservations(observations, {
+        configIdentityStage: 'steady-state',
+      }),
     /expected ConfigIdentity is missing from both observers/,
   );
 });
@@ -287,13 +291,18 @@ test('candidate readback accepts a new bound expected before trusted identity co
     ),
   );
   assert.throws(
-    () => validateExpectedConfigIdentityObservers(undefined, {
-      schemaVersion: 1,
-      status: 'unverifiable',
-      reason: 'expected_not_bound',
-      releaseId: 'rc-1',
-      observed: validConfigIdentity.observed,
-    }, { configIdentityStage: 'candidate-readback' }),
+    () =>
+      validateExpectedConfigIdentityObservers(
+        undefined,
+        {
+          schemaVersion: 1,
+          status: 'unverifiable',
+          reason: 'expected_not_bound',
+          releaseId: 'rc-1',
+          observed: validConfigIdentity.observed,
+        },
+        { configIdentityStage: 'candidate-readback' },
+      ),
     /requires a consistent API expected ConfigIdentity/,
   );
 });
@@ -576,10 +585,7 @@ test('expected identity env parser handles mismatch and fails closed on incomple
   );
   assert.throws(
     () =>
-      parse([
-        'AGENT_SAAS_RELEASE_ID=rc-1',
-        `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
-      ]),
+      parse(['AGENT_SAAS_RELEASE_ID=rc-1', `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`]),
     /missing config identity schema version/,
   );
   assert.throws(

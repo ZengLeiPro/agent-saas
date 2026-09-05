@@ -18,7 +18,11 @@ test('packageManager 固定的 pnpm 版本在 GitHub Release 二进制校验和�
   for (const entry of entries) {
     assert.equal(entry.length, 2, `malformed pin line: ${entry.join(' ')}`);
     assert.match(entry[0], /^[a-f0-9]{64}$/u, `pin must be a sha256: ${entry[0]}`);
-    assert.match(entry[1], /^pnpm-[a-z0-9-]+@\d+\.\d+\.\d+$/u, `pin key must be <asset>@<version>: ${entry[1]}`);
+    assert.match(
+      entry[1],
+      /^pnpm-[a-z0-9-]+@\d+\.\d+\.\d+$/u,
+      `pin key must be <asset>@<version>: ${entry[1]}`,
+    );
   }
   assert.ok(
     entries.some(([, key]) => key === `pnpm-linux-x64@${version}`),
@@ -29,12 +33,21 @@ test('packageManager 固定的 pnpm 版本在 GitHub Release 二进制校验和�
 test('setup-pnpm 只从 GitHub Releases 拉固定二进制、校验 sha256 并按版本缓存', () => {
   assert.match(action, /using: composite/u);
   assert.match(action, /"packageManager":\[\[:space:\]\]\*"pnpm@/u);
-  assert.match(action, /https:\/\/github\.com\/pnpm\/pnpm\/releases\/download\/v\$\{PNPM_VERSION\}\/\$\{PNPM_ASSET\}/u);
+  assert.match(
+    action,
+    /https:\/\/github\.com\/pnpm\/pnpm\/releases\/download\/v\$\{PNPM_VERSION\}\/\$\{PNPM_ASSET\}/u,
+  );
   assert.match(action, /sha256sum "\$PNPM_DIR\/pnpm"/u);
   assert.match(action, /uses: actions\/cache@v6/u);
-  assert.match(action, /key: pnpm-standalone-v1-\$\{\{ runner\.os \}\}-\$\{\{ steps\.resolve\.outputs\.asset \}\}-\$\{\{ steps\.resolve\.outputs\.version \}\}/u);
+  assert.match(
+    action,
+    /key: pnpm-standalone-v1-\$\{\{ runner\.os \}\}-\$\{\{ steps\.resolve\.outputs\.asset \}\}-\$\{\{ steps\.resolve\.outputs\.version \}\}/u,
+  );
   assert.match(action, /echo "\$PNPM_DIR" >> "\$GITHUB_PATH"/u);
-  assert.doesNotMatch(action, /npm (?:install|ci|i) |registry\.npmjs\.org|corepack|pnpm\/action-setup/u);
+  assert.doesNotMatch(
+    action,
+    /npm (?:install|ci|i) |registry\.npmjs\.org|corepack|pnpm\/action-setup/u,
+  );
   // 摘要不匹配或版本不匹配都必须失败，而不是带着未知二进制继续。
   assert.match(action, /pnpm binary digest mismatch/u);
   assert.match(action, /pnpm reported \$installed, expected \$PNPM_VERSION/u);
@@ -47,10 +60,17 @@ test('所有 workflow 都改用固定二进制安装 pnpm', () => {
     'deploy-staging.yml',
     'promote-release.yml',
     'staging-acceptance.yml',
-    'confirm-expand-migration.yml',
   ]) {
     const workflow = readFileSync(new URL(`.github/workflows/${name}`, root), 'utf8');
-    assert.doesNotMatch(workflow, /pnpm\/action-setup/u, `${name} still bootstraps pnpm via npm registry`);
-    assert.match(workflow, /uses: \.\/\.github\/actions\/setup-pnpm/u, `${name} does not use setup-pnpm`);
+    assert.doesNotMatch(
+      workflow,
+      /pnpm\/action-setup/u,
+      `${name} still bootstraps pnpm via npm registry`,
+    );
+    assert.match(
+      workflow,
+      /uses: \.\/\.github\/actions\/setup-pnpm/u,
+      `${name} does not use setup-pnpm`,
+    );
   }
 });

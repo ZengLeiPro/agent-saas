@@ -354,8 +354,8 @@ export const platformAdminApi = {
   providerQuotaHistory(hours = 24): Promise<ProviderQuotaHistoryResponse> {
     return getJson(buildAdminApiPath("/provider-quota/history", { hours }));
   },
-  refreshProviderQuota(): Promise<ProviderQuotaOverviewResponse> {
-    return mutateJson(buildAdminApiPath("/provider-quota/refresh"), "POST");
+  refreshProviderQuota(accountKey?: string): Promise<ProviderQuotaOverviewResponse> {
+    return mutateJson(buildAdminApiPath("/provider-quota/refresh", { accountKey }), "POST");
   },
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));

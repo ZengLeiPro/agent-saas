@@ -65,7 +65,11 @@ describe('provider quota admin router', () => {
     const refreshed = await fetch(`${base}/refresh`, { method: 'POST' });
     expect(refreshed.status).toBe(200);
     expect(service.refresh).toHaveBeenCalledTimes(1);
+    expect(service.refresh).toHaveBeenLastCalledWith(undefined);
     expect(service.overview).toHaveBeenCalledTimes(2);
+    const single = await fetch(`${base}/refresh?accountKey=codex%3Ac1`, { method: 'POST' });
+    expect(single.status).toBe(200);
+    expect(service.refresh).toHaveBeenLastCalledWith('codex:c1');
   });
 
   it('test：校验请求体，服务端错误转成 400 文案', async () => {

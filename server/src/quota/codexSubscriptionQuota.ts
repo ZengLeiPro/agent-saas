@@ -49,6 +49,8 @@ export interface NormalizedCodexUsage {
   planType?: string;
   windows: ProviderQuotaWindow[];
   limitReached: boolean;
+  /** 可用的额度重置券张数。 */
+  resetCredits?: number;
   extra: Record<string, unknown>;
 }
 
@@ -102,11 +104,15 @@ export function normalizeCodexUsage(raw: unknown): NormalizedCodexUsage {
     }
   }
   const credits = isRecord(record.credits) ? record.credits : undefined;
+  const resetCredits = isRecord(record.rate_limit_reset_credits)
+    ? finiteNumber(record.rate_limit_reset_credits.available_count)
+    : undefined;
   return {
     ...(typeof record.email === 'string' ? { email: record.email } : {}),
     ...(typeof record.plan_type === 'string' ? { planType: record.plan_type } : {}),
     windows,
     limitReached: rateLimit.limit_reached === true,
+    ...(resetCredits !== undefined ? { resetCredits } : {}),
     extra: {
       ...(credits
         ? {

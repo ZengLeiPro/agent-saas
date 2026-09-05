@@ -123,6 +123,8 @@ async function makeModels(vault: InMemorySecretVault): Promise<NonNullable<AppCo
   };
 }
 
+const statusAvailability: Record<string, 'available' | 'quota_cooldown' | 'auth_unavailable'> = {};
+
 function codexManager(refs: string[], enabled = true) {
   return {
     getConfiguration: () => ({ enabled, credentialRefs: refs }) as never,
@@ -134,6 +136,11 @@ function codexManager(refs: string[], enabled = true) {
         configured: true,
         connected: true,
         email: `${ref}@mail`,
+        expiresAt: '2026-09-14T06:22:10.000Z',
+        availability: statusAvailability[ref] ?? ('available' as const),
+        ...(statusAvailability[ref] === 'quota_cooldown'
+          ? { cooldownUntil: '2026-09-05T07:30:00.000Z', lastFailureCode: 'usage_limit_reached' }
+          : {}),
       })),
     getCredentialsForCredential: async (ref: string) => ({
       accessToken: `tok-${ref}`,
@@ -307,6 +314,48 @@ describe('ProviderQuotaService', () => {
         secretAccessKey: 'direct',
       }),
     ).resolves.toMatchObject({ limitReached: false });
+  });
+
+  it('Codex 快照带重置券与凭据状态，overview 叠加实时凭据状态；refresh 可按账号单采', async () => {
+    const vault = new InMemorySecretVault();
+    const models = await makeModels(vault);
+    const store = new FakeStore();
+    const fetchImpl = routedFetch({
+      codex: () => json({ ...codexUsage, rate_limit_reset_credits: { available_count: 2 } }),
+    });
+    const service = new ProviderQuotaService({
+      store: store as unknown as PgProviderQuotaSnapshotStore,
+      getModelsConfig: () => models,
+      secretVault: vault,
+      codexCredentialManager: codexManager(['c1']),
+      enableCollector: false,
+      fetchImpl,
+      now,
+      logger,
+    });
+    const first = await service.refresh('codex:c1');
+    expect(first.map((s) => s.accountKey)).toEqual(['codex:c1']);
+    expect(first[0]!.resetCredits).toBe(2);
+    expect(first[0]!.credential).toEqual({
+      expiresAt: '2026-09-14T06:22:10.000Z',
+      availability: 'available',
+    });
+    await expect(service.refresh('codex:nope')).rejects.toThrow(/账号不存在/u);
+
+    statusAvailability.c1 = 'quota_cooldown';
+    try {
+      const overview = await service.overview();
+      const codex = overview.items.find((s) => s.accountKey === 'codex:c1')!;
+      expect(codex.credential).toMatchObject({
+        availability: 'quota_cooldown',
+        cooldownUntil: '2026-09-05T07:30:00.000Z',
+        lastFailureCode: 'usage_limit_reached',
+      });
+      // 火山账号只在配置里、尚未采集过，不在 overview 中
+      expect(overview.items.map((s) => s.accountKey)).toEqual(['codex:c1']);
+    } finally {
+      delete statusAvailability.c1;
+    }
   });
 
   it('start 只在 enableCollector=true 时安排定时器，stop 可重复调用', () => {

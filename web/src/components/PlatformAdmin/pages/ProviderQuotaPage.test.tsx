@@ -12,8 +12,10 @@ vi.mock('../api', () => ({ platformAdminApi: api }));
 
 import {
   ProviderQuotaPage,
+  accountStatus,
   baselineUsedPercent,
   formatResetIn,
+  formatWan,
   windowTone,
 } from './ProviderQuotaPage';
 
@@ -56,6 +58,13 @@ const overview: ProviderQuotaOverviewResponse = {
       plan: { type: 'pro' },
       windows: [{ id: 'primary', label: '每周', usedPercent: 100, unit: '%', limitReached: true }],
       limitReached: true,
+      resetCredits: 2,
+      credential: {
+        expiresAt: '2026-09-14T06:22:10.000Z',
+        availability: 'quota_cooldown',
+        cooldownUntil: '2026-09-05T07:30:00.000Z',
+        lastFailureCode: 'usage_limit_reached',
+      },
       ok: false,
       error: 'Codex usage HTTP 401',
       collectedAt: '2026-09-05T06:30:00.000Z',
@@ -100,26 +109,40 @@ describe('ProviderQuotaPage', () => {
     api.refreshProviderQuota.mockReset().mockResolvedValue(overview);
   });
 
-  it('按账号渲染窗口进度、撞限标记、失败原因与采集器状态', async () => {
+  it('按账号渲染状态徽标、剩余额度瓷片、凭据事实与采集器状态', async () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-volcengine:ark')).toBeTruthy());
-    expect(screen.getByText('kaiyankeji.3@gmail.com')).toBeTruthy();
-    expect(screen.getByText('94.1%')).toBeTruthy();
-    expect(screen.getByText('接近上限')).toBeTruthy();
-    expect(screen.getAllByText('已撞限').length).toBeGreaterThan(0);
+    // 卡级状态：火山接近上限（月度 94%），Codex 采集失败
+    expect(screen.getAllByText('接近上限').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('采集失败')).toBeTruthy();
+    // 大数字是剩余百分比；用量用「万」表达
+    expect(screen.getByText('5.9%')).toBeTruthy();
+    expect(screen.getByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeTruthy();
+    expect(screen.getByText(/已用 100\.0% · 仅提供百分比/u)).toBeTruthy();
+    // Codex 事实栅格：重置券、凭据到期、调度状态
+    expect(screen.getByText('2 张')).toBeTruthy();
+    expect(screen.getByText('凭据到期')).toBeTruthy();
+    expect(screen.getByText(/^冷却中，至 /u)).toBeTruthy();
+    // 失败原因 + 上次成功数据提示
     expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
+    // 顶部汇总
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
-    expect(screen.getByText(/1 个账号已撞限/u)).toBeTruthy();
+    expect(screen.getByText(/1 个账号已耗尽或不可用/u)).toBeTruthy();
+    expect(screen.getByText(/1 个账号接近上限或冷却中/u)).toBeTruthy();
     // 24h 变化来自 history 的最早成功点
     expect(screen.getByText(/24h \+4\.1%/u)).toBeTruthy();
+    // 火山口径脚注
+    expect(screen.getByText(/不计入 5 小时 \/ 周额度限制/u)).toBeTruthy();
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
 
-  it('「立即采集」走 refresh 接口并刷新页面', async () => {
+  it('「立即采集」全量刷新，卡上的刷新按钮只刷该账号', async () => {
     render(<ProviderQuotaPage />);
     await waitFor(() => expect(screen.getByTestId('quota-account-volcengine:ark')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /立即采集/u }));
-    await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith(undefined));
+    fireEvent.click(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' }));
+    await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith('codex:c1'));
     expect(api.providerQuota).toHaveBeenCalledTimes(1);
   });
 
@@ -144,6 +167,26 @@ describe('helpers', () => {
     expect(windowTone({ usedPercent: 85 })).toBe('warning');
     expect(windowTone({ usedPercent: 99, limitReached: true })).toBe('critical');
     expect(windowTone({ usedPercent: 100 })).toBe('critical');
+  });
+
+  it('accountStatus：采集失败 > 凭据不可用 > 已耗尽 > 冷却中 > 接近上限 > 正常', () => {
+    const okWindow = { id: 'w', label: 'w', usedPercent: 10 };
+    expect(accountStatus({ ok: false, limitReached: false, windows: [] })).toEqual({ tone: 'critical', label: '采集失败' });
+    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'auth_unavailable' } }).label).toBe('凭据不可用');
+    expect(accountStatus({ ok: true, limitReached: true, windows: [okWindow], credential: { availability: 'quota_cooldown' } }).label).toBe('已耗尽');
+    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'quota_cooldown' } })).toEqual({ tone: 'warning', label: '冷却中' });
+    expect(accountStatus({ ok: true, limitReached: false, windows: [{ ...okWindow, usedPercent: 90 }] }).label).toBe('接近上限');
+    expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow] })).toEqual({ tone: 'ok', label: '正常' });
+  });
+
+  it('formatWan：万/亿量级与小数位', () => {
+    expect(formatWan(378005.7)).toBe('37.8万');
+    expect(formatWan(1_398.957)).toBe('1,399');
+    expect(formatWan(50_000)).toBe('5.0万');
+    expect(formatWan(2_500_000)).toBe('250万');
+    expect(formatWan(123_456_789)).toBe('1.23亿');
+    expect(formatWan(0.6)).toBe('0.6');
+    expect(formatWan(0)).toBe('0');
   });
 
   it('formatResetIn：分钟/小时/天三档，过期为即将重置', () => {

@@ -1,4 +1,5 @@
 import type {
+  ProviderQuotaCredentialState,
   ProviderQuotaHistoryResponse,
   ProviderQuotaOverviewResponse,
   ProviderQuotaSnapshot,
@@ -55,6 +56,22 @@ const vaultReader = (): VaultCaller => ({
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function credentialStateOf(status: {
+  expiresAt?: string;
+  accessTokenExpired?: boolean;
+  availability?: ProviderQuotaCredentialState['availability'];
+  cooldownUntil?: string;
+  lastFailureCode?: string;
+}): ProviderQuotaCredentialState {
+  return {
+    ...(status.expiresAt ? { expiresAt: status.expiresAt } : {}),
+    ...(status.accessTokenExpired !== undefined ? { accessTokenExpired: status.accessTokenExpired } : {}),
+    ...(status.availability ? { availability: status.availability } : {}),
+    ...(status.cooldownUntil ? { cooldownUntil: status.cooldownUntil } : {}),
+    ...(status.lastFailureCode ? { lastFailureCode: status.lastFailureCode } : {}),
+  };
 }
 
 /**
@@ -118,8 +135,8 @@ export class ProviderQuotaService {
   }
 
   /** 管理端「立即刷新」：不抢锁，直接采一轮并落库。 */
-  async refresh(): Promise<ProviderQuotaSnapshot[]> {
-    return this.collectAndPersist();
+  async refresh(accountKey?: string): Promise<ProviderQuotaSnapshot[]> {
+    return this.collectAndPersist(accountKey);
   }
 
   async overview(): Promise<ProviderQuotaOverviewResponse> {
@@ -129,13 +146,13 @@ export class ProviderQuotaService {
       this.options.store.latestSuccessful(),
     ]);
     const okByKey = new Map(latestOk.map((snapshot) => [snapshot.accountKey, snapshot]));
+    const liveCredentials = await this.codexCredentialStates();
     const items = latest
       .filter((snapshot) => activeKeys.has(snapshot.accountKey))
       .map((snapshot) => {
-        if (snapshot.ok) return snapshot;
         // 失败快照保留上一次成功的窗口数据，只覆盖错误与采集时间。
-        const previous = okByKey.get(snapshot.accountKey);
-        return previous
+        const previous = snapshot.ok ? undefined : okByKey.get(snapshot.accountKey);
+        const merged = previous
           ? {
               ...previous,
               ok: false,
@@ -144,6 +161,9 @@ export class ProviderQuotaService {
               extra: { ...previous.extra, lastSuccessAt: previous.collectedAt },
             }
           : snapshot;
+        // 凭据/调度状态始终取当前进程的实时值，不用快照里的旧值。
+        const credential = liveCredentials.get(merged.accountKey);
+        return credential ? { ...merged, credential } : merged;
       })
       .sort(
         (a, b) =>
@@ -188,8 +208,12 @@ export class ProviderQuotaService {
     };
   }
 
-  private async collectAndPersist(): Promise<ProviderQuotaSnapshot[]> {
-    const sources = await this.sources();
+  private async collectAndPersist(accountKey?: string): Promise<ProviderQuotaSnapshot[]> {
+    const allSources = await this.sources();
+    const sources = accountKey
+      ? allSources.filter((source) => source.accountKey === accountKey)
+      : allSources;
+    if (accountKey && sources.length === 0) throw new Error(`账号不存在或已移除：${accountKey}`);
     const snapshots = await Promise.all(sources.map((source) => source.collect()));
     await this.options.store.append(snapshots);
     this.lastRunAt = this.now().toISOString();
@@ -218,6 +242,17 @@ export class ProviderQuotaService {
 
   private async sources(): Promise<QuotaSource[]> {
     return [...this.volcengineSources(), ...(await this.codexSources())];
+  }
+
+  private async codexCredentialStates(): Promise<Map<string, ProviderQuotaCredentialState>> {
+    const manager = this.options.codexCredentialManager;
+    if (!manager || !manager.getConfiguration().enabled) return new Map();
+    const statuses = await manager.getStatuses().catch(() => []);
+    return new Map(
+      statuses
+        .filter((status) => typeof status.id === 'string')
+        .map((status) => [`codex:${status.id}`, credentialStateOf(status)]),
+    );
   }
 
   private volcengineSources(): QuotaSource[] {
@@ -296,6 +331,7 @@ export class ProviderQuotaService {
             sourceKind: 'codex_subscription' as const,
             accountKey,
             accountLabel: fallbackLabel,
+            ...(status ? { credential: credentialStateOf(status) } : {}),
           };
           try {
             const token = await manager.getCredentialsForCredential(credentialRef);
@@ -306,6 +342,7 @@ export class ProviderQuotaService {
               ...(usage.planType ? { plan: { type: usage.planType } } : {}),
               windows: usage.windows,
               limitReached: usage.limitReached,
+              ...(usage.resetCredits !== undefined ? { resetCredits: usage.resetCredits } : {}),
               ok: true,
               collectedAt,
               extra: usage.extra,

@@ -56,9 +56,11 @@ export function createProviderQuotaAdminRouter(
     }
   });
 
-  router.post('/refresh', async (_req, res) => {
+  router.post('/refresh', async (req, res) => {
+    const raw = req.query.accountKey ?? (req.body as { accountKey?: unknown } | undefined)?.accountKey;
+    const accountKey = typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
     try {
-      await options.service!.refresh();
+      await options.service!.refresh(accountKey);
       res.json(await options.service!.overview());
     } catch (error) {
       res.status(502).json({ error: message(error) });

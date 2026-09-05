@@ -52,6 +52,7 @@ const usageSample = {
   },
   credits: { has_credits: false, unlimited: false, overage_limit_reached: false, balance: '0' },
   rate_limit_reached_type: null,
+  rate_limit_reset_credits: { available_count: 1, applicable_available_count: 0 },
 };
 
 describe('normalizeCodexUsage', () => {
@@ -60,6 +61,7 @@ describe('normalizeCodexUsage', () => {
     expect(usage.email).toBe('kaiyankeji.3@gmail.com');
     expect(usage.planType).toBe('pro');
     expect(usage.limitReached).toBe(false);
+    expect(usage.resetCredits).toBe(1);
     expect(usage.windows.map((w) => [w.id, w.label, w.usedPercent])).toEqual([
       ['primary', '每周', 68],
       ['codex_bengalfox:primary', 'GPT-5.3-Codex-Spark · 5 小时', 0],

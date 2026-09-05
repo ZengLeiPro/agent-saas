@@ -30,6 +30,15 @@ export interface ProviderQuotaPlanInfo {
   autoRenew?: boolean;
 }
 
+/** 凭据/调度侧状态（Codex 订阅账号）：看板据此区分「真撞限」与「token 过期 / 正在被调度器绕开」。 */
+export interface ProviderQuotaCredentialState {
+  expiresAt?: string;
+  accessTokenExpired?: boolean;
+  availability?: 'available' | 'quota_cooldown' | 'auth_unavailable';
+  cooldownUntil?: string;
+  lastFailureCode?: string;
+}
+
 export interface ProviderQuotaSnapshot {
   sourceKind: ProviderQuotaSourceKind;
   /** 稳定账号键：codex:<credentialRef> / volcengine:<groupId>。 */
@@ -41,6 +50,9 @@ export interface ProviderQuotaSnapshot {
   plan?: ProviderQuotaPlanInfo;
   windows: ProviderQuotaWindow[];
   limitReached: boolean;
+  /** Codex：可用的额度重置券张数（rate_limit_reset_credits.available_count）。 */
+  resetCredits?: number;
+  credential?: ProviderQuotaCredentialState;
   /** false 时 windows 为空，error 记录采集失败原因。 */
   ok: boolean;
   error?: string;

@@ -1,178 +1,62 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { useColors } from '../../theme';
+import React, { useCallback, useEffect, useState } from 'react';
 import { registerPromptHandler, type TextPromptOptions } from '../../lib/prompt';
+import { TextPrompt } from '../ui/TextPrompt';
+import { ActionSheetHost } from '../ui/ActionSheet';
 
+/**
+ * 全局浮层宿主（`app/_layout.tsx` 挂载一次）。
+ *
+ * 承载两类命令式调用：
+ *   - `showTextPrompt(...)`：Android 走这里的受控对话框（iOS 用原生 Alert.prompt）；
+ *   - `showActionMenu(...)`：由 ActionSheetHost 渲染为底部动作面板。
+ * 外观分别由 `components/ui/TextPrompt` 与 `components/ui/ActionSheet` 提供，
+ * 本文件只负责「注册 handler + 生命周期」。
+ */
 export function PromptHost() {
-  const colors = useColors();
   const [opts, setOpts] = useState<TextPromptOptions | null>(null);
-  const [value, setValue] = useState('');
-  const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
-    registerPromptHandler((next) => {
-      setOpts(next);
-      setValue(next.defaultValue ?? '');
-      setTimeout(() => inputRef.current?.focus(), 80);
-    });
+    registerPromptHandler(setOpts);
     return () => registerPromptHandler(null);
   }, []);
 
-  if (!opts) return null;
-
-  const handleCancel = () => {
-    const o = opts;
+  const handleCancel = useCallback(() => {
+    const current = opts;
     setOpts(null);
-    o.onCancel?.();
-  };
+    current?.onCancel?.();
+  }, [opts]);
 
-  const handleConfirm = () => {
-    const o = opts;
+  const handleConfirm = useCallback(
+    (value: string) => {
+      const current = opts;
+      setOpts(null);
+      current?.onConfirm(value);
+    },
+    [opts],
+  );
+
+  const handleExtraAction = useCallback(() => {
+    const action = opts?.extraAction;
     setOpts(null);
-    o.onConfirm(value);
-  };
+    action?.onPress();
+  }, [opts]);
 
   return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={!!opts}
-      onRequestClose={handleCancel}
-      statusBarTranslucent
-    >
-      <KeyboardAvoidingView
-        style={[styles.backdrop, { backgroundColor: colors.overlay }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleCancel} />
-        <View
-          style={[
-            styles.dialog,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}
-        >
-          <Text style={[styles.title, { color: colors.foreground }]}>{opts.title}</Text>
-          {opts.message ? (
-            <Text style={[styles.message, { color: colors.mutedForeground }]}>{opts.message}</Text>
-          ) : null}
-          <TextInput
-            ref={inputRef}
-            value={value}
-            onChangeText={setValue}
-            placeholder={opts.placeholder}
-            placeholderTextColor={colors.mutedForeground}
-            secureTextEntry={opts.secureTextEntry}
-            keyboardType={opts.keyboardType}
-            maxLength={opts.maxLength}
-            multiline={opts.multiline}
-            autoCapitalize={opts.autoCapitalize ?? 'sentences'}
-            autoCorrect={false}
-            onSubmitEditing={opts.multiline ? undefined : handleConfirm}
-            returnKeyType="done"
-            style={[
-              styles.input,
-              {
-                color: colors.foreground,
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-                minHeight: opts.multiline ? 80 : 40,
-                textAlignVertical: opts.multiline ? 'top' : 'center',
-              },
-            ]}
-          />
-          <View style={styles.actions}>
-            <Pressable
-              onPress={handleCancel}
-              style={({ pressed }) => [styles.btn, pressed && { opacity: 0.6 }]}
-            >
-              <Text style={[styles.btnText, { color: colors.mutedForeground }]}>
-                {opts.cancelText ?? '取消'}
-              </Text>
-            </Pressable>
-            {opts.extraAction ? (
-              <Pressable
-                onPress={() => {
-                  const action = opts.extraAction!;
-                  setOpts(null);
-                  action.onPress();
-                }}
-                style={({ pressed }) => [styles.btn, pressed && { opacity: 0.6 }]}
-              >
-                <Text style={[styles.btnText, { color: colors.foreground }]}>
-                  {opts.extraAction.label}
-                </Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              onPress={handleConfirm}
-              style={({ pressed }) => [styles.btn, pressed && { opacity: 0.6 }]}
-            >
-              <Text style={[styles.btnText, styles.btnTextPrimary, { color: colors.primary }]}>
-                {opts.confirmText ?? '确定'}
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+    <>
+      {opts ? (
+        <TextPrompt
+          {...opts}
+          visible
+          extraAction={
+            opts.extraAction
+              ? { label: opts.extraAction.label, onPress: handleExtraAction }
+              : undefined
+          }
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      ) : null}
+      <ActionSheetHost />
+    </>
   );
 }
-
-const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  dialog: {
-    width: '100%',
-    maxWidth: 360,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 20,
-  },
-  title: {
-    fontSize: 17,
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  message: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  input: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-    marginTop: 4,
-  },
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 16,
-    gap: 8,
-  },
-  btn: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  btnText: {
-    fontSize: 16,
-  },
-  btnTextPrimary: {
-    fontWeight: '600',
-  },
-});

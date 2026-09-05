@@ -5,17 +5,19 @@ import {
   TouchableOpacity,
   StyleSheet,
   Keyboard,
-  Alert,
   Text,
   Animated,
   ActivityIndicator,
 } from 'react-native';
 import { Square, CircleStop, ArrowUp, Mic, Plus } from 'lucide-react-native';
-import type { UploadedFile } from '@agent/shared';
-import { useColors, useTheme, spacing, typography, radius } from '../../theme';
+import type { ModelList, SandboxProfile, UploadedFile } from '@agent/shared';
+import { useColors, spacing, typography, radius, fontScale, fontWeight } from '../../theme';
 import { FileAttachmentList } from './FileAttachmentList';
+import { ModelPicker, type PickerExtraSection } from './ModelPicker';
+import { SandboxProfileToggle } from './SandboxProfileToggle';
 import { hapticLight, hapticMedium } from '../../lib/haptics';
-import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
+import { DropdownMenu, type DropdownSection, type DrillDownPage } from '../overlays/DropdownMenu';
+import { useSandboxWarmup } from '../../hooks/useSandboxWarmup';
 
 interface ChatInputProps {
   input: string;
@@ -43,23 +45,39 @@ interface ChatInputProps {
   tooShortTip?: boolean;
   /** Structured target-unavailable message; disables every send/composer action. */
   disabledReason?: string | null;
+  // 工具条：模型选择器（与 Web 一样挂在输入框工具条上）
+  modelList?: ModelList | null;
+  selectedModel?: string | null;
+  onModelChange?: (ref: string) => void;
+  modelExtraSections?: PickerExtraSection[];
+  onModelExtraAction?: (actionId: string) => void;
+  modelDrillDowns?: Record<string, DrillDownPage>;
+  onModelDrillDownSelect?: (parentId: string, childId: string) => void;
+  /** 已落地会话的服务端沙箱档位，仅用于工具条只读展示。 */
+  sessionSandboxProfile?: SandboxProfile;
 }
 
 const INPUT_MIN_HEIGHT = 40;
 const INPUT_MAX_HEIGHT = 120;
+const CIRCLE_SIZE = 32;
 
 export function ChatInput({
   input, setInput, loading, onSend, onStop, stopping,
   uploadedFiles, uploading, uploadError, onDismissUploadError, onPickFile, onPickImage, onTakePhoto, onRemoveFile,
   isRecording, recordingDuration, onStartRecording, onStopRecording, onCancelRecording,
   sessionId, tooShortTip, disabledReason,
+  modelList, selectedModel, onModelChange,
+  modelExtraSections, onModelExtraAction, modelDrillDowns, onModelDrillDownSelect,
+  sessionSandboxProfile,
 }: ChatInputProps) {
   const colors = useColors();
-  const { isDark } = useTheme();
 
   const inputRef = useRef<TextInput>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  // 首次有效输入预热沙箱（与 Web `warmupSessionOnce` 同语义）。
+  useSandboxWarmup(sessionId, input);
 
   const hasContent = input.trim().length > 0 || uploadedFiles.length > 0;
   const showStop = loading && (!hasContent || stopping);
@@ -90,7 +108,7 @@ export function ChatInput({
 
   const showAttachOptions = useCallback(() => {
     hapticLight();
-    attachBtnRef.current?.measureInWindow((_x, y, _w, _h) => {
+    attachBtnRef.current?.measureInWindow((_x, y) => {
       // Anchor above the button (dropdown appears upward from input area)
       setAttachAnchorTop(y - 4);
       setAttachMenuVisible(true);
@@ -146,56 +164,82 @@ export function ChatInput({
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
     },
-    // Attachment list sits above the row, with its own background
+    // Attachment list sits above the card, with its own background
     attachContainer: {
-      marginHorizontal: 14,
-      marginBottom: 4,
-      borderRadius: 16,
+      marginHorizontal: spacing.md,
+      marginBottom: spacing.xs,
+      borderRadius: radius['2xl'],
       backgroundColor: colors.card,
       overflow: 'hidden',
     },
-    // Single row layout — transparent background
-    row: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-      paddingHorizontal: 14,
-      paddingVertical: 6,
-      gap: 6,
-    },
-    // Circle button base
-    circleBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
+    // Web `rounded-[24px] border border-border bg-card` 的移动端等价物
+    card: {
+      marginHorizontal: spacing.md,
+      marginTop: spacing.xs,
+      marginBottom: spacing.xs,
+      borderRadius: radius.xl,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
       backgroundColor: colors.card,
     },
-    // Input pill
-    inputPill: {
-      flex: 1,
-      borderRadius: radius.md,
-      backgroundColor: colors.card,
-      paddingHorizontal: 14,
-      paddingTop: 10,
-      paddingBottom: 10,
+    input: {
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm + 2,
+      paddingBottom: spacing.xs,
       fontSize: typography.body.fontSize,
       fontWeight: typography.body.fontWeight,
       color: colors.foreground,
       minHeight: INPUT_MIN_HEIGHT,
       maxHeight: INPUT_MAX_HEIGHT,
-      textAlignVertical: 'center',
+    },
+    // 底部工具栏：左（附件 / 运行环境）右（模型 / 发送）
+    toolbar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.sm,
+      paddingBottom: spacing.sm,
+      gap: spacing.sm,
+    },
+    toolbarSide: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    // Circle button base
+    circleBtn: {
+      width: CIRCLE_SIZE,
+      height: CIRCLE_SIZE,
+      borderRadius: CIRCLE_SIZE / 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    attachBtn: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    modelTrigger: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.md,
+      maxWidth: 140,
+    },
+    modelTriggerText: {
+      ...fontScale.xs,
+      fontWeight: fontWeight.medium,
+      color: colors.mutedForeground,
     },
     // Recording pill
     recordingPill: {
-      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       height: INPUT_MIN_HEIGHT,
-      borderRadius: radius.md,
-      backgroundColor: colors.card,
-      paddingHorizontal: 12,
-      gap: 8,
+      paddingHorizontal: spacing.md,
+      gap: spacing.sm,
     },
     recordingDot: {
       width: 8,
@@ -212,8 +256,8 @@ export function ChatInput({
     disabledReason: {
       ...typography.caption,
       color: colors.destructive,
-      paddingHorizontal: 14,
-      paddingTop: 8,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
     },
     cancelText: {
       ...typography.caption,
@@ -221,7 +265,7 @@ export function ChatInput({
     },
     // Right button variants
     micBtn: {
-      backgroundColor: colors.card,
+      backgroundColor: colors.muted,
     },
     sendBtn: {
       backgroundColor: colors.primary,
@@ -233,21 +277,24 @@ export function ChatInput({
       backgroundColor: colors.muted,
       opacity: 0.6,
     },
+    disabledRight: {
+      opacity: 0.4,
+    },
     // Too short floating tip
     tipContainer: {
       position: 'absolute',
       top: -32,
       alignSelf: 'center',
       backgroundColor: colors.foreground,
-      paddingHorizontal: 12,
-      paddingVertical: 4,
-      borderRadius: 12,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      borderRadius: radius.xl,
     },
     tipText: {
       ...typography.caption,
       color: colors.background,
     },
-  }), [colors, isDark]);
+  }), [colors]);
 
   // Right button rendering
   const renderRightButton = () => {
@@ -300,7 +347,7 @@ export function ChatInput({
   return (
     <View style={styles.wrapper} testID="chat-composer">
       {disabledReason ? <Text style={styles.disabledReason}>{disabledReason}</Text> : null}
-      {/* Attachments — independent floating card above the row */}
+      {/* Attachments — independent floating card above the composer */}
       {hasAttachments && (
         <View style={styles.attachContainer}>
           <FileAttachmentList
@@ -313,26 +360,8 @@ export function ChatInput({
         </View>
       )}
 
-      {/* Main input row — each element floats independently */}
-      <View style={styles.row}>
-        {/* Left: attach button */}
-        <TouchableOpacity
-          ref={attachBtnRef}
-          testID="chat-attachment-button"
-          accessibilityLabel="添加附件"
-          style={styles.circleBtn}
-          onPress={showAttachOptions}
-          disabled={isRecording || !!disabledReason}
-          activeOpacity={0.7}
-        >
-          <Plus
-            size={24}
-            color={colors.mutedForeground}
-            strokeWidth={2}
-          />
-        </TouchableOpacity>
-
-        {/* Center: input or recording indicator */}
+      {/* Composer card — 文本区在上，工具条在下（与 Web ChatInput 同一结构） */}
+      <View style={styles.card}>
         {isRecording ? (
           <View style={styles.recordingPill}>
             <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulseAnim }] }]} />
@@ -348,8 +377,8 @@ export function ChatInput({
             ref={inputRef}
             testID="chat-composer-input"
             accessibilityLabel="消息输入框"
-            style={styles.inputPill}
-            placeholder={disabledReason || "输入消息..."}
+            style={styles.input}
+            placeholder={disabledReason || '输入消息...'}
             placeholderTextColor={colors.mutedForeground}
             value={input}
             onChangeText={setInput}
@@ -362,9 +391,58 @@ export function ChatInput({
           />
         )}
 
-        {/* Right: mic / send / stop */}
-        <View pointerEvents={disabledReason ? 'none' : 'auto'} style={disabledReason ? { opacity: 0.4 } : undefined}>
-          {renderRightButton()}
+        <View style={styles.toolbar}>
+          <View style={styles.toolbarSide}>
+            <TouchableOpacity
+              ref={attachBtnRef}
+              testID="chat-attachment-button"
+              accessibilityLabel="添加附件"
+              style={[styles.circleBtn, styles.attachBtn]}
+              onPress={showAttachOptions}
+              disabled={isRecording || !!disabledReason}
+              activeOpacity={0.7}
+            >
+              <Plus size={20} color={colors.foreground} strokeWidth={2} />
+            </TouchableOpacity>
+            <SandboxProfileToggle
+              sessionId={sessionId}
+              sessionProfile={sessionSandboxProfile}
+              loading={loading}
+              disabled={!!disabledReason}
+            />
+          </View>
+
+          <View style={styles.toolbarSide}>
+            {modelList && onModelChange && !isRecording ? (
+              <ModelPicker
+                testID="chat-model-picker"
+                accessibilityLabel="模型选择器"
+                modelList={modelList}
+                selectedModel={selectedModel ?? null}
+                onModelChange={onModelChange}
+                sessionId={sessionId}
+                disabled={!!disabledReason}
+                extraSections={modelExtraSections}
+                onExtraAction={onModelExtraAction}
+                drillDowns={modelDrillDowns}
+                onDrillDownSelect={onModelDrillDownSelect}
+              >
+                {(modelLabel) => (
+                  <View style={styles.modelTrigger}>
+                    <Text style={styles.modelTriggerText} numberOfLines={1}>
+                      {modelLabel ?? selectedModel ?? '模型'}
+                    </Text>
+                  </View>
+                )}
+              </ModelPicker>
+            ) : null}
+            <View
+              pointerEvents={disabledReason ? 'none' : 'auto'}
+              style={disabledReason ? styles.disabledRight : undefined}
+            >
+              {renderRightButton()}
+            </View>
+          </View>
         </View>
       </View>
 

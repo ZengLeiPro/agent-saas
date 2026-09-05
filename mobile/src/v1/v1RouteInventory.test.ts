@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   V1_ALLOWED_ROUTES,
   V1_DEFERRED_ROUTES,
+  V1_DELETED_ROUTES,
   classifyV1Route,
 } from './v1Capabilities';
 
@@ -90,6 +91,44 @@ describe('M00-01 路由清单完整性', () => {
     expect(existsSync(join(APP_DIR, '../src/services/previewTokenCache.ts'))).toBe(false);
   });
 
+  // 09-04 拍板：移动端定位员工使用端，管理类页面物理删除（管理后台留 Web）。
+  it('已删除的管理类路由文件与其专属组件/hook 不再存在', () => {
+    const deletedRouteFiles = [
+      'settings/users.tsx',
+      'user-form.tsx',
+      'settings/audit-log.tsx',
+      'settings/all-agents.tsx',
+      'settings/agent-profile/[username].tsx',
+      'settings/skills-admin.tsx',
+      'settings/skills-tenant-admin.tsx',
+    ];
+    for (const rel of deletedRouteFiles) {
+      expect(existsSync(join(APP_DIR, rel)), rel).toBe(false);
+    }
+    for (const route of [
+      'settings/users',
+      'user-form',
+      'settings/audit-log',
+      'settings/all-agents',
+      'settings/agent-profile/[username]',
+      'settings/skills-admin',
+      'settings/skills-tenant-admin',
+    ]) {
+      expect(routes, route).not.toContain(route);
+      expect(V1_DELETED_ROUTES[route], `${route} 缺少墓碑理由`).toBeTruthy();
+    }
+    const deletedSources = [
+      '../src/components/UserManager',
+      '../src/components/user/UserForm.tsx',
+      '../src/components/audit',
+      '../src/hooks/useLoginLogs.ts',
+      '../src/hooks/useAdminSkills.ts',
+    ];
+    for (const rel of deletedSources) {
+      expect(existsSync(join(APP_DIR, rel)), rel).toBe(false);
+    }
+  });
+
   it('Mobile WebView 代码不执行 workspace HTML 或 preview URL', () => {
     const srcDir = join(APP_DIR, '..', 'src');
     const thisTest = fileURLToPath(import.meta.url);
@@ -99,12 +138,18 @@ describe('M00-01 路由清单完整性', () => {
         const source = readFileSync(file, 'utf8');
         return source.includes('react-native-webview') || source.includes('<WebView');
       });
-    expect(webViewSources.map((file) => relative(join(APP_DIR, '..'), file))).toEqual([
+    // 允许清单：只有「本地文本选择」与「本地 MathML 公式」两处 WebView，
+    // 两者都只吃本地字符串，新增任何 WebView 都必须在这里显式登记。
+    expect(webViewSources.map((file) => relative(join(APP_DIR, '..'), file)).sort()).toEqual([
       'src/components/chat/TextSelectModal.tsx',
-    ]);
-    // The remaining local text-selection WebView must not consume file paths or remote preview URLs.
-    const remaining = readFileSync(webViewSources[0], 'utf8');
-    expect(remaining).not.toMatch(/filePath|preview-token|\/preview\/|authFetch|source=\{\{\s*uri/);
+      'src/components/chat/blocks/MathBlock.tsx',
+    ].sort());
+    // 两处 WebView 都不得消费文件路径或远程 preview URL。
+    for (const file of webViewSources) {
+      const source = readFileSync(file, 'utf8');
+      expect(source, file).not.toMatch(/filePath|preview-token|\/preview\/|authFetch|source=\{\{\s*uri/);
+      expect(source, file).toContain("originWhitelist={['about:blank']}");
+    }
   });
 
   it('生产 allowlist 路由源码中无「正在开发中」占位文案', () => {

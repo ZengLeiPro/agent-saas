@@ -1,8 +1,17 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import { View, Text, Animated, StyleSheet, TouchableOpacity, type StyleProp, type ViewStyle } from 'react-native';
+import { fontScale, fontWeight } from '../theme';
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
+import {
+  SWIPE_ACTION_WIDTH,
+  resolveSwipeOpenThreshold,
+  resolveSwipeSpringConfig,
+} from '../lib/swipeMotion';
 
 export type { Swipeable };
+
+/** 吸附动画：Web 是 200ms 缓动，RN 侧用等效的临界阻尼弹簧。 */
+const SWIPE_SPRING = resolveSwipeSpringConfig();
 
 export interface SwipeAction {
   key: string;
@@ -36,7 +45,7 @@ interface SwipeableRowProps {
 export function SwipeableRow({
   children,
   actions,
-  actionWidth = 72,
+  actionWidth = SWIPE_ACTION_WIDTH,
   openRowRef,
   containerStyle,
   enableBackGesture = false,
@@ -136,14 +145,16 @@ export function SwipeableRow({
     <Swipeable
       ref={swipeRef}
       renderRightActions={renderRightActions}
-      rightThreshold={40}
+      // 阈值对齐 Web：拖过动作总宽的 40% 才吸附到打开态。
+      rightThreshold={resolveSwipeOpenThreshold(actions.length, actionWidth)}
+      animationOptions={SWIPE_SPRING}
       overshootRight={false}
       onSwipeableOpen={handleOpen}
       onSwipeableClose={handleClose}
       containerStyle={containerStyle}
       {...backGestureProps}
     >
-      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+      {/* 旧版 Swipeable 的 children 类型过窄，这里按运行时实际形态放行。 */}
       {children as any}
     </Swipeable>
   );
@@ -158,7 +169,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...fontScale.sm,
+    fontWeight: fontWeight.semibold,
   },
 });

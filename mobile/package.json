@@ -77,6 +77,7 @@
     "expo-sharing": "~55.0.24",
     "expo-status-bar": "~55.0.6",
     "expo-video": "~55.0.21",
+    "katex": "^0.16.45",
     "lucide-react-native": "^1.24.0",
     "markdown-it": "10.0.0",
     "markdown-it-cjk-friendly": "3.0.0",

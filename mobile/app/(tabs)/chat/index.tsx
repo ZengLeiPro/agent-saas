@@ -1,126 +1,90 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+/**
+ * 会话列表页 —— 对齐 Web 手机浏览器版 `web/src/components/MobileSessionList.tsx`。
+ *
+ * 本文件只做「屏幕编排」：状态、导航、以及把列表 / pill 行 / FAB / 面板拼起来；
+ * 列表行、滑动动作、分组对话框、回收站等都在 `src/components/sessions/` 下。
+ */
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, InteractionManager, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
+import { Plus } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { SessionGroup } from '@agent/shared';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  RefreshControl,
-  StyleSheet,
-  Alert,
-  Pressable,
-  InteractionManager,
-} from "react-native";
-import { Stack, useRouter } from "expo-router";
-import { FlashList } from "@shopify/flash-list";
-import { Plus, Trash2, Timer, Folder } from "lucide-react-native";
-import {
-  DropdownMenu,
-  type DropdownSection,
-} from "../../../src/components/overlays/DropdownMenu";
-import type {
-  ChatSessionIndexItem,
-  SessionGroup,
-  AgentProfile,
-} from "@agent/shared";
-import { glassFree } from "../../../src/lib/headerItems";
-import {
-  useGroups,
+  resolveSwipeSelectGuard,
+  selectGroupUnreadMap,
   useGroupedSessions,
-  formatShortDate,
-  authFetch,
-  fetchAllAgentProfiles,
-  fetchAgentProfile,
-  getPlatform,
-  getSortedGroupItems,
-  resolveNewSessionAgentTarget,
-  resolveTargetSessionAction,
-} from "@agent/shared";
-import type { AgentTarget, ApiSessionListItem } from "@agent/shared";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useChatAppState } from "../../../src/contexts/ChatAppStateContext";
-import { useAuth } from "../../../src/contexts/AuthContext";
-import { SkeletonList } from "../../../src/components/SkeletonList";
-import { SessionRow } from "../../../src/components/SessionRow";
-import type {
-  SwipeAction,
-  Swipeable,
-} from "../../../src/components/SwipeableRow";
-import { useColors, spacing, typography } from "../../../src/theme";
+  useGroups,
+} from '@agent/shared';
+import { useChatAppState } from '../../../src/contexts/ChatAppStateContext';
+import { useAuth } from '../../../src/contexts/AuthContext';
+import { useTabBar } from '../../../src/contexts/TabBarContext';
+import { SessionRow } from '../../../src/components/SessionRow';
+import type { Swipeable } from '../../../src/components/SwipeableRow';
 import {
-  hapticLight,
-  hapticWarning,
-  hapticSuccess,
-} from "../../../src/lib/haptics";
-import { showTextPrompt } from "../../../src/lib/prompt";
-import { useTabBar } from "../../../src/contexts/TabBarContext";
-import { captureSessionListAnchor, readSessionListAnchor } from "../../../src/lib/sessionListAnchor";
+  GroupPickerSheet,
+  SessionGroupRow,
+  SessionListFabs,
+  SessionListView,
+  SessionPillRow,
+  SessionSelectionBar,
+  TrashSheet,
+  useNewSessionLauncher,
+  useSessionAvatarMap,
+  useSessionGroupActions,
+  useSessionRowActions,
+  useSessionSelection,
+  type SessionListItem,
+} from '../../../src/components/sessions';
+import { glassFree } from '../../../src/lib/headerItems';
+import { hapticLight, hapticWarning } from '../../../src/lib/haptics';
+import { readSessionListAnchor } from '../../../src/lib/sessionListAnchor';
+import { toSidebarSessions } from '../../../src/lib/sessionListAdapter';
+import { useColors, fontScale } from '../../../src/theme';
 
-/** Convert API sessions to sidebar format for useGroupedSessions */
-function toSidebarSessions(
-  sessions: ApiSessionListItem[],
-): ChatSessionIndexItem[] {
-  return sessions.map((s) => ({
-    id: s.sessionId,
-    title: s.title || "新对话",
-    createdAt: s.createdAtMs || s.updatedAtMs,
-    updatedAt: s.updatedAtMs,
-    preview: s.preview,
-    source: s.source,
-    owner: s.owner,
-    cronJobId: s.cronJobId,
-    cronJobName: s.cronJobName,
-    orgAgentId: s.orgAgentId,
-    orgAgentName: s.orgAgentName,
-    orgAgentAvailable: s.orgAgentAvailable,
-    agentTarget: s.agentTarget,
-    agentTargetSnapshot: s.agentTargetSnapshot,
-    agentTargetUnavailableReason: s.agentTargetUnavailableReason,
-  }));
-}
-
-type ListItem =
-  | { type: "session"; session: ChatSessionIndexItem }
-  | { type: "group"; group: SessionGroup };
-
-const LIST_ITEM_ESTIMATED_SIZE = 62;
-
-// 模块级 avatar 缓存：跨 re-mount 保持（tab 切换不丢），冷启动时由 AsyncStorage 填充
-const AVATAR_CACHE_KEY = "avatarMap";
-let _avatarMapModuleCache: Record<
-  string,
-  { avatar?: string; avatarVersion?: number }
-> = {};
+/** 分组定时刷新周期（ms），与会话轮询保持一致 */
+const GROUPS_REFRESH_MS = 30_000;
 
 export default function SessionListScreen() {
   const colors = useColors();
   const chat = useChatAppState();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-
-  const [isRefreshing, setIsRefreshing] = React.useState(false);
   const { setTabBarHidden } = useTabBar();
+  const { user: authUser } = useAuth();
 
-  // Multi-select state
-  const [isSelectMode, setIsSelectMode] = React.useState(false);
-  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const isAdminUser = authUser?.role === 'admin';
+  const isReadOnlyGroups = isAdminUser && chat.ownerFilter === null;
+  const showOwner = isAdminUser && chat.ownerFilter === null;
 
-  // Swipe group menu state
-  const [swipeGroupMenuVisible, setSwipeGroupMenuVisible] =
-    React.useState(false);
-  const [swipeGroupMenuAnchor, setSwipeGroupMenuAnchor] = React.useState(0);
-  const [swipeGroupSessionId, setSwipeGroupSessionId] = React.useState<
-    string | null
-  >(null);
-  const swipeGroupTriggerRef = React.useRef<View>(null);
-  const swipeGroupCloseRef = React.useRef<(() => void) | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
 
-  // Batch group menu state
-  const [batchGroupMenuVisible, setBatchGroupMenuVisible] =
-    React.useState(false);
-  const [batchGroupMenuAnchor, setBatchGroupMenuAnchor] = React.useState(0);
-  const batchGroupTriggerRef = React.useRef<View>(null);
-
+  // FlashList 的 imperative 句柄，只用来恢复滚动位置。
   const listRef = useRef<any>(null);
+  const openSwipeableRef = useRef<Swipeable | null>(null);
+  const swipeDismissedAtRef = useRef(0);
   const didRestoreAnchorRef = useRef(false);
+
+  const groupsHook = useGroups();
+  const avatarMap = useSessionAvatarMap({ isAdmin: isAdminUser, username: authUser?.username });
+
+  const sidebarSessions = useMemo(
+    () => toSidebarSessions(chat.sessions, chat.loading ? chat.sessionId : null),
+    [chat.sessions, chat.loading, chat.sessionId],
+  );
+  const groupedEntries = useGroupedSessions(sidebarSessions, '', groupsHook.groups);
+  const groupUnread = useMemo(
+    () => selectGroupUnreadMap(groupsHook.groups, sidebarSessions),
+    [groupsHook.groups, sidebarSessions],
+  );
+
+  const groupActions = useSessionGroupActions({
+    groupsHook,
+    sessions: sidebarSessions,
+    onCompleted: () => selectionRef.current?.exitSelectMode(),
+  });
+
   const restoreListAnchor = useCallback(() => {
     if (!didRestoreAnchorRef.current) return;
     InteractionManager.runAfterInteractions(() => {
@@ -130,7 +94,7 @@ export default function SessionListScreen() {
     });
   }, []);
 
-  // Provider-owned pager survives detail navigation; restore the list viewport on return.
+  // Provider 持有分页器，详情页返回后恢复列表视口。
   useEffect(() => {
     if (chat.sessionsHydrated && !didRestoreAnchorRef.current) {
       didRestoreAnchorRef.current = true;
@@ -138,362 +102,99 @@ export default function SessionListScreen() {
     }
   }, [chat.sessionsHydrated, restoreListAnchor]);
 
-  // Swipe-to-reveal state
-  const openSwipeableRef = useRef<Swipeable | null>(null);
-
-  // Auth & admin state
-  const { user: authUser } = useAuth();
-  const isAdminUser = authUser?.role === "admin";
-  const isReadOnlyGroups = isAdminUser && chat.ownerFilter === null;
-
-  // Group state (API returns the current user's groups)
-  const groupsHook = useGroups();
-
-  // Agent avatar map: username → { avatar, avatarVersion }
-  // 模块级缓存消除 re-mount 闪烁（tab 切换等场景），AsyncStorage 缓存覆盖冷启动
-  const [avatarMap, setAvatarMap] = React.useState<
-    Record<string, { avatar?: string; avatarVersion?: number }>
-  >(_avatarMapModuleCache);
-  const updateAvatarMap = useCallback(
-    (map: Record<string, { avatar?: string; avatarVersion?: number }>) => {
-      _avatarMapModuleCache = map;
-      setAvatarMap(map);
-    },
-    [],
-  );
-
-  // Effect 1: 缓存读取 — 不依赖 auth，挂载即刻执行，避免被 auth 状态变化取消
-  useEffect(() => {
-    // 模块级缓存已有数据时跳过 AsyncStorage 读取
-    if (Object.keys(_avatarMapModuleCache).length > 0) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const raw = await getPlatform().storage.getItem(AVATAR_CACHE_KEY);
-        if (!cancelled && raw) {
-          const cached = JSON.parse(raw) as Record<
-            string,
-            { avatar?: string; avatarVersion?: number }
-          >;
-          if (Object.keys(cached).length > 0) updateAvatarMap(cached);
-        }
-      } catch {
-        /* silent */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Effect 2: API 刷新 — 依赖 auth，auth 就绪后拉最新数据并回写缓存
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        let map: Record<string, { avatar?: string; avatarVersion?: number }> =
-          {};
-        if (isAdminUser) {
-          const profiles = await fetchAllAgentProfiles();
-          for (const p of profiles)
-            map[p.username] = {
-              avatar: p.avatar,
-              avatarVersion: p.avatarVersion,
-            };
-        } else if (authUser?.username) {
-          const profile = await fetchAgentProfile(authUser.username);
-          map = {
-            [authUser.username]: {
-              avatar: profile.avatar,
-              avatarVersion: profile.avatarVersion,
-            },
-          };
-        }
-        if (!cancelled && Object.keys(map).length > 0) {
-          updateAvatarMap(map);
-          void getPlatform().storage.setItem(
-            AVATAR_CACHE_KEY,
-            JSON.stringify(map),
-          );
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAdminUser, authUser?.username, updateAvatarMap]);
-
-  // Periodic groups refresh (30s) — keep in sync with sessions polling
   useEffect(() => {
     const interval = setInterval(() => {
       void groupsHook.loadGroups();
-    }, 30000);
+    }, GROUPS_REFRESH_MS);
     return () => clearInterval(interval);
   }, [groupsHook.loadGroups]);
 
-  // Convert to sidebar format & compute grouped list
-  const sidebarSessions = useMemo(
-    () => toSidebarSessions(chat.sessions),
-    [chat.sessions],
-  );
-  const groupedEntries = useGroupedSessions(
-    sidebarSessions,
-    "",
-    groupsHook.groups,
-  );
-
-  // Filter out group_child entries (they are shown inside group route)
-  // In select mode: hide all groups, show only plain sessions
-  const listData = useMemo<ListItem[]>(
-    () =>
-      groupedEntries.filter((e): e is ListItem =>
-        isSelectMode
-          ? e.type === "session"
-          : e.type === "session" || e.type === "group",
-      ),
-    [groupedEntries, isSelectMode],
-  );
-
-  // --- Multi-select helpers ---
-  const toggleSelect = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const closeOpenSwipeable = useCallback(() => {
+    if (!openSwipeableRef.current) return;
+    openSwipeableRef.current.close();
+    openSwipeableRef.current = null;
+    swipeDismissedAtRef.current = Date.now();
   }, []);
 
-  const enterSelectMode = useCallback(() => {
-    hapticLight();
-    openSwipeableRef.current?.close();
-    setIsSelectMode(true);
-    setSelectedIds(new Set());
-    // Defer tab bar hide to next frame so header updates first
-    requestAnimationFrame(() => setTabBarHidden(true));
-  }, [setTabBarHidden]);
+  const listDataAll = useMemo<SessionListItem[]>(
+    () => groupedEntries.filter((e): e is SessionListItem => e.type === 'session' || e.type === 'group'),
+    [groupedEntries],
+  );
 
-  const exitSelectMode = useCallback(() => {
-    setIsSelectMode(false);
-    setSelectedIds(new Set());
-    requestAnimationFrame(() => setTabBarHidden(false));
-  }, [setTabBarHidden]);
+  const selection = useSessionSelection({
+    isAdminUser,
+    allRowIds: useMemo(
+      () =>
+        listDataAll.map((item) =>
+          item.type === 'group' ? `group-${item.group.groupKey}` : item.session.id,
+        ),
+      [listDataAll],
+    ),
+    refreshSessions: chat.refreshSessions,
+    setTabBarHidden,
+    closeOpenSwipeable,
+  });
 
-  const selectedCount = selectedIds.size;
-  const hasSelection = selectedCount > 0;
+  // groupActions 在 selection 之前创建，用 ref 回读最新的退出多选回调。
+  const selectionRef = useRef<typeof selection | null>(null);
+  selectionRef.current = selection;
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: {
-          flex: 1,
-          backgroundColor: colors.card,
-        },
-        contentArea: {
-          flex: 1,
-        },
-        groupRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          minHeight: LIST_ITEM_ESTIMATED_SIZE,
-          paddingHorizontal: spacing.md,
-          paddingVertical: 10,
-          backgroundColor: colors.card,
-        },
-        groupRowPressed: {
-          backgroundColor: colors.secondary,
-        },
-        avatarCircle: {
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          justifyContent: "center",
-          alignItems: "center",
-          marginRight: spacing.md,
-        },
-        avatarManual: {
-          backgroundColor: colors.statusIcon.info,
-        },
-        avatarCron: {
-          backgroundColor: colors.warning,
-        },
-        groupContent: {
-          flex: 1,
-        },
-        groupSeparator: {
-          position: "absolute",
-          bottom: 0,
-          left: spacing.sm + 42 + spacing.md,
-          right: 0,
-          height: StyleSheet.hairlineWidth,
-          backgroundColor: colors.border,
-        },
-        titleRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-        },
-        groupName: {
-          ...typography.body,
-          color: colors.foreground,
-          fontWeight: "500",
-          flex: 1,
-          marginRight: spacing.sm,
-        },
-        groupTime: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-        },
-        previewRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          marginTop: 2,
-        },
-        groupPreview: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-          flex: 1,
-          marginRight: spacing.sm,
-        },
-        groupOwnerName: {
-          ...typography.caption,
-          color: colors.primary,
-          fontWeight: "500",
-          marginRight: spacing.sm,
-        },
-        countBadge: {
-          minWidth: 20,
-          height: 20,
-          borderRadius: 10,
-          backgroundColor: colors.muted,
-          justifyContent: "center",
-          alignItems: "center",
-          paddingHorizontal: 6,
-        },
-        countBadgeText: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-          fontWeight: "600",
-          fontSize: 11,
-        },
-        empty: {
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          paddingVertical: 80,
-        },
-        emptyText: {
-          ...typography.body,
-          color: colors.mutedForeground,
-        },
-        // Bottom pill buttons
-        bottomPillContainer: {
-          position: "absolute",
-          bottom: insets.bottom + 8,
-          left: spacing.lg,
-          right: spacing.lg,
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          zIndex: 100,
-        },
-        pillInner: {
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          height: 50,
-          paddingHorizontal: 22,
-          borderRadius: 25,
-        },
-        pillFallback: {
-          backgroundColor: colors.muted,
-        },
-        pillText: {
-          fontSize: 17,
-          fontWeight: "600",
-        },
-        iconPillInner: {
-          width: 50,
-          height: 50,
-          borderRadius: 25,
-          alignItems: "center",
-          justifyContent: "center",
-        },
-        headerText: {
-          fontSize: 17,
-          color: colors.foreground,
-        },
-      }),
-    [colors, insets.top, insets.bottom],
+  // 多选模式下隐藏分组行，只批量操作普通会话。
+  const listData = useMemo(
+    () => (selection.isSelectMode ? listDataAll.filter((item) => item.type === 'session') : listDataAll),
+    [listDataAll, selection.isSelectMode],
   );
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
-      if (openSwipeableRef.current) {
-        openSwipeableRef.current.close();
+      const guard = resolveSwipeSelectGuard({
+        hasOpenRow: openSwipeableRef.current !== null,
+        dismissedAt: swipeDismissedAtRef.current,
+        now: Date.now(),
+      });
+      if (guard === 'close-open-row') {
+        closeOpenSwipeable();
         return;
       }
+      if (guard === 'suppress') return;
       hapticLight();
       chat.selectSession(sessionId);
       router.push(`/chat/${sessionId}`);
     },
-    [chat.selectSession, router],
+    [chat, router, closeOpenSwipeable],
   );
 
-  const handleNewSession = useCallback(() => {
-    hapticLight();
-    if (isAdminUser && chat.ownerFilter === null) {
-      Alert.alert('无法新建会话', '管理员全部用户视图不混入个人 Agent 选择器，请先选择具体用户。');
-      return;
-    }
-    if (!chat.agentTargetCatalog) {
-      Alert.alert('无法新建会话', chat.agentTargetCatalogReason?.message ?? 'Agent 目录仍在加载，请稍后重试。');
-      return;
-    }
-    const selection = resolveNewSessionAgentTarget({
-      catalog: chat.agentTargetCatalog,
-      activeTarget: chat.activeAgentTarget,
-    });
-    const launch = (target: AgentTarget) => {
-      const action = resolveTargetSessionAction({ target, current: null });
-      if (action.kind !== 'new-session') return;
-      chat.startAgentTargetSession(action.target);
-      router.push('/chat/new');
-    };
-    if (selection.kind === 'selected') {
-      launch(selection.target);
-      return;
-    }
-    if (selection.kind === 'unavailable') {
-      Alert.alert('暂无可用 Agent', selection.reason.message);
-      return;
-    }
-    const buttons = selection.options.flatMap(target => {
-      if (target.kind !== 'org-agent') return [];
-      const option = chat.agentTargetCatalog?.orgAgents.find(candidate => candidate.target.kind === 'org-agent' && candidate.target.orgAgentId === target.orgAgentId);
-      return [{ text: option?.presentation?.name ?? '企业专家', onPress: () => launch(target) }];
-    });
-    Alert.alert('选择企业专家', '当前组织未开放个人通用 Agent，请选择要开始对话的企业专家。', [
-      ...buttons,
-      { text: '取消', style: 'cancel' },
-    ]);
-  }, [chat, isAdminUser, router]);
+  const handleGroupClick = useCallback(
+    (group: SessionGroup) => {
+      const guard = resolveSwipeSelectGuard({
+        hasOpenRow: openSwipeableRef.current !== null,
+        dismissedAt: swipeDismissedAtRef.current,
+        now: Date.now(),
+      });
+      if (guard === 'close-open-row') {
+        closeOpenSwipeable();
+        return;
+      }
+      if (guard === 'suppress') return;
+      hapticLight();
+      router.push(
+        `/(tabs)/chat/group/${group.groupKey}?name=${encodeURIComponent(group.name)}`,
+      );
+    },
+    [router, closeOpenSwipeable],
+  );
 
   const handleDeleteSession = useCallback(
     (sessionId: string) => {
       hapticWarning();
       Alert.alert(
-        isAdminUser ? "移至回收站" : "删除会话",
-        isAdminUser
-          ? "会话将移至回收站，可随时恢复。"
-          : "确定要删除这个会话吗？",
+        isAdminUser ? '移至回收站' : '删除会话',
+        isAdminUser ? '会话将移至回收站，可随时恢复。' : '确定要删除这个会话吗？',
         [
-          { text: "取消", style: "cancel" },
+          { text: '取消', style: 'cancel' },
           {
-            text: isAdminUser ? "移至回收站" : "删除",
-            style: "destructive",
+            text: isAdminUser ? '移至回收站' : '删除',
+            style: 'destructive',
             onPress: () => {
               void chat.handleDeleteSession(sessionId);
             },
@@ -504,274 +205,48 @@ export default function SessionListScreen() {
     [chat, isAdminUser],
   );
 
-  const handleGroupClick = useCallback(
-    (group: SessionGroup) => {
-      if (openSwipeableRef.current) {
-        openSwipeableRef.current.close();
-        return;
-      }
-      hapticLight();
-      router.push(
-        `/(tabs)/chat/group/${group.groupKey}?name=${encodeURIComponent(group.name)}`,
-      );
+  const getSessionActions = useSessionRowActions({
+    readOnlyGroups: isReadOnlyGroups,
+    onOpenGroupPicker: (sessionId) => groupActions.openPicker([sessionId]),
+    onRename: (sessionId, title) => {
+      void chat.renameSession(sessionId, title);
     },
-    [router],
-  );
+    onAutoTitle: (sessionId) => {
+      void chat.autoTitleSession(sessionId);
+    },
+    onDelete: handleDeleteSession,
+  });
 
-  const groupMenuSections = useMemo<DropdownSection[]>(() => {
-    const sections: DropdownSection[] = [
-      {
-        id: "create-section",
-        actions: [{ id: "__create__", label: "新建分组" }],
-      },
-    ];
-    const items = getSortedGroupItems(
-      groupsHook.groups,
-      groupsHook.sorting,
-      sidebarSessions,
+  const handleNewSession = useNewSessionLauncher({
+    chat,
+    isAdminUser,
+    onNavigate: (path) => router.push(path as never),
+  });
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    void Promise.all([chat.refreshSessions(), groupsHook.loadGroups()]).finally(() =>
+      setIsRefreshing(false),
     );
-    if (items.length > 0) {
-      sections.push({
-        id: "groups-section",
-        actions: items.map((g) => ({ id: g.id, label: g.name })),
-      });
-    }
-    return sections;
-  }, [groupsHook.groups, groupsHook.sorting, sidebarSessions]);
-
-  // Refs: 让 swipe action 回调始终读取最新值，绕过 SessionRow React.memo 阻断
-  const groupMenuSectionsRef = useRef(groupMenuSections);
-  groupMenuSectionsRef.current = groupMenuSections;
-  const createGroupRef = useRef(groupsHook.createGroup);
-  createGroupRef.current = groupsHook.createGroup;
-  const addSessionsToGroupRef = useRef(groupsHook.addSessionsToGroup);
-  addSessionsToGroupRef.current = groupsHook.addSessionsToGroup;
-
-  // --- Batch action handlers ---
-  const handleBatchGroupAction = useCallback(
-    async (actionId: string) => {
-      const ids = [...selectedIds];
-      if (ids.length === 0) return;
-
-      if (actionId === "__create__") {
-        showTextPrompt({
-          title: "新建分组",
-          onConfirm: async (name) => {
-            const trimmed = name.trim();
-            if (trimmed) {
-              await groupsHook.createGroup(trimmed, ids);
-              exitSelectMode();
-              hapticSuccess();
-            }
-          },
-        });
-      } else {
-        await groupsHook.addSessionsToGroup(actionId, ids);
-        exitSelectMode();
-        hapticSuccess();
-      }
-    },
-    [selectedIds, groupsHook, exitSelectMode],
-  );
-
-  const handleSwipeGroupSelect = useCallback(
-    (actionId: string) => {
-      if (!swipeGroupSessionId) return;
-      if (actionId === "__create__") {
-        showTextPrompt({
-          title: "新建分组",
-          onConfirm: (name) => {
-            const trimmed = name.trim();
-            if (trimmed)
-              void createGroupRef.current(trimmed, [swipeGroupSessionId]);
-          },
-        });
-      } else {
-        void addSessionsToGroupRef.current(actionId, [swipeGroupSessionId]);
-      }
-    },
-    [swipeGroupSessionId],
-  );
-
-  const handleBatchDelete = useCallback(() => {
-    if (!hasSelection) return;
-    hapticWarning();
-
-    const ids = [...selectedIds];
-    Alert.alert(
-      isAdminUser ? "批量移至回收站" : "批量删除",
-      `确定要删除 ${ids.length} 个会话吗？`,
-      [
-        { text: "取消", style: "cancel" },
-        {
-          text: isAdminUser ? "移至回收站" : "删除",
-          style: "destructive",
-          onPress: async () => {
-            for (const sid of ids) {
-              try {
-                await authFetch(
-                  `/api/sessions/${encodeURIComponent(sid)}?deleteSidecar=true`,
-                  {
-                    method: "DELETE",
-                  },
-                );
-              } catch {
-                /* ignore individual failures */
-              }
-            }
-            await chat.refreshSessions();
-            exitSelectMode();
-            hapticSuccess();
-          },
-        },
-      ],
-    );
-  }, [hasSelection, selectedIds, isAdminUser, chat, exitSelectMode]);
-
-  // --- Toggle all ---
-  const handleToggleAll = useCallback(() => {
-    hapticLight();
-    if (selectedIds.size === listData.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(
-        new Set(
-          listData.map((item) =>
-            item.type === "group"
-              ? `group-${item.group.groupKey}`
-              : item.session.id,
-          ),
-        ),
-      );
-    }
-  }, [selectedIds.size, listData]);
-
-  const getSessionActions = useCallback(
-    (session: ChatSessionIndexItem): SwipeAction[] => {
-      const actions: SwipeAction[] = [];
-      if (!isReadOnlyGroups) {
-        actions.push({
-          key: "group",
-          label: "分组",
-          backgroundColor: colors.actions.organize,
-          color: colors.actions.onAction,
-          onPress: () => {
-            hapticLight();
-            setSwipeGroupSessionId(session.id);
-            openSwipeableRef.current?.close();
-            // Use a small delay to let swipeable close and measure layout
-            setTimeout(() => {
-              swipeGroupTriggerRef.current?.measureInWindow((_x, y, _w, _h) => {
-                setSwipeGroupMenuAnchor(y);
-                setSwipeGroupMenuVisible(true);
-              });
-            }, 100);
-          },
-        });
-      }
-      actions.push(
-        {
-          key: "rename",
-          label: "重命名",
-          backgroundColor: colors.actions.edit,
-          color: colors.actions.onAction,
-          onPress: () => {
-            hapticLight();
-            showTextPrompt({
-              title: "重命名",
-              defaultValue: session.title || "",
-              extraAction: {
-                label: "自动",
-                onPress: () => {
-                  void chat.autoTitleSession(session.id);
-                },
-              },
-              onConfirm: (newTitle) => {
-                const trimmed = newTitle.trim();
-                if (trimmed) void chat.renameSession(session.id, trimmed);
-              },
-            });
-          },
-        },
-        {
-          key: "delete",
-          label: "删除",
-          backgroundColor: colors.actions.destructive,
-          color: colors.actions.onAction,
-          onPress: () => handleDeleteSession(session.id),
-        },
-      );
-      return actions;
-    },
-    [colors, handleDeleteSession, isReadOnlyGroups, chat.renameSession],
-  );
-
-  const showOwner = isAdminUser && chat.ownerFilter === null;
+  }, [chat, groupsHook]);
 
   const renderItem = useCallback(
-    ({ item }: { item: ListItem }) => {
-      if (item.type === "group") {
-        const latestChild = item.group.children[0];
+    ({ item }: { item: SessionListItem }) => {
+      if (item.type === 'group') {
         return (
-          <Pressable
-            style={({ pressed }) => [
-              styles.groupRow,
-              pressed && styles.groupRowPressed,
-            ]}
-            onPress={() => handleGroupClick(item.group)}
-          >
-            <View
-              style={[
-                styles.avatarCircle,
-                item.group.kind === "cron"
-                  ? styles.avatarCron
-                  : styles.avatarManual,
-              ]}
-            >
-              {item.group.kind === "cron" ? (
-                <Timer
-                  size={20}
-                  color={colors.primaryForeground}
-                  strokeWidth={2}
-                />
-              ) : (
-                <Folder
-                  size={20}
-                  color={colors.primaryForeground}
-                  strokeWidth={2}
-                />
-              )}
-            </View>
-            <View style={styles.groupContent}>
-              <View style={styles.titleRow}>
-                <Text style={styles.groupName} numberOfLines={1}>
-                  {item.group.name}
-                </Text>
-                <Text style={styles.groupTime}>
-                  {formatShortDate(item.group.latestUpdatedAt)}
-                </Text>
-              </View>
-              <View style={styles.previewRow}>
-                {showOwner && latestChild?.owner && (
-                  <Text style={styles.groupOwnerName} numberOfLines={1}>
-                    {latestChild.owner.username}
-                  </Text>
-                )}
-                <Text style={styles.groupPreview} numberOfLines={1}>
-                  {latestChild?.preview || latestChild?.title || ""}
-                </Text>
-                <View style={styles.countBadge}>
-                  <Text style={styles.countBadgeText}>{item.group.count}</Text>
-                </View>
-              </View>
-            </View>
-            <View style={styles.groupSeparator} />
-          </Pressable>
+          <SessionGroupRow
+            group={item.group}
+            unread={groupUnread.get(item.group.groupKey) === true}
+            showOwner={showOwner}
+            readOnly={isReadOnlyGroups}
+            openRowRef={openSwipeableRef}
+            onPress={handleGroupClick}
+            onRename={groupActions.promptRenameGroup}
+            onDelete={groupActions.confirmDeleteGroup}
+          />
         );
       }
-
-      const ownerUsername =
-        item.session.owner?.username || authUser?.username || "";
+      const ownerUsername = item.session.owner?.username || authUser?.username || '';
       const ownerAvatar = avatarMap[ownerUsername];
       return (
         <SessionRow
@@ -780,9 +255,9 @@ export default function SessionListScreen() {
           openRowRef={openSwipeableRef}
           onPress={handleSelectSession}
           showOwner={showOwner}
-          selectMode={isSelectMode}
-          selected={selectedIds.has(item.session.id)}
-          onSelectToggle={() => toggleSelect(item.session.id)}
+          selectMode={selection.isSelectMode}
+          selected={selection.selectedIds.has(item.session.id)}
+          onSelectToggle={() => selection.toggleSelect(item.session.id)}
           agentAvatar={ownerAvatar?.avatar}
           agentAvatarVersion={ownerAvatar?.avatarVersion}
           agentAvatarUsername={ownerUsername}
@@ -790,239 +265,111 @@ export default function SessionListScreen() {
       );
     },
     [
-      colors,
-      styles,
+      groupUnread,
+      showOwner,
+      isReadOnlyGroups,
       handleGroupClick,
+      groupActions.promptRenameGroup,
+      groupActions.confirmDeleteGroup,
+      authUser?.username,
+      avatarMap,
       getSessionActions,
       handleSelectSession,
-      showOwner,
-      isSelectMode,
-      selectedIds,
-      toggleSelect,
-      avatarMap,
-      authUser?.username,
+      selection,
     ],
   );
 
-  const keyExtractor = useCallback((item: ListItem) => {
-    if (item.type === "group") return `group-${item.group.groupKey}`;
-    return item.session.id;
-  }, []);
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: colors.card },
+        headerText: { ...fontScale.base, color: colors.foreground },
+      }),
+    [colors],
+  );
 
-  const getItemType = useCallback((item: ListItem) => item.type, []);
+  const headerLeft = () => (
+    <TouchableOpacity
+      onPress={selection.isSelectMode ? selection.exitSelectMode : selection.enterSelectMode}
+      activeOpacity={0.7}
+    >
+      <Text style={styles.headerText}>{selection.isSelectMode ? '完成' : '选择'}</Text>
+    </TouchableOpacity>
+  );
 
-  const renderContent = () => {
-    if (chat.isLoadingSessions && chat.sessions.length === 0) {
-      return <SkeletonList />;
-    }
-    return (
-      <FlashList
-        testID="chat-session-list"
-        accessibilityLabel="会话列表"
-        key={`${isSelectMode ? "select" : "list"}-${chat.sessionsHydrated ? "hydrated" : "cold"}`}
-        ref={listRef}
-        data={listData}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        getItemType={getItemType}
-        drawDistance={250}
-        overrideProps={{ initialDrawBatchSize: 12 }}
-        onLoad={restoreListAnchor}
-        contentContainerStyle={{
-          paddingBottom: isSelectMode ? insets.bottom + 70 : insets.bottom,
-        }}
-        onScroll={(event) => { captureSessionListAnchor(event.nativeEvent.contentOffset.y); }}
-        scrollEventThrottle={32}
-        onScrollBeginDrag={() => openSwipeableRef.current?.close()}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={() => {
-              setIsRefreshing(true);
-              void Promise.all([
-                chat.refreshSessions(),
-                groupsHook.loadGroups(),
-              ]).finally(() => setIsRefreshing(false));
-            }}
-            tintColor={colors.primary}
-          />
-        }
-        onEndReached={() => {
-          if (chat.hasMoreSessions) void chat.loadMoreSessions();
-        }}
-        onEndReachedThreshold={0.3}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>暂无会话</Text>
-          </View>
-        }
-      />
+  const headerRight = () =>
+    selection.isSelectMode ? (
+      <TouchableOpacity onPress={selection.toggleAll} activeOpacity={0.7}>
+        <Text style={styles.headerText}>{selection.allSelected ? '取消全选' : '全选'}</Text>
+      </TouchableOpacity>
+    ) : (
+      <TouchableOpacity onPress={handleNewSession} activeOpacity={0.7}>
+        <Plus size={24} color={colors.foreground} strokeWidth={2} />
+      </TouchableOpacity>
     );
-  };
-
-  // Whether batch group button should be enabled
-  const canBatchGroup = hasSelection && !isReadOnlyGroups;
 
   return (
     <View style={styles.container} testID="chat-home-screen">
       <Stack.Screen
         options={{
-          title: "Agent SaaS",
-          headerLeft: () => (
-            <TouchableOpacity
-              onPress={isSelectMode ? exitSelectMode : enterSelectMode}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.headerText}>
-                {isSelectMode ? "完成" : "选择"}
-              </Text>
-            </TouchableOpacity>
-          ),
-          unstable_headerLeftItems: () => [
-            glassFree(
-              <TouchableOpacity
-                onPress={isSelectMode ? exitSelectMode : enterSelectMode}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.headerText}>
-                  {isSelectMode ? "完成" : "选择"}
-                </Text>
-              </TouchableOpacity>,
-            ),
-          ],
-          headerRight: () =>
-            isSelectMode ? (
-              <TouchableOpacity onPress={handleToggleAll} activeOpacity={0.7}>
-                <Text style={styles.headerText}>
-                  {selectedIds.size === listData.length && listData.length > 0
-                    ? "取消全选"
-                    : "全选"}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity onPress={handleNewSession} activeOpacity={0.7}>
-                <Plus size={24} color={colors.foreground} strokeWidth={2} />
-              </TouchableOpacity>
-            ),
-          unstable_headerRightItems: () =>
-            isSelectMode
-              ? [
-                  glassFree(
-                    <TouchableOpacity
-                      onPress={handleToggleAll}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.headerText}>
-                        {selectedIds.size === listData.length &&
-                        listData.length > 0
-                          ? "取消全选"
-                          : "全选"}
-                      </Text>
-                    </TouchableOpacity>,
-                  ),
-                ]
-              : [
-                  glassFree(
-                    <TouchableOpacity
-                      onPress={handleNewSession}
-                      activeOpacity={0.7}
-                    >
-                      <Plus
-                        size={24}
-                        color={colors.foreground}
-                        strokeWidth={2}
-                      />
-                    </TouchableOpacity>,
-                  ),
-                ],
+          title: 'Agent SaaS',
+          headerLeft,
+          unstable_headerLeftItems: () => [glassFree(headerLeft())],
+          headerRight,
+          unstable_headerRightItems: () => [glassFree(headerRight())],
         }}
       />
-      <View style={styles.contentArea}>{renderContent()}</View>
 
-      {/* Bottom pill buttons in select mode */}
-      {isSelectMode && (
-        <View style={styles.bottomPillContainer}>
-          {renderLeftPill()}
-          {renderDeletePill()}
-        </View>
+      <SessionListView
+        listKey={`${selection.isSelectMode ? 'select' : 'list'}-${chat.sessionsHydrated ? 'hydrated' : 'cold'}`}
+        listRef={listRef}
+        data={listData}
+        renderItem={renderItem}
+        showSkeleton={chat.isLoadingSessions && chat.sessions.length === 0}
+        isRefreshing={isRefreshing}
+        onRefresh={handleRefresh}
+        hasMore={chat.hasMoreSessions}
+        isLoadingMore={chat.isLoadingMoreSessions}
+        onLoadMore={() => void chat.loadMoreSessions()}
+        header={
+          selection.isSelectMode ? null : (
+            <SessionPillRow trashOpen={trashOpen} onToggleTrash={() => setTrashOpen((v) => !v)} />
+          )
+        }
+        contentBottomPadding={insets.bottom + (selection.isSelectMode ? 70 : 88)}
+        onListLoad={restoreListAnchor}
+        onScrollBeginDrag={closeOpenSwipeable}
+      />
+
+      {selection.isSelectMode ? (
+        <SessionSelectionBar
+          selectedCount={selection.selectedCount}
+          canGroup={!isReadOnlyGroups}
+          onGroup={() => groupActions.openPicker([...selection.selectedIds])}
+          onDelete={selection.batchDelete}
+        />
+      ) : (
+        <SessionListFabs
+          hasManualGroups={groupActions.hasManualGroups}
+          disabled={chat.isLoadingSessions && chat.sessions.length === 0}
+          onNewSession={handleNewSession}
+          onNewGroup={groupActions.promptCreateEmptyGroup}
+        />
       )}
 
-      {/* Hidden ref for swipe group menu anchor measurement */}
-      <View
-        ref={swipeGroupTriggerRef}
-        style={{ position: "absolute", top: 0, left: 0 }}
-        collapsable={false}
+      <GroupPickerSheet
+        visible={groupActions.pickerVisible}
+        onClose={groupActions.closePicker}
+        groups={groupActions.allGroups}
+        onSelectGroup={groupActions.addToGroup}
+        onCreateGroupRequested={groupActions.promptCreateGroupForPending}
       />
 
-      {/* Swipe group dropdown menu */}
-      <DropdownMenu
-        visible={swipeGroupMenuVisible}
-        onClose={() => setSwipeGroupMenuVisible(false)}
-        sections={groupMenuSectionsRef.current}
-        onSelect={handleSwipeGroupSelect}
-        anchorTop={swipeGroupMenuAnchor}
-      />
-
-      {/* Batch group dropdown menu */}
-      <DropdownMenu
-        visible={batchGroupMenuVisible}
-        onClose={() => setBatchGroupMenuVisible(false)}
-        sections={groupMenuSectionsRef.current}
-        onSelect={(actionId) => {
-          void handleBatchGroupAction(actionId);
-        }}
-        anchorTop={batchGroupMenuAnchor}
+      <TrashSheet
+        visible={trashOpen}
+        onClose={() => setTrashOpen(false)}
+        onChanged={() => void chat.refreshSessions()}
       />
     </View>
   );
-
-  function renderGlass(style: any, children: React.ReactNode) {
-    return <View style={[style, styles.pillFallback]}>{children}</View>;
-  }
-
-  function renderLeftPill() {
-    const label = `分组${hasSelection ? ` (${selectedCount})` : ""}`;
-    const content = renderGlass(
-      styles.pillInner,
-      <>
-        <Text style={[styles.pillText, { color: colors.foreground }]}>
-          {label}
-        </Text>
-      </>,
-    );
-
-    if (canBatchGroup) {
-      return (
-        <Pressable
-          ref={batchGroupTriggerRef}
-          onPress={() => {
-            hapticLight();
-            batchGroupTriggerRef.current?.measureInWindow((_x, y, _w, h) => {
-              setBatchGroupMenuAnchor(y + h);
-              setBatchGroupMenuVisible(true);
-            });
-          }}
-        >
-          {content}
-        </Pressable>
-      );
-    }
-    return content;
-  }
-
-  function renderDeletePill() {
-    const color = hasSelection ? colors.destructive : colors.foreground;
-    return (
-      <TouchableOpacity
-        onPress={handleBatchDelete}
-        disabled={!hasSelection}
-        activeOpacity={0.7}
-      >
-        {renderGlass(
-          styles.iconPillInner,
-          <Trash2 size={24} color={color} strokeWidth={2} />,
-        )}
-      </TouchableOpacity>
-    );
-  }
 }

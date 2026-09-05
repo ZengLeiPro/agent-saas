@@ -90,6 +90,50 @@ function sqlSource(statement) {
   return `// release-migration: expand\nconst migrationSql = ${JSON.stringify(statement)};`;
 }
 
+function planInSubprocess(source) {
+  const script = `
+    import { createMigrationPlan } from ${JSON.stringify(new URL('./migration-plan.mjs', import.meta.url).href)};
+    const BASELINE = ${JSON.stringify(BASELINE)};
+    const TARGET = ${JSON.stringify(TARGET)};
+    const gitFixture = ${gitFixture.toString()};
+    const result = createMigrationPlan({
+      baseline: BASELINE, target: TARGET, changedPaths: [${JSON.stringify(PATH)}],
+      execFileSync: gitFixture({
+        baselines: {}, targets: { [${JSON.stringify(PATH)}]: ${JSON.stringify(source)} },
+        diffs: { [${JSON.stringify(PATH)}]: ${JSON.stringify(addedSourceDiff(source))} },
+        nameStatus: ${JSON.stringify(`A\t${PATH}`)},
+      }),
+    });
+    process.stdout.write(JSON.stringify(result));
+  `;
+  return JSON.parse(
+    execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      timeout: 5_000,
+    }),
+  );
+}
+
+test('ordinary alias diamonds without descriptor factories terminate and remain blocked', () => {
+  const source = [
+    'const seed = runtimeRoot;',
+    ...Array.from({ length: 28 }, (_, index) => {
+      const previous = index === 0 ? 'seed' : `alias${index - 1}`;
+      return `const alias${index} = ${previous} ?? ${previous};`;
+    }),
+    'const result = alias27(); result.run();',
+  ].join('\n');
+  const result = planInSubprocess(source);
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /cannot be classified deterministically/u);
+});
+
+test('dynamic member alias cycles terminate and remain blocked', () => {
+  const result = planInSubprocess('let index = runtimeRoot; index = index[key]; index.run();');
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /cannot be classified deterministically/u);
+});
+
 test('emits a deterministic baseline-bound no-migration plan', () => {
   const execFileSync = gitFixture({ targets: {}, nameStatus: '' });
   const first = createMigrationPlan({

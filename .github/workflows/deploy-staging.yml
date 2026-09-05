@@ -414,10 +414,13 @@ jobs:
             cat "$RUNNER_TEMP/classification.json" >&2
             exit 1
           fi
-          node scripts/release/migration-plan.mjs \
+          if ! node scripts/release/migration-plan.mjs \
             --changed-paths "$RUNNER_TEMP/classification.json" \
             --baseline "$baseline" --target "$RELEASE_SHA" \
-            > "$RUNNER_TEMP/migration.json"
+            > "$RUNNER_TEMP/migration.json"; then
+            cat "$RUNNER_TEMP/migration.json" >&2
+            exit 1
+          fi
           node scripts/release/produce-release-evidence.mjs \
             --sha "$RELEASE_SHA" \
             --merge "$RUNNER_TEMP/merge.json" \
@@ -592,8 +595,11 @@ jobs:
           node scripts/release/classify-components.mjs --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/classification.json"
           diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
                <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
-          node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
-            --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
+          if ! node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
+            --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"; then
+            cat "$RUNNER_TEMP/migration-plan.json" >&2
+            exit 1
+          fi
           diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
       - name: Resolve exact ACS image when required

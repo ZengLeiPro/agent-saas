@@ -116,9 +116,8 @@ export function KnowledgeSuiteSetup({ tenantId, suites, manageable, receipt, onR
     setError(null);
   }, [suite?.suiteId, suite?.configuration.mode, suite?.configuration.userIds.join("\u0000"), suite?.configuration.groupIds.join("\u0000")]);
 
-  if (!suite) return <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">当前没有可配置的数据源。</div>;
-  const simple = suite.configuration.mode !== "advanced" && suite.configuration.mode !== "mixed";
-  const complete = (suite.completeness ?? "complete") === "complete";
+  const simple = suite?.configuration.mode !== "advanced" && suite?.configuration.mode !== "mixed";
+  const complete = (suite?.completeness ?? "complete") === "complete";
   const syncLabel = (item: KnowledgeSuite) => {
     if (snapshot.loading) return "同步状态读取中";
     if (snapshot.error) return "同步状态不可用";
@@ -134,7 +133,7 @@ export function KnowledgeSuiteSetup({ tenantId, suites, manageable, receipt, onR
   const assignments = mode === "all" ? [{ assigneeType: "everyone", effect: "allow" }]
     : [...userIds.map(assigneeId => ({ assigneeType: "user", assigneeId, effect: "allow" })),
       ...groupIds.map(assigneeId => ({ assigneeType: "directory_group", assigneeId, effect: "allow" }))];
-  const command = { reason: reason.trim(), changes: suite.resources.map(resource => ({
+  const command = { reason: reason.trim(), changes: (suite?.resources ?? []).map(resource => ({
     resourceType: "org_knowledge", resourceId: resource.resourceId, expectedVersion: resource.version, assignments,
   })) };
   const resetPreview = () => { setPreview(null); onReceipt(null); setError(null); };
@@ -178,6 +177,9 @@ export function KnowledgeSuiteSetup({ tenantId, suites, manageable, receipt, onR
     },
     draft: { mode, userIds: draftUserIds, groupIds: draftGroupIds, reason },
   });
+
+  // 早退必须放在所有 Hook 调用之后，否则 suites 由空变非空时 Hook 顺序会变化
+  if (!suite) return <div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">当前没有可配置的数据源。</div>;
 
   return <div className="space-y-5">
     <section aria-labelledby="context-step-source">

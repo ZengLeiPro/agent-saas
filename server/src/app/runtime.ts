@@ -181,9 +181,8 @@ import { createDefaultExecutionTransportRegistry } from '../agent/toolRuntime.js
 import { buildTenantScopedEnv } from '../agent/tenantEnv.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
 import { ClientDaemonGateway } from '../runtime/clientDaemonGateway.js';
-import { createHandHealthScanner } from '../runtime/createHandHealthScanner.js';
-import type { HandHealthScanner } from '../runtime/handHealthScanner.js';
-import { HandLeaseJanitor } from '../runtime/handLeaseJanitor.js';
+import { startHandMaintenanceWorkers, type HandMaintenanceWorkers } from '../runtime/startHandMaintenanceWorkers.js';
+import { createProviderQuotaRuntime, type ProviderQuotaRuntime } from '../quota/providerQuotaRuntime.js';
 import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
@@ -660,10 +659,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let tenantLifecycleWatcher: TenantLifecycleWatcher | undefined;
   let cancelDeliveryRetryTimer: NodeJS.Timeout | undefined;
   let runtimeSchedulerAutoWake = false;
-  // B4：HandHealthScanner 仅 PG runtime 装配，shutdown 时 stop()。
-  let handHealthScanner: HandHealthScanner | undefined;
-  // 2026-08-03 P1: server-remote hand 租约巡检（同 scanner 门槛装配）。
-  let handLeaseJanitor: HandLeaseJanitor | undefined;
+  // Hand 维护 worker 与套餐额度采集均仅 PG runtime 装配，shutdown 时 stop()。
+  let handMaintenance: HandMaintenanceWorkers | undefined;
+  let providerQuotaRuntime: ProviderQuotaRuntime | undefined;
   const {
     secretVault,
     resolvedSttRuntimeConfig,
@@ -1093,8 +1091,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       // Stop automation claimers before the shared scheduler and PG pool.
       setSessionMetaProjectionSink(undefined);
       clientDaemonGateway?.close();
-      handHealthScanner?.stop();
-      handLeaseJanitor?.stop();
+      handMaintenance?.stop(); providerQuotaRuntime?.stop();
       systemMetricsCollector?.stop();
       alertNotifier?.stop(); taskboardStatusNotificationWorker?.stop();
       await sessionAutomationCoordinator?.stop();
@@ -2833,26 +2830,24 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } else if (userStore) {
     serverLogger.warn('Feishu Token Broker unavailable: PG store, app credentials, or business scopes are not configured');
   }
-  // Hand lease 老化不能与主动恢复共用开关：事故止血关闭 scanner 时，janitor 仍须运行。
-  if (enableSingletonWorkers && pgHandStore) {
-    handLeaseJanitor = new HandLeaseJanitor({
-      handStore: pgHandStore,
-      logger: serverLogger.child('HandLeaseJanitor'),
+  handMaintenance = startHandMaintenanceWorkers({
+    enable: enableSingletonWorkers,
+    handStore: pgHandStore,
+    eventStore: pgEventStore,
+    scannerConfig: config.runtimeHandHealthScanner,
+    resolveHandAuthToken: (hand) => tenantRemoteHandResolver.resolveForHand(hand),
+    defaultServerRemoteAuthToken: resolvedServerRemote?.authToken,
+    isExecutionEnabled: isRuntimeExecutionEnabled,
+    janitorLogger: serverLogger.child('HandLeaseJanitor'),
+    scannerLogger: serverLogger.child('HandHealth'),
+  });
+  // 套餐额度：ws-only 只读+按需刷新；singleton Worker 跑周期采集（集群内 advisory lock 单例）。
+  if (pgEventStore && config.runtimeEventStore?.backend === 'pg') {
+    providerQuotaRuntime = await createProviderQuotaRuntime({
+      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix,
+      getModelsConfig: () => config.models, secretVault, codexCredentialManager,
+      enableCollector: enableSingletonWorkers, logger: serverLogger.child('ProviderQuota'),
     });
-    handLeaseJanitor.start();
-  }
-  // B4: 仅恢复关联 active run 的 Server-remote Hand；历史会话由下一条真实消息按需复活。
-  if (enableSingletonWorkers && pgHandStore && pgEventStore && config.runtimeHandHealthScanner?.enabled !== false) {
-    handHealthScanner = createHandHealthScanner({
-      config: config.runtimeHandHealthScanner,
-      handStore: pgHandStore,
-      eventStore: pgEventStore,
-      resolveHandAuthToken: (hand) => tenantRemoteHandResolver.resolveForHand(hand),
-      defaultServerRemoteAuthToken: resolvedServerRemote?.authToken,
-      logger: serverLogger.child('HandHealth'),
-      isExecutionEnabled: isRuntimeExecutionEnabled,
-    });
-    handHealthScanner.start();
   }
   if (config.dingtalk?.enabled) {
     channelManager.register(new DingtalkChannel({
@@ -2890,6 +2885,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     : undefined;
   return {
     config, processRole, processCwd,
+    providerQuotaService: providerQuotaRuntime?.service,
     sessionBasePath, agentCwd,
     sandboxWarmupService, ...(sandboxLifecycleService ? { sandboxLifecycleService } : {}),
     sharedDir, tenantSkillsRootDir,

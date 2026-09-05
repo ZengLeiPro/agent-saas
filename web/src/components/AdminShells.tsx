@@ -23,7 +23,7 @@ import { filterCustomerOrganizations, governanceRoute as makeGovernanceRoute, ty
 import { PlatformAdminHeaderControls } from "@/components/PlatformAdmin/PlatformAdminHeaderControls";
 import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControls";
 import { TenantSettingsPanel } from "@/components/TenantSettingsPanel";
-import { InfraPage, OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
+import { InfraPage, OverviewPage, ProviderQuotaPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
 import { SystemSettingsPanel } from "@/components/PlatformAdmin/SystemSettingsPanel";
 import { ConfigStatusPanel } from "@/components/PlatformAdmin/ConfigStatusPanel";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
@@ -662,6 +662,8 @@ export function PlatformAdminShell({
         return <SandboxesPage sandboxName={governanceRoute.entityId} />;
       case "platform.runtime.infra":
         return <InfraPage />;
+      case "platform.runtime.provider-quota":
+        return <ProviderQuotaPage />;
       case "platform.runtime.efficiency":
         return renderEfficiency();
       case "platform.governance.audit":
@@ -708,6 +710,7 @@ export function PlatformAdminShell({
     }
     if (activeSection === "sandboxes") return <SandboxesPage sandboxName={entityId} />;
     if (activeSection === "infra") return <InfraPage />;
+    if (activeSection === "provider-quota") return <ProviderQuotaPage />;
     return renderEfficiency();
   })();
 

@@ -1,4 +1,5 @@
 export * from './types/correlation';
+export * from './types/providerQuota';
 export * from './types/sessionAutomation';
 export * from './lib/sessionAutomationCommands.js';
 export { GOVERNANCE_CAPABILITIES, governanceCapability } from './types/governanceCapability';

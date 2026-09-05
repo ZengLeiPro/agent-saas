@@ -453,6 +453,16 @@ export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
     routeId: 'platform.org-business.entitlements-billing',
   },
   {
+    id: 'platform-provider-quota',
+    surface: 'analytics',
+    area: 'platform',
+    group: '平台分析',
+    label: '套餐额度',
+    description: '查看 Codex、火山等模型套餐账号的实时用量、重置时间与撞限状态。',
+    iconKey: 'quota',
+    routeId: 'platform.runtime.provider-quota',
+  },
+  {
     id: 'platform-sessions',
     surface: 'analytics',
     area: 'platform',

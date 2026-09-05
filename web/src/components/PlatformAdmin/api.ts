@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { parseConfigIdentitySummary } from "@agent/shared/schemas/configIdentity";
+import type { ProviderQuotaHistoryResponse, ProviderQuotaOverviewResponse } from "@agent/shared";
 
 import { authFetch } from "@/lib/authFetch";
 import type {
@@ -346,6 +347,15 @@ function safeParseJson<T>(text: string, fallback: T): T {
 export const platformAdminApi = {
   configStatus(): Promise<EffectiveConfigStatus> {
     return getJson("/api/admin/config-status");
+  },
+  providerQuota(): Promise<ProviderQuotaOverviewResponse> {
+    return getJson(buildAdminApiPath("/provider-quota"));
+  },
+  providerQuotaHistory(hours = 24): Promise<ProviderQuotaHistoryResponse> {
+    return getJson(buildAdminApiPath("/provider-quota/history", { hours }));
+  },
+  refreshProviderQuota(): Promise<ProviderQuotaOverviewResponse> {
+    return mutateJson(buildAdminApiPath("/provider-quota/refresh"), "POST");
   },
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));

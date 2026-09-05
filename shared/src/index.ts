@@ -772,6 +772,7 @@ export {
 export type {
   DetailGroup,
   OutcomeStat,
+  OutcomeStatVerdict,
   StatVerdict,
   StepDetailPart,
 } from './lib/detailSemantics';

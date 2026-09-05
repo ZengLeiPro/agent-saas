@@ -98,7 +98,15 @@ export function AssetLibraryDialog({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const listPath = viewMode === "all" ? "assets" : path;
-  const { entries: rawEntries, loading, error, refresh } = useFileList(
+  const {
+    entries: rawEntries,
+    loading,
+    loadingMore,
+    error,
+    hasMore,
+    refresh,
+    loadMore,
+  } = useFileList(
     listPath,
     undefined,
     viewMode === "all",
@@ -312,7 +320,7 @@ export function AssetLibraryDialog({
                   <p className="text-sm text-destructive">{error}</p>
                   <Button variant="outline" size="sm" onClick={refresh}>重试</Button>
                 </div>
-              ) : entries.length === 0 ? (
+              ) : entries.length === 0 && !hasMore ? (
                 <div className="flex flex-1 flex-col items-center justify-center text-muted-foreground">
                   <Folder className="mb-3 size-10 opacity-30" />
                   <p className="text-sm">
@@ -367,6 +375,14 @@ export function AssetLibraryDialog({
                         </button>
                       );
                     })}
+                    {hasMore ? (
+                      <div className="flex justify-center py-2">
+                        <Button variant="ghost" size="sm" onClick={loadMore} disabled={loadingMore}>
+                          <Loader2 className={cn("size-4", loadingMore && "animate-spin")} />
+                          {loadingMore ? "正在加载" : "加载更多"}
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 </ScrollArea>
               )}

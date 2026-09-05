@@ -5,6 +5,7 @@ import {
   StyleSheet,
   RefreshControl,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Check } from 'lucide-react-native';
@@ -27,6 +28,9 @@ interface FileListProps {
   selectMode?: boolean;
   selectedPaths?: Set<string>;
   onSelectToggle?: (path: string) => void;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => Promise<void>;
 }
 
 function getParentFolder(path: string): string {
@@ -116,7 +120,7 @@ function FileRow({ entry, onPress, onDelete, openRowRef, colors, showPath, enabl
   );
 }
 
-export function FileList({ entries, loading, onRefresh, onPress, onDelete, contentPaddingBottom = 0, showPath, enableBackGesture, selectMode, selectedPaths, onSelectToggle }: FileListProps) {
+export function FileList({ entries, loading, onRefresh, onPress, onDelete, contentPaddingBottom = 0, showPath, enableBackGesture, selectMode, selectedPaths, onSelectToggle, loadingMore, hasMore, onLoadMore }: FileListProps) {
   const colors = useColors();
   const openRowRef = useRef<Swipeable | null>(null);
 
@@ -150,6 +154,11 @@ export function FileList({ entries, loading, onRefresh, onPress, onDelete, conte
       drawDistance={250}
       contentContainerStyle={listStyles.contentContainer}
       onScrollBeginDrag={() => openRowRef.current?.close()}
+      onEndReached={() => {
+        if (hasMore && !loadingMore) void onLoadMore?.();
+      }}
+      onEndReachedThreshold={0.4}
+      ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.primary} style={styles.footer} /> : null}
       refreshControl={
         <RefreshControl
           refreshing={loading}
@@ -206,4 +215,5 @@ const styles = StyleSheet.create({
     right: 0,
     height: StyleSheet.hairlineWidth,
   },
+  footer: { marginVertical: spacing.md },
 });

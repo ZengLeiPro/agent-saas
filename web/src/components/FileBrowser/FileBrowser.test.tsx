@@ -47,8 +47,11 @@ function renderBrowser(entries: FileEntry[]) {
     currentPath: "assets",
     parentPath: null,
     loading: false,
+    loadingMore: false,
     error: null,
+    hasMore: false,
     refresh: vi.fn(),
+    loadMore: vi.fn(),
   });
   return render(<FileBrowser onPreviewFile={vi.fn()} />);
 }

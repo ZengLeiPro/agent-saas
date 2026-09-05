@@ -1,5 +1,5 @@
-import { readdir, lstat } from "fs/promises";
 import { type Stats } from "fs";
+import { lstat, readdir } from "fs/promises";
 import { resolve, extname, basename, dirname, join, relative, sep } from "path";
 import { Router, type Request } from "express";
 import { resolveUserCwd } from "../workspace/resolver.js";
@@ -17,6 +17,12 @@ import {
   relativeToTrustedRoot,
   removeTrustedPath,
 } from "../security/trustedFile.js";
+import {
+  InvalidFileListCursorError,
+  listRecursiveFilePage,
+  parseRecursiveFilePageSize,
+  type FileListEntry,
+} from "./fileListPage.js";
 
 /** /api/file/read 允许预览读取的扩展名（文本/代码/标记类，须 ⊇ 前端可预览集合） */
 const PREVIEW_READ_EXTS = new Set([
@@ -142,19 +148,11 @@ function fileCacheControl(absolutePath: string, userCwd: string, contentType: st
   return "private, max-age=300, must-revalidate";
 }
 
-interface FileEntry {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  size: number;
-  modifiedAt: number;
-  extension: string;
-}
-
 interface FileListResponse {
-  entries: FileEntry[];
+  entries: FileListEntry[];
   currentPath: string;
   parentPath: string | null;
+  nextCursor?: string | null;
 }
 
 export interface FileRouterOptions {
@@ -534,50 +532,49 @@ export function createFileRouter(options: FileRouterOptions): Router {
       }
 
       const recursive = req.query.recursive === "true";
-
-      // 递归扫描辅助函数
-      async function scanDir(
-        dirAbsPath: string,
-        dirRelPath: string,
-        result: FileEntry[],
-      ): Promise<void> {
-        const relativeDirectory = relative(selectedRoot, dirAbsPath);
-        const pinned = await openTrustedDirectory(selectedRoot, relativeDirectory);
-        try {
-          const names = await readdir(pinned.fdPath);
-          await Promise.all(
-            names.map(async (name) => {
-              if (name.startsWith(".")) return;
-              try {
-                const entryAbsPath = join(dirAbsPath, name);
-                const entryStat = await lstat(join(pinned.fdPath, name));
-                if (entryStat.isSymbolicLink()) return;
-                const isDir = entryStat.isDirectory();
-                const entryRelPath = join(dirRelPath, name);
-                if (recursive && isDir) {
-                  await scanDir(entryAbsPath, entryRelPath, result);
-                } else {
-                  result.push({
-                    name,
-                    path: entryRelPath,
-                    isDirectory: isDir,
-                    size: isDir ? 0 : entryStat.size,
-                    modifiedAt: entryStat.mtimeMs,
-                    extension: isDir ? "" : extname(name).toLowerCase(),
-                  });
-                }
-              } catch {
-                // Entries that race or are symlinks are omitted.
-              }
-            }),
-          );
-        } finally {
-          await pinned.handle.close();
-        }
+      if (recursive) {
+        const page = await listRecursiveFilePage({
+          selectedRoot,
+          rootPath: requestedPath,
+          cursor: req.query.cursor as string | undefined,
+          limit: parseRecursiveFilePageSize(req.query.limit),
+        });
+        const response: FileListResponse = {
+          entries: page.entries,
+          currentPath: requestedPath,
+          parentPath: requestedPath === "assets" ? null : dirname(requestedPath),
+          nextCursor: page.nextCursor,
+        };
+        res.json(response);
+        return;
       }
 
-      const entries: FileEntry[] = [];
-      await scanDir(absolutePath, requestedPath, entries);
+      const entries: FileListEntry[] = [];
+      const relativeDirectory = relative(selectedRoot, absolutePath);
+      const pinned = await openTrustedDirectory(selectedRoot, relativeDirectory);
+      try {
+        const names = await readdir(pinned.fdPath);
+        await Promise.all(names.map(async (name) => {
+          if (name.startsWith(".")) return;
+          try {
+            const entryStat = await lstat(join(pinned.fdPath, name));
+            if (entryStat.isSymbolicLink()) return;
+            const isDir = entryStat.isDirectory();
+            entries.push({
+              name,
+              path: join(requestedPath, name),
+              isDirectory: isDir,
+              size: isDir ? 0 : entryStat.size,
+              modifiedAt: entryStat.mtimeMs,
+              extension: isDir ? "" : extname(name).toLowerCase(),
+            });
+          } catch {
+            // Entries that race or are symlinks are omitted.
+          }
+        }));
+      } finally {
+        await pinned.handle.close();
+      }
 
       // 排序：目录在前（字母序），文件在后（字母序）
       entries.sort((a, b) => {
@@ -592,6 +589,10 @@ export function createFileRouter(options: FileRouterOptions): Router {
       };
       res.json(response);
     } catch (error) {
+      if (error instanceof InvalidFileListCursorError) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
       serverLogger.error(`[file/list] ERROR user=${user?.username}`, error);
       res.status(500).json({ error: "Failed to list directory" });
     }

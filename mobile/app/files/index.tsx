@@ -65,7 +65,15 @@ export default function FilesScreen() {
   const sort = sortPrefs[viewMode];
 
   const effectiveOwner = isAdmin ? (ownerFilter ?? undefined) : undefined;
-  const { entries: rawEntries, loading, refresh } = useFileList(
+  const {
+    entries: rawEntries,
+    loading,
+    loadingMore,
+    refresh,
+    loadMore,
+    hasMore,
+    error,
+  } = useFileList(
     ROOT_PATH,
     viewMode === 'all',
     effectiveOwner,
@@ -151,9 +159,10 @@ export default function FilesScreen() {
       <SegmentedControl
         values={VIEW_LABELS}
         selectedIndex={VIEW_MODES.indexOf(viewMode)}
-        onChange={(event) =>
-          setViewMode(VIEW_MODES[event.nativeEvent.selectedSegmentIndex])
-        }
+        onChange={(event) => {
+          const nextMode = VIEW_MODES[event.nativeEvent.selectedSegmentIndex];
+          if (nextMode) setViewMode(nextMode);
+        }}
         style={SEGMENT_STYLE}
       />
     ),
@@ -215,6 +224,10 @@ export default function FilesScreen() {
       <FileBrowserBody
         entries={entries}
         loading={loading}
+        loadingMore={loadingMore}
+        error={error}
+        hasMore={hasMore}
+        onLoadMore={loadMore}
         layoutMode={layoutMode}
         onRefresh={refresh}
         onPress={handlePress}

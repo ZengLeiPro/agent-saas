@@ -11,6 +11,8 @@ export interface FileListResponse {
   entries: FileEntry[];
   currentPath: string;
   parentPath: string | null;
+  /** 递归列表的下一页游标；非递归列表或遍历完成时为 null/缺省。 */
+  nextCursor?: string | null;
 }
 
 export type FileSortKey = "name" | "modifiedAt" | "size" | "extension";

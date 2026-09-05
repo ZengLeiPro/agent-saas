@@ -3,7 +3,7 @@
  * 让 `/files` 与 `/files/browse` 两条路由共用同一套呈现层（差别只在头部与取数）。
  */
 import React, { useCallback, useState } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { FileEntry } from '@agent/shared';
 import { EmptyState, Skeleton } from '../ui';
 import { EntityIcons } from '../../lib/icons';
@@ -16,6 +16,10 @@ export type FileLayoutMode = 'list' | 'grid';
 export interface FileBrowserBodyProps {
   entries: FileEntry[];
   loading: boolean;
+  loadingMore?: boolean;
+  error?: string | null;
+  hasMore?: boolean;
+  onLoadMore?: () => Promise<void>;
   layoutMode: FileLayoutMode;
   onRefresh: () => Promise<void>;
   onPress: (entry: FileEntry) => void;
@@ -63,6 +67,10 @@ function FileListSkeleton({ layoutMode }: { layoutMode: FileLayoutMode }) {
 export function FileBrowserBody({
   entries,
   loading,
+  loadingMore,
+  error,
+  hasMore,
+  onLoadMore,
   layoutMode,
   onRefresh,
   onPress,
@@ -85,7 +93,23 @@ export function FileBrowserBody({
     return <FileListSkeleton layoutMode={layoutMode} />;
   }
 
-  if (!loading && entries.length === 0) {
+  if (error && entries.length === 0) {
+    return (
+      <View style={[styles.fill, styles.center, styles.error, { backgroundColor: colors.card }]}>
+        <Text style={[styles.errorTitle, { color: colors.foreground }]}>加载失败</Text>
+        <Text style={[styles.errorMessage, { color: colors.mutedForeground }]}>{error}</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => { void onRefresh(); }}
+          style={[styles.retry, { borderColor: colors.border }]}
+        >
+          <Text style={{ color: colors.foreground }}>重试</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (!loading && entries.length === 0 && !hasMore) {
     return (
       <View style={[styles.fill, styles.center, { backgroundColor: colors.card }]}>
         <EmptyState
@@ -111,6 +135,9 @@ export function FileBrowserBody({
           selectedPaths={selectedPaths}
           onSelectToggle={onSelectToggle}
           width={width}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          onLoadMore={onLoadMore}
         />
       ) : (
         <FileList
@@ -125,6 +152,9 @@ export function FileBrowserBody({
           selectMode={selectMode}
           selectedPaths={selectedPaths}
           onSelectToggle={onSelectToggle}
+          loadingMore={loadingMore}
+          hasMore={hasMore}
+          onLoadMore={onLoadMore}
         />
       )}
     </View>
@@ -134,6 +164,10 @@ export function FileBrowserBody({
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   center: { justifyContent: 'center' },
+  error: { alignItems: 'center', paddingHorizontal: spacing.xl, gap: spacing.sm },
+  errorTitle: { fontSize: 16, fontWeight: '600' },
+  errorMessage: { fontSize: 13, textAlign: 'center' },
+  retry: { marginTop: spacing.xs, borderWidth: 1, borderRadius: radius.lg, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   skeletonList: {
     flex: 1,
     paddingTop: spacing.sm,

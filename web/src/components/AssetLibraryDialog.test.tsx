@@ -24,8 +24,11 @@ vi.mock("@/components/FileBrowser/useFileList", () => ({
     return {
       entries: recursive ? mocks.allEntries : mocks.entries,
       loading: false,
+      loadingMore: false,
       error: null,
+      hasMore: false,
       refresh: vi.fn(),
+      loadMore: vi.fn(),
     };
   },
 }));

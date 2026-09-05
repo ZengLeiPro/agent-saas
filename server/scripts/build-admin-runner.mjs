@@ -7,9 +7,18 @@
 // 预编译为 --packages=external 的 ESM 后，脚本在部署目录里直接用该 release 的
 // node_modules 解析依赖（pg 等均为 prod dependency），不需要 tsx。
 //
+// 治理层（manifest schemaVersion 2）：
+//   - 每个命令入口 banner 同时导入 Runtime dependency guard 与 governance bootstrap；
+//     bootstrap 拒绝未经 launcher 启动的直接执行。
+//   - dist/admin/launcher.mjs 是唯一受支持的执行入口：解析 manifest、校验入口 digest、
+//     Release/Config/Environment identity、写意图与授权，并写脱敏回执。
+//   - manifest 携带每个命令的治理 metadata（唯一真相源 admin-runner-entries.mjs）。
+//
 // 产物：
-//   dist/admin/<command>.mjs(+.map)  可直接 node 执行的入口
-//   dist/admin/manifest.json         入口清单 + 每个入口的 sha256/size
+//   dist/admin/<command>.mjs(+.map)      命令入口（必须经 launcher 执行）
+//   dist/admin/launcher.mjs(+.map)       治理 launcher
+//   dist/admin-governance-bootstrap.mjs  命令入口 banner 导入的 bootstrap
+//   dist/admin/manifest.json             入口清单 + 治理 metadata + 每个文件的 sha256/size
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -19,66 +28,47 @@ import {
   loadRuntimeDependencyContract,
   runtimeDependencyContractDigest,
 } from '../../scripts/release/runtime-dependency.mjs';
+import { ADMIN_RUNNER_ENTRIES, validateAdminRunnerEntries } from './admin-runner-entries.mjs';
+
+export {
+  ADMIN_RUNNER_ENTRIES,
+  renderAdminRunnerCommandTable,
+  validateAdminRunnerEntries,
+  validateAdminRunnerGovernance,
+} from './admin-runner-entries.mjs';
 
 export const MANIFEST_KIND = 'agent-saas-admin-runner';
-
-// 受控清单：只有具备 dry-run / 幂等 / 门禁语义的一次性运维脚本才允许进入
-// Admin Runner。新增条目时同步更新 docs/admin-runner.md。
-export const ADMIN_RUNNER_ENTRIES = Object.freeze([
-  {
-    command: 'migrate-events-file-to-pg',
-    source: 'scripts/migrate-events-file-to-pg.mts',
-    description:
-      'file EventStore jsonl -> PG runtime_events 一次性 ETL；默认 dry-run，--execute 写入',
-  },
-  {
-    command: 'migrate-platform-tenant-pantheon',
-    source: 'scripts/migrate-platform-tenant-pantheon.mts',
-    description: '平台租户目录迁移到 pantheon 布局；默认 dry-run，--apply 写入',
-  },
-  {
-    command: 'backfill-runtime-sessions',
-    source: 'scripts/backfill-runtime-sessions.mts',
-    description: 'runtime session 背填到 PG；默认 dry-run，--execute 写入',
-  },
-  {
-    command: 'repair-runtime-session-statuses',
-    source: 'scripts/repair-runtime-session-statuses.mts',
-    description: '按 runtime_runs 真源修复会话目录假 active；默认 dry-run，--execute 幂等写入',
-  },
-  {
-    command: 'repair-taskboard-workflow',
-    source: 'scripts/repairTaskboardWorkflow.ts',
-    description: 'taskboard workflow 状态修复；默认 dry-run，--apply 写入',
-  },
-  {
-    command: 'runtime-events-maintenance',
-    source: 'src/scripts/runtime-events-maintenance.mts',
-    description:
-      'runtime events retention 维护；默认严格只读 dry-run，写操作需 --authorization-ref',
-  },
-  {
-    command: 'context-derived-replay',
-    source: 'scripts/context-derived-replay.mts',
-    description: 'derived context 投影重放修复；默认 dry-run，--apply 写入',
-  },
-]);
+export const MANIFEST_SCHEMA_VERSION = 2;
+export const RUNTIME_GUARD_ENTRY = '../runtime-dependency-admin-guard.mjs';
+export const GOVERNANCE_BOOTSTRAP_ENTRY = '../admin-governance-bootstrap.mjs';
+export const LAUNCHER_ENTRY = 'launcher.mjs';
+export const LAUNCHER_SOURCE = 'src/release/adminRunner/launcherCli.ts';
 
 export function adminEntryFile(command) {
   return `${command}.mjs`;
 }
 
-export function esbuildArgs(source, outfile) {
+export function adminBanner({ bootstrap = true } = {}) {
+  const imports = [`import '${RUNTIME_GUARD_ENTRY}';`];
+  if (bootstrap) imports.push(`import '${GOVERNANCE_BOOTSTRAP_ENTRY}';`);
+  return imports.join('');
+}
+
+export function esbuildArgs(source, outfile, { bootstrap = true } = {}) {
   return [
     resolve(source),
     '--bundle',
     '--platform=node',
     '--format=esm',
     '--target=node22',
+    // 与 build:config-identity-cli 相同的 shared alias，launcher 复用运行期身份实现。
+    '--alias:@agent/shared/schemas/configIdentity=../shared/src/schemas/configIdentity.ts',
+    '--alias:@agent/shared/schemas/releaseManifest=../shared/src/schemas/releaseManifest.ts',
+    '--alias:@agent/shared=../shared/src/index.ts',
     // npm 包保持 external：运行时用该 release 的 prod node_modules 解析，
     // 与 dist/index.js 的外部化策略一致，保证"同一 release、同一依赖"。
     '--packages=external',
-    "--banner:js=import '../runtime-dependency-admin-guard.mjs';",
+    `--banner:js=${adminBanner({ bootstrap })}`,
     `--outfile=${outfile}`,
     '--sourcemap',
   ];
@@ -102,18 +92,60 @@ export function adminRuntimeGuardSource() {
   ].join('\n');
 }
 
+// bootstrap 是防误用而非防对抗：有 root 的操作者可以伪造 env 与 marker。它保证
+// 文档化路径之外“顺手直跑入口文件”会被明确拒绝并指向 launcher。
+export function adminGovernanceBootstrapSource() {
+  return [
+    "import { readFileSync } from 'node:fs';",
+    "import { basename, join } from 'node:path';",
+    'function refuse(reason) {',
+    '  process.stderr.write(',
+    '    `[admin-governance] refused: ${reason}. One-off operations must run through dist/admin/launcher.mjs <command> -- <args>.\\n`,',
+    '  );',
+    '  process.exit(3);',
+    '}',
+    'const nonce = process.env.AGENT_SAAS_ADMIN_LAUNCH_NONCE;',
+    'const receiptDir = process.env.AGENT_SAAS_ADMIN_RECEIPT_DIR;',
+    "if (!nonce || !/^[a-f0-9]{32}$/u.test(nonce)) refuse('missing launcher nonce');",
+    "if (!receiptDir) refuse('missing AGENT_SAAS_ADMIN_RECEIPT_DIR');",
+    'let marker;',
+    'try {',
+    "  marker = JSON.parse(readFileSync(join(receiptDir, '.launch', `${nonce}.json`), 'utf8'));",
+    '} catch {',
+    "  refuse('launch marker missing');",
+    '}',
+    "if (marker?.entry !== basename(process.argv[1] ?? '')) refuse('launch marker does not match this entry');",
+    '',
+  ].join('\n');
+}
+
 export function adminRunnerManifest(
   kind,
   commands,
   dependencyContractDigest,
   runtimeDependencyGuard,
+  governanceBootstrap,
+  launcher,
 ) {
   return {
-    schemaVersion: 1,
+    schemaVersion: MANIFEST_SCHEMA_VERSION,
     kind,
     dependencyContractDigest,
     runtimeDependencyGuard,
+    governanceBootstrap,
+    launcher,
     commands,
+  };
+}
+
+export function manifestCommand(entry, details) {
+  return {
+    command: entry.command,
+    entry: adminEntryFile(entry.command),
+    source: entry.source,
+    description: entry.description,
+    governance: entry.governance,
+    ...details,
   };
 }
 
@@ -127,6 +159,7 @@ export async function buildAdminRunner({
   manifestKind = MANIFEST_KIND,
   exec = run,
 } = {}) {
+  validateAdminRunnerEntries(entries);
   const outDir = join(root, 'dist', 'admin');
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
@@ -136,20 +169,32 @@ export async function buildAdminRunner({
     await stat(sourcePath);
     const outfile = join(outDir, adminEntryFile(entry.command));
     exec('pnpm', ['exec', 'esbuild', ...esbuildArgs(sourcePath, outfile)], root);
-    const details = await digestFile(outfile);
-    commands.push({
-      command: entry.command,
-      entry: adminEntryFile(entry.command),
-      source: entry.source,
-      description: entry.description,
-      ...details,
-    });
+    commands.push(manifestCommand(entry, await digestFile(outfile)));
   }
+  const launcherSource = join(root, LAUNCHER_SOURCE);
+  await stat(launcherSource);
+  const launcherOut = join(outDir, LAUNCHER_ENTRY);
+  exec(
+    'pnpm',
+    ['exec', 'esbuild', ...esbuildArgs(launcherSource, launcherOut, { bootstrap: false })],
+    root,
+  );
+  const launcher = {
+    entry: LAUNCHER_ENTRY,
+    source: LAUNCHER_SOURCE,
+    ...(await digestFile(launcherOut)),
+  };
   const guardPath = join(outDir, '..', 'runtime-dependency-admin-guard.mjs');
   await writeFile(guardPath, adminRuntimeGuardSource(), { flag: 'w' });
   const runtimeDependencyGuard = {
-    entry: '../runtime-dependency-admin-guard.mjs',
+    entry: RUNTIME_GUARD_ENTRY,
     ...(await digestFile(guardPath)),
+  };
+  const bootstrapPath = join(outDir, '..', 'admin-governance-bootstrap.mjs');
+  await writeFile(bootstrapPath, adminGovernanceBootstrapSource(), { flag: 'w' });
+  const governanceBootstrap = {
+    entry: GOVERNANCE_BOOTSTRAP_ENTRY,
+    ...(await digestFile(bootstrapPath)),
   };
   const dependencyContractDigest = runtimeDependencyContractDigest(
     await loadRuntimeDependencyContract(
@@ -161,6 +206,8 @@ export async function buildAdminRunner({
     commands,
     dependencyContractDigest,
     runtimeDependencyGuard,
+    governanceBootstrap,
+    launcher,
   );
   await writeFile(join(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, {
     flag: 'wx',
@@ -171,7 +218,7 @@ export async function buildAdminRunner({
 if (import.meta.url === `file://${process.argv[1]}`) {
   buildAdminRunner().then((manifest) => {
     process.stdout.write(
-      `admin-runner: ${manifest.commands.length} command(s) -> dist/admin/manifest.json\n`,
+      `admin-runner: ${manifest.commands.length} command(s) + launcher -> dist/admin/manifest.json\n`,
     );
   });
 }

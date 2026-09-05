@@ -15,18 +15,22 @@ const access = {
   retry: vi.fn(),
 } as unknown as ManagementSettingsAccess;
 
-describe('ManagementShell', () => {
-  it('统一渲染面包屑、页头和唯一滚动容器', () => {
+describe('ManagementShell 统一布局', () => {
+  it('统一内容宽度并只在工作区外层滚动，不渲染面包屑和重复页标题', () => {
     render(
       <ManagementShell route={governanceRoute('platform.overview.overview')} access={access}>
         <div>真实内容</div>
       </ManagementShell>,
     );
-    expect(screen.getByTestId('management-shell').getAttribute('data-surface')).toBe('analytics');
-    expect(screen.getAllByText('平台总览').length).toBeGreaterThan(0);
-    expect(screen.getByTestId('management-scroll-container').className).toContain(
-      'overflow-y-auto',
+    const shell = screen.getByTestId('management-shell');
+    expect(shell.getAttribute('data-surface')).toBe('analytics');
+    expect(shell.getAttribute('data-scroll-container')).toBe('true');
+    expect(shell.className).toContain('overflow-y-auto');
+    expect(screen.getByTestId('management-page-content').parentElement?.className).toContain(
+      'max-w-5xl',
     );
+    expect(screen.queryByRole('banner')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
     expect(screen.getByText('真实内容')).toBeTruthy();
   });
 

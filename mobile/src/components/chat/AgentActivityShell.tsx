@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { CheckCircle2, ChevronRight, CircleAlert, CircleX, Clock3, PauseCircle } from 'lucide-react-native';
-import { useColors, spacing, radius, typography, type ThemeColors } from '../../theme';
+import { useColors, spacing, radius, typography, fontScale, type ThemeColors } from '../../theme';
 
 export type AgentActivityState = 'running' | 'completed' | 'warning' | 'failed' | 'waiting' | 'cancelled';
 
@@ -106,7 +106,7 @@ function makeStyles(colors: ThemeColors) {
       fontWeight: '600',
     },
     state: {
-      fontSize: 9,
+      ...fontScale.xs2,
       color: colors.mutedForeground,
     },
     subtitle: {

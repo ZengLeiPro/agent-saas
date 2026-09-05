@@ -18,6 +18,7 @@ import { useForegroundRefresh } from '../src/hooks/useForegroundRefresh';
 import { useEnterpriseUpdateChecker } from '../src/hooks/useUpdateChecker';
 import { useShareIntentBridge } from '../src/hooks/useShareIntentBridge';
 import { useNativeOAuthCallbackBridge } from '../src/hooks/useNativeOAuthCallbackBridge';
+import { useScenarioDeepLinkBridge } from '../src/hooks/useScenarioDeepLinkBridge';
 import { useWsLifecycle } from '../src/hooks/useWsLifecycle';
 import {
   readEnterpriseUpdaterRuntimeConfig,
@@ -48,6 +49,8 @@ function AuthGate() {
   useForegroundRefresh();
   useShareIntentBridge();
   useNativeOAuthCallbackBridge();
+  // 场景直达：agent-saas://...?scenario= / ?workflow=&intent=，登录后才消费
+  useScenarioDeepLinkBridge(Boolean(user));
   useWsLifecycle(Boolean(user));
 
   return (
@@ -74,12 +77,6 @@ function AuthGate() {
             <Stack.Screen name="settings" />
             <Stack.Screen
               name="change-password"
-              options={{
-                headerShown: true,
-              }}
-            />
-            <Stack.Screen
-              name="user-form"
               options={{
                 headerShown: true,
               }}

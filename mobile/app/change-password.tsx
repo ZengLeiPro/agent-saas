@@ -26,7 +26,7 @@ export default function ChangePasswordScreen() {
   }, []);
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Stack.Screen
         options={{
           title: '修改密码',

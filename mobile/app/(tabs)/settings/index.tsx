@@ -1,32 +1,24 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Switch,
-  Alert,
-  Linking,
-} from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { View, Text, ScrollView, Alert, Linking } from "react-native";
 import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
-import { ChevronRight } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Constants from "expo-constants";
 import { useAuth } from "../../../src/contexts/AuthContext";
 import { useLocalAppLock } from "../../../src/contexts/LocalAppLockContext";
 import { useTtsPlayer } from "../../../src/hooks/useTtsPlayer";
 import { mobileConfig } from "../../../src/platform/mobileConfig";
-import Constants from "expo-constants";
 import {
-  useColors,
   spacing,
-  typography,
   radius,
+  fontScale,
+  fontWeight,
+  useThemedStyles,
   useFontSize,
   type FontSizeLevel,
 } from "../../../src/theme";
 import { AgentAvatar } from "../../../src/components/AgentAvatar";
+import { Button, Chip, ListRow, ListRowGroup } from "../../../src/components/ui";
 import {
   DEFAULT_TENANT_SETTINGS,
   fetchAgentProfile,
@@ -39,6 +31,7 @@ import { isV1RouteAllowed } from "../../../src/v1/v1Capabilities";
 import { getV1BuildProfile } from "../../../src/v1/v1Runtime";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
+const AVATAR_SIZE = 40;
 
 const FONT_SIZE_OPTIONS: { value: FontSizeLevel; label: string }[] = [
   { value: "small", label: "小" },
@@ -53,25 +46,17 @@ export default function SettingsScreen() {
       reportActivity("page_viewed", { detail: "设置" });
     }, []),
   );
-  const colors = useColors();
   const insets = useSafeAreaInsets();
-  const {
-    user,
-    logout,
-    serviceConfig,
-    changeServiceOrigin,
-  } = useAuth();
+  const { user, logout, serviceConfig, changeServiceOrigin } = useAuth();
   const tts = useTtsPlayer();
   const localLock = useLocalAppLock();
   const [localLockBusy, setLocalLockBusy] = useState(false);
   const router = useRouter();
-  const tenantFeatures =
-    user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
+  const tenantFeatures = user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   const { level: fontSizeLevel, setLevel: setFontSizeLevel } = useFontSize();
 
   // V1 范围裁剪（M00-01）：生产构建隐藏延期菜单项。
   const v1Profile = getV1BuildProfile();
-  const showAllAgents = isV1RouteAllowed("settings/all-agents", v1Profile);
   const showCron = isV1RouteAllowed("cron", v1Profile);
   const showGovernance = isV1RouteAllowed("settings/my-permissions", v1Profile);
   const showConnections = isV1RouteAllowed("settings/connections", v1Profile);
@@ -90,152 +75,46 @@ export default function SettingsScreen() {
   }, [user, showGovernance]);
 
   const initial = (user?.username || "U").charAt(0).toUpperCase();
-  const avatarUri = user?.avatar
-    ? `${mobileConfig.getBaseUrl()}${user.avatar}`
-    : null;
+  const avatarUri = user?.avatar ? `${mobileConfig.getBaseUrl()}${user.avatar}` : null;
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: {
-          flex: 1,
-          backgroundColor: colors.background,
-        },
-        scrollContent: {
-          paddingTop: spacing.lg,
-          paddingHorizontal: spacing.lg,
-          paddingBottom: spacing.lg + insets.bottom,
-        },
-        section: {
-          marginBottom: spacing.xl,
-        },
-        sectionTitle: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-          textTransform: "uppercase",
-          marginBottom: spacing.sm,
-          marginLeft: spacing.xs,
-        },
-        card: {
-          backgroundColor: colors.card,
-          borderRadius: radius.lg,
-          overflow: "hidden",
-        },
-        avatarRow: {
-          flexDirection: "row",
-          alignItems: "center",
-          paddingHorizontal: spacing.lg,
-          paddingVertical: spacing.md,
-        },
-        avatar: {
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          backgroundColor: colors.primary,
-          alignItems: "center",
-          justifyContent: "center",
-        },
-        avatarImage: {
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-        },
-        avatarText: {
-          color: colors.primaryForeground,
-          fontSize: 16,
-          fontWeight: "600",
-        },
-        avatarUsername: {
-          ...typography.body,
-          color: colors.foreground,
-          fontWeight: "500",
-          flex: 1,
-          marginLeft: spacing.md,
-        },
-        row: {
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          paddingHorizontal: spacing.lg,
-          paddingVertical: spacing.md,
-        },
-        rowBorder: {
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: colors.border,
-        },
-        rowLabel: {
-          ...typography.body,
-          color: colors.foreground,
-        },
-        rowRight: {
-          flexDirection: "row",
-          alignItems: "center",
-          gap: spacing.xs,
-          flexShrink: 1,
-        },
-        rowValue: {
-          ...typography.body,
-          color: colors.mutedForeground,
-          flexShrink: 1,
-          maxWidth: 180,
-        },
-        switchRow: {
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          paddingHorizontal: spacing.lg,
-          paddingVertical: spacing.sm,
-        },
-        fontSizeRow: {
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          paddingHorizontal: spacing.lg,
-          paddingVertical: spacing.md,
-        },
-        fontSizeOptions: {
-          flexDirection: "row",
-          backgroundColor: colors.secondary,
-          borderRadius: radius.md,
-          padding: 2,
-          gap: 2,
-        },
-        fontSizeOption: {
-          paddingHorizontal: 12,
-          paddingVertical: 6,
-          borderRadius: radius.sm,
-        },
-        fontSizeOptionActive: {
-          backgroundColor: colors.primary,
-        },
-        fontSizeOptionText: {
-          ...typography.caption,
-          color: colors.mutedForeground,
-        },
-        fontSizeOptionTextActive: {
-          color: colors.primaryForeground,
-          fontWeight: "600",
-        },
-        logoutBtn: {
-          backgroundColor: colors.card,
-          borderRadius: radius.lg,
-          paddingVertical: 14,
-          alignItems: "center",
-        },
-        logoutText: {
-          ...typography.body,
-          color: colors.destructive,
-          fontWeight: "600",
-        },
-        versionText: {
-          ...typography.body,
-          color: colors.mutedForeground,
-          textAlign: "center",
-          marginTop: spacing.lg,
-        },
-      }),
-    [colors, insets.top, insets.bottom],
-  );
+  const styles = useThemedStyles((colors) => ({
+    container: { flex: 1, backgroundColor: colors.background },
+    scrollContent: {
+      paddingTop: spacing.lg,
+      paddingHorizontal: spacing.lg,
+      paddingBottom: spacing.lg + insets.bottom,
+    },
+    section: { marginBottom: spacing.xl },
+    sectionTitle: {
+      ...fontScale.xs,
+      fontWeight: fontWeight.medium,
+      color: colors.mutedForeground,
+      textTransform: "uppercase" as const,
+      marginBottom: spacing.sm,
+      marginLeft: spacing.xs,
+    },
+    avatar: {
+      width: AVATAR_SIZE,
+      height: AVATAR_SIZE,
+      borderRadius: radius.full,
+      backgroundColor: colors.primary,
+      alignItems: "center" as const,
+      justifyContent: "center" as const,
+    },
+    avatarImage: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: radius.full },
+    avatarText: {
+      ...fontScale.base,
+      fontWeight: fontWeight.semibold,
+      color: colors.primaryForeground,
+    },
+    fontSizeOptions: { flexDirection: "row" as const, gap: spacing.xs },
+    versionText: {
+      ...fontScale.xs,
+      color: colors.mutedForeground,
+      textAlign: "center" as const,
+      marginTop: spacing.lg,
+    },
+  }));
 
   const handleEditServer = () => {
     if (!serviceConfig.editable) return;
@@ -281,239 +160,151 @@ export default function SettingsScreen() {
     }
   };
 
+  const fontSizeControl = (
+    <View style={styles.fontSizeOptions}>
+      {FONT_SIZE_OPTIONS.map((opt) => (
+        <Chip
+          key={opt.value}
+          label={opt.label}
+          selected={fontSizeLevel === opt.value}
+          onPress={() => setFontSizeLevel(opt.value)}
+        />
+      ))}
+    </View>
+  );
+
   return (
     <View style={styles.container} testID="settings-screen" accessibilityLabel="设置">
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* Account Section */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* 账户 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>账户</Text>
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.avatarRow}
+          <ListRowGroup>
+            <ListRow
+              title={agentProfile?.realName || user?.username || "-"}
+              titleTestID="account-username"
+              accessibilityLabel="当前账户"
+              leading={
+                avatarUri ? (
+                  <Image source={{ uri: avatarUri }} style={styles.avatarImage} cachePolicy="disk" />
+                ) : (
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>{initial}</Text>
+                  </View>
+                )
+              }
               onPress={() =>
                 router.push({
                   pathname: "/settings/user-detail/[userId]",
                   params: { userId: user?.id || "" },
                 })
               }
-              activeOpacity={0.7}
-            >
-              {avatarUri ? (
-                <Image
-                  source={{ uri: avatarUri }}
-                  style={styles.avatarImage}
-                  cachePolicy="disk"
-                />
-              ) : (
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initial}</Text>
-                </View>
-              )}
-              <Text style={styles.avatarUsername} testID="account-username" accessibilityLabel="当前账户">
-                {agentProfile?.realName || user?.username || "-"}
-              </Text>
-              <ChevronRight
-                size={16}
-                color={colors.mutedForeground}
-                strokeWidth={2}
-              />
-            </TouchableOpacity>
-          </View>
+            />
+          </ListRowGroup>
         </View>
 
-        {/* Agent Profile Section */}
+        {/* Agent */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Agent</Text>
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={[styles.avatarRow, styles.rowBorder]}
+          <ListRowGroup>
+            <ListRow
+              title={agentProfile?.name || "AI 助手"}
+              leading={
+                <AgentAvatar
+                  avatar={agentProfile?.avatar}
+                  username={user?.username}
+                  size={AVATAR_SIZE}
+                  version={agentProfile?.avatarVersion}
+                />
+              }
               onPress={() => router.push("/settings/agent-profile")}
-              activeOpacity={0.7}
-            >
-              <AgentAvatar
-                avatar={agentProfile?.avatar}
-                username={user?.username}
-                size={40}
-                version={agentProfile?.avatarVersion}
-              />
-              <Text style={styles.avatarUsername}>
-                {agentProfile?.name || "AI 助手"}
-              </Text>
-              <ChevronRight
-                size={16}
-                color={colors.mutedForeground}
-                strokeWidth={2}
-              />
-            </TouchableOpacity>
-            {showAllAgents && (
-              <TouchableOpacity
-                style={[styles.row, styles.rowBorder]}
-                onPress={() => router.push("/settings/all-agents")}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.rowLabel}>所有 Agent</Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
-              </TouchableOpacity>
-            )}
-            {tenantFeatures.cronEnabled && showCron && (
-              <TouchableOpacity
-                style={styles.row}
-                onPress={() => router.push("/cron")}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.rowLabel}>定时任务</Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
-              </TouchableOpacity>
-            )}
-          </View>
+            />
+            {tenantFeatures.cronEnabled && showCron ? (
+              <ListRow title="定时任务" onPress={() => router.push("/cron")} />
+            ) : null}
+          </ListRowGroup>
         </View>
 
-        {/* M30-02 Security Section */}
+        {/* M30-02 安全 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>安全</Text>
-          <View style={styles.card}>
-            <View style={styles.switchRow}>
-              <View style={{ flex: 1, paddingRight: spacing.md }}>
-                <Text style={styles.rowLabel}>生物识别应用锁</Text>
-                <Text style={styles.rowValue}>离开后台 30 秒后锁定；不替代服务端登录</Text>
-              </View>
-              <Switch
-                value={localLock.enabled}
-                disabled={localLockBusy || !localLock.availability?.supported || !localLock.availability?.enrolled}
-                onValueChange={(value) => { void handleLocalLockChange(value); }}
-                trackColor={{ false: colors.muted, true: colors.success }}
-                thumbColor={colors.card}
-                ios_backgroundColor={colors.muted}
-              />
-            </View>
-          </View>
+          <ListRowGroup>
+            <ListRow
+              title="生物识别应用锁"
+              subtitle="离开后台 30 秒后锁定；不替代服务端登录"
+              switchValue={localLock.enabled}
+              switchDisabled={
+                localLockBusy || !localLock.availability?.supported || !localLock.availability?.enrolled
+              }
+              onSwitchChange={(value) => { void handleLocalLockChange(value); }}
+            />
+          </ListRowGroup>
         </View>
 
-        {/* General Section */}
+        {/* 通用 */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>通用</Text>
-          <View style={styles.card}>
-            <View style={[styles.fontSizeRow, styles.rowBorder]}>
-              <Text style={styles.rowLabel}>字体大小</Text>
-              <View style={styles.fontSizeOptions}>
-                {FONT_SIZE_OPTIONS.map((opt) => (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[
-                      styles.fontSizeOption,
-                      fontSizeLevel === opt.value &&
-                        styles.fontSizeOptionActive,
-                    ]}
-                    onPress={() => setFontSizeLevel(opt.value)}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.fontSizeOptionText,
-                        fontSizeLevel === opt.value &&
-                          styles.fontSizeOptionTextActive,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-            {tts.available && (
-              <View style={[styles.switchRow, styles.rowBorder]}>
-                <Text style={styles.rowLabel}>自动播放 TTS</Text>
-                <Switch
-                  value={tts.autoPlay}
-                  onValueChange={tts.toggleAutoPlay}
-                  trackColor={{ false: colors.muted, true: colors.success }}
-                  thumbColor={colors.card}
-                  ios_backgroundColor={colors.muted}
-                />
-              </View>
-            )}
+          <ListRowGroup>
+            <ListRow title="字体大小" accessory={fontSizeControl} />
+            {tts.available ? (
+              <ListRow
+                title="自动播放 TTS"
+                switchValue={tts.autoPlay}
+                onSwitchChange={tts.toggleAutoPlay}
+              />
+            ) : null}
             {serviceConfig.editable ? (
-              <TouchableOpacity
-                style={styles.row}
+              <ListRow
+                title="服务地址"
+                value={serviceConfig.apiOrigin ?? "未配置"}
                 onPress={handleEditServer}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.rowLabel}>服务地址</Text>
-                <View style={styles.rowRight}>
-                  <Text style={styles.rowValue} numberOfLines={1}>
-                    {serviceConfig.apiOrigin ?? "未配置"}
-                  </Text>
-                  <ChevronRight
-                    size={16}
-                    color={colors.mutedForeground}
-                    strokeWidth={2}
-                  />
-                </View>
-              </TouchableOpacity>
+              />
             ) : (
-              <View style={styles.row}>
-                <Text style={styles.rowLabel}>服务地址</Text>
-                <Text style={styles.rowValue} numberOfLines={1}>
-                  {serviceConfig.apiOrigin ?? "构建配置缺失"}
-                </Text>
-              </View>
+              <ListRow
+                title="服务地址"
+                value={serviceConfig.apiOrigin ?? "构建配置缺失"}
+              />
             )}
-          </View>
+          </ListRowGroup>
         </View>
 
-        {/* V2 Personal Governance */}
-        {showGovernance && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>个人治理</Text>
-          <View style={styles.card}>
-            <TouchableOpacity style={[styles.row, styles.rowBorder]} onPress={() => router.push("/settings/my-permissions")} activeOpacity={0.7}>
-              <Text style={styles.rowLabel}>我的权限</Text>
-              <ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} />
-            </TouchableOpacity>
-            {showConnections && (
-            <TouchableOpacity style={[styles.row, styles.rowBorder]} onPress={() => router.push("/settings/connections")} activeOpacity={0.7}>
-              <Text style={styles.rowLabel}>连接与授权</Text>
-              <View style={styles.rowRight}><Text style={styles.rowValue}>Google Workspace 与 MCP</Text><ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} /></View>
-            </TouchableOpacity>
-            )}
-            <View style={[styles.row, styles.rowBorder]}>
-              <Text style={styles.rowLabel}>文件与存储</Text>
-              <Text style={styles.rowValue}>只读迁移态</Text>
-            </View>
-            <View style={[styles.row, governanceSummary?.persona !== "member" && styles.rowBorder]}>
-              <Text style={styles.rowLabel}>治理身份</Text>
-              <Text style={styles.rowValue}>{governanceSummary?.label ?? "权威摘要不可用"}</Text>
-            </View>
-            {governanceSummary?.persona !== "member" && governanceSummary ? <TouchableOpacity style={styles.row} onPress={() => { void openGovernanceDesktop(); }} activeOpacity={0.7}>
-              <Text style={styles.rowLabel}>管理待办与异常</Text>
-              <View style={styles.rowRight}><Text style={styles.rowValue}>在桌面控制台继续</Text><ChevronRight size={16} color={colors.mutedForeground} strokeWidth={2} /></View>
-            </TouchableOpacity> : null}
+        {/* V2 个人治理 */}
+        {showGovernance ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>个人治理</Text>
+            <ListRowGroup>
+              <ListRow title="我的权限" onPress={() => router.push("/settings/my-permissions")} />
+              {showConnections ? (
+                <ListRow
+                  title="连接与授权"
+                  value="Google Workspace 与 MCP"
+                  onPress={() => router.push("/settings/connections")}
+                />
+              ) : null}
+              <ListRow title="文件与存储" value="只读迁移态" />
+              <ListRow title="治理身份" value={governanceSummary?.label ?? "权威摘要不可用"} />
+              {governanceSummary && governanceSummary.persona !== "member" ? (
+                <ListRow
+                  title="管理待办与异常"
+                  value="在桌面控制台继续"
+                  onPress={() => { void openGovernanceDesktop(); }}
+                />
+              ) : null}
+            </ListRowGroup>
           </View>
-        </View>
-        )}
+        ) : null}
 
-        {/* Logout */}
+        {/* 退出登录 */}
         <View style={styles.section}>
-          <TouchableOpacity
+          <Button
             testID="logout-button"
             accessibilityLabel="退出登录"
-            style={styles.logoutBtn}
+            label="退出登录"
+            variant="destructive"
+            size="lg"
+            fullWidth
             onPress={handleLogout}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.logoutText}>退出登录</Text>
-          </TouchableOpacity>
+          />
           <Text style={styles.versionText}>v{APP_VERSION}</Text>
         </View>
       </ScrollView>

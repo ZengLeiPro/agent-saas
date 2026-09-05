@@ -42,6 +42,14 @@ describe('V1 capability manifest 基础不变量', () => {
     const deleted = Object.keys(V1_DELETED_ROUTES);
     expect(deleted).toContain('webview-spike');
     expect(deleted).toContain('chat/html-preview');
+    // 09-04 拍板：管理类页面物理删除后的墓碑
+    expect(deleted).toContain('settings/users');
+    expect(deleted).toContain('user-form');
+    expect(deleted).toContain('settings/audit-log');
+    expect(deleted).toContain('settings/all-agents');
+    expect(deleted).toContain('settings/agent-profile/[username]');
+    expect(deleted).toContain('settings/skills-admin');
+    expect(deleted).toContain('settings/skills-tenant-admin');
     for (const route of deleted) {
       expect(V1_ALLOWED_ROUTES.includes(route)).toBe(false);
       expect(V1_DEFERRED_ROUTES[route]).toBeUndefined();
@@ -73,11 +81,13 @@ describe('classifyV1Route', () => {
   it('分类延期路由为 deferred', () => {
     expect(classifyV1Route('(tabs)/files')).toBe('deferred');
     expect(classifyV1Route('cron')).toBe('deferred');
-    expect(classifyV1Route('settings/users')).toBe('deferred');
-    expect(classifyV1Route('settings/all-agents')).toBe('deferred');
+    expect(classifyV1Route('settings/skills')).toBe('deferred');
     expect(classifyV1Route('chat/html-preview')).toBe('unclassified');
     expect(classifyV1Route('settings/connections')).toBe('deferred');
     expect(classifyV1Route('oauth/callback')).toBe('allowed');
+    // 09-04 已物理删除的管理类路由：落回 unclassified（生产 fail closed）
+    expect(classifyV1Route('settings/users')).toBe('unclassified');
+    expect(classifyV1Route('settings/all-agents')).toBe('unclassified');
   });
 
   it('未分类路由返回 unclassified（fail closed 依据）', () => {
@@ -126,6 +136,9 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('settings/users', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/connections', 'production')).toBe(false);
     expect(isV1RouteAllowed('cron-form', 'production')).toBe(false);
+    for (const route of Object.keys(V1_DELETED_ROUTES)) {
+      expect(isV1RouteAllowed(route, 'production'), route).toBe(false);
+    }
   });
 
   it('development / preview 不裁剪', () => {

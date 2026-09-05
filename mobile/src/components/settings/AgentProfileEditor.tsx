@@ -37,8 +37,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors, spacing, typography, radius } from "../../theme";
 import { useAuth } from "../../contexts/AuthContext";
 import { AgentAvatar } from "../AgentAvatar";
-import { BackButton } from "../BackButton";
-import { glassFree } from "../../lib/headerItems";
 import {
   fetchAgentProfile,
   updateAgentProfile,
@@ -56,16 +54,12 @@ interface AgentProfileEditorProps {
   username?: string;
   title: string;
   activityDetail: string;
-  requireAdmin?: boolean;
-  backToAllAgents?: boolean;
 }
 
 export function AgentProfileEditor({
   username: targetUsername,
   title,
   activityDetail,
-  requireAdmin = false,
-  backToAllAgents = false,
 }: AgentProfileEditorProps) {
   useEffect(() => {
     reportActivity("agent_profile_viewed", { detail: activityDetail });
@@ -77,13 +71,11 @@ export function AgentProfileEditor({
   const customSkillsEnabled = (
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features
   ).customSkillsEnabled;
-  // V1 范围裁剪（M00-01）：生产构建隐藏人格/记忆编辑、技能管理与「所有 Agent」返回。
+  // V1 范围裁剪（M00-01）：生产构建隐藏人格/记忆编辑与技能管理。
   const v1Profile = getV1BuildProfile();
   const showPersonaEditor = isV1RouteAllowed("persona-editor", v1Profile);
   const showSkills =
     customSkillsEnabled && isV1RouteAllowed("settings/skills", v1Profile);
-  const showBackToAllAgents =
-    backToAllAgents && isV1RouteAllowed("settings/all-agents", v1Profile);
   const username = targetUsername || user?.username;
 
   const [name, setName] = useState("");
@@ -350,10 +342,6 @@ export function AgentProfileEditor({
   );
 
   if (!user) return null;
-  if (requireAdmin && user.role !== "admin") {
-    router.replace("/settings/agent-profile");
-    return null;
-  }
 
   const headerTitle =
     realName && targetUsername ? `${realName} 的 Agent` : title;
@@ -363,24 +351,6 @@ export function AgentProfileEditor({
       <Stack.Screen
         options={{
           title: headerTitle,
-          ...(showBackToAllAgents
-            ? {
-                headerLeft: () => (
-                  <BackButton
-                    label="返回"
-                    onPress={() => router.replace("/settings/all-agents")}
-                  />
-                ),
-                unstable_headerLeftItems: () => [
-                  glassFree(
-                    <BackButton
-                      label="返回"
-                      onPress={() => router.replace("/settings/all-agents")}
-                    />,
-                  ),
-                ],
-              }
-            : {}),
         }}
       />
       <KeyboardAvoidingView

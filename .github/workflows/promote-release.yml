@@ -791,19 +791,20 @@ jobs:
             > "$RUNNER_TEMP/web-assets/release-identity.json"
           web_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web"
           rm -f "$web_rollback_attempted_marker"
-          had_index=false; had_identity=false
-          if run_with_web_lock aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/index.html" \
-            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
-            run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
-              "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
-            had_index=true
-          fi
-          test "$had_index" = true
-          if run_with_web_lock aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
+          # stat 还会读取对象 ACL；备份只需要 GetObject 与已有 ListObjects 权限。
+          web_object_present() {
+            local target="$1" listing
+            listing="$(run_with_web_lock aliyun --secure oss ls "$target" \
+              --limited-num 2 --region "$RELEASE_RECORD_OSS_REGION")" || return 1
+            printf '%s\n' "$listing" | awk -v target="$target" \
+              '$NF == target { found = 1 } END { print found ? "true" : "false" }'
+          }
+          run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
+            "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
+          had_identity="$(web_object_present "$PRODUCTION_WEB_OSS_URI/release-identity.json")"
+          if [ "$had_identity" = true ]; then
             run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
               "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
-            had_identity=true
           fi
           restore_web_entry() {
             local failed=0 readback="$RUNNER_TEMP/web-rollback-readback"
@@ -837,10 +838,12 @@ jobs:
                   "$readback/release-identity.json"; then
                 failed=1
               fi
-            elif run_with_web_lock aliyun --secure oss stat \
-                "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-                --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
-              failed=1
+            else
+              local identity_present
+              if ! identity_present="$(web_object_present "$PRODUCTION_WEB_OSS_URI/release-identity.json")" || \
+                 [ "$identity_present" != false ]; then
+                failed=1
+              fi
             fi
             if ! run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
                 "$readback/index.html" --region "$RELEASE_RECORD_OSS_REGION" || \

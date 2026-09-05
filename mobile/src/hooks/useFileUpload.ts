@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import {
@@ -8,9 +8,20 @@ import {
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
 import type { UploadedFile } from '@agent/shared';
-import { authFetch, MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILES_PER_REQUEST, validateAttachmentSelection } from '@agent/shared';
-import { validateMobileUploadedFiles } from '../lib/chatSubmissionAdapter';
+import {
+  acceptUploadedFiles,
+  authFetch,
+  MAX_UPLOAD_FILES_PER_REQUEST,
+  useAttachmentUploads,
+  validateAttachmentSelection,
+} from '@agent/shared';
 import { AttachmentPickerAdapter } from '../platform/attachmentPickerAdapter';
+
+/**
+ * mobile 附件上传：状态机内核在 shared `useAttachmentUploads`（与 Web 共用），
+ * 这里只保留原生专有的部分——系统选择器 / 相机、HEIC→JPEG、picker adapter 的
+ * URI 托管（URI 永不进入状态）。
+ */
 
 const HEIF_MIMES = new Set(['image/heif', 'image/heic', 'image/heif-sequence', 'image/heic-sequence']);
 
@@ -42,46 +53,20 @@ export interface FileUploadState {
 }
 
 export function useFileUpload(boundary?: { available: boolean; identityKey: string }): FileUploadState {
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const filesRef = useRef<UploadedFile[]>([]);
   const pickerAdapterRef = useRef(new AttachmentPickerAdapter());
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const boundaryRef = useRef(boundary);
-  const generationRef = useRef(0);
-  filesRef.current = uploadedFiles;
-
-  useEffect(() => {
-    const previous = boundaryRef.current;
-    boundaryRef.current = boundary;
-    const identityChanged = !!previous && !!boundary && previous.identityKey !== boundary.identityKey;
-    if (!identityChanged && boundary?.available !== false) return;
-    const hadUpload = !!abortControllerRef.current;
-    generationRef.current += 1;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    pickerAdapterRef.current.fence();
-    setUploading(false);
-    if (hadUpload) setUploadError(identityChanged ? '身份已切换，请重新选择文件' : '应用已锁定或离线，请重新选择文件');
-  }, [boundary?.available, boundary?.identityKey]);
-
-  const dismissUploadError = useCallback(() => {
-    setUploadError(null);
-  }, []);
-
-  const reportUploadError = useCallback((message: string) => {
-    setUploadError(message);
-  }, []);
+  const core = useAttachmentUploads({
+    boundary: boundary ? { ready: boundary.available, identityKey: boundary.identityKey } : undefined,
+    unavailableMessage: '应用已锁定或离线，请重新选择文件',
+    onFence: () => pickerAdapterRef.current.fence(),
+  });
+  const { beginUpload, appendFiles, setUploadError, boundaryBlockReason } = core;
 
   const uploadFileFromUri = useCallback(async (uri: string, name: string, mimeType: string) => {
-    if (boundaryRef.current?.available === false) {
+    if (boundaryBlockReason()) {
       setUploadError('应用已锁定或离线，无法上传');
       return;
     }
-    setUploading(true);
-    setUploadError(null);
-    const generation = generationRef.current;
+    const slot = beginUpload();
     let localIntentId = '';
     try {
       localIntentId = createUploadRequestId();
@@ -99,12 +84,10 @@ export function useFileUpload(boundary?: { available: boolean; identityKey: stri
         type: source.mimeType || 'application/octet-stream',
       } as unknown as Blob);
 
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
       const response = await authFetch('/api/upload', {
         method: 'POST',
         headers: { 'X-Upload-Request-Id': createUploadRequestId() },
-        signal: controller.signal,
+        signal: slot.signal,
         body: formData,
       });
 
@@ -113,26 +96,16 @@ export function useFileUpload(boundary?: { available: boolean; identityKey: stri
         throw new Error(data.error || `上传失败: ${response.status}`);
       }
 
-      const validation = validateMobileUploadedFiles([data.files[0]]);
-      if (!validation.ok) throw new Error(validation.issue.message);
-      const uploaded: UploadedFile = {
-        ...data.files[0],
-        attachmentId: validation.value[0].attachmentId,
-      };
-
-      if (generation === generationRef.current) setUploadedFiles(prev => [...prev, uploaded]);
+      if (slot.isCurrent()) appendFiles(acceptUploadedFiles([data.files[0]]));
     } catch (error) {
-      if (generation === generationRef.current) setUploadError(
+      if (slot.isCurrent()) setUploadError(
         '上传失败：' + (error instanceof Error ? error.message : '未知错误'),
       );
     } finally {
       if (localIntentId) pickerAdapterRef.current.release(localIntentId);
-      if (generation === generationRef.current) {
-        abortControllerRef.current = null;
-        setUploading(false);
-      }
+      slot.finish();
     }
-  }, []);
+  }, [appendFiles, beginUpload, boundaryBlockReason, setUploadError]);
 
   const pickFile = useCallback(async () => {
     try {
@@ -169,7 +142,7 @@ export function useFileUpload(boundary?: { available: boolean; identityKey: stri
       setUploadError(`选择文件失败：${message}`);
       Alert.alert('选择文件失败', message);
     }
-  }, [uploadFileFromUri]);
+  }, [setUploadError, uploadFileFromUri]);
 
   const pickImage = useCallback(async () => {
     try {
@@ -238,57 +211,27 @@ export function useFileUpload(boundary?: { available: boolean; identityKey: stri
     }
   }, [uploadFileFromUri]);
 
-  const removeFile = useCallback((index: number) => {
-    setUploadedFiles(prev => {
-      const next = [...prev];
-      next.splice(index, 1);
-      return next;
-    });
-  }, []);
-
-  const clearFiles = useCallback(() => {
-    generationRef.current += 1;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    pickerAdapterRef.current.fence();
-    setUploadedFiles([]);
-  }, []);
-
-  const consumeFiles = useCallback((): UploadedFile[] => {
-    generationRef.current += 1;
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    const current = filesRef.current;
-    pickerAdapterRef.current.fence();
-    setUploadedFiles([]);
-    return current;
-  }, []);
-
   const addUploadedFiles = useCallback((files: UploadedFile[]) => {
     if (!files.length) return;
-    const validation = validateMobileUploadedFiles(files);
-    if (!validation.ok) {
-      setUploadError(`附件不可发送：${validation.issue.message}`);
-      return;
+    try {
+      appendFiles(acceptUploadedFiles(files));
+    } catch (error) {
+      setUploadError(`附件不可发送：${error instanceof Error ? error.message : '未知错误'}`);
     }
-    setUploadedFiles(prev => [...prev, ...files.map((file, index) => ({
-      ...file,
-      attachmentId: validation.value[index].attachmentId,
-    }))]);
-  }, []);
+  }, [appendFiles, setUploadError]);
 
   return {
-    uploadedFiles,
-    uploading,
-    uploadError,
-    dismissUploadError,
-    reportUploadError,
+    uploadedFiles: core.uploadedFiles,
+    uploading: core.uploading,
+    uploadError: core.uploadError,
+    dismissUploadError: core.dismissUploadError,
+    reportUploadError: core.reportUploadError,
     pickFile,
     pickImage,
     takePhoto,
-    removeFile,
-    clearFiles,
-    consumeFiles,
+    removeFile: core.removeFile,
+    clearFiles: core.clearFiles,
+    consumeFiles: core.consumeFiles,
     addUploadedFiles,
   };
 }

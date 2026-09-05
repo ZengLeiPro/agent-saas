@@ -365,7 +365,7 @@
       "evidence": [
         {
           "path": "docs/release/迁移审核记录-20260905.md",
-          "digest": "sha256:d4798eb0fe726b39b21ef98f4a54b7fd76c027de0d5d6596d259164c1df04f3c"
+          "digest": "sha256:ff0964e648797fb8c3596a006a93b5d3916a07dd71b116bf3a937136b8a9ea93"
         },
         {
           "path": "server/src/__tests__/releaseMigrationBaseline.ts",

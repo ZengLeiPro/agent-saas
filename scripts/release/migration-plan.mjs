@@ -708,22 +708,29 @@ function changedLines(diff, prefix, header) {
     .join('\n');
 }
 
-function addedTargetLines(diff) {
+// 统一按 unified diff 还原「某一侧被改动的行号」：'+' 取目标侧新增行，'-' 取基线侧删除行。
+function changedSourceLines(diff, side) {
+  const isTarget = side === '+';
+  const other = isTarget ? '-' : '+';
   const lines = new Set();
-  let targetLine = null;
+  let cursor = null;
   for (const line of diff.split(/\r?\n/u)) {
-    const hunk = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/u);
+    const hunk = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/u);
     if (hunk) {
-      targetLine = Number(hunk[1]);
+      cursor = Number(isTarget ? hunk[2] : hunk[1]);
       continue;
     }
-    if (targetLine === null || line.startsWith('---') || line.startsWith('+++')) continue;
-    if (line.startsWith('+')) {
-      lines.add(targetLine);
-      targetLine += 1;
-    } else if (!line.startsWith('-')) targetLine += 1;
+    if (cursor === null || line.startsWith('---') || line.startsWith('+++')) continue;
+    if (line.startsWith(side)) {
+      lines.add(cursor);
+      cursor += 1;
+    } else if (!line.startsWith(other)) cursor += 1;
   }
   return lines;
+}
+
+function addedTargetLines(diff) {
+  return changedSourceLines(diff, '+');
 }
 
 function touchesAddedLine(sourceFile, node, addedLines) {
@@ -816,6 +823,97 @@ function analyzeScriptMigration(content, diff, path) {
   };
   for (const statement of touchedStatements) collectLiterals(statement);
   return analysis;
+}
+
+// 文本是否呈现任何 SQL 形态：迁移语句、contract 语句、动态 SQL 或无法分类的语句都算。
+// 判定前统一走 normalizeSqlForClassification，未闭合注释/引号会被规范化成显式标记而落入 unsafe 侧。
+function hasSqlShape(value) {
+  const normalized = normalizeSqlForClassification(value);
+  return (
+    MIGRATION_PROVIDER_SQL_PATTERN.test(normalized) ||
+    CONTRACT_PATTERN.test(normalized) ||
+    DYNAMIC_SQL_PATTERN.test(normalized) ||
+    UNKNOWN_SQL_PATTERN.test(normalized)
+  );
+}
+
+// 提取整份源码里全部呈 SQL 形态的静态字面量（含带插值模板的原始文本），按序列化后比较，
+// 用于回答「本次变更有没有动过任何 SQL」。基线侧与目标侧都要跑，缺一侧就无法比较。
+// 返回 null 表示无法判定（非脚本文件或解析失败），调用方必须回退到严格逻辑。
+function staticSqlLiteralSignature(content, path) {
+  if (content === null || !SCRIPT_MIGRATION_PATTERN.test(path)) return null;
+  const sourceFile = ts.createSourceFile(
+    path,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if ((sourceFile.parseDiagnostics ?? []).length > 0) return null;
+  const literals = [];
+  const collect = (node) => {
+    if (isStaticSqlLiteral(node)) {
+      if (hasSqlShape(node.text)) literals.push(node.text);
+    } else if (ts.isTemplateExpression(node)) {
+      // 带插值的模板整体取原始文本：插值本身就是 SQL 拼接，必须参与比较。
+      const raw = node.getText(sourceFile);
+      if (hasSqlShape(raw)) literals.push(raw);
+    }
+    ts.forEachChild(node, collect);
+  };
+  ts.forEachChild(sourceFile, collect);
+  return JSON.stringify(literals.sort());
+}
+
+// 变更行是否碰到任何「import 时会执行代码」的顶层语句。解析不了一律当作碰到了。
+function changeTouchesTopLevelExecutableStatement(content, path, lines) {
+  if (lines.size === 0) return false;
+  const sourceFile = ts.createSourceFile(
+    path,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if ((sourceFile.parseDiagnostics ?? []).length > 0) return true;
+  return sourceFile.statements.some(
+    (statement) =>
+      touchesAddedLine(sourceFile, statement, lines) && isTopLevelExecutableStatement(statement),
+  );
+}
+
+// 迁移闭包里的依赖模块（不是迁移根、也没有 expand 注释）如果本次变更完全没碰 SQL，
+// 自动判为 no-schema-change：两端 SQL 静态字面量集合完全相同、增删行文本不含任何 SQL 形态，
+// 且两端变更行都没有触碰 import 时会执行代码的顶层语句（否则 SQL 可能不经字面量落地）。
+// 任何一条不满足都返回 false，回到原有严格逻辑（删除即 contract、缺 expand 注释即阻断）。
+function isSqlNeutralDependencyChange({
+  path,
+  content,
+  baselineContent,
+  diff,
+  additions,
+  deletions,
+}) {
+  if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
+  if (isMigrationPath(path) || GOVERNANCE_MIGRATION_PROVIDER_PATH.test(path)) return false;
+  if (hasExpandMetadata(content, path)) return false;
+  const targetSignature = staticSqlLiteralSignature(content, path);
+  // baselineContent 为 null 表示基线不存在该文件（新增/新纳入闭包）；非字符串表示读不到，无法判定。
+  let baselineSignature = null;
+  if (baselineContent === null) baselineSignature = '[]';
+  else if (typeof baselineContent === 'string')
+    baselineSignature = staticSqlLiteralSignature(baselineContent, path);
+  if (targetSignature === null || baselineSignature === null) return false;
+  if (targetSignature !== baselineSignature) return false;
+  if (hasSqlShape(`${additions}\n${deletions}`)) return false;
+  if (changeTouchesTopLevelExecutableStatement(content, path, changedSourceLines(diff, '+')))
+    return false;
+  const deletedLines = changedSourceLines(diff, '-');
+  if (deletedLines.size === 0) return true;
+  return (
+    typeof baselineContent === 'string' &&
+    !changeTouchesTopLevelExecutableStatement(baselineContent, path, deletedLines)
+  );
 }
 
 function relativeModuleDependencies(content, path, requestedBindings, requestedCallableBindings) {
@@ -3579,78 +3677,82 @@ function hasTopLevelExecutableCode(path, content) {
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
-  return sourceFile.statements.some((statement) => {
+  return sourceFile.statements.some(isTopLevelExecutableStatement);
+}
+
+// 顶层语句是否会在 import 时执行代码。从 hasTopLevelExecutableCode 里原样抽出，
+// 以便按「变更行触碰到的顶层语句」做同一套判定。
+function isTopLevelExecutableStatement(statement) {
+  if (
+    ts.isImportDeclaration(statement) ||
+    ts.isImportEqualsDeclaration(statement) ||
+    ts.isExportDeclaration(statement) ||
+    ts.isFunctionDeclaration(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement)
+  )
+    return false;
+  if (ts.isModuleDeclaration(statement)) {
+    const declared =
+      (statement.flags & ts.NodeFlags.Ambient) !== 0 ||
+      (ts.canHaveModifiers(statement) &&
+        (ts.getModifiers(statement) ?? []).some(
+          (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
+        ));
+    return !declared;
+  }
+  if (ts.isExportAssignment(statement))
+    return (
+      !isStaticDataExpression(statement.expression) &&
+      !isDeferredFunctionExpression(statement.expression)
+    );
+  if (ts.isVariableStatement(statement))
+    return statement.declarationList.declarations.some(
+      (declaration) =>
+        declaration.initializer !== undefined &&
+        !isStaticDataExpression(declaration.initializer) &&
+        !isDeferredFunctionExpression(declaration.initializer),
+    );
+  if (ts.isClassDeclaration(statement)) {
+    if ((ts.getDecorators(statement) ?? []).length > 0) return true;
     if (
-      ts.isImportDeclaration(statement) ||
-      ts.isImportEqualsDeclaration(statement) ||
-      ts.isExportDeclaration(statement) ||
-      ts.isFunctionDeclaration(statement) ||
-      ts.isInterfaceDeclaration(statement) ||
-      ts.isTypeAliasDeclaration(statement)
+      (statement.heritageClauses ?? []).some((clause) =>
+        clause.types.some(
+          (type) =>
+            !isSafeHeritageExpression(type.expression) || expressionExecutesCode(type.expression),
+        ),
+      )
     )
-      return false;
-    if (ts.isModuleDeclaration(statement)) {
-      const declared =
-        (statement.flags & ts.NodeFlags.Ambient) !== 0 ||
-        (ts.canHaveModifiers(statement) &&
-          (ts.getModifiers(statement) ?? []).some(
-            (modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword,
-          ));
-      return !declared;
-    }
-    if (ts.isExportAssignment(statement))
-      return (
-        !isStaticDataExpression(statement.expression) &&
-        !isDeferredFunctionExpression(statement.expression)
-      );
-    if (ts.isVariableStatement(statement))
-      return statement.declarationList.declarations.some(
-        (declaration) =>
-          declaration.initializer !== undefined &&
-          !isStaticDataExpression(declaration.initializer) &&
-          !isDeferredFunctionExpression(declaration.initializer),
-      );
-    if (ts.isClassDeclaration(statement)) {
-      if ((ts.getDecorators(statement) ?? []).length > 0) return true;
+      return true;
+    return statement.members.some((member) => {
+      if ((ts.getDecorators(member) ?? []).length > 0) return true;
       if (
-        (statement.heritageClauses ?? []).some((clause) =>
-          clause.types.some(
-            (type) =>
-              !isSafeHeritageExpression(type.expression) || expressionExecutesCode(type.expression),
-          ),
-        )
+        member.name !== undefined &&
+        ts.isComputedPropertyName(member.name) &&
+        (expressionExecutesCode(member.name.expression) ||
+          !isStaticDataExpression(member.name.expression))
       )
         return true;
-      return statement.members.some((member) => {
-        if ((ts.getDecorators(member) ?? []).length > 0) return true;
-        if (
-          member.name !== undefined &&
-          ts.isComputedPropertyName(member.name) &&
-          (expressionExecutesCode(member.name.expression) ||
-            !isStaticDataExpression(member.name.expression))
-        )
-          return true;
-        if (ts.isClassStaticBlockDeclaration(member)) return true;
-        const isStatic =
-          ts.canHaveModifiers(member) &&
-          (ts.getModifiers(member) ?? []).some(
-            (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-          );
-        return (
-          isStatic &&
-          ts.isPropertyDeclaration(member) &&
-          member.initializer !== undefined &&
-          !isStaticDataExpression(member.initializer) &&
-          !isDeferredFunctionExpression(member.initializer)
+      if (ts.isClassStaticBlockDeclaration(member)) return true;
+      const isStatic =
+        ts.canHaveModifiers(member) &&
+        (ts.getModifiers(member) ?? []).some(
+          (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
         );
-      });
-    }
-    if (ts.isEnumDeclaration(statement))
-      return statement.members.some(
-        (member) => member.initializer !== undefined && !isStaticDataExpression(member.initializer),
+      return (
+        isStatic &&
+        ts.isPropertyDeclaration(member) &&
+        member.initializer !== undefined &&
+        !isStaticDataExpression(member.initializer) &&
+        !isDeferredFunctionExpression(member.initializer)
       );
-    return !ts.isEmptyStatement(statement);
-  });
+    });
+  }
+  if (ts.isEnumDeclaration(statement))
+    return statement.members.some(
+      (member) => member.initializer !== undefined && !isStaticDataExpression(member.initializer),
+    );
+  return !ts.isEmptyStatement(statement);
 }
 
 function isMigrationExecutionModule(path, content) {
@@ -4289,11 +4391,23 @@ export function createMigrationPlan({
     ),
   ].sort();
   const inventory = [];
+  // 自动判定为「无结构变更」的依赖模块：既不进 blockingReasons，也不把计划抬成 expand。
+  const sqlNeutralPaths = new Set();
+  const readBaselineContent = (path) => {
+    try {
+      const snapshot = snapshotFor(baseline);
+      return snapshot.repositoryPaths.has(path) ? snapshot.read(path) : null;
+    } catch {
+      return undefined;
+    }
+  };
   for (const path of paths) {
     const reviewed = reviews.entries.get(path);
     if (reviewed) {
       if (reviewed.classification === 'contract') {
-        blockingReasons.push(`Migration ${path} has a reviewed contract change and requires a separate contract release.`);
+        blockingReasons.push(
+          `Migration ${path} has a reviewed contract change and requires a separate contract release.`,
+        );
       }
       inventory.push({
         path,
@@ -4342,6 +4456,26 @@ export function createMigrationPlan({
     const scanText = normalizeSqlForClassification(
       `${additions}\n${scriptAnalysis.staticLiterals.join('\n')}`,
     );
+    if (
+      isSqlNeutralDependencyChange({
+        path,
+        content,
+        baselineContent: newlyReachable.has(path) ? null : readBaselineContent(path),
+        diff,
+        additions,
+        deletions,
+      })
+    ) {
+      sqlNeutralPaths.add(path);
+      inventory.push({
+        path,
+        targetBlobDigest: digest(content),
+        addedLinesDigest: digest(additions),
+        deletedLinesDigest: digest(deletions),
+        classification: 'no-schema-change',
+      });
+      continue;
+    }
     if (deletions.trim()) {
       blockingReasons.push(
         `Migration ${path} deletes or replaces baseline content and requires a separate contract release.`,
@@ -4379,8 +4513,13 @@ export function createMigrationPlan({
     });
   }
 
-  const phase = paths.some((path) => reviews.entries.get(path)?.classification !== 'no-schema-change')
-    ? 'expand' : 'none';
+  const phase = paths.some(
+    (path) =>
+      !sqlNeutralPaths.has(path) &&
+      reviews.entries.get(path)?.classification !== 'no-schema-change',
+  )
+    ? 'expand'
+    : 'none';
   const planBody = {
     schemaVersion: 2,
     baselineSha: baseline,

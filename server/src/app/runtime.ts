@@ -2311,25 +2311,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // ── L2 记忆整合引擎（2026-07-29）：随 cron leadership 启停（蓝绿单实例）──
   if (enableSingletonWorkers && pgEventStore && pgSessionProjectionStore && memoryConsolidationStore && userStore) {
     const consolidationLogger = serverLogger.child('MemoryConsolidation');
-    const engineUserStore = userStore;
     memoryConsolidationEngine = new MemoryConsolidationEngine({
       store: memoryConsolidationStore,
       eventStore: pgEventStore,
       projectionStore: pgSessionProjectionStore,
-      userStore: {
-        findById: (id) => {
-          const user = engineUserStore.findById(id);
-          return user
-            ? { id: user.id, username: user.username, role: user.role, tenantId: user.tenantId, disabled: user.disabled }
-            : undefined;
-        },
-      },
+      userStore,
       isTenantEnabled: (tenantId) =>
         getTenantMemoryFeatureStatus(tenantId).memoryConsolidationEnabled.effective,
       dispatch: billedRunDispatch,
       agentCwd,
       getConfig: resolveMemoryConsolidationConfig,
       onScannerStatus: createMemoryConsolidationScannerStatusHandler({ alertNotifier, logger: consolidationLogger }),
+      onCommitted: (workspaceDir) => memoryIndexServiceRef.current?.enqueueSync(workspaceDir, 'memory-consolidation'),
       logger: { info: (msg) => consolidationLogger.info(msg), warn: (msg) => consolidationLogger.warn(msg) },
     });
   }

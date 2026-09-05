@@ -160,7 +160,7 @@ describe('memory polling admin router', () => {
         hoursSpan: 6,
         timezone: 'Asia/Shanghai',
         lookbackHours: 72,
-        maxTurns: 45,
+        maxTurns: 1000,
         timeoutSeconds: 1200,
         model: 'kaiyan-llm/gpt-5.5',
       };

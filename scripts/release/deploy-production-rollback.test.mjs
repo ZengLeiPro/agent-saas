@@ -7,6 +7,76 @@ import test from 'node:test';
 
 const SCRIPT = resolve('scripts/release/deploy-production-release.sh');
 
+test('真实 App EXIT 回调在 deploy_app 栈退出后仍能恢复两个 unit 文件', async () => {
+  const value = await fixture();
+  const source = await readFile(SCRIPT, 'utf8');
+  const deployStart = source.indexOf('deploy_app() {');
+  const stateStart = source.indexOf('  DEPLOY_APP_ROLLBACK_COMMITTED=false', deployStart);
+  const callbackEnd = source.indexOf('  arm_deploy_rollback cleanup_app_failure', stateStart);
+  const rollbackStart = source.indexOf('rollback_app_release() {');
+  const rollbackEnd = source.indexOf('\ncleanup_app_failure() {', rollbackStart);
+  const locals = [
+    'rollback_root',
+    'api_active',
+    'api_idle',
+    'worker_active',
+    'worker_idle',
+    'api_idle_previous',
+    'worker_idle_previous',
+    'api_env',
+    'worker_env',
+    'had_api_env',
+    'had_worker_env',
+    'server_unit',
+    'worker_unit',
+  ];
+  const environment = { ...process.env, ...value.environment };
+  for (const name of locals) {
+    environment['FIXTURE_' + name] = environment[name];
+    delete environment[name];
+  }
+  const shell = `set -euo pipefail
+record_rollback_attempt() { :; }
+${source.slice(rollbackStart, rollbackEnd)}
+CONFIG_GOVERNANCE_FENCE=held
+# 在真实磁盘恢复结束后停止，避免进入运行服务的 authority 分支。
+validate_app_release_envs_match() { exit 17; }
+setup() {
+${locals.map((name) => 'local ' + name + '="$FIXTURE_' + name + '"').join('\n')}
+${source.slice(stateStart, callbackEnd)}
+trap cleanup_app_failure EXIT
+}
+setup
+false
+`;
+  const result = spawnSync('bash', ['-c', shell], { encoding: 'utf8', env: environment });
+  assert.equal(result.status, 17, result.stderr);
+  assert.doesNotMatch(result.stderr, /unbound variable/u);
+  for (const [backup, destination] of [
+    ['server@.service', 'server_unit'],
+    ['runtime-worker@.service', 'worker_unit'],
+  ]) {
+    assert.equal(await readFile(value.environment[destination], 'utf8'), backup + '\n');
+  }
+});
+
+test('配置身份预检在回滚启动与 systemd 修改前执行', async () => {
+  const source = await readFile(SCRIPT, 'utf8');
+  const deployStart = source.indexOf('deploy_app() {');
+  const preflight = source.indexOf('  config_identity="$(env', deployStart);
+  for (const mutation of [
+    '  trap cleanup_app_failure EXIT',
+    '  arm_deploy_rollback cleanup_app_failure',
+    '  install -m 0644 "$SERVER_UNIT_TEMPLATE"',
+    '  ln -sfn "$target" "$APP_COLOR_ROOT/$api_idle"',
+  ]) {
+    assert.ok(
+      preflight > deployStart && preflight < source.indexOf(mutation, deployStart),
+      mutation,
+    );
+  }
+});
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'production-app-rollback-'));
   const bin = join(root, 'bin');

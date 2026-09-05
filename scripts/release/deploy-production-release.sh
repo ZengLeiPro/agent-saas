@@ -381,6 +381,8 @@ DEPLOY_APP_ROLLBACK_WORKER_IDLE_PREVIOUS=
 DEPLOY_APP_ROLLBACK_API_ENV=
 DEPLOY_APP_ROLLBACK_WORKER_ENV=
 DEPLOY_APP_ROLLBACK_ROOT=
+DEPLOY_APP_ROLLBACK_SERVER_UNIT=
+DEPLOY_APP_ROLLBACK_WORKER_UNIT=
 DEPLOY_APP_ROLLBACK_HAD_API_ENV=false
 DEPLOY_APP_ROLLBACK_HAD_WORKER_ENV=false
 DEPLOY_APP_ROLLBACK_HAD_NGINX=false
@@ -1538,6 +1540,22 @@ deploy_app() {
     mv "$candidate" "$target"
   fi
   mkdir -p "$target/server/data" "$target/workspace-shared"
+  # 在触碰 systemd、颜色链接或候选配置前完成只读预检；失败不应启动回滚。
+  # TASK-318：发布前对主机实际配置计算 expected config identity（同一实现于
+  # 运行期 observed identity；含受管 inline secret 的 production fail-closed）。
+  # 候选 CLI 不继承 rollback receipt 元数据，stderr 也加前缀后再回放，避免普通诊断
+  # 碰巧形成 Workflow 识别的裸 sentinel。恶意 root 制品仍属于既有发布信任边界。
+  config_identity="$(env \
+    -u PHASE \
+    -u GITHUB_RUN_ID \
+    -u GITHUB_RUN_ATTEMPT \
+    -u ROLLBACK_ATTEMPTED_MARKER \
+    node "$target/server/dist/config-identity-cli.js" \
+    --config /etc/agent-saas/config.json --environment production \
+    --process-cwd "$target/server" \
+    --runtime-data-dir /mnt/agent-saas/server-data \
+    --env-file /etc/agent-saas/server.env \
+    2> >(sed 's/^/[config-identity-cli] /' >&2))"
   api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
   worker_active="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac
@@ -1580,6 +1598,8 @@ deploy_app() {
   DEPLOY_APP_ROLLBACK_API_ENV="$api_env"
   DEPLOY_APP_ROLLBACK_WORKER_ENV="$worker_env"
   DEPLOY_APP_ROLLBACK_ROOT="$rollback_root"
+  DEPLOY_APP_ROLLBACK_SERVER_UNIT="$server_unit"
+  DEPLOY_APP_ROLLBACK_WORKER_UNIT="$worker_unit"
   DEPLOY_APP_ROLLBACK_HAD_API_ENV="$had_api_env"
   DEPLOY_APP_ROLLBACK_HAD_WORKER_ENV="$had_worker_env"
   DEPLOY_APP_ROLLBACK_HAD_NGINX=false
@@ -1599,6 +1619,8 @@ deploy_app() {
     local worker_idle_previous="$DEPLOY_APP_ROLLBACK_WORKER_IDLE_PREVIOUS"
     local api_env="$DEPLOY_APP_ROLLBACK_API_ENV" worker_env="$DEPLOY_APP_ROLLBACK_WORKER_ENV"
     local rollback_root="$DEPLOY_APP_ROLLBACK_ROOT"
+    local server_unit="$DEPLOY_APP_ROLLBACK_SERVER_UNIT"
+    local worker_unit="$DEPLOY_APP_ROLLBACK_WORKER_UNIT"
     local had_api_env="$DEPLOY_APP_ROLLBACK_HAD_API_ENV"
     local had_worker_env="$DEPLOY_APP_ROLLBACK_HAD_WORKER_ENV"
     local had_nginx="$DEPLOY_APP_ROLLBACK_HAD_NGINX"
@@ -1776,21 +1798,6 @@ EOF
   ln -sfn "$target" "$APP_WORKER_ROOT/$worker_idle"
   printf '%s\n' "$target" >"$rollback_root/api.candidate.target"
   printf '%s\n' "$target" >"$rollback_root/worker.candidate.target"
-  # TASK-318：发布前对主机实际配置计算 expected config identity（同一实现于
-  # 运行期 observed identity；含受管 inline secret 的 production fail-closed）。
-  # 候选 CLI 不继承 rollback receipt 元数据，stderr 也加前缀后再回放，避免普通诊断
-  # 碰巧形成 Workflow 识别的裸 sentinel。恶意 root 制品仍属于既有发布信任边界。
-  config_identity="$(env \
-    -u PHASE \
-    -u GITHUB_RUN_ID \
-    -u GITHUB_RUN_ATTEMPT \
-    -u ROLLBACK_ATTEMPTED_MARKER \
-    node "$target/server/dist/config-identity-cli.js" \
-    --config /etc/agent-saas/config.json --environment production \
-    --process-cwd "$target/server" \
-    --runtime-data-dir /mnt/agent-saas/server-data \
-    --env-file /etc/agent-saas/server.env \
-    2> >(sed 's/^/[config-identity-cli] /' >&2))"
   DEPLOY_APP_ROLLBACK_CONFIG_IDENTITY="$config_identity"
   upsert_env "$MANIFEST_PATH" "$api_env" api "$config_identity"
   upsert_env "$MANIFEST_PATH" "$worker_env" worker "$config_identity"

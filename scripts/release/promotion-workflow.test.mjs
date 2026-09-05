@@ -447,7 +447,8 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /"\$RUNNER_TEMP\/built\/artifact-index\.json"/u);
   assert.doesNotMatch(workflow, /release\/wait-for-acr-image\.sh/u);
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
-  assert.match(workflow, /run_with_web_lock aliyun --secure oss stat/u);
+  assert.match(workflow, /run_with_web_lock aliyun --secure oss ls/u);
+  assert.doesNotMatch(workflow, /run_with_web_lock aliyun --secure oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
   assert.match(workflow, /OSS attestation mirror/u);
   assert.match(workflow, /OSS operation mirror/u);

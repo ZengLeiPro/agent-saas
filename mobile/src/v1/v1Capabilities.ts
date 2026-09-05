@@ -69,6 +69,13 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
 export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
   'webview-spike': '§2.2 WebView Spike 入口已删除（M00-01）',
   'chat/html-preview': '旧 workspace HTML preview 已关闭（M50-03）；正式交付仅走 Artifact viewer',
+  'settings/users': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'user-form': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/audit-log': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/all-agents': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/agent-profile/[username]': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/skills-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
+  'settings/skills-tenant-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
 };
 
 /**
@@ -84,14 +91,7 @@ export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
   'memory-browser': '§2.2 Memory 浏览与编辑 UI 延期（Gate A）',
   'persona-editor': '§1.3 V1 最小设置：Agent 人格/记忆编辑不在信息架构内（M30-03 后评估）',
   'text-editor': '仅被延期的 Cron/Memory 流程使用（§2.2）',
-  'settings/all-agents': '§2.2 「所有 Agent」旧页面不得作为可执行 Agent 入口（M30-03）',
-  'settings/agent-profile/[username]': '仅从延期的 all-agents 页面可达（§2.2）',
-  'settings/users': '§2.2 用户管理移动页延期（平台/租户管理走 Web）',
-  'user-form': '§2.2 用户管理移动页延期（平台/租户管理走 Web）',
-  'settings/audit-log': '§2.2 审计移动页延期（平台/租户管理走 Web）',
   'settings/skills': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
-  'settings/skills-admin': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
-  'settings/skills-tenant-admin': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
   'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',
   'settings/connections': '§2.2 Connections/OAuth 原生管理入口延期；仅保留最小 OAuth callback（Gate A）',
 };

@@ -1,9 +1,8 @@
 import type { ReactNode } from 'react';
-import { ChevronRight } from 'lucide-react';
-
 import { OrganizationScopeBanner } from '@/components/GovernanceConsole';
 import type { SettingsDirtyController } from '@/components/PersonalSettings/dirtyRegistry';
 import type { ManagementSettingsAccess } from '@/hooks/useManagementSettingsAccess';
+import { SETTINGS_CONTENT_WIDTH } from '@/components/SettingsCenter/SettingsPanelHeader';
 import {
   activeManagementTab,
   managementPageForRoute,
@@ -15,9 +14,6 @@ import type { GovernanceRouteState } from '@/lib/governanceNavigation';
 import { navigateGovernance } from '@/lib/urlSync';
 import { cn } from '@/lib/utils';
 import { StateBlock } from './StateBlock';
-
-const surfaceLabels = { config: '设置', analytics: '分析' } as const;
-const areaLabels = { organization: '组织管理', platform: '平台运营' } as const;
 
 const detailTabLabels: Readonly<Record<string, string>> = {
   profile: '资料',
@@ -136,13 +132,11 @@ function MobileManagementNavigation({
 export function ManagementShell({
   route,
   access,
-  tenantName,
   dirtyController,
   children,
 }: {
   route: GovernanceRouteState;
   access: ManagementSettingsAccess;
-  tenantName?: string;
   dirtyController?: SettingsDirtyController;
   children: ReactNode;
 }) {
@@ -161,27 +155,14 @@ export function ManagementShell({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col bg-muted/20"
+      className="h-full overflow-y-auto bg-muted/20"
       data-testid="management-shell"
       data-surface={page.surface}
+      data-scroll-container="true"
     >
       <MobileManagementNavigation route={route} access={access} />
-      <header className="flex h-[52px] shrink-0 items-center border-b bg-background/90 px-5 backdrop-blur md:px-7">
-        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <span>{surfaceLabels[page.surface]}</span>
-          <ChevronRight className="size-3.5 opacity-50" />
-          <span>{areaLabels[page.area]}</span>
-          <ChevronRight className="size-3.5 opacity-50" />
-          <span className="hidden sm:inline">{page.group}</span>
-          <ChevronRight className="hidden size-3.5 opacity-50 sm:block" />
-          <span className="truncate text-sm font-semibold text-foreground">{page.label}</span>
-        </div>
-      </header>
-      <main
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6"
-        data-testid="management-scroll-container"
-      >
-        <div className="mx-auto max-w-[1200px]">
+      <main className="px-4 py-5 md:px-8 md:py-6">
+        <div className={SETTINGS_CONTENT_WIDTH}>
           {route.area === 'organization' ? (
             <OrganizationScopeBanner
               route={route}
@@ -189,19 +170,8 @@ export function ManagementShell({
               settingsMode={page.surface === 'config'}
             />
           ) : null}
-          <div className={cn(route.area === 'organization' && 'mt-5')}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight">{page.label}</h1>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  {tenantName && route.area === 'organization' ? `${tenantName} · ` : ''}
-                  {page.description}
-                </p>
-              </div>
-            </div>
-            <ManagementTabs route={route} />
-            <DetailTabs route={route} />
-          </div>
+          <ManagementTabs route={route} />
+          <DetailTabs route={route} />
           <div className="mt-6" data-testid="management-page-content">
             {children}
           </div>

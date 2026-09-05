@@ -104,6 +104,11 @@ test('max-lines reports stale entries, preserves renamed debt identity, and bloc
   const baseline = new Map([['server/src/old.ts', { lines: 1200, scope: 'production' }]]);
   assert.match(evaluateMaxLines({ current: new Map(), baseline, baseBaseline: baseline, renames: new Map() }).errors.join('\n'), /STALE/u);
 
+  // --prune 模式下 STALE 条目必须被放行（prune 正是用来移除它们的），否则 baseline 永远写不回去。
+  const pruned = evaluateMaxLines({ current: new Map(), baseline, baseBaseline: baseline, renames: new Map(), prune: true });
+  assert.equal(pruned.errors.length, 0);
+  assert.deepEqual(pruned.stale, ['server/src/old.ts']);
+
   const renamed = new Map([['server/src/new.ts', { lines: 1200, scope: 'production' }]]);
   assert.equal(evaluateMaxLines({ current: renamed, baseline, baseBaseline: baseline, renames: new Map([['server/src/new.ts', 'server/src/old.ts']]) }).errors.length, 0);
 

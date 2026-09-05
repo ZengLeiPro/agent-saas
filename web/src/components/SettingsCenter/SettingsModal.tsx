@@ -889,7 +889,7 @@ export function SettingsModalInner({
         if (!visited.has(id)) return null;
         const isActive = id === activeConfig.id;
         return (
-          <div key={id} className={cn("h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
+          <div key={id} className={cn(embedded ? "min-h-full" : "h-full min-h-0", !isActive && "hidden")} aria-hidden={!isActive}>
             <Suspense fallback={<SettingsSectionFallback />}>
               {node}
             </Suspense>

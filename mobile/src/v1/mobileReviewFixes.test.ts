@@ -22,10 +22,11 @@ describe('TASK-375 移动端 V1 复核整改', () => {
 
   it('默认不把独立 tool_result raw payload 挂到渲染树', () => {
     const source = readMobile('src/components/chat/MessageItem.tsx');
+    const toolBlock = readMobile('src/components/chat/blocks/ToolBlock.tsx');
 
     expect(source).toContain('<ToolResultBlock message={item} gate={presentationGate} />');
-    expect(source).toContain('expanded && canonical.showRaw ? parseToolResult(message.result) : null');
-    expect(source).toContain('disabled={!canonical.showRaw}');
+    expect(toolBlock).toContain('expanded && canonical.showRaw ? parseToolResult(message.result) : null');
+    expect(toolBlock).toContain('disabled={!canonical.showRaw}');
   });
 
   it('TextSelect WebView 禁止脚本、外部导航和主动远程内容', () => {
@@ -35,6 +36,22 @@ describe('TASK-375 移动端 V1 复核整改', () => {
     expect(source).toContain('javaScriptEnabled={false}');
     expect(source).toContain("default-src 'none'");
     expect(source).toContain(".replaceAll('<', '&lt;')");
+  });
+
+  it('公式 WebView 只渲染本地 MathML、禁网络与外部导航', () => {
+    const source = readMobile('src/components/chat/blocks/MathBlock.tsx');
+    const katex = readMobile('src/lib/katexMathml.ts');
+
+    expect(source).toContain("originWhitelist={['about:blank']}");
+    expect(source).toContain("default-src 'none'");
+    expect(source).toContain("onShouldStartLoadWithRequest={(request) => request.url === 'about:blank'}");
+    expect(source).toContain('source={{ html }}');
+    // 公式渲染在 RN 侧完成，WebView 里不加载任何第三方脚本
+    expect(source).not.toContain('injectedJavaScript');
+    expect(source).not.toContain('https://');
+    // trust=false 阻断 \href / \url 类外链注入宏
+    expect(katex).toContain('trust: false');
+    expect(katex).toContain("output: 'mathml'");
   });
 
   it('ACK 未确认 intent 保留幂等键，interaction 生命周期绑定原会话', () => {
@@ -57,10 +74,13 @@ describe('TASK-375 移动端 V1 复核整改', () => {
   });
 
   it('固定高度的交互区提供可滚动容器', () => {
-    const source = readMobile('app/chat/[sessionId].tsx');
+    // 交互区已抽成独立组件（AskUserPromptPanel），会话页只负责挂载。
+    const screen = readMobile('app/chat/[sessionId].tsx');
+    const panel = readMobile('src/components/chat/AskUserPromptPanel.tsx');
 
-    expect(source).toContain('style={styles.interactionScroll}');
-    expect(source).toContain('nestedScrollEnabled');
-    expect(source).toContain('keyboardShouldPersistTaps="handled"');
+    expect(screen).toContain('<AskUserPromptPanel');
+    expect(panel).toContain('style={styles.interactionScroll}');
+    expect(panel).toContain('nestedScrollEnabled');
+    expect(panel).toContain('keyboardShouldPersistTaps="handled"');
   });
 });

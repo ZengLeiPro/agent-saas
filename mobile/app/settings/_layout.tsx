@@ -22,13 +22,9 @@ export default function SettingsDetailLayout() {
     >
       <Stack.Screen name="my-permissions" options={{ title: "我的权限" }} />
       <Stack.Screen name="connections" options={{ title: "连接与授权" }} />
-      <Stack.Screen name="users" options={{ title: "用户管理" }} />
       <Stack.Screen name="user-detail" options={{ title: "用户详情" }} />
-      <Stack.Screen name="audit-log" />
-      <Stack.Screen name="all-agents" options={{ title: "所有 Agent" }} />
       <Stack.Screen name="agent-profile" options={{ headerShown: false }} />
       <Stack.Screen name="skills" options={{ title: "技能" }} />
-      <Stack.Screen name="skills-admin" options={{ title: "技能管理" }} />
     </Stack>
   );
 }

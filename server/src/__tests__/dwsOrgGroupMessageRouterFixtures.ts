@@ -255,9 +255,13 @@ export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       _id: string, _owner: string, _fence: number, text: string, reasonCode: string,
     ) => ({ ...claimed, state: 'reply_pending', replyKind: 'access_rejection',
       responseText: text, rejectionReasonCode: reasonCode })),
-    markReplyAttemptStarted: vi
-      .fn()
-      .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
+    // 真实 store 会写入当前时间；测试夹具也必须对齐 DWS 23 小时幂等窗口。
+    // 固定时间会随真实时钟推移而穿越窗口，造成与业务无关的假失败。
+    markReplyAttemptStarted: vi.fn().mockImplementation(async () => ({
+      ...claimed,
+      state: 'reply_pending',
+      replyStartedAt: new Date().toISOString(),
+    })),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
     reject: vi.fn().mockImplementation(async (
       _id: string, _owner: string, _fence: number, rejectionReasonCode: string,

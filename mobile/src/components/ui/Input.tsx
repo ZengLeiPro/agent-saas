@@ -25,6 +25,13 @@ export interface InputProps {
   multiline?: boolean;
   /** 校验失败：边框转 danger */
   invalid?: boolean;
+  /**
+   * 形态：`boxed`（默认）为独立描边输入框；
+   * `bare` 去掉描边/底色/内边距，供 `form/FormTextField` 这类「行内输入」内嵌到列表行里。
+   */
+  variant?: 'boxed' | 'bare';
+  /** 文本对齐：设置页样式的行内输入通常右对齐 */
+  align?: 'left' | 'right';
   onSubmitEditing?: () => void;
   /** 右侧内联控件（如「获取验证码」按钮） */
   trailing?: React.ReactNode;
@@ -51,6 +58,8 @@ export function Input({
   editable = true,
   multiline,
   invalid = false,
+  variant = 'boxed',
+  align = 'left',
   onSubmitEditing,
   trailing,
   style,
@@ -60,12 +69,13 @@ export function Input({
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   const borderColor = invalid ? colors.destructive : focused ? colors.ring : colors.input;
+  const bare = variant === 'bare';
 
   return (
     <View
       style={[
         styles.wrap,
-        { backgroundColor: colors.card, borderColor },
+        bare ? styles.wrapBare : { backgroundColor: colors.card, borderColor },
         editable ? null : styles.disabled,
         style,
       ]}
@@ -73,7 +83,14 @@ export function Input({
       <TextInput
         testID={testID}
         accessibilityLabel={accessibilityLabel}
-        style={[styles.input, { color: colors.foreground }]}
+        style={[
+          styles.input,
+          // bare 形态没有边框可以变色，校验失败改用文字色表达
+          { color: bare && invalid ? colors.destructive : colors.foreground, textAlign: align },
+          bare ? styles.inputBare : null,
+          multiline ? styles.inputMultiline : null,
+        ]}
+        textAlignVertical={multiline ? 'top' : 'center'}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -106,10 +123,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     gap: spacing.sm,
   },
+  wrapBare: {
+    minHeight: 0,
+    borderWidth: 0,
+    paddingHorizontal: 0,
+  },
   input: {
     flex: 1,
     paddingVertical: spacing.sm,
     ...fontScale.base,
+  },
+  inputBare: {
+    paddingVertical: 0,
+    minHeight: 24,
+  },
+  inputMultiline: {
+    minHeight: 60,
   },
   disabled: {
     opacity: 0.5,

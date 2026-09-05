@@ -4,7 +4,7 @@
  * - 子 → 壳 `route.changed{path,title?}`，若这次变化正是刚刚那条导航的回声，携带同一 `navId`；
  * - `syncHistory()`：用户导航 `pushState`，初始化 / 重定向 / 回滚 `replaceState`。
  */
-import { MESSAGE_NAMESPACE, MESSAGE_VERSION } from '@kaiyan/ky-app-contract';
+import { MESSAGE_NAMESPACE, MESSAGE_VERSION } from '@kaiyan/ky-app-contract/browser';
 
 import { toAppPath } from './environment.js';
 import type { AnyEnvelope, Messenger } from './messenger.js';

@@ -16,7 +16,7 @@ import {
   MESSAGE_VERSION,
   type InitPayload,
   type ReadyPayload,
-} from '@kaiyan/ky-app-contract';
+} from '@kaiyan/ky-app-contract/browser';
 
 import type { AnyEnvelope, Messenger } from './messenger.js';
 import type { TokenManager } from './tokenManager.js';

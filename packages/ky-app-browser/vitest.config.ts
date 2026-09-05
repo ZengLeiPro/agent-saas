@@ -5,8 +5,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
-      '@kaiyan/ky-app-contract': fileURLToPath(
-        new URL('../ky-app-contract/src/index.ts', import.meta.url),
+      '@kaiyan/ky-app-contract/browser': fileURLToPath(
+        new URL('../ky-app-contract/src/browser.ts', import.meta.url),
       ),
     },
   },

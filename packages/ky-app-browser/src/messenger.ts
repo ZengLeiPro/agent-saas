@@ -10,7 +10,7 @@ import {
   MESSAGE_VERSION,
   SHELL_TO_APP_MESSAGE_TYPES,
   type KyMessageEnvelope,
-} from '@kaiyan/ky-app-contract';
+} from '@kaiyan/ky-app-contract/browser';
 
 import { KyTimeoutError } from './errors.js';
 import { ReplyCache } from './replyCache.js';

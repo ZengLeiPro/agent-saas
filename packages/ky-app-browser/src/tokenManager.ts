@@ -3,7 +3,10 @@
  * 到期前 60 s 单飞续期；回前台 / 401 / 剩余 < 30 s 按需续期；版本号原子替换；
  * `temporary` 指数退避（1 s 起、上限 30 s），终止性 reason 停止请求并回调。
  */
-import type { TokenRefreshErrorPayload, TokenRefreshPayload } from '@kaiyan/ky-app-contract';
+import type {
+  TokenRefreshErrorPayload,
+  TokenRefreshPayload,
+} from '@kaiyan/ky-app-contract/browser';
 
 import { KyAuthError, type KyAuthErrorReason } from './errors.js';
 import type { AnyEnvelope, Messenger } from './messenger.js';

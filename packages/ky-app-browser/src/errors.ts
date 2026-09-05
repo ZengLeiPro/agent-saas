@@ -1,5 +1,5 @@
 /** SDK 抛出的错误类型。客户面文案由应用层渲染，这里只给机器可读的 code / reason。 */
-import type { TokenRefreshErrorReason } from '@kaiyan/ky-app-contract';
+import type { TokenRefreshErrorReason } from '@kaiyan/ky-app-contract/browser';
 
 /** 令牌不可用 / 401 无法自动恢复；写请求必须由页面用幂等键自行处理。 */
 export type KyAuthErrorReason =

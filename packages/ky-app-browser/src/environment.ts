@@ -2,7 +2,7 @@
  * 子端运行环境的读取：`ky` / `ky_iid` / `ky_nonce` 保留参数、当前应用路径规范化、
  * 壳 origin 推导（§5.2 / §5.3）。
  */
-import { RESERVED_QUERY_PARAMS, normalizeAppPath } from '@kaiyan/ky-app-contract';
+import { RESERVED_QUERY_PARAMS, normalizeAppPath } from '@kaiyan/ky-app-contract/browser';
 
 import type { KyWindowLike } from './types.js';
 

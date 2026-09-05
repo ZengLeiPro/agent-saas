@@ -6,7 +6,7 @@
  *
  * 令牌只在内存，绝不落 `localStorage` / cookie；本包不读 `process.env` / `import.meta.env`。
  */
-export { CONTRACT_VERSION } from '@kaiyan/ky-app-contract';
+export { CONTRACT_VERSION } from '@kaiyan/ky-app-contract/browser';
 
 export { createKyApp, DEFAULT_ATTEST_URL, clampText } from './createKyApp.js';
 export { KyAuthError, KyTimeoutError, KyUsageError, type KyAuthErrorReason } from './errors.js';

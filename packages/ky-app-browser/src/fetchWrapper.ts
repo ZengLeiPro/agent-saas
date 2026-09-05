@@ -6,7 +6,7 @@
  *   `KyAuthError` 交页面用幂等键处理；
  * - 响应头 `X-KY-Perm-Version` 变化 → `perm.changed`（§3.4 权限版本发现）。
  */
-import { HTTP_HEADERS } from '@kaiyan/ky-app-contract';
+import { HTTP_HEADERS } from '@kaiyan/ky-app-contract/browser';
 
 import { KyAuthError } from './errors.js';
 import type { TokenManager } from './tokenManager.js';

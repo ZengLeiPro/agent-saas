@@ -18,7 +18,7 @@ import {
   type TokenRefreshErrorPayload,
   type TokenRefreshPayload,
   type VisibilityPayload,
-} from '@kaiyan/ky-app-contract';
+} from '@kaiyan/ky-app-contract/browser';
 
 import { globalWindow, readLocation, resolveShellOrigin } from './environment.js';
 import { KyUsageError } from './errors.js';

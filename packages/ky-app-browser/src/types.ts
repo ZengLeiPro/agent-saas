@@ -10,7 +10,7 @@ import type {
   TokenRefreshErrorReason,
   ToastPayload,
   AgentOpenPayload,
-} from '@kaiyan/ky-app-contract';
+} from '@kaiyan/ky-app-contract/browser';
 
 /** 定时器句柄：不绑定 Node 的 `Timeout` 也不绑定浏览器的 `number`。 */
 export type KyTimerHandle = unknown;

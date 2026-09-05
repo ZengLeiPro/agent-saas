@@ -26,7 +26,7 @@ import {
   useSessionRowActions,
 } from '../../../../src/components/sessions';
 import { toSidebarSessions } from '../../../../src/lib/sessionListAdapter';
-import { useColors, spacing } from '../../../../src/theme';
+import { useColors, spacing, typography, fontScale, fontWeight } from '../../../../src/theme';
 import { glassFree } from '../../../../src/lib/headerItems';
 import { hapticLight, hapticWarning, hapticSuccess } from '../../../../src/lib/haptics';
 import { showTextPrompt } from '../../../../src/lib/prompt';
@@ -263,7 +263,7 @@ export default function GroupDetailScreen() {
       paddingVertical: 80,
     },
     emptyText: {
-      fontSize: 15,
+      ...typography.body,
       color: colors.mutedForeground,
     },
     headerTitle: {
@@ -272,12 +272,12 @@ export default function GroupDetailScreen() {
       gap: 6,
     },
     headerTitleText: {
-      fontSize: 17,
-      fontWeight: '600',
+      ...fontScale.base,
+      fontWeight: fontWeight.semibold,
       color: colors.foreground,
     },
     headerText: {
-      fontSize: 17,
+      ...fontScale.base,
       color: colors.foreground,
     },
     // Bottom pill buttons
@@ -303,8 +303,8 @@ export default function GroupDetailScreen() {
       backgroundColor: colors.muted,
     },
     pillText: {
-      fontSize: 17,
-      fontWeight: '600',
+      ...fontScale.base,
+      fontWeight: fontWeight.semibold,
     },
     iconPillInner: {
       width: 50,

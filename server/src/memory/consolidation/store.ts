@@ -21,6 +21,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Pool, type PoolClient } from 'pg';
+import { reconcileConsolidationState } from './reconcile.js';
 
 import type {
   ConsolidationRunRecord,
@@ -370,10 +371,14 @@ export class PgMemoryConsolidationStore {
    */
   async claimDue(input: {
     workerId: string; now: string; limit: number; leaseSeconds: number;
+    reconcile?: { debounceMinutes: number };
   }): Promise<ConsolidationState[]> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      if (input.reconcile) {
+        await reconcileConsolidationState(client, this.prefix, input.now, input.reconcile.debounceMinutes);
+      }
       const res = await client.query<StateRow>(
         `SELECT * FROM ${this.stateTable}
          WHERE target_session_sequence > processed_session_sequence

@@ -39,8 +39,13 @@ export function getDesktopHeaderTitle({
   const tabTitle = TAB_TITLES[activeTab];
   if (tabTitle) return tabTitle;
   if (isTrashPreview) return '回收站预览';
-  const sessionTitle = sidebarSessions.find((session) => session.id === sessionId)?.title;
-  if (sessionTitle && activeAgentTargetLabel) return `${sessionTitle} · ${activeAgentTargetLabel}`;
+  const session = sidebarSessions.find((item) => item.id === sessionId);
+  const sessionTitle = session?.title;
+  // TASK-397：个人 Agent 是默认身份，「 · 个人 Agent」后缀对会话标题是冗余信息；
+  // 企业专家名与「绑定不可验证」状态后缀仍然保留。
+  if (sessionTitle && activeAgentTargetLabel && session?.agentTarget?.kind !== 'personal') {
+    return `${sessionTitle} · ${activeAgentTargetLabel}`;
+  }
   return sessionTitle
     || activeAgentTargetLabel
     || activeOrgAgent?.name

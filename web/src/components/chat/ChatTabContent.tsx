@@ -165,7 +165,8 @@ function InitialConversationHeader({
           />
         )}
         <span className="text-foreground">{agentName}</span>
-        <span>{orgAgent ? "· 企业专家" : "· 个人 Agent"}</span>
+        {/* TASK-397：个人 Agent 是默认身份，「· 个人 Agent」后缀冗余；仅企业专家保留类型标签。 */}
+        {orgAgent ? <span>· 企业专家</span> : null}
       </div>
       <h1 className="text-[28px] font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">
         {orgAgent ? `要让${orgAgent.name}处理什么？` : "今天先推进哪件事？"}

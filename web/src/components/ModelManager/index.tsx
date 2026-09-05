@@ -648,7 +648,7 @@ export function ModelManager() {
           embedding: {
             baseUrl: memoryIndex.embedding.baseUrl.trim(),
             // GET 已脱敏无明文；留空提交时服务端保留现有 Key
-            apiKey: (memoryIndex.embedding.apiKey ?? "").trim(),
+            apiKey: memoryIndex.embedding.apiKey?.trim() || undefined,
             model: memoryIndex.embedding.model.trim(),
             dimensions: Number(memoryIndex.embedding.dimensions) || 0,
           },

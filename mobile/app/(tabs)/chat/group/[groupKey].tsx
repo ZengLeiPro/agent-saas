@@ -19,26 +19,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatAppState } from '../../../../src/contexts/ChatAppStateContext';
 import { useAuth } from '../../../../src/contexts/AuthContext';
 import { SessionRow } from '../../../../src/components/SessionRow';
-import type { SwipeAction, Swipeable } from '../../../../src/components/SwipeableRow';
+import type { Swipeable } from '../../../../src/components/SwipeableRow';
+import {
+  GroupPickerSheet,
+  useSessionGroupActions,
+  useSessionRowActions,
+} from '../../../../src/components/sessions';
+import { toSidebarSessions } from '../../../../src/lib/sessionListAdapter';
 import { useColors, spacing } from '../../../../src/theme';
 import { glassFree } from '../../../../src/lib/headerItems';
 import { hapticLight, hapticWarning, hapticSuccess } from '../../../../src/lib/haptics';
 import { showTextPrompt } from '../../../../src/lib/prompt';
 import { useTabBar } from '../../../../src/contexts/TabBarContext';
-
-function toSidebarSessions(sessions: ApiSessionListItem[]): ChatSessionIndexItem[] {
-  return sessions.map((s) => ({
-    id: s.sessionId,
-    title: s.title || '新对话',
-    createdAt: s.createdAtMs || s.updatedAtMs,
-    updatedAt: s.updatedAtMs,
-    preview: s.preview,
-    source: s.source,
-    owner: s.owner,
-    cronJobId: s.cronJobId,
-    cronJobName: s.cronJobName,
-  }));
-}
 
 export default function GroupDetailScreen() {
   const colors = useColors();
@@ -244,49 +236,17 @@ export default function GroupDetailScreen() {
     );
   }, [hasSelection, selectedIds, isAdminUser, chat, exitSelectMode]);
 
-  const getActions = useCallback((session: ChatSessionIndexItem): SwipeAction[] => {
-    const actions: SwipeAction[] = [];
-    if (!isReadOnlyGroups) {
-      actions.push({
-        key: 'ungroup',
-        label: '移出',
-        backgroundColor: colors.actions.organize,
-        color: colors.actions.onAction,
-        onPress: () => handleRemoveFromGroup(session.id),
-      });
-    }
-    actions.push(
-      {
-        key: 'rename',
-        label: '重命名',
-        backgroundColor: colors.actions.edit,
-        color: colors.actions.onAction,
-        onPress: () => {
-          hapticLight();
-          showTextPrompt({
-            title: '重命名',
-            defaultValue: session.title || '',
-            extraAction: {
-              label: '自动',
-              onPress: () => { void chat.autoTitleSession(session.id); },
-            },
-            onConfirm: (newTitle) => {
-              const trimmed = newTitle.trim();
-              if (trimmed) void chat.renameSession(session.id, trimmed);
-            },
-          });
-        },
-      },
-      {
-        key: 'delete',
-        label: '删除',
-        backgroundColor: colors.actions.destructive,
-        color: colors.actions.onAction,
-        onPress: () => handleDeleteSession(session.id),
-      },
-    );
-    return actions;
-  }, [handleRemoveFromGroup, handleDeleteSession, isReadOnlyGroups]);
+  // 分组详情行的动作集与主列表一致（分组 / 重命名 / AI 命名 / 移出 / 删除）。
+  const groupActions = useSessionGroupActions({ groupsHook, sessions: sidebarSessions });
+  const getActions = useSessionRowActions({
+    readOnlyGroups: isReadOnlyGroups,
+    inGroup: true,
+    onOpenGroupPicker: (sessionId) => groupActions.openPicker([sessionId]),
+    onRename: (sessionId, title) => { void chat.renameSession(sessionId, title); },
+    onAutoTitle: (sessionId) => { void chat.autoTitleSession(sessionId); },
+    onRemoveFromGroup: handleRemoveFromGroup,
+    onDelete: handleDeleteSession,
+  });
 
   const styles = useMemo(() => StyleSheet.create({
     container: {
@@ -567,6 +527,15 @@ export default function GroupDetailScreen() {
         onSelect={handleGroupMenuSelect}
         anchorTop={headerMenuAnchor}
         align="right"
+      />
+
+      {/* 行滑动「分组」动作的分组选择器 */}
+      <GroupPickerSheet
+        visible={groupActions.pickerVisible}
+        onClose={groupActions.closePicker}
+        groups={groupActions.allGroups}
+        onSelectGroup={groupActions.addToGroup}
+        onCreateGroupRequested={groupActions.promptCreateGroupForPending}
       />
     </View>
   );

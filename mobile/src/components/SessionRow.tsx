@@ -1,11 +1,17 @@
 import React, { useMemo, type MutableRefObject } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { MessageCircle, Check } from 'lucide-react-native';
+import Animated from 'react-native-reanimated';
 import type { ChatSessionIndexItem } from '@agent/shared';
-import { formatShortDate } from '@agent/shared';
+import { formatShortDate, getSessionWaitingLabel } from '@agent/shared';
 import { SwipeableRow, type SwipeAction, type Swipeable } from './SwipeableRow';
 import { AgentAvatar } from './AgentAvatar';
+import { StatusIcons, ICON_SIZE, ICON_STROKE } from '../lib/icons';
+import { useSpinStyle } from './ui/motion';
 import { useColors, spacing, typography, radius } from '../theme';
+
+/** 未读红点直径（pt），对齐 Web `size-1.5`。 */
+const UNREAD_DOT_SIZE = 6;
 
 interface SessionRowProps {
   session: ChatSessionIndexItem;
@@ -126,7 +132,23 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       ...typography.caption,
       color: colors.mutedForeground,
     },
+    waitingLabel: {
+      ...typography.caption,
+      color: colors.warning,
+      fontWeight: '500',
+    },
+    unreadDot: {
+      width: UNREAD_DOT_SIZE,
+      height: UNREAD_DOT_SIZE,
+      borderRadius: UNREAD_DOT_SIZE / 2,
+      backgroundColor: colors.destructive,
+      marginRight: spacing.xs,
+    },
   }), [colors]);
+
+  const waitingLabel = getSessionWaitingLabel(session.runtimeStatus);
+  const isRunning = session.isRunning === true && !waitingLabel;
+  const spinStyle = useSpinStyle(isRunning);
 
   const hasAgentAvatar = agentAvatar !== undefined;
   const targetLabel = session.agentTargetSnapshot?.name ?? '绑定不可验证';
@@ -158,12 +180,29 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       {avatarElement}
       <View style={styles.sessionContent}>
         <View style={styles.titleRow}>
+          {session.hasUnreadAiReply === true && (
+            <View style={styles.unreadDot} accessibilityLabel="有未读回复" />
+          )}
           <Text style={styles.sessionTitle} numberOfLines={1} testID={`${session.id}-title`}>
             {session.title || '新会话'}
           </Text>
-          <Text style={styles.sessionTime}>
-            {formatShortDate(session.updatedAt)}
-          </Text>
+          {waitingLabel ? (
+            <Text style={styles.waitingLabel} accessibilityLabel={`会话${waitingLabel}`}>
+              {waitingLabel}
+            </Text>
+          ) : isRunning ? (
+            <Animated.View style={spinStyle} accessibilityLabel="会话运行中">
+              <StatusIcons.running
+                size={ICON_SIZE.inline}
+                color={colors.statusIcon.info}
+                strokeWidth={ICON_STROKE.default}
+              />
+            </Animated.View>
+          ) : (
+            <Text style={styles.sessionTime}>
+              {formatShortDate(session.updatedAt)}
+            </Text>
+          )}
         </View>
         <View style={styles.subtitleRow}>
             <Text style={styles.targetName} numberOfLines={1}>{targetLabel}</Text>
@@ -203,6 +242,9 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
     prev.session.title === next.session.title &&
     prev.session.preview === next.session.preview &&
     prev.session.updatedAt === next.session.updatedAt &&
+    prev.session.hasUnreadAiReply === next.session.hasUnreadAiReply &&
+    prev.session.isRunning === next.session.isRunning &&
+    prev.session.runtimeStatus === next.session.runtimeStatus &&
     prev.session.owner?.username === next.session.owner?.username &&
     prev.onPress === next.onPress &&
     prev.enableBackGesture === next.enableBackGesture &&

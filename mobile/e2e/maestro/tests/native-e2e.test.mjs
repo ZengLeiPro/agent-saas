@@ -82,6 +82,8 @@ test('app exposes the stable native IDs consumed by Maestro', async () => {
     'src/components/chat/ChatSessionHeader.tsx',
     // 交互区/队列条与表单体已拆成独立组件，稳定 ID 随代码一起搬到这些文件。
     'src/components/chat/AskUserPromptPanel.tsx', 'src/components/chat/QueuedMessageBar.tsx',
+    // 会话列表已拆成 src/components/sessions/*，列表本体的稳定 ID 随代码搬到这里。
+    'src/components/sessions/SessionListView.tsx',
     'src/components/chat/blocks/AskUserBlock.tsx', 'src/components/chat/blocks/PermissionBlock.tsx',
   ].map((relative) => readFile(path.join(mobileRoot, relative), 'utf8')));
   const joined = sources.join('\n');

@@ -280,41 +280,10 @@ export {
   TASKBOARD_STAGE_DEFAULT_PROMPTS,
   buildScenarioPrompt,
 } from './types/index';
-export {
-  LOAD_MORE_DISTANCE_PX,
-  SWIPE_DISMISS_GUARD_MS,
-  resolveSessionListRuntimeStatus,
-  resolveSwipeSelectGuard,
-  selectGroupUnreadMap,
-  shouldLoadMoreOnScroll,
-} from './lib/sessionListPresentation';
-export type {
-  ScrollLoadMoreInput,
-  SessionListInteractionSummary,
-  SessionListRuntimeInput,
-  SwipeSelectGuard,
-  SwipeSelectGuardInput,
-  UnreadGroupRef,
-  UnreadSessionRef,
-} from './lib/sessionListPresentation';
-export {
-  RECOMMENDATION_COUNT,
-  matchRoleIdByPosition,
-  pickRecommendedScenarios,
-  pickRoleTopScenarios,
-  resolveScenarioActionMeta,
-} from './lib/scenarioRecommendation';
-export type {
-  ScenarioActionMeta,
-  ScenarioActionTone,
-  ScenarioRoleRef,
-} from './lib/scenarioRecommendation';
-export { parseScenarioDeepLink, stripScenarioDeepLinkParams } from './lib/scenarioDeepLink';
-export type {
-  ScenarioDeepLinkIntent,
-  ScenarioDeepLinkParams,
-  ScenarioDeepLinkTarget,
-} from './lib/scenarioDeepLink';
+// 会话列表元信息 / 场景推荐 / 场景直达：移动端与 Web 共用的纯逻辑。
+export * from './lib/sessionListPresentation';
+export * from './lib/scenarioRecommendation';
+export * from './lib/scenarioDeepLink';
 export { saveUserPreferences } from './lib/preferencesApi';
 export { GLOBAL_TENANT_ID } from './types/index';
 export {

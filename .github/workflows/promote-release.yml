@@ -19,7 +19,7 @@ permissions:
   actions: read
   deployments: write
 
-# 与 compatibility App/ACS 和 expand confirmation 共享生产写锁。
+# 生产切换与自动收尾共用本次锁，并与 compatibility App/ACS 串行。
 concurrency:
   group: production-runtime
   cancel-in-progress: false
@@ -79,6 +79,7 @@ jobs:
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
       - name: Download immutable RC evidence
+        id: release_evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -107,13 +108,22 @@ jobs:
             none:not_required|expand:required_after_observation) ;;
             *) echo 'Invalid expand/confirm/contract migration plan' >&2; exit 1 ;;
           esac
+          finalization_mode="$(node scripts/release/promotion-finalization-mode.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID")"
+          if [ "$finalization_mode" != promote ]; then
+            deployment_id="$(node scripts/release/promotion-finalization-mode.mjs \
+              "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID" --deployment-id)"
+            echo "PRODUCTION_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
+          fi
           {
             echo "RELEASE_SHA=$release_sha"
             echo "MANIFEST_DIGEST=$manifest_digest"
+            echo "PROMOTION_FINALIZATION_MODE=$finalization_mode"
             echo "MIGRATION_PHASE=$migration_phase"
           } >> "$GITHUB_ENV"
 
       - name: Fail-closed revalidate deterministic Staging evidence and record human approval
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -223,6 +233,7 @@ jobs:
           cat "$RUNNER_TEMP/production-known-host" >> ~/.ssh/known_hosts
 
       - name: Read authoritative live production prefix before any write
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
           remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -244,10 +255,9 @@ jobs:
             "$RUNNER_TEMP/production-before.json"
           # This gate is deliberately before promotionGate, payload prefetch, the durable promoting
           # marker, receipts, and every production mutation.
-          migration_gate="$(node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
+          node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
             --manifest "$RUNNER_TEMP/manifest.json" \
-            --production-state "$RUNNER_TEMP/production-before.json")"
-          legacy_api_requires_upgrade="$(printf '%s' "$migration_gate" | jq -r .legacyApiRequiresUpgrade)"
+            --production-state "$RUNNER_TEMP/production-before.json"
           pnpm exec tsx server/src/release/promotionGateCli.ts \
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
             --production-state "$RUNNER_TEMP/production-before.json" \
@@ -256,8 +266,7 @@ jobs:
           if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
             jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
               "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
-            if [ "$legacy_api_requires_upgrade" = false ] && \
-               diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
+            if diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
                 <(jq -S . "$RUNNER_TEMP/production-target.json") >/dev/null; then
               production_already_target=true
             fi
@@ -265,6 +274,7 @@ jobs:
           echo "PRODUCTION_ALREADY_TARGET=$production_already_target" >> "$GITHUB_ENV"
 
       - name: Verify immutable Manifest, artifact index and Release record from OSS
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
           : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
@@ -293,6 +303,7 @@ jobs:
             "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
 
       - name: Prefetch, verify, and safely extract selected Manifest artifacts and ACS identity
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/built" "$RUNNER_TEMP/selected"
@@ -364,6 +375,7 @@ jobs:
             "$expected_repository"
 
       - name: Mark and persist promotion started before any production write
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -393,6 +405,7 @@ jobs:
             || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
       - name: Create GitHub Production Deployment
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -406,6 +419,7 @@ jobs:
             -f state=in_progress -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
 
       - name: Upload immutable deploy payload and RC-bound managed units
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
           remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -470,6 +484,7 @@ jobs:
              }"
 
       - name: Persist ACS operation start receipt
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         id: start_acs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -490,7 +505,7 @@ jobs:
 
       - name: Deploy exact ACS Orchestrator and Sandbox digest first
         id: deploy_acs
-        if: steps.start_acs.outcome == 'success'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_acs.outcome == 'success')
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -522,7 +537,7 @@ jobs:
 
       - name: Persist ACS operation receipt
         id: receipt_acs
-        if: always() && env.PROMOTION_STARTED == 'true'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
           STEP_OUTCOME: ${{ steps.deploy_acs.outcome }}
@@ -545,7 +560,7 @@ jobs:
 
       - name: Persist API and Worker operation start receipts
         id: start_app
-        if: steps.deploy_acs.outcome == 'success' && steps.receipt_acs.outcome == 'success'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.deploy_acs.outcome == 'success' && steps.receipt_acs.outcome == 'success')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -567,7 +582,7 @@ jobs:
 
       - name: Deploy API blue-green and hand off Runtime Worker
         id: deploy_app
-        if: steps.start_app.outcome == 'success'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_app.outcome == 'success')
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -601,7 +616,7 @@ jobs:
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
-        if: always() && env.PROMOTION_STARTED == 'true'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
           STEP_OUTCOME: ${{ steps.deploy_app.outcome }}
@@ -626,7 +641,7 @@ jobs:
 
       - name: Persist Web operation start receipt
         id: start_web
-        if: steps.deploy_app.outcome == 'success' && steps.receipt_app.outcome == 'success'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.deploy_app.outcome == 'success' && steps.receipt_app.outcome == 'success')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -646,7 +661,7 @@ jobs:
 
       - name: Publish Web entry last and retain prior hashed assets
         id: deploy_web
-        if: steps.start_web.outcome == 'success'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_web.outcome == 'success')
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -887,7 +902,7 @@ jobs:
 
       - name: Persist Web operation receipt
         id: receipt_web
-        if: always() && env.PROMOTION_STARTED == 'true'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
           STEP_OUTCOME: ${{ steps.deploy_web.outcome }}
@@ -910,7 +925,7 @@ jobs:
 
       - name: Read every live component and commit trusted identity only on complete convergence
         id: readback
-        if: always() && env.PROMOTION_STARTED == 'true'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -1048,7 +1063,7 @@ jobs:
           trap - EXIT
 
       - name: Reconcile component outcome
-        if: always() && env.PROMOTION_STARTED == 'true'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         run: |
           set -euo pipefail
           observation_complete=false
@@ -1108,7 +1123,8 @@ jobs:
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 
       - name: Record truthful final outcome
-        if: always() && env.PROMOTION_STARTED == 'true'
+        id: final_outcome
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1136,15 +1152,16 @@ jobs:
           fi
           migration_confirmation=not_required
           if [ "$MIGRATION_PHASE" = expand ]; then
-            migration_confirmation=separate_confirmation_required
+            migration_confirmation=automatic_readback_required
             if [ "$outcome" = completed ]; then
               outcome=awaiting_expand_confirmation
-              reason='expand migration is physically converged and awaits deterministic confirmation'
+              reason='expand migration is physically converged; automatic finalization follows'
             fi
           fi
           reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
             --arg migrationConfirmation "$migration_confirmation" \
-            '{summary:$summary,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"预发验收"}}')"
+            --arg productionDeploymentId "${PRODUCTION_DEPLOYMENT_ID:-}" \
+            '{summary:$summary,productionDeploymentId:$productionDeploymentId,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"预发验收"}}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state "$outcome" --operation "outcome:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -1157,16 +1174,45 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
             || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           state=failure
-          case "$outcome" in completed|awaiting_expand_confirmation) state=success ;; esac
+          case "$outcome" in completed) state=success ;; awaiting_expand_confirmation) state=in_progress ;; esac
           if printf '%s' "${PRODUCTION_DEPLOYMENT_ID:-}" | grep -Eq '^[0-9]+$'; then
             gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$PRODUCTION_DEPLOYMENT_ID/statuses" \
               -f state="$state" -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
           fi
           echo "PROMOTION_OUTCOME=$outcome" >> "$GITHUB_ENV"
+          if [ "$outcome" = awaiting_expand_confirmation ]; then echo "expand=true" >> "$GITHUB_OUTPUT"; fi
           case "$outcome" in completed|awaiting_expand_confirmation) ;; *) exit 1 ;; esac
 
+      - name: 自动核验扩展迁移并完成发布
+        id: finalize_expand
+        if: >-
+          always() && !cancelled() && steps.release_evidence.outcome == 'success' &&
+          (steps.final_outcome.outputs.expand == 'true' ||
+           env.PROMOTION_FINALIZATION_MODE == 'confirm' || env.PROMOTION_FINALIZATION_MODE == 'repair')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIRMATION_REASON: ${{ env.PROMOTION_REASON }}
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10 1800 bash scripts/release/finalize-expand-migration.sh
+          echo 'PROMOTION_OUTCOME=completed' >> "$GITHUB_ENV"
+
+      - name: 记录扩展迁移自动收尾结果
+        if: always() && steps.finalize_expand.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          state=failure
+          if [ "${{ steps.finalize_expand.outcome }}" = success ]; then state=success; fi
+          if printf '%s' "${PRODUCTION_DEPLOYMENT_ID:-}" | grep -Eq '^[0-9]+$'; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$PRODUCTION_DEPLOYMENT_ID/statuses" \
+              -f state="$state" -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
+          fi
+          test "$state" = success
+
       - name: Record fail-closed outcome before production mutation
-        if: failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true'
+        if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1202,3 +1248,7 @@ jobs:
             ${{ runner.temp }}/production-after.json
             ${{ runner.temp }}/production-confirmed.json
             ${{ runner.temp }}/reconcile.json
+            ${{ runner.temp }}/migration-confirmation*.json
+            ${{ runner.temp }}/production-live*.json
+            ${{ runner.temp }}/production-api-ready*.json
+            ${{ runner.temp }}/attestations/

@@ -9,19 +9,8 @@ function requireAction(value, label) {
   return value;
 }
 
-/**
- * ConfigIdentity migration stages are intentionally asymmetric:
- * - fresh/retry_before_change uses the trusted production-state reader and may observe the one
- *   legacy baseline before any write;
- * - retry_after_change normally uses the strict live/private reader;
- * - only a Manifest that deploys both API and Worker may use the legacy retry baseline, because
- *   this run is then guaranteed to execute the API upgrade before convergence is accepted.
- */
-export function planPromotionConfigIdentityBaseline({
-  retryMode,
-  apiAction,
-  runtimeWorkerAction,
-}) {
+/** 正常发布严格核对 trusted identity；中断恢复允许已切换的私有身份先于最终提交。 */
+export function planPromotionConfigIdentityBaseline({ retryMode, apiAction, runtimeWorkerAction }) {
   if (!RETRY_MODES.has(retryMode)) throw new Error(`Unknown promotion retry mode: ${retryMode}`);
   const api = requireAction(apiAction, 'Manifest API action');
   const worker = requireAction(runtimeWorkerAction, 'Manifest Runtime Worker action');
@@ -30,20 +19,16 @@ export function planPromotionConfigIdentityBaseline({
   if (retryMode !== 'retry_after_change') {
     return {
       reader: 'read-production-state.mjs',
-      configIdentityStage: 'legacy-pre-upgrade-baseline',
+      configIdentityStage: 'steady-state',
     };
   }
   return {
     reader: 'read-live-production-components.mjs',
-    configIdentityStage:
-      api === 'deploy' ? 'legacy-api-upgrade-retry-baseline' : 'steady-state',
+    configIdentityStage: api === 'deploy' ? 'candidate-readback' : 'steady-state',
   };
 }
 
-/**
- * A baseline without ConfigIdentity is the legacy first-migration state. It is admissible only
- * when this Manifest deploys API+Worker. Callers must run this before every production write.
- */
+/** 每次生产写入前均要求已建立配置身份，禁止恢复到首次升级的缺失豁免。 */
 export function assertPromotionConfigIdentityWriteGate({ manifest, productionState }) {
   const api = requireAction(manifest?.components?.api?.action, 'Manifest API action');
   const worker = requireAction(
@@ -52,13 +37,10 @@ export function assertPromotionConfigIdentityWriteGate({ manifest, productionSta
   );
   if (api !== worker) throw new Error('Manifest API and Runtime Worker actions must match');
 
-  const legacyApiRequiresUpgrade = productionState?.configIdentity === undefined;
-  if (legacyApiRequiresUpgrade && api !== 'deploy') {
-    throw new Error(
-      'Legacy API ConfigIdentity baseline requires this Manifest to deploy API and Runtime Worker before any production write',
-    );
+  if (productionState?.configIdentity?.status !== 'consistent') {
+    throw new Error('Production writes require a consistent ConfigIdentity');
   }
-  return { legacyApiRequiresUpgrade };
+  return { configIdentityConfirmed: true };
 }
 
 function parseOptions(argv) {

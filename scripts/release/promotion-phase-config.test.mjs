@@ -41,6 +41,13 @@ function runPhase(
   }
   const { productionState } = fixture.retries.find(({ failedStage }) => failedStage === phase);
   const state = structuredClone(productionState);
+  if (!state.configIdentity && privateSnapshot) {
+    state.configIdentity = structuredClone(
+      fixture.retries.find(({ failedStage }) => failedStage === 'web').productionState
+        .configIdentity,
+    );
+    state.configIdentity.releaseId = state.apiReleaseId;
+  }
   if (drift) state.components.web.artifactDigest = `sha256:${'f'.repeat(64)}`;
   const snapshot = privateSnapshot ? structuredClone(state.configIdentity) : undefined;
   if (snapshot && inconsistent) snapshot.status = 'mismatch';
@@ -65,7 +72,7 @@ const configIdentity = selectLiveConfigIdentity({
   apiReleaseId: state.apiReleaseId,
   configIdentityStage: stage,
 });
-validateExpectedConfigIdentityObservers(undefined, configIdentity, { configIdentityStage: stage });
+validateExpectedConfigIdentityObservers(${JSON.stringify(fixture.observerBaselines.regularReleaseTrustedConfigIdentity)}, configIdentity, { configIdentityStage: stage });
 writeFileSync(args[args.indexOf('--output') + 1], JSON.stringify(state));
 `,
   );
@@ -91,10 +98,10 @@ writeFileSync(args[args.indexOf('--output') + 1], JSON.stringify(state));
 }
 
 for (const phase of ['acs', 'app']) {
-  test(`${phase} 实际 shell 前置检查允许升级旧 API，并继续核对完整生产矩阵`, () => {
-    const result = runPhase(phase);
+  test(`${phase} 实际 shell 前置检查要求私有身份，并继续核对完整生产矩阵`, () => {
+    const result = runPhase(phase, { privateSnapshot: true });
     assert.equal(result.status, 0, result.stderr);
-    const drift = runPhase(phase, { drift: true });
+    const drift = runPhase(phase, { drift: true, privateSnapshot: true });
     assert.notEqual(drift.status, 0);
     assert.match(drift.stderr, /Production changed after promotion gate/);
   });
@@ -103,6 +110,8 @@ for (const phase of ['acs', 'app']) {
 test('Web 阶段和 API 保持原样的发布仍拒绝缺失私有快照', () => {
   for (const [phase, options] of [
     ['web', {}],
+    ['acs', {}],
+    ['app', {}],
     ['acs', { keepApi: true }],
   ]) {
     const result = runPhase(phase, options);
@@ -133,5 +142,5 @@ test('Web 允许已升级的私有身份先于 trusted 提交，并继续拒绝�
   }
   const keep = runPhase('web', { privateSnapshot: true, keepApi: true });
   assert.notEqual(keep.status, 0);
-  assert.match(keep.stderr, /missing from trusted runtime identity/);
+  assert.match(keep.stderr, /digest disagrees across observers/);
 });

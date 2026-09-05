@@ -17,8 +17,8 @@ import type {
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { DwsRequesterResolution } from '../dws/requesterIdentityResolver.js';
 
-// Keep reply-window fixtures relative to wall-clock time so the suite cannot expire.
-export const now = new Date().toISOString();
+export const now = '2026-08-14T00:00:00.000Z';
+const injectedNowMs = Date.parse(now) + 60_000;
 
 export interface DwsOrgGroupRouterHarnessOptions {
   liveDeny?: boolean;
@@ -255,12 +255,10 @@ export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       _id: string, _owner: string, _fence: number, text: string, reasonCode: string,
     ) => ({ ...claimed, state: 'reply_pending', replyKind: 'access_rejection',
       responseText: text, rejectionReasonCode: reasonCode })),
-    // 真实 store 会写入当前时间；测试夹具也必须对齐 DWS 23 小时幂等窗口。
-    // 固定时间会随真实时钟推移而穿越窗口，造成与业务无关的假失败。
     markReplyAttemptStarted: vi.fn().mockImplementation(async () => ({
       ...claimed,
       state: 'reply_pending',
-      replyStartedAt: new Date().toISOString(),
+      replyStartedAt: now,
     })),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
     reject: vi.fn().mockImplementation(async (
@@ -566,6 +564,7 @@ export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
       : {}),
     isOrgAgentRuntimeV2Ready: () => true,
     logger,
+    now: () => injectedNowMs,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
     ...(options.frontReplyDeadlineMs ? { frontReplyDeadlineMs: options.frontReplyDeadlineMs } : {}),

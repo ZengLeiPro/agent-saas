@@ -158,6 +158,7 @@ export interface AgentDwsMessageRouterOptions {
   leaseRenewMs?: number;
   maxConcurrency?: number;
   frontReplyDeadlineMs?: number;
+  now?: () => number; // 可注入时钟；测试用于让幂等窗口判定确定化。
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -179,7 +180,6 @@ export class AgentDwsMessageRouter {
   private retryTimer?: NodeJS.Timeout;
   private pumping = false;
   private stopped = false;
-
   constructor(private readonly options: AgentDwsMessageRouterOptions) {
     this.pollMs = boundedPositive(options.pollMs, DEFAULT_POLL_MS);
     this.leaseTtlMs = boundedPositive(options.leaseTtlMs, DEFAULT_LEASE_TTL_MS);
@@ -202,7 +202,6 @@ export class AgentDwsMessageRouter {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
   }
-
   start(): void {
     if (this.stopped || this.timer) return;
     this.timer = setInterval(() => this.scheduleKick(), this.pollMs);
@@ -564,6 +563,7 @@ export class AgentDwsMessageRouter {
         item,
         this.workerId,
         shared.routingClarification,
+        this.options.now?.() ?? Date.now(),
       );
       const clarificationDelivery = await this.visibleReply.send(
         account, item, clarificationText, shared, 'front_reply', 'replied',
@@ -651,7 +651,7 @@ export class AgentDwsMessageRouter {
       this.workerId,
       item.leaseFence,
     );
-    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'reply');
+    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'reply', this.options.now?.() ?? Date.now());
     const replyAccount = await this.options.accountStore.getForTenant(
       item.tenantId,
       item.accountId,
@@ -735,7 +735,7 @@ export class AgentDwsMessageRouter {
       this.workerId,
       item.leaseFence,
     );
-    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply');
+    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply', this.options.now?.() ?? Date.now());
     const rejectionDelivery = await this.visibleReply.send(
       account,
       item,

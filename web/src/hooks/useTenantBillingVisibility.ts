@@ -1,21 +1,19 @@
 import { useEffect, useState } from "react";
 
+import { resolveBillingAllowance } from "@agent/shared";
+import type { BillingAllowance, TenantBillingSummary } from "@agent/shared";
+
 import { authFetch } from "@/lib/authFetch";
 
-export interface TenantBillingSummary {
-  balanceCredits: number;
-  billingEnabled: boolean;
-  billingMode: string;
-}
+// 计费口径（额度取值、可见性、文案）已下沉 shared（PR #476）；
+// 本 hook 只保留取数与 tenant 作用域缓存。
+export type { BillingAllowance, TenantBillingSummary };
+export { resolveBillingAllowance };
 
+/** 本 hook 只消费额度两字段，故用 shared MyMemberBudget 的子集。 */
 export interface MyMemberBudget {
   monthlyLimitCredits: number | null;
   remainingCredits: number | null;
-}
-
-export interface BillingAllowance {
-  credits: number;
-  source: "member" | "tenant";
 }
 
 interface BillingSummaryState {
@@ -33,16 +31,6 @@ const HIDDEN_BILLING_SUMMARY: TenantBillingSummary = {
   billingEnabled: false,
   billingMode: "internal",
 };
-
-export function resolveBillingAllowance(
-  summary: TenantBillingSummary,
-  budget: MyMemberBudget | null,
-): BillingAllowance {
-  if (budget && budget.monthlyLimitCredits !== null && budget.remainingCredits !== null) {
-    return { credits: budget.remainingCredits, source: "member" };
-  }
-  return { credits: summary.balanceCredits, source: "tenant" };
-}
 
 export function useTenantBillingSummary(tenantId?: string | null): TenantBillingSummary | null {
   const [state, setState] = useState<BillingSummaryState | null>(null);

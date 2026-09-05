@@ -54,8 +54,8 @@ NODE
         aliyun cr ListRepoBuildRecordLog \
           --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
           --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
-          --BuildRecordId "$build_record_id" --Offset 0 --PageSize 100 > "$logs"
-        node scripts/release/verify-acr-build-revision.mjs "$logs" "$RELEASE_SHA"
+          --BuildRecordId "$build_record_id" --Offset 0 > "$logs"
+        node scripts/release/verify-acr-build-revision.mjs "$logs" "$RELEASE_SHA" main
         break
         ;;
       FAILED|CANCELED)

@@ -144,7 +144,7 @@ function setup(input: {
     markReplyAttemptStarted: vi.fn().mockImplementation(async (inboxId: string) => {
       const entry = claimedById.get(inboxId) ?? claimed;
       return { ...entry, state: 'reply_pending',
-        replyStartedAt: entry.replyStartedAt ?? new Date().toISOString() };
+        replyStartedAt: entry.replyStartedAt ?? item.updatedAt };
     }),
     defer: vi.fn().mockResolvedValue({ ...claimed, state: 'retry_wait' }),
     complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
@@ -198,6 +198,7 @@ function setup(input: {
     ...(input.recoveredEvents ? {
       eventStore: { listByRun: vi.fn().mockResolvedValue(input.recoveredEvents) },
     } : {}),
+    now: () => Date.parse(item.updatedAt) + 60_000,
     pollMs: input.pollMs ?? 60_000,
     leaseTtlMs: 60_000,
     leaseRenewMs: 30_000,
@@ -771,7 +772,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       attempt: 2,
       runId: 'run-a',
       responseText: '已生成的回复',
-      replyStartedAt: new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString(),
+      replyStartedAt: new Date(Date.parse(item.updatedAt) - 24 * 60 * 60 * 1_000).toISOString(),
     };
     const { router, messageStore, sender } = setup({ claimed });
 

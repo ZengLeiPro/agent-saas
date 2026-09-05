@@ -10,6 +10,13 @@
  * - 后端 503（file backend 未装配 PG）→ enabled=false，按钮隐藏。
  */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  MESSAGE_FEEDBACK_PATH,
+  buildMessageFeedbackPayload,
+  messageFeedbackOutcome,
+  messageFeedbackSessionPath,
+  parseSubmittedFeedbackHashes,
+} from '@agent/shared';
 import { authFetch } from '@/lib/authFetch';
 
 export interface MessageFeedbackContextValue {
@@ -44,17 +51,18 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
     setSubmittedHashes(new Set());
     setEnabled(true);
     if (!sessionId) return;
-    authFetch(`/api/feedback/session/${encodeURIComponent(sessionId)}`)
+    authFetch(messageFeedbackSessionPath(sessionId))
       .then(async (res) => {
         if (cancelled) return;
-        if (res.status === 503) {
+        const outcome = messageFeedbackOutcome(res.status);
+        if (outcome === 'disabled') {
           setEnabled(false);
           return;
         }
-        if (!res.ok) return;
-        const data = await res.json() as { items?: Array<{ contentHash: string }> };
+        if (outcome !== 'ok') return;
+        const hashes = parseSubmittedFeedbackHashes(await res.json());
         if (cancelled) return;
-        setSubmittedHashes(new Set((data.items ?? []).map((item) => item.contentHash)));
+        setSubmittedHashes(new Set(hashes));
       })
       .catch(() => { /* 加载失败保持空集合，提交仍幂等 */ });
     return () => { cancelled = true; };
@@ -68,21 +76,22 @@ export function MessageFeedbackProvider({ sessionId, children }: { sessionId: st
   const submit = useCallback(async (args: { messageId: string; content: string; comment?: string }) => {
     if (!sessionId) return false;
     try {
-      const res = await authFetch('/api/feedback', {
+      const res = await authFetch(MESSAGE_FEEDBACK_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(buildMessageFeedbackPayload({
           sessionId,
           messageId: args.messageId,
           content: args.content,
-          ...(args.comment?.trim() ? { comment: args.comment.trim() } : {}),
-        }),
+          ...(args.comment !== undefined ? { comment: args.comment } : {}),
+        })),
       });
-      if (res.status === 503) {
+      const outcome = messageFeedbackOutcome(res.status);
+      if (outcome === 'disabled') {
         setEnabled(false);
         return false;
       }
-      if (!res.ok) return false;
+      if (outcome !== 'ok') return false;
       const data = await res.json() as { contentHash?: string };
       if (data.contentHash) {
         setSubmittedHashes((prev) => {

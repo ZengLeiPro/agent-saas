@@ -634,8 +634,8 @@ jobs:
                   --region "$ACR_REGION_ID" \
                   --InstanceId "$ACR_INSTANCE_ID" \
                   --BuildRecordId "$brecord_id" \
-                  --Offset 0 --PageSize 100 > "$logs_file"
-                node scripts/release/verify-acr-build-revision.mjs "$logs_file" "$GITHUB_SHA"
+                  --Offset 0 > "$logs_file"
+                node scripts/release/verify-acr-build-revision.mjs "$logs_file" "$GITHUB_SHA" main
                 echo "image_tag=$btag" >> "$GITHUB_OUTPUT"
                 echo "build_record_id=$brecord_id" >> "$GITHUB_OUTPUT"
                 exit 0
@@ -831,7 +831,10 @@ jobs:
             scripts/release/verify-installed-release.mjs \
             scripts/release/write-compatibility-acs-identity.mjs \
             scripts/release/write-live-production-identity.mjs "$stage/scripts/release/"
-          tar --no-xattrs -czf "$RUNNER_TEMP/acs-orchestrator.tgz" -C "$stage" .
+          # seal-root-staged-payload.sh 拒绝任何链接条目：pnpm 内容寻址仓库会让同内容文件共享 inode
+          # （tar 记为硬链接 h），node_modules/.bin 是符号链接且 ECS 上的服务只执行 dist/index.js。
+          tar --no-xattrs --hard-dereference --exclude='*/node_modules/.bin' \
+            -czf "$RUNNER_TEMP/acs-orchestrator.tgz" -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name acsOrchestrator \
             --file "$RUNNER_TEMP/acs-orchestrator.tgz" \

@@ -105,9 +105,10 @@ export function rejectionMessage(reason: string): string {
 export function assertDwsReplyAttemptFresh(
   replyStartedAt: string | undefined,
   kind: 'reply' | 'rejection reply',
+  nowMs = Date.now(),
 ): void {
   if (!replyStartedAt) throw new Error(`Agent DWS ${kind} attempt timestamp is missing`);
-  if (Date.now() - Date.parse(replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
+  if (nowMs - Date.parse(replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
     throw new Error(`Agent DWS ${kind} idempotency window expired; manual reconciliation required`);
   }
 }
@@ -117,13 +118,14 @@ export async function prepareRoutingClarificationReply(
   item: AgentDwsInboxRecord,
   owner: string,
   currentText: string,
+  nowMs = Date.now(),
 ): Promise<string> {
   const responseText = item.state === 'reply_pending' ? item.responseText : currentText;
   if (!responseText) throw new Error('Agent DWS routing clarification reply is missing');
   if (item.state !== 'reply_pending')
     await store.saveDispatchResult(item.inboxId, owner, item.leaseFence, responseText);
   const attempt = await store.markReplyAttemptStarted(item.inboxId, owner, item.leaseFence);
-  assertDwsReplyAttemptFresh(attempt.replyStartedAt, 'reply');
+  assertDwsReplyAttemptFresh(attempt.replyStartedAt, 'reply', nowMs);
   return responseText;
 }
 

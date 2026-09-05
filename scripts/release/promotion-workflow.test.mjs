@@ -1088,11 +1088,11 @@ test('App cleanup after Worker drain restores both sides before the success rece
   const cleanupEnd = deploy.indexOf('  arm_deploy_rollback cleanup_app_failure', cleanupStart);
   const cleanup = deploy.slice(cleanupStart, cleanupEnd);
   const workerDrain = deploy.indexOf(
-    'install -m 0644 /dev/null "/run/agent-saas-runtime-worker-$worker_active.draining"',
+    'hand_off_retired_authority "agent-saas-runtime-worker@$worker_active"',
     cleanupEnd,
   );
   const apiDrain = deploy.indexOf(
-    'install -m 0644 /dev/null "/run/agent-saas-server-$api_active.draining"',
+    'hand_off_retired_authority "agent-saas-server@$api_active"',
     workerDrain,
   );
   assert.ok(workerDrain > cleanupEnd && apiDrain > workerDrain);

@@ -606,41 +606,45 @@ test('Production and Staging deploy modules enforce atomic App topology and priv
   assert.ok(forwardAppApiCheck > forwardApiFinalCheck);
   assert.ok(forwardAppWorkerCheck > forwardAppApiCheck);
   assert.ok(forwardAppMarker > forwardAppWorkerCheck);
-  const forwardRetireApi = production.indexOf(
-    'retire_systemd_authority "agent-saas-server@$api_active"',
+  // 交接语义：authority 提交后先把 committed 点前移，再把旧 Worker/API 交给后台 drain，
+  // 不等待、不 --now 强停；候选侧的最终校验在交接之后继续执行。
+  const committedBeforeHandoff = production.indexOf(
+    'DEPLOY_APP_ROLLBACK_COMMITTED=true',
     forwardAppMarker,
   );
-  const forwardRetireWorker = production.indexOf(
-    'retire_systemd_authority "agent-saas-runtime-worker@$worker_active"',
-    forwardRetireApi,
+  const forwardHandoffWorker = production.indexOf(
+    'hand_off_retired_authority "agent-saas-runtime-worker@$worker_active"',
+    committedBeforeHandoff,
+  );
+  const forwardHandoffApi = production.indexOf(
+    'hand_off_retired_authority "agent-saas-server@$api_active"',
+    forwardHandoffWorker,
   );
   const committedApiFinalCheck = production.indexOf(
     "'Committed candidate App final API ConfigIdentity'",
-    forwardRetireWorker,
+    forwardHandoffApi,
   );
   const committedWorkerFinalCheck = production.indexOf(
     "'Committed candidate App final Worker ConfigIdentity'",
     committedApiFinalCheck,
   );
-  const rollbackCommitted = production.indexOf(
-    'DEPLOY_APP_ROLLBACK_COMMITTED=true',
-    committedWorkerFinalCheck,
-  );
   const candidateCommitFailure = production.slice(
     production.indexOf("echo 'Candidate App lost authority before marker commit'"),
-    production.indexOf('old_worker_pid=', forwardAppMarker),
+    committedBeforeHandoff,
   );
   assert.doesNotMatch(candidateCommitFailure, /release_config_governance_fence/u);
-  assert.ok(forwardRetireApi > forwardAppMarker);
-  assert.ok(forwardRetireWorker > forwardRetireApi);
-  assert.ok(committedApiFinalCheck > forwardRetireWorker);
+  assert.ok(committedBeforeHandoff > forwardAppMarker);
+  assert.ok(forwardHandoffWorker > committedBeforeHandoff);
+  assert.ok(forwardHandoffApi > forwardHandoffWorker);
+  assert.ok(committedApiFinalCheck > forwardHandoffApi);
   assert.ok(committedWorkerFinalCheck > committedApiFinalCheck);
+  const deployAppBody = production.slice(deployAppStart, production.indexOf('case "$PHASE" in', deployAppStart));
+  assert.doesNotMatch(deployAppBody, /retire_systemd_authority|systemctl disable --now "agent-saas-(?:server|runtime-worker)@\$(?:api|worker)_active"/u);
   const committedRouteCheck = production.indexOf(
     'validate_api_routing_boundary "$api_idle" "$release_id"',
     committedWorkerFinalCheck,
   );
   assert.ok(committedRouteCheck > committedWorkerFinalCheck);
-  assert.ok(rollbackCommitted > committedRouteCheck);
   assert.match(production, /\[ "\$api_candidate_admitted" = true \]/u);
   const appMarkerCommit = production.slice(
     production.indexOf('commit_app_active_colors() {'),

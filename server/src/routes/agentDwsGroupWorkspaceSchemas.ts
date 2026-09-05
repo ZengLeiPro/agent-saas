@@ -2,9 +2,15 @@ import { z } from 'zod';
 
 import type { OrgAgentEffectiveConfig } from '../data/orgGroupAgents/index.js';
 
+const GROUP_DWS_RESOURCE_ID = /^doc:[^\s,]+$/;
+
 export const groupWorkspaceQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
 });
+
+export const groupBindingCreateSchema = z
+  .object({ conversationId: z.string().trim().min(1).max(1024) })
+  .strict();
 
 export const groupWorkspaceUpdateSchema = z
   .object({
@@ -44,8 +50,7 @@ export const groupWorkspaceUpdateSchema = z
                   .string()
                   .trim()
                   .min(3)
-                  .max(1_200)
-                  .regex(/^[a-z][a-z0-9_-]{0,31}:.+$/, 'DWS 资源必须使用 <module>:<resourceId>'),
+                  .max(1_200),
               )
               .max(200)
               .optional(),
@@ -69,7 +74,18 @@ export const groupWorkspaceUpdateSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if ((!value.enabled || value.policy.liveDeny)) return;
+    const invalidIndex = value.effectiveConfig.capabilities.dwsResourceIds
+      ?.findIndex((resourceId) => !GROUP_DWS_RESOURCE_ID.test(resourceId)) ?? -1;
+    if (invalidIndex < 0) return;
+    context.addIssue({
+      code: 'custom',
+      message: '共享群 DWS 资源必须使用 doc:<nodeId>',
+      path: ['effectiveConfig', 'capabilities', 'dwsResourceIds', invalidIndex],
+    });
+  });
 
 export const deliveryReconcileSchema = z
   .object({
@@ -140,6 +156,8 @@ export function groupDwsCapabilityError(
   enforce: boolean,
 ): string | undefined {
   if (!enforce) return undefined;
+  if (config.capabilities.dwsResourceIds.some((id) => !GROUP_DWS_RESOURCE_ID.test(id)))
+    return '共享群 DWS 资源目前仅支持 doc:<nodeId>';
   if (
     config.capabilities.toolNames.includes('DwsBusiness') &&
     config.capabilities.dwsResourceIds.length === 0

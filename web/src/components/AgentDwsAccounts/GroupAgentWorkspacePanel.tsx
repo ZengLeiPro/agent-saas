@@ -52,7 +52,26 @@ export interface Binding {
     access: { triggerRoles: string[]; approvalRoles: string[] };
     speech: { proactive: boolean; requireMention: boolean };
   };
-  effectiveConfigComputation?: Record<string, unknown>;
+  effectiveConfigComputation?: {
+    publishedAgent: {
+      skillIds: string[];
+      knowledgeSkillIds: string[];
+      sourceIds: string[];
+      executionMode: string;
+      enabled: boolean;
+    };
+    channelCeiling: {
+      toolNames: string[];
+      contextSourceIds: string[];
+      contextDirectoryAvailable: boolean;
+    };
+    groupNarrowing: Binding['effectiveConfig'];
+    liveOverrides: {
+      bindingEnabled: boolean;
+      liveDeny: boolean;
+      accountStatus: string;
+    };
+  };
 }
 
 export interface WorkOrder {
@@ -146,6 +165,11 @@ interface WorkspaceResponse {
   workspaces: WorkspaceGroup[];
   deliveries: Delivery[];
   approvals: GroupAgentApproval[];
+  observedGroups?: Array<{
+    conversationId: string;
+    lastEventAt: string;
+    bindingId: string | null;
+  }>;
 }
 
 export type WorkspaceMutation = (
@@ -154,6 +178,8 @@ export type WorkspaceMutation = (
   body: unknown,
   method?: 'POST' | 'PATCH',
 ) => Promise<void>;
+
+const GROUP_DWS_RESOURCE_ID = /^doc:[^\s,]+$/;
 
 function csv(value: string): string[] {
   return [
@@ -186,8 +212,13 @@ export function GroupAgentWorkspacePanel({
   const [data, setData] = useState<WorkspaceResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [groupToCreate, setGroupToCreate] = useState('');
   const eligible = useMemo(
-    () => accounts.filter((account) => account.status === 'active'),
+    () => accounts.filter((account) => (
+      Boolean(account.profileId && account.corpId && account.dingtalkUserId)
+      && account.status !== 'draft'
+      && account.status !== 'authorizing'
+    )),
     [accounts],
   );
   useEffect(() => {
@@ -215,8 +246,15 @@ export function GroupAgentWorkspacePanel({
     }
   }, [accountId, tenantId]);
   useEffect(() => {
+    setGroupToCreate('');
     void load();
   }, [load]);
+  const unboundGroups = useMemo(
+    () => (data?.observedGroups ?? []).filter((group) => !group.bindingId),
+    [data?.observedGroups],
+  );
+  const selectedAccount = eligible.find((account) => account.accountId === accountId);
+  const canCreateBinding = selectedAccount?.status === 'active';
 
   const mutate = async (
     key: string,
@@ -267,7 +305,7 @@ export function GroupAgentWorkspacePanel({
           <SelectContent>
             {eligible.map((account) => (
               <SelectItem key={account.accountId} value={account.accountId}>
-                {account.displayName}
+                {account.displayName}{account.status === 'active' ? '' : `（${account.status}）`}
               </SelectItem>
             ))}
           </SelectContent>
@@ -285,6 +323,55 @@ export function GroupAgentWorkspacePanel({
         {!accountId ? (
           <p className="text-sm text-muted-foreground">先完成一个成员账号的 OAuth 授权。</p>
         ) : null}
+        {data ? (
+          <section className="space-y-3 rounded-lg border p-4">
+            <div>
+              <h3 className="font-medium">从已观测群创建配置</h3>
+              <p className="text-sm text-muted-foreground">
+                选择该成员账号 Personal Stream 已收到过 @ 的群，创建独立 shadow 绑定后再配置并激活。
+              </p>
+            </div>
+            {selectedAccount && !canCreateBinding ? (
+              <p className="text-sm text-warning-foreground">
+                当前账号为 {selectedAccount.status}，可查看并停用已有配置；重新激活账号后才能创建新群配置。
+              </p>
+            ) : null}
+            {unboundGroups.length ? (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-72 flex-1 space-y-1">
+                  <Label>已观测群</Label>
+                  <Select value={groupToCreate} onValueChange={setGroupToCreate}>
+                    <SelectTrigger aria-label="已观测群">
+                      <SelectValue placeholder="选择一个尚未绑定的群" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {unboundGroups.map((group) => (
+                        <SelectItem key={group.conversationId} value={group.conversationId}>
+                          {group.conversationId} · 最近事件 {group.lastEventAt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  type="button"
+                  disabled={!groupToCreate || !canCreateBinding || Boolean(busy)}
+                  onClick={() => void mutate(
+                    'create-binding',
+                    `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace/bindings`,
+                    { conversationId: groupToCreate },
+                  )}
+                >
+                  创建群配置
+                </Button>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                暂无尚未绑定的已观测群。受钉钉 Personal Stream 能力限制，群需先 @ 一次该成员账号才会进入选择列表。
+              </p>
+            )}
+          </section>
+        ) : null}
         {data?.bindings.map((binding) => (
           <BindingEditor
             key={`${binding.bindingId}:${binding.revision}`}
@@ -299,7 +386,7 @@ export function GroupAgentWorkspacePanel({
         ))}
         {data && data.bindings.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            尚未发现群绑定；群内首次 @ 后会生成 shadow 绑定，再由管理员激活。
+            尚未创建群绑定；先从上方已观测群中选择并创建 shadow 绑定。
           </p>
         ) : null}
         <GroupAgentApprovalQueue
@@ -427,17 +514,29 @@ function BindingEditor({
   const [taskVisibility, setTaskVisibility] = useState(binding.policy.taskVisibility);
   const [triggerRoles, setTriggerRoles] = useState(binding.effectiveConfig.access.triggerRoles);
   const [approvalRoles, setApprovalRoles] = useState(binding.effectiveConfig.access.approvalRoles);
-  const [skills, setSkills] = useState(binding.effectiveConfig.capabilities.skillIds.join(', '));
-  const [tools, setTools] = useState(binding.effectiveConfig.capabilities.toolNames.join(', '));
+  const [skills, setSkills] = useState(binding.effectiveConfig.capabilities.skillIds);
+  const [tools, setTools] = useState(binding.effectiveConfig.capabilities.toolNames);
   const [dwsResources, setDwsResources] = useState(
     binding.effectiveConfig.capabilities.dwsResourceIds.join(', '),
   );
-  const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds.join(', '));
+  const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds);
   const [memoryPolicy, setMemoryPolicy] = useState(binding.effectiveConfig.memory);
+  const computation = binding.effectiveConfigComputation;
+  const skillCatalog = computation?.publishedAgent.skillIds;
+  const toolCatalog = computation?.channelCeiling.toolNames;
+  const sourceCatalog = computation?.channelCeiling.contextDirectoryAvailable
+    ? computation.channelCeiling.contextSourceIds.filter((sourceId) =>
+        computation.publishedAgent.sourceIds.includes(sourceId),
+      )
+    : undefined;
   const save = async () => {
     onBusy(`binding:${binding.bindingId}`);
     onError('');
     try {
+      const parsedDwsResources = csv(dwsResources);
+      if (enabled && !liveDeny
+        && parsedDwsResources.some((resourceId) => !GROUP_DWS_RESOURCE_ID.test(resourceId)))
+        throw new Error('共享群 DWS 资源目前仅支持 doc:<nodeId>');
       const response = await authFetch(
         `/api/agent-dws-accounts/${encodeURIComponent(accountId)}/group-workspace?tenantId=${encodeURIComponent(tenantId)}`,
         {
@@ -462,12 +561,12 @@ function BindingEditor({
               instructions: { system: instructions.trim() },
               knowledge: {
                 contextEnabled,
-                sourceIds: csv(sources),
+                sourceIds: sources,
               },
               capabilities: {
-                skillIds: csv(skills),
-                toolNames: csv(tools),
-                dwsResourceIds: csv(dwsResources),
+                skillIds: skills,
+                toolNames: tools,
+                dwsResourceIds: parsedDwsResources,
               },
               memory: memoryPolicy,
               access: { triggerRoles, approvalRoles },
@@ -520,39 +619,47 @@ function BindingEditor({
             onChange={(event) => setDisplayName(event.target.value)}
           />
         </div>
-        <div>
-          <Label>技能 ID</Label>
-          <Input value={skills} onChange={(event) => setSkills(event.target.value)} />
-        </div>
-        <div>
-          <Label>工具名</Label>
-          <Input value={tools} onChange={(event) => setTools(event.target.value)} />
-          <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-            <Switch
-              checked={csv(tools).includes('DwsBusiness')}
-              onCheckedChange={(checked) => {
-                const next = csv(tools).filter((name) => name !== 'DwsBusiness');
-                setTools((checked ? [...next, 'DwsBusiness'] : next).join(', '));
-              }}
-              aria-label="启用钉钉业务工具"
-            />
-            启用钉钉业务工具（共享群受动作矩阵约束）
-          </label>
-        </div>
-        <div>
-          <Label>知识源 ID</Label>
-          <Input value={sources} onChange={(event) => setSources(event.target.value)} />
-        </div>
+        <CapabilityToggles
+          label="技能"
+          options={skillCatalog}
+          selected={skills}
+          onChange={setSkills}
+          emptyMessage="当前 Agent 未发布可选技能，无法为该群新增技能。"
+          unavailableMessage="技能目录暂不可用；已保留当前配置，请刷新后再选择。"
+        />
+        <CapabilityToggles
+          label="工具"
+          options={toolCatalog}
+          selected={tools}
+          onChange={setTools}
+          emptyMessage="当前群入口未开放可选工具。"
+          unavailableMessage="工具目录暂不可用；已保留当前配置，请刷新后再选择。"
+          formatOption={(value) => value === 'DwsBusiness'
+            ? 'DwsBusiness（钉钉业务工具）'
+            : value}
+        />
+        <CapabilityToggles
+          label="知识源"
+          options={sourceCatalog}
+          selected={sources}
+          onChange={setSources}
+          emptyMessage="当前 Agent 与群授权范围没有交集，无法选择知识源。"
+          unavailableMessage="知识源目录暂不可用；已保留当前配置，请刷新或检查账号的 Context 授权。"
+        />
         <div>
           <Label htmlFor={`dws-resources-${binding.bindingId}`}>钉钉资源范围</Label>
           <Input
             id={`dws-resources-${binding.bindingId}`}
             value={dwsResources}
-            placeholder="例如 doc:节点ID、drive:文件夹ID"
+            placeholder="例如 doc:节点ID"
+            pattern="(?:doc:[^\\s,]+)(?:\\s*,\\s*doc:[^\\s,]+)*"
+            title="仅支持 doc:<nodeId>，多个资源用逗号分隔"
             onChange={(event) => setDwsResources(event.target.value)}
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            启用钉钉业务工具时必填；格式为模块:资源ID，多个用逗号分隔。
+            当前接口无法枚举 DWS 资源。共享群目前只验证了钉钉文档命令；请从文档资源详情或地址复制节点 ID，
+            按 doc:&lt;nodeId&gt; 填写（多个用逗号分隔）。其他模块尚无确定性资源选择器，不能在此配置。
+            不确定节点 ID 时先不要选择 DwsBusiness，避免凭名称猜测。
           </p>
         </div>
       </div>
@@ -566,7 +673,7 @@ function BindingEditor({
           启用企业上下文
         </label>
         <p className="text-xs text-muted-foreground md:col-span-2">
-          启用后须配置知识源，并在工具名中保留 ContextSearch 与 ContextGet；服务端会按当前群绑定再次校验。
+          启用后须从上方目录选择知识源，并保留 ContextSearch 与 ContextGet；服务端会按当前群绑定再次校验。
         </p>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
@@ -669,6 +776,73 @@ function BindingEditor({
         </pre>
       </details>
     </section>
+  );
+}
+
+function CapabilityToggles({
+  label,
+  options,
+  selected,
+  onChange,
+  emptyMessage,
+  unavailableMessage,
+  formatOption = (value) => value,
+}: {
+  label: string;
+  options?: string[];
+  selected: string[];
+  onChange(value: string[]): void;
+  emptyMessage: string;
+  unavailableMessage: string;
+  formatOption?(value: string): string;
+}) {
+  const catalog = options ? [...new Set(options)].sort() : undefined;
+  const staleSelections = catalog
+    ? selected.filter((value) => !catalog.includes(value))
+    : [];
+  const toggle = (value: string, checked: boolean) => {
+    onChange(checked
+      ? [...new Set([...selected, value])]
+      : selected.filter((item) => item !== value));
+  };
+  return (
+    <fieldset className="min-w-0 space-y-2 rounded-md border p-3">
+      <legend className="px-1 text-sm font-medium">{label}</legend>
+      {catalog?.map((value) => (
+        <label key={value} className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={selected.includes(value)}
+            onCheckedChange={(checked) => toggle(value, checked)}
+            aria-label={`${label}：${value}`}
+          />
+          <span className="break-all">{formatOption(value)}</span>
+        </label>
+      ))}
+      {catalog && catalog.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{emptyMessage}</p>
+      ) : null}
+      {!catalog ? (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>{unavailableMessage}</p>
+          {selected.length ? <p className="break-all">当前保留：{selected.join('、')}</p> : null}
+        </div>
+      ) : null}
+      {staleSelections.length ? (
+        <div className="space-y-1 rounded-md bg-muted p-2 text-xs text-muted-foreground">
+          <p>以下既有值不在当前目录中，只能保留或移除，不能新增：</p>
+          {staleSelections.map((value) => (
+            <label key={value} className="flex items-center gap-2">
+              <Switch
+                checked
+                onCheckedChange={(checked) => toggle(value, checked)}
+                aria-label={`${label}：移除非目录值 ${value}`}
+              />
+              <span className="break-all">{value}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </fieldset>
   );
 }
 

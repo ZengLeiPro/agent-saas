@@ -1,8 +1,8 @@
 import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
 import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
-import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
+import { bindingMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 
 const MAX_EVENT_ID_LENGTH = 512;
 
@@ -33,14 +33,12 @@ export async function pinActiveOrgAgentGroupRouting(input: {
 }): Promise<void> {
   const { store, account, event, item } = input;
   if (!store || event.type !== 'user_im_message_receive_at') return;
-  const binding = await store.ensureShadowBinding({
-    tenantId: account.tenantId,
-    accountId: account.accountId,
-    agentId: account.agentId,
-    conversationId: event.conversationId!,
-    channelKind: 'group',
-    workspaceId: deriveAgentWorkspaceId(account.tenantId, account.agentId),
-  });
+  const binding = await store.getBinding(
+    account.tenantId,
+    account.accountId,
+    event.conversationId!,
+  );
+  if (!binding || !bindingMatchesCurrentAccountIdentity(binding, account)) return;
   if (
     binding.activationState !== 'active' ||
     !binding.enabled ||

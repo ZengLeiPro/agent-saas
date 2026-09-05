@@ -1,13 +1,18 @@
 import { createHash } from 'node:crypto';
 
 import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
+import type {
+  AgentDwsInboxRecord,
+  AgentDwsMessageStore,
+} from '../data/agentDwsMessages/index.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
 import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
+import { inboxMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
 const MAX_SYSTEM_CONTEXT_FIELD = 500;
+const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 
 export function isV1InboxWithoutIdentity(item: AgentDwsInboxRecord): boolean {
   return (
@@ -20,14 +25,7 @@ export function matchesInboxAccountIdentity(
   item: AgentDwsInboxRecord,
   account: AgentDwsAccountRecord,
 ): boolean {
-  const rawIdentity = item.payload.accountIdentity;
-  if (!rawIdentity || typeof rawIdentity !== 'object' || Array.isArray(rawIdentity)) return false;
-  const identity = rawIdentity as Record<string, unknown>;
-  return (
-    identity.profileId === account.profileId &&
-    identity.corpId === account.corpId &&
-    identity.dingtalkUserId === account.dingtalkUserId
-  );
+  return inboxMatchesCurrentAccountIdentity(item, account);
 }
 
 export function buildSystemContext(
@@ -93,11 +91,50 @@ export function rejectionMessage(reason: string): string {
     case 'ORG_AGENT_AUDIENCE_DENIED':
     case 'ORG_AGENT_TRIGGER_ROLE_DENIED':
       return '你目前不在这个 Agent 的可用范围内，请联系管理员调整成员范围。';
+    case 'ORG_AGENT_CHANNEL_DISABLED':
+      return '本群的 Agent 配置已停用，请联系管理员重新激活。';
+    case 'ORG_AGENT_CHANNEL_UNCONFIGURED':
+      return '本群尚未配置 Agent。请管理员在群工作台选择该群，创建并激活独立配置。';
     case 'ORG_AGENT_UNAVAILABLE':
       return '这个 Agent 当前未启用，请联系管理员检查账号与 Agent 状态。';
     default:
       return '当前请求未通过组织权限检查。请联系管理员确认本群配置和你的访问范围。';
   }
+}
+
+export function assertDwsReplyAttemptFresh(
+  replyStartedAt: string | undefined,
+  kind: 'reply' | 'rejection reply',
+  nowMs = Date.now(),
+): void {
+  if (!replyStartedAt) throw new Error(`Agent DWS ${kind} attempt timestamp is missing`);
+  if (nowMs - Date.parse(replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
+    throw new Error(`Agent DWS ${kind} idempotency window expired; manual reconciliation required`);
+  }
+}
+
+export async function prepareRoutingClarificationReply(
+  store: AgentDwsMessageStore,
+  item: AgentDwsInboxRecord,
+  owner: string,
+  currentText: string,
+  nowMs = Date.now(),
+): Promise<string> {
+  const responseText = item.state === 'reply_pending' ? item.responseText : currentText;
+  if (!responseText) throw new Error('Agent DWS routing clarification reply is missing');
+  if (item.state !== 'reply_pending')
+    await store.saveDispatchResult(item.inboxId, owner, item.leaseFence, responseText);
+  const attempt = await store.markReplyAttemptStarted(item.inboxId, owner, item.leaseFence);
+  assertDwsReplyAttemptFresh(attempt.replyStartedAt, 'reply', nowMs);
+  return responseText;
+}
+
+export function persistedRejectionReason(item: AgentDwsInboxRecord): string | undefined {
+  if (item.state !== 'reply_pending' || item.replyKind !== 'access_rejection') return undefined;
+  if (!item.rejectionReasonCode || item.responseText === undefined) {
+    throw new Error('Agent DWS persisted rejection reply metadata is incomplete');
+  }
+  return item.rejectionReasonCode;
 }
 
 export function collectAssistantText(events: PlatformEvent[]): string {
@@ -153,6 +190,7 @@ export function compactError(error: unknown): string {
   );
 }
 
+/** Adapts the legacy nullable resolver into the fail-closed outcome contract. */
 export async function legacyRequesterResolution(
   resolver: (
     account: AgentDwsAccountRecord,
@@ -167,4 +205,62 @@ export async function legacyRequesterResolution(
   return requester
     ? { status: 'resolved', requester }
     : { status: 'unmapped', reason: 'REQUESTER_IDENTITY_UNMAPPED' };
+}
+
+export async function authorizeCurrentDwsRequester(input: {
+  account: AgentDwsAccountRecord;
+  expectedRequester: UserIdentity;
+  senderOpenDingtalkId: string;
+  senderName?: string;
+  sessionId: string;
+  runId: string;
+  resolveRequester: (
+    account: AgentDwsAccountRecord,
+    senderOpenDingtalkId: string,
+    senderName?: string,
+  ) => Promise<UserIdentity | null> | UserIdentity | null;
+  resolveRequesterOutcome?: (
+    account: AgentDwsAccountRecord,
+    senderOpenDingtalkId: string,
+    senderName?: string,
+  ) => Promise<DwsRequesterResolution> | DwsRequesterResolution;
+  authorizeRequester: (input: {
+    account: AgentDwsAccountRecord;
+    requester: UserIdentity;
+    sessionId: string;
+    runId: string;
+    phase?: 'dispatch' | 'provider_start';
+  }) => Promise<{ allowed: boolean; reason?: string }>;
+}): Promise<{ allowed: boolean; reason?: string }> {
+  let resolution: DwsRequesterResolution;
+  try {
+    resolution = input.resolveRequesterOutcome
+      ? await input.resolveRequesterOutcome(
+          input.account, input.senderOpenDingtalkId, input.senderName,
+        )
+      : await legacyRequesterResolution(
+          input.resolveRequester, input.account, input.senderOpenDingtalkId, input.senderName,
+        );
+  } catch {
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_REVALIDATION_FAILED' };
+  }
+  if (resolution.status !== 'resolved') return { allowed: false, reason: resolution.reason };
+  const current = resolution.requester;
+  const samePrincipal = current.id === input.expectedRequester.id
+    && current.tenantId === input.account.tenantId
+    && current.tenantId === input.expectedRequester.tenantId
+    && current.username === input.expectedRequester.username;
+  const sameStaffId = !input.resolveRequesterOutcome || (
+    Boolean(current.dingtalkStaffId)
+    && current.dingtalkStaffId === input.expectedRequester.dingtalkStaffId
+  );
+  if (!samePrincipal || !sameStaffId)
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_CHANGED' };
+  return await input.authorizeRequester({
+    account: input.account,
+    requester: current,
+    sessionId: input.sessionId,
+    runId: input.runId,
+    phase: 'provider_start',
+  });
 }

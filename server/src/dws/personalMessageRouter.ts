@@ -36,6 +36,8 @@ import {
   sharedAllowedTools,
 } from './orgAgentGroupPolicy.js';
 import {
+  assertDwsReplyAttemptFresh,
+  authorizeCurrentDwsRequester,
   boundedExternalId,
   boundedPositive,
   buildSystemContext,
@@ -46,13 +48,18 @@ import {
   legacyRequesterResolution,
   matchesInboxAccountIdentity,
   normalizeEventTimestamp,
+  persistedRejectionReason,
+  prepareRoutingClarificationReply,
   rejectionMessage,
   safeLogId,
   serviceIdentity,
 } from './personalMessageRouterHelpers.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import { deliverNextOrgAgentIntent } from './orgAgentDeliveryWorker.js';
-import { OrgAgentVisibleReplyService, settleFrontReply } from './orgAgentVisibleReply.js';
+import {
+  finalizeReplyDelivery, OrgAgentProviderAuthorizationRevokedError,
+  OrgAgentVisibleReplyService, settleFrontReply,
+} from './orgAgentVisibleReply.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
@@ -62,7 +69,6 @@ const DEFAULT_LEASE_RENEW_MS = 30_000;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 32;
 const ACTIVE_RUN_RECHECK_MS = 30_000;
-const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 const DEFAULT_FRONT_REPLY_DEADLINE_MS = 3_000;
 const MAX_EVENT_ID_LENGTH = 512;
 const MAX_CONVERSATION_ID_LENGTH = 1_024;
@@ -130,6 +136,7 @@ export interface AgentDwsMessageRouterOptions {
     requester: UserIdentity;
     sessionId: string;
     runId: string;
+    phase?: 'dispatch' | 'provider_start';
   }) => Promise<{ allowed: boolean; reason?: string }>;
   auditRequesterRejection: (input: {
     account: AgentDwsAccountRecord;
@@ -151,8 +158,7 @@ export interface AgentDwsMessageRouterOptions {
   leaseRenewMs?: number;
   maxConcurrency?: number;
   frontReplyDeadlineMs?: number;
-  /** 可注入时钟（毫秒），默认 Date.now；测试用于让幂等窗口判定确定化。 */
-  now?: () => number;
+  now?: () => number; // 可注入时钟；测试用于让幂等窗口判定确定化。
   logger?: {
     info(message: string): void;
     warn(message: string): void;
@@ -174,7 +180,6 @@ export class AgentDwsMessageRouter {
   private retryTimer?: NodeJS.Timeout;
   private pumping = false;
   private stopped = false;
-
   constructor(private readonly options: AgentDwsMessageRouterOptions) {
     this.pollMs = boundedPositive(options.pollMs, DEFAULT_POLL_MS);
     this.leaseTtlMs = boundedPositive(options.leaseTtlMs, DEFAULT_LEASE_TTL_MS);
@@ -197,12 +202,6 @@ export class AgentDwsMessageRouter {
       throw new Error('Agent DWS inbox lease renew interval must be shorter than its TTL');
     }
   }
-
-  /** 真实时钟读取统一走这里，便于测试注入固定时间。 */
-  private now(): number {
-    return this.options.now?.() ?? Date.now();
-  }
-
   start(): void {
     if (this.stopped || this.timer) return;
     this.timer = setInterval(() => this.scheduleKick(), this.pollMs);
@@ -471,7 +470,11 @@ export class AgentDwsMessageRouter {
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
     }
-
+    const persistedRejection = persistedRejectionReason(item);
+    if (persistedRejection) {
+      await this.rejectAccess(account, item, persistedRejection);
+      return;
+    }
     const senderName =
       typeof item.payload.senderName === 'string' ? item.payload.senderName : undefined;
     const serviceEvent = item.payload.source === 'background_task_completion';
@@ -536,7 +539,6 @@ export class AgentDwsMessageRouter {
       await this.rejectAccess(account, item, 'REQUESTER_IDENTITY_UNMAPPED_OR_AMBIGUOUS');
       return;
     }
-
     const candidateSessionId = `agent-dws-session-${randomUUID()}`;
     const runId =
       item.runId ?? deterministicId('agent-dws-run', `${item.accountId}:${item.eventId}`);
@@ -556,25 +558,17 @@ export class AgentDwsMessageRouter {
       return;
     }
     if (shared?.routingClarification) {
-      await this.options.messageStore.saveDispatchResult(
-        item.inboxId,
-        this.workerId,
-        item.leaseFence,
-        shared.routingClarification,
-      );
-      await this.options.messageStore.markReplyAttemptStarted(
-        item.inboxId,
-        this.workerId,
-        item.leaseFence,
-      );
-      await this.visibleReply.send(
-        account,
+      const clarificationText = await prepareRoutingClarificationReply(
+        this.options.messageStore,
         item,
+        this.workerId,
         shared.routingClarification,
-        shared,
-        'front_reply',
-        'replied',
+        this.options.now?.() ?? Date.now(),
       );
+      const clarificationDelivery = await this.visibleReply.send(
+        account, item, clarificationText, shared, 'front_reply', 'replied',
+      );
+      if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, clarificationDelivery))) return;
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
       return;
     }
@@ -657,11 +651,7 @@ export class AgentDwsMessageRouter {
       this.workerId,
       item.leaseFence,
     );
-    if (!replyAttempt.replyStartedAt)
-      throw new Error('Agent DWS reply attempt timestamp is missing');
-    if (this.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
-      throw new Error('Agent DWS reply idempotency window expired; manual reconciliation required');
-    }
+    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'reply', this.options.now?.() ?? Date.now());
     const replyAccount = await this.options.accountStore.getForTenant(
       item.tenantId,
       item.accountId,
@@ -674,35 +664,41 @@ export class AgentDwsMessageRouter {
     ) {
       throw new Error('Agent DWS account identity changed before reply');
     }
-    await settleFrontReply(
-      frontReplyDeadline,
-      () =>
-        this.visibleReply.send(
-          replyAccount,
-          item,
-          responseText,
-          shared,
-          'front_reply',
-          'replied',
-          'first',
-        ),
-      () =>
-        this.visibleReply.send(
-          replyAccount,
-          item,
-          responseText,
-          shared,
-          'front_reply',
-          'replied',
-          'final',
-        ),
+    const authorizeBeforeProvider = !shared && requester && !serviceEvent
+      ? () => authorizeCurrentDwsRequester({
+          account: replyAccount, expectedRequester: requester,
+          senderOpenDingtalkId: item.senderOpenDingtalkId!, ...(senderName ? { senderName } : {}),
+          sessionId, runId, resolveRequester: this.options.resolveRequester,
+          ...(this.options.resolveRequesterOutcome
+            ? { resolveRequesterOutcome: this.options.resolveRequesterOutcome } : {}),
+          authorizeRequester: this.options.authorizeRequester,
+        })
+      : undefined;
+    const sendReply = (phase: 'first' | 'final') => this.visibleReply.send(
+      replyAccount, item, responseText, shared, 'front_reply', 'replied', phase,
+      undefined, authorizeBeforeProvider,
     );
+    let replyDelivery;
+    try {
+      replyDelivery = await settleFrontReply(
+        frontReplyDeadline, () => sendReply('first'), () => sendReply('final'),
+      );
+    } catch (error) {
+      if (!(error instanceof OrgAgentProviderAuthorizationRevokedError)) throw error;
+      await this.options.auditRequesterRejection({ account: replyAccount,
+        eventId: item.eventId, ...(requester ? { requester } : {}), reason: error.reason });
+      await this.visibleReply.replacePendingWithAccessRejection(
+        replyAccount, item, rejectionMessage(error.reason), error.reason, true);
+      return;
+    }
+    if (!(await finalizeReplyDelivery(
+      this.options.messageStore, this.workerId, item, replyDelivery,
+    ))) return;
     await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
     this.options.logger?.info(
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,
     );
   }
-
   private async rejectAccess(
     account: AgentDwsAccountRecord,
     item: AgentDwsInboxRecord,
@@ -715,19 +711,32 @@ export class AgentDwsMessageRouter {
       ...(requester ? { requester } : {}),
       reason,
     });
-    const responseText = rejectionMessage(reason);
-    await this.options.messageStore.saveDispatchResult(
+    if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
+      await this.visibleReply.replacePendingWithAccessRejection(
+        account, item, rejectionMessage(reason), reason,
+      );
+      this.options.logger?.warn(`Agent DWS pending normal reply reconciled account=${item.accountId} event=${item.eventId} reason=${reason}`);
+      return;
+    }
+    // processing 阶段先持久化拒绝正文与类型；拒绝型 reply_pending 重领时直接恢复。
+    const saved = item.state === 'reply_pending'
+      ? item
+      : await this.options.messageStore.saveRejectionResult(
+          item.inboxId,
+          this.workerId,
+          item.leaseFence,
+          rejectionMessage(reason),
+          reason,
+        );
+    const responseText = saved.responseText ?? rejectionMessage(reason);
+    const reasonCode = saved.rejectionReasonCode ?? reason;
+    const replyAttempt = await this.options.messageStore.markReplyAttemptStarted(
       item.inboxId,
       this.workerId,
       item.leaseFence,
-      responseText,
     );
-    await this.options.messageStore.markReplyAttemptStarted(
-      item.inboxId,
-      this.workerId,
-      item.leaseFence,
-    );
-    await this.visibleReply.send(
+    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply', this.options.now?.() ?? Date.now());
+    const rejectionDelivery = await this.visibleReply.send(
       account,
       item,
       responseText,
@@ -735,12 +744,17 @@ export class AgentDwsMessageRouter {
       'access_rejection',
       'rejected',
     );
-    await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+    if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, rejectionDelivery))) return;
+    await this.options.messageStore.reject(
+      item.inboxId,
+      this.workerId,
+      item.leaseFence,
+      reasonCode,
+    );
     this.options.logger?.warn(
-      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reason}`,
+      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reasonCode}`,
     );
   }
-
   private async recoverOrResumeMissingRun(
     item: AgentDwsInboxRecord,
     sessionId: string,
@@ -791,7 +805,6 @@ export class AgentDwsMessageRouter {
     if (!recovered.trim()) throw new Error('Agent DWS completed run has no recoverable reply');
     return recovered;
   }
-
   private async dispatch(
     item: AgentDwsInboxRecord,
     sessionId: string,

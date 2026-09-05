@@ -15,9 +15,15 @@ export async function buildGroupWorkspaceView(input: {
   agentStore: Pick<OrgAgentStore, 'get'>;
   limit: number;
   frontdeskTools: ReadonlySet<string>;
-  contextCeiling: { publishedSourceIds: string[]; channelSourceIds: string[] };
+  contextCeiling: {
+    available: boolean;
+    publishedSourceIds: string[];
+    channelSourceIds: string[];
+  };
 }) {
   const groupBindings = input.bindings.filter((binding) => binding.channelKind === 'group');
+  // Group resources without a currently visible identity-bound binding stay fail-closed.
+  const visibleBindingIds = new Set(groupBindings.map((binding) => binding.bindingId));
   const data = await input.store.loadGroupWorkspace({
     tenantId: input.tenantId,
     bindingIds: groupBindings.map((binding) => binding.bindingId),
@@ -73,6 +79,7 @@ export async function buildGroupWorkspaceView(input: {
           channelCeiling: {
             toolNames: [...input.frontdeskTools].sort(),
             contextSourceIds: input.contextCeiling.channelSourceIds,
+            contextDirectoryAvailable: input.contextCeiling.available,
           },
           groupNarrowing: binding.effectiveConfig,
           liveOverrides: {
@@ -84,7 +91,9 @@ export async function buildGroupWorkspaceView(input: {
       };
     }),
     workspaces,
-    deliveries: input.deliveries.map(toPublicDeliveryRecord),
+    deliveries: input.deliveries
+      .filter((record) => Boolean(record.bindingId && visibleBindingIds.has(record.bindingId)))
+      .map(toPublicDeliveryRecord),
   };
 }
 

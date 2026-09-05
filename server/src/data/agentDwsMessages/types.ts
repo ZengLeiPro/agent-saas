@@ -16,6 +16,11 @@ export interface AgentDwsLegacyAccountIdentityCandidate {
   dingtalkUserId: string;
 }
 
+export interface AgentDwsCurrentAccountIdentity
+  extends AgentDwsLegacyAccountIdentityCandidate {
+  identityUpdatedAt: string;
+}
+
 export interface AgentDwsNormalizedEvent {
   tenantId: string;
   accountId: string;
@@ -50,6 +55,9 @@ export interface AgentDwsInboxRecord {
   runId?: string;
   responseText?: string;
   replyStartedAt?: string;
+  replyKind?: 'normal' | 'access_rejection';
+  disposition?: 'rejected' | 'reply_blocked' | 'delivery_unknown';
+  rejectionReasonCode?: string;
   attempt: number;
   maxAttempts: number;
   leaseOwner?: string;
@@ -87,7 +95,18 @@ export interface AgentDwsIngestResult {
 export interface AgentDwsMessageStore {
   init(): Promise<void>;
   ingest(event: AgentDwsNormalizedEvent, rawPayload: unknown): Promise<AgentDwsIngestResult>;
-  listForAccount(tenantId: string, accountId: string, limit?: number): Promise<AgentDwsInboxRecord[]>;
+  listForAccount(
+    tenantId: string,
+    accountId: string,
+    limit?: number,
+    identity?: AgentDwsCurrentAccountIdentity,
+  ): Promise<AgentDwsInboxRecord[]>;
+  hasObservedGroup(
+    tenantId: string,
+    accountId: string,
+    conversationId: string,
+    identity: AgentDwsCurrentAccountIdentity,
+  ): Promise<boolean>;
   listActiveForAccount(tenantId: string, accountId: string): Promise<AgentDwsInboxRecord[]>;
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
   releaseClaim(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
@@ -119,6 +138,15 @@ export interface AgentDwsMessageStore {
     fence: number,
     responseText: string,
   ): Promise<AgentDwsInboxRecord>;
+  /** Persists a new rejection or atomically replaces an unsent normal reply. */
+  saveRejectionResult(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    responseText: string,
+    reasonCode: string,
+    replacePendingReply?: boolean,
+  ): Promise<AgentDwsInboxRecord>;
   markReplyAttemptStarted(
     inboxId: string,
     owner: string,
@@ -132,6 +160,23 @@ export interface AgentDwsMessageStore {
     reason: string,
   ): Promise<AgentDwsInboxRecord>;
   complete(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
+  reject(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord>;
+  blockReply(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    reasonCode: string,
+  ): Promise<AgentDwsInboxRecord>;
+  markReplyUnknown(
+    inboxId: string,
+    owner: string,
+    fence: number,
+  ): Promise<AgentDwsInboxRecord>;
   fail(
     inboxId: string,
     owner: string,

@@ -70,16 +70,16 @@
         {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:7b66409def5a89d2c8172594266c61e8ef168380226f55cc1190c342aefc1604",
-          "targetDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
           "classification": "no-schema-change",
-          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。"
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
         },
         {
           "path": "server/src/data/entitlements/types.ts",
           "baselineDigest": "sha256:3477de456af56a1964cf5c656cb295fe2f80cc4e56fb673097cabc78a2928e35",
-          "targetDigest": "sha256:147e65ebcd35b499283ba19d7cb5ef2117d971bf89885813e5f43e5ac5b156b1",
+          "targetDigest": "sha256:dc4bcd5462853feb7e452ad9cd394bddd7d8a3fbc94f9031f36aa91fcc291a3e",
           "classification": "no-schema-change",
-          "reason": "权限类型和常量定义，无数据库执行。"
+          "reason": "权限类型和常量定义，无数据库执行。WP2a 复审：ENTITLEMENT_RESOURCE_TYPES 增加 integrated_system。"
         },
         {
           "path": "server/src/data/feedback/store.ts",
@@ -91,16 +91,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",

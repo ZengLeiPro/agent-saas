@@ -1,10 +1,10 @@
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, ScrollView, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { showTextPrompt } from '../../src/lib/prompt';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown } from 'lucide-react-native';
-import { evaluateAgentTargetTransition, type AgentTarget, type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems, mergeIncomingShareText } from '@agent/shared';
+import { type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems, mergeIncomingShareText } from '@agent/shared';
 import { BackButton } from '../../src/components/BackButton';
 import type { PickerExtraSection } from '../../src/components/chat/ModelPicker';
 import type { DrillDownPage } from '../../src/components/overlays/DropdownMenu';
@@ -17,18 +17,34 @@ import { useOnlineStatus } from '../../src/hooks/useOnlineStatus';
 import { useWsLifecycle } from '../../src/hooks/useWsLifecycle';
 import { useAppLifecycle } from '../../src/hooks/useAppLifecycle';
 import { useScrollToTop } from '../../src/hooks/useScrollToTop';
+import { useRuntimeRecovery } from '../../src/hooks/useRuntimeRecovery';
+import { useAgentSwitch } from '../../src/hooks/useAgentSwitch';
 import { MessageList } from '../../src/components/chat/MessageList';
-import { AskUserBlock, PermissionBlock } from '../../src/components/chat/MessageItem';
+import { EmptyChatRecommendCards } from '../../src/components/chat/EmptyChatRecommendCards';
+import { ExpertWelcome } from '../../src/components/chat/ExpertWelcome';
+import { useScenarioDeepLink } from '../../src/hooks/useScenarioDeepLink';
+import { resolveActiveExpertPresentation } from '../../src/lib/activeExpertPresentation';
+import { SubagentTranscriptSheet } from '../../src/components/chat/SubagentTranscriptSheet';
+import {
+  SubagentTranscriptProvider,
+  type SubagentTranscriptTarget,
+} from '../../src/components/chat/blocks';
+import { MessageFeedbackProvider } from '../../src/contexts/MessageFeedbackContext';
+import { AskUserPromptPanel } from '../../src/components/chat/AskUserPromptPanel';
+import { QueuedMessageBar } from '../../src/components/chat/QueuedMessageBar';
 import { ChatInput } from '../../src/components/chat/ChatInput';
 import { ConnectionBanner } from '../../src/components/ConnectionBanner';
-import { TokenDetailTrigger, TokenDetailOverlay } from '../../src/components/chat/TokenDetail';
-import { ModelPicker } from '../../src/components/chat/ModelPicker';
+import { TokenDetailOverlay } from '../../src/components/chat/TokenDetail';
+import { ChatHeaderRight, ChatHeaderTitle } from '../../src/components/chat/ChatSessionHeader';
+import { BillingDetailOverlay, useBillingBadgeData } from '../../src/components/chat/BillingMiniBadge';
+import { OrgAgentPickerSheet } from '../../src/components/chat/OrgAgentPickerSheet';
+import { AgentSwitchConfirmation } from '../../src/components/chat/AgentSwitchConfirmation';
 import { KeyboardStickyView, KeyboardAvoidingView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import { useHeaderHeight } from '@react-navigation/elements';
 import ReAnimated, { useAnimatedStyle, interpolate } from 'react-native-reanimated';
 import { hapticLight } from '../../src/lib/haptics';
 import { glassFree } from '../../src/lib/headerItems';
-import { useColors, typography, type ThemeColors } from '../../src/theme';
+import { useColors, spacing, radius, fontScale, type ThemeColors } from '../../src/theme';
 
 export default function ChatDetailScreen() {
   const colors = useColors();
@@ -45,11 +61,16 @@ export default function ChatDetailScreen() {
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
   const { width: screenWidth } = useWindowDimensions();
-  const styles = useScreenStyles(colors, screenWidth);
+  const styles = useScreenStyles(colors);
 
-  const { listRef } = useScrollToTop<RenderItem>();
+  const { listRef, scrollToTop } = useScrollToTop<RenderItem>();
+  // 失败恢复：失败用户消息原位重试，其余失败补发「继续」（与 Web 同语义）。
+  const recoverFromFailure = useRuntimeRecovery();
   const [tooShortTip, setTooShortTip] = useState(false);
-  const [showTokenDetail, setShowTokenDetail] = useState(false);
+  // 两张用量卡互斥展开（与 Web MobileLayout `activeUsageCard` 同语义）
+  const [activeUsageCard, setActiveUsageCard] = useState<'context' | 'billing' | null>(null);
+  // 子任务完整过程：面板挂在会话页（这里才拿得到 MessageList），块内只发起打开请求
+  const [transcriptTarget, setTranscriptTarget] = useState<SubagentTranscriptTarget | null>(null);
   const defaultBottomPadding = 56 + insets.bottom;
   const [composerHeight, setComposerHeight] = useState(defaultBottomPadding);
   const lastComposerHeightRef = useRef(defaultBottomPadding);
@@ -137,11 +158,11 @@ export default function ChatDetailScreen() {
     } else {
       chat.voiceCallbackRef.current = undefined;
     }
-  }, [tts.available, tts.autoPlay]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tts.available, tts.autoPlay]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const handleVoiceSend = useCallback(async (fileUri: string, durationMs: number) => {
     await chat.sendVoiceMessage(fileUri, durationMs);
-  }, [chat.sendVoiceMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat.sendVoiceMessage]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const recorder = useVoiceRecorder({
     onVoiceSend: handleVoiceSend,
@@ -165,15 +186,6 @@ export default function ChatDetailScreen() {
 
   const sessionOwner = currentSession?.owner?.username;
   const headerAgentTarget = currentSession?.agentTarget ?? chat.activeAgentTarget;
-  const [pendingAgentSwitch, setPendingAgentSwitch] = useState<AgentTarget | null>(null);
-
-  const headerAgentTargetLabel = currentSession
-    ? currentSession.agentTargetSnapshot?.name ?? '绑定不可验证'
-    : headerAgentTarget?.kind === 'personal'
-      ? '个人 Agent'
-      : headerAgentTarget?.kind === 'org-agent'
-        ? chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === headerAgentTarget.orgAgentId)?.presentation?.name ?? '企业专家'
-        : '绑定不可验证';
 
   // Fetch the correct agent profile for the session owner (not the global ownerFilter-based one)
   const [sessionAgentProfile, setSessionAgentProfile] = useState<Awaited<ReturnType<typeof fetchAgentProfile>> | null>(null);
@@ -184,6 +196,16 @@ export default function ChatDetailScreen() {
       .then(setSessionAgentProfile)
       .catch(() => setSessionAgentProfile(null));
   }, [sessionOwner, authUser?.username]);
+
+  // 顶栏 Agent 名回落链与 Web MobileLayout 一致：
+  // 服务端绑定快照 → 目录里的专家名 → 本人 Agent 档案名 → 兜底。
+  const headerAgentTargetLabel = currentSession
+    ? currentSession.agentTargetSnapshot?.name ?? '绑定不可验证'
+    : headerAgentTarget?.kind === 'personal'
+      ? sessionAgentProfile?.name ?? '个人 Agent'
+      : headerAgentTarget?.kind === 'org-agent'
+        ? chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === headerAgentTarget.orgAgentId)?.presentation?.name ?? '企业专家'
+        : '绑定不可验证';
 
   const isNewSession = !effectiveSessionId;
 
@@ -224,23 +246,13 @@ export default function ChatDetailScreen() {
       }
     }
 
-    if (!(isAdminUser && chat.ownerFilter === null) && chat.agentTargetCatalog) {
-      const actions = [chat.agentTargetCatalog.personal, ...chat.agentTargetCatalog.orgAgents]
-        .filter(option => option.availability.status === 'available')
-        .map(option => ({
-          id: option.target.kind === 'personal' ? '_agent:personal' : `_agent:${option.target.orgAgentId}`,
-          label: option.target.kind === 'personal' ? '切换到个人 Agent' : `切换到 ${(option.presentation as { name?: string } | undefined)?.name ?? '企业专家'}`,
-        }));
-      if (actions.length > 0) sections.push({ id: '_agent_section', actions });
-    }
-
     sections.push({
       id: '_compact_section',
       actions: [{ id: '_compact', label: '压缩上下文' }],
     });
 
     return sections;
-  }, [chat.agentTargetCatalog, chat.ownerFilter, isAdminUser, isNewSession, isReadOnlyGroups, currentGroupId]);
+  }, [isNewSession, isReadOnlyGroups, currentGroupId]);
 
   // Drill-down: group selection — 使用 getSortedGroupItems 统一排序，与其他入口一致
   const drillDowns = useMemo<Record<string, DrillDownPage> | undefined>(() => {
@@ -258,67 +270,15 @@ export default function ChatDetailScreen() {
     };
   }, [isNewSession, isReadOnlyGroups, currentGroupId, groups, sorting]);
 
-  const launchAgentSwitch = useCallback((target: AgentTarget) => {
-    chat.startAgentTargetSession(target);
-    router.replace('/chat/new');
-  }, [chat.startAgentTargetSession, router]);
+  // Agent 切换编排（目标选择 / shared 决策 / 确认 / 取消活动）整体收在独立 hook 里。
+  const agentSwitch = useAgentSwitch({
+    sessionId: effectiveSessionId ?? null,
+    currentSession,
+    onLaunchNewSession: useCallback(() => { router.replace('/chat/new'); }, [router]),
+  });
 
-  const requestAgentSwitch = useCallback((target: AgentTarget) => {
-    const option = target.kind === 'personal'
-      ? chat.agentTargetCatalog?.personal
-      : chat.agentTargetCatalog?.orgAgents.find(candidate => candidate.target.kind === 'org-agent' && candidate.target.orgAgentId === target.orgAgentId);
-    const queueItems = chat.chatQueueItems.filter(item => item.sessionId === effectiveSessionId && ['queued', 'running', 'cancel_pending'].includes(item.status));
-    const decision = evaluateAgentTargetTransition({
-      currentSession: effectiveSessionId && currentSession?.agentTarget
-        ? { sessionId: effectiveSessionId, target: currentSession.agentTarget, bindingVersion: currentSession.agentTargetBindingVersion ?? 0 }
-        : null,
-      requestedTarget: target,
-      runLiveness: chat.loading
-        ? { state: 'active', recoveryActions: ['cancel'], version: 1 }
-        : { state: 'terminal', recoveryActions: [], version: 1 },
-      queueSnapshot: effectiveSessionId && queueItems.length ? {
-        version: 1, sessionId: effectiveSessionId, generatedAt: new Date().toISOString(), items: queueItems,
-      } : null,
-      pendingInteraction: currentSession?.activeInteraction ?? null,
-      availability: option?.availability ?? { status: 'unavailable', reason: { code: 'no_available_target', message: '该 Agent 当前不可用', contactAdmin: true } },
-      generation: 1,
-      availabilityVersion: currentSession?.agentTargetSnapshot?.version ?? 1,
-    });
-    if (decision.kind === 'blocked') { Alert.alert('无法切换 Agent', decision.reason.message); return; }
-    if (decision.kind === 'reuse') { chat.selectSession(decision.sessionId); return; }
-    if (decision.kind === 'new-session') { launchAgentSwitch(decision.target); return; }
-    Alert.alert('切换 Agent', '当前会话仍有运行中、排队中或待处理交互。不同 Agent 将开启新会话，草稿和附件会保留。', [
-      { text: '暂不切换', style: 'cancel' },
-      { text: '保留旧会话运行', onPress: () => launchAgentSwitch(target) },
-      { text: '取消活动后切换', style: 'destructive', onPress: () => {
-        setPendingAgentSwitch(target);
-        chat.stopGeneration();
-        void chat.cancelAgentSwitchQueue().then(ok => {
-          if (!ok) { setPendingAgentSwitch(null); Alert.alert('取消失败', '服务端未确认排队消息取消，请重试。'); }
-        });
-      } },
-    ]);
-  }, [chat, currentSession, effectiveSessionId, launchAgentSwitch]);
-
-  useEffect(() => {
-    if (!pendingAgentSwitch) return;
-    const activeQueue = chat.chatQueueItems.some(item => item.sessionId === effectiveSessionId && ['queued', 'running', 'cancel_pending'].includes(item.status));
-    if (chat.loading || activeQueue || currentSession?.activeInteraction) return;
-    const target = pendingAgentSwitch;
-    setPendingAgentSwitch(null);
-    launchAgentSwitch(target);
-  }, [chat.chatQueueItems, chat.loading, currentSession?.activeInteraction, effectiveSessionId, launchAgentSwitch, pendingAgentSwitch]);
-
-  const handleTitleAction = useCallback((actionId: string) => {
+  const handleSessionMenuAction = useCallback((actionId: string) => {
     if (!sessionId || isNewSession) return;
-    if (actionId.startsWith('_agent:')) {
-      const key = actionId.slice('_agent:'.length);
-      const target = key === 'personal'
-        ? chat.agentTargetCatalog?.personal.target
-        : chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === key)?.target;
-      if (target) requestAgentSwitch(target);
-      return;
-    }
     if (actionId === '_rename') {
       showTextPrompt({
         title: '重命名会话',
@@ -342,7 +302,7 @@ export default function ChatDetailScreen() {
         ],
       );
     }
-  }, [sessionId, isNewSession, currentSession?.title, currentGroupId, chat.agentTargetCatalog, chat.renameSession, chat.autoTitleSession, chat.compactSession, removeSessionsFromGroup, requestAgentSwitch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, isNewSession, currentSession?.title, currentGroupId, chat.renameSession, chat.autoTitleSession, chat.compactSession, removeSessionsFromGroup]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const handleDrillDownSelect = useCallback((parentId: string, childId: string) => {
     if (!sessionId || isNewSession) return;
@@ -366,7 +326,7 @@ export default function ChatDetailScreen() {
     if (newSessionId) {
       router.replace({ pathname: '/chat/[sessionId]' as any, params: { sessionId: newSessionId } });
     }
-  }, [chat.forkFromMessage, router]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chat.forkFromMessage, router]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   const handlePreviewMd = useCallback((filePath: string) => {
     if (getPreviewFileType(filePath) === 'html') {
@@ -435,7 +395,7 @@ export default function ChatDetailScreen() {
     if (sessionId && sessionId !== chat.sessionId) {
       chat.selectSession(sessionId);
     }
-  }, [sessionId, chat.sessionId, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, chat.sessionId, navigation]); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
   // 系统级分享流程：share-target 页面把已上传完成的文件存到 PendingSharedFilesContext，
   // 这里在挂载时一次性消费并灌入 fileUpload state，等用户补一句话发送。
@@ -447,70 +407,75 @@ export default function ChatDetailScreen() {
       // Inbound text augments rather than replaces the owner-scoped composer draft.
       chat.setInput(mergeIncomingShareText(chat.input, incoming.text));
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // 依赖故意收窄（react-hooks/exhaustive-deps 在本仓库未启用）
 
-  const pendingInteractions = useMemo(() => chat.messages
-    .filter((message): message is Extract<MessageItem, { type: 'ask_user' | 'permission_request' }> =>
-      (message.type === 'ask_user' || message.type === 'permission_request') && message.status === 'pending')
-    .sort((left, right) => (left.interactionOrder ?? Number.MAX_SAFE_INTEGER) - (right.interactionOrder ?? Number.MAX_SAFE_INTEGER)
-      || (left.interactionVersion ?? 0) - (right.interactionVersion ?? 0)
-      || left.interactionId.localeCompare(right.interactionId)), [chat.messages]);
-  const activeInteraction = pendingInteractions[0] ?? null;
   const interactionDisabled = Boolean(chat.activeAgentTargetUnavailableReason || !chat.activeAgentTarget);
+
+  // 场景直达：deep link 命中的起手指令预填进输入框（只预填，不自动发送）。
+  useScenarioDeepLink(useCallback((prompt: string) => { chat.setInput(prompt); }, [chat.setInput]));
+
+  // 空会话态：企业专家会话展示其起手任务，否则回落到岗位场景推荐卡。
+  const activeExpert = useMemo(
+    () => resolveActiveExpertPresentation(chat.agentTargetCatalog, headerAgentTarget),
+    [chat.agentTargetCatalog, headerAgentTarget],
+  );
+  const showEmptyState = chat.messages.length === 0 && !chat.isLoadingMessages && !chat.loading;
+
+  const transcriptValue = useMemo(
+    () => ({ openTranscript: (target: SubagentTranscriptTarget) => setTranscriptTarget(target) }),
+    [],
+  );
+
+  // 顶栏右侧的积分徽标：数据面与 Web BillingMiniBadge 同三条接口，30s 轮询。
+  const billing = useBillingBadgeData(effectiveSessionId ?? null);
+
+  const toggleUsageCard = useCallback((card: 'context' | 'billing') => {
+    hapticLight();
+    setActiveUsageCard(prev => (prev === card ? null : card));
+  }, []);
+
+  // 顶栏左键三态：子任务面板打开时先关面板，否则退回会话列表。
+  const handleHeaderBack = useCallback(() => {
+    if (transcriptTarget) { setTranscriptTarget(null); return; }
+    router.back();
+  }, [transcriptTarget, router]);
+
+  const headerTitleNode = (
+    <ChatHeaderTitle
+      transcriptTitle={transcriptTarget?.title ?? null}
+      sessionTitle={currentSession?.title || '新会话'}
+      agentLabel={headerAgentTargetLabel}
+      screenWidth={screenWidth}
+      agentPickerDisabled={isAdminUser && chat.ownerFilter === null}
+      onPressAgent={agentSwitch.openPicker}
+      onPressBlank={scrollToTop}
+    />
+  );
+  const headerRightNode = (
+    <ChatHeaderRight
+      tokenUsage={chat.tokenUsage}
+      contextUsage={chat.contextUsage}
+      showContextTokens={chat.modelList?.showContextTokens !== false}
+      allowContextTokenDetails={chat.modelList?.allowContextTokenDetails === true}
+      onToggleTokenCard={() => toggleUsageCard('context')}
+      billing={billing}
+      onToggleBillingCard={() => toggleUsageCard('billing')}
+      ttsAvailable={tts.available}
+      ttsAutoPlay={tts.autoPlay}
+      onToggleTtsAutoPlay={tts.toggleAutoPlay}
+    />
+  );
 
   return (
     <View style={styles.container} testID="chat-screen">
       <Stack.Screen
         options={{
           title: '',
-          headerLeft: () => <BackButton />,
-          unstable_headerLeftItems: () => [glassFree(
-            <BackButton />
-          )],
-          headerTitle: () => {
-            const title = currentSession?.title || '新会话';
-            const renderTrigger = (modelLabel: string | null) => (
-              <View style={styles.navTitleRow}>
-                <View style={styles.navTitleInner}>
-                  <Text style={styles.navTitle} numberOfLines={1}>{title}</Text>
-                  <View style={styles.navModelRow}>
-                    <Text style={[styles.navModelText, { color: colors.mutedForeground }]} numberOfLines={1}>
-                      {headerAgentTargetLabel} · {modelLabel ?? '模型'}
-                    </Text>
-                    <ChevronDown size={10} color={colors.mutedForeground} strokeWidth={2} />
-                  </View>
-                </View>
-              </View>
-            );
-            const inner = chat.modelList ? (
-              <ModelPicker
-                testID="agent-target-picker"
-                modelList={chat.modelList}
-                selectedModel={chat.selectedModel}
-                onModelChange={chat.onModelChange}
-                sessionId={chat.sessionId}
-                extraSections={extraSections}
-                onExtraAction={handleTitleAction}
-                drillDowns={drillDowns}
-                onDrillDownSelect={handleDrillDownSelect}
-              >
-                {renderTrigger}
-              </ModelPicker>
-            ) : renderTrigger(null);
-            return inner;
-          },
-          headerRight: () => chat.tokenUsage ? (
-            <TokenDetailTrigger tokenUsage={chat.tokenUsage} contextUsage={chat.contextUsage} onPress={() => {
-              hapticLight();
-              setShowTokenDetail(prev => !prev);
-            }} />
-          ) : undefined,
-          unstable_headerRightItems: () => chat.tokenUsage ? [glassFree(
-            <TokenDetailTrigger tokenUsage={chat.tokenUsage} contextUsage={chat.contextUsage} onPress={() => {
-              hapticLight();
-              setShowTokenDetail(prev => !prev);
-            }} />
-          )] : [],
+          headerLeft: () => <BackButton onPress={handleHeaderBack} />,
+          unstable_headerLeftItems: () => [glassFree(<BackButton onPress={handleHeaderBack} />)],
+          headerTitle: () => headerTitleNode,
+          headerRight: () => headerRightNode,
+          unstable_headerRightItems: () => [glassFree(headerRightNode)],
         }}
       />
 
@@ -524,6 +489,16 @@ export default function ChatDetailScreen() {
         </View>
       ) : null}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
+      {/* 反馈入口的数据面开关：无会话或后端 503 时 value=null，气泡里的按钮零渲染 */}
+      {showEmptyState ? (
+        activeExpert ? (
+          <ExpertWelcome expert={activeExpert} onPrefill={chat.setInput} />
+        ) : (
+          <EmptyChatRecommendCards onTryScenario={(prompt) => chat.setInput(prompt)} />
+        )
+      ) : null}
+      <MessageFeedbackProvider sessionId={chat.sessionId}>
+      <SubagentTranscriptProvider value={transcriptValue}>
       <MessageList
         headerPadding={0}
         bottomPadding={Platform.OS === 'ios' ? composerHeight - (isKeyboardOpen ? insets.bottom : 0) : defaultBottomPadding}
@@ -536,7 +511,7 @@ export default function ChatDetailScreen() {
         listRef={listRef}
         onPermissionResponse={chat.handlePermissionResponse}
         onAskUserResponse={chat.handleAskUserResponse}
-        onRetryMessage={chat.retryMessage}
+        onRetryMessage={recoverFromFailure}
         onForkMessage={handleFork}
         onPreviewMd={handlePreviewMd}
         onTtsPlay={tts.available ? tts.play : undefined}
@@ -545,31 +520,18 @@ export default function ChatDetailScreen() {
         isLoadingEarlier={chat.isLoadingEarlier}
         onLoadEarlier={chat.loadEarlierMessages}
       />
+      </SubagentTranscriptProvider>
+      </MessageFeedbackProvider>
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>
         <View onLayout={handleComposerLayout}>
-        {activeInteraction ? (
-          <View
-            style={styles.interactionZone}
-            accessibilityLabel={activeInteraction.type === 'ask_user' ? '待回答问题' : '待处理权限请求'}
-            testID="canonical-interaction-zone"
-          >
-            <ScrollView
-              style={styles.interactionScroll}
-              contentContainerStyle={styles.interactionScrollContent}
-              nestedScrollEnabled
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-            >
-              {activeInteraction.type === 'ask_user' ? (
-                <AskUserBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handleAskUserResponse} />
-              ) : (
-                <PermissionBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handlePermissionResponse} />
-              )}
-              {pendingInteractions.length > 1 ? <Text style={styles.interactionQueueText}>另有 {pendingInteractions.length - 1} 个交互按服务端顺序排队</Text> : null}
-            </ScrollView>
-          </View>
-        ) : null}
+        <QueuedMessageBar />
+        <AskUserPromptPanel
+          messages={chat.messages}
+          disabled={interactionDisabled}
+          onAskUserResponse={chat.handleAskUserResponse}
+          onPermissionResponse={chat.handlePermissionResponse}
+        />
         <ChatInput
           input={chat.input}
           setInput={chat.setInput}
@@ -593,6 +555,14 @@ export default function ChatDetailScreen() {
           sessionId={chat.sessionId}
           tooShortTip={tooShortTip}
           disabledReason={chat.activeAgentTargetUnavailableReason?.message ?? (!chat.activeAgentTarget ? '没有可用的 Agent 目标，请联系组织管理员。' : null)}
+          modelList={chat.modelList}
+          selectedModel={chat.selectedModel}
+          onModelChange={chat.onModelChange}
+          modelExtraSections={extraSections}
+          onModelExtraAction={handleSessionMenuAction}
+          modelDrillDowns={drillDowns}
+          onModelDrillDownSelect={handleDrillDownSelect}
+          sessionSandboxProfile={currentSession?.sandboxProfile}
         />
         {/* Safe area padding — smoothly animated with keyboard via Reanimated */}
         {insets.bottom > 0 && <ReAnimated.View style={safeAreaAnimStyle} />}
@@ -608,83 +578,68 @@ export default function ChatDetailScreen() {
         </Animated.View>
       </KeyboardStickyView>
 
-      {/* Token detail overlay */}
-      {showTokenDetail && chat.tokenUsage && (
+      {/* 用量卡：上下文明细与积分明细互斥展开 */}
+      {activeUsageCard === 'context' && chat.tokenUsage && (
         <TokenDetailOverlay
           tokenUsage={chat.tokenUsage}
           contextUsage={chat.contextUsage}
           messages={chat.messages}
           onOpenChildSession={(childSessionId) => {
-            setShowTokenDetail(false);
+            setActiveUsageCard(null);
             router.push({ pathname: '/chat/[sessionId]' as any, params: { sessionId: childSessionId } });
           }}
           sessionId={sessionId || ''}
           topOffset={0}
-          onDismiss={() => setShowTokenDetail(false)}
+          onDismiss={() => setActiveUsageCard(null)}
+        />
+      )}
+      {activeUsageCard === 'billing' && (
+        <BillingDetailOverlay
+          data={billing}
+          isAdmin={isAdminUser}
+          onDismiss={() => setActiveUsageCard(null)}
+        />
+      )}
+
+      {/* Agent 目标选择与切换确认 */}
+      <OrgAgentPickerSheet
+        visible={agentSwitch.pickerVisible}
+        onClose={agentSwitch.closePicker}
+        catalog={chat.agentTargetCatalog}
+        activeTarget={headerAgentTarget ?? null}
+        onSelect={agentSwitch.requestAgentSwitch}
+      />
+      {agentSwitch.confirmation ? (
+        <AgentSwitchConfirmation
+          visible
+          targetName={agentSwitch.confirmation.targetName}
+          impacts={agentSwitch.confirmation.impacts}
+          cancelling={agentSwitch.cancelling}
+          cancelError={agentSwitch.cancelError}
+          onKeepOldOpen={agentSwitch.keepOldOpen}
+          onCancelActive={agentSwitch.cancelActive}
+          onClose={agentSwitch.dismissConfirmation}
+        />
+      ) : null}
+
+      {/* 子任务完整过程：全屏覆盖，复用 MessageList 渲染子会话回放 */}
+      {transcriptTarget && (
+        <SubagentTranscriptSheet
+          visible
+          childSessionId={transcriptTarget.childSessionId}
+          title={transcriptTarget.title}
+          onClose={() => setTranscriptTarget(null)}
         />
       )}
     </View>
   );
 }
 
-const HEADER_SIDE_RESERVE = 60;
-
-function useScreenStyles(colors: ThemeColors, screenWidth: number) {
+function useScreenStyles(colors: ThemeColors) {
   return useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: colors.background,
-    },
-    navTitleRow: {
-      maxWidth: screenWidth - HEADER_SIDE_RESERVE * 2,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      overflow: 'hidden',
-    },
-    navTitleInner: {
-      flexShrink: 1,
-      minWidth: 0,
-      alignItems: 'center',
-      overflow: 'hidden',
-    },
-    navTitle: {
-      fontSize: 15,
-      fontWeight: '600' as const,
-      lineHeight: 20,
-      color: colors.foreground,
-    },
-    navModelRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 2,
-    },
-    navModelText: {
-      fontSize: 10,
-      lineHeight: 13,
-    },
-    interactionZone: {
-      marginHorizontal: 12,
-      marginBottom: 8,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 12,
-      backgroundColor: colors.card,
-      maxHeight: 360,
-    },
-    interactionScroll: {
-      flexShrink: 1,
-    },
-    interactionScrollContent: {
-      flexGrow: 0,
-      paddingBottom: 4,
-    },
-    interactionQueueText: {
-      marginTop: 8,
-      fontSize: 12,
-      color: colors.mutedForeground,
     },
     inputOverlay: {
       position: 'absolute',
@@ -724,9 +679,9 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
     },
     compactionNoticePill: {
       backgroundColor: colors.card,
-      borderRadius: 16,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
+      borderRadius: radius.lg,
+      paddingHorizontal: spacing.md + 2,
+      paddingVertical: spacing.sm,
       maxWidth: '85%',
       shadowColor: colors.shadow,
       shadowOffset: { width: 0, height: 2 },
@@ -737,9 +692,9 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
       borderColor: colors.border,
     },
     compactionNoticeText: {
-      fontSize: 13,
+      ...fontScale.xs,
       color: colors.mutedForeground,
       textAlign: 'center',
     },
-  }), [colors, screenWidth]);
+  }), [colors]);
 }

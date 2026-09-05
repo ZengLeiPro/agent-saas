@@ -285,6 +285,10 @@ export {
   TASKBOARD_STAGE_DEFAULT_PROMPTS,
   buildScenarioPrompt,
 } from './types/index';
+// 会话列表元信息 / 场景推荐 / 场景直达：移动端与 Web 共用的纯逻辑。
+export * from './lib/sessionListPresentation';
+export * from './lib/scenarioRecommendation';
+export * from './lib/scenarioDeepLink';
 export { saveUserPreferences } from './lib/preferencesApi';
 export { GLOBAL_TENANT_ID } from './types/index';
 export {
@@ -419,6 +423,47 @@ export type {
 
 // Lib - sessions API (mapping functions)
 export { mapSessionDetailToMessages } from './lib/sessionsApi';
+export { warmupSessionSandbox } from './lib/sandboxWarmupApi';
+
+// Lib - 沙箱档位（日常 / 编程）纯语义
+export {
+  SANDBOX_PROFILE_OPTIONS,
+  isSandboxProfileLocked,
+  resolveSessionSandboxProfile,
+  sandboxProfileLabel,
+} from './lib/sandboxProfile';
+export type { SandboxProfileOption } from './lib/sandboxProfile';
+
+// Lib - 模型选择器纯逻辑（锁组 / 展示名 / 可选分组）
+export {
+  parseModelRef,
+  resolveLockedModelGroupId,
+  resolveSelectedModelName,
+  selectableModelGroups,
+} from './lib/modelSelection';
+
+// Lib - 积分徽标纯逻辑
+export {
+  billingAllowanceLabel,
+  billingModeLabel,
+  budgetBarRatio,
+  budgetStatusLabel,
+  formatBillingCredits,
+  formatBillingCreditsDetailed,
+  formatBudgetUsageRatio,
+  isBillingBadgeVisible,
+  resolveBillingAllowance,
+  resolveBillingBadgeTone,
+} from './lib/billingBadge';
+export type {
+  BillingAccountSummary,
+  BillingAllowance,
+  BillingBadgeTone,
+  MemberBudgetStatus,
+  MyMemberBudget,
+  SessionBillingSummary,
+  TenantBillingSummary,
+} from './lib/billingBadge';
 export { searchSessions } from './lib/searchApi';
 export type { SearchSessionsParams } from './lib/searchApi';
 export {
@@ -627,6 +672,65 @@ export {
 } from './lib/markers';
 export type { MarkerSegment, CitationSegment } from './lib/markers';
 
+// Lib - Markdown 正文里的公式切分（代码块 / 行内代码内的 $ 不当公式）
+export { splitMathSegments, hasMathSegments } from './lib/mathSegments';
+export type { MathSegment, SplitMathOptions } from './lib/mathSegments';
+
+// Lib - Token 用量胶囊 / 明细面板展示模型（取值优先级 + 阈值预警 + 文案）
+export {
+  selectTokenUsageView,
+  formatUsagePercent,
+  tokenCategoryColor,
+  contextAccuracyLabel,
+} from './lib/tokenUsageView';
+export type { TokenUsageView, TokenUsageTone } from './lib/tokenUsageView';
+
+// Lib - 消息反馈（点踩）与门禁拒答申诉的端点 / 幂等 / 文案契约
+export {
+  MESSAGE_FEEDBACK_COMMENT_MAX,
+  MESSAGE_FEEDBACK_PATH,
+  GUARDRAIL_APPEAL_PATH,
+  messageFeedbackSessionPath,
+  buildMessageFeedbackPayload,
+  parseSubmittedFeedbackHashes,
+  messageFeedbackOutcome,
+  buildGuardrailAppealPayload,
+  guardrailAppealOutcome,
+  guardrailAppealFailureCopy,
+} from './lib/messageFeedback';
+export type {
+  MessageFeedbackInput,
+  MessageFeedbackOutcome,
+  GuardrailAppealOutcome,
+} from './lib/messageFeedback';
+
+// Lib - 会话 Context 引用证据（[CITE] contextId 分支）只读展示模型
+export {
+  normalizeContextCitationDetail,
+  contextCitationError,
+  contextCitationPath,
+  safeContextCitationUrl,
+  formatContextCitationTime,
+} from './lib/contextCitation';
+export type { ContextCitationDetail, ContextCitationEvidence } from './lib/contextCitation';
+
+// Lib - 上下文压缩（/compact v2 黑箱化）跨端超集：web / mobile 两套 API 同源
+export {
+  asCompactionItem,
+  isCompactionItem,
+  isCompactionStatusEvent,
+  createCompactionRunningItem,
+  createCompactionDoneItem,
+  compactionDoneReplacement,
+  compactionItemFromBlock,
+  injectCompactionMessages,
+} from './lib/compaction';
+export type {
+  CompactionMessageItem,
+  CompactionOutcome,
+  CompactionStatusEvent,
+} from './lib/compaction';
+
 // Lib - 工具执行「给人看」摘要（与原始 payload 并存，不替代）
 export { normalizeToolPresentation } from './lib/toolPresentation';
 export type { ToolPresentation, ToolReceipt, DetailLine } from './lib/toolPresentation';
@@ -647,6 +751,63 @@ export type {
   BlockAction,
   PresentationTone,
 } from './lib/presentation/types';
+
+// Lib - 活动状态语气与耗时格式化（Web/Mobile 同一套语气判定）
+export {
+  PRESENTATION_TONE_TO_ACTIVITY,
+  formatActivityDuration,
+} from './lib/activityStatusTone';
+export type { ActivityStatusTone } from './lib/activityStatusTone';
+
+// Lib - DetailLine 语义判别与排版分组（分型渲染的共同根因，两端必须同源）
+export {
+  DEFAULT_WARN_HEADER,
+  collectDetailKeyValues,
+  groupDetailLines,
+  isEmphasisValue,
+  migrateLegacySectionVerdicts,
+  statVerdict,
+  visibleOutcomeStats,
+} from './lib/detailSemantics';
+export type {
+  DetailGroup,
+  OutcomeStat,
+  StatVerdict,
+  StepDetailPart,
+} from './lib/detailSemantics';
+
+// Lib - Agent 活动分组折叠摘要 / runtime_status 中文标签
+export {
+  getActiveItemIndex,
+  getActivityDurationMs,
+  getCompletedGroupTitle,
+  getRuntimeStatusLabel,
+  getRuntimeStatusMeta,
+  getRuntimeStatusTone,
+  isActiveActivity,
+  isWaitingForUserAction,
+  selectActivityGroupSummary,
+} from './lib/activityGroupSummary';
+export type {
+  GroupSummaryInfo,
+  RuntimeStatus,
+  RuntimeStatusIcon,
+} from './lib/activityGroupSummary';
+
+// Lib - 业务步骤状态语义（步骤流 / 时间线 / 详情面板共用）
+export {
+  businessStepOverallStatus,
+  isEndedWithoutTerminal,
+  outcomeToneMeta,
+  todoAccessibleStatus,
+  todoStatusMeta,
+} from './lib/businessStepStatus';
+export type {
+  BusinessStepIcon,
+  BusinessStepOverallLabel,
+  BusinessStepOverallStatus,
+  BusinessStepStatusMeta,
+} from './lib/businessStepStatus';
 
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）
 export { normalizeSystemPanel, normalizePanelPatches, foldPanel } from './lib/systemPanel';
@@ -710,6 +871,27 @@ export {
 // Lib - message grouping (pure function)
 export { groupMessages } from './lib/groupMessages';
 export type { GroupMessagesOptions } from './lib/groupMessages';
+
+// Lib - 主对话区投影（纯函数，Web/Mobile 同源）
+export { businessStepMainItems } from './lib/businessStepMainItems';
+export type { BusinessStepMainItemsOptions } from './lib/businessStepMainItems';
+
+// Lib - 插话队列条投影（纯函数）
+export { queuedMessageBarTitle, selectQueuedMessageEntries } from './lib/queuedMessageBar';
+export type { QueuedMessageEntry } from './lib/queuedMessageBar';
+
+// Lib - 客户面失败文案口径（纯函数）
+export {
+  GENERIC_FAILURE_MESSAGE,
+  POLICY_FAILURE_MESSAGE,
+  formatQuotaResetHint,
+  selectClientFailureCopy,
+} from './lib/clientFailureCopy';
+export type {
+  ClientFailureCopy,
+  ClientFailureCopyInput,
+  ClientFailureKind,
+} from './lib/clientFailureCopy';
 
 // Lib - WS event processor (pure functions)
 export {
@@ -779,41 +961,8 @@ export {
   debouncedLoadSessions,
 } from './store/actions/sessionLoader';
 
-export {
-  fetchMcpTemplates,
-  fetchMyMcp,
-  updateMyMcpSelections,
-  bindMyMcpSecret,
-  bindAdminMcpSecret,
-  diagnoseMyMcp,
-  fetchMcpAdminServers,
-  upsertMcpServer,
-  deleteMcpServer,
-  upsertMyMcpServer,
-  deleteMyMcpServer,
-  startMyMcpOAuth,
-  disconnectMyMcpOAuth,
-} from './lib/mcpApi';
+export * from './lib/mcpApi';
 
-export {
-  setNativeConnectorRuntimeEnabled,
-  type NativeRuntimeConnectorId,
-  fetchGithubConnection,
-  connectGithub,
-  disconnectGithub,
-  fetchXConnection,
-  connectX,
-  disconnectX,
-  fetchNotionConnection,
-  fetchNotionAuthSession,
-  startNotionAuthSession,
-  disconnectNotion,
-  fetchGoogleWorkspaceConnection,
-  startGoogleWorkspaceOAuth,
-  disconnectGoogleWorkspace,
-  fetchAliyunConnection,
-  connectAliyun,
-  disconnectAliyun,
-} from './lib/connectorsApi';
+export * from './lib/connectorsApi';
 
 // Governance UI contract and authoritative API clients

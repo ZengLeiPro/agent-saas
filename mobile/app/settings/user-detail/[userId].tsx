@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Camera, ChevronRight, FileText, Lock, SquarePen, X, type LucideIcon } from 'lucide-react-native';
+import { Camera, ChevronRight, Lock, X, type LucideIcon } from 'lucide-react-native';
 import { launchPhotoLibraryForUserAction } from '../../../src/platform/jitMediaPermissions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authFetch } from '@agent/shared';
@@ -20,7 +20,7 @@ import type { UserInfo } from '@agent/shared';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { useUsers } from '../../../src/hooks/useUsers';
 import { getServerUrl } from '../../../src/platform/mobileConfig';
-import { isV1RouteAllowed } from '../../../src/v1/v1Capabilities';
+import { isProductionProfile } from '../../../src/v1/v1Capabilities';
 import { getV1BuildProfile } from '../../../src/v1/v1Runtime';
 import { canCommitSelfProfileResponse, selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
 import { useColors, spacing, typography, radius } from '../../../src/theme';
@@ -41,13 +41,11 @@ export default function UserDetailScreen() {
   const { user: currentUser, updateAvatar } = useAuth();
   // V1 范围裁剪（M00-01）：生产构建只允许当前账号自助资料，
   // 不请求、读取或回退到可能属于旧身份的管理员用户列表。
+  // 09-04 拍板：用户管理（编辑资料 / 启禁用 / 删除 / 操作日志）整体移交 Web 管理后台，
+  // 本页只保留当前账号的头像与密码自助入口。
   const v1Profile = getV1BuildProfile();
-  const v1AdminActionsEnabled =
-    isV1RouteAllowed('user-form', v1Profile) &&
-    isV1RouteAllowed('settings/audit-log', v1Profile);
-  const { users, deleteUser, toggleUserDisabled, refresh: refreshUsers } = useUsers(v1AdminActionsEnabled);
+  const { users } = useUsers(!isProductionProfile(v1Profile));
 
-  const isAdmin = currentUser?.role === 'admin';
   const isSelf = userId === currentUser?.id;
 
   // For non-admin viewing self, fetch from /api/auth/me
@@ -216,15 +214,6 @@ export default function UserDetailScreen() {
       ...typography.body,
       color: colors.foreground,
     },
-    dangerRow: {
-      paddingVertical: 14,
-      alignItems: 'center',
-    },
-    dangerText: {
-      ...typography.body,
-      color: colors.destructive,
-      fontWeight: '600',
-    },
     // Avatar modal
     modalOverlay: {
       flex: 1,
@@ -279,17 +268,12 @@ export default function UserDetailScreen() {
       type: asset.mimeType || 'image/jpeg',
     } as any);
     try {
-      // Self: POST /api/auth/avatar; Admin for others: POST /api/auth/users/:id/avatar
-      const url = isSelf ? '/api/auth/avatar' : `/api/auth/users/${user.id}/avatar`;
-      const res = await authFetch(url, { method: 'POST', body: formData });
+      // 仅本人自助改头像：POST /api/auth/avatar（未被 legacy write gate 封死）。
+      const res = await authFetch('/api/auth/avatar', { method: 'POST', body: formData });
       if (res.ok) {
         const data = await res.json() as { avatar: string; avatarVersion?: number };
-        if (isSelf) {
-          updateAvatar(data.avatar, data.avatarVersion);
-          void fetchSelfProfile();
-        } else {
-          void refreshUsers();
-        }
+        updateAvatar(data.avatar, data.avatarVersion);
+        void fetchSelfProfile();
       } else {
         Alert.alert('上传失败');
       }
@@ -298,91 +282,13 @@ export default function UserDetailScreen() {
     }
   };
 
-  const handleEdit = () => {
-    router.push({
-      pathname: '/user-form',
-      params: {
-        userId: user.id,
-        username: user.username,
-        realName: user.realName || '',
-        role: user.role,
-        maxTurns: user.permissions?.maxTurns?.toString() || '',
-        maxRequests: user.permissions?.rateLimit?.maxRequests?.toString() || '',
-        dingtalkStaffId: user.dingtalkStaffId || '',
-      },
-    });
-  };
-
-  const handleViewLogs = () => {
-    router.push({
-      pathname: '/settings/audit-log',
-      params: { username: user.username },
-    });
-  };
-
-  const handleToggleDisabled = () => {
-    if (user.disabled) {
-      void (async () => {
-        try {
-          await toggleUserDisabled(user.id, false);
-        } catch (err) {
-          Alert.alert('操作失败', err instanceof Error ? err.message : '未知错误');
-        }
-      })();
-    } else {
-      Alert.alert('禁用用户', `确定要禁用用户 "${user.username}" 吗？禁用后将无法登录和使用所有功能。`, [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '禁用',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await toggleUserDisabled(user.id, true);
-            } catch (err) {
-              Alert.alert('操作失败', err instanceof Error ? err.message : '未知错误');
-            }
-          },
-        },
-      ]);
-    }
-  };
-
-  const handleDelete = () => {
-    Alert.alert('删除用户', `确定要删除用户 "${user.username}" 吗？`, [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteUser(user.id);
-            router.back();
-          } catch (err) {
-            Alert.alert('删除失败', err instanceof Error ? err.message : '未知错误');
-          }
-        },
-      },
-    ]);
-  };
-
-  // Build action rows dynamically
-  // 修改头像: self + admin viewing others
-  // 编辑资料: always (admin can edit anyone, user can edit self)
-  // 修改密码: self only (admin resets password via edit form)
-  // 操作日志: admin only
+  // 操作行：仅当前账号自助（修改头像 / 修改密码）。
+  // 管理类操作（编辑资料、启禁用、删除、操作日志）已移交 Web 管理后台。
   const actionRows: { key: string; Icon: LucideIcon; label: string; onPress: () => void }[] = [];
 
-  if (isSelf || (isAdmin && v1AdminActionsEnabled)) {
-    actionRows.push({ key: 'avatar', Icon: Camera, label: '修改头像', onPress: () => void handleAvatarUpload() });
-  }
-  if (isAdmin && v1AdminActionsEnabled) {
-    actionRows.push({ key: 'edit', Icon: SquarePen, label: '编辑资料', onPress: handleEdit });
-  }
   if (isSelf) {
+    actionRows.push({ key: 'avatar', Icon: Camera, label: '修改头像', onPress: () => void handleAvatarUpload() });
     actionRows.push({ key: 'password', Icon: Lock, label: '修改密码', onPress: () => router.push('/change-password') });
-  }
-  if (isAdmin && v1AdminActionsEnabled) {
-    actionRows.push({ key: 'logs', Icon: FileText, label: '操作日志', onPress: handleViewLogs });
   }
 
   return (
@@ -477,26 +383,6 @@ export default function UserDetailScreen() {
             )}
           </View>
         </View>
-
-        {/* 危险操作 — only admin and not self */}
-        {isAdmin && !isSelf && v1AdminActionsEnabled && (
-          <View style={styles.section}>
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={[styles.dangerRow, styles.rowBorder]}
-                onPress={handleToggleDisabled}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.dangerText, user.disabled && { color: colors.success }]}>
-                  {user.disabled ? '启用用户' : '禁用用户'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dangerRow} onPress={handleDelete} activeOpacity={0.7}>
-                <Text style={styles.dangerText}>删除用户</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
       </ScrollView>
 
       {/* Avatar full-screen modal */}

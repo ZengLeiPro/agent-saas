@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { authFetch } from '@agent/shared';
-import type { UserInfo, CreateUserInput, UpdateUserInput } from '@agent/shared';
+import type { UserInfo } from '@agent/shared';
 
+/**
+ * 用户列表只读 hook。
+ *
+ * 09-04 拍板：移动端定位「员工使用端」，用户管理（增删改 / 启禁用 / 角色与租户）
+ * 一律走 Web 管理后台；服务端 `authLegacyWriteGate` 也已把
+ * POST/PATCH/DELETE `/api/auth/users*` 封死（409 MIGRATION_LEGACY_WRITE_SEALED）。
+ * 因此这里只保留 `GET /api/auth/users` 列表读取，
+ * 仅供管理员在文件页按 owner 过滤等只读场景使用。
+ */
 export function useUsers(enabled = true) {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [loading, setLoading] = useState(enabled);
@@ -31,53 +40,5 @@ export function useUsers(enabled = true) {
     void refresh();
   }, [refresh]);
 
-  const createUser = useCallback(async (input: CreateUserInput) => {
-    const res = await authFetch('/api/auth/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error || '创建用户失败');
-    }
-    await refresh();
-  }, [refresh]);
-
-  const updateUser = useCallback(async (id: string, input: UpdateUserInput) => {
-    const res = await authFetch(`/api/auth/users/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error || '更新用户失败');
-    }
-    await refresh();
-  }, [refresh]);
-
-  const deleteUser = useCallback(async (id: string) => {
-    const res = await authFetch(`/api/auth/users/${id}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error || '删除用户失败');
-    }
-    await refresh();
-  }, [refresh]);
-
-  const toggleUserDisabled = useCallback(async (id: string, disabled: boolean) => {
-    const res = await authFetch(`/api/auth/users/${id}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ disabled }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(data.error || '切换用户状态失败');
-    }
-    await refresh();
-  }, [refresh]);
-
-  return { users, loading, error, refresh, createUser, updateUser, deleteUser, toggleUserDisabled };
+  return { users, loading, error, refresh };
 }

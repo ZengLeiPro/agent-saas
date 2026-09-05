@@ -78,6 +78,13 @@ test('app exposes the stable native IDs consumed by Maestro', async () => {
     'app/chat/[sessionId].tsx', 'app/share-target.tsx', 'src/components/ConnectionBanner.tsx',
     'src/components/SessionRow.tsx', 'src/components/chat/ChatInput.tsx', 'src/components/chat/MessageItem.tsx',
     'src/components/chat/ModelPicker.tsx', 'src/components/overlays/DropdownMenu.tsx',
+    // 会话页顶栏（返回三态 / Agent 目标入口 / 用量胶囊）已拆成独立组件。
+    'src/components/chat/ChatSessionHeader.tsx',
+    // 交互区/队列条与表单体已拆成独立组件，稳定 ID 随代码一起搬到这些文件。
+    'src/components/chat/AskUserPromptPanel.tsx', 'src/components/chat/QueuedMessageBar.tsx',
+    // 会话列表已拆成 src/components/sessions/*，列表本体的稳定 ID 随代码搬到这里。
+    'src/components/sessions/SessionListView.tsx',
+    'src/components/chat/blocks/AskUserBlock.tsx', 'src/components/chat/blocks/PermissionBlock.tsx',
   ].map((relative) => readFile(path.join(mobileRoot, relative), 'utf8')));
   const joined = sources.join('\n');
   for (const id of [
@@ -85,6 +92,7 @@ test('app exposes the stable native IDs consumed by Maestro', async () => {
     'chat-session-list', 'chat-home-screen', 'logout-button', 'account-username', 'agent-target-picker',
     'chat-composer-input', 'chat-send-button', 'chat-attachment-button', 'chat-microphone-button',
     'canonical-interaction-zone', 'ask-user-submit', 'permission-allow-button', 'connection-banner',
+    'interaction-counter', 'interaction-prev', 'interaction-next', 'queued-message-bar',
     'share-target-screen', 'share-target-send', 'settings-screen',
   ]) assert.ok(joined.includes(id), `missing native test ID: ${id}`);
 });

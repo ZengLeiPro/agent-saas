@@ -56,11 +56,8 @@ import { isCompactionStatusEvent } from "../lib/compaction";
 import { acknowledgedInteractionResponse } from "./interactionResponseAck";
 import type { MessageItemInput } from "@agent/shared";
 import { canonicalChatAttachmentToDisplay } from "@agent/shared";
-import {
-  buildMobileChatSubmission,
-  toMobileChatWireMessage,
-  validateMobileUploadedFiles,
-} from "../lib/chatSubmissionAdapter";
+import { buildMobileChatSubmission, toMobileChatWireMessage, validateMobileUploadedFiles } from "../lib/chatSubmissionAdapter";
+import { getDraftSandboxProfile } from "../lib/sandboxProfileStore";
 import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chatTelemetry';
 import { telemetryClient } from '../telemetry/runtime';
 import { shouldProjectInteractionEvent } from '../lib/interactionProjectionFence';
@@ -1010,7 +1007,7 @@ export function useChatAppStateCore(): ChatAppState {
       const normalized = buildMobileChatSubmission({
         text: inputText,
         clientMsgId,
-        target: { ...(activeSessionId ? { sessionId: activeSessionId } : {}), agentTarget },
+        target: { ...(activeSessionId ? { sessionId: activeSessionId } : { sandboxProfile: getDraftSandboxProfile() }), agentTarget },
         deliveryMode: 'queue',
         model: selectedModelRef.current ?? undefined,
         attachments,
@@ -1505,7 +1502,7 @@ export function useChatAppStateCore(): ChatAppState {
                     wsLatestSessionIdRef.current?.value ||
                     sessionIdRef.current ||
                     "live"
-                  }-${c.coveredEventCount}`;
+                  }-${c.coveredEventCount ?? 0}`;
             const exists = msgRef.current.messagesRef.current.some(
               (m) => m.id === stableId,
             );
@@ -1514,7 +1511,7 @@ export function useChatAppStateCore(): ChatAppState {
                 id: stableId,
                 type: "compaction",
                 ...(c.summary ? { summary: c.summary } : {}),
-                coveredEventCount: c.coveredEventCount,
+                coveredEventCount: c.coveredEventCount ?? 0,
                 timestamp: Date.now(),
               } as unknown as MessageItemInput);
               msgRef.current.triggerScroll();

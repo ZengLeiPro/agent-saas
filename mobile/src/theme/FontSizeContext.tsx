@@ -79,13 +79,8 @@ export function useChatTypography(): typeof typography {
   const { scale } = useFontSize();
   return useMemo(() => {
     if (scale === 1) return typography;
-    return {
-      title: scaleStyle(typography.title, scale),
-      subtitle: scaleStyle(typography.subtitle, scale),
-      body: scaleStyle(typography.body, scale),
-      bodySmall: scaleStyle(typography.bodySmall, scale),
-      caption: scaleStyle(typography.caption, scale),
-      mono: scaleStyle(typography.mono, scale),
-    };
+    return Object.fromEntries(
+      Object.entries(typography).map(([key, style]) => [key, scaleStyle(style, scale)]),
+    ) as typeof typography;
   }, [scale]);
 }

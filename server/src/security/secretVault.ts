@@ -532,6 +532,7 @@ export class HttpSecretVault implements SecretVault {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly refs = new Map<string, SecretRef>();
   private readonly refMetadataCachedAt = new Map<string, number>();
+  private readonly refInvalidationTokens = new Map<string, object>();
 
   constructor(private readonly options: HttpSecretVaultOptions) {
     if (!options.authToken || options.authToken.length < 8) throw new Error('HttpSecretVault authToken is required');
@@ -573,7 +574,9 @@ export class HttpSecretVault implements SecretVault {
     const cacheKey = this.cacheKey(id, caller);
     const cached = this.readCache(cacheKey);
     if (cached !== undefined) return cached;
+    const invalidationToken = this.refInvalidationTokens.get(id);
     const result = await this.post<{ value: string; ref: unknown }>('/secrets/resolve', { ref: id, caller });
+    this.assertRequestNotInvalidated(id, invalidationToken);
     const resolved = sanitizeRemoteRef(result.ref);
     if (resolved.id !== id) throw new Error('HttpSecretVault resolve response ref id mismatch');
     assertAllowed(resolved, caller, 'read');
@@ -592,7 +595,9 @@ export class HttpSecretVault implements SecretVault {
     }
     const cached = this.readRefMetadata(id);
     if (cached) return cached;
+    const invalidationToken = this.refInvalidationTokens.get(id);
     const response = await this.post<unknown | null>('/secrets/inspect', { ref: id, caller });
+    this.assertRequestNotInvalidated(id, invalidationToken);
     if (!response) return null;
     const inspected = sanitizeRemoteRef(response);
     if (inspected.id !== id) throw new Error('HttpSecretVault inspect response ref id mismatch');
@@ -635,8 +640,15 @@ export class HttpSecretVault implements SecretVault {
    */
   invalidate(ref: SecretRef | string): void {
     const id = refId(ref);
+    this.refInvalidationTokens.set(id, {});
     this.invalidateCache(id);
     this.refMetadataCachedAt.delete(id);
+  }
+
+  private assertRequestNotInvalidated(id: string, token: object | undefined): void {
+    if (this.refInvalidationTokens.get(id) !== token) {
+      throw new Error('HttpSecretVault response was invalidated while request was in flight');
+    }
   }
 
   private rememberRef(ref: SecretRef): void {

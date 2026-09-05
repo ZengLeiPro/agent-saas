@@ -18,6 +18,14 @@ function makeFetch(responder: (path: string, body: any) => unknown) {
   }) as unknown as typeof fetch;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function remoteRef(id: string, ownerId = 'alice') {
   return {
     id,
@@ -176,6 +184,92 @@ describe('HttpSecretVault cache (A3)', () => {
     expect(resolveCount).toBe(1);
     vault.invalidate('ref-a');
     expect(await vault.getSecret('ref-a', caller)).toBe('v2');
+    expect(resolveCount).toBe(2);
+  });
+
+  it('rejects an in-flight metadata response invalidated before it returns', async () => {
+    const firstResponse = deferred<Response>();
+    let inspectCount = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const path = new URL(input instanceof URL ? input : input.toString()).pathname;
+      if (path !== '/secrets/inspect') throw new Error(`unexpected path ${path}`);
+      inspectCount += 1;
+      if (inspectCount === 1) return await firstResponse.promise;
+      return jsonResponse({ ...remoteRef('ref-a'), version: 2 });
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local',
+      authToken: 'test-token-xyz',
+      fetchImpl,
+      metadataCacheTtlMs: 60_000,
+    });
+
+    const pendingInspect = vault.inspectRef('ref-a', caller);
+    await vi.waitFor(() => expect(inspectCount).toBe(1));
+    vault.invalidate('ref-a');
+    firstResponse.resolve(jsonResponse(remoteRef('ref-a')));
+
+    await expect(pendingInspect).rejects.toThrow('response was invalidated while request was in flight');
+    await expect(vault.inspectRef('ref-a', caller)).resolves.toMatchObject({ version: 2 });
+    expect(inspectCount).toBe(2);
+  });
+
+  it('rejects an in-flight plaintext response invalidated before it returns', async () => {
+    const firstResponse = deferred<Response>();
+    let resolveCount = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const path = new URL(input instanceof URL ? input : input.toString()).pathname;
+      if (path !== '/secrets/resolve') throw new Error(`unexpected path ${path}`);
+      resolveCount += 1;
+      if (resolveCount === 1) return await firstResponse.promise;
+      return jsonResponse({ value: 'new', ref: { ...remoteRef('ref-a'), version: 2 } });
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local',
+      authToken: 'test-token-xyz',
+      fetchImpl,
+      cacheTtlMs: 60_000,
+    });
+
+    const pendingResolve = vault.getSecret('ref-a', caller);
+    await vi.waitFor(() => expect(resolveCount).toBe(1));
+    vault.invalidate('ref-a');
+    firstResponse.resolve(jsonResponse({ value: 'old', ref: remoteRef('ref-a') }));
+
+    await expect(pendingResolve).rejects.toThrow('response was invalidated while request was in flight');
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('new');
+    expect(resolveCount).toBe(2);
+  });
+
+  it('prevents a completed rotate from being crossed by an older in-flight resolve', async () => {
+    const firstResponse = deferred<Response>();
+    let resolveCount = 0;
+    const fetchImpl: typeof fetch = vi.fn(async (input) => {
+      const path = new URL(input instanceof URL ? input : input.toString()).pathname;
+      if (path === '/secrets/resolve') {
+        resolveCount += 1;
+        if (resolveCount === 1) return await firstResponse.promise;
+        return jsonResponse({ value: 'new', ref: { ...remoteRef('ref-a'), version: 2 } });
+      }
+      if (path === '/secrets/ref-a/rotate') {
+        return jsonResponse({ ...remoteRef('ref-a'), version: 2 });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.local',
+      authToken: 'test-token-xyz',
+      fetchImpl,
+      cacheTtlMs: 60_000,
+    });
+
+    const pendingResolve = vault.getSecret('ref-a', caller);
+    await vi.waitFor(() => expect(resolveCount).toBe(1));
+    await vault.rotateSecret('ref-a', 'new', caller);
+    firstResponse.resolve(jsonResponse({ value: 'old', ref: remoteRef('ref-a') }));
+
+    await expect(pendingResolve).rejects.toThrow('response was invalidated while request was in flight');
+    await expect(vault.getSecret('ref-a', caller)).resolves.toBe('new');
     expect(resolveCount).toBe(2);
   });
 

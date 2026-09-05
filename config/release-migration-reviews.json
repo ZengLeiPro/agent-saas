@@ -1567,6 +1567,35 @@
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         }
       ]
+    },
+    {
+      "baselineSha": "0934f1b4bd208900bf02714381dedd05dc729033",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "targetDigest": "sha256:bac6549c205ad516424762a7fec5cbcf1b80ac676706093984eda32df022e984",
+          "classification": "expand",
+          "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
+        },
+        {
+          "path": "server/src/webPush/store.ts",
+          "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
+          "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
+          "classification": "no-schema-change",
+          "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
+          "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        }
+      ]
     }
   ]
 }

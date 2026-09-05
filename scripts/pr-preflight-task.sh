@@ -11,6 +11,9 @@ require_test_database() {
 case "$task" in
   checks)
     pnpm check:ratchets
+    pnpm -r --filter './packages/*' typecheck
+    pnpm -r --filter './packages/*' test
+    pnpm -r --filter './packages/*' build
     pnpm test:release-contracts
     pnpm check:runtime-dependencies
     pnpm -F server typecheck

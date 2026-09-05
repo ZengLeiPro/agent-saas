@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "组织群 Agent v2：Runtime Worker 发布身份标记与 ACS 任务沙箱共享只读挂载路径必须由部署环境显式注入",
-  "updatedAt": "2026-09-03",
+  "reason": "WP1 契约包：定制项目部署配置 KY_* 与测试环境变量",
+  "updatedAt": "2026-09-05",
   "domains": {
     "server": {
       "budget": 63,
@@ -191,6 +191,10 @@
         "TASKBOARD_TABLE_PREFIX",
         "VERIFY_WS_MODEL"
       ]
+    },
+    "packages": {
+      "budget": 0,
+      "names": []
     }
   }
 }

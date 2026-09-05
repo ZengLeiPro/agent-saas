@@ -73,6 +73,10 @@ describe('M00-01 路由清单完整性', () => {
     expect(routes).toContain('cron');
     expect(routes).toContain('cron/[jobId]');
     expect(routes).toContain('cron-form');
+    // P3-3c 文件中心三条 Stack 路由（不在 (tabs) 组内）
+    expect(routes).toContain('files');
+    expect(routes).toContain('files/browse');
+    expect(routes).toContain('files/preview');
   });
 
   it('每个真实路由都已分类：未分类路由一律 fail closed，不得混入', () => {
@@ -114,6 +118,10 @@ describe('M00-01 路由清单完整性', () => {
       // P3-3a：并入能力中心后删除
       'settings/skills.tsx',
       'settings/connections.tsx',
+      // P3-3c：文件中心迁出 Tab 后，旧 Tab 路由文件不得残留
+      '(tabs)/files/index.tsx',
+      '(tabs)/files/browse.tsx',
+      '(tabs)/files/_layout.tsx',
     ];
     for (const rel of deletedRouteFiles) {
       expect(existsSync(join(APP_DIR, rel)), rel).toBe(false);
@@ -128,6 +136,8 @@ describe('M00-01 路由清单完整性', () => {
       'settings/skills-tenant-admin',
       'settings/skills',
       'settings/connections',
+      '(tabs)/files',
+      '(tabs)/files/browse',
     ]) {
       expect(routes, route).not.toContain(route);
       expect(V1_DELETED_ROUTES[route], `${route} 缺少墓碑理由`).toBeTruthy();
@@ -155,6 +165,8 @@ describe('M00-01 路由清单完整性', () => {
       });
     // 允许清单：只有「本地文本选择」与「本地 MathML 公式」两处 WebView，
     // 两者都只吃本地字符串，新增任何 WebView 都必须在这里显式登记。
+    // P3-3c 文件中心刻意没有引入第三处 WebView：PDF 交系统原生阅读器，
+    // HTML/SVG 只给下载分享（见 components/files/preview/ActiveContentNotice.tsx）。
     expect(webViewSources.map((file) => relative(join(APP_DIR, '..'), file)).sort()).toEqual([
       'src/components/chat/TextSelectModal.tsx',
       'src/components/chat/blocks/MathBlock.tsx',

@@ -54,6 +54,13 @@ const PRODUCTION_REACHABLE_UI: readonly string[] = [
   'src/components/cron/CronJobForm.tsx',
   'src/components/cron/JobList.tsx',
   'src/hooks/useCapabilityContext.ts',
+  // P3-3c 文件中心：浏览 / 子目录 / 通用预览，以及条目点击分派与引用卡
+  'app/files/index.tsx',
+  'app/files/browse.tsx',
+  'app/files/preview.tsx',
+  'app/chat/markdown-preview.tsx',
+  'src/hooks/useFileEntryPress.ts',
+  'src/components/chat/blocks/CitationCard.tsx',
   // 路由门禁本身也是生产可达代码（其 replace 目标为动态值，不受字符串扫描影响，
   // 行为由 v1RouteGate.runtime.test.tsx 运行时守卫覆盖）
   'src/v1/V1RouteGate.tsx',
@@ -143,6 +150,11 @@ describe('M00-01 生产界面导航扫描', () => {
     expect(findings.some((f) => f.target === 'cron/[jobId]')).toBe(true);
     expect(findings.some((f) => f.target === 'cron-form')).toBe(true);
     expect(findings.some((f) => f.target === 'text-editor')).toBe(true);
+    // P3-3c：文件中心入口、子目录深链与通用预览路由都必须被扫到
+    expect(findings.some((f) => f.target === 'files')).toBe(true);
+    expect(findings.some((f) => f.target === 'files/browse')).toBe(true);
+    expect(findings.some((f) => f.target === 'files/preview')).toBe(true);
+    expect(findings.some((f) => f.target === 'chat/markdown-preview')).toBe(true);
   });
 
   it('所有导航目标都能被能力清单解析（无未分类路由）', () => {

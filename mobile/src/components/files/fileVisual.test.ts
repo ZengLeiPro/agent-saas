@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getFileTypeVisual } from '@agent/shared';
 import { FILE_VISUAL_CATEGORIES, resolveFileVisual, resolveFileVisualCategory } from './fileVisual';
 
 describe('resolveFileVisualCategory', () => {
@@ -41,12 +42,20 @@ describe('resolveFileVisual', () => {
     });
   });
 
-  it('文件按深浅色取 shared 色板值', () => {
-    expect(resolveFileVisual({ isDirectory: false, name: 'a.pdf' }, false).color).toBe('#EF4444');
-    expect(resolveFileVisual({ isDirectory: false, name: 'a.pdf' }, true).color).toBe('#EF4444');
-    // default 是唯一深浅色不同的类别
-    expect(resolveFileVisual({ isDirectory: false, name: 'a.xyz' }, false).color).toBe('#9CA3AF');
-    expect(resolveFileVisual({ isDirectory: false, name: 'a.xyz' }, true).color).toBe('#6B7280');
+  it('文件按深浅色取 shared 色板值（色板唯一来源是 shared，不在 mobile 复写 hex）', () => {
+    const pdf = getFileTypeVisual('a.pdf');
+    expect(resolveFileVisual({ isDirectory: false, name: 'a.pdf' }, false).color).toBe(pdf.color);
+    expect(resolveFileVisual({ isDirectory: false, name: 'a.pdf' }, true).color).toBe(pdf.colorDark);
+
+    // default 是唯一深浅色取值不同的类别：isDark 开关必须真的生效
+    const fallback = getFileTypeVisual('a.xyz');
+    expect(fallback.colorDark).not.toBe(fallback.color);
+    expect(resolveFileVisual({ isDirectory: false, name: 'a.xyz' }, false).color).toBe(
+      fallback.color,
+    );
+    expect(resolveFileVisual({ isDirectory: false, name: 'a.xyz' }, true).color).toBe(
+      fallback.colorDark,
+    );
   });
 });
 

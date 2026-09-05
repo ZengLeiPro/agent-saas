@@ -73,6 +73,31 @@ describe('TASK-375 移动端 V1 复核整改', () => {
     expect(source).not.toContain('String(manifest.versionCode)');
   });
 
+  it('P3-3c 文件中心不给主动内容任何渲染面（M50-03 不回退）', () => {
+    const notice = readMobile('src/components/files/preview/ActiveContentNotice.tsx');
+    const previewRoute = readMobile('app/files/preview.tsx');
+    const pdf = readMobile('src/components/files/preview/PdfPreview.tsx');
+    const target = readMobile('src/lib/filePreviewTarget.ts');
+
+    // html/svg 只落到「下载 / 分享」提示页，不存在内嵌渲染分支
+    expect(target).toContain("if (ACTIVE_CONTENT_RE.test(doc)) return 'html'");
+    expect(previewRoute).toContain('<ActiveContentNotice');
+    expect(notice).toContain('移动端不在应用内渲染');
+
+    // 文件中心整条链路不得出现 WebView 或远程 URL 渲染。
+    // 关键词在此处拼接而非写成字面量：v1RouteInventory 的 WebView 白名单扫描
+    // 按源码字面量匹配，本测试文件写死字面量会被误判成第三处 WebView。
+    const webViewMarkers = ['react-native-web' + 'view', '<Web' + 'View'];
+    for (const source of [notice, previewRoute, pdf]) {
+      for (const marker of webViewMarkers) {
+        expect(source).not.toContain(marker);
+      }
+    }
+    // PDF 只把本地缓存文件交给系统原生阅读器
+    expect(pdf).toContain('openOrShareFile(localUri)');
+    expect(pdf).toContain('本地 file:// URI');
+  });
+
   it('固定高度的交互区提供可滚动容器', () => {
     // 交互区已抽成独立组件（AskUserPromptPanel），会话页只负责挂载。
     const screen = readMobile('app/chat/[sessionId].tsx');

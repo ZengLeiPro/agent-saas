@@ -30,7 +30,8 @@ const BUILD_PROFILES: readonly V1BuildProfile[] = [
 
 /**
  * V1 强制信息架构：生产包只保留「对话 / 设置」两个 Tab。
- * （方案 §1.3、§2.2「Files Tab 必须隐藏」）
+ * （方案 §1.3、§2.2「Files Tab 必须隐藏」；P3-3c 后文件中心是 Stack 路由，
+ * `app/(tabs)/_layout.tsx` 里已经不存在 files Tab 定义。）
  */
 export const V1_PRODUCTION_TABS: readonly string[] = ['chat', 'settings'];
 
@@ -72,6 +73,13 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
   'cron',
   'cron/[jobId]',
   'cron-form',
+  // 文件中心（P3-3c）：浏览 / 子目录 / 通用预览，与 Web `FileBrowser` +
+  // `FilePreviewPanel` 同一信息架构。09-05 拍板不恢复第三个 Tab，
+  // 入口是会话列表「文件」pill 与设置页「文件与存储」，按
+  // `tenantFeatures.filesEnabled` 门控（见 src/lib/filesEntry.ts）。
+  'files',
+  'files/browse',
+  'files/preview',
   // 全屏文本编辑器：任务中心的提示词/事件内容编辑走它（此前随 Cron 一起延期）
   'text-editor',
   // 系统分享附件入口（§2.1 #8）
@@ -95,6 +103,8 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
   'settings/skills-tenant-admin': '09-04 拍板：移动端定位员工使用端，用户管理走 Web（管理后台留 Web）',
   'settings/skills': 'P3-3a：员工技能页并入能力中心 capabilities/skills，旧路由删除',
   'settings/connections': 'P3-3a：MCP/OAuth 连接管理并入能力中心 capabilities/connectors，旧路由删除',
+  '(tabs)/files': 'P3-3c：文件中心迁到 Stack 路由 files（不恢复第三个 Tab），旧 Tab 路由删除',
+  '(tabs)/files/browse': 'P3-3c：文件中心迁到 Stack 路由 files/browse，旧 Tab 路由删除',
 };
 
 /**
@@ -102,8 +112,6 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
  * 理由文案是发布 Gate A 审计证据的一部分，不得留空。
  */
 export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
-  '(tabs)/files': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
-  '(tabs)/files/browse': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
   'memory-browser': '§2.2 Memory 浏览与编辑 UI 延期（Gate A）',
   'persona-editor': '§1.3 V1 最小设置：Agent 人格/记忆编辑不在信息架构内（M30-03 后评估）',
   'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',

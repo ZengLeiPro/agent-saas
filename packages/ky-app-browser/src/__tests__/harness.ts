@@ -4,8 +4,16 @@
  * 不用真实浏览器（真实浏览器 e2e 属 Phase C）：两个「窗口」由手工对象模拟，
  * 入站消息通过 `send()` 直接投递给 SDK 注册的 `message` 监听器。
  */
+import { createKyApp } from '../createKyApp.js';
 import type { AnyEnvelope } from '../messenger.js';
-import type { KyMessageListener, KyTimerHandle, KyTimers, KyWindowLike } from '../types.js';
+import type {
+  KyApp,
+  KyAppOptions,
+  KyMessageListener,
+  KyTimerHandle,
+  KyTimers,
+  KyWindowLike,
+} from '../types.js';
 
 export interface TestClock {
   now: () => number;
@@ -241,4 +249,52 @@ export function initPayload(nowMs: number, overrides?: Record<string, unknown>) 
     contractVersion: 1,
     ...overrides,
   };
+}
+
+/** 一次性完成 attest → ready → init → active，返回可继续操作的上下文。 */
+export interface Bootstrapped {
+  app: KyApp;
+  shell: TestWindow;
+  clock: TestClock;
+  fetchStub: FetchStub;
+  /** 首条 ready 的 id。 */
+  readyId: string;
+  /** 壳回复某条需应答消息。 */
+  reply: (type: string, payload: unknown, requestType: string) => void;
+}
+
+export async function bootstrap(
+  overrides?: Partial<KyAppOptions> & {
+    href?: string;
+    nowMs?: number;
+    init?: Record<string, unknown>;
+  },
+): Promise<Bootstrapped> {
+  const clock = createClock(overrides?.nowMs);
+  const shell = createTestWindow(
+    overrides?.href === undefined ? undefined : { href: overrides.href },
+  );
+  const fetchStub = createFetchStub([attestResponse()]);
+  fetchStub.routes.set('/ky/v1/attest', [attestResponse()]);
+  const { href: _href, nowMs: _nowMs, init: _init, ...appOptions } = overrides ?? {};
+  const app = createKyApp({
+    window: shell.win,
+    fetch: fetchStub.impl,
+    timers: clock.timers,
+    now: clock.now,
+    ...appOptions,
+  });
+  await clock.advance(0);
+  const readyId = String(shell.lastOfType('ready')?.id);
+  shell.send(
+    shellMessage('init', { ...initPayload(clock.now()), ...overrides?.init }, { id: readyId }),
+  );
+  await clock.advance(0);
+
+  const reply = (type: string, payload: unknown, requestType: string): void => {
+    const request = shell.lastOfType(requestType);
+    shell.send(shellMessage(type, payload, { id: request?.id }));
+  };
+
+  return { app, shell, clock, fetchStub, readyId, reply };
 }

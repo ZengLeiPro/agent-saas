@@ -15,6 +15,8 @@ import type { KyCounters, KyTimerHandle, KyTimers } from './types.js';
 
 /** 到期前多久开始主动续期（毫秒，§3.1 `user` 行）。 */
 export const PROACTIVE_REFRESH_LEAD_MS = 60_000;
+/** 主动续期定时器的最小延迟（毫秒），防止短令牌把续期变成热循环。 */
+export const PROACTIVE_REFRESH_MIN_DELAY_MS = 1_000;
 /** 剩余不足多久时，请求必须先等续期完成（毫秒，§3.1 `user` 行）。 */
 export const REFRESH_NOW_THRESHOLD_MS = 30_000;
 /** `temporary` 指数退避：1 s 起、上限 30 s。 */
@@ -157,7 +159,8 @@ export class TokenManager {
     this.#proactiveTimer = null;
     const remaining = this.store.remainingMs(this.#deps.now());
     if (remaining === null) return;
-    const delay = Math.max(0, remaining - PROACTIVE_REFRESH_LEAD_MS);
+    // 下限 1 s：万一壳发回来的令牌剩余已不足 60 s，也不能变成 0 延迟的热循环。
+    const delay = Math.max(PROACTIVE_REFRESH_MIN_DELAY_MS, remaining - PROACTIVE_REFRESH_LEAD_MS);
     this.#proactiveTimer = this.#deps.timers.setTimeout(() => {
       this.#proactiveTimer = null;
       void this.refresh();

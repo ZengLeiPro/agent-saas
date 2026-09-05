@@ -53,6 +53,17 @@ function deployComponent(expected, manifest, component) {
 
 const PHASES = ['acs', 'app', 'web'];
 
+export function promotionPhaseConfigIdentityStage(manifest, phase) {
+  if (!PHASES.includes(phase)) throw new Error(`Unknown promotion phase: ${phase}`);
+  const api = manifest.components?.api?.action;
+  const worker = manifest.components?.runtimeWorker?.action;
+  if (!['deploy', 'keep'].includes(api) || api !== worker) {
+    throw new Error('Manifest API and Runtime Worker actions must match');
+  }
+  // ACS/App 前仍可能运行首次升级的旧 API；Web 阶段必须已具备新版私有快照。
+  return phase !== 'web' && api === 'deploy' ? 'legacy-api-upgrade-retry-baseline' : 'steady-state';
+}
+
 function allowedPhaseMatrices(manifest, phase) {
   const phaseIndex = PHASES.indexOf(phase);
   const expected = baselineComponents(manifest);
@@ -94,6 +105,11 @@ export function assertPromotionPhaseState(manifest, productionState, phase) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [manifestPath, statePath, phase] = process.argv.slice(2);
+  if (statePath === '--config-identity-stage') {
+    const manifest = JSON.parse(await readFile(resolve(manifestPath), 'utf8'));
+    process.stdout.write(`${promotionPhaseConfigIdentityStage(manifest, phase)}\n`);
+    process.exit(0);
+  }
   if (!manifestPath || !statePath || !phase) {
     throw new Error(
       'usage: verify-promotion-phase-state.mjs <manifest.json> <production-state.json> <acs|app|web>',

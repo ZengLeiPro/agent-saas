@@ -422,7 +422,8 @@ test -f "$config_identity_reader" || {
 # 否则首个 phase 成功后会把后续 phase 拒绝在事务中间。
 production_now="/tmp/agent-saas-production-before-${PHASE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 rm -f "$production_now"
-node "$READ_LIVE_COMPONENTS_SCRIPT" --output "$production_now" >/dev/null
+phase_config_identity_stage="$(node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" --config-identity-stage "$PHASE")"
+node "$READ_LIVE_COMPONENTS_SCRIPT" --config-identity-stage "$phase_config_identity_stage" --output "$production_now" >/dev/null
 node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" "$production_now" "$PHASE" >/dev/null
 rm -f "$production_now"
 if [ "$VERIFY_ONLY" = true ]; then

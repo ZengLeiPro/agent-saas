@@ -428,7 +428,7 @@ jobs:
             node scripts/release/reuse-promotion-artifacts.mjs plan "$RUNNER_TEMP/manifest.json" \
               > "$RUNNER_TEMP/reusable-artifact-plan.tsv"
             while IFS=$'\t' read -r filename digest source; do
-              if ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              if ssh -n -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
                 "sudo test -f '$source' && sudo test ! -L '$source' && test \"\$(sudo sha256sum '$source' | cut -d' ' -f1)\" = '$digest'"; then
                 printf '%s\n' "$filename" >> "$reusable_list"
               fi

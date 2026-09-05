@@ -4,7 +4,7 @@
  * 列数按屏宽自适应，最小卡片宽度与 Web 的 `minmax(96px,1fr)` 同口径。
  */
 import React, { useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View, RefreshControl } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, RefreshControl } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Check } from 'lucide-react-native';
 import { formatFileSize, formatShortDate, type FileEntry } from '@agent/shared';
@@ -25,6 +25,9 @@ export interface FileGridProps {
   onSelectToggle?: (path: string) => void;
   /** 容器宽度（用于算列数），由调用方 onLayout 提供 */
   width: number;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  onLoadMore?: () => Promise<void>;
 }
 
 export function resolveGridColumns(width: number): number {
@@ -100,6 +103,9 @@ export function FileGrid({
   selectedPaths,
   onSelectToggle,
   width,
+  loadingMore,
+  hasMore,
+  onLoadMore,
 }: FileGridProps) {
   const colors = useColors();
   const columns = resolveGridColumns(width);
@@ -125,6 +131,11 @@ export function FileGrid({
         />
       )}
       contentContainerStyle={contentContainerStyle}
+      onEndReached={() => {
+        if (hasMore && !loadingMore) void onLoadMore?.();
+      }}
+      onEndReachedThreshold={0.4}
+      ListFooterComponent={loadingMore ? <ActivityIndicator color={colors.primary} style={styles.footer} /> : null}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
       }
@@ -161,4 +172,5 @@ const styles = StyleSheet.create({
     ...fontScale.xs2,
     textAlign: 'center',
   },
+  footer: { marginVertical: spacing.md },
 });

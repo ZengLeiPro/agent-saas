@@ -6,6 +6,47 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { hydrateArtifacts, reusableArtifactPlan } from './reuse-promotion-artifacts.mjs';
 
+test('真实工作流的 SSH 探测不会吞掉第二个制品的循环输入', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { chmod } = await import('node:fs/promises');
+  const root = await mkdtemp(join(tmpdir(), 'reuse-probe-'));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  // 模拟 SSH 默认转发 stdin；-n 才会断开循环输入。
+  await writeFile(join(bin, 'ssh'), '#!/bin/bash\nif [ "$1" != -n ]; then cat >/dev/null; fi\n');
+  await chmod(join(bin, 'ssh'), 0o755);
+  await writeFile(
+    join(root, 'reusable-artifact-plan.tsv'),
+    'server-bundle.tgz\tdigest1\t/source/server\nacs-orchestrator.tgz\tdigest2\t/source/acs\n',
+  );
+  const list = join(root, 'reusable.txt');
+  await writeFile(list, '');
+  const workflow = await readFile(
+    new URL('../../.github/workflows/promote-release.yml', import.meta.url),
+    'utf8',
+  );
+  const start = workflow.indexOf("            while IFS=$'\\t'");
+  const marker = 'done < "$RUNNER_TEMP/reusable-artifact-plan.tsv"';
+  const end = workflow.indexOf(marker, start) + marker.length;
+  assert.ok(start > 0 && end > start);
+  const result = spawnSync('bash', ['-c', 'set -euo pipefail\n' + workflow.slice(start, end)], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: bin + ':' + process.env.PATH,
+      RUNNER_TEMP: root,
+      reusable_list: list,
+      ECS_USER: 'test',
+      ECS_HOST: 'test',
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual((await readFile(list, 'utf8')).trim().split('\n'), [
+    'server-bundle.tgz',
+    'acs-orchestrator.tgz',
+  ]);
+});
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'reuse-promotion-'));
   await mkdir(join(root, 'artifacts'));

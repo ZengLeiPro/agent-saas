@@ -1,346 +1,247 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, Pressable, Alert } from 'react-native';
+/**
+ * 文件中心子目录页 —— 与 `/files` 共用呈现层（`FileBrowserBody`）与选择/删除逻辑，
+ * 差别只在：面包屑可回跳任意上级、没有「所有文件」切换、没有 owner 过滤。
+ * 管理员的根目录浏览（`root=true`）走同一页，只读不删。
+ */
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { View, StyleSheet, type View as RNView } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { MoreHorizontal, ChevronLeft, Trash2 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DropdownMenu, type DropdownSection } from '../../src/components/overlays/DropdownMenu';
-import { FILE_SORT_LABELS, authFetch, getPreviewFileType } from '@agent/shared';
-import type { FileEntry, FileSortKey, FileSortOrder } from '@agent/shared';
+import type { FileEntry } from '@agent/shared';
+import { DropdownMenu } from '../../src/components/overlays/DropdownMenu';
+import { FileBreadcrumb } from '../../src/components/files/FileBreadcrumb';
+import { FileBrowserBody } from '../../src/components/files/FileBrowserBody';
+import { FileSelectionBar } from '../../src/components/files/FileSelectionBar';
+import {
+  HeaderMenuButton,
+  HeaderTextButton,
+} from '../../src/components/files/fileHeaderItems';
+import {
+  buildFileMenuSections,
+  nextSortState,
+  parseFileMenuAction,
+} from '../../src/components/files/fileMenuSections';
 import { useFileList } from '../../src/hooks/useFileList';
-import { useFileOpen } from '../../src/hooks/useFileOpen';
-import { FileList } from '../../src/components/files/FileList';
-import { useColors, useTheme, spacing } from '../../src/theme';
-import { useTabBar } from '../../src/contexts/TabBarContext';
+import { useFileBrowserPrefs } from '../../src/hooks/useFileBrowserPrefs';
+import { useFileEntryPress } from '../../src/hooks/useFileEntryPress';
+import { useFileSelection } from '../../src/hooks/useFileSelection';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { sortFileEntries } from '../../src/lib/fileSort';
 import { hapticLight } from '../../src/lib/haptics';
 import { glassFree } from '../../src/lib/headerItems';
-
-function sortEntries(entries: FileEntry[], sortKey: FileSortKey, sortOrder: FileSortOrder): FileEntry[] {
-  const sorted = [...entries];
-  sorted.sort((a, b) => {
-    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-    let cmp = 0;
-    switch (sortKey) {
-      case 'name': cmp = a.name.localeCompare(b.name); break;
-      case 'modifiedAt': cmp = a.modifiedAt - b.modifiedAt; break;
-      case 'size': cmp = a.size - b.size; break;
-      case 'extension': cmp = a.extension.localeCompare(b.extension) || a.name.localeCompare(b.name); break;
-    }
-    return sortOrder === 'asc' ? cmp : -cmp;
-  });
-  return sorted;
-}
+import { BackButton } from '../../src/components/BackButton';
+import { useColors, spacing } from '../../src/theme';
 
 export default function BrowseFolderScreen() {
-  const { path, owner, root } = useLocalSearchParams<{ path: string; owner?: string; root?: string }>();
+  const { path, owner, root } = useLocalSearchParams<{
+    path: string;
+    owner?: string;
+    root?: string;
+  }>();
   const colors = useColors();
-  const { isDark } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { setTabBarHidden } = useTabBar();
   const { user: authUser } = useAuth();
-  const ownerFilter = owner ?? null;
-  const [sortKey, setSortKey] = useState<FileSortKey>('name');
-  const [sortOrder, setSortOrder] = useState<FileSortOrder>('asc');
-
-  // Multi-select state
-  const [isSelectMode, setIsSelectMode] = useState(false);
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  const selectedCount = selectedPaths.size;
-  const hasSelection = selectedCount > 0;
-
-  const { open: openFile } = useFileOpen();
 
   // 非 admin 用户即使通过 deep link 传入 root=true 也退化为普通模式
   const isRootMode = root === 'true' && authUser?.role === 'admin';
   const folderPath = path || 'assets';
+  const ownerFilter = owner ?? undefined;
+
+  const { sortPrefs, layoutMode, updateSort, updateLayoutMode } = useFileBrowserPrefs();
+  const sort = sortPrefs.folder;
+
   const { entries: rawEntries, loading, refresh } = useFileList(
     folderPath,
     undefined,
-    ownerFilter ?? undefined,
+    ownerFilter,
     isRootMode ? true : undefined,
   );
-
   const entries = useMemo(
-    () => sortEntries(rawEntries, sortKey, sortOrder),
-    [rawEntries, sortKey, sortOrder],
+    () => sortFileEntries(rawEntries, sort.key, sort.order),
+    [rawEntries, sort.key, sort.order],
   );
 
-  const folderName = (isRootMode && folderPath === '.') ? '根目录' : (folderPath.split('/').pop() || '文件');
+  const selection = useFileSelection({
+    owner: ownerFilter,
+    root: isRootMode,
+    onDeleted: refresh,
+  });
+  const { press } = useFileEntryPress({ owner: ownerFilter, root: isRootMode });
 
-  const toggleSelect = useCallback((p: string) => {
-    setSelectedPaths(prev => {
-      const next = new Set(prev);
-      if (next.has(p)) next.delete(p);
-      else next.add(p);
-      return next;
-    });
-  }, []);
+  const handlePress = useCallback(
+    (entry: FileEntry) => {
+      void press(entry);
+    },
+    [press],
+  );
 
-  const enterSelectMode = useCallback(() => {
-    hapticLight();
-    setIsSelectMode(true);
-    setSelectedPaths(new Set());
-    requestAnimationFrame(() => setTabBarHidden(true));
-  }, [setTabBarHidden]);
+  const handleDeleteOne = useCallback(
+    (entry: FileEntry) => selection.confirmDelete([entry]),
+    [selection],
+  );
 
-  const exitSelectMode = useCallback(() => {
-    setIsSelectMode(false);
-    setSelectedPaths(new Set());
-    requestAnimationFrame(() => setTabBarHidden(false));
-  }, [setTabBarHidden]);
+  const selectedEntries = useMemo(
+    () => entries.filter((entry) => selection.selectedPaths.has(entry.path)),
+    [entries, selection.selectedPaths],
+  );
 
-  const handleToggleAll = useCallback(() => {
-    hapticLight();
-    if (selectedPaths.size === entries.length) {
-      setSelectedPaths(new Set());
-    } else {
-      setSelectedPaths(new Set(entries.map(e => e.path)));
-    }
-  }, [selectedPaths.size, entries]);
+  const folderName =
+    isRootMode && folderPath === '.' ? '根目录' : folderPath.split('/').pop() || '文件';
 
-  const handleBatchMove = useCallback(() => {
-    Alert.alert('正在开发中', '移动功能即将上线');
-  }, []);
-
-  const handleBatchDelete = useCallback(() => {
-    if (!hasSelection) return;
-    Alert.alert('正在开发中', '批量删除功能即将上线');
-  }, [hasSelection]);
-
-  const handleDelete = useCallback((entry: FileEntry) => {
-    const typeLabel = entry.isDirectory ? '文件夹' : '文件';
-    Alert.alert(
-      `删除${typeLabel}`,
-      `确定要删除 ${entry.name} 吗？${entry.isDirectory ? '文件夹内的所有内容都将被删除。' : ''}此操作不可撤销。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const params = new URLSearchParams({ path: entry.path });
-              if (ownerFilter) params.set('owner', ownerFilter);
-              const res = await authFetch(`/api/file/delete?${params}`, { method: 'DELETE' });
-              if (res.ok) {
-                await refresh();
-              } else {
-                Alert.alert('错误', '删除失败');
-              }
-            } catch {
-              Alert.alert('错误', '删除失败');
-            }
-          },
+  /** 面包屑回跳：目标是当前路径的祖先就 pop，否则 push 一层新的浏览页 */
+  const handleBreadcrumbNavigate = useCallback(
+    (target: string) => {
+      if (target === folderPath) return;
+      if (folderPath.startsWith(`${target}/`) && router.canGoBack()) {
+        router.back();
+        return;
+      }
+      router.push({
+        pathname: '/files/browse',
+        params: {
+          path: target,
+          ...(ownerFilter ? { owner: ownerFilter } : {}),
+          ...(isRootMode ? { root: 'true' } : {}),
         },
-      ],
-    );
-  }, [refresh]);
+      });
+    },
+    [folderPath, ownerFilter, isRootMode, router],
+  );
 
-  // Workspace HTML never enters an in-app renderer; Artifact delivery is the supported path.
-  const handleEntryPress = useCallback(async (entry: FileEntry) => {
-    if (entry.isDirectory) {
-      router.push({ pathname: '/files/browse', params: { path: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
-      return;
-    }
+  // ── 头部下拉菜单 ────────────────────────────────────────────────
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState(0);
+  const menuTriggerRef = useRef<RNView>(null);
 
-    const previewType = getPreviewFileType(entry.name);
-    if (previewType === 'html') {
-      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
-      return;
-    }
-    if (previewType === 'md') {
-      router.push({ pathname: '/chat/markdown-preview', params: { filePath: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
-      return;
-    }
-
-    await openFile({
-      path: entry.path,
-      modifiedAt: entry.modifiedAt,
-      size: entry.size,
-      owner: ownerFilter ?? undefined,
-      root: isRootMode || undefined,
-    });
-  }, [router, ownerFilter, openFile, isRootMode]);
-
-  const containerStyle = useMemo(() => ({
-    flex: 1,
-    backgroundColor: colors.card,
-  }), [colors.card]);
-
-  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
-  const [headerMenuAnchor, setHeaderMenuAnchor] = useState(0);
-  const headerMenuTriggerRef = useRef<View>(null);
-
-  const handleOpenHeaderMenu = useCallback(() => {
+  const openMenu = useCallback(() => {
     hapticLight();
-    headerMenuTriggerRef.current?.measureInWindow((_x, y, _w, h) => {
-      setHeaderMenuAnchor(y + h);
-      setHeaderMenuVisible(true);
+    menuTriggerRef.current?.measureInWindow((_x, y, _w, h) => {
+      setMenuAnchor(y + h);
+      setMenuVisible(true);
     });
   }, []);
 
-  const menuSections = useMemo<DropdownSection[]>(() => {
-    const keys: FileSortKey[] = ['name', 'modifiedAt', 'size', 'extension'];
-    return [{
-      id: '_sort_section',
-      label: `排序 (${sortOrder === 'asc' ? '升序' : '降序'})`,
-      actions: keys.map(k => {
-        const isActive = sortKey === k;
-        const arrow = isActive ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : '';
-        return {
-          id: k,
-          label: `${FILE_SORT_LABELS[k]}${arrow}`,
-          checked: isActive,
-        };
+  const menuSections = useMemo(
+    () =>
+      buildFileMenuSections({
+        sortKey: sort.key,
+        sortOrder: sort.order,
+        layoutMode,
       }),
-    }];
-  }, [sortKey, sortOrder]);
+    [sort.key, sort.order, layoutMode],
+  );
 
-  const handleMenuSelect = useCallback((actionId: string) => {
-    const key = actionId as FileSortKey;
-    if (key === sortKey) {
-      setSortOrder(o => o === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortKey(key);
-      setSortOrder(key === 'modifiedAt' ? 'desc' : 'asc');
-    }
-  }, [sortKey]);
+  const handleMenuSelect = useCallback(
+    (actionId: string) => {
+      const action = parseFileMenuAction(actionId);
+      if (!action) return;
+      if (action.type === 'layout') updateLayoutMode(action.mode);
+      else if (action.type === 'sort') updateSort('folder', nextSortState(sort, action.key));
+      else if (action.type === 'refresh') void refresh();
+    },
+    [updateLayoutMode, updateSort, sort, refresh],
+  );
 
-  const headerTextStyle = { fontSize: 17, color: colors.foreground };
+  const rightButton = useCallback(
+    () =>
+      selection.selectMode ? (
+        <HeaderTextButton
+          label={
+            selection.selectedCount === entries.length && entries.length > 0
+              ? '取消全选'
+              : '全选'
+          }
+          onPress={() => selection.toggleSelectAll(entries)}
+        />
+      ) : (
+        <HeaderMenuButton onPress={openMenu} triggerRef={menuTriggerRef} />
+      ),
+    [selection, entries, openMenu],
+  );
+
+  // 根目录只读：不提供选择/删除
+  const leftButton = useCallback(() => {
+    if (isRootMode) return null;
+    return selection.selectMode ? (
+      <HeaderTextButton label="完成" onPress={selection.exitSelectMode} />
+    ) : (
+      <HeaderTextButton label="选择" onPress={selection.enterSelectMode} />
+    );
+  }, [isRootMode, selection.selectMode, selection.exitSelectMode, selection.enterSelectMode]);
 
   return (
-    <View style={containerStyle}>
+    <View style={[styles.container, { backgroundColor: colors.card }]}>
       <Stack.Screen
         options={{
           title: folderName,
-          headerRight: () =>
-            isSelectMode ? (
-              <TouchableOpacity onPress={handleToggleAll} activeOpacity={0.7}>
-                <Text style={headerTextStyle}>
-                  {selectedPaths.size === entries.length && entries.length > 0 ? '取消全选' : '全选'}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu}>
-                <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
-              </Pressable>
-            ),
-          unstable_headerRightItems: () => isSelectMode
-            ? [glassFree(
-                <TouchableOpacity onPress={handleToggleAll} activeOpacity={0.7}>
-                  <Text style={headerTextStyle}>
-                    {selectedPaths.size === entries.length && entries.length > 0 ? '取消全选' : '全选'}
-                  </Text>
-                </TouchableOpacity>
-              )]
-            : [glassFree(
-                <Pressable ref={headerMenuTriggerRef} onPress={handleOpenHeaderMenu}>
-                  <MoreHorizontal size={22} color={colors.foreground} strokeWidth={2} />
-                </Pressable>
-              )],
-          headerBackVisible: false,
-          headerLeft: isRootMode
-            ? () => (
-                <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                  <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                </TouchableOpacity>
-              )
-            : () => isSelectMode ? (
-                <TouchableOpacity onPress={exitSelectMode} activeOpacity={0.7}>
-                  <Text style={headerTextStyle}>完成</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                    <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={enterSelectMode} activeOpacity={0.7}>
-                    <Text style={headerTextStyle}>选择</Text>
-                  </TouchableOpacity>
-                </View>
-              ),
-          unstable_headerLeftItems: isRootMode
-            ? () => [glassFree(
-                <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                  <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                </TouchableOpacity>
-              )]
-            : () => isSelectMode
-              ? [glassFree(
-                  <TouchableOpacity onPress={exitSelectMode} activeOpacity={0.7}>
-                    <Text style={headerTextStyle}>完成</Text>
-                  </TouchableOpacity>
-                )]
-              : [
-                  glassFree(
-                    <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={{ padding: 4 }}>
-                      <ChevronLeft size={22} color={colors.foreground} strokeWidth={2} />
-                    </TouchableOpacity>
-                  ),
-                  glassFree(
-                    <TouchableOpacity onPress={enterSelectMode} activeOpacity={0.7}>
-                      <Text style={headerTextStyle}>选择</Text>
-                    </TouchableOpacity>
-                  ),
-                ],
+          headerRight: rightButton,
+          unstable_headerRightItems: () => [glassFree(rightButton())],
+          headerLeft: () => {
+            const extra = leftButton();
+            return (
+              <View style={styles.headerLeft}>
+                <BackButton />
+                {extra}
+              </View>
+            );
+          },
+          unstable_headerLeftItems: () => {
+            const extra = leftButton();
+            return extra
+              ? [glassFree(<BackButton />), glassFree(extra)]
+              : [glassFree(<BackButton />)];
+          },
         }}
       />
-      <FileList
-        key={`${sortKey}-${sortOrder}${isSelectMode ? '-select' : ''}`}
-        entries={entries}
-        loading={loading}
-        onRefresh={refresh}
-        onPress={(entry) => { void handleEntryPress(entry); }}
-        onDelete={isRootMode ? undefined : handleDelete}
-        contentPaddingBottom={isSelectMode ? insets.bottom + 70 : insets.bottom}
-        enableBackGesture
-        selectMode={isSelectMode}
-        selectedPaths={selectedPaths}
-        onSelectToggle={toggleSelect}
+
+      <FileBreadcrumb
+        currentPath={folderPath}
+        rootLabel={isRootMode ? '根目录' : '文件'}
+        onNavigate={handleBreadcrumbNavigate}
       />
 
-      {isSelectMode && (
-        <View style={{
-          position: 'absolute',
-          bottom: insets.bottom + 8,
-          left: spacing.lg,
-          right: spacing.lg,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          zIndex: 100,
-        }}>
-          <TouchableOpacity onPress={handleBatchMove} disabled={!hasSelection} activeOpacity={0.7}>
-            {renderGlass(
-              { alignItems: 'center', justifyContent: 'center', height: 50, paddingHorizontal: 22, borderRadius: 25 },
-              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.foreground }}>
-                移动{hasSelection ? ` (${selectedCount})` : ''}
-              </Text>,
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleBatchDelete} disabled={!hasSelection} activeOpacity={0.7}>
-            {renderGlass(
-              { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-              <Trash2 size={24} color={hasSelection ? colors.destructive : colors.foreground} strokeWidth={2} />,
-            )}
-          </TouchableOpacity>
-        </View>
-      )}
+      <FileBrowserBody
+        entries={entries}
+        loading={loading}
+        layoutMode={layoutMode}
+        onRefresh={refresh}
+        onPress={handlePress}
+        onDelete={isRootMode ? undefined : handleDeleteOne}
+        contentPaddingBottom={selection.selectMode ? insets.bottom + 70 : insets.bottom}
+        enableBackGesture
+        selectMode={selection.selectMode}
+        selectedPaths={selection.selectedPaths}
+        onSelectToggle={selection.toggleSelect}
+      />
 
-      {/* Header dropdown menu */}
+      {selection.selectMode ? (
+        <FileSelectionBar
+          selectedCount={selection.selectedCount}
+          onDelete={() => selection.confirmDelete(selectedEntries)}
+          bottomInset={insets.bottom}
+        />
+      ) : null}
+
       <DropdownMenu
-        visible={headerMenuVisible}
-        onClose={() => setHeaderMenuVisible(false)}
+        visible={menuVisible}
+        onClose={() => setMenuVisible(false)}
         sections={menuSections}
         onSelect={handleMenuSelect}
-        anchorTop={headerMenuAnchor}
+        anchorTop={menuAnchor}
         align="right"
       />
     </View>
   );
-
-  function renderGlass(style: any, children: React.ReactNode) {
-    return <View style={[style, { backgroundColor: colors.muted }]}>{children}</View>;
-  }
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+});

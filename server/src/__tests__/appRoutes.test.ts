@@ -1,3 +1,5 @@
+import express from 'express';
+import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => {
@@ -159,7 +161,8 @@ vi.mock('../routes/feedback.js', () => ({
 vi.mock('../routes/tenantRemoteHandsAdmin.js', () => ({
   createTenantRemoteHandsAdminRouter: mocked.createTenantRemoteHandsAdminRouter,
 }));
-vi.mock('../routes/runtimeOperationsAdmin.js', () => ({
+vi.mock('../routes/runtimeOperationsAdmin.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../routes/runtimeOperationsAdmin.js')>(),
   createRuntimeOperationsAdminRouter: mocked.createRuntimeOperationsAdminRouter,
 }));
 vi.mock('../routes/platformObservability.js', () => ({
@@ -231,7 +234,7 @@ describe('registerRoutes', () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
-  it('registers base routes and skips cron route when cron service is absent', () => {
+  it('registers base routes, config baseline/identity callbacks, and skips cron without a service', async () => {
     const app = {
       use: vi.fn(),
       get: vi.fn(),
@@ -264,10 +267,14 @@ describe('registerRoutes', () => {
       },
       groupStore: {},
       userStore: undefined,
+      refreshSharedConfig: vi.fn(async () => true),
+      validateSharedConfigCandidate: vi.fn(async () => undefined),
+      refreshVoiceTranscriptionConfig: vi.fn(async () => true),
     };
 
     registerRoutes(app as any, runtime);
 
+    // Tool 与 STT 都必须通过同一 force=true 共享配置刷新器建立完整基线。
     expect(mocked.createHealthRouter).toHaveBeenCalledWith(
       runtime.config,
       expect.objectContaining({
@@ -289,6 +296,11 @@ describe('registerRoutes', () => {
     expect(mocked.createFileRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
+    });
+    expect(mocked.createVoiceRouter).toHaveBeenCalledWith({
+      agentCwd: '/agent',
+      transcriptionService: runtime.voiceTranscriptionService,
+      refreshSharedConfig: runtime.refreshVoiceTranscriptionConfig,
     });
     // Legacy grants are checked against live principal and auth-epoch state.
     expect(mocked.createPreviewRoutes).toHaveBeenCalledWith({
@@ -391,6 +403,7 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.uploadRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.fileRouter);
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.voiceRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.previewTokenRouter);
     expect(app.use).toHaveBeenCalledWith('/preview', mocked.previewServeRouter);
     expect(app.use).toHaveBeenCalledWith('/api/search', mocked.searchRouter);
@@ -400,15 +413,138 @@ describe('registerRoutes', () => {
     expect(app.use).toHaveBeenCalledWith('/api', mocked.groupsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/dingtalk', mocked.requireAdmin, mocked.dingtalkRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/tenant-remote-hands', mocked.tenantRemoteHandsAdminRouter);
+    expect(mocked.createTenantRemoteHandsAdminRouter).toHaveBeenCalledWith(expect.objectContaining({
+      validateConfigReload: runtime.validateSharedConfigCandidate,
+    }));
     expect(app.use).toHaveBeenCalledWith('/api/admin/runtime-operations', mocked.runtimeOperationsAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin', mocked.requireAdmin, mocked.platformObservabilityRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/system', mocked.requireAdmin, mocked.systemAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/internal', mocked.internalAcsAlertsRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/tool-controls', mocked.toolControlsAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/audio-transcribe', mocked.audioTranscribeAdminRouter);
+    const toolOptions = (mocked.createToolControlsAdminRouter as any).mock.calls[0]?.[0];
+    const audioOptions = (mocked.createAudioTranscribeAdminRouter as any).mock.calls[0]?.[0];
+    expect(toolOptions).toEqual(expect.objectContaining({
+      ensureConfigBaselineApplied: expect.any(Function), onConfigReloaded: expect.any(Function),
+    }));
+    expect(audioOptions).toEqual(expect.objectContaining({
+      ensureConfigBaselineApplied: expect.any(Function), onConfigReloaded: expect.any(Function),
+    }));
+    await expect(toolOptions.ensureConfigBaselineApplied('tool-baseline')).resolves.toBe(true);
+    await expect(audioOptions.ensureConfigBaselineApplied('audio-baseline')).resolves.toBe(true);
+    expect(runtime.refreshSharedConfig).toHaveBeenNthCalledWith(1, true);
+    expect(runtime.refreshSharedConfig).toHaveBeenNthCalledWith(2, true);
     expect(app.use).toHaveBeenCalledWith('/api/admin/connector-dictionary', mocked.connectorDictionaryAdminRouter);
     expect(app.use).toHaveBeenCalledWith('/api/admin/image-gen-pricing', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api/admin/memory-polling', expect.any(Function));
+  });
+
+  it('wires config identity into the real platform overview router and preserves its admin guard', async () => {
+    const actualPlatformObservability = await vi.importActual<
+      typeof import('../routes/platformObservability.js')
+    >('../routes/platformObservability.js');
+    (mocked.createPlatformObservabilityRouter as any).mockImplementationOnce(
+      actualPlatformObservability.createPlatformObservabilityRouter,
+    );
+
+    const configIdentity: import('@agent/shared').ConfigIdentitySummary = {
+      schemaVersion: 1,
+      status: 'consistent',
+      expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+      observed: {
+        schemaVersion: 1,
+        digest: `sha256:${'a'.repeat(64)}`,
+        credentialVersionDigest: null,
+        versionResolution: 'resolved',
+        secretRefCount: 0,
+      },
+      releaseId: 'rc-register-routes-test',
+      lastObservedAt: '2026-08-31T16:00:00.000Z',
+    };
+    const getConfigIdentitySummary = vi.fn(() => configIdentity);
+    const registrationApp = { use: vi.fn(), get: vi.fn() };
+    const runtime: any = {
+      processRole: 'ws-only',
+      config: {
+        server: {},
+        agent: { userOverrides: undefined },
+        tenantRemoteHands: { hands: [] },
+      },
+      agentCwd: '/agent',
+      sessionBasePath: '/sessions',
+      dingtalkDeps: {
+        sessionService: { loadSessions: vi.fn() },
+        deliveryService: { sendMessage: vi.fn() },
+      },
+      dispatchMetricsStore: {
+        getSnapshot: vi.fn(() => ({ totalRuns: 0 })),
+      },
+      channelManager: {
+        getActiveStreamCount: vi.fn(() => 0),
+        getChannel: vi.fn(() => undefined),
+        draining: false,
+      },
+      uploadManager: {
+        getMetricsSnapshot: vi.fn(() => ({ activeUploads: 0 })),
+      },
+      cronRuntime: {
+        service: null,
+        cronRunsDir: '/runs',
+      },
+      groupStore: {},
+      getConfigIdentitySummary,
+    };
+
+    registerRoutes(registrationApp as any, runtime);
+
+    const platformOptions = (mocked.createPlatformObservabilityRouter as any).mock.calls.at(-1)?.[0];
+    expect(platformOptions).toEqual(expect.objectContaining({
+      getConfigIdentitySummary: expect.any(Function),
+    }));
+    expect(platformOptions?.getConfigIdentitySummary).not.toBe(getConfigIdentitySummary);
+
+    const observabilityRouter = mocked.createPlatformObservabilityRouter.mock.results.at(-1)?.value;
+    const registration = registrationApp.use.mock.calls.find(
+      (call) => call[0] === '/api/admin' && call[2] === observabilityRouter,
+    );
+    expect(registration).toBeDefined();
+
+    const app = express();
+    app.use((req, _res, next) => {
+      req.user = {
+        sub: 'route-assembly-test',
+        username: 'route-assembly-test',
+        role: req.header('x-test-role') === 'user' ? 'user' : 'admin',
+        tenantId: 'pantheon',
+      };
+      next();
+    });
+    app.use(registration![0], registration![1], registration![2]);
+    const server = await new Promise<Server>((resolve) => {
+      const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    });
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('failed to bind test server');
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+
+      const forbidden = await fetch(`${baseUrl}/api/admin/overview/snapshot`, {
+        headers: { 'x-test-role': 'user' },
+      });
+      expect(forbidden.status).toBe(403);
+      expect(getConfigIdentitySummary).not.toHaveBeenCalled();
+
+      const response = await fetch(`${baseUrl}/api/admin/overview/snapshot`);
+      const responseBody = await response.json() as any;
+      expect({ status: response.status, body: responseBody }).toEqual({
+        status: 200,
+        body: expect.objectContaining({ configIdentity }),
+      });
+      expect(getConfigIdentitySummary).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it('registers cron route when cron service is present', () => {

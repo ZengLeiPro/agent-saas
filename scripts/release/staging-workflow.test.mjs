@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { validateExpectedConfigIdentityObservers } from './read-production-state.mjs';
+
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
 const acrWaitPath = new URL('./wait-for-acr-image.sh', import.meta.url);
 const acceptanceWorkflowPath = new URL(
@@ -185,6 +187,76 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
+test('首次 Production ConfigIdentity 迁移必须显式选择且不降低 steady-state 门禁', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  assert.match(
+    workflow,
+    /production_config_identity_stage:[\s\S]*type: choice[\s\S]*default: steady-state[\s\S]*- steady-state[\s\S]*- legacy-pre-upgrade-baseline/u,
+  );
+  assert.match(
+    workflow,
+    /PRODUCTION_CONFIG_IDENTITY_STAGE: \$\{\{ inputs\.production_config_identity_stage \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /read-production-state\.mjs' --config-identity-stage '\$PRODUCTION_CONFIG_IDENTITY_STAGE'/u,
+  );
+  assert.match(workflow, /Selected stage: \\`\$PRODUCTION_CONFIG_IDENTITY_STAGE\\`/u);
+  assert.match(workflow, /Default remains `steady-state`/u);
+
+  assert.doesNotThrow(() =>
+    validateExpectedConfigIdentityObservers(undefined, undefined, {
+      configIdentityStage: 'legacy-pre-upgrade-baseline',
+    }),
+  );
+  assert.throws(
+    () => validateExpectedConfigIdentityObservers(undefined, undefined),
+    /completely absent outside the legacy pre-upgrade baseline/u,
+  );
+
+  const expected = {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+  };
+  const apiSummary = {
+    schemaVersion: 1,
+    status: 'consistent',
+    releaseId: 'rc-20260904-01',
+    expected,
+    observed: {
+      ...expected,
+      credentialVersionDigest: null,
+      versionResolution: 'resolved',
+      secretRefCount: 0,
+    },
+  };
+  for (const [trusted, api] of [
+    [expected, undefined],
+    [undefined, apiSummary],
+  ]) {
+    assert.throws(
+      () =>
+        validateExpectedConfigIdentityObservers(trusted, api, {
+          configIdentityStage: 'legacy-pre-upgrade-baseline',
+        }),
+      /missing from/u,
+    );
+  }
+  assert.throws(
+    () =>
+      validateExpectedConfigIdentityObservers(
+        expected,
+        {
+          ...apiSummary,
+          expected: { ...expected, digest: `sha256:${'b'.repeat(64)}` },
+          observed: { ...apiSummary.observed, digest: `sha256:${'b'.repeat(64)}` },
+        },
+        { configIdentityStage: 'legacy-pre-upgrade-baseline' },
+      ),
+    /disagrees across observers/u,
+  );
+});
+
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
   const [workflow, stagingBinding, authSpec] = await Promise.all([
     readFile(acceptanceWorkflowPath, 'utf8'),
@@ -287,8 +359,8 @@ test('installed Staging units accept the persistent config path and reject the l
   assert.ok(functionStart >= 0 && functionEnd > functionStart);
   const verifier = deploy.slice(functionStart, functionEnd + 2);
   const config = 'AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json';
-  const api = `${config} AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready`;
-  const worker = `${config} AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready`;
+  const api = `${config} AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/config-identity.json`;
+  const worker = `${config} AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/runtime-worker-config-identity.json`;
   const run = (apiEnvironment, workerEnvironment) =>
     spawnSync('bash', [
       '-c',
@@ -299,6 +371,14 @@ test('installed Staging units accept the persistent config path and reject the l
     ]);
 
   assert.equal(run(api, worker).status, 0);
+  assert.notEqual(
+    run(api, worker.replace('runtime-worker-config-identity.json', 'config-identity.json')).status,
+    0,
+  );
+  assert.notEqual(
+    run(api.replace('config-identity.json', 'runtime-worker-config-identity.json'), worker).status,
+    0,
+  );
   assert.notEqual(
     run(
       api.replace(
@@ -321,8 +401,11 @@ test('installed Staging units accept the persistent config path and reject the l
   );
 });
 
-test('target deployment consumes bundles with component identities and only Staging paths', async () => {
-  const deploy = await readFile(deployPath, 'utf8');
+test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {
+  const [deploy, workflow] = await Promise.all([
+    readFile(deployPath, 'utf8'),
+    readFile(workflowPath, 'utf8'),
+  ]);
   assert.doesNotMatch(deploy, /pnpm (install|build)|npm (install|run)/u);
   assert.doesNotMatch(deploy, /\/opt\/agent-saas-app|agent-saas-server@|active-color/u);
   assert.match(deploy, /\/opt\/agent-saas-staging/u);
@@ -340,7 +423,21 @@ test('target deployment consumes bundles with component identities and only Stag
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
   assert.match(deploy, /does not execute the immutable Staging server entrypoint/u);
+  assert.match(deploy, /validateCandidateReleaseReadiness/u);
+  assert.match(deploy, /\/run\/agent-saas-staging\/config-identity\.json/u);
+  assert.match(deploy, /\/run\/agent-saas-staging\/runtime-worker-config-identity\.json/u);
+  assert.match(deploy, /'AGENT_SAAS_CONFIG_IDENTITY_PATH'/u);
+  assert.match(
+    deploy,
+    /rm -f "\$run_root\/runtime-worker\.ready" \\\n  "\$api_config_identity_snapshot" "\$worker_config_identity_snapshot"/u,
+  );
+  assert.doesNotMatch(deploy, /api\.configIdentity/u);
   assert.match(deploy, /agent-saas-acs-orchestrator-staging\.service/u);
+  assert.match(deploy, /Missing shared ConfigIdentity readiness contract module/u);
+  assert.match(
+    workflow,
+    /read-production-state\.mjs scripts\/release\/read-runtime-identity\.mjs/u,
+  );
   assert.match(deploy, /kill -USR2/u);
   assert.match(deploy, /orchestratorArtifactDigest/u);
   assert.match(deploy, /sandboxImageDigest/u);
@@ -349,10 +446,13 @@ test('target deployment consumes bundles with component identities and only Stag
   assert.match(deploy, /if \[ -L "\$current" \]; then/u);
   assert.match(deploy, /readlink -f -- "\$current"/u);
   assert.match(deploy, /had_previous_release=false/u);
+  assert.match(deploy, /trap 'exit 129' HUP/u);
+  assert.match(deploy, /trap 'exit 130' INT/u);
+  assert.match(deploy, /trap 'exit 143' TERM/u);
   assert.match(deploy, /if \[ "\$had_previous_release" = true \]; then/u);
   assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
-  assert.match(deploy, /rm -f \/run\/agent-saas-staging\/server\.pid/u);
-  assert.match(deploy, /\/run\/agent-saas-staging\/acs-orchestrator\.pid/u);
+  assert.match(deploy, /rm -f "\$run_root\/server\.pid"/u);
+  assert.match(deploy, /"\$run_root\/acs-orchestrator\.pid"/u);
   assert.match(deploy, /systemctl reset-failed agent-saas-runtime-worker-staging\.service/u);
   assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
   assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
@@ -384,8 +484,12 @@ test('target deployment consumes bundles with component identities and only Stag
     /AGENT_SAAS_CONFIG_PATH=\/var\/lib\/agent-saas-staging\/config\/config\.json/u,
   );
   assert.match(deploy, /API and Runtime Worker must use the shared Staging config/u);
+  assert.match(
+    deploy,
+    /verify_staging_unit_environment "\$api_unit_environment" "\$worker_unit_environment"/u,
+  );
   assert.match(deploy, /config_root="\$state_root\/config"/u);
-  assert.match(deploy, /legacy_server_config=\/etc\/agent-saas-staging\/config\.json/u);
+  assert.match(deploy, /legacy_server_config="\$etc_root\/config\.json"/u);
   assert.match(deploy, /install -d -o agent-saas-staging -g agent-saas-staging -m 0700/u);
   assert.match(deploy, /Staging mutable config must be a regular non-symlink file/u);
   assert.match(deploy, /artifact\.backend must be local/u);
@@ -418,7 +522,10 @@ test('target deployment consumes bundles with component identities and only Stag
     /sharedDir: '\/opt\/agent-saas-staging\/current\/server\/workspace-shared'/u,
   );
   assert.match(deploy, /cp -a "\$server_config" "\$rollback_root\/config\.json"/u);
-  assert.match(deploy, /cp -a "\$rollback_root\/config\.json" "\$server_config"/u);
+  assert.match(
+    deploy,
+    /restore_optional_file "\$had_server_config" "\$rollback_root\/config\.json" "\$server_config"/u,
+  );
   assert.match(deploy, /chown agent-saas-staging:agent-saas-staging "\$server_config"/u);
   assert.match(deploy, /chmod 0600 "\$server_config"/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
@@ -443,10 +550,15 @@ test('target deployment consumes bundles with component identities and only Stag
       deploy.indexOf('ln -sfn "$target" "$current"'),
   );
   assert.match(deploy, /AGENT_SAAS_RELEASE_SHA: manifest\.components\.api\.sourceSha/u);
-  assert.match(deploy, /release\.releaseSha !== manifest\.components\.api\.sourceSha/u);
   assert.doesNotMatch(deploy, /AGENT_SAAS_RELEASE_SHA: manifest\.releaseSha/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
+  assert.match(deploy, /trap finish EXIT # one-shot dispatcher/u);
+  assert.match(deploy, /restore_optional_file "\$had_server_unit"/u);
+  assert.ok(
+    deploy.indexOf('trap finish EXIT # one-shot dispatcher') <
+      deploy.indexOf('install_staging_unit \\\n  "$UNIT_DIR/agent-saas-server-staging.service.template"'),
+  );
   assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_ENABLED=true/u);
   assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce/u);
   assert.match(deploy, /acs\.lifecycle\?\.enabled !== true/u);
@@ -455,17 +567,61 @@ test('target deployment consumes bundles with component identities and only Stag
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
 
+test('Staging deploy cleanup is best-effort and every temporary path is run-attempt isolated', async () => {
+  const [deploy, workflow] = await Promise.all([
+    readFile(deployPath, 'utf8'),
+    readFile(workflowPath, 'utf8'),
+  ]);
+  assert.match(deploy, /GITHUB_RUN_ATTEMPT:\?GITHUB_RUN_ATTEMPT is required/u);
+  assert.match(
+    workflow,
+    /remote="\/tmp\/agent-saas-staging-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u,
+  );
+  assert.match(
+    deploy,
+    /printf '%s:%s' "\$GITHUB_RUN_ID" "\$GITHUB_RUN_ATTEMPT" \| grep -Eq '\^\[1-9\]\[0-9\]\*:\[1-9\]\[0-9\]\*\$'/u,
+  );
+  assert.match(deploy, /deployment_attempt_id="\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u);
+  assert.match(
+    workflow,
+    /GITHUB_RUN_ID='\$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='\$GITHUB_RUN_ATTEMPT' bash/u,
+  );
+  for (const pathFixture of [
+    'config.json.migrate-$deployment_attempt_id',
+    'candidate-${deployment_attempt_id}',
+    'candidate-$deployment_attempt_id',
+    'rollback-$release_id-$deployment_attempt_id',
+    '.release-persistence-$release_id-$deployment_attempt_id',
+    'acs-health-$deployment_attempt_id.json',
+    'api-ready-$deployment_attempt_id.json',
+  ]) {
+    assert.ok(deploy.includes(pathFixture), `missing run-attempt path fixture: ${pathFixture}`);
+  }
+  assert.match(deploy, /candidatePath = `\$\{configPath\}\.candidate-\$\{deploymentAttemptId\}`/u);
+  assert.match(deploy, /candidatePath = `\$\{envPath\}\.candidate-\$\{deploymentAttemptId\}`/u);
+  assert.match(deploy, /trap '' HUP INT TERM[\s\S]{0,800}set \+e/u);
+  assert.match(deploy, /Rollback backups stay on disk for manual recovery/u);
+  assert.match(
+    deploy,
+    /rm -rf "\$candidate"[\s\S]{0,320}if \[ "\$deployment_committed" = false \]; then\s+rollback/u,
+  );
+  assert.match(
+    deploy,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
+  );
+});
+
 test('Staging health gate rejects shadow mode before commit so EXIT trap rolls back', async () => {
   const deploy = await readFile(deployPath, 'utf8');
   const validator = deploy.match(
-    /node - "\$MANIFEST_PATH" "\$state_root\/api-ready\.json" "\$state_root\/acs-health\.json" <<'NODE'\n([\s\S]*?)\nNODE\n\ninstall -m 0444/u,
+    /node - "\$MANIFEST_PATH" "\$acs_health_probe" <<'NODE'\n([\s\S]*?)\nNODE\n\ninstall -m 0444/u,
   )?.[1];
-  assert.ok(validator, 'Staging health validator must remain executable as an isolated contract');
-  assert.ok(
-    deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") <
-      deploy.indexOf('deployment_committed=true'),
+  assert.ok(validator, 'Staging ACS health validator must remain executable as an isolated contract');
+  assert.ok(deploy.indexOf("acs.lifecyclePolicyMode !== 'enforce'") < deploy.indexOf('deployment_committed=true'));
+  assert.match(
+    deploy,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
   );
-  assert.match(deploy, /if \[ "\$deployment_committed" = false \]; then rollback; fi/u);
 
   const root = await mkdtemp(join(tmpdir(), 'staging-health-'));
   try {
@@ -481,9 +637,6 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
         },
       },
     };
-    const api = {
-      release: { releaseId: manifest.releaseId, releaseSha: manifest.components.api.sourceSha },
-    };
     const acs = {
       environment: 'staging',
       releaseId: manifest.releaseId,
@@ -494,11 +647,10 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
       lifecycle: { enabled: true },
       lifecyclePolicyMode: 'shadow',
     };
-    const paths = [join(root, 'manifest.json'), join(root, 'api.json'), join(root, 'acs.json')];
+    const paths = [join(root, 'manifest.json'), join(root, 'acs.json')];
     await Promise.all([
       writeFile(paths[0], JSON.stringify(manifest)),
-      writeFile(paths[1], JSON.stringify(api)),
-      writeFile(paths[2], JSON.stringify(acs)),
+      writeFile(paths[1], JSON.stringify(acs)),
     ]);
     const shadow = spawnSync(process.execPath, ['-', ...paths], {
       input: validator,
@@ -506,25 +658,12 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
     });
     assert.notEqual(shadow.status, 0, 'shadow response must fail the deployment health gate');
 
-    await writeFile(
-      paths[2],
-      JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }),
-    );
-    const disabled = spawnSync(process.execPath, ['-', ...paths], {
-      input: validator,
-      encoding: 'utf8',
-    });
-    assert.notEqual(
-      disabled.status,
-      0,
-      'disabled lifecycle controller must fail the deployment health gate',
-    );
+    await writeFile(paths[1], JSON.stringify({ ...acs, lifecycle: { enabled: false }, lifecyclePolicyMode: 'enforce' }));
+    const disabled = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
+    assert.notEqual(disabled.status, 0, 'disabled lifecycle controller must fail the deployment health gate');
 
-    await writeFile(paths[2], JSON.stringify({ ...acs, lifecyclePolicyMode: 'enforce' }));
-    const enforce = spawnSync(process.execPath, ['-', ...paths], {
-      input: validator,
-      encoding: 'utf8',
-    });
+    await writeFile(paths[1], JSON.stringify({ ...acs, lifecyclePolicyMode: 'enforce' }));
+    const enforce = spawnSync(process.execPath, ['-', ...paths], { input: validator, encoding: 'utf8' });
     assert.equal(enforce.status, 0, enforce.stderr);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -620,12 +759,36 @@ test('Staging API and Worker keep mutable process data isolated while executing 
     workerUnit,
     /Environment=AGENT_SAAS_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
   );
+  assert.match(
+    workerUnit,
+    /Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=\/run\/agent-saas-staging\/runtime-worker-config-identity\.json/u,
+  );
+  assert.match(
+    workerUnit,
+    /ExecStartPre=\/usr\/bin\/rm -f \/run\/agent-saas-staging\/runtime-worker\.ready \/run\/agent-saas-staging\/runtime-worker-config-identity\.json/u,
+  );
   assert.doesNotMatch(workerUnit, /AGENT_SAAS_WORKER_READY_FILE/u);
 
   const serverUnit = await readFile(serverUnitPath, 'utf8');
   assert.match(
     serverUnit,
     /Environment=AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
+  );
+  assert.match(
+    serverUnit,
+    /Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=\/run\/agent-saas-staging\/config-identity\.json/u,
+  );
+  assert.match(
+    serverUnit,
+    /ExecStartPre=\/usr\/bin\/rm -f \/run\/agent-saas-staging\/config-identity\.json/u,
+  );
+  assert.notEqual(
+    serverUnit.indexOf('Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH='),
+    -1,
+  );
+  assert.ok(
+    serverUnit.indexOf('Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=') >
+      serverUnit.indexOf('EnvironmentFile=/etc/agent-saas-staging/server.env'),
   );
 });
 

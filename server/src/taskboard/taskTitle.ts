@@ -16,7 +16,7 @@ export interface TaskboardTitleGeneratorOptions {
   agentCwd?: string;
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;
-  refreshSharedConfig?: () => void;
+  refreshSharedConfig?: (force?: boolean) => void | boolean | Promise<boolean>;
   getTitleSystemPrompt?: () => string;
   tokenUsageStore?: TokenUsageStore;
   billingService?: BillingService;
@@ -25,7 +25,7 @@ export interface TaskboardTitleGeneratorOptions {
 export interface TaskboardTitleGeneratorRuntime {
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;
-  refreshSharedConfig: () => void;
+  refreshSharedConfig: (force?: boolean) => void | boolean | Promise<boolean>;
   systemPromptRegistry: { get(key: string): string };
   tokenUsageStore?: TokenUsageStore;
   billingService?: BillingService;
@@ -79,7 +79,7 @@ export async function generateAndApplyTaskTitle(
 export function createTaskboardTitleGenerator(options: TaskboardTitleGeneratorOptions) {
   return async (description: string, identity: TaskboardIdentity): Promise<string | null> => {
     try {
-      options.refreshSharedConfig?.();
+      if (await options.refreshSharedConfig?.(true) === false) return null;
       if (!description.trim() || !options.agentCwd || !options.titleGeneratorConfigs?.length) return null;
 
       const sessionId = `task-title-${randomUUID()}`;

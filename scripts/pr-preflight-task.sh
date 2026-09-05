@@ -8,6 +8,7 @@ require_test_database() {
   export MEMORY_CONSOLIDATION_TEST_PG_URL="${MEMORY_CONSOLIDATION_TEST_PG_URL:-$TEST_DATABASE_URL}"
 }
 
+# checks 覆盖统一 Release 契约套件、发布身份、readiness、兼容 authority 与 rollback 门禁。
 case "$task" in
   checks)
     pnpm check:ratchets
@@ -15,6 +16,10 @@ case "$task" in
     pnpm -r --filter './packages/*' test
     pnpm -r --filter './packages/*' build
     pnpm test:release-contracts
+    bash -n scripts/release/production-deploy-rollback.sh
+    bash scripts/release/production-deploy-rollback.test.sh
+    bash scripts/release/compat-app-authority.test.sh
+    bash scripts/release/staging-deploy-cleanup.test.sh
     pnpm check:runtime-dependencies
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
+import { assertProductionManagedCredentialSafety } from '../release/configIdentity.js';
 import { createTenantRemoteHandsAdminRouter } from '../routes/tenantRemoteHandsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
@@ -190,6 +191,43 @@ describe('tenant remote hands admin router', () => {
       expect(body.error).toContain('allowlist rollout requires userIds or usernames');
       expect(readFileSync(configPath, 'utf-8')).toBe(before);
     });
+  });
+
+  it('rejects Production inline authToken before disk or runtime mutation', async () => {
+    const rawConfig = baseRawConfig();
+    const hand = rawConfig.tenantRemoteHands.hands[0] as Record<string, unknown>;
+    delete hand.authToken;
+    hand.authTokenRef = 'secret://tenant/remote-hand';
+    const onTenantRemoteHandsUpdated = vi.fn();
+    const validateConfigReload = vi.fn(assertProductionManagedCredentialSafety);
+
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/tenant-remote-hands`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tenantRemoteHands: {
+            hands: [{
+              id: 'tenant-ecs',
+              rollout: { mode: 'all' },
+              baseUrl: 'http://tenant-ecs-hand:3300',
+              authToken: 'must-not-be-written',
+            }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect((await readJson(response)).error).toContain('must use SecretVault ref');
+      expect(validateConfigReload).toHaveBeenCalledTimes(1);
+      expect(onTenantRemoteHandsUpdated).not.toHaveBeenCalled();
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(runtimeConfig.tenantRemoteHands?.hands[0]?.authTokenRef).toBe(
+        'secret://tenant/remote-hand',
+      );
+      expect(runtimeConfig.tenantRemoteHands?.hands[0]?.authToken).toBeUndefined();
+    }, { onTenantRemoteHandsUpdated, validateConfigReload });
   });
 
   it('probes hand health with the configured bearer token', async () => {

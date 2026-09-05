@@ -1,0 +1,28 @@
+{
+  "runtimeOnly": {
+    "runtimeExpected": {
+      "schemaVersion": 1,
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "apiSummary": null
+  },
+  "apiOnly": {
+    "runtimeExpected": null,
+    "apiSummary": {
+      "schemaVersion": 1,
+      "status": "consistent",
+      "releaseId": "rc-1",
+      "expected": {
+        "schemaVersion": 1,
+        "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "observed": {
+        "schemaVersion": 1,
+        "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "credentialVersionDigest": null,
+        "versionResolution": "resolved",
+        "secretRefCount": 0
+      }
+    }
+  }
+}

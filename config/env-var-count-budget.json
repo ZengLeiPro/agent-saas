@@ -4,12 +4,13 @@
   "updatedAt": "2026-09-05",
   "domains": {
     "server": {
-      "budget": 63,
+      "budget": 64,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
         "AGENT_AZEROTH_LEAD_URL",
         "AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE",
+        "AGENT_SAAS_CONFIG_IDENTITY_PATH",
         "AGENT_SAAS_CONFIG_PATH",
         "AGENT_SAAS_CREATE_WORKSPACE_VENV",
         "AGENT_SAAS_DRAIN_ABORT_GRACE_MS",
@@ -27,8 +28,8 @@
         "AGENT_TRANSCRIPTS_ROOT",
         "AZEROTH_API_URL",
         "AZEROTH_PROXY_BASE_URL",
-        "AZEROTH_TOKENS_FILE",
         "AZEROTH_TOKEN_METADATA_VERIFY",
+        "AZEROTH_TOKENS_FILE",
         "CONFIG_JSON_PATH",
         "CONNECTOR_OAUTH_CALLBACK_URL",
         "FEISHU_CONNECTOR_APP_ID",

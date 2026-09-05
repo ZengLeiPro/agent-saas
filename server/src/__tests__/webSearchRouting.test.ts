@@ -223,9 +223,29 @@ describe('WebSearch provider payloads', () => {
       },
     } as never, vault);
 
-    // 境外源拿不到明文就等于 scope=global 不可用，必须与主源同等解析
+    // 境外源缺少明文即 scope=global 不可用，必须与主源同等解析。
     expect(resolved?.search?.apiKey).toBe('zhipu-plaintext');
     expect(resolved?.search?.global?.apiKey).toBe('tavily-plaintext');
+  });
+
+  it.each([
+    ['primary', { provider: 'zhipu', apiKeyRef: 'vault://primary-sensitive' }, 'webTools.search.apiKeyRef'],
+    ['global', { provider: 'zhipu', global: { provider: 'tavily', apiKeyRef: 'vault://global-sensitive' } }, 'webTools.search.global.apiKeyRef'],
+  ] as const)('redacts %s SecretVault resolution failures before logging or audit', async (_scope, search, field) => {
+    const vault = new InMemorySecretVault();
+    const vaultDetail = 'upstream leaked credential detail';
+    vi.spyOn(vault, 'getSecret').mockRejectedValue(new Error(vaultDetail));
+
+    const error = await resolveWebToolsConfig({ enabled: true, search } as never, vault)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: 'CredentialResolutionError',
+      code: 'CREDENTIAL_RESOLUTION_FAILED',
+      field,
+    });
+    expect(String(error)).not.toContain('vault://');
+    expect(String(error)).not.toContain(vaultDetail);
   });
 
   it('exposes scope in tool metadata and surfaces degradation to the model', async () => {

@@ -1,5 +1,5 @@
 /** M50-04 path-free voice transcription routes. Audio playback uses GET /attachments/:attachmentId/content. */
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import {
   VoiceTranscriptionError,
@@ -9,6 +9,7 @@ import {
 export interface VoiceRouterOptions {
   agentCwd: string;
   transcriptionService: VoiceTranscriptionService;
+  refreshSharedConfig: (force?: boolean) => boolean | Promise<boolean>;
 }
 
 function requestUserCwd(agentCwd: string, req: Request): string {
@@ -21,10 +22,31 @@ function requestUserCwd(agentCwd: string, req: Request): string {
   } : undefined);
 }
 
+function sendConfigRefreshUnavailable(res: Response): void {
+  res.status(503).json({
+    success: false,
+    error: {
+      code: 'STT_CONFIG_REFRESH_FAILED',
+      message: '语音识别配置暂不可用',
+      retryable: true,
+    },
+  });
+}
+
 export function createVoiceRouter(options: VoiceRouterOptions): Router {
   const router = Router();
 
   router.post('/voice/transcriptions', async (req, res) => {
+    try {
+      if (!await options.refreshSharedConfig(true)) {
+        sendConfigRefreshUnavailable(res);
+        return;
+      }
+    } catch {
+      sendConfigRefreshUnavailable(res);
+      return;
+    }
+
     try {
       const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
       const result = await options.transcriptionService.request(requestUserCwd(options.agentCwd, req), {

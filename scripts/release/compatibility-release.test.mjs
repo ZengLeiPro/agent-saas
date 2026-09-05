@@ -4,6 +4,7 @@ import { closeSync, openSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { createComponentArtifactIndex } from './create-component-artifact-index.mjs';
@@ -152,9 +153,14 @@ test('builds compatibility runtime identities without carrying stale App metadat
     releaseId: RELEASE_ID,
     sourceSha: SHA,
     serverDigest: DIGEST,
+    configIdentityDigest: DIGEST,
+    configIdentityCredentialVersionDigest: DIGEST,
   });
   assert.equal(environment.AGENT_SAAS_RELEASE_SHA, SHA);
   assert.equal(environment.AGENT_SAAS_WEB_DIGEST, DIGEST);
+  assert.equal(environment.AGENT_SAAS_CONFIG_IDENTITY_DIGEST, DIGEST);
+  assert.equal(environment.AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION, '1');
+  assert.equal(environment.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST, DIGEST);
 
   const acs = buildCompatibilityAcsIdentity({
     releaseId: RELEASE_ID,
@@ -184,6 +190,18 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
     environment: 'production',
     observedAt: '2026-08-28T16:00:00.000Z',
     components,
+    configIdentity: {
+      schemaVersion: 1,
+      status: 'consistent',
+      expected: { schemaVersion: 1, digest: DIGEST },
+      observed: {
+        schemaVersion: 1,
+        digest: DIGEST,
+        credentialVersionDigest: null,
+        versionResolution: 'resolved',
+        secretRefCount: 0,
+      },
+    },
     topology: {
       api: { color: 'blue', unit: 'agent-saas-server@blue.service' },
       runtimeWorker: { color: 'blue', unit: 'agent-saas-runtime-worker@blue.service' },
@@ -198,6 +216,8 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
   assert.equal(identity.topology.api.activeColor, 'blue');
   assert.equal(identity.components.api.deployedAt, live.observedAt);
   assert.match(identity.configFingerprint, /^sha256:[a-f0-9]{64}$/u);
+  assert.deepEqual(identity.configIdentity, { schemaVersion: 1, digest: DIGEST });
+  assert.equal(identity.configIdentity.status, undefined);
 });
 
 test('legacy deploy entrypoints persist immutable baselines and refresh trusted identity', async () => {
@@ -252,6 +272,35 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /GITHUB_RUN_ATTEMPT='\$\{GITHUB_RUN_ATTEMPT\}'/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ID/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ATTEMPT/u);
+  assert.match(
+    appWorkflow,
+    /agent-saas-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}-\$\{GITHUB_SHA\}\.tgz/u,
+  );
+  assert.match(
+    appWorkflow,
+    /agent-saas-runtime-identity-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}/u,
+  );
+  assert.match(appWorkflow, /config-identity-cli\.js/u);
+  assert.match(
+    appWorkflow,
+    /failed to calculate candidate config identity[\s\S]{0,160}rollback_idle_and_exit/u,
+  );
+  assert.match(
+    appWorkflow,
+    /failed to persist candidate config identity[\s\S]{0,160}rollback_idle_and_exit/u,
+  );
+  const postReadyIdentityProbe = appWorkflow.slice(
+    appWorkflow.indexOf('CONFIG_IDENTITY_SNAPSHOT="/run/${SERVICE_NAME}-${IDLE}.config-identity.json"'),
+    appWorkflow.indexOf('# ── 7. warmup'),
+  );
+  assert.match(postReadyIdentityProbe, /readPrivateConfigIdentitySnapshot/u);
+  assert.match(postReadyIdentityProbe, /summary\.status !== "consistent"/u);
+  assert.match(postReadyIdentityProbe, /summary\.releaseId !== expectedReleaseId/u);
+  assert.match(
+    postReadyIdentityProbe,
+    /candidate private config identity validation failed[\s\S]{0,120}rollback_idle_and_exit/u,
+  );
+  assert.match(appWorkflow, /--config-identity-digest/u);
   assert.equal(
     appWorkflow.match(/write-live-production-identity\.mjs' --input '\$remote\/live\.json'/gu)
       ?.length,
@@ -343,6 +392,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /pre-deploy rollback state captured/u);
   assert.match(appWorkflow, /rollback-compatibility-app\.sh/u);
   assert.match(appWorkflow, /compatibility-deploy-transaction\.sh/u);
+  assert.match(appWorkflow, /publish_compat_deploy_rollback/u);
   assert.ok(
     appWorkflow.indexOf('pre-deploy rollback state captured') <
       appWorkflow.indexOf('SYSTEMD_UNITS_DIRTY=1'),
@@ -402,14 +452,22 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
-      appWorkflow.indexOf('rollback state committed and rollback.sh refreshed'),
+      appWorkflow.indexOf('atomic App rollback committed'),
+  );
+  assert.doesNotMatch(
+    appWorkflow,
+    /install -m 0755 "\$RELEASE_DIR\/scripts\/release\/rollback-compatibility-app\.sh"/u,
+  );
+  assert.doesNotMatch(
+    appWorkflow,
+    /agent-saas-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_SHA\}\.tgz/u,
+  );
+  assert.match(
+    appWorkflow,
+    /readlink -f "\$DEPLOY_ROOT\/rollback\.sh"[\s\S]*"\$COMPAT_ROLLBACK_STATE_DIR\/rollback\.sh"/u,
   );
   assert.ok(
-    appWorkflow.indexOf('mv -Tf "$ROLLBACK_STATE_LINK.candidate" "$ROLLBACK_STATE_LINK"') <
-      appWorkflow.indexOf('"$DEPLOY_ROOT/rollback.sh.candidate"'),
-  );
-  assert.ok(
-    appWorkflow.indexOf('rollback state committed and rollback.sh refreshed') <
+    appWorkflow.indexOf('atomic App rollback committed') <
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),
   );
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
@@ -548,6 +606,45 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
       acsDeploy.indexOf('PREVIOUS_APP_DIR="$(readlink -f "$CURRENT_LINK")"'),
   );
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
+});
+
+
+test('post-ready ConfigIdentity 私有快照缺失、畸形或不一致时触发 rollback', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  const prefix = "if ! node --input-type=module -e '\n";
+  const start = workflow.indexOf(prefix);
+  assert.notEqual(start, -1);
+  const scriptStart = start + prefix.length;
+  const scriptEnd = workflow.indexOf("\n          ' \"file://$RELEASE_DIR/scripts/release/read-production-state.mjs\"", scriptStart);
+  assert.notEqual(scriptEnd, -1);
+  const parser = workflow.slice(scriptStart, scriptEnd);
+  const root = await mkdtemp(join(tmpdir(), 'compat-config-identity-'));
+  const snapshotPath = join(root, 'config-identity.json');
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'scripts/release/read-production-state.mjs')).href;
+  const runParser = () => spawnSync(process.execPath, [
+    '--input-type=module', '-e', parser, '--', moduleUrl, snapshotPath, RELEASE_ID,
+  ]);
+
+  assert.notEqual(runParser().status, 0);
+  await writeFile(snapshotPath, '{bad-json');
+  assert.notEqual(runParser().status, 0);
+  const summary = {
+    schemaVersion: 1,
+    status: 'consistent',
+    releaseId: RELEASE_ID,
+    expected: { schemaVersion: 1, digest: DIGEST },
+    observed: {
+      schemaVersion: 1,
+      digest: DIGEST,
+      credentialVersionDigest: null,
+      versionResolution: 'resolved',
+      secretRefCount: 0,
+    },
+  };
+  await writeFile(snapshotPath, JSON.stringify({ ...summary, releaseId: 'rc-wrong' }));
+  assert.notEqual(runParser().status, 0);
+  await writeFile(snapshotPath, JSON.stringify(summary));
+  assert.equal(runParser().status, 0);
 });
 
 test('holds one remote Production lock through compatibility Web commit and compensation', async () => {

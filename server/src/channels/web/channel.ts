@@ -2333,12 +2333,21 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
-    // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
+    // 5) 此处仍未 accepted：配置刷新、权威语音校验、门禁、会话持久化和 durable enqueue
+    // 任一步都可能失败。chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
+    let configRefreshFailure: unknown;
+    try {
+      if (await this.config.refreshSharedConfig?.(true) === false) configRefreshFailure = 'stale runtime config';
+    } catch (error) { configRefreshFailure = error || 'unknown refresh error'; }
+    if (configRefreshFailure) {
+      chatLogger.warn(`Shared config refresh failed; rejecting stale runtime config: ${configRefreshFailure instanceof Error ? configRefreshFailure.message : String(configRefreshFailure)}`);
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+      this.sendChatRejected(ws, clientMsgId, canonicalVoice ? 'stt_failed' : 'model_not_allowed', '共享配置刷新失败，请重试');
+      return;
+    }
 
-    // 6) M50-04 voice is transcribed before submission. The server registry, not a local path or
-    // client status, proves that transcriptionId belongs to this owner and attachmentId. Edited text
-    // is accepted only after that authoritative linkage succeeds.
+    // 6) M50-04 voice is transcribed before submission. The server registry is authoritative:
+    // transcriptionId must belong to this owner and attachmentId before edited text is accepted.
     let resolvedMessage = message || '';
     if (canonicalVoice) {
       const cwd = resolveUserCwd(this.config.agentCwd!, user ? {
@@ -2346,6 +2355,7 @@ export class WebChannel implements BaseChannel {
       } : undefined);
       const authoritativeVoice = this.config.voiceTranscriptionService?.getAuthoritative(cwd, canonicalVoice.transcriptionId);
       if (!authoritativeVoice
+        || authoritativeVoice.transcriptionId !== canonicalVoice.transcriptionId
         || authoritativeVoice.attachmentId !== canonicalVoice.attachmentId
         || !canonicalAttachments.some((attachment) => attachment.attachmentId === canonicalVoice.attachmentId)) {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
@@ -2836,9 +2846,8 @@ export class WebChannel implements BaseChannel {
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
         const existingSessionRecord = await enqueueRuntime.sessionCatalog.get(enqueueSessionId);
-        // policy 必须在首条消息入队前 pin；先刷新共享配置，避免 Web 预建 Session
+        // policy 必须在首条消息入队前 pin；共享配置已在权威语音校验前刷新，避免 Web 预建 Session
         // 把刚开启 delegation 的新会话永久写成 v1。
-        this.config.refreshSharedConfig?.();
         const enqueueOwner = sessionOwner ?? userIdentity;
         titleOwnerId = enqueueOwner?.id;
         const enqueueWorkspaceId = existingSessionRecord?.workspaceId
@@ -4158,19 +4167,12 @@ export class WebChannel implements BaseChannel {
       const title = await existing;
       if (title || !retryAfterInFlightFailure) return title;
       // 终态若撞上首条消息的在途生成，且该次失败，补偿重试一次。
-      return this.resolveTitleForSession(
-        sessionId,
-        userInfo,
-        fallbackUserMessage,
-        fallbackAssistantReply,
-      );
+      return this.resolveTitleForSession(sessionId, userInfo, fallbackUserMessage, fallbackAssistantReply);
     }
 
     const generation = this.generateTitleForSession(
-      sessionId,
-      userInfo,
-      fallbackUserMessage,
-      fallbackAssistantReply,
+      sessionId, userInfo,
+      fallbackUserMessage, fallbackAssistantReply,
     ).then((title) => {
       if (title) {
         this.eventBus?.emitDual(userInfo.id, sessionId, {
@@ -4197,7 +4199,7 @@ export class WebChannel implements BaseChannel {
     fallbackUserMessage = '',
     fallbackAssistantReply = '',
   ): Promise<string | null> {
-    this.config.refreshSharedConfig?.();
+    if (await this.config.refreshSharedConfig?.(true) === false) return null;
     const titleConfigs = this.config.titleGeneratorConfigs;
     const agentCwd = this.config.agentCwd;
     if (!titleConfigs?.length || !agentCwd) return null;
@@ -4210,7 +4212,7 @@ export class WebChannel implements BaseChannel {
       });
       const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: userInfo.tenantId, userId: userInfo.id });
       const meta = await readSessionMeta(transcriptPath);
-      // 没有 meta 无法持久化，等 session 初始化/后续终态再次触发；已有命名不覆盖。
+      // 没有 meta 无法持久化，等待 session 初始化/后续终态再次触发；已有命名不覆盖。
       if (!meta || meta.customTitle || meta.generatedTitle) return null;
 
       // 优先从 transcript 读首两轮（命名素材稳定，与手动 /auto-title 一致）；
@@ -4297,9 +4299,7 @@ export class WebChannel implements BaseChannel {
   }
 
   /**
-   * enqueue-only / cross-process 路径专用：只有 userId 时按 UserStore 反查
-   * username/role/tenantId 再走 resolveTitleForSession。userStore 缺失或查不到
-   * 用户则放弃命名（无法解析物理 cwd）。
+   * enqueue-only / cross-process：按 userId 反查完整身份后命名；缺失时放弃（无法解析物理 cwd）。
    */
   private async maybeGenerateTitleByUserId(
     sessionId: string,

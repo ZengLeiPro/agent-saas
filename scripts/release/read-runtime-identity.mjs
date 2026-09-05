@@ -242,6 +242,23 @@ export function validateRuntimeIdentity(identity, options = {}) {
     );
   if (!DIGEST_PATTERN.test(identity.configFingerprint ?? ''))
     blockingReasons.push('Production runtime identity configFingerprint must be a SHA-256 digest.');
+  // TASK-318：可选 configIdentity（存在时必须是合法的 expected 身份）。
+  if (identity.configIdentity !== undefined) {
+    const expected = identity.configIdentity;
+    if (
+      !expected ||
+      typeof expected !== 'object' ||
+      !Number.isSafeInteger(expected.schemaVersion) ||
+      expected.schemaVersion <= 0 ||
+      !DIGEST_PATTERN.test(expected.digest ?? '') ||
+      (expected.credentialVersionDigest !== undefined &&
+        !DIGEST_PATTERN.test(expected.credentialVersionDigest))
+    ) {
+      blockingReasons.push(
+        'Production runtime identity configIdentity must carry a valid schema version and SHA-256 digests.',
+      );
+    }
+  }
   if (
     !identity.components ||
     typeof identity.components !== 'object' ||

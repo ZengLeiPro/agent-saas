@@ -1,0 +1,49 @@
+{
+  "digestMismatch": {
+    "schemaVersion": 1,
+    "status": "unverifiable",
+    "reason": "secret_ref_version_unresolved",
+    "releaseId": "rc-1",
+    "expected": {
+      "schemaVersion": 1,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "observed": {
+      "schemaVersion": 1,
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "credentialVersionDigest": null,
+      "versionResolution": "unavailable",
+      "secretRefCount": 1
+    }
+  },
+  "schemaMismatch": {
+    "schemaVersion": 1,
+    "status": "unverifiable",
+    "reason": "secret_ref_version_unresolved",
+    "releaseId": "rc-1",
+    "expected": {
+      "schemaVersion": 2,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "observed": {
+      "schemaVersion": 1,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "credentialVersionDigest": null,
+      "versionResolution": "unavailable",
+      "secretRefCount": 1
+    }
+  },
+  "expectedMissing": {
+    "schemaVersion": 1,
+    "status": "unverifiable",
+    "reason": "secret_ref_version_unresolved",
+    "releaseId": "rc-1",
+    "observed": {
+      "schemaVersion": 1,
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "credentialVersionDigest": null,
+      "versionResolution": "unavailable",
+      "secretRefCount": 1
+    }
+  }
+}

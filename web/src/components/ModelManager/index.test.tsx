@@ -79,6 +79,7 @@ describe("ModelManager 排序", () => {
         const payload = JSON.parse(String(init.body));
         return jsonResponse({
           ...payload,
+          revision: "rev-2",
           titleSystemPrompt: {
             content: payload.titleSystemPrompt,
             defaultContent: TITLE_PROMPT,
@@ -95,6 +96,7 @@ describe("ModelManager 排序", () => {
         });
       }
       return jsonResponse({
+        revision: "rev-1",
         models: initialModels,
         memoryIndex: null,
         titleGenerator: { model: "main/gpt", fallbackModels: [] },

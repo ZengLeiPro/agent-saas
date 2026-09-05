@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import {
   hasSystemdEnvironment,
   parseReleaseEnvironment,
   readJson,
+  selectConfigIdentitySummary,
+  selectLiveConfigIdentity,
   validateLiveProductionComponents,
 } from './read-live-production-components.mjs';
 
@@ -108,6 +111,121 @@ test('trusts the running Worker systemd environment instead of a release env ass
       }),
     /Worker environment is not explicit/u,
   );
+});
+
+test('private ConfigIdentity is mandatory unless a strict legacy API identity summary is present', () => {
+  const legacy = {
+    schemaVersion: 1,
+    status: 'not_collected',
+    releaseId: 'legacy-release',
+  };
+  assert.deepEqual(selectConfigIdentitySummary(undefined, legacy), legacy);
+  assert.deepEqual(selectConfigIdentitySummary(legacy, undefined), legacy);
+  assert.throws(
+    () => selectConfigIdentitySummary(undefined, { ...legacy, leaked: 'forbidden' }),
+    /unknown fields/u,
+  );
+  assert.throws(
+    () => selectConfigIdentitySummary(undefined, undefined),
+    /unavailable from both private snapshot and legacy API summary/u,
+  );
+});
+
+test('legacy retry rejects a public ConfigIdentity for the wrong active API release', () => {
+  assert.throws(
+    () =>
+      selectLiveConfigIdentity({
+        privateConfigIdentity: undefined,
+        publicConfigIdentity: {
+          schemaVersion: 1,
+          status: 'not_collected',
+          releaseId: 'stale-legacy-release',
+        },
+        apiReleaseId: 'active-legacy-release',
+        configIdentityStage: 'legacy-api-upgrade-retry-baseline',
+      }),
+    /releaseId disagrees with active API release identity/u,
+  );
+});
+
+test('legacy retry accepts a public ConfigIdentity for the active API release', () => {
+  const publicSummary = {
+    schemaVersion: 1,
+    status: 'not_collected',
+    releaseId: 'active-legacy-release',
+  };
+  assert.deepEqual(
+    selectLiveConfigIdentity({
+      privateConfigIdentity: undefined,
+      publicConfigIdentity: publicSummary,
+      apiReleaseId: 'active-legacy-release',
+      configIdentityStage: 'legacy-api-upgrade-retry-baseline',
+    }),
+    publicSummary,
+  );
+});
+
+test('legacy retry accepts a completely missing ConfigIdentity', () => {
+  assert.equal(
+    selectLiveConfigIdentity({
+      privateConfigIdentity: undefined,
+      publicConfigIdentity: undefined,
+      apiReleaseId: 'legacy-release',
+      configIdentityStage: 'legacy-api-upgrade-retry-baseline',
+    }),
+    undefined,
+  );
+});
+
+test('live selection binds private ConfigIdentity to the active API release', () => {
+  assert.throws(
+    () =>
+      selectLiveConfigIdentity({
+        privateConfigIdentity: undefined,
+        publicConfigIdentity: {
+          schemaVersion: 1,
+          status: 'not_collected',
+          releaseId: 'legacy-release',
+        },
+        apiReleaseId: 'legacy-release',
+        configIdentityStage: 'candidate-readback',
+      }),
+    /Private Production ConfigIdentity snapshot is required during candidate-readback/u,
+  );
+  const privateSummary = {
+    schemaVersion: 1,
+    status: 'not_collected',
+    releaseId: 'active-kept-release',
+  };
+  assert.deepEqual(
+    selectLiveConfigIdentity({
+      privateConfigIdentity: privateSummary,
+      publicConfigIdentity: { ...privateSummary, releaseId: 'public-release' },
+      apiReleaseId: 'active-kept-release',
+      configIdentityStage: 'steady-state',
+    }),
+    privateSummary,
+  );
+  assert.throws(
+    () =>
+      selectLiveConfigIdentity({
+        privateConfigIdentity: privateSummary,
+        publicConfigIdentity: undefined,
+        apiReleaseId: 'different-active-release',
+        configIdentityStage: 'steady-state',
+      }),
+    /releaseId disagrees with active API release identity/u,
+  );
+});
+
+test('retry/readback validates ConfigIdentity without requiring stale trusted topology', async () => {
+  const source = await readFile(
+    new URL('./read-live-production-components.mjs', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /\/etc\/agent-saas\/runtime-identity\.json/u);
+  assert.match(source, /validateExpectedConfigIdentityObservers/u);
+  assert.doesNotMatch(source, /readRuntimeIdentity\s*\(/u);
 });
 
 test('reads the strict ACS health route without a cache-busting query', async (t) => {

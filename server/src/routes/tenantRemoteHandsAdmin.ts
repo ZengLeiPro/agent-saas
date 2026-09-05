@@ -1,3 +1,4 @@
+
 import { Router } from 'express';
 import { applyEdits, modify } from 'jsonc-parser';
 
@@ -18,9 +19,11 @@ export interface CreateTenantRemoteHandsAdminRouterOptions {
   fetchImpl?: typeof fetch;
   healthTimeoutMs?: number;
   onTenantRemoteHandsUpdated?: (tenantRemoteHands: TenantRemoteHandsConfig) => void;
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
   configMutationService?: AdminConfigMutationService;
 }
 
+/** JSON 配置对象的窄类型。 */
 type RawObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is RawObject {
@@ -197,12 +200,14 @@ export function createTenantRemoteHandsAdminRouter(
             formattingOptions: { insertSpaces: true, tabSize: 2 },
           }));
         },
+        ...(options.validateConfigReload ? { validateCandidate: options.validateConfigReload } : {}),
         applyRuntime: (candidate) => {
           const next = candidate.tenantRemoteHands ?? { hands: [] };
           options.config.tenantRemoteHands = next;
           options.onTenantRemoteHandsUpdated?.(next);
         },
       });
+
       res.json({
         tenantRemoteHands: sanitizeTenantRemoteHands(result.config.tenantRemoteHands),
       });

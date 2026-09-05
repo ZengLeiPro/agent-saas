@@ -803,6 +803,53 @@
           "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
         }
       ]
+    },
+    {
+      "baselineSha": "de5fa851ce50f1d60e9fa143e88d7ebca11492d3",
+      "files": [
+        {
+          "path": "server/src/apns/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:88f1bc6b5aa2e20a0dac005edfcc8460a038177d6e85b06e4f7a2c4e11b7ba08",
+          "classification": "expand",
+          "reason": "新增独立APNs设备与投递表及索引；init仅幂等建表/建索引和锁，新旧版本不共用这些新表。真实PG并发/重复init及旧反馈数据保留通过。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "targetDigest": "sha256:ee68a8adebc0846962ec44f73791afb485a265483182b337ac99fb0dc1fe97ab",
+          "classification": "no-schema-change",
+          "reason": "Web Push配置定义抽出，新增可选APNs配置，无数据库调用。"
+        },
+        {
+          "path": "server/src/app/pushConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
+          "classification": "no-schema-change",
+          "reason": "新建Zod配置校验模块，无SQL或初始化副作用。"
+        },
+        {
+          "path": "server/src/data/feedback/store.ts",
+          "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
+          "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
+          "classification": "no-schema-change",
+          "reason": "init两端结构完全相同；只扩展既有verdict读写，真实PG旧写入/新写入/旧版重启及列结构对比通过。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/RC60后续迁移审核-20260906.md",
+          "digest": "sha256:ee8112a457b1d42b011ee587215014872982c33ab2a150ad95f050d883a507c1"
+        },
+        {
+          "path": "server/src/__tests__/apns.test.ts",
+          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+        },
+        {
+          "path": "server/src/__tests__/feedbackRoutes.test.ts",
+          "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
+        }
+      ]
     }
   ]
 }

@@ -781,7 +781,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
@@ -839,7 +839,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
@@ -897,7 +897,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
@@ -955,7 +955,7 @@
         },
         {
           "path": "server/src/__tests__/apns.test.ts",
-          "digest": "sha256:cb043a30a1b0048fe092eef9717b97a28bf46401eb2c1894ccbf0b301f05272f"
+          "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",

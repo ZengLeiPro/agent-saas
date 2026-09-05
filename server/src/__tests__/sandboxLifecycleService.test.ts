@@ -644,7 +644,7 @@ describe('SandboxLifecycleService durable lifecycle protocol, routing and recove
     expect(markCleanupDelivered).toHaveBeenCalledWith('run-cleanup', expect.any(String), expect.any(String));
   });
 
-  it('initial prepared cleanup pins the actually registered ACS hand instead of server-remote providerId', async () => {
+  it.each([false, undefined])('按真实 ACS hand 清理；waitForDeletion=%s 时软删除不等待远端、物理删除仍等待', async (waitForDeletion) => {
     const hands = [remote('acs-new', 'http://acs-new.test'), remote('acs-old', 'http://acs-old.test', 'drain')];
     let pending = cleanup();
     let state: 'none' | 'prepared' | 'cancelling' | 'pending' = 'none';
@@ -668,7 +668,12 @@ describe('SandboxLifecycleService durable lifecycle protocol, routing and recove
       isCleanupClaimCurrent: vi.fn(async () => true), releaseCleanupClaim: vi.fn(async () => undefined),
       markCleanupDelivered: vi.fn(async () => undefined),
     };
-    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve; });
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith('/scope')) await deleteGate;
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
     const service = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
       sessionCatalog: { get: async () => ({ ...session(), deletedAt: '2026-08-30T01:00:00.000Z' }) },
@@ -681,7 +686,17 @@ describe('SandboxLifecycleService durable lifecycle protocol, routing and recove
       fetchImpl,
     });
 
-    await expect(service.prepareSessionDeletion('session-1')).resolves.toBe('deleted');
+    let settled = false;
+    const result = service.commitPreparedSessionDeletion('session-1', { waitForDeletion }).then((value) => {
+      settled = true; return value;
+    });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledWith('http://acs-old.test/sandboxes/scope', expect.any(Object)));
+    expect(settled).toBe(waitForDeletion === false);
+    expect(store.completePreparedCleanup).toHaveBeenCalled();
+    expect(store.markCleanupDelivered).not.toHaveBeenCalled();
+    releaseDelete();
+    await expect(result).resolves.toBe(waitForDeletion === false ? 'queued' : 'deleted');
+    await vi.waitFor(() => expect(store.markCleanupDelivered).toHaveBeenCalled());
     expect(enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({ targetHandId: 'acs-old' }), { prepared: true });
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]))).toEqual([
       'http://acs-old.test/sandboxes/deletion-generation', 'http://acs-old.test/sandboxes/scope',

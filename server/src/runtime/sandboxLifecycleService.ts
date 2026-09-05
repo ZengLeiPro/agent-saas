@@ -195,7 +195,7 @@ export class SandboxLifecycleService {
     }
   }
 
-  async commitPreparedSessionDeletion(sessionId: string): Promise<SandboxDeletionResult> {
+  async commitPreparedSessionDeletion(sessionId: string, options?: { waitForDeletion?: boolean }): Promise<SandboxDeletionResult> {
     let prepared = (await this.options.store.listPreparedCleanupCandidates()).filter((item) => item.sessionId === sessionId);
     let pending = (await this.options.store.listCleanupCandidates()).filter((item) => item.sessionId === sessionId);
     const intent: Exclude<SandboxDeletionResult, 'deleted'> = prepared.length > 0 || pending.length > 0
@@ -205,6 +205,11 @@ export class SandboxLifecycleService {
       prepared = (await this.options.store.listPreparedCleanupCandidates()).filter((item) => item.sessionId === sessionId);
     }
     for (const candidate of prepared) await this.processPreparedCleanup(candidate);
+    // 软删除只等待持久化取消；远端容器回收交给可重试的清理队列。
+    if (options?.waitForDeletion === false) {
+      if (intent === 'queued') this.wake();
+      return intent;
+    }
     pending = (await this.options.store.listCleanupCandidates()).filter((item) => item.sessionId === sessionId);
     for (const candidate of pending) {
       try {

@@ -136,12 +136,13 @@ describe("useSession 跨会话详情请求隔离", () => {
   it.each([
     ["daily", "coding"],
     ["coding", "daily"],
-  ] as const)("删除 %s 当前会话并自动切换后回填 %s 档位", async (currentProfile, nextProfile) => {
+  ] as const)("删除 %s 当前会话后进入新建页，不切到 %s 会话", async (currentProfile, nextProfile) => {
     const currentSessionId = `${currentProfile}-session`;
     const nextSessionId = `${nextProfile}-session`;
     let activeSessionId = currentSessionId;
     let displayedProfile = currentProfile;
     const callbacks = makeCallbacks();
+    callbacks.onNewSession = vi.fn(() => { displayedProfile = "coding"; });
     callbacks.onSandboxProfile = vi.fn((sessionId, profile, activate) => {
       if (activate) { activeSessionId = sessionId; displayedProfile = "coding"; }
       if (sessionId === activeSessionId) displayedProfile = profile ?? "coding";
@@ -163,12 +164,14 @@ describe("useSession 跨会话详情请求隔离", () => {
     act(() => result.current.confirmDeleteSession(currentSessionId));
     await act(async () => { await result.current.handleDeleteSession(); });
 
-    expect(result.current.sessionId).toBe(nextSessionId);
-    expect(callbacks.onSandboxProfile).toHaveBeenCalledWith(nextSessionId, undefined, true);
-    expect(displayedProfile).toBe(nextProfile);
+    expect(result.current.sessionId).toBeNull();
+    expect(result.current.isNewSession).toBe(true);
+    expect(callbacks.onSandboxProfile).not.toHaveBeenCalledWith(nextSessionId, undefined, true);
+    expect(callbacks.onNewSession).toHaveBeenCalledOnce();
+    expect(displayedProfile).toBe("coding");
   });
 
-  it.each([[500, "next-session"], [404, null], [403, null]] as const)("删除后自动切换详情返回 %s 时会话归属保持一致", async (status, expectedSessionId) => {
+  it("删除当前会话后不再请求其他会话详情", async () => {
     let activeSessionId: string | null = "current-session";
     const callbacks = makeCallbacks();
     callbacks.onSandboxProfile = vi.fn((sessionId, _profile, activate) => { if (activate) activeSessionId = sessionId; });
@@ -177,7 +180,7 @@ describe("useSession 跨会话详情请求隔离", () => {
     authFetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") return Promise.resolve(jsonResponse({}));
       if (url.startsWith("/api/sessions/current-session")) return Promise.resolve(jsonResponse({ blocks: [], sandboxProfile: "daily" }));
-      if (url.startsWith("/api/sessions/next-session")) return Promise.resolve({ ok: false, status, statusText: `HTTP ${status}` } as Response);
+      if (url.startsWith("/api/sessions/next-session")) throw new Error("不应加载其他会话");
       return Promise.resolve(jsonResponse({ sessions: [{ sessionId: "next-session", updatedAtMs: 1 }], hasMore: false }));
     });
     const { result } = renderHook(() => useSession(callbacks));
@@ -189,15 +192,11 @@ describe("useSession 跨会话详情请求隔离", () => {
     act(() => result.current.confirmDeleteSession("current-session"));
     await act(async () => { await result.current.handleDeleteSession(); });
 
-    expect(result.current.sessionId).toBe(expectedSessionId);
-    expect(activeSessionId).toBe(expectedSessionId);
-    if (status === 403 || status === 404) {
-      expect(callbacks.onSessionInvalidated).toHaveBeenCalledWith("next-session", status);
-      expect(result.current.sessionLoadError).toBeNull();
-    } else {
-      expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
-      expect(result.current.sessionLoadError).toBe("会话无法打开，请重试");
-    }
+    expect(result.current.sessionId).toBeNull();
+    expect(activeSessionId).toBeNull();
+    expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
+    expect(result.current.sessionLoadError).toBeNull();
+    expect(authFetchMock.mock.calls.some(([url]) => url.startsWith("/api/sessions/next-session"))).toBe(false);
     expect(callbacks.resetMessages).toHaveBeenCalled();
   });
 

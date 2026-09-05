@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ThumbsDown } from 'lucide-react';
+import { MESSAGE_FEEDBACK_COMMENT_MAX } from '@agent/shared';
 import { cn } from '@/lib/utils';
 import { sha256Hex, useMessageFeedback } from '@/contexts/MessageFeedbackContext';
 
@@ -82,7 +83,7 @@ export function MessageFeedbackButton({ messageId, content }: { messageId: strin
             autoComplete="off"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            maxLength={500}
+            maxLength={MESSAGE_FEEDBACK_COMMENT_MAX}
             rows={3}
             placeholder="可选：说明问题（如答非所问、信息有误）"
             className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:border-foreground/30 focus:ring-0"

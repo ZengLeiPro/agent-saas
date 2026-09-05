@@ -69,6 +69,10 @@ describe('M00-01 路由清单完整性', () => {
     expect(routes).toContain('capabilities/skills');
     expect(routes).toContain('capabilities/connectors');
     expect(routes).toContain('capabilities/experts');
+    // P3-3b 任务中心三条路由
+    expect(routes).toContain('cron');
+    expect(routes).toContain('cron/[jobId]');
+    expect(routes).toContain('cron-form');
   });
 
   it('每个真实路由都已分类：未分类路由一律 fail closed，不得混入', () => {

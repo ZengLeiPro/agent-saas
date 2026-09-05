@@ -65,6 +65,15 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
   'capabilities/skills',
   'capabilities/connectors',
   'capabilities/experts',
+  // 任务中心（P3-3b）：定时任务列表 / 详情 / 创建编辑，与 Web `CronManager`
+  // 的「定时任务」二级 Tab 同一信息架构（任务看板不进 mobile）。
+  // 入口按 `tenantFeatures.cronEnabled` + `personalAgentOnly` 门控，
+  // 与 Web `getSidebarNavItems` 一致。
+  'cron',
+  'cron/[jobId]',
+  'cron-form',
+  // 全屏文本编辑器：任务中心的提示词/事件内容编辑走它（此前随 Cron 一起延期）
+  'text-editor',
   // 系统分享附件入口（§2.1 #8）
   'share-target',
 ];
@@ -95,12 +104,8 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
 export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
   '(tabs)/files': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
   '(tabs)/files/browse': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
-  cron: '§2.2 Cron 导航与管理 UI 延期（Gate A）',
-  'cron/[jobId]': '§2.2 Cron 导航与管理 UI 延期（Gate A）',
-  'cron-form': '§2.2 Cron 导航与管理 UI 延期（Gate A）',
   'memory-browser': '§2.2 Memory 浏览与编辑 UI 延期（Gate A）',
   'persona-editor': '§1.3 V1 最小设置：Agent 人格/记忆编辑不在信息架构内（M30-03 后评估）',
-  'text-editor': '仅被延期的 Cron/Memory 流程使用（§2.2）',
   'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',
 };
 

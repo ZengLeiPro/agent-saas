@@ -17,9 +17,9 @@ import React from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V1RouteGate } from './V1RouteGate';
-import CronListScreen from '../../app/cron/index';
+import MemoryBrowserScreen from '../../app/memory-browser';
 import MyPermissionsScreen from '../../app/settings/my-permissions';
-import * as sharedMod from '@agent/shared';
+
 import * as governanceMod from '@agent/shared/lib/governanceApi';
 
 // ── 可控运行时状态（vi.hoisted 保证先于 mock 工厂执行） ──────────────
@@ -29,7 +29,7 @@ const h = vi.hoisted(() => ({
   user: null as null | { username: string },
   authLoading: true as boolean,
   replace: vi.fn(),
-  cronRefresh: vi.fn(async () => {}),
+  memoryRefresh: vi.fn(async () => {}),
 }));
 
 // ── 模块 mocks ────────────────────────────────────────────────────────
@@ -128,6 +128,7 @@ vi.mock('@agent/shared', () => ({
   })),
   startMyMcpOAuth: vi.fn(async () => ({ authorizationUrl: 'https://a.example.test' })),
   reportActivity: vi.fn(async () => {}),
+  getPreviewFileType: () => 'markdown',
 }));
 
 vi.mock('@agent/shared/lib/governanceApi', () => ({
@@ -137,23 +138,26 @@ vi.mock('@agent/shared/lib/governanceApi', () => ({
   fetchEffectiveResources: vi.fn(async () => []),
 }));
 
-vi.mock('../hooks/useCronJobs', async () => {
+vi.mock('../hooks/useFileList', async () => {
   const React = await import('react');
   return {
-    // 模拟真实 hook 的挂载期 fetch（真实实现经 scheduleIdle 调 refresh）
-    useCronJobs: () => {
+    // 模拟真实 hook 的挂载期 fetch（延期页面不得触发任何数据请求）
+    useFileList: () => {
       React.useEffect(() => {
-        void h.cronRefresh();
+        void h.memoryRefresh();
       }, []);
-      return {
-        jobs: [],
-        loading: false,
-        refresh: h.cronRefresh,
-        toggleJob: async () => {},
-      };
+      return { entries: [], loading: false, refresh: h.memoryRefresh };
     },
   };
 });
+
+vi.mock('../hooks/useFileOpen', () => ({
+  useFileOpen: () => ({ open: vi.fn(async () => {}) }),
+}));
+
+vi.mock('../components/files/FileList', () => ({
+  FileList: () => null,
+}));
 
 vi.mock('../lib/haptics', () => ({
   hapticLight: vi.fn(),
@@ -186,10 +190,6 @@ vi.mock('@shopify/flash-list', () => ({
   FlashList: () => null,
 }));
 
-vi.mock('../components/cron/JobList', () => ({
-  JobList: () => null,
-}));
-
 // ── 用例 ──────────────────────────────────────────────────────────────
 
 const OAUTH_HANDOFF_CODE = 'A'.repeat(48);
@@ -197,11 +197,12 @@ const OAUTH_HANDOFF_CODE = 'A'.repeat(48);
 /** 仍存在的延期路由及其挂载期副作用 spies。 */
 const DEFERRED_CASES = [
   {
-    name: 'Cron（延期）',
-    segments: ['cron'],
-    params: {},
-    screen: <CronListScreen />,
-    getSyncSpies: () => [vi.mocked(sharedMod.reportActivity), h.cronRefresh],
+    // P3-3b：任务中心已进入 allowlist，改用仍延期的「记忆浏览」作延期样本
+    name: '记忆浏览（延期）',
+    segments: ['memory-browser'],
+    params: { path: 'memory' },
+    screen: <MemoryBrowserScreen />,
+    getSyncSpies: () => [h.memoryRefresh],
   },
   {
     // P3-3a：Connections 管理已并入能力中心（allowlist），改用仍延期的「我的权限」作对照
@@ -381,6 +382,24 @@ describe('M00-01 V1RouteGate：production 允许路由照常挂载', () => {
 
     expect(screen.getByTestId('child-mounted')).toBeTruthy();
     expect(h.replace).toHaveBeenCalledWith('/(tabs)/chat');
+  });
+
+  it('P3-3b：任务中心路由在 production 放行（列表 / 详情 / 创建编辑）', () => {
+    for (const segments of [['cron'], ['cron', '[jobId]'], ['cron-form'], ['text-editor']]) {
+      cleanup();
+      h.segments = segments;
+      h.authLoading = false;
+      h.user = { username: 'alice' };
+
+      render(
+        <V1RouteGate>
+          <div data-testid="child-mounted" />
+        </V1RouteGate>,
+      );
+
+      expect(screen.queryByTestId('v1-route-denied-shell'), segments.join('/')).toBeNull();
+      expect(screen.getByTestId('child-mounted')).toBeTruthy();
+    }
   });
 
   it('未分类路由同样 fail closed（新路由未登记清单时拒绝）', () => {

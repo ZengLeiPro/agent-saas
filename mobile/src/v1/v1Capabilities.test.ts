@@ -83,7 +83,7 @@ describe('classifyV1Route', () => {
 
   it('分类延期路由为 deferred', () => {
     expect(classifyV1Route('(tabs)/files')).toBe('deferred');
-    expect(classifyV1Route('cron')).toBe('deferred');
+    expect(classifyV1Route('memory-browser')).toBe('deferred');
     expect(classifyV1Route('chat/html-preview')).toBe('unclassified');
     expect(classifyV1Route('oauth/callback')).toBe('allowed');
     // P3-3a：旧技能/连接页已删除，重新出现即为未分类（生产 fail closed）
@@ -92,6 +92,13 @@ describe('classifyV1Route', () => {
     // 09-04 已物理删除的管理类路由：落回 unclassified（生产 fail closed）
     expect(classifyV1Route('settings/users')).toBe('unclassified');
     expect(classifyV1Route('settings/all-agents')).toBe('unclassified');
+  });
+
+  it('P3-3b：任务中心（含文本编辑器）已从延期转为 allowed', () => {
+    for (const route of ['cron', 'cron/[jobId]', 'cron-form', 'text-editor']) {
+      expect(classifyV1Route(route), route).toBe('allowed');
+      expect(V1_DEFERRED_ROUTES[route], `${route} 不应再留在延期清单`).toBeUndefined();
+    }
   });
 
   it('未分类路由返回 unclassified（fail closed 依据）', () => {
@@ -136,6 +143,11 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('capabilities/skills', 'production')).toBe(true);
     expect(isV1RouteAllowed('capabilities/connectors', 'production')).toBe(true);
     expect(isV1RouteAllowed('capabilities/experts', 'production')).toBe(true);
+    // P3-3b 任务中心三条路由 + 文本编辑器
+    expect(isV1RouteAllowed('cron', 'production')).toBe(true);
+    expect(isV1RouteAllowed('cron/[jobId]', 'production')).toBe(true);
+    expect(isV1RouteAllowed('cron-form', 'production')).toBe(true);
+    expect(isV1RouteAllowed('text-editor', 'production')).toBe(true);
   });
 
   it('生产：全部延期路由与未分类路由 fail closed', () => {
@@ -146,7 +158,7 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1RouteAllowed('settings/users', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/connections', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/skills', 'production')).toBe(false);
-    expect(isV1RouteAllowed('cron-form', 'production')).toBe(false);
+    expect(isV1RouteAllowed('memory-browser', 'production')).toBe(false);
     for (const route of Object.keys(V1_DELETED_ROUTES)) {
       expect(isV1RouteAllowed(route, 'production'), route).toBe(false);
     }
@@ -169,7 +181,9 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1SegmentsAllowed(['settings', 'connections'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['capabilities', 'workflows'], 'production')).toBe(true);
     expect(isV1SegmentsAllowed(['capabilities'], 'production')).toBe(true);
-    expect(isV1SegmentsAllowed(['cron'], 'production')).toBe(false);
+    expect(isV1SegmentsAllowed(['cron'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['cron', '[jobId]'], 'production')).toBe(true);
+    expect(isV1SegmentsAllowed(['memory-browser'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['webview-spike'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['settings', 'users'], 'preview')).toBe(true);
   });
@@ -189,7 +203,7 @@ describe('getV1VisibleTabs（生产菜单快照）', () => {
 describe('resolveV1GateDecision（根路由门禁决策，M00-01 返工）', () => {
   const deferredRoutes: string[][] = [
     ['chat', 'html-preview'],
-    ['cron'],
+    ['memory-browser'],
     ['settings', 'users'],
     ['webview-spike'], // 墓碑路由
     ['brand-new-page'], // 未分类路由

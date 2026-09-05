@@ -46,6 +46,13 @@ const PRODUCTION_REACHABLE_UI: readonly string[] = [
   'app/capabilities/experts.tsx',
   'src/components/capabilities/CapabilityTabBar.tsx',
   'src/components/sessions/SessionPillRow.tsx',
+  // P3-3b 任务中心：列表 / 详情 / 创建编辑，以及表单里跳转全屏文本编辑器
+  'app/cron/index.tsx',
+  'app/cron/[jobId].tsx',
+  'app/cron-form.tsx',
+  'app/text-editor.tsx',
+  'src/components/cron/CronJobForm.tsx',
+  'src/components/cron/JobList.tsx',
   'src/hooks/useCapabilityContext.ts',
   // 路由门禁本身也是生产可达代码（其 replace 目标为动态值，不受字符串扫描影响，
   // 行为由 v1RouteGate.runtime.test.tsx 运行时守卫覆盖）
@@ -131,6 +138,11 @@ describe('M00-01 生产界面导航扫描', () => {
     // P3-3a：会话列表 pill 与 Tab 切换的导航目标都必须被扫到
     expect(findings.some((f) => f.target === 'capabilities')).toBe(true);
     expect(findings.some((f) => f.target === 'capabilities/experts')).toBe(true);
+    // P3-3b：任务中心入口、详情深链与创建编辑页都必须被扫到
+    expect(findings.some((f) => f.target === 'cron')).toBe(true);
+    expect(findings.some((f) => f.target === 'cron/[jobId]')).toBe(true);
+    expect(findings.some((f) => f.target === 'cron-form')).toBe(true);
+    expect(findings.some((f) => f.target === 'text-editor')).toBe(true);
   });
 
   it('所有导航目标都能被能力清单解析（无未分类路由）', () => {

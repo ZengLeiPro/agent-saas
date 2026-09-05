@@ -316,7 +316,7 @@
       "hoursSpan": 4,
       "timezone": "Asia/Shanghai",
       "lookbackHours": 48,
-      "maxTurns": 30,
+      "maxTurns": 1000,
       "timeoutSeconds": 900
       // "model": "volcengine/glm-5.2"  // 可选覆盖；缺省跟随各租户默认模型
     },

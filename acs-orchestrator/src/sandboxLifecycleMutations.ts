@@ -358,7 +358,18 @@ async function applyProtectedAnnotation(
     const result = await kubectl.run(['patch', resourceName, '--type=json', '-p', JSON.stringify(patch)], { timeoutMs: config.sandboxWaitTimeoutMs });
     if (result.exitCode === 0) return uid;
     const detail = result.stderr || result.stdout;
-    const conflict = /conflict|test(?: operation)? failed|object has been modified|precondition|resourceversion/i.test(detail);
+    let conflict = /conflict|test(?: operation)? failed|object has been modified|precondition|resourceversion/i.test(detail);
+    if (!conflict && /the request is invalid/i.test(detail)) {
+      // API Server 可能把 JSON Patch 的 test 失败折叠为通用 Invalid。
+      // 只有独立回读证实版本竞争才重试，真实无效 patch 仍报错。
+      const latest = await getStatus();
+      const latestMetadata = objectValue(latest?.raw?.metadata);
+      if (!latest || stringValue(latestMetadata.uid) !== uid) {
+        throw new SandboxMutationPreconditionError(`Sandbox 已删除或同名重建，拒绝更新 ${description}`);
+      }
+      const latestVersion = stringValue(latestMetadata.resourceVersion);
+      conflict = Boolean(latestVersion && latestVersion !== resourceVersion);
+    }
     if (conflict && attempt + 1 < maxAttempts) continue;
     if (conflict) throw new SandboxMutationPreconditionError(`更新 ${description} 失败: ${detail}`);
     throw new Error(`更新 ${description} 失败: ${detail}`);

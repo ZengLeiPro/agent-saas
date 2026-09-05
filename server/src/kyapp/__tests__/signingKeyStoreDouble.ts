@@ -8,6 +8,10 @@ import type { KyAppSigningKeyRecord, KyAppSigningKeyStatus } from '../keys/store
 export class FakeSigningKeyStore {
   readonly records = new Map<string, KyAppSigningKeyRecord>();
 
+  async get(kid: string): Promise<KyAppSigningKeyRecord | null> {
+    return this.records.get(kid) ?? null;
+  }
+
   async findByStatus(status: KyAppSigningKeyStatus): Promise<KyAppSigningKeyRecord | null> {
     for (const record of this.records.values()) if (record.status === status) return record;
     return null;

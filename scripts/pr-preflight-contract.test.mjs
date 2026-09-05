@@ -49,7 +49,7 @@ test('本地 PR preflight 仍按原顺序串行执行全部任务', () => {
   }
 });
 
-test('分片测试任务：affected 用 --changed、覆盖率写 blob、web 契约脚本只在首片跑', () => {
+test('分片测试任务：affected 用 --changed、覆盖率写 blob、web 不在 Runner 上跑 Playwright 契约脚本', () => {
   const start = tasks.indexOf('  test)');
   const end = tasks.indexOf('  coverage-merge)');
   assert.ok(start > -1 && end > start);
@@ -57,23 +57,24 @@ test('分片测试任务：affected 用 --changed、覆盖率写 blob、web 契�
   for (const marker of [
     'args=(run "--shard=$shard/$total" --passWithNoTests --reporter=dot)',
     'args+=("--changed=$base")',
-    'args+=(--coverage --reporter=blob "--outputFile=.vitest-reports/blob-$shard-$total.json")',
+    'args+=(--coverage --reporter=blob "--outputFile=coverage-blobs/blob-$shard-$total.json")',
     'server|web) args+=(--maxWorkers=2 --coverage.processingConcurrency=2) ;;',
     'pnpm -F @agent/shared exec vitest "${args[@]}"',
     'require_test_database',
     'pnpm -F server exec vitest "${args[@]}"',
     'NODE_ENV=test pnpm -F web exec vitest "${args[@]}" --testTimeout=15000',
-    'if [ "$shard" = 1 ]; then',
-    'pnpm -F web run check:comparison-layout',
-    'pnpm -F web run check:management-contract',
   ]) {
     assert.match(task, new RegExp(escapeRegExp(marker), 'u'));
   }
   // affected 模式没有 base SHA 必须失败，不能静默退化成只跑未提交改动。
   assert.match(task, /affected mode requires a base SHA/u);
+  // check:comparison-layout 需要本机 Playwright 浏览器，旧 CI 的 test:coverage 也从未运行它。
+  assert.doesNotMatch(task, /pnpm -F web run check:/u);
   const merge = tasks.slice(end, tasks.indexOf('  postgres)'));
-  assert.match(merge, /test -d "\$workspace\/\.vitest-reports"/u);
-  assert.match(merge, /vitest run --merge-reports=\.vitest-reports --coverage/u);
+  assert.match(merge, /test -d "\$workspace\/coverage-blobs"/u);
+  assert.match(merge, /vitest run --merge-reports=coverage-blobs --coverage/u);
+  // 点开头目录会被 actions/upload-artifact 默认排除（首轮 PR run 实测 0 个 artifact）。
+  assert.doesNotMatch(tasks, /\.vitest-reports/u);
 });
 
 test('CI 计划：PR 只跑受影响工作区、非 import 图资源与未知路径 fail closed', () => {
@@ -174,6 +175,8 @@ test('CI 并行任务、分片矩阵与 Build & Check 汇总门禁完整连接',
     'needs: [ci_plan, preflight_checks, tests, postgres_contracts, web_production, mobile_router_export, mobile_contract]',
     'pattern: coverage-blob-*-${{ github.run_id }}-${{ github.run_attempt }}',
     'bash scripts/pr-preflight-task.sh coverage-merge "$workspace"',
+    'path: ${{ matrix.workspace }}/coverage-blobs/',
+    'no coverage blobs downloaded for $workspace',
     'needs.preflight_checks.result',
     'needs.tests.result',
     'needs.postgres_contracts.result',

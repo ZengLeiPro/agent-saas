@@ -40,6 +40,7 @@ case "$task" in
     # 分片测试：test <shared|server|web> <shard> <total> <full|affected> <base-sha|-> <coverage true|false>
     # affected 用 vitest --changed=<base> 沿静态 import 图选择相关测试（含被改的测试文件本身）；
     # 覆盖率只在 full 模式收集，写成 blob 供 coverage-merge 跨 Runner 合并。
+    # blob 目录不用点开头：actions/upload-artifact 默认不打包隐藏目录。
     workspace="${2:-}" shard="${3:-}" total="${4:-}" mode="${5:-full}" base="${6:--}" coverage="${7:-false}"
     case "$workspace" in
       shared|server|web) ;;
@@ -59,7 +60,7 @@ case "$task" in
       args+=("--changed=$base")
     fi
     if [ "$coverage" = true ]; then
-      args+=(--coverage --reporter=blob "--outputFile=.vitest-reports/blob-$shard-$total.json")
+      args+=(--coverage --reporter=blob "--outputFile=coverage-blobs/blob-$shard-$total.json")
       case "$workspace" in
         server|web) args+=(--maxWorkers=2 --coverage.processingConcurrency=2) ;;
       esac
@@ -73,11 +74,8 @@ case "$task" in
         pnpm -F server exec vitest "${args[@]}"
         ;;
       web)
+        # web 的布局/管理壳对比脚本依赖本机 Playwright 浏览器，与旧 CI 一样只在本地 `pnpm -F web test` 执行。
         NODE_ENV=test pnpm -F web exec vitest "${args[@]}" --testTimeout=15000
-        if [ "$shard" = 1 ]; then
-          pnpm -F web run check:comparison-layout
-          pnpm -F web run check:management-contract
-        fi
         ;;
     esac
     ;;
@@ -93,8 +91,8 @@ case "$task" in
         exit 2
         ;;
     esac
-    test -d "$workspace/.vitest-reports"
-    pnpm -F "$filter" exec vitest run --merge-reports=.vitest-reports --coverage
+    test -d "$workspace/coverage-blobs"
+    pnpm -F "$filter" exec vitest run --merge-reports=coverage-blobs --coverage
     ;;
 
   postgres)

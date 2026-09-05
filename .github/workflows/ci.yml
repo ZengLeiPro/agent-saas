@@ -171,7 +171,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage-blob-${{ matrix.workspace }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ matrix.workspace }}/.vitest-reports/
+          path: ${{ matrix.workspace }}/coverage-blobs/
           if-no-files-found: warn
           retention-days: 1
 
@@ -410,14 +410,14 @@ jobs:
         run: |
           set -euo pipefail
           for workspace in shared server web; do
-            mkdir -p "$workspace/.vitest-reports"
+            mkdir -p "$workspace/coverage-blobs"
             find "$RUNNER_TEMP/coverage-blobs" -path "*/coverage-blob-$workspace-*" -name '*.json' \
-              -exec cp -f {} "$workspace/.vitest-reports/" \; 2>/dev/null || true
-            if [ -z "$(ls -A "$workspace/.vitest-reports" 2>/dev/null)" ]; then
-              echo "no coverage blobs for $workspace; skip merge"
-              continue
+              -exec cp -f {} "$workspace/coverage-blobs/" \; 2>/dev/null || true
+            if [ -z "$(ls -A "$workspace/coverage-blobs" 2>/dev/null)" ]; then
+              echo "::error title=Coverage merge::no coverage blobs downloaded for $workspace"
+              exit 1
             fi
-            echo "merging $(ls "$workspace/.vitest-reports" | wc -l | tr -d ' ') blob(s) for $workspace"
+            echo "merging $(ls "$workspace/coverage-blobs" | wc -l | tr -d ' ') blob(s) for $workspace"
             bash scripts/pr-preflight-task.sh coverage-merge "$workspace"
           done
 

@@ -110,6 +110,30 @@ describe("ModelManager 排序", () => {
     });
   });
 
+  it('展示失效门禁引用并允许修正主链，保存时保留超时和上下文参数', async () => {
+    const originalFetch = vi.mocked(authFetch).getMockImplementation()!;
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      const response = await originalFetch(path, init);
+      if (path !== "/api/admin/models" || init?.method === "PUT") return response;
+      return jsonResponse({ ...await response.json(), guardrail: {
+        model: 'kaiyan-llm/gpt53codexspark', fallbackModels: ['kaiyan-llm/gpt54mini'], timeoutMs: 6000, maxRecentRounds: 2,
+      } });
+    });
+    const user = userEvent.setup();
+    render(<ModelManager />);
+    expect(await screen.findByRole('option', { name: '引用已失效：kaiyan-llm/gpt53codexspark' })).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText('门禁主模型'), 'main/gpt');
+    await user.selectOptions(screen.getByLabelText('门禁备用模型 1'), 'backup/glm');
+    await user.click(screen.getByRole('button', { name: '保存并生效' }));
+    await waitFor(() => {
+      const call = vi.mocked(authFetch).mock.calls.find(([path, init]) => path === '/api/admin/models' && init?.method === 'PUT');
+      expect(JSON.parse(String(call?.[1]?.body)).guardrail).toEqual({
+        model: 'main/gpt', fallbackModels: ['backup/glm'], timeoutMs: 6000, maxRecentRounds: 2,
+      });
+    });
+    expect((screen.getByLabelText('门禁主模型') as HTMLSelectElement).value).toBe('main/gpt');
+  });
+
   it.each([undefined, "", "   ", " new-embedding-key "])("保存记忆索引 Key %j 时省略空值、保留新凭据", async (apiKey) => {
     const originalFetch = vi.mocked(authFetch).getMockImplementation()!;
     vi.mocked(authFetch).mockImplementation(async (path, init) => {

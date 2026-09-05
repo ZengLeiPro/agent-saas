@@ -14,41 +14,7 @@ import { resolveModelsConfig } from '../app/runtimeGovernanceCredentials.js';
 
 const servers: Array<{ close: () => void }> = [];
 
-function baseRawConfig() {
-  return {
-    agent: { cwd: '/tmp/agent' },
-    server: { port: 3200 },
-    models: {
-      default: 'main/gpt',
-      allowCrossGroupSwitch: false,
-      groups: [{
-        id: 'main',
-        name: 'Main',
-        apiKey: 'sk-main',
-        baseUrl: 'https://llm.example.invalid/v1',
-        models: [{ id: 'gpt', name: 'GPT', value: 'gpt-5' }],
-      }],
-    },
-    memory: {
-      enabled: true,
-      injectContext: { enabled: true, maxLines: 120 },
-      index: {
-        enabled: false,
-        dbDir: 'data/memory-index',
-        embedding: {
-          baseUrl: 'https://old-embedding.example.invalid',
-          apiKey: 'old-embedding-key',
-          model: 'old-embedding-model',
-          dimensions: 1024,
-        },
-        chunking: { tokens: 200, overlap: 40 },
-        search: { vectorWeight: 0.7, textWeight: 0.3, maxResults: 10, minScore: 0.3 },
-        temporalDecay: { enabled: false, halfLifeDays: 30 },
-        sync: { debounceMs: 1500 },
-      },
-    },
-  };
-}
+import { baseRawConfig } from './helpers/modelsAdminFixture.js';
 
 function makeWorkspace(rawConfig: ReturnType<typeof baseRawConfig> | Record<string, unknown>) {
   const root = mkdtempSync(join(tmpdir(), 'models-admin-'));
@@ -581,6 +547,56 @@ describe('models admin router', () => {
       expect((await readJson(response)).error).toContain('门禁模型引用不存在：main/mini');
       expect(JSON.parse(readFileSync(configPath, 'utf-8')).models.groups[0].models).toHaveLength(2);
       expect(runtimeConfig.models?.groups[0]?.models).toHaveLength(2);
+    });
+  });
+
+  it.each([false, true])('保存时修复既有悬空门禁引用，并保持原运行时默认模型与参数（显式提交=%s）', async (submitGuardrail) => {
+    const guardrail = { model: 'kaiyan-llm/gpt53codexspark', fallbackModels: ['kaiyan-llm/gpt54mini'], timeoutMs: 6000, maxRecentRounds: 2 };
+    const rawConfig = { ...baseRawConfig(), guardrail };
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      expect((await readJson(await fetch(`${baseUrl}/api/admin/models`))).guardrail).toEqual(guardrail);
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: rawConfig.models, ...(submitGuardrail ? { guardrail } : {}) }),
+      });
+      expect(response.status).toBe(200);
+      const expected = { ...guardrail, model: 'main/gpt', fallbackModels: [] };
+      expect((await readJson(response)).guardrail).toEqual(expected);
+      expect(runtimeConfig.guardrail).toEqual(expected);
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).guardrail).toEqual(expected);
+      expect((await readJson(await fetch(`${baseUrl}/api/admin/models`))).guardrail).toEqual(expected);
+    });
+  });
+
+  it('门禁引用可与模型重命名一起原子保存，未提交字段保持不变', async () => {
+    const rawConfig = { ...baseRawConfig(), guardrail: { model: 'main/gpt', timeoutMs: 9000, maxRecentRounds: 3 } };
+    const models = structuredClone(rawConfig.models);
+    models.groups[0]!.models[0]!.id = 'renamed';
+    models.default = 'main/renamed';
+    await withApp(rawConfig, async ({ baseUrl, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models, guardrail: { ...rawConfig.guardrail, model: models.default } }),
+      });
+      expect(response.status).toBe(200);
+      expect(runtimeConfig.guardrail).toEqual({ ...rawConfig.guardrail, model: models.default });
+    });
+  });
+
+  it.each(['missing/ref', 'main/responses'])('拒绝新提交的无效或不兼容门禁模型 %s，磁盘不变', async (model) => {
+    const rawConfig = baseRawConfig();
+    const models = { ...rawConfig.models, groups: [...rawConfig.models.groups.map((group) => ({
+      ...group, models: [...group.models, { id: 'responses', name: 'Responses', value: 'responses', protocol: 'responses' }],
+    }))] };
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models, guardrail: { model } }),
+      });
+      expect(response.status).toBe(400);
+      expect((await readJson(response)).error).toContain('门禁模型');
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
     });
   });
 

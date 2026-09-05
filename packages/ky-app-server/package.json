@@ -1,0 +1,47 @@
+{
+  "name": "@kaiyan/ky-app-server",
+  "version": "0.1.0",
+  "description": "定制项目服务端 SDK：SAT/Local Token 验签、目录同步、平台事件、能力定义与 Hono 适配器",
+  "type": "module",
+  "license": "UNLICENSED",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@kaiyan/ky-app-contract": "workspace:*",
+    "@node-rs/argon2": "^2.0.0",
+    "jose": "^6.1.3",
+    "pg": "^8.21.0"
+  },
+  "peerDependencies": {
+    "hono": "^4.12.30"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@hono/node-server": "^1.19.14",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "hono": "^4.12.30",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.18"
+  }
+}

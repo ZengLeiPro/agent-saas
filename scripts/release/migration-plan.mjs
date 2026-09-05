@@ -899,6 +899,9 @@ function isSqlNeutralDependencyChange({
 }) {
   if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
   if (isMigrationPath(path) || GOVERNANCE_MIGRATION_PROVIDER_PATH.test(path)) return false;
+  // 启动建表根模块（PRODUCTION_STARTUP_SCHEMA_ROOTS）自身持有 DDL，任何改动都走人工审核，
+  // 不享受「无 SQL 变化的依赖模块」自动放行（2026-09-05 曾磊拍板）。
+  if (PRODUCTION_STARTUP_SCHEMA_ROOTS.includes(path)) return false;
   if (hasExpandMetadata(content, path)) return false;
   const targetSignature = staticSqlLiteralSignature(content, path);
   // baselineContent 为 null 表示基线不存在该文件（新增/新纳入闭包）；非字符串表示读不到，无法判定。

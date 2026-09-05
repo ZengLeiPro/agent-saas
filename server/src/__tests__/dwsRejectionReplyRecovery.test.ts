@@ -27,12 +27,16 @@ const item: AgentDwsInboxRecord = {
   leaseExpiresAt: now, createdAt: now, updatedAt: now,
 };
 
-const requester = { id: 'user-a', username: 'alice', role: 'user' as const, tenantId: 'tenant-a' };
+const requester = { id: 'user-a', username: 'alice', role: 'user' as const,
+  tenantId: 'tenant-a', dingtalkStaffId: 'staff-a' };
 
 function setup(claimed: AgentDwsInboxRecord[], options: {
   requester?: boolean;
   requesterAllowed?: boolean;
   outcome?: { status: 'unavailable'; reason: string };
+  useOutcome?: boolean;
+  recoveryState?: 'none' | 'unstarted' | 'sent' | 'unknown';
+  cancelCount?: number;
   withDeliveryStore?: boolean;
   authorizationSequence?: Array<{ allowed: boolean; reason?: string }>;
 } = {}) {
@@ -79,7 +83,12 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
     ? {
         reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
         claimNextDelivery: vi.fn().mockResolvedValue(null),
-        cancelUnstartedDeliveriesForInbox: vi.fn().mockResolvedValue(1),
+        cancelUnstartedDeliveriesForInbox: vi.fn().mockResolvedValue(
+          options.cancelCount ?? 1,
+        ),
+        getReplyRecoveryStateForInbox: vi.fn().mockResolvedValue(
+          options.recoveryState ?? 'unstarted',
+        ),
         createDelivery: vi.fn(async (input: Record<string, unknown>) => {
           createdDelivery = { ...input, deliveryId: 'delivery-a', deliveryState: 'pending',
             attempt: 0, maxAttempts: 8, createdAt: now, updatedAt: now };
@@ -108,19 +117,21 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
       ? { allowed: false, reason: 'ASSIGNMENT_DENIED' }
       : { allowed: true },
   );
+  const resolveRequesterOutcome = vi.fn().mockResolvedValue(
+    options.outcome ?? { status: 'resolved', requester },
+  );
   const router = new AgentDwsMessageRouter({
     agentCwd: '/workspace', messageStore,
     accountStore: { getForTenant: vi.fn().mockResolvedValue(account) } as unknown as AgentDwsAccountStore,
     dispatch: dispatch as never, resolveDefaultModel: () => ({ ref: 'models/test', model: 'test' }),
     resolveRequester: vi.fn().mockResolvedValue(options.requester ? requester : null),
-    ...(options.outcome
-      ? { resolveRequesterOutcome: vi.fn().mockResolvedValue(options.outcome) }
-      : {}),
+    ...(options.outcome || options.useOutcome ? { resolveRequesterOutcome } : {}),
     authorizeRequester,
     auditRequesterRejection: vi.fn(), auditToolPolicyRejection: vi.fn(), sender,
     ...(orgGroupAgentStore ? { orgGroupAgentStore } : {}),
   });
-  return { router, messageStore, sender, providerSend, dispatch, authorizeRequester, orgGroupAgentStore };
+  return { router, messageStore, sender, providerSend, dispatch, authorizeRequester,
+    resolveRequesterOutcome, orgGroupAgentStore };
 }
 
 describe('Agent DWS rejection reply recovery', () => {
@@ -145,7 +156,7 @@ describe('Agent DWS rejection reply recovery', () => {
     expect(test.dispatch).not.toHaveBeenCalled();
   });
 
-  it('普通 reply_pending 遇身份目录不可用时替换为安全拒绝', async () => {
+  it('普通 reply_pending 无旧投递证据时宁可标记 unknown 也不发送拒绝', async () => {
     const normal = { ...item, state: 'reply_pending' as const,
       responseText: '机密正常回复', replyStartedAt: now };
     const test = setup([normal], {
@@ -155,15 +166,14 @@ describe('Agent DWS rejection reply recovery', () => {
     await expect(test.router.runOnce()).resolves.toBe(true);
 
     expect(test.messageStore.blockReply).not.toHaveBeenCalled();
-    expect(test.providerSend).toHaveBeenCalledWith(
-      '当前请求未通过组织权限检查。请联系管理员确认本群配置和你的访问范围。',
+    expect(test.providerSend).not.toHaveBeenCalled();
+    expect(test.messageStore.markReplyUnknown).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1,
     );
-    expect(test.messageStore.reject).toHaveBeenCalledWith(
-      'inbox-a', expect.any(String), 1, 'DWS_REQUESTER_DIRECTORY_UNAVAILABLE',
-    );
+    expect(test.messageStore.reject).not.toHaveBeenCalled();
   });
 
-  it('普通 reply_pending 遇 Assignment deny 时先取消旧投递再发送安全拒绝', async () => {
+  it('普通 reply_pending 遇 Assignment deny 时仅在未出站时发送安全拒绝', async () => {
     const normal = {
       ...item,
       eventType: 'user_im_message_receive_o2o_all' as const,
@@ -196,7 +206,37 @@ describe('Agent DWS rejection reply recovery', () => {
     );
   });
 
-  it('长运行回复在 provider fence 后撤权时隔离旧正文并发送安全拒绝', async () => {
+  it.each([
+    ['sent', 'sent', 'complete'],
+    ['provider_started', 'unknown', 'unknown'],
+    ['unknown', 'unknown', 'unknown'],
+  ] as const)('旧 normal 为 %s 时不发送第二条拒绝', async (
+    _deliveryState, recoveryState, expectedInboxState,
+  ) => {
+    const normal = { ...item, eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const, replyKind: 'normal' as const,
+      responseText: '可能已经出站的正文', replyStartedAt: now };
+    const test = setup([normal], { requester: true, requesterAllowed: false,
+      withDeliveryStore: true, recoveryState, cancelCount: 0 });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.messageStore.saveRejectionResult).not.toHaveBeenCalled();
+    expect(test.sender.send).not.toHaveBeenCalled();
+    if (expectedInboxState === 'complete') {
+      expect(test.messageStore.complete).toHaveBeenCalledWith(
+        'inbox-a', expect.any(String), 1,
+      );
+      expect(test.messageStore.markReplyUnknown).not.toHaveBeenCalled();
+    } else {
+      expect(test.messageStore.markReplyUnknown).toHaveBeenCalledWith(
+        'inbox-a', expect.any(String), 1,
+      );
+      expect(test.messageStore.complete).not.toHaveBeenCalled();
+    }
+  });
+
+  it('长运行回复在 provider fence 后 Assignment 撤权时发送安全拒绝', async () => {
     const normal = { ...item, eventType: 'user_im_message_receive_o2o_all' as const,
       state: 'reply_pending' as const, replyKind: 'normal' as const,
       responseText: '旧授权下生成的机密正文', replyStartedAt: now };
@@ -233,6 +273,39 @@ describe('Agent DWS rejection reply recovery', () => {
       'inbox-a', expect.any(String), 1, 'ASSIGNMENT_DENIED',
     );
     expect(test.messageStore.complete).not.toHaveBeenCalled();
+  });
+
+  it('provider-start 慢重验期间 staffId 映射变化时旧正文零发送', async () => {
+    const normal = { ...item, eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const, replyKind: 'normal' as const,
+      responseText: '旧身份生成的正文', replyStartedAt: now };
+    const test = setup([normal], { requester: true, useOutcome: true,
+      withDeliveryStore: true, authorizationSequence: [{ allowed: true }] });
+    let release!: () => void;
+    let started!: () => void;
+    const resolving = new Promise<void>(resolve => { started = resolve; });
+    test.resolveRequesterOutcome.mockReset()
+      .mockResolvedValueOnce({ status: 'resolved', requester })
+      .mockImplementationOnce(async () => {
+        started();
+        await new Promise<void>(resolve => { release = resolve; });
+        return { status: 'resolved', requester: { ...requester, dingtalkStaffId: 'staff-b' } };
+      });
+
+    const running = test.router.runOnce();
+    await resolving;
+    release();
+    await expect(running).resolves.toBe(true);
+
+    expect(test.authorizeRequester).toHaveBeenCalledOnce();
+    expect(test.providerSend).not.toHaveBeenCalledWith('旧身份生成的正文');
+    expect(test.providerSend).toHaveBeenCalledWith(
+      '当前请求未通过组织权限检查。请联系管理员确认本群配置和你的访问范围。',
+    );
+    expect(test.messageStore.saveRejectionResult).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, expect.any(String), 'REQUESTER_IDENTITY_CHANGED', true,
+    );
+    expect(test.messageStore.markReplyUnknown).not.toHaveBeenCalled();
   });
 
   it('撤权后的安全拒绝在 provider 后歧义时标记 delivery_unknown', async () => {

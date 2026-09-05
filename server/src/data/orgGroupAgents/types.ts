@@ -107,6 +107,7 @@ export interface OrgAgentWorkConversation {
 }
 
 export type DwsDeliveryState = 'pending' | 'sending' | 'sent' | 'unknown' | 'dead_letter';
+export type DwsReplyRecoveryState = 'none' | 'unstarted' | 'sent' | 'unknown';
 export interface DwsDeliveryAccountIdentity {
   profileId: string;
   corpId: string;
@@ -319,6 +320,10 @@ export interface OrgGroupAgentStore {
     inboxId: string,
     reason: string,
   ): Promise<number>;
+  getReplyRecoveryStateForInbox(
+    tenantId: string,
+    inboxId: string,
+  ): Promise<DwsReplyRecoveryState>;
   reconcileAllExpiredDeliveries(limit?: number): Promise<number>;
   /** Crosses the durable boundary immediately before provider transport invocation. */
   markDeliveryProviderStarted(

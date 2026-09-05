@@ -188,6 +188,7 @@ export function compactError(error: unknown): string {
   );
 }
 
+/** Adapts the legacy nullable resolver into the fail-closed outcome contract. */
 export async function legacyRequesterResolution(
   resolver: (
     account: AgentDwsAccountRecord,
@@ -202,4 +203,62 @@ export async function legacyRequesterResolution(
   return requester
     ? { status: 'resolved', requester }
     : { status: 'unmapped', reason: 'REQUESTER_IDENTITY_UNMAPPED' };
+}
+
+export async function authorizeCurrentDwsRequester(input: {
+  account: AgentDwsAccountRecord;
+  expectedRequester: UserIdentity;
+  senderOpenDingtalkId: string;
+  senderName?: string;
+  sessionId: string;
+  runId: string;
+  resolveRequester: (
+    account: AgentDwsAccountRecord,
+    senderOpenDingtalkId: string,
+    senderName?: string,
+  ) => Promise<UserIdentity | null> | UserIdentity | null;
+  resolveRequesterOutcome?: (
+    account: AgentDwsAccountRecord,
+    senderOpenDingtalkId: string,
+    senderName?: string,
+  ) => Promise<DwsRequesterResolution> | DwsRequesterResolution;
+  authorizeRequester: (input: {
+    account: AgentDwsAccountRecord;
+    requester: UserIdentity;
+    sessionId: string;
+    runId: string;
+    phase?: 'dispatch' | 'provider_start';
+  }) => Promise<{ allowed: boolean; reason?: string }>;
+}): Promise<{ allowed: boolean; reason?: string }> {
+  let resolution: DwsRequesterResolution;
+  try {
+    resolution = input.resolveRequesterOutcome
+      ? await input.resolveRequesterOutcome(
+          input.account, input.senderOpenDingtalkId, input.senderName,
+        )
+      : await legacyRequesterResolution(
+          input.resolveRequester, input.account, input.senderOpenDingtalkId, input.senderName,
+        );
+  } catch {
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_REVALIDATION_FAILED' };
+  }
+  if (resolution.status !== 'resolved') return { allowed: false, reason: resolution.reason };
+  const current = resolution.requester;
+  const samePrincipal = current.id === input.expectedRequester.id
+    && current.tenantId === input.account.tenantId
+    && current.tenantId === input.expectedRequester.tenantId
+    && current.username === input.expectedRequester.username;
+  const sameStaffId = !input.resolveRequesterOutcome || (
+    Boolean(current.dingtalkStaffId)
+    && current.dingtalkStaffId === input.expectedRequester.dingtalkStaffId
+  );
+  if (!samePrincipal || !sameStaffId)
+    return { allowed: false, reason: 'REQUESTER_IDENTITY_CHANGED' };
+  return await input.authorizeRequester({
+    account: input.account,
+    requester: current,
+    sessionId: input.sessionId,
+    runId: input.runId,
+    phase: 'provider_start',
+  });
 }

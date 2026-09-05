@@ -37,6 +37,7 @@ import {
 } from './orgAgentGroupPolicy.js';
 import {
   assertDwsReplyAttemptFresh,
+  authorizeCurrentDwsRequester,
   boundedExternalId,
   boundedPositive,
   buildSystemContext,
@@ -664,8 +665,13 @@ export class AgentDwsMessageRouter {
       throw new Error('Agent DWS account identity changed before reply');
     }
     const authorizeBeforeProvider = !shared && requester && !serviceEvent
-      ? () => this.options.authorizeRequester({
-          account: replyAccount, requester, sessionId, runId, phase: 'provider_start',
+      ? () => authorizeCurrentDwsRequester({
+          account: replyAccount, expectedRequester: requester,
+          senderOpenDingtalkId: item.senderOpenDingtalkId!, ...(senderName ? { senderName } : {}),
+          sessionId, runId, resolveRequester: this.options.resolveRequester,
+          ...(this.options.resolveRequesterOutcome
+            ? { resolveRequesterOutcome: this.options.resolveRequesterOutcome } : {}),
+          authorizeRequester: this.options.authorizeRequester,
         })
       : undefined;
     const sendReply = (phase: 'first' | 'final') => this.visibleReply.send(
@@ -682,7 +688,7 @@ export class AgentDwsMessageRouter {
       await this.options.auditRequesterRejection({ account: replyAccount,
         eventId: item.eventId, ...(requester ? { requester } : {}), reason: error.reason });
       await this.visibleReply.replacePendingWithAccessRejection(
-        replyAccount, item, rejectionMessage(error.reason), error.reason);
+        replyAccount, item, rejectionMessage(error.reason), error.reason, true);
       return;
     }
     if (!(await finalizeReplyDelivery(
@@ -693,7 +699,6 @@ export class AgentDwsMessageRouter {
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,
     );
   }
-
   private async rejectAccess(
     account: AgentDwsAccountRecord,
     item: AgentDwsInboxRecord,
@@ -710,7 +715,7 @@ export class AgentDwsMessageRouter {
       await this.visibleReply.replacePendingWithAccessRejection(
         account, item, rejectionMessage(reason), reason,
       );
-      this.options.logger?.warn(`Agent DWS pending normal reply replaced account=${item.accountId} event=${item.eventId} reason=${reason}`);
+      this.options.logger?.warn(`Agent DWS pending normal reply reconciled account=${item.accountId} event=${item.eventId} reason=${reason}`);
       return;
     }
     // processing 阶段先持久化拒绝正文与类型；拒绝型 reply_pending 重领时直接恢复。
@@ -750,7 +755,6 @@ export class AgentDwsMessageRouter {
       `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reasonCode}`,
     );
   }
-
   private async recoverOrResumeMissingRun(
     item: AgentDwsInboxRecord,
     sessionId: string,
@@ -801,7 +805,6 @@ export class AgentDwsMessageRouter {
     if (!recovered.trim()) throw new Error('Agent DWS completed run has no recoverable reply');
     return recovered;
   }
-
   private async dispatch(
     item: AgentDwsInboxRecord,
     sessionId: string,

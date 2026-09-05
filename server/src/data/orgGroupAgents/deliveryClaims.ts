@@ -1,6 +1,6 @@
 import type pg from 'pg';
 
-import type { DwsDeliveryIntent } from './types.js';
+import type { DwsDeliveryIntent, DwsReplyRecoveryState } from './types.js';
 import { mapDelivery } from './storeMappers.js';
 
 export const DELIVERY_MAX_ATTEMPTS = 5;
@@ -265,6 +265,31 @@ export async function cancelUnstartedDeliveryIntentsForInbox(
     [tenantId, inboxId, compactDeliveryError(reason)],
   );
   return result.rowCount ?? 0;
+}
+
+export async function getReplyRecoveryStateForInbox(
+  pool: pg.Pool,
+  deliveriesTable: string,
+  tenantId: string,
+  inboxId: string,
+): Promise<DwsReplyRecoveryState> {
+  const result = await pool.query<{ recovery_state: DwsReplyRecoveryState }>(
+    `SELECT CASE
+      WHEN COUNT(*) FILTER (WHERE delivery_state='unknown'
+        OR (provider_started_at IS NOT NULL AND delivery_state NOT IN ('sent','dead_letter'))
+        OR (delivery_state='dead_letter' AND provider_started_at IS NOT NULL
+          AND COALESCE(last_error,'') NOT LIKE 'ORG_AGENT_PROVIDER_AUTHORIZATION_%')) > 0
+        THEN 'unknown'
+      WHEN COUNT(*) FILTER (WHERE delivery_state='sent') > 0 THEN 'sent'
+      WHEN COUNT(*) > 0 THEN 'unstarted'
+      ELSE 'none'
+    END AS recovery_state
+    FROM ${deliveriesTable}
+    WHERE tenant_id=$1 AND inbox_id=$2
+      AND delivery_kind='front_reply' AND disposition='replied'`,
+    [tenantId, inboxId],
+  );
+  return result.rows[0]?.recovery_state ?? 'none';
 }
 
 export async function claimNextDeliveryIntent(

@@ -335,12 +335,28 @@ export class OrgAgentVisibleReplyService {
     item: AgentDwsInboxRecord,
     text: string,
     reason: string,
+    knownUnsent = false,
   ): Promise<boolean> {
     const messageStore = this.options.messageStore;
     if (!messageStore) throw new Error('Agent DWS message store unavailable');
     await this.cancelPendingForInbox(
       item, `ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:${reason}`,
     );
+    if (!knownUnsent) {
+      const recoveryState = this.options.orgGroupAgentStore
+        ? await this.options.orgGroupAgentStore.getReplyRecoveryStateForInbox(
+            item.tenantId, item.inboxId,
+          )
+        : 'none';
+      if (recoveryState === 'sent') {
+        await messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+        return false;
+      }
+      if (recoveryState === 'unknown' || recoveryState === 'none') {
+        await messageStore.markReplyUnknown(item.inboxId, this.workerId, item.leaseFence);
+        return false;
+      }
+    }
     const rejection = await messageStore.saveRejectionResult(
       item.inboxId, this.workerId, item.leaseFence, text, reason, true,
     );
@@ -360,12 +376,12 @@ export class OrgAgentVisibleReplyService {
   }
 
   /** Prevents stale direct replies from surviving a newly denied request. */
-  async cancelPendingForInbox(item: AgentDwsInboxRecord, reason: string): Promise<void> {
-    await this.options.orgGroupAgentStore?.cancelUnstartedDeliveriesForInbox(
+  async cancelPendingForInbox(item: AgentDwsInboxRecord, reason: string): Promise<number> {
+    return await this.options.orgGroupAgentStore?.cancelUnstartedDeliveriesForInbox(
       item.tenantId,
       item.inboxId,
       reason,
-    );
+    ) ?? 0;
   }
 
   private async isLive(shared: SharedGroupContext, delivery: DwsDeliveryIntent): Promise<boolean> {

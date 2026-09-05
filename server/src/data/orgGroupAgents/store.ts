@@ -5,6 +5,7 @@ import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governanc
 import {
   type DwsDeliveryIntent,
   type DwsDeliveryIntentCreate,
+  type DwsReplyRecoveryState,
   type ExternalActorRef,
   type OrgAgentChannelActorRef,
   type OrgAgentChannelBinding,
@@ -30,6 +31,7 @@ import {
   compactDeliveryError,
   finishClaimedDelivery,
   getDeliveryIntent,
+  getReplyRecoveryStateForInbox,
   listDeliveryIntents,
   reconcileExpiredDeliveriesForAccount,
   reconcileExpiredAndStaleDeliveries,
@@ -370,6 +372,16 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
       tenantId,
       inboxId,
       reason,
+    );
+  }
+
+  async getReplyRecoveryStateForInbox(
+    tenantId: string,
+    inboxId: string,
+  ): Promise<DwsReplyRecoveryState> {
+    assertTexts(tenantId, inboxId);
+    return getReplyRecoveryStateForInbox(
+      this.pool, this.deliveriesTable, tenantId, inboxId,
     );
   }
 

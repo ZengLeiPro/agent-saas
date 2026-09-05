@@ -473,6 +473,7 @@ export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
         });
     }),
     markDeliveryDeadLetter: vi.fn(),
+    // Mirrors the production recovery split after cancellation.
     cancelUnstartedDeliveriesForInbox: vi.fn(async (
       _tenantId: string,
       inboxId: string,
@@ -489,6 +490,14 @@ export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
         cancelled += 1;
       }
       return cancelled;
+    }),
+    getReplyRecoveryStateForInbox: vi.fn(async (_tenantId: string, inboxId: string) => {
+      const matches = [...storedDeliveries.values()].filter(candidate => (
+        candidate.inboxId === inboxId && candidate.deliveryKind === 'front_reply'
+      ));
+      if (matches.some(candidate => candidate.deliveryState === 'unknown')) return 'unknown';
+      if (matches.some(candidate => candidate.deliveryState === 'sent')) return 'sent';
+      return matches.length > 0 ? 'unstarted' : 'none';
     }),
   } as unknown as OrgGroupAgentStore;
   const dispatch = vi.fn((_message, context, _options, hooks) =>

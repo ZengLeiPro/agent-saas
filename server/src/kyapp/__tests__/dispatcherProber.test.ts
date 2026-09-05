@@ -344,6 +344,60 @@ describe('健康探测', () => {
   });
 });
 
+describe('域名归属周期复验（§2.5）', () => {
+  const READY_OK = JSON.stringify({
+    status: 'ok',
+    contractVersion: 1,
+    appVersion: '1.0.0',
+    manifestDigest: 'f'.repeat(64),
+    installationState: 'enabled',
+    deps: { db: true, executionStore: true, jtiStore: true, directorySync: { checkpoint: 1, ageSeconds: 1 } },
+    jwksKids: [],
+  });
+
+  function healthyFetch(): typeof fetch {
+    return (async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/ky/v1/health/live')) {
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(READY_OK, { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+  }
+
+  it('TXT 记录漂移时告警并写运行状态，但不改实例状态机', async () => {
+    let txt = 'placeholder-token-value-long-enough';
+    const harness = await rig({ fetchImpl: healthyFetch(), resolveTxt: async () => [[txt]] });
+    // 让实例带上一个与 DNS 不匹配的验证令牌。
+    await harness.systems.createInstallation({
+      installationId: 'tsi_dns_probe',
+      tenantId: 't_demo',
+      systemId: 'demo-erp',
+      baseUrl: TEST_ORIGIN,
+      origin: TEST_ORIGIN,
+      techContactUserId: 'u_tech',
+      domainVerificationToken: 'expected-token-value-long-enough',
+      actor: 'u_seed',
+    });
+    await harness.systems.updateInstallationStatus({
+      installationId: 'tsi_dns_probe', status: 'enabled', actor: 'u_seed',
+    });
+
+    const drifted = await harness.prober.tick(Date.parse('2026-09-06T00:00:00.000Z'));
+    expect(drifted.domainDrifts).toBe(1);
+    expect(harness.runtimeStore.records.get('tsi_dns_probe')!.lastError)
+      .toContain('域名归属周期复验未通过');
+    // 只告警、不下线。
+    expect((await harness.systems.getInstallation('tsi_dns_probe'))!.status).toBe('enabled');
+    expect(harness.alerts.some((item) => item.installationId === 'tsi_dns_probe')).toBe(true);
+
+    txt = 'expected-token-value-long-enough';
+    const recovered = await harness.prober.tick(Date.parse('2026-09-06T00:10:00.000Z'));
+    expect(recovered.domainDrifts).toBe(0);
+  });
+});
+
 describe('无安装实例时的密钥轮换', () => {
   it('没有 enabled 实例时「全部已验证」为空真，允许切换（否则全新环境永远无法轮换）', async () => {
     const { impl } = recordingFetch(() => ackResponse({ ok: true }));

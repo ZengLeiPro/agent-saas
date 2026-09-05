@@ -160,6 +160,17 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     now,
     clearAlert: (installationId) =>
       clearKyAppInstallationAlert(pool, runtimeStore.table, installationId),
+    // §2.5：`ready` 节拍上复验域名归属；只读探测，不改状态机。
+    reverifyDomain: async (installationId) => {
+      const installation = await systems.getInstallation(installationId);
+      if (!installation?.domainVerificationToken) return true;
+      const hostname = new URL(installation.baseUrl).hostname;
+      const result = await installations.probeDomainOwnership(
+        hostname,
+        installation.domainVerificationToken,
+      );
+      return result.verified;
+    },
     onAlert: alerts.onHealthAlert,
   });
   const worker = new KyAppWorker({

@@ -289,6 +289,16 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     outbound,
     now,
     clearAlert: (installationId) => runtimeStore.clearAlert(installationId),
+    reverifyDomain: async (installationId) => {
+      const installation = await systems.getInstallation(installationId);
+      if (!installation?.domainVerificationToken) return true;
+      const hostname = new URL(installation.baseUrl).hostname;
+      const result = await installations.probeDomainOwnership(
+        hostname,
+        installation.domainVerificationToken,
+      );
+      return result.verified;
+    },
     onAlert: (alert) => alerts.push({ kind: alert.kind, installationId: alert.installationId }),
   });
 

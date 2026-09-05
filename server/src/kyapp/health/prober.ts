@@ -40,6 +40,11 @@ export interface KyAppHealthProberOptions {
   outbound: KyAppOutbound;
   /** 恢复后清掉告警标记（`installations/queries.ts` 的对称操作）。 */
   clearAlert: (installationId: string) => Promise<void>;
+  /**
+   * §2.5「`ready` 周期复验」：按 ready 节拍复验域名归属。
+   * 返回 `false` 表示归属校验没通过；未注入即跳过复验。
+   */
+  reverifyDomain?: (installationId: string) => Promise<boolean>;
   onAlert?: (alert: KyAppHealthAlert) => void;
   now?: () => number;
 }
@@ -49,6 +54,8 @@ export interface KyAppHealthTickResult {
   readyProbed: number;
   alerts: number;
   digestMismatches: number;
+  /** 域名归属周期复验未通过的实例数（§2.5）。 */
+  domainDrifts: number;
 }
 
 function readString(source: unknown, key: string): string | undefined {
@@ -87,6 +94,7 @@ export class KyAppHealthProber {
       readyProbed: 0,
       alerts: 0,
       digestMismatches: 0,
+      domainDrifts: 0,
     };
     const installations = await this.options.directory.listEnabled();
     for (const installation of installations) {
@@ -114,6 +122,7 @@ export class KyAppHealthProber {
         result.readyProbed += 1;
         const ready = await this.probeReady(installation);
         if (ready.digestMismatch) result.digestMismatches += 1;
+        if (await this.reverifyDomain(installation)) result.domainDrifts += 1;
       }
     }
     return result;
@@ -248,6 +257,36 @@ export class KyAppHealthProber {
       });
       return { digestMismatch: false };
     }
+  }
+
+  /**
+   * §2.5：`ready` 节拍上复验域名归属。失败只告警 + 记运行状态，
+   * **不改安装实例状态机**——域名临时解析异常不该让客户的系统直接下线。
+   */
+  private async reverifyDomain(installation: KyAppInstallationBrief): Promise<boolean> {
+    const reverify = this.options.reverifyDomain;
+    if (!reverify) return false;
+    let verified: boolean;
+    try {
+      verified = await reverify(installation.installationId);
+    } catch {
+      return false;
+    }
+    if (verified) return false;
+    await this.options.runtimeStore.recordReady({
+      installationId: installation.installationId,
+      status: 'ok',
+      error: '域名归属周期复验未通过：DNS TXT 记录已不匹配登记的验证令牌',
+    });
+    this.options.onAlert?.({
+      installationId: installation.installationId,
+      systemId: installation.systemId,
+      tenantId: installation.tenantId,
+      kind: 'ky_app_installation_unhealthy',
+      consecutiveFailures: 0,
+      detail: '域名归属周期复验未通过',
+    });
+    return true;
   }
 
   private isDue(

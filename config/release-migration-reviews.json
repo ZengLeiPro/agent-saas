@@ -124,6 +124,13 @@
           "reason": "增加四个可空身份列及允许全空/全非空的 CHECK；旧行和旧写入全空合法，不完整新身份被拒绝。"
         },
         {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
           "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:68f676fa41e06b1a9df425e51257f098129cc3408bf3e5d03464b6d1cd50417c",
@@ -199,6 +206,48 @@
           "targetDigest": "sha256:793ecfc742f3aedbcb23194da045581804c1cc19f3826d296cba8208e4f5590a",
           "classification": "no-schema-change",
           "reason": "价格换算纯函数调整，无数据库迁移。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
@@ -468,6 +517,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -475,11 +531,74 @@
           "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
           "path": "server/src/data/transcripts/parse.ts",
           "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
           "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
           "classification": "no-schema-change",
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
           "path": "server/src/release/configIdentity.ts",
@@ -570,6 +689,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -577,11 +703,74 @@
           "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
           "path": "server/src/data/transcripts/parse.ts",
           "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
           "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
           "classification": "no-schema-change",
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
           "path": "server/src/release/configIdentity.ts",
@@ -635,6 +824,13 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/feedback/store.ts",
           "baselineDigest": "sha256:f30e8f44ab28e292ccbaa502af409c462a4fa282f812fff428b599f29f1fdc2f",
           "targetDigest": "sha256:f2bbf51cd1d8460ac1856ec0ad19c86145aea85498881cada9c1877234fc777b",
@@ -642,11 +838,74 @@
           "reason": "消息反馈评分写入既有 verdict 列（建表语句自始含该列，默认 down）；INSERT 增列、读取回传 rating；无 ALTER、无回填、无建表变更。"
         },
         {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
           "path": "server/src/data/transcripts/parse.ts",
           "baselineDigest": "sha256:8535e9653f8286bebc43dbc02a24820bb452c73c0a01f9420f2efc30077353e1",
           "targetDigest": "sha256:35bdecbc17d5eb37f365ccd9d819fa2c9ecb96e643771fedbf6b7a27341eb40e",
           "classification": "no-schema-change",
           "reason": "仅类型层改动：块类型抽到 parseBlockTypes.ts 转发，failureKind 放宽为 RuntimeFailureKind；无 SQL 变化。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
           "path": "server/src/release/configIdentity.ts",
@@ -700,6 +959,76 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行；Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+        },
+        {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
@@ -743,6 +1072,76 @@
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
         },
         {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+        },
+        {
           "path": "server/src/release/configIdentity.ts",
           "baselineDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
           "targetDigest": "sha256:7ae39e8f4c0f038d660861f84cc8c3813f0a72bde217d767a050b37dea19a086",
@@ -784,6 +1183,76 @@
           "targetDigest": "sha256:3da66414160d2a9d4b022b5a7e36d9b9447d41441fcab6ef6bd2a7c7bc305acf",
           "classification": "no-schema-change",
           "reason": "Web Push 与 APNs 的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。WP2a 复审：completeResourceScopes 新增 integrated_system 默认 selected 空集，只多插入一行 scope，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
           "path": "server/src/release/configIdentity.ts",

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { PgGovernanceMigrationRunner } from '../data/governance-schema/migrations.js';
+import { PgGovernanceMigrationRunner, GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
 import { governanceV39OrgGroupBindingIdentityStatements } from '../data/governance-schema/v39OrgGroupBindingIdentityMigration.js';
 import { governanceV40DwsDeliveryAccountIdentityStatements } from '../data/governance-schema/v40DwsDeliveryAccountIdentityMigration.js';
 import { PgProviderQuotaSnapshotStore } from '../quota/providerQuotaSnapshotStore.js';
@@ -134,7 +134,7 @@ describePg('真实生产基线的迁移与回滚兼容性', () => {
     await rollbackHandle?.release();
   }, 30_000);
 
-  it('真实 v37 治理数据库可升级 v40、重复运行并由旧 runner 重启', async () => {
+  it('真实 v37 治理数据库可升级到当前版本、重复运行并由旧 runner 重启', async () => {
     const old = await loadReleaseMigrationBaseline<{
       PgGovernanceMigrationRunner: typeof PgGovernanceMigrationRunner;
     }>('server/src/data/governance-schema/migrations.ts');
@@ -150,7 +150,9 @@ describePg('真实生产基线的迁移与回滚兼容性', () => {
           `SELECT version FROM ${prefix}_g_governance_schema_versions WHERE version>=37 ORDER BY version`,
         )
       ).rows,
-    ).toEqual([37, 38, 39, 40].map((version) => ({ version })));
+    ).toEqual(
+      Array.from({ length: GOVERNANCE_SCHEMA_VERSION - 36 }, (_, index) => ({ version: 37 + index })),
+    );
     const quota = new PgProviderQuotaSnapshotStore(pool, { tablePrefix: prefix });
     await quota.init();
     await quota.init();

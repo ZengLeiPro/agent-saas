@@ -3,15 +3,15 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 352537,
+    "startupJsGzipBytes": 354259,
     "startupCssGzipBytes": 34963,
-    "startupJsBrotliBytes": 281108,
+    "startupJsBrotliBytes": 282113,
     "startupCssBrotliBytes": 27673,
-    "largestJsGzipBytes": 352537,
+    "largestJsGzipBytes": 354259,
     "largestCssGzipBytes": 34963,
-    "largestJsBrotliBytes": 281108,
+    "largestJsBrotliBytes": 282113,
     "largestCssBrotliBytes": 27673,
-    "largestJs": "assets/index-DJD9CuKm.js",
+    "largestJs": "assets/index-DktBHugd.js",
     "largestCss": "assets/index-CDFZj6l4.css"
   },
   "tolerance": {
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "P5-1 附件上传状态机下沉 shared useAttachmentUploads：Web useFileUpload 改为消费共享 hook，启动包 +1.4KB gzip（同一状态机不再两端各一份）",
+  "reason": "P5-2/P5-3 会话、消息与 useChatAppState 共同内核下沉 shared：Web 改为消费共享 hook（useMessageBuffer/useSessionHistoryPaging/useStreamWatchdog/useModelSelection 等），启动包累计 +1.7KB gzip（同一逻辑不再两端各一份）",
   "updatedAt": "2026-09-05"
 }

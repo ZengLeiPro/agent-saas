@@ -2,9 +2,6 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { AgentTarget, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
-import type { ModelList } from "@/types/models";
-import type { AppTab } from "@/types/sidebar";
-import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope } from "@/lib/wsClient";
 import { approvalPolicyPayloadForTier, resolveApprovalTier } from "@/lib/approvalTier";
@@ -23,8 +20,11 @@ import {
 import { canonicalChatAttachmentToDisplay, createChatClientState, interactionKey, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { runtimeTerminalAlert } from "@/lib/runtimeFailureAlert";
-import { fetchAgentProfile, reportActivity } from "@agent/shared";
-import type { AgentProfile, SessionParticipants } from "@agent/shared";
+import { fetchAgentProfile } from "@agent/shared";
+import {
+  applyReplayedSessionMetadata, markMessageBubbleFailed, useAgentProfile, useForkFromMessage,
+  useModelSelection, useSessionParticipants, useStreamWatchdog,
+} from "@agent/shared";
 import { saveSessionMessages } from "@/lib/messageCache";
 import {
   getComposerDraftScope,
@@ -56,14 +56,13 @@ import {
   shouldAcceptSessionEvent,
 } from "@/lib/queueConsistency";
 export type { QueuedInterjection } from "@/lib/interjectionConsumption";
-import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl, analysisHistoryStateForNavigation } from "@/lib/urlSync";
-import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
-import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
+import { parseUrl, pushUrl, replaceUrl } from "@/lib/urlSync";
+import { registerUpdateGuard, registerBeforeReloadHook } from "@/lib/swUpdate";
 import { runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
-import type { AdminSettingsState, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
-import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
-import { useAdminSettingsNavigation } from "@/hooks/useAdminSettingsNavigation";
+import { useChatFilePanels } from "@/hooks/useChatFilePanels";
+import { useChatRouteState } from "@/hooks/useChatRouteState";
+import { useChatUrlSync } from "@/hooks/useChatUrlSync";
 import { usePendingNewSessionTarget } from "@/hooks/usePendingNewSessionTarget";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSession } from "@/hooks/useSession";
@@ -101,42 +100,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const approvalTier = resolveApprovalTier(user?.preferences);
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
-  // ---- Agent Profile ----
-  const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
-  useEffect(() => {
-    if (!user) { setAgentProfile(null); return; }
-    fetchAgentProfile(user.username)
-      .then(setAgentProfile)
-      .catch(() => setAgentProfile(null));
-  }, [user]);
-  // ---- Session Participants ----
-  const [sessionParticipants, setSessionParticipants] = useState<SessionParticipants | null>(null);
-  // ---- File preview ----
-  const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);
-  const [explicitPreviewOwner, setExplicitPreviewOwner] = useState<string | undefined>(undefined);
-  const [previewMode, setPreviewMode] = useState<"dialog" | "side">("dialog");
-  const openFilePreview = useCallback((path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => {
-    setPreviewFilePath(path);
-    setExplicitPreviewOwner(owner);
-    // md/PDF 附件卡默认走 "side"（右侧面板），让用户可以边预览边继续对话；
-    // FileBrowser、代码块内联路径等调用点保持默认 "dialog" 弹窗行为。
-    setPreviewMode(options?.mode ?? "dialog");
-  }, []);
-  const dockFilePreview = useCallback(() => {
-    setPreviewMode("side");
-  }, []);
-  const expandFilePreview = useCallback(() => {
-    setPreviewMode("dialog");
-  }, []);
-  const closeFilePreview = useCallback(() => {
-    setPreviewFilePath(null);
-    setExplicitPreviewOwner(undefined);
-    setPreviewMode("dialog");
-  }, []);
-  // ---- File browser ----
-  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
-  const toggleFileBrowser = useCallback(() => setFileBrowserOpen(v => !v), []);
-  const closeFileBrowser = useCallback(() => setFileBrowserOpen(false), []);
+  const sessionIdRef = useRef<string | null>(null);
+  // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
+  const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
+  // ---- Agent Profile（shared 内核）----
+  const agentProfile = useAgentProfile({ username: user?.username ?? null, fetchAgentProfile, revision: user });
+  // ---- File preview / File browser（按域拆出）----
+  const {
+    previewFilePath, setPreviewFilePath, explicitPreviewOwner, previewMode,
+    openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
+    fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
+  } = useChatFilePanels();
   // ---- Trash preview (admin only) ----
   const [trashPreviewSessionId, setTrashPreviewSessionId] = useState<string | null>(null);
   const isTrashPreview = trashPreviewSessionId !== null;
@@ -161,28 +135,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { notifications, dismissNotification, pushNotification,
     lastMemoryRecall, dismissMemoryRecall, showMemoryRecall, pluginInstallStatus,
     showPluginInstallStatus, resetChatNotifications } = useChatNotificationState();
-  const [activeTab, setActiveTabRaw] = useState<AppTab>(urlState.tab);
-  const [governanceRouteState, setGovernanceRouteRaw] = useState<GovernanceRouteState | null>(urlState.governanceRoute);
-  const [platformAdminSection, setPlatformAdminSectionRaw] = useState<PlatformAdminSection>(urlState.adminSection ?? 'overview');
-  const [platformAdminEntityId, setPlatformAdminEntityIdRaw] = useState<string | null>(urlState.adminEntityId);
-  const [tenantAdminSection, setTenantAdminSectionRaw] = useState<TenantAdminSection>(urlState.tenantAdminSection ?? 'overview');
-  const [pendingCanonicalPath, setPendingCanonicalPath] = useState<string | null>(urlState.canonicalPath);
-  const [settingsOpen, setSettingsOpen] = useState(() => urlState.settingsSection !== null);
-  const [settingsSection, setSettingsSectionRaw] = useState<CanonicalSettingsSectionId>(urlState.settingsSection ?? 'account-security');
-  const [adminSettings, setAdminSettingsRaw] = useState<AdminSettingsState | null>(() => urlState.adminSettings);
-  const activeTabRef = useRef<AppTab>(activeTab);
-  activeTabRef.current = activeTab;
-  const governanceRouteRef = useRef<GovernanceRouteState | null>(governanceRouteState);
-  governanceRouteRef.current = governanceRouteState;
-  const platformAdminRouteRef = useRef<{ section: PlatformAdminSection; entityId: string | null }>({
-    section: platformAdminSection,
-    entityId: platformAdminEntityId,
-  });
-  platformAdminRouteRef.current = { section: platformAdminSection, entityId: platformAdminEntityId };
-  const tenantAdminSectionRef = useRef<TenantAdminSection>(tenantAdminSection);
-  tenantAdminSectionRef.current = tenantAdminSection;
-  const adminSettingsRef = useRef<AdminSettingsState | null>(adminSettings);
-  adminSettingsRef.current = adminSettings;
+  // ---- 页签 / 治理路由 / 设置路由状态（按域拆出）----
+  const route = useChatRouteState({ urlState, immediateSessionIdRef });
+  const {
+    activeTab, activeTabRef, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection,
+    settingsOpen, settingsSection, adminSettings,
+    setActiveTab, pushActiveTab, setPlatformAdminRoute, setTenantAdminRoute,
+    openSettings, closeSettings, setSettingsSection, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
+  } = route;
   const streamNonceRef = useRef(0);
   const streamIdRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
@@ -298,27 +258,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const voiceCallbackRef = useRef(options?.onVoiceEvent);
   voiceCallbackRef.current = options?.onVoiceEvent;
   // ---- Model selection (with retry on WS reconnect) ----
-  const [modelList, setModelList] = useState<ModelList | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const { modelList, selectedModel, setSelectedModel, modelListRef, selectedModelRef, fetchModelList } = useModelSelection({
+    authFetch,
+    selectOnLoad: (prev, data) => (sessionIdRef.current ? (prev || data.default) : data.default),
+  });
   const [autoApproveRunShell, setAutoApproveRunShellState] = useState(false);
   // full / low-risk 档本身已自动批准工具；ask 档由会话级开关决定。
   const effectiveAutoApproveRunShell = approvalTier !== "ask" || autoApproveRunShell;
-  const modelListRef = useRef(modelList);
-  modelListRef.current = modelList;
-  const fetchModelList = useCallback(() => {
-    authFetch("/api/models")
-      .then((r) => {
-        if (r.ok) return r.json();
-        return null;
-      })
-      .then((data: ModelList | null) => {
-        if (data) {
-          setModelList(data);
-          setSelectedModel((prev) => sessionIdRef.current ? (prev || data.default) : data.default);
-        }
-      })
-      .catch(() => { });
-  }, []);
   useEffect(() => {
     fetchModelList();
   }, [fetchModelList]);
@@ -345,13 +291,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const stoppingRef = useRef(stopping); stoppingRef.current = stopping;
   const uploadedFilesRef = useRef(fileUpload.uploadedFiles); uploadedFilesRef.current = fileUpload.uploadedFiles;
   const uploadingRef = useRef(fileUpload.uploading); uploadingRef.current = fileUpload.uploading;
-  const selectedModelRef = useRef(selectedModel); selectedModelRef.current = selectedModel;
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
   const approvalTierRef = useRef(approvalTier); approvalTierRef.current = approvalTier;
   const msgRef = useRef(msg); msgRef.current = msg;
-  const sessionIdRef = useRef<string | null>(null);
-  // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
-  const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
   const getCurrentSessionId = useCallback(() => immediateSessionIdRef.current ?? sessionIdRef.current, []);
   const currentRuntimeSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
   const effectiveLoading = loading || Boolean(currentRuntimeSessionId && runningSessionIds.has(currentRuntimeSessionId)); loadingRef.current = effectiveLoading;
@@ -753,25 +695,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return session.sessions.find(s => s.sessionId === session.sessionId)?.owner?.username;
   }, [explicitPreviewOwner, session.sessionId, session.sessions]);
   const sessionOwnerRef = useRef(previewFileOwner); sessionOwnerRef.current = previewFileOwner;
-  // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile ----
-  useEffect(() => {
-    const owner = session.sessionOwner;
-    if (!owner || owner.username === user?.username) {
-      setSessionParticipants(null);
-      return;
-    }
-    // 立即设置 owner 信息（头像/名字可用），agent 异步加载后补充
-    setSessionParticipants({ owner, agent: null });
-    let cancelled = false;
-    fetchAgentProfile(owner.username)
-      .then(agent => {
-        if (!cancelled) setSessionParticipants({ owner, agent });
-      })
-      .catch(() => {
-        // agent 已为 null，无需额外处理
-      });
-    return () => { cancelled = true; };
-  }, [session.sessionOwner, user?.username]);
+  // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile（shared 内核）----
+  const [sessionParticipants, setSessionParticipants] = useSessionParticipants({
+    sessionOwner: session.sessionOwner, currentUsername: user?.username, fetchAgentProfile,
+  });
   sessionIdRef.current = session.sessionId; uploadSessionIdRef.current = immediateSessionIdRef.current ?? session.sessionId;
   refreshTokenUsageRef.current = session.refreshTokenUsage; loadSessionDetailRef.current = session.loadSessionDetail;
   useEffect(() => {
@@ -838,106 +765,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       return carryNewSessionChoice;
     });
   }, [approvalTier, session.sessionId]);
-
-  // ---- URL 路由同步 ----
-  const TAB_LABELS: Partial<Record<AppTab, string>> = {
-    cron: '任务中心', files: '文件管理', scenarios: '任务模板', capabilities: '能力中心',
-  };
-  const setActiveTab = useCallback((tab: AppTab) => {
-    setSettingsOpen(false);
-    setAdminSettingsRaw(null);
-    setActiveTabRaw(tab);
-    if (tab === 'platform-admin') {
-      const next = governanceRoute('platform.overview.overview');
-      setGovernanceRouteRaw(next);
-      setPlatformAdminSectionRaw('overview');
-      setPlatformAdminEntityIdRaw(null);
-      replaceGovernanceUrl(next);
-    } else if (tab === 'tenant-admin') {
-      const current = governanceRouteRef.current?.area === 'organization' ? governanceRouteRef.current : null;
-      const next = current ?? governanceRoute('organization.overview.overview');
-      setGovernanceRouteRaw(next);
-      replaceGovernanceUrl(next);
-    } else {
-      setGovernanceRouteRaw(null);
-      replaceUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
-    }
-    // 上报非 chat/profile 的 tab 切换（profile 由 AgentProfile 组件自行上报）
-    const label = TAB_LABELS[tab];
-    if (label) reportActivity('page_viewed', { detail: label });
-  }, []);
-
-  /** push 版本的 setActiveTab：用 pushState 创建历史记录，供 user menu 跳转使用（浏览器后退可回到原页面） */
-  const pushActiveTab = useCallback((tab: AppTab) => {
-    setSettingsOpen(false);
-    setAdminSettingsRaw(null);
-    setActiveTabRaw(tab);
-    if (tab === 'platform-admin') {
-      const next = governanceRoute('platform.overview.overview');
-      setGovernanceRouteRaw(next);
-      setPlatformAdminSectionRaw('overview');
-      setPlatformAdminEntityIdRaw(null);
-      pushGovernanceUrl(next);
-    } else if (tab === 'tenant-admin') {
-      const current = governanceRouteRef.current?.area === 'organization' ? governanceRouteRef.current : null;
-      const next = current ?? governanceRoute('organization.overview.overview');
-      setGovernanceRouteRaw(next);
-      pushGovernanceUrl(next);
-    } else {
-      setGovernanceRouteRaw(null);
-      pushUrl(tab, tab === 'chat' ? immediateSessionIdRef.current : null);
-    }
-    const label = TAB_LABELS[tab];
-    if (label) reportActivity('page_viewed', { detail: label });
-  }, []);
-
-  const setPlatformAdminRoute = useCallback((section: PlatformAdminSection, entityId: string | null = null) => {
-    setSettingsOpen(false);
-    setAdminSettingsRaw(null);
-    setActiveTabRaw('platform-admin');
-    setPlatformAdminSectionRaw(section);
-    setPlatformAdminEntityIdRaw(entityId);
-    // 改造前这里丢弃整串 query：从 sessions 筛了某组织再点侧栏「执行记录」，组织筛选没了。
-    // 现在按白名单透传作用域筛选（tenantId / userId）——section 私有筛选（kind/phase/cursor…）
-    // 跨 section 无意义，仍然丢弃。
-    pushPlatformAdminUrl({ section, entityId, search: preserveScopeSearch() });
-  }, []);
-
-  /** 切换组织分析页签：进路径 + push 历史（后退回上一个页签，而不是退出整个组织分析） */
-  const setTenantAdminRoute = useCallback((section: string) => {
-    const next = normalizeTenantAdminSection(section);
-    setSettingsOpen(false);
-    setAdminSettingsRaw(null);
-    setActiveTabRaw('tenant-admin');
-    setTenantAdminSectionRaw(next);
-    // 切页签丢弃页内私有筛选，但带着组织作用域走
-    pushTenantAdminUrl({ section: next, search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
-  }, []);
-
-  const { openSettings, closeSettings, setSettingsSection } = usePersonalSettingsNavigation({
-    getActiveTab: () => activeTabRef.current,
-    getPlatformRoute: () => platformAdminRouteRef.current,
-    getTenantSection: () => tenantAdminSectionRef.current,
-    getSessionId: () => immediateSessionIdRef.current,
-    openState: (section, route) => {
-      setAdminSettingsRaw(null); setGovernanceRouteRaw(route); setSettingsOpen(true); setSettingsSectionRaw(section);
-    },
-    closeState: () => { setSettingsOpen(false); setGovernanceRouteRaw(null); },
-  });
-
-  const { openAdminSettings, closeAdminSettings, setAdminSettingsSection } = useAdminSettingsNavigation({
-    getActiveTab: () => activeTabRef.current,
-    getPlatformRoute: () => platformAdminRouteRef.current,
-    getTenantSection: () => tenantAdminSectionRef.current,
-    getSessionId: () => immediateSessionIdRef.current,
-    getCurrentSettings: () => adminSettingsRef.current,
-    openState: (target, section) => {
-      setSettingsOpen(false);
-      setGovernanceRouteRaw(null);
-      setAdminSettingsRaw({ target, section });
-    },
-    closeState: () => setAdminSettingsRaw(null),
-  });
 
   // ---- 企业专家草稿态（2026-07 唯恩批次）----
   // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
@@ -1040,168 +867,24 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [msg, session.sessionId, session.loadSessionDetail, user?.username]);
 
-  // Popstate refs（保持最新引用避免 effect 重注册）
-  const selectSessionRawRef = useRef(session.selectSession);
-  selectSessionRawRef.current = session.selectSession;
-  const newSessionRawRef = useRef(session.newSession);
-  newSessionRawRef.current = session.newSession;
+  // 浏览器前进/后退 与 URL 兜底同步（按域拆出，effect 逻辑与依赖原样）
+  useChatUrlSync({
+    route, sessionId: session.sessionId,
+    selectSession: session.selectSession, newSession: session.newSession,
+    sessionIdRef, immediateSessionIdRef, queuedSessionIdRef, mutateQueuedInterjections, markSessionRead,
+  });
 
-  // 浏览器前进/后退 → 解析 URL → 更新状态（不操作 URL）
-  useEffect(() => {
-    const handler = (event: PopStateEvent) => {
-      // 只有用户真实触发的前进/后退才允许借导航应用 SW 更新；应用内部派发的
-      // synthetic popstate 只是让 SPA 重读 URL，强刷会造成管理菜单随机闪屏。
-      if (maybeReloadOnPopstate(event)) return;
-      const {
-        tab,
-        sessionId: urlSessionId,
-        settingsSection: urlSettingsSection,
-        adminSection: urlAdminSection,
-        adminEntityId: urlAdminEntityId,
-        tenantAdminSection: urlTenantAdminSection,
-        adminSettings: urlAdminSettings,
-        governanceRoute: urlGovernanceRoute,
-        canonicalPath,
-      } = parseUrl();
-      setGovernanceRouteRaw(urlGovernanceRoute);
-      setPendingCanonicalPath(canonicalPath);
-      if (urlAdminSettings) {
-        // 统一设置工作区覆盖在当前产品页上；页内前进/后退只切设置叶子，不改动来源 tab。
-        setSettingsOpen(false);
-        setAdminSettingsRaw(urlAdminSettings);
-        return;
-      }
-      if (urlSettingsSection) {
-        setAdminSettingsRaw(null);
-        setSettingsOpen(true);
-        setSettingsSectionRaw(urlSettingsSection);
-        return;
-      }
-      setSettingsOpen(false);
-      setAdminSettingsRaw(null);
-      if (tab === 'platform-admin') {
-        setPlatformAdminSectionRaw(urlAdminSection ?? 'overview');
-        setPlatformAdminEntityIdRaw(urlAdminEntityId);
-      }
-      if (tab === 'tenant-admin' && urlTenantAdminSection) {
-        setTenantAdminSectionRaw(urlTenantAdminSection);
-      }
-      immediateSessionIdRef.current = urlSessionId;
-      queuedSessionIdRef.current = urlSessionId;
-      mutateQueuedInterjections((prev) => prev);
-      setActiveTabRaw(tab);
-      if (tab === 'chat') {
-        if (urlSessionId && urlSessionId !== sessionIdRef.current) {
-          markSessionRead(urlSessionId);
-          selectSessionRawRef.current(urlSessionId);
-        } else if (!urlSessionId && sessionIdRef.current) {
-          newSessionRawRef.current();
-        }
-      }
-    };
-    window.addEventListener('popstate', handler);
-    return () => window.removeEventListener('popstate', handler);
-  }, [markSessionRead, mutateQueuedInterjections]);
-
-  // 兜底：确保 URL 始终与 state 一致（覆盖 delete fallback 等间接变更）
-  useEffect(() => {
-    if (pendingCanonicalPath) {
-      const current = `${window.location.pathname}${window.location.search}`;
-      if (current !== pendingCanonicalPath) {
-        window.history.replaceState(analysisHistoryStateForNavigation('replace', pendingCanonicalPath), '', pendingCanonicalPath);
-      }
-      setPendingCanonicalPath(null);
-      return;
-    }
-    const expectedUrl = buildUrl(
-      activeTab,
-      activeTab === 'chat' ? session.sessionId : null,
-    );
-    if (governanceRouteState) {
-      const governanceUrl = buildGovernanceUrl(governanceRouteState);
-      if (governanceUrl !== `${window.location.pathname}${window.location.search}`) {
-        replaceGovernanceUrl(governanceRouteState);
-      }
-      return;
-    }
-    if (adminSettings) {
-      const adminUrl = buildAdminSettingsUrl(adminSettings.target, adminSettings.section);
-      if (adminUrl !== window.location.pathname) {
-        replaceAdminSettingsUrl(adminSettings.target, adminSettings.section);
-      }
-      return;
-    }
-    if (settingsOpen) {
-      const settingsUrl = buildSettingsUrl(settingsSection);
-      if (settingsUrl !== window.location.pathname) {
-        replaceSettingsUrl(settingsSection);
-      }
-      return;
-    }
-    if (activeTab === 'platform-admin') {
-      const expectedPath = buildPlatformAdminUrl({
-        section: platformAdminSection,
-        entityId: platformAdminEntityId,
-      });
-      if (expectedPath !== window.location.pathname) {
-        replacePlatformAdminUrl({
-          section: platformAdminSection,
-          entityId: platformAdminEntityId,
-          search: window.location.search,
-        });
-      }
-      return;
-    }
-    if (activeTab === 'tenant-admin') {
-      // 与 platform-admin 完全对称：路径带页签，search（筛选）原样保留
-      const expectedPath = buildTenantAdminUrl({ section: tenantAdminSection });
-      if (expectedPath !== window.location.pathname) {
-        replaceTenantAdminUrl({ section: tenantAdminSection, search: window.location.search });
-      }
-      return;
-    }
-    if (expectedUrl !== window.location.pathname) {
-      immediateSessionIdRef.current = session.sessionId;
-      queuedSessionIdRef.current = session.sessionId;
-      mutateQueuedInterjections((prev) => prev);
-      replaceUrl(activeTab, activeTab === 'chat' ? session.sessionId : null);
-    }
-  }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath, mutateQueuedInterjections]);
-
-  // ---- 运行态 watchdog：防止 done 丢失时 loading 永久锁定 ----
-  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastStreamEventAtRef = useRef(0);
-
-  const clearWatchdog = useCallback(() => {
-    if (watchdogTimerRef.current) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null; }
-    lastStreamEventAtRef.current = 0;
-  }, []);
-
-  const resetWatchdog = useCallback(() => {
-    if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
-    if (!loadingRef.current) return;
-    const timeout = lastStreamEventAtRef.current > 0 ? 45_000 : 60_000;
-    watchdogTimerRef.current = setTimeout(async () => {
-      watchdogTimerRef.current = null;
-      if (!loadingRef.current) return;
-      const sid = sessionIdRef.current;
+  // ---- 运行态 watchdog：防止 done 丢失时 loading 永久锁定（shared 内核）----
+  const { clearWatchdog, resetWatchdog, touchWatchdog } = useStreamWatchdog({
+    authFetch,
+    isLoading: () => loadingRef.current,
+    getSessionId: () => sessionIdRef.current,
+    createStaleGuard: (sid) => {
       const watchdogNonce = streamNonceRef.current;
       const watchdogRuntimeVersion = sid ? runtimeVersionBySessionRef.current.get(sid) ?? 0 : 0;
-      const watchdogIsStale = () => sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce || Boolean(sid && (runtimeVersionBySessionRef.current.get(sid) ?? 0) !== watchdogRuntimeVersion);
-      if (sid) {
-        try {
-          const res = await authFetch(`/api/sessions/${sid}/stream-status`);
-          if (watchdogIsStale()) return;
-          if (res.ok) {
-            const { active } = await res.json() as { active: boolean };
-            if (watchdogIsStale()) return;
-            if (active) { resetWatchdog(); return; } // Agent 还活着
-          }
-        } catch {
-          if (watchdogIsStale()) return;
-        }
-      }
-      if (watchdogIsStale()) return;
+      return () => sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce || Boolean(sid && (runtimeVersionBySessionRef.current.get(sid) ?? 0) !== watchdogRuntimeVersion);
+    },
+    onExpired: (sid) => {
       if (sid) patchSessionRuntime(sid, { status: 'idle', streamId: null, runId: null, lastEventId: null, attached: false });
       finalizeStreamingMessages(msgRef.current);
       finalizeRunningSubagents(msgRef.current);
@@ -1210,8 +893,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       setStopping(false);
       dispatchConnection('complete');
       sessionRef.current.refreshCurrentSession();
-    }, timeout);
-  }, [dispatchConnection, patchSessionRuntime]);
+    },
+  });
 
   const finalizeTerminalRuntime = useCallback((args: {
     sessionId: string;
@@ -1582,18 +1265,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             || e.type === 'ask_user' || e.type === 'interaction_resolved') {
             projectRecoveredInteraction(e);
           }
-          if (e.type === 'title_updated') sessionRef.current.updateSessionTitle(e.sessionId, e.title);
-          else if (e.type === 'session_updated') {
-            if ((e as any).isNew && sessionRef.current.upsertSession) {
-              sessionRef.current.upsertSession({ sessionId: e.sessionId, preview: e.preview, updatedAtMs: e.updatedAtMs, title: (e as any).title, model: (e as any).model, username: (e as any).username });
-            } else {
-              sessionRef.current.updateSessionMeta(e.sessionId, {
-                preview: e.preview,
-                updatedAtMs: e.updatedAtMs,
-                ...((e as any).title !== undefined ? { title: (e as any).title } : {}),
-              });
-            }
-          }
+          if (applyReplayedSessionMetadata(sessionRef.current, e)) { /* title_updated / session_updated 已写入列表 */ }
           else if (e.type === 'session_deleted') {
             if ((immediateSessionIdRef.current ?? sessionIdRef.current) === e.sessionId) {
               immediateSessionIdRef.current = null; sessionIdRef.current = null; queuedSessionIdRef.current = null; wsLatestSessionIdRef.current = { value: null };
@@ -1806,8 +1478,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (wsAttachedRef.current && data.type !== 'title_updated' && data.type !== 'session_updated'
         && data.type !== 'session_deleted' && data.type !== 'interaction_resolved'
         && data.type !== 'pending_interactions') {
-        lastStreamEventAtRef.current = Date.now();
-        resetWatchdog();
+        touchWatchdog();
       }
 
       // ── 上下文压缩黑箱化（2026-07）：compaction_status 专用事件，不进 processWsEvent ──
@@ -2094,26 +1765,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     return unsub;
   }, [dispatchConnection, scheduleTerminalRuntimeProbe]);
 
-  /** 内部：标记 bubble 为 failed（按 clientMsgId 或回退到 userMsgIndex） */
+  /** 内部：标记 bubble 为 failed（按 clientMsgId 或回退到 userMsgIndex；shared 实现） */
   const markBubbleFailed = useCallback((clientMsgId: string | undefined, fallbackIndex: number, reason: string) => {
-    const msgs = msgRef.current.messagesRef.current;
-    let idx = -1;
-    if (clientMsgId) {
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if ((m.type === 'user' || m.type === 'user-voice') && 'clientMsgId' in m && m.clientMsgId === clientMsgId) {
-          idx = i;
-          break;
-        }
-      }
-    }
-    if (idx < 0) idx = fallbackIndex;
-    if (idx < 0) return;
-    msgRef.current.updateMessageAt(idx, (m) => {
-      if (m.type === 'user') return { ...m, status: 'failed' as const, failedReason: reason };
-      if (m.type === 'user-voice') return { ...m, status: 'failed' as const, failedReason: reason };
-      return m;
-    });
+    markMessageBubbleFailed(msgRef.current, clientMsgId, fallbackIndex, reason);
   }, []);
 
   /** ACK 超时后查询服务端权威状态；网络不明时保持 verifying，绝不直接开放重试。 */
@@ -2871,33 +2525,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     dismissQueuedEntry(clientMsgId, mutateQueuedInterjections);
   }, [mutateQueuedInterjections]);
 
-  // ---- Fork from message (从此编辑) ----
-  const forkFromMessage = useCallback(async (message: MessageItem) => {
-    if (message.type !== 'user') return;
-    const sourceSessionId = sessionIdRef.current;
-    if (!sourceSessionId) return;
-
-    try {
-      const res = await authFetch(`/api/sessions/${encodeURIComponent(sourceSessionId)}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blockId: message.id }),
-      });
-      if (!res.ok) {
-        console.error('Fork failed:', res.status);
-        return;
-      }
-      const { newSessionId, forkMessage } = await res.json();
-
+  // ---- Fork from message (从此编辑；shared 内核) ----
+  const forkFromMessage = useForkFromMessage({
+    authFetch,
+    getSourceSessionId: () => sessionIdRef.current,
+    onForked: async (newSessionId, forkMessage) => {
       selectSessionWithUrl(newSessionId);
       await sessionRef.current.loadDetailPromiseRef.current;
       setInput(forkMessage);
       // 刷新会话列表，确保新会话出现在侧边栏
       void sessionRef.current.loadSessions({ fresh: true });
-    } catch (err) {
-      console.error('Fork failed:', err);
-    }
-  }, [setInput, selectSessionWithUrl]);
+    },
+  });
 
   // ---- 会话切换时恢复模型选择 ----
   // 仅在 sessionId 实际切换时才重置/恢复，避免 sessions 列表刷新（WS 重连、

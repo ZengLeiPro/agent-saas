@@ -59,14 +59,14 @@ identity commit 完成，或失败补偿与权威读回证明结束；锁租约�
 1. 打包不含 `web/` 的 Server release，scp 上传 ECS。
 2. 读 `/etc/agent-saas/active-color` 定位 idle 色；校验 active 实例在服务。
 3. 安装前清理未受保护的历史 release，并校验至少 8 GiB 可用空间、25 万可用 inode；随后解包到 `releases/<sha>`，`server/data` 软链 NAS，以 isolated linker 安装 server/shared 依赖。
-4. 只改 Web idle 色 symlink（active 色 symlink 永不动）→ 启动固定 `ws-only` 的 `agent-saas-server@<idle>`。
-5. 切流前门禁：`/api/healthz/ready` 200（180s 硬门禁）+ warmup done（420s 软门禁）+ 冒烟。任何失败会还原 idle 色 symlink 并回收当次 release/上传包，老色全程在服务。
-6. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ `nginx -t` → reload → 验证。
-7. 更新 Web active-color；运行时代码命中分类时再滚动独立 Runtime Worker，
-   候选 ready 后让旧 worker 在安全边界交棒；纯 Web 变更跳过 worker。
+4. 只改 idle symlink；命中 Runtime Worker 分类时先启动候选、完成 pid/ready 门禁并排空旧 Worker，纯 Web 变更跳过。
+5. 启动固定 `ws-only` 的 Web idle 色；切流前要求 `/api/healthz/ready` 200、私有 ConfigIdentity 快照严格校验、warmup 与冒烟通过。
+6. 备份并重写 nginx 双配置（新色 primary、旧色 backup）→ `nginx -t` → reload → 验证；写盘、reload 或验证失败均由统一 rollback 恢复旧配置并重载。
+7. 更新 Web active-color / unit ownership，从活动 API/Worker/Web/ACS 与私有快照重建 trusted identity；任一步失败统一恢复 nginx、marker、unit、Worker 与 runtime identity。
 8. 重新生成 rollback 脚本，并 `kill -USR2` 精确 drain 旧 Web 色。
 
-当前 `rollback.sh` 只回滚 Web/API。Runtime Worker 依靠 N/N+1 兼容与受控滚动，
+发布失败时的统一 rollback 会恢复 Web/API 与本次预激活的 Runtime Worker；发布成功后生成的
+人工 `rollback.sh` 仍只回滚 Web/API。Runtime Worker 依靠 N/N+1 兼容与受控滚动，
 需要回退时按上一生产 SHA 重新发布；不会因为一次纯 Web 回滚而隐式切换执行层。
 若生产配置含 `clientDaemon` 或 PG 中存在 active device，拆分发布会在切流前
 fail-fast，旧 all-in-one 拓扑保持不动。

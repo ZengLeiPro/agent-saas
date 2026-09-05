@@ -2,6 +2,7 @@ export type ModelRetryReason =
   | 'transient_network_error'
   | 'transient_http_error'
   | 'transient_stream_interrupt'
+  | 'stream_guard_recovery'
   | 'transient_provider_error'
   | 'previous_response_not_found'
   | 'invalid_encrypted_content';

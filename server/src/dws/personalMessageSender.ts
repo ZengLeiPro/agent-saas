@@ -6,6 +6,7 @@ import {
   type AgentDwsAccountRecord,
 } from '../data/agentDwsAccounts/index.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
+import type { ToolInvocationRequest } from '../runtime/handProtocol.js';
 import { HttpTransport, type HttpTransportOptions } from '../runtime/httpTransport.js';
 import type { DwsWorkspacePrincipal } from './authFlow.js';
 import { deriveDwsPrincipalWorkspaceId, resolveDwsPrincipalCwd } from './authFlow.js';
@@ -27,6 +28,7 @@ export interface DwsPersonalMessageSenderOptions {
     invokeTimeoutMs?: number;
   }>;
   transportFactory?: (options: HttpTransportOptions) => Pick<ExecutionTransport, 'invoke'>;
+  createInvocationId?: () => string;
   logger?: {
     info?(message: string): void;
     warn?(message: string): void;
@@ -39,6 +41,7 @@ export interface DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
+    onProviderStart?: () => Promise<void>,
   ): Promise<Record<string, unknown> | undefined>;
 }
 
@@ -55,6 +58,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
+    onProviderStart?: () => Promise<void>,
   ): Promise<Record<string, unknown> | undefined> {
     // Build and validate before resolving credentials or touching the transport.
     const command = buildDwsPersonalMessageCommand(account, event, text, idempotencyKey);
@@ -69,11 +73,11 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     if (!mountSubPath) throw new Error('无法解析 Agent DWS connector workspace 挂载路径');
     const workspaceId = deriveDwsPrincipalWorkspaceId(principal);
 
-    const response = await transport.invoke({
+    const request: ToolInvocationRequest = {
       toolName: 'Shell',
       input: { command, timeoutMs: DWS_MESSAGE_TIMEOUT_MS },
       context: {
-        invocationId: `agent-dws-message-${randomUUID()}`,
+        invocationId: `agent-dws-message-${(this.options.createInvocationId ?? randomUUID)()}`,
         workspace: {
           id: workspaceId,
           root,
@@ -88,7 +92,12 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
           workload: DWS_PERSONAL_MESSAGE_WORKLOAD,
         },
       },
-    });
+    };
+
+    // The complete invoke envelope is now immutable local state. Once this callback succeeds,
+    // the next operation enters the transport without further request construction.
+    await onProviderStart?.();
+    const response = await transport.invoke(request);
 
     if (response.status === 'error') {
       const error = redactDwsMessageError(response.error, remote.authToken);

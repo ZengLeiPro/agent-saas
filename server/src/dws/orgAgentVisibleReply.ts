@@ -5,7 +5,10 @@ import {
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
+import type {
+  AgentDwsInboxRecord,
+  AgentDwsMessageStore,
+} from '../data/agentDwsMessages/index.js';
 import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import {
   DELIVERY_MAX_ATTEMPTS,
@@ -16,25 +19,55 @@ import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
 import { createRedactedTerminalNotice } from './orgAgentDeliveryWorker.js';
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
+import {
+  bindingMatchesCurrentAccountIdentity,
+  currentAgentDwsAccountIdentity,
+  deliveryMatchesCurrentAccountIdentity,
+  inboxMatchesCurrentAccountIdentity,
+} from './agentDwsAccountIdentity.js';
 
 const FRONT_REPLY_FALLBACK = '收到，我正在处理，完成后会在这里回复结果。';
 
+export class OrgAgentProviderAuthorizationRevokedError extends Error {
+  constructor(readonly reason: string) {
+    super(`ORG_AGENT_PROVIDER_AUTHORIZATION_REVOKED:${reason}`);
+  }
+}
+
+/** A final reply may follow only a confirmed-sent fallback, never an unknown provider attempt. */
 export async function settleFrontReply(
   deadline: { cancel(): Promise<DwsDeliveryIntent | undefined> } | undefined,
   sendNatural: () => Promise<DwsDeliveryIntent | undefined>,
   sendFinal: () => Promise<DwsDeliveryIntent | undefined>,
-): Promise<void> {
+): Promise<DwsDeliveryIntent | undefined> {
   const [fallback, natural] = await Promise.all([
     deadline?.cancel() ?? Promise.resolve(undefined),
     sendNatural(),
   ]);
-  if ((natural ?? fallback)?.source === 'system') await sendFinal();
+  const first = natural ?? fallback;
+  if (first?.source === 'system' && first.deliveryState === 'sent') return await sendFinal();
+  return first;
+}
+
+export async function finalizeReplyDelivery(
+  store: AgentDwsMessageStore,
+  owner: string,
+  item: AgentDwsInboxRecord,
+  delivery: DwsDeliveryIntent | undefined,
+): Promise<boolean> {
+  if (!delivery || delivery.deliveryState === 'sent') return true;
+  if (delivery.deliveryState === 'unknown' || delivery.deliveryState === 'dead_letter') {
+    await store.markReplyUnknown(item.inboxId, owner, item.leaseFence);
+    return false;
+  }
+  throw new Error(`AGENT_DWS_REPLY_DELIVERY_NOT_SENT:${delivery.deliveryState}`);
 }
 
 export class OrgAgentVisibleReplyService {
   constructor(
     private readonly options: {
       accountStore: AgentDwsAccountStore;
+      messageStore?: AgentDwsMessageStore;
       orgGroupAgentStore?: OrgGroupAgentStore;
       orgAgentStore?: Pick<OrgAgentStore, 'get'>;
       sender: DwsPersonalMessageSenderLike;
@@ -103,13 +136,23 @@ export class OrgAgentVisibleReplyService {
     disposition: 'replied' | 'rejected',
     replyPhase: 'first' | 'final' = 'first',
     sourceOverride?: DwsDeliveryIntent['source'],
+    authorizeBeforeProvider?: () => Promise<{ allowed: boolean; reason?: string }>,
   ): Promise<DwsDeliveryIntent | undefined> {
+    const idempotencyPrefix = deliveryKind === 'access_rejection'
+      ? (replyPhase === 'first' ? 'agent-dws-rejection' : 'agent-dws-rejection-final')
+      : (replyPhase === 'first' ? 'agent-dws-reply' : 'agent-dws-final');
     const idempotencyKey = deterministicId(
-      replyPhase === 'first' ? 'agent-dws-reply' : 'agent-dws-final',
+      idempotencyPrefix,
       `${item.accountId}:${item.eventId}`,
     );
     if (!this.options.orgGroupAgentStore) {
-      await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey);
+      await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey, async () => {
+        const authorization = await authorizeBeforeProvider?.();
+        if (authorization && !authorization.allowed)
+          throw new OrgAgentProviderAuthorizationRevokedError(
+            authorization.reason ?? 'ACCESS_DENIED',
+          );
+      });
       return undefined;
     }
     const visibility = shared?.completionWork?.visibility ?? shared?.binding.policy.taskVisibility;
@@ -147,10 +190,14 @@ export class OrgAgentVisibleReplyService {
               ? { peerOpenId: item.senderOpenDingtalkId }
               : {}),
           };
+    const accountIdentity = currentAgentDwsAccountIdentity(account);
+    if (!accountIdentity || !inboxMatchesCurrentAccountIdentity(item, account))
+      throw new Error('ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_UNAVAILABLE');
     const delivery = await this.options.orgGroupAgentStore.createDelivery({
       tenantId: item.tenantId,
       inboxId: item.inboxId,
       accountId: item.accountId,
+      accountIdentity,
       conversationId: item.conversationId,
       ...(shared
         ? {
@@ -198,46 +245,143 @@ export class OrgAgentVisibleReplyService {
       if (!current || current.idempotencyKey !== delivery.idempotencyKey) throw error;
       return current;
     }
-    let providerStarted = false;
-    try {
-      await this.options.orgGroupAgentStore.markDeliveryProviderStarted(
-        delivery.deliveryId,
-        this.workerId,
-        claimed.leaseFence,
+    const currentAccount = await this.options.accountStore.getForTenant(
+      claimed.tenantId, claimed.accountId,
+    );
+    if (
+      !currentAccount ||
+      currentAccount.status !== 'active' ||
+      !hasExactAgentDwsProfile(currentAccount) ||
+      (Boolean(claimed.agentId) && currentAccount.agentId !== claimed.agentId)
+    ) {
+      return await this.options.orgGroupAgentStore.markClaimedDeliveryDeadLetter(
+        claimed.deliveryId, this.workerId, claimed.leaseFence,
+        'ORG_AGENT_DELIVERY_ACCOUNT_UNAVAILABLE',
       );
-      providerStarted = true;
+    }
+    if (!deliveryMatchesCurrentAccountIdentity(claimed.accountIdentity, currentAccount)) {
+      return await this.options.orgGroupAgentStore.markClaimedDeliveryDeadLetter(
+        claimed.deliveryId, this.workerId, claimed.leaseFence,
+        'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
+      );
+    }
+    let providerStarted = false;
+    let providerFenceAborted = false;
+    try {
       const receipt = await this.options.sender.send(
-        account,
+        currentAccount,
         outboundEvent(item, claimed.destination),
         claimed.content,
         claimed.idempotencyKey,
+        async () => {
+          await this.options.orgGroupAgentStore!.markDeliveryProviderStarted(
+            delivery.deliveryId,
+            this.workerId,
+            claimed.leaseFence,
+          );
+          let authorization: { allowed: boolean; reason?: string } | undefined;
+          try {
+            authorization = await authorizeBeforeProvider?.();
+          } catch (error) {
+            providerFenceAborted = true;
+            await this.options.orgGroupAgentStore!.markClaimedDeliveryDeadLetter(
+              delivery.deliveryId, this.workerId, claimed.leaseFence,
+              `ORG_AGENT_PROVIDER_AUTHORIZATION_FAILED:${compactError(error)}`,
+            );
+            throw error;
+          }
+          if (authorization && !authorization.allowed) {
+            providerFenceAborted = true;
+            const reason = authorization.reason ?? 'ACCESS_DENIED';
+            await this.options.orgGroupAgentStore!.markClaimedDeliveryDeadLetter(
+              delivery.deliveryId, this.workerId, claimed.leaseFence,
+              `ORG_AGENT_PROVIDER_AUTHORIZATION_REVOKED:${reason}`,
+            );
+            throw new OrgAgentProviderAuthorizationRevokedError(reason);
+          }
+          providerStarted = true;
+        },
       );
       if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
-      await this.options.orgGroupAgentStore.markDeliverySent(
+      return await this.options.orgGroupAgentStore.markDeliverySent(
         delivery.deliveryId,
         this.workerId,
         claimed.leaseFence,
         receipt,
       );
     } catch (error) {
+      if (providerFenceAborted) throw error;
       if (providerStarted)
-        await this.options.orgGroupAgentStore.markDeliveryUnknown(
+        return await this.options.orgGroupAgentStore.markDeliveryUnknown(
           delivery.deliveryId,
           this.workerId,
           claimed.leaseFence,
           error,
         );
-      else
-        await this.options.orgGroupAgentStore.releaseClaimedDeliveryForRetry(
-          delivery.deliveryId,
-          this.workerId,
-          claimed.leaseFence,
-          error,
-          deliveryRetryDelayMs(claimed.attempt),
-          DELIVERY_MAX_ATTEMPTS,
-        );
+      await this.options.orgGroupAgentStore.releaseClaimedDeliveryForRetry(
+        delivery.deliveryId,
+        this.workerId,
+        claimed.leaseFence,
+        error,
+        deliveryRetryDelayMs(claimed.attempt),
+        DELIVERY_MAX_ATTEMPTS,
+      );
+      throw error;
     }
-    return delivery;
+  }
+
+  async replacePendingWithAccessRejection(
+    account: AgentDwsAccountRecord,
+    item: AgentDwsInboxRecord,
+    text: string,
+    reason: string,
+    knownUnsent = false,
+  ): Promise<boolean> {
+    const messageStore = this.options.messageStore;
+    if (!messageStore) throw new Error('Agent DWS message store unavailable');
+    await this.cancelPendingForInbox(
+      item, `ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:${reason}`,
+    );
+    if (!knownUnsent) {
+      const recoveryState = this.options.orgGroupAgentStore
+        ? await this.options.orgGroupAgentStore.getReplyRecoveryStateForInbox(
+            item.tenantId, item.inboxId,
+          )
+        : 'none';
+      if (recoveryState === 'sent') {
+        await messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
+        return false;
+      }
+      if (recoveryState === 'unknown' || recoveryState === 'none') {
+        await messageStore.markReplyUnknown(item.inboxId, this.workerId, item.leaseFence);
+        return false;
+      }
+    }
+    const rejection = await messageStore.saveRejectionResult(
+      item.inboxId, this.workerId, item.leaseFence, text, reason, true,
+    );
+    await messageStore.markReplyAttemptStarted(
+      item.inboxId, this.workerId, item.leaseFence,
+    );
+    const delivery = await this.send(
+      account, rejection, text, undefined, 'access_rejection', 'rejected',
+    );
+    if (!(await finalizeReplyDelivery(
+      messageStore, this.workerId, rejection, delivery,
+    ))) return false;
+    await messageStore.reject(
+      item.inboxId, this.workerId, item.leaseFence, reason,
+    );
+    return true;
+  }
+
+  /** Prevents stale direct replies from surviving a newly denied request. */
+  async cancelPendingForInbox(item: AgentDwsInboxRecord, reason: string): Promise<number> {
+    return await this.options.orgGroupAgentStore?.cancelUnstartedDeliveriesForInbox(
+      item.tenantId,
+      item.inboxId,
+      reason,
+    ) ?? 0;
   }
 
   private async isLive(shared: SharedGroupContext, delivery: DwsDeliveryIntent): Promise<boolean> {
@@ -253,9 +397,10 @@ export class OrgAgentVisibleReplyService {
     const currentAgent = this.options.orgAgentStore?.get(shared.binding.agentId);
     const unavailable =
       !current ||
+      !currentAccount ||
+      !bindingMatchesCurrentAccountIdentity(current, currentAccount) ||
       current.bindingId !== shared.binding.bindingId ||
       current.agentId !== shared.binding.agentId ||
-      !currentAccount ||
       currentAccount.status !== 'active' ||
       !hasExactAgentDwsProfile(currentAccount) ||
       currentAccount.agentId !== shared.binding.agentId;

@@ -6,6 +6,8 @@ import type { OrgAgentWorkOrderControlRequest } from './backgroundTaskRuntime.js
 import { parseBackgroundTaskMetadata } from './backgroundTaskMetadata.js';
 import type { OrgAgentBackgroundWorkCoordinator } from './orgAgentBackgroundWork.js';
 
+const ORG_AGENT_BACKGROUND_TASK_POLICY_TOOL = 'BackgroundTask';
+
 export async function controlOrgAgentWorkOrder(
   config: RawRuntimeRunDispatchConfig,
   orgWork: OrgAgentBackgroundWorkCoordinator,
@@ -77,9 +79,22 @@ export async function authorizeOrgAgentWorkOrderMutation(
     !caller ||
     !store ||
     caller.externalActor.kind !== 'external_user' ||
-    caller.externalActorAssurance !== 'mapped'
+    caller.externalActorAssurance !== 'mapped' ||
+    caller.accountId !== caller.agentPrincipal.accountId ||
+    caller.agentId !== caller.agentPrincipal.agentId
   )
     throw new Error('ORG_AGENT_WORK_ORDER_MUTATION_DENIED');
+  const evaluateChannel = config.orgAgentChannelPolicyEvaluator;
+  if (!evaluateChannel) throw new Error('ORG_AGENT_WORK_ORDER_MUTATION_DENIED');
+  const livePolicy = await evaluateChannel({
+    tenantId: caller.agentPrincipal.tenantId,
+    bindingId: caller.bindingId,
+    accountId: caller.accountId,
+    agentId: caller.agentId,
+    conversationId: caller.channelPrincipal.conversationId,
+    toolName: ORG_AGENT_BACKGROUND_TASK_POLICY_TOOL,
+  });
+  if (!livePolicy.allowed) throw new Error('ORG_AGENT_WORK_ORDER_MUTATION_DENIED');
   const [work, binding] = await Promise.all([
     store.getWorkOrder(caller.agentPrincipal.tenantId, workOrderId),
     store.getBindingById(caller.agentPrincipal.tenantId, caller.bindingId),

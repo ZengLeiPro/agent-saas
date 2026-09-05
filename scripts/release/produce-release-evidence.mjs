@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 import {
+  configIdentitySummarySchema,
   RELEASE_EVIDENCE_SCHEMA_VERSION,
   validateReleaseEvidenceDocument,
 } from './release-evidence-schema.mjs';
@@ -82,6 +83,7 @@ const productionStateSchema = z
     schemaVersion: z.literal(1),
     environment: z.literal('production'),
     digest,
+    configIdentity: configIdentitySummarySchema.optional(),
     components: z
       .object({
         web: z.object({ gitSha: sha, artifactDigest: digest }).passthrough(),
@@ -296,10 +298,15 @@ export async function produceReleaseEvidence(options) {
       },
     },
     productionBaseline,
+    // TASK-318：Release Evidence 仅透传脱敏摘要，不包含配置值或 secret ref。
+    ...(production.configIdentity !== undefined
+      ? { configIdentity: production.configIdentity }
+      : {}),
     baselineArtifacts,
     affectedComponents: classification.components,
     migrationPlan: migration.migrationPlan,
   };
+  // 透传后再次走共享 schema，避免 Production snapshot 绕过 Evidence 语义约束。
   const evidence = validateReleaseEvidenceDocument(
     { ...body, evidenceDigest: digestBuffer(Buffer.from(canonicalJson(body))) },
     { expectedSha: releaseSha },

@@ -58,12 +58,16 @@ export interface ResponsesTransportExecuteInput {
   /** Provider 用于 Prompt Cache 路由亲和的稳定内容指纹。 */
   promptCacheKey?: string;
   signal?: AbortSignal;
+  /** guard 的唯一恢复请求，禁止传输层再做隐式重发。 */
+  recoveryAttempt?: boolean;
   /** Binding used while selecting opaque replay items; transport re-checks it before sending. */
   expectedContinuationBinding?: ProviderContinuationBinding;
 }
 
 export interface ResponsesTransportExecuteResult {
   response: Response;
+  /** 下游拒绝已接收终态时也须清除连接锚点，避免复用未经接受的输出。 */
+  invalidate?: () => void;
   continuationBinding?: ProviderContinuationBinding;
   /** Account/issuer changed between replay selection and HTTP send, so opaque items were dropped. */
   continuationReplayReset?: boolean;

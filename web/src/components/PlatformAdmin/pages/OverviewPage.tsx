@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartNoAxesColumn, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { platformAdminApi } from "../api";
 import { formatAttentionKind, formatAttentionTitle, formatRunStatus } from "../displayText";
 import { attentionSeverity, formatNumber, formatRate, formatTime, formatYuan } from "../format";
 import type { BillingDailyPoint, OverviewAttentionEntityRef, OverviewSnapshot, PlatformTrendResponse } from "../types";
+import { ConfigIdentityCard } from "./ConfigIdentityCard";
 
 function navigate(section: PlatformAdminSection, search?: Record<string, string | number | boolean | null | undefined>) {
   navigatePlatformAdmin({ section, search });
@@ -42,39 +43,158 @@ function navigateRef(ref: OverviewAttentionEntityRef | undefined) {
   navigatePlatformAdmin({ section, entityId: ref.id });
 }
 
+type SnapshotFreshness = "loading" | "fresh" | "stale" | "unavailable";
+
+const SNAPSHOT_REQUEST_TIMEOUT_MS = 15_000;
+const AUXILIARY_REQUEST_TIMEOUT_MS = 15_000;
+const AUTO_REFRESH_DELAY_MS = 15_000; // 前一次加载结束后再计时
+
 export function OverviewPage() {
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null);
+  const [snapshotFreshness, setSnapshotFreshness] = useState<SnapshotFreshness>("loading");
   const [costTrend, setCostTrend] = useState<BillingDailyPoint[]>([]);
   const [platformTrend, setPlatformTrend] = useState<PlatformTrendResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadGeneration = useRef(0);
+  const hasSnapshot = useRef(false);
+  const loadInFlight = useRef<Promise<void> | null>(null);
+  const autoRefreshTimer = useRef<number | null>(null);
+  const auxiliaryRequestTimer = useRef<number | null>(null);
+  const snapshotAbortController = useRef<AbortController | null>(null);
+  const trendAbortController = useRef<AbortController | null>(null);
+  const autoRefreshEnabled = useRef(false);
+  const loadRef = useRef<(mode?: "initial" | "refresh") => Promise<void>>(async () => undefined);
 
-  const load = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
-    if (mode === "initial") setLoading(true);
-    else setRefreshing(true);
-    try {
-      const [data, trend, usageTrend] = await Promise.all([
-        platformAdminApi.overviewSnapshot(),
-        platformAdminApi.billingTrend(14).catch(() => null),
-        platformAdminApi.overviewTrends(14).catch(() => null),
-      ]);
-      setSnapshot(data);
-      setCostTrend(trend?.audit.daily ?? []);
-      setPlatformTrend(usageTrend);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+  const scheduleAutoRefresh = useCallback(() => {
+    if (!autoRefreshEnabled.current) return;
+    if (autoRefreshTimer.current !== null) window.clearTimeout(autoRefreshTimer.current);
+    autoRefreshTimer.current = window.setTimeout(() => {
+      autoRefreshTimer.current = null;
+      void loadRef.current("refresh");
+    }, AUTO_REFRESH_DELAY_MS);
   }, []);
 
+  const load = useCallback((mode: "initial" | "refresh" = "refresh") => {
+    if (loadInFlight.current) return loadInFlight.current;
+    if (autoRefreshTimer.current !== null) {
+      window.clearTimeout(autoRefreshTimer.current);
+      autoRefreshTimer.current = null;
+    }
+
+    trendAbortController.current?.abort();
+    trendAbortController.current = null;
+    if (auxiliaryRequestTimer.current !== null) {
+      window.clearTimeout(auxiliaryRequestTimer.current);
+      auxiliaryRequestTimer.current = null;
+    }
+
+    const generation = ++loadGeneration.current;
+    const snapshotController = new AbortController();
+    const auxiliaryController = new AbortController();
+    snapshotAbortController.current = snapshotController;
+    trendAbortController.current = auxiliaryController;
+    // snapshot 主请求是配置身份唯一真源；辅助趋势失败不影响该状态。
+    if (mode === "initial") {
+      setLoading(true);
+      setSnapshotFreshness("loading");
+    } else {
+      setRefreshing(true);
+    }
+
+    const trendRequest = platformAdminApi.billingTrend(14, auxiliaryController.signal).catch(() => null);
+    const usageTrendRequest = platformAdminApi.overviewTrends(14, auxiliaryController.signal).catch(() => null);
+    const auxiliaryTimeout = window.setTimeout(
+      () => auxiliaryController.abort(),
+      AUXILIARY_REQUEST_TIMEOUT_MS,
+    );
+    auxiliaryRequestTimer.current = auxiliaryTimeout;
+    void Promise.all([trendRequest, usageTrendRequest])
+      .then(([trend, usageTrend]) => {
+        if (generation !== loadGeneration.current) return;
+        setCostTrend(trend?.audit.daily ?? []);
+        setPlatformTrend(usageTrend);
+      })
+      .finally(() => {
+        window.clearTimeout(auxiliaryTimeout);
+        if (auxiliaryRequestTimer.current === auxiliaryTimeout) auxiliaryRequestTimer.current = null;
+        if (trendAbortController.current === auxiliaryController) trendAbortController.current = null;
+      });
+
+    let operation: Promise<void>;
+    operation = (async () => {
+      let snapshotTimeout: number | undefined;
+      try {
+        const snapshotRequest = platformAdminApi.overviewSnapshot(snapshotController.signal);
+        const data = await Promise.race([
+          snapshotRequest,
+          new Promise<never>((_, reject) => {
+            snapshotTimeout = window.setTimeout(
+              () => {
+                snapshotController.abort();
+                reject(new Error("总览请求超时（15 秒）"));
+              },
+              SNAPSHOT_REQUEST_TIMEOUT_MS,
+            );
+          }),
+        ]);
+        if (snapshotTimeout !== undefined) {
+          window.clearTimeout(snapshotTimeout);
+          snapshotTimeout = undefined;
+        }
+        if (generation !== loadGeneration.current) return;
+        hasSnapshot.current = true;
+        setSnapshot(data);
+        setSnapshotFreshness("fresh");
+        setError(null);
+      } catch (err) {
+        auxiliaryController.abort();
+        if (generation !== loadGeneration.current) return;
+        // 保留其他最近指标供排障，但配置身份必须立刻降级，不能继续显示旧 consistent。
+        const stale = hasSnapshot.current;
+        setSnapshot((current) => current ? { ...current, configIdentity: null } : current);
+        setSnapshotFreshness(stale ? "stale" : "unavailable");
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+      } finally {
+        if (snapshotTimeout !== undefined) window.clearTimeout(snapshotTimeout);
+        if (snapshotAbortController.current === snapshotController) snapshotAbortController.current = null;
+        if (generation === loadGeneration.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    })();
+    loadInFlight.current = operation;
+    void operation.then(() => {
+      if (loadInFlight.current === operation) loadInFlight.current = null;
+      scheduleAutoRefresh();
+    });
+    return operation;
+  }, [scheduleAutoRefresh]);
+  loadRef.current = load;
+
   useEffect(() => {
+    autoRefreshEnabled.current = true;
     void load("initial");
-    const timer = window.setInterval(() => void load("refresh"), 15_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      autoRefreshEnabled.current = false;
+      loadGeneration.current += 1;
+      loadInFlight.current = null;
+      snapshotAbortController.current?.abort();
+      snapshotAbortController.current = null;
+      trendAbortController.current?.abort();
+      trendAbortController.current = null;
+      if (autoRefreshTimer.current !== null) {
+        window.clearTimeout(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+      if (auxiliaryRequestTimer.current !== null) {
+        window.clearTimeout(auxiliaryRequestTimer.current);
+        auxiliaryRequestTimer.current = null;
+      }
+    };
   }, [load]);
 
   const attentionItems = useMemo(() => (snapshot?.attention ?? []).map((item, index) => ({
@@ -95,11 +215,16 @@ export function OverviewPage() {
     );
   }
 
+  const snapshotIsFresh = snapshotFreshness === "fresh";
+  const snapshotUnavailable = snapshotFreshness === "stale" || snapshotFreshness === "unavailable";
   const health = snapshot?.health;
-  const dispatch = health?.dispatch as { dropped?: number; errors?: number; total?: number } | null | undefined;
-  const projectionFailed = Number(health?.sessionMetaProjection?.failed ?? 0);
-  const dispatchErrors = Number(dispatch?.errors ?? dispatch?.dropped ?? 0);
-  const internalIssueCount = dispatchErrors + projectionFailed;
+  const toolRoutingKnown = health?.toolRouting24h != null;
+  const dispatchErrors = health?.dispatch?.totalErrors;
+  const projectionFailures = health?.sessionMetaProjection?.failures;
+  const dispatchKnown = dispatchErrors != null;
+  const projectionKnown = projectionFailures != null;
+  const internalHealthKnown = dispatchKnown && projectionKnown;
+  const internalIssueCount = (dispatchErrors ?? 0) + (projectionFailures ?? 0);
   const activeStatuses = Object.entries(health?.activeRuns.byStatus ?? {}).filter(([, count]) => count > 0);
   const trendValues = costTrend.map((point) => point.actualCostYuanMicro / 1_000_000);
   const latest7 = trendValues.slice(-7).reduce((sum, value) => sum + value, 0);
@@ -135,6 +260,16 @@ export function OverviewPage() {
         }
       />
 
+      {snapshotFreshness === "stale" && (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-ink">
+          总览刷新失败，当前展示的是上次成功获取的数据（已过期），不能用于判断当前状态。
+        </div>
+      )}
+      {snapshotFreshness === "unavailable" && (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning-ink">
+          总览数据不可用，无法判断当前平台状态。
+        </div>
+      )}
       {error && <AdminErrorAlert error={error} />}
 
       {/* 6 张卡在 xl 上单行排完（原来 4 列 → 第二行只有 2 张，白吃一屏高度）。
@@ -170,17 +305,23 @@ export function OverviewPage() {
           title="近 1 小时环境故障"
           value={formatNumber(health?.handFailures1h)}
           description="点击查看同期异常执行"
-          tone={(health?.handFailures1h ?? 0) > 0 ? "bad" : "good"}
+          tone={!snapshotIsFresh ? "default" : (health?.handFailures1h ?? 0) > 0 ? "bad" : "good"}
           onClick={() => navigate("runs", { status: "failed", hours: 1 })}
         />
         <MetricCard
           title="工具调用失败"
           value={formatNumber(health?.toolRouting24h?.failedCount)}
-          description={`${formatNumber(health?.toolRouting24h?.total)} 次调用 / 24h`}
-          tone={(health?.toolRouting24h?.failedCount ?? 0) > 0 ? "warn" : "good"}
+          description={toolRoutingKnown
+            ? `${formatNumber(health?.toolRouting24h?.total)} 次调用 / 24h`
+            : "数据未知，无法确认近 24 小时调用状态"}
+          tone={!snapshotIsFresh || !toolRoutingKnown
+            ? "default"
+            : health!.toolRouting24h!.failedCount > 0 ? "warn" : "good"}
           onClick={() => navigate("efficiency")}
         />
       </div>
+
+      <ConfigIdentityCard identity={snapshot?.configIdentity} />
 
       <div className="grid gap-3 xl:grid-cols-2">
         <Card density="compact">
@@ -247,9 +388,9 @@ export function OverviewPage() {
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
         <AttentionQueue
-          items={attentionItems}
-          loading={refreshing && !snapshot}
-          unavailable={!snapshot}
+          items={snapshotIsFresh ? attentionItems : []}
+          loading={snapshotFreshness === "loading"}
+          unavailable={snapshotUnavailable}
         />
         <Card density="compact">
           <CardHeader>
@@ -275,9 +416,13 @@ export function OverviewPage() {
             </div>
             {/* 「当前没有任务」是好消息，不是故障空态 —— 不加 CTA、不加灰色「暂无数据」 */}
             <div className="rounded-md bg-muted/40 p-2.5 text-xs text-muted-foreground">
-              {activeStatuses.length > 0
-                ? activeStatuses.map(([status, count]) => `${formatRunStatus(status)} ${count}`).join(" · ")
-                : "当前没有正在执行或等待中的任务"}
+              {!snapshotIsFresh
+                ? snapshotFreshness === "stale"
+                  ? "执行数据已过期，无法确认当前任务状态"
+                  : "执行数据不可用，无法确认当前任务状态"
+                : activeStatuses.length > 0
+                  ? activeStatuses.map(([status, count]) => `${formatRunStatus(status)} ${count}`).join(" · ")
+                  : "当前没有正在执行或等待中的任务"}
             </div>
           </CardContent>
         </Card>
@@ -290,21 +435,38 @@ export function OverviewPage() {
               <TriangleAlert className="size-4" />
               系统内部健康
             </span>
-            <span className={cn("text-xs", internalIssueCount > 0 ? "text-destructive" : "text-success")}>
-              {internalIssueCount > 0 ? `${internalIssueCount} 项需关注` : "正常"}
+            <span className={cn(
+              "text-xs",
+              !snapshotIsFresh || !internalHealthKnown
+                ? "text-warning-ink"
+                : internalIssueCount > 0 ? "text-destructive" : "text-success",
+            )}>
+              {!snapshotIsFresh
+                ? snapshotFreshness === "stale" ? "数据已过期" : "数据不可用"
+                : internalIssueCount > 0
+                  ? `${internalIssueCount} 项需关注`
+                  : internalHealthKnown ? "正常" : "数据未知"}
             </span>
           </summary>
           <CardContent className="grid gap-2 border-t pt-3 sm:grid-cols-2">
             <div className="rounded-md bg-muted/40 p-2.5 text-sm">
               <div className="font-medium">任务派发</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {dispatchErrors > 0 ? `${dispatchErrors} 次派发异常；仅统计本次服务启动后。` : "未发现任务派发异常。"}
+                {!snapshotIsFresh
+                  ? snapshotFreshness === "stale" ? "数据已过期，无法确认当前派发状态。" : "数据不可用，无法确认当前派发状态。"
+                  : !dispatchKnown
+                    ? "当前数据未知，无法确认任务派发状态。"
+                    : dispatchErrors > 0 ? `${dispatchErrors} 次派发异常；仅统计本次服务启动后。` : "未发现任务派发异常。"}
               </div>
             </div>
             <div className="rounded-md bg-muted/40 p-2.5 text-sm">
               <div className="font-medium">对话列表数据</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {projectionFailed > 0 ? `${projectionFailed} 个对话同步失败，列表可能显示不全。` : "对话列表数据同步正常。"}
+                {!snapshotIsFresh
+                  ? snapshotFreshness === "stale" ? "数据已过期，无法确认当前同步状态。" : "数据不可用，无法确认当前同步状态。"
+                  : !projectionKnown
+                    ? "当前数据未知，无法确认对话列表同步状态。"
+                    : projectionFailures > 0 ? `${projectionFailures} 个对话同步失败，列表可能显示不全。` : "对话列表数据同步正常。"}
               </div>
             </div>
           </CardContent>

@@ -22,6 +22,7 @@ export const platformAdminSections: PlatformAdminNavItem[] = [
   { id: "runs", label: RUN_SHORT_LABEL, icon: ListTree },
   { id: "sandboxes", label: "执行环境", icon: ServerCog },
   { id: "infra", label: "系统资源", icon: HardDrive },
+  { id: "provider-quota", label: "套餐额度", icon: EntityIcons.credits },
   { id: "audit", label: "操作记录", icon: EntityIcons.audit },
   { id: "efficiency", label: "执行效率", icon: EntityIcons.analytics },
 ];

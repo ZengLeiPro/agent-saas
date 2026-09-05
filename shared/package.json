@@ -15,7 +15,8 @@
     "./lib/chatSubmission": "./src/lib/chatSubmission.ts",
     "./schemas/releaseManifest": "./src/schemas/releaseManifest.ts",
     "./types/governance": "./src/types/governance.ts",
-    "./*": "./src/*"
+    "./schemas/configIdentity": "./src/schemas/configIdentity.ts",
+    "./*": "./src/*.ts"
   },
   "dependencies": {
     "zod": "^4.3.6"

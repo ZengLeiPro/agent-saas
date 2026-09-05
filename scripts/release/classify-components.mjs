@@ -58,12 +58,15 @@ const NON_RUNTIME_FILES = new Set([
   'eslint.config.mjs',
   'scripts/check-max-lines-ratchet.mjs',
   'scripts/ratchets.test.mjs',
+  'scripts/ci-plan.mjs',
+  // 删除的旧脚本仍会出现在生产基线到目标版本的差异中。
   'scripts/coverage-workspace-plan.mjs',
   'scripts/format-new-staged-files.mjs',
   'scripts/generate-dws-command-policy.mjs',
   'scripts/pr-preflight-contract.test.mjs',
   'scripts/pr-preflight-task.sh',
   'scripts/pr-preflight.sh',
+  'scripts/runtime-worker-rollout-order.test.mjs',
   'scripts/test_acs_operational_scripts.py',
   'scripts/typecheck-staged.mjs',
 ]);

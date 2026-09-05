@@ -12,7 +12,14 @@ import type {
   OrgAgentWorkOrderControl,
 } from './types.js';
 
+/** Missing identity columns are legacy and remain fail-closed at the routing boundary. */
 export function mapBinding(row: Record<string, unknown>): OrgAgentChannelBinding {
+  const profileId = text(row.account_profile_id);
+  const corpId = text(row.account_corp_id);
+  const dingtalkUserId = text(row.account_dingtalk_user_id);
+  const accountIdentity = profileId && corpId && dingtalkUserId && row.account_identity_updated_at
+    ? { profileId, corpId, dingtalkUserId, identityUpdatedAt: iso(row.account_identity_updated_at) }
+    : undefined;
   return {
     bindingId: String(row.binding_id),
     tenantId: String(row.tenant_id),
@@ -25,6 +32,7 @@ export function mapBinding(row: Record<string, unknown>): OrgAgentChannelBinding
     conversationSpaceId: String(row.conversation_space_id),
     serviceSessionId: String(row.service_session_id),
     workspaceId: String(row.workspace_id),
+    ...(accountIdentity ? { accountIdentity } : {}),
     policy: validatePolicy(parseJson(row.policy_json)),
     effectiveConfig: validateEffectiveConfig(parseJson(row.effective_config_json)),
     revision: Number(row.revision),
@@ -48,11 +56,18 @@ export function mapWorkConversation(row: Record<string, unknown>): OrgAgentWorkC
 }
 
 export function mapDelivery(row: Record<string, unknown>): DwsDeliveryIntent {
+  const profileId = text(row.account_profile_id);
+  const corpId = text(row.account_corp_id);
+  const dingtalkUserId = text(row.account_dingtalk_user_id);
+  const accountIdentity = profileId && corpId && dingtalkUserId && row.account_identity_updated_at
+    ? { profileId, corpId, dingtalkUserId, identityUpdatedAt: iso(row.account_identity_updated_at) }
+    : undefined;
   return {
     deliveryId: String(row.delivery_id),
     tenantId: String(row.tenant_id),
     ...(text(row.inbox_id) ? { inboxId: text(row.inbox_id) } : {}),
     accountId: String(row.account_id),
+    ...(accountIdentity ? { accountIdentity } : {}),
     conversationId: String(row.conversation_id),
     ...(text(row.agent_id) ? { agentId: text(row.agent_id) } : {}),
     ...(text(row.binding_id) ? { bindingId: text(row.binding_id) } : {}),

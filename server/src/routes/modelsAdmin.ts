@@ -1,10 +1,12 @@
-import { Router } from 'express';
-import { applyEdits, modify } from 'jsonc-parser';
+import { readFileSync } from 'node:fs';
+import { Router, type Response } from 'express';
+import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getPublicModelList } from '../app/models.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
+import { configRevision } from './configWriteLock.js';
 import type {
   AppConfig,
   MemoryIndexAppConfig,
@@ -15,10 +17,20 @@ import type {
 import {
   AdminConfigMutationService,
   ConfigConflictError,
+  ConfigMutationCommittedError,
+  RuntimeRestoreFailedError,
+  configFingerprint,
 } from '../config/adminConfigMutationService.js';
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import {
+  assertQuotaSourcesComplete,
+  persistSubmittedQuotaSecrets,
+  redactGroupQuotaSource,
+  restoreGroupQuotaSourceSecret,
+  submittedQuotaSecretGroups,
+} from './modelsAdminQuotaSource.js';
 
 export interface CreateModelsAdminRouterOptions {
   processCwd: string;
@@ -28,9 +40,27 @@ export interface CreateModelsAdminRouterOptions {
   onSystemPromptOverridesUpdated?: (next: SystemPromptsConfig) => void;
   configMutationService?: AdminConfigMutationService;
   secretVault?: SecretVault;
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
+  /** 兼容两阶段直写调用方；集中式 mutation service 路径由 applyRuntime 接管。 */
+  prepareConfigUpdate?: (next: AppConfig) => () => void;
+  onConfigReloaded?: (expectedConfigText: string) => void | Promise<void>;
+  requireRevision?: boolean;
+  ensureConfigBaselineApplied?: (expectedText: string) => Promise<boolean>;
+}
+
+class RuntimeConfigValidationError extends Error {}
+
+function sendRevisionMutationError(res: Response, error: unknown): void {
+  if (error instanceof ConfigConflictError && error.currentRevision) {
+    res.setHeader('ETag', `"${error.currentRevision}"`);
+    res.status(409).json({ error: error.message, code: error.code, revision: error.currentRevision });
+    return;
+  }
+  sendConfigMutationError(res, error);
 }
 
 type ModelsAdminUpdate = {
+  candidateConfig: AppConfig;
   models: ModelsConfig;
   memoryIndex: MemoryIndexAppConfig | null;
   memoryIndexProvided: boolean;
@@ -54,7 +84,7 @@ function redactModels(models: ModelsConfig): unknown {
   return {
     ...models,
     groups: models.groups.map((group) => {
-      const { apiKey, apiKeyRef: _apiKeyRef, ...rest } = group;
+      const { apiKey, apiKeyRef: _apiKeyRef, ...rest } = redactGroupQuotaSource(group);
       return { ...rest, hasApiKey: Boolean(apiKey || group.apiKeyRef) };
     }),
   };
@@ -86,6 +116,7 @@ function titleSystemPromptView(config: AppConfig) {
   };
 }
 
+// 辅助模型主链与全部 fallback 必须随 models 候选一起验证，避免写盘后才派生失败。
 function validateTitleGeneratorModels(models: ModelsConfig, titleGenerator: TitleGeneratorAppConfig | undefined): void {
   if (!titleGenerator) return;
   const refs = [titleGenerator.model, ...(titleGenerator.fallbackModels ?? [])];
@@ -111,8 +142,12 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
     );
     next.models = {
       ...modelsRecord,
-      groups: (modelsRecord.groups as unknown[]).map((groupRaw) => {
-        if (!isRecord(groupRaw)) return groupRaw;
+      groups: (modelsRecord.groups as unknown[]).map((groupRawInput) => {
+        if (!isRecord(groupRawInput)) return groupRawInput;
+        const groupRaw = restoreGroupQuotaSourceSecret(
+          groupRawInput,
+          typeof groupRawInput.id === 'string' ? config.models?.groups.find((g) => g.id === groupRawInput.id) : undefined,
+        );
         const { hasApiKey: _ignored, ...group } = groupRaw;
         const inlineKey = typeof group.apiKey === 'string' ? group.apiKey : undefined;
         if (inlineKey && inlineKey.length > 0) return group;
@@ -167,26 +202,35 @@ async function persistSubmittedModelCredentials(input: {
   createdRefs: CreatedSecretRef[];
   replacedRefs: CreatedSecretRef[];
   previousRefs: Map<string, string | undefined>;
+  allowInlineWithoutVault?: boolean;
 }): Promise<ModelsConfig> {
-  return {
-    ...input.models,
-    groups: await Promise.all(input.models.groups.map(async (group) => {
-      if (!input.submittedGroups.has(group.id) || !group.apiKey) return group;
-      if (!input.secretVault) throw new Error('SecretVault 未配置，不能保存模型 API Key');
-      const ref = await input.secretVault.putSecret(
-        GLOBAL_OWNER_ID,
-        'models',
-        group.apiKey,
-        { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
-        { groupId: group.id, purpose: 'model-api' },
-      );
-      input.createdRefs.push({ ref: ref.id, kind: 'models' });
-      const previousRef = input.previousRefs.get(group.id);
-      if (previousRef && previousRef !== ref.id) input.replacedRefs.push({ ref: previousRef, kind: 'models' });
-      const { apiKey: _apiKey, ...safe } = group;
-      return { ...safe, apiKeyRef: ref.id };
-    })),
-  };
+  const groups: ModelsConfig['groups'] = [];
+  for (const group of input.models.groups) {
+    if (!input.submittedGroups.has(group.id) || !group.apiKey) {
+      groups.push(group);
+      continue;
+    }
+    if (!input.secretVault) {
+      if (input.allowInlineWithoutVault) {
+        groups.push(group);
+        continue;
+      }
+      throw new Error('SecretVault 未配置，不能保存模型 API Key');
+    }
+    const ref = await input.secretVault.putSecret(
+      GLOBAL_OWNER_ID,
+      'models',
+      group.apiKey,
+      { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
+      { groupId: group.id, purpose: 'model-api' },
+    );
+    input.createdRefs.push({ ref: ref.id, kind: 'models' });
+    const previousRef = input.previousRefs.get(group.id);
+    if (previousRef && previousRef !== ref.id) input.replacedRefs.push({ ref: previousRef, kind: 'models' });
+    const { apiKey: _apiKey, ...safe } = group;
+    groups.push({ ...safe, apiKeyRef: ref.id });
+  }
+  return { ...input.models, groups };
 }
 
 type CreatedSecretRef = { ref: string; kind: 'models' | 'memory_index' };
@@ -220,13 +264,27 @@ async function persistSubmittedMemoryCredential(input: {
   return { ...input.memoryIndex, embedding: { ...embedding, apiKeyRef: ref.id } };
 }
 
-async function revokeModelRefs(vault: SecretVault | undefined, refs: CreatedSecretRef[]): Promise<void> {
-  if (!vault) return;
-  await Promise.all(refs.map((item) => vault.revokeSecret(item.ref, {
+function unreferencedReplacedRefs(config: AppConfig, refs: CreatedSecretRef[]): CreatedSecretRef[] {
+  const referenced = new Set([
+    ...(config.models?.groups.flatMap((group) => group.apiKeyRef ? [`models\0${group.apiKeyRef}`] : []) ?? []),
+    ...(config.memory?.index?.embedding.apiKeyRef ? [`memory_index\0${config.memory.index.embedding.apiKeyRef}`] : []),
+  ]);
+  return [...new Map(
+    refs
+      .filter((item) => !referenced.has(`${item.kind}\0${item.ref}`))
+      .map((item) => [`${item.kind}\0${item.ref}`, item]),
+  ).values()];
+}
+
+/** 去重撤销并返回失败；调用方按提交前/后阶段决定回滚或报告维护失败。 */
+async function revokeModelRefs(vault: SecretVault | undefined, refs: CreatedSecretRef[]): Promise<unknown[]> {
+  if (!vault) return [];
+  const outcomes = await Promise.allSettled(refs.map((item) => vault.revokeSecret(item.ref, {
     actor: 'system',
     userId: 'models_config_admin',
     scopes: [`secret:${item.kind}:revoke`],
-  }).catch(() => undefined)));
+  })));
+  return outcomes.flatMap((outcome) => outcome.status === 'rejected' ? [outcome.reason] : []);
 }
 
 function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUpdate {
@@ -275,7 +333,17 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
   const parsed = parseAppConfig(merged);
   if (!parsed.models) throw new Error('models 未配置');
   validateTitleGeneratorModels(parsed.models, parsed.titleGenerator);
+  if (parsed.guardrail?.model) {
+    const available = new Set(parsed.models.groups.flatMap((group) => (
+      group.models.map((model) => `${group.id}/${model.id}`)
+    )));
+    for (const ref of [parsed.guardrail.model, ...(parsed.guardrail.fallbackModels ?? [])]) {
+      if (!available.has(ref)) throw new Error(`门禁模型引用不存在：${ref}`);
+    }
+  }
+  assertQuotaSourcesComplete(parsed.models);
   return {
+    candidateConfig: parsed,
     models: parsed.models,
     memoryIndex: parsed.memory?.index ?? null,
     memoryIndexProvided,
@@ -298,16 +366,18 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    if (!options.config.models) {
-      res.status(404).json({ error: 'models 未配置' });
-      return;
-    }
+    const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
+    const diskConfig = parseAppConfig(parseJsonc(configText));
+    if (!diskConfig.models) { res.status(404).json({ error: 'models 未配置' }); return; }
+    const revision = configRevision(configText);
+    res.setHeader('ETag', `"${revision}"`);
     res.json({
-      models: redactModels(options.config.models),
-      memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
-      titleGenerator: titleGeneratorView(options.config),
-      titleSystemPrompt: titleSystemPromptView(options.config),
-      publicModelList: getPublicModelList(options.config.models),
+      revision,
+      models: redactModels(diskConfig.models),
+      memoryIndex: redactMemoryIndex(diskConfig.memory?.index ?? null),
+      titleGenerator: titleGeneratorView(diskConfig),
+      titleSystemPrompt: titleSystemPromptView(diskConfig),
+      publicModelList: getPublicModelList(diskConfig.models),
     });
   });
 
@@ -316,10 +386,24 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     const createdRefs: CreatedSecretRef[] = [];
     const replacedRefs: CreatedSecretRef[] = [];
     const requestContext = mutationRequestContext(req);
+    const expectedRevisions = [
+      typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : undefined,
+      requestContext.expectedFingerprint,
+    ].filter((revision): revision is string => Boolean(revision));
     try {
       const result = await configMutationService.mutate({
-        ...requestContext,
+        actor: requestContext.actor,
+        expectedRevision: expectedRevisions[0],
         changedPaths: ['models', 'memory.index', 'titleGenerator', 'systemPrompts.utility.title'],
+        validateBaseline: async (configText, _current) => {
+          const revision = configRevision(configText);
+          if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) {
+            throw new ConfigConflictError(configFingerprint(parseJsonc(configText)), revision);
+          }
+          if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) {
+            throw new Error('当前配置基线未完整应用，拒绝写入');
+          }
+        },
         buildCandidate: async (configText, rawConfig) => {
           const persisted = parseAppConfig(rawConfig);
           nextUpdate = validateModelsUpdate(rawConfig, restoreSecrets(req.body, persisted));
@@ -333,6 +417,18 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
               createdRefs,
               replacedRefs,
               previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.apiKeyRef])),
+              allowInlineWithoutVault: Boolean(options.validateConfigReload),
+            }),
+          };
+          nextUpdate = {
+            ...nextUpdate,
+            models: await persistSubmittedQuotaSecrets({
+              models: nextUpdate.models,
+              submittedGroups: submittedQuotaSecretGroups(req.body, persisted.models),
+              secretVault: options.secretVault,
+              createdRefs,
+              replacedRefs,
+              previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.quotaSource?.secretAccessKeyRef])),
             }),
           };
           nextUpdate = {
@@ -360,8 +456,23 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           if (nextUpdate.titleSystemPromptProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['systemPrompts'], Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           return updatedText;
         },
+        ...(options.validateConfigReload
+          ? {
+              validateCandidate: async (candidate: AppConfig) => {
+                try {
+                  await options.validateConfigReload?.(candidate);
+                } catch (error) {
+                  throw new RuntimeConfigValidationError(
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              },
+            }
+          : {}),
         applyRuntime: async (candidate) => {
           if (!candidate.models) throw new Error('models 未配置');
+          const commitPreparedConfig = options.prepareConfigUpdate?.(candidate);
+          commitPreparedConfig?.();
           options.config.models = candidate.models;
           if (candidate.memory) options.config.memory = candidate.memory;
           else delete options.config.memory;
@@ -369,14 +480,27 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           else delete options.config.titleGenerator;
           if (candidate.systemPrompts) options.config.systemPrompts = candidate.systemPrompts;
           else delete options.config.systemPrompts;
-          await options.onModelsUpdated?.(candidate.models);
+          if (!commitPreparedConfig) {
+            await options.onModelsUpdated?.(candidate.models);
+            options.onSystemPromptOverridesUpdated?.(candidate.systemPrompts ?? {});
+          }
           await options.onMemoryIndexUpdated?.(candidate.memory?.index);
-          options.onSystemPromptOverridesUpdated?.(candidate.systemPrompts ?? {});
         },
+        ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
-      await revokeModelRefs(options.secretVault, replacedRefs);
-      res.setHeader('ETag', `"${result.rawConfigFingerprint}"`);
+      const pruneErrors = await revokeModelRefs(
+        options.secretVault,
+        unreferencedReplacedRefs(result.config, replacedRefs),
+      );
+      if (pruneErrors.length > 0) {
+        throw new ConfigMutationCommittedError(
+          new AggregateError(pruneErrors, '配置已提交，但旧模型凭据撤销失败'),
+        );
+      }
+      // ETag is the raw-text CAS revision; rawConfigFingerprint remains a separate governance identity.
+      res.setHeader('ETag', `"${result.revision}"`);
       res.json({
+        revision: result.revision,
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),
@@ -384,15 +508,44 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         publicModelList: getPublicModelList(result.config.models!),
       });
     } catch (error) {
-      await revokeModelRefs(options.secretVault, createdRefs);
-      if (error instanceof Error && !(error instanceof ConfigConflictError)) {
-        // Validation failures remain client errors; mutation/readback failures use the shared handler.
-        if (/models|memory|标题|提示语|配置/u.test(error.message)) {
+      let cleanupErrors: unknown[] = [];
+      if (error instanceof ConfigMutationCommittedError) {
+        // durable/runtime 已提交；只撤销最终配置中已无任何引用的旧 refs。
+        cleanupErrors = await revokeModelRefs(
+          options.secretVault,
+          unreferencedReplacedRefs(options.config, replacedRefs),
+        );
+      } else if (!(error instanceof RuntimeRestoreFailedError)) {
+        // 提交前失败或完整回滚：候选 refs 无人引用，旧 refs 仍需保留。
+        cleanupErrors = await revokeModelRefs(options.secretVault, createdRefs);
+      }
+      if (cleanupErrors.length > 0) {
+        sendRevisionMutationError(res, error instanceof ConfigMutationCommittedError
+          ? error
+          : new AggregateError(
+              [error, ...cleanupErrors],
+              '配置变更失败，且候选模型凭据撤销失败',
+            ));
+        return;
+      }
+      if (error instanceof RuntimeConfigValidationError) {
+        sendConfigMutationError(res, error);
+        return;
+      }
+      if (
+        error instanceof Error
+        && !(error instanceof ConfigConflictError)
+        && !(error instanceof ConfigMutationCommittedError)
+        && !(error instanceof RuntimeRestoreFailedError)
+      ) {
+        // 仅提交前候选校验属于 client error；已提交/恢复失败必须走服务端错误。
+        if (/models|memory|标题|提示语|配置|门禁模型/u.test(error.message)) {
           res.status(400).json({ error: error.message });
           return;
         }
       }
-      sendConfigMutationError(res, error);
+      // 配置已提交但维护失败必须保留 5xx，提示调用方重新读取服务端状态与凭据状态。
+      sendRevisionMutationError(res, error);
     }
   });
 

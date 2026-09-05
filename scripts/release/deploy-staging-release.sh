@@ -8,6 +8,10 @@ set -euo pipefail
 : "${STAGING_RUNTIME_ASSETS_PATH:?STAGING_RUNTIME_ASSETS_PATH is required}"
 : "${STAGING_RUNTIME_ASSETS_DIGEST:?STAGING_RUNTIME_ASSETS_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
+printf '%s:%s' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$'
+deployment_attempt_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
@@ -19,17 +23,171 @@ printf '%s' "$STAGING_RUNTIME_ASSETS_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
 test "sha256:$(sha256sum "$STAGING_RUNTIME_ASSETS_PATH" | cut -d' ' -f1)" = \
   "$STAGING_RUNTIME_ASSETS_DIGEST"
 
-root=/opt/agent-saas-staging
-state_root=/var/lib/agent-saas-staging
+root="${STAGING_RELEASE_ROOT:-/opt/agent-saas-staging}"
+state_root="${STAGING_STATE_ROOT:-/var/lib/agent-saas-staging}"
+etc_root="${STAGING_ETC_ROOT:-/etc/agent-saas-staging}"
+systemd_root="${STAGING_SYSTEMD_ROOT:-/etc/systemd/system}"
+runtime_root="${STAGING_RUNTIME_ROOT:-/mnt/agent-saas-staging/runtime}"
+run_root="${STAGING_RUN_ROOT:-/run/agent-saas-staging}"
+api_config_identity_snapshot="$run_root/config-identity.json"
+worker_config_identity_snapshot="$run_root/runtime-worker-config-identity.json"
 config_root="$state_root/config"
 server_config="$config_root/config.json"
-legacy_server_config=/etc/agent-saas-staging/config.json
+legacy_server_config="$etc_root/config.json"
+server_env="$etc_root/server.env"
+acs_env="$etc_root/acs-orchestrator.env"
+acs_identity="$etc_root/acs-release-identity.json"
+server_unit="$systemd_root/agent-saas-server-staging.service"
+worker_unit="$systemd_root/agent-saas-runtime-worker-staging.service"
+acs_unit="$systemd_root/agent-saas-acs-orchestrator-staging.service"
 target="$root/releases/$release_id"
 current="$root/current"
-lock=/run/lock/agent-saas-staging/deploy.lock
+lock="${STAGING_LOCK_PATH:-/run/lock/agent-saas-staging/deploy.lock}"
 mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
+config_identity_reader="${CONFIG_IDENTITY_READER:-$(dirname "$0")/read-production-state.mjs}"
+test -f "$config_identity_reader" || {
+  echo 'Missing shared ConfigIdentity readiness contract module' >&2
+  exit 1
+}
+
+runtime_dir="$runtime_root/server"
+artifact_dir="$runtime_root/artifacts"
+candidate="$target.candidate-$deployment_attempt_id"
+rollback_root="$state_root/rollback-$release_id-$deployment_attempt_id"
+artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$deployment_attempt_id"
+acs_health_probe="$state_root/acs-health-$deployment_attempt_id.json"
+api_ready_probe="$state_root/api-ready-$deployment_attempt_id.json"
+mkdir -p "$rollback_root"
+
+previous=''
+had_previous_release=false
+if [ -L "$current" ]; then
+  previous="$(readlink -f -- "$current")" || {
+    echo 'Staging current symlink cannot be resolved' >&2
+    exit 1
+  }
+  case "$previous" in
+    "$root/releases/"*) ;;
+    *) echo 'Staging current symlink is outside the immutable release root' >&2; exit 1 ;;
+  esac
+  test -d "$previous" || { echo 'Staging current release target is missing' >&2; exit 1; }
+  had_previous_release=true
+elif [ -e "$current" ]; then
+  echo 'Staging current path exists but is not a symlink' >&2
+  exit 1
+fi
+
+had_server_config=false
+had_server_env=false
+had_acs_env=false
+had_previous_identity=false
+had_server_unit=false
+had_worker_unit=false
+had_acs_unit=false
+if [ -e "$server_config" ]; then
+  had_server_config=true
+  cp -a "$server_config" "$rollback_root/config.json"
+fi
+if [ -e "$server_env" ]; then
+  had_server_env=true
+  cp -a "$server_env" "$rollback_root/server.env"
+fi
+if [ -e "$acs_env" ]; then
+  had_acs_env=true
+  cp -a "$acs_env" "$rollback_root/acs-orchestrator.env"
+fi
+if [ -e "$acs_identity" ]; then
+  had_previous_identity=true
+  cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
+fi
+if [ -e "$server_unit" ]; then
+  had_server_unit=true
+  cp -a "$server_unit" "$rollback_root/agent-saas-server-staging.service"
+fi
+if [ -e "$worker_unit" ]; then
+  had_worker_unit=true
+  cp -a "$worker_unit" "$rollback_root/agent-saas-runtime-worker-staging.service"
+fi
+if [ -e "$acs_unit" ]; then
+  had_acs_unit=true
+  cp -a "$acs_unit" "$rollback_root/agent-saas-acs-orchestrator-staging.service"
+fi
+
+# BEGIN staging deploy cleanup lifecycle
+deployment_committed=false
+runtime_mutated=false
+cleanup_armed=true
+restore_optional_file() {
+  local existed="$1" backup="$2" destination="$3"
+  if [ "$existed" = true ]; then
+    cp -a "$backup" "$destination"
+  else
+    rm -f "$destination"
+  fi
+}
+rollback() {
+  restore_optional_file "$had_server_config" "$rollback_root/config.json" "$server_config"
+  restore_optional_file "$had_server_env" "$rollback_root/server.env" "$server_env"
+  restore_optional_file "$had_acs_env" "$rollback_root/acs-orchestrator.env" "$acs_env"
+  restore_optional_file "$had_previous_identity" \
+    "$rollback_root/acs-release-identity.json" "$acs_identity"
+  restore_optional_file "$had_server_unit" \
+    "$rollback_root/agent-saas-server-staging.service" "$server_unit"
+  restore_optional_file "$had_worker_unit" \
+    "$rollback_root/agent-saas-runtime-worker-staging.service" "$worker_unit"
+  restore_optional_file "$had_acs_unit" \
+    "$rollback_root/agent-saas-acs-orchestrator-staging.service" "$acs_unit"
+  systemctl daemon-reload || true
+  if [ "$runtime_mutated" = true ]; then
+    rm -f "$run_root/runtime-worker.ready" \
+      "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
+    if [ "$had_previous_release" = true ]; then
+      ln -sfn "$previous" "$current"
+      systemctl restart agent-saas-acs-orchestrator-staging.service || true
+      systemctl restart agent-saas-server-staging.service || true
+      systemctl restart agent-saas-runtime-worker-staging.service || true
+    else
+      rm -f "$current"
+      systemctl stop agent-saas-runtime-worker-staging.service || true
+      systemctl stop agent-saas-server-staging.service || true
+      systemctl stop agent-saas-acs-orchestrator-staging.service || true
+      rm -f "$run_root/server.pid" "$run_root/runtime-worker.pid" \
+        "$run_root/runtime-worker.ready" "$run_root/acs-orchestrator.pid"
+      systemctl reset-failed agent-saas-runtime-worker-staging.service \
+        agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
+    fi
+  fi
+}
+finish() {
+  local status=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  if [ "$cleanup_armed" != true ]; then
+    return "$status"
+  fi
+  cleanup_armed=false
+  # Cleanup is one-shot and best-effort: every cleanup and rollback operation is
+  # attempted, while the status captured before cleanup remains authoritative.
+  # Rollback backups stay on disk for manual recovery if any restore step fails.
+  set +e
+  rm -rf "$candidate"
+  rm -f "$server_unit.candidate-$deployment_attempt_id" \
+    "$worker_unit.candidate-$deployment_attempt_id" \
+    "$acs_unit.candidate-$deployment_attempt_id"
+  rm -f "$artifact_persistence_probe"
+  rm -f "$acs_health_probe" "$api_ready_probe"
+  if [ "$deployment_committed" = false ]; then
+    rollback
+  fi
+  return "$status"
+}
+trap finish EXIT # one-shot dispatcher
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# END staging deploy cleanup lifecycle
 
 install -d -o agent-saas-staging -g agent-saas-staging -m 0700 "$config_root"
 if [ ! -e "$server_config" ]; then
@@ -37,7 +195,7 @@ if [ ! -e "$server_config" ]; then
     echo 'Staging shared config is missing from both mutable and legacy paths' >&2
     exit 1
   }
-  config_candidate="$config_root/.config.json.migrate-$GITHUB_RUN_ID"
+  config_candidate="$config_root/.config.json.migrate-$deployment_attempt_id"
   install -o agent-saas-staging -g agent-saas-staging -m 0600 \
     "$legacy_server_config" "$config_candidate"
   mv -f "$config_candidate" "$server_config"
@@ -52,7 +210,7 @@ chmod 0600 "$server_config"
 install_staging_unit() {
   source_path="$1"
   destination_path="$2"
-  candidate_path="${destination_path}.candidate-${GITHUB_RUN_ID}"
+  candidate_path="${destination_path}.candidate-${deployment_attempt_id}"
   test -f "$source_path" || {
     echo "Missing Staging systemd unit template: $source_path" >&2
     exit 1
@@ -65,6 +223,8 @@ verify_staging_unit_environment() {
   local api_environment="$1"
   local worker_environment="$2"
   local expected_config='AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json'
+  local expected_api_snapshot='AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/config-identity.json'
+  local expected_worker_snapshot='AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/runtime-worker-config-identity.json'
   if ! printf '%s\n' "$worker_environment" \
     | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready'; then
     echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
@@ -73,6 +233,14 @@ verify_staging_unit_environment() {
   if ! printf '%s\n' "$api_environment" \
     | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready'; then
     echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$api_environment" | grep -Fq "$expected_api_snapshot"; then
+    echo 'Staging API unit does not use its private ConfigIdentity snapshot' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$worker_environment" | grep -Fq "$expected_worker_snapshot"; then
+    echo 'Staging Runtime Worker unit does not use its private ConfigIdentity snapshot' >&2
     return 1
   fi
   for unit_environment in "$api_environment" "$worker_environment"; do
@@ -84,8 +252,9 @@ verify_staging_unit_environment() {
   done
 }
 
-runtime_dir=/mnt/agent-saas-staging/runtime/server
-artifact_dir=/mnt/agent-saas-staging/runtime/artifacts
+runtime_dir="$runtime_root/server"
+artifact_dir="$runtime_root/artifacts"
+
 runuser -u agent-saas-staging -- sh -c \
   'umask 027; mkdir -p -- "$1" "$2"' sh "$runtime_dir" "$artifact_dir"
 runtime_owner="$(stat -c '%u:%g' "$runtime_dir")"
@@ -106,100 +275,15 @@ for directory in "$runtime_dir" "$artifact_dir"; do
     }
   done
 done
-previous=''
-had_previous_release=false
-if [ -L "$current" ]; then
-  previous="$(readlink -f -- "$current")" || {
-    echo 'Staging current symlink cannot be resolved' >&2
-    exit 1
-  }
-  case "$previous" in
-    "$root/releases/"*) ;;
-    *) echo 'Staging current symlink is outside the immutable release root' >&2; exit 1 ;;
-  esac
-  test -d "$previous" || { echo 'Staging current release target is missing' >&2; exit 1; }
-  had_previous_release=true
-elif [ -e "$current" ]; then
-  echo 'Staging current path exists but is not a symlink' >&2
-  exit 1
-fi
-worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
-api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
-verify_staging_unit_environment "$api_unit_environment" "$worker_unit_environment"
-candidate="$target.candidate-$GITHUB_RUN_ID"
-rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
-artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$GITHUB_RUN_ID"
-mkdir -p "$rollback_root"
-server_env=/etc/agent-saas-staging/server.env
-acs_env=/etc/agent-saas-staging/acs-orchestrator.env
-acs_identity=/etc/agent-saas-staging/acs-release-identity.json
-cp -a "$server_env" "$rollback_root/server.env"
-cp -a "$server_config" "$rollback_root/config.json"
-cp -a "$acs_env" "$rollback_root/acs-orchestrator.env"
-had_previous_identity=false
-if [ -e "$acs_identity" ]; then
-  had_previous_identity=true
-  cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
-fi
-server_unit=/etc/systemd/system/agent-saas-server-staging.service
-worker_unit=/etc/systemd/system/agent-saas-runtime-worker-staging.service
-acs_unit=/etc/systemd/system/agent-saas-acs-orchestrator-staging.service
-cp -a "$server_unit" "$rollback_root/server.service"
-cp -a "$worker_unit" "$rollback_root/runtime-worker.service"
-cp -a "$acs_unit" "$rollback_root/acs-orchestrator.service"
-units_updated=false
-deployment_committed=false
-rollback() {
-  if [ "$units_updated" = true ]; then
-    cp -a "$rollback_root/server.service" "$server_unit"
-    cp -a "$rollback_root/runtime-worker.service" "$worker_unit"
-    cp -a "$rollback_root/acs-orchestrator.service" "$acs_unit"
-    systemctl daemon-reload
-  fi
-  cp -a "$rollback_root/server.env" "$server_env"
-  cp -a "$rollback_root/config.json" "$server_config"
-  cp -a "$rollback_root/acs-orchestrator.env" "$acs_env"
-  if [ "$had_previous_identity" = true ]; then
-    cp -a "$rollback_root/acs-release-identity.json" "$acs_identity"
-  else
-    rm -f "$acs_identity"
-  fi
-  if [ "$had_previous_release" = true ]; then
-    ln -sfn "$previous" "$current"
-    systemctl restart agent-saas-acs-orchestrator-staging.service || true
-    systemctl restart agent-saas-server-staging.service || true
-    systemctl restart agent-saas-runtime-worker-staging.service || true
-  else
-    rm -f "$current"
-    systemctl stop agent-saas-runtime-worker-staging.service || true
-    systemctl stop agent-saas-server-staging.service || true
-    systemctl stop agent-saas-acs-orchestrator-staging.service || true
-    rm -f /run/agent-saas-staging/server.pid \
-      /run/agent-saas-staging/runtime-worker.pid \
-      /run/agent-saas-staging/runtime-worker.ready \
-      /run/agent-saas-staging/acs-orchestrator.pid
-    systemctl reset-failed agent-saas-runtime-worker-staging.service \
-      agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
-  fi
-}
-finish() {
-  status=$?
-  trap - EXIT
-  rm -rf "$candidate"
-  rm -f "$artifact_persistence_probe"
-  if [ "$deployment_committed" = false ]; then rollback; fi
-  exit "$status"
-}
-trap finish EXIT
-trap 'exit 130' HUP INT TERM
-
-units_updated=true
 install_staging_unit \
-  "$UNIT_DIR/agent-saas-server-staging.service.template" "$server_unit"
+  "$UNIT_DIR/agent-saas-server-staging.service.template" \
+  "$server_unit"
 install_staging_unit \
-  "$UNIT_DIR/agent-saas-runtime-worker-staging.service.template" "$worker_unit"
+  "$UNIT_DIR/agent-saas-runtime-worker-staging.service.template" \
+  "$worker_unit"
 install_staging_unit \
-  "$UNIT_DIR/agent-saas-acs-orchestrator-staging.service.template" "$acs_unit"
+  "$UNIT_DIR/agent-saas-acs-orchestrator-staging.service.template" \
+  "$acs_unit"
 systemctl daemon-reload
 
 for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-staging.service; do
@@ -209,19 +293,20 @@ for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-
     exit 1
   }
   systemctl show "$service_name" --property ExecStart --value \
-    | grep -Fq '/opt/agent-saas-staging/current/server/dist/index.js' || {
+    | grep -Fq "$current/server/dist/index.js" || {
     echo "$service_name does not execute the immutable Staging server entrypoint" >&2
     exit 1
   }
 done
+
 worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
 api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
 verify_staging_unit_environment "$api_unit_environment" "$worker_unit_environment"
 
-node - "$server_config" <<'NODE'
+node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const configPath = process.argv[2];
+const [configPath, deploymentAttemptId] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 const currentSecret = config.artifact?.signedUrlSecret;
 const signedUrlSecret = typeof currentSecret === 'string'
@@ -233,13 +318,14 @@ config.artifact = {
   backend: 'local',
   rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
   signedUrlSecret,
-  readUrlTtlSeconds: 900,
+  readUrlTtlSeconds: 300,
   maxBlobBytes: 100 * 1024 * 1024,
   retentionDays: 90,
   gcIntervalMs: 24 * 60 * 60 * 1000,
 };
-fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-fs.renameSync(`${configPath}.candidate`, configPath);
+const candidatePath = `${configPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
@@ -402,7 +488,7 @@ if (artifact.backend !== 'local') failures.push('artifact.backend must be local'
 if (artifact.rootDir !== '/mnt/agent-saas-staging/runtime/artifacts') failures.push('artifact.rootDir must use the shared NAS Artifact directory');
 if (typeof artifact.signedUrlSecret !== 'string' || artifact.signedUrlSecret.length < 16) failures.push('artifact.signedUrlSecret must be persistent');
 if (artifact.signedUrlSecret === config.auth?.jwtSecret) failures.push('artifact.signedUrlSecret must be independent from auth.jwtSecret');
-if (artifact.readUrlTtlSeconds !== 900) failures.push('artifact.readUrlTtlSeconds must be 900');
+if (artifact.readUrlTtlSeconds !== 300) failures.push('artifact.readUrlTtlSeconds must be 300');
 if (artifact.maxBlobBytes !== 104857600) failures.push('artifact.maxBlobBytes must be 104857600');
 if (artifact.retentionDays !== 90) failures.push('artifact.retentionDays must be 90');
 if (artifact.gcIntervalMs !== 86400000) failures.push('artifact.gcIntervalMs must be 86400000');
@@ -414,24 +500,34 @@ if (failures.length > 0) {
 }
 NODE
 
+runtime_mutated=true
 ln -sfn "$target" "$current"
-node - "$server_config" <<'NODE'
+node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');
-const configPath = process.argv[2];
+const [configPath, deploymentAttemptId] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 config.agent = {
   ...(config.agent || {}),
   sharedDir: '/opt/agent-saas-staging/current/server/workspace-shared',
 };
-fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-fs.renameSync(`${configPath}.candidate`, configPath);
+const candidatePath = `${configPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
-node - "$MANIFEST_PATH" "$server_env" <<'NODE'
+# TASK-318：发布前对 $server_config 中的 Staging 实际配置计算 expected config identity
+#（与运行期 observed identity 同一实现；Staging 启动断言要求该 digest 必须存在）。
+config_identity="$(node "$target/server/dist/config-identity-cli.js" \
+  --config "$server_config" --environment staging \
+  --process-cwd /mnt/agent-saas-staging/runtime/server \
+  --runtime-data-dir /mnt/agent-saas-staging/runtime/server/data \
+  --env-file "$server_env")"
+node - "$MANIFEST_PATH" "$server_env" "$config_identity" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, configIdentityJson, deploymentAttemptId] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const identity = JSON.parse(configIdentityJson);
 const desired = {
   AGENT_SAAS_RELEASE_ID: manifest.releaseId,
   AGENT_SAAS_RELEASE_SHA: manifest.components.api.sourceSha,
@@ -439,18 +535,30 @@ const desired = {
   AGENT_SAAS_WEB_DIGEST: manifest.components.web.artifactDigest,
   AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: manifest.components.acs.orchestratorArtifactDigest,
   AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: manifest.components.acs.sandboxImageDigest,
+  AGENT_SAAS_CONFIG_IDENTITY_DIGEST: identity.digest,
+  AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: String(identity.schemaVersion),
 };
-const keys = new Set(Object.keys(desired));
+if (identity.credentialVersionDigest) {
+  desired.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST = identity.credentialVersionDigest;
+}
+const keys = new Set([
+  ...Object.keys(desired),
+  // identity 未解析到版本时必须删除旧 release 遗留值，禁止凭据版本串线。
+  'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST',
+  // 私有快照路径由各 systemd unit 独立声明，禁止共享 env 覆盖。
+  'AGENT_SAAS_CONFIG_IDENTITY_PATH',
+]);
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !keys.has(line.split('=', 1)[0]));
 for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`);
-fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
-fs.renameSync(`${envPath}.candidate`, envPath);
+const candidatePath = `${envPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${lines.join('\n')}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, envPath);
 NODE
 chown root:agent-saas-staging "$server_env"
 chmod 0640 "$server_env"
-node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
+node - "$MANIFEST_PATH" "$acs_env" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, deploymentAttemptId] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const reference = `${manifest.artifacts.acsImage.repository}@${manifest.artifacts.acsImage.digest}`; // 不可变镜像引用
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter(Boolean);
@@ -460,15 +568,16 @@ const output = lines.filter((line) => !line.startsWith('ACS_SANDBOX_IMAGE=')
 output.push(`ACS_SANDBOX_IMAGE=${reference}`);
 output.push('ACS_SANDBOX_LIFECYCLE_ENABLED=true');
 output.push('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce'); // rollout 显式收敛到 enforce
-fs.writeFileSync(`${envPath}.candidate`, `${output.join('\n')}\n`, { mode: 0o600 });
-fs.renameSync(`${envPath}.candidate`, envPath);
+const candidatePath = `${envPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${output.join('\n')}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, envPath);
 NODE
 chown root:agent-saas-staging "$acs_env"
 chmod 0640 "$acs_env"
-node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
+node - "$MANIFEST_PATH" "$acs_env" "$deployment_attempt_id" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, deploymentAttemptId] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const configFingerprint = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(envPath)).digest('hex')}`;
 const identity = {
@@ -481,8 +590,10 @@ const identity = {
   namespace: 'agent-saas-staging',
   configFingerprint,
 };
-fs.writeFileSync('/etc/agent-saas-staging/acs-release-identity.json.candidate', `${JSON.stringify(identity)}\n`, { mode: 0o444 });
-fs.renameSync('/etc/agent-saas-staging/acs-release-identity.json.candidate', '/etc/agent-saas-staging/acs-release-identity.json');
+const identityPath = '/etc/agent-saas-staging/acs-release-identity.json';
+const candidatePath = `${identityPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${JSON.stringify(identity)}\n`, { mode: 0o444 });
+fs.renameSync(candidatePath, identityPath);
 NODE
 runuser -u agent-saas-staging -- sh -c \
   'umask 077; printf "%s" "$2" > "$1"' sh "$artifact_persistence_probe" "$release_id"
@@ -499,19 +610,21 @@ if systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service; then
     exit 1
   }
 fi
+rm -f "$run_root/runtime-worker.ready" \
+  "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
 systemctl restart agent-saas-acs-orchestrator-staging.service
 for attempt in $(seq 1 60); do
-  curl -fsS http://127.0.0.1:3410/health >"$state_root/acs-health.json" && break
+  curl -fsS http://127.0.0.1:3410/health >"$acs_health_probe" && break
   sleep 2
 done
-test -s "$state_root/acs-health.json"
+test -s "$acs_health_probe"
 systemctl restart agent-saas-server-staging.service
 systemctl restart agent-saas-runtime-worker-staging.service
 for attempt in $(seq 1 60); do
-  curl -fsS http://127.0.0.1:3210/api/healthz/ready >"$state_root/api-ready.json" && break
+  curl -fsS http://127.0.0.1:3210/api/healthz/ready >"$api_ready_probe" && break
   sleep 2
 done
-test -s "$state_root/api-ready.json"
+test -s "$api_ready_probe"
 runuser -u agent-saas-staging -- test -r "$artifact_persistence_probe"
 test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
   echo 'Staging Artifact persistence probe did not survive the service restart' >&2
@@ -519,18 +632,28 @@ test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
 }
 rm -f "$artifact_persistence_probe"
 
-node - "$MANIFEST_PATH" "$state_root/api-ready.json" "$state_root/acs-health.json" <<'NODE'
+node --input-type=module - "$MANIFEST_PATH" "$api_ready_probe" \
+  "$api_config_identity_snapshot" "$config_identity" \
+  "$config_identity_reader" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const [manifestPath, readyPath, snapshotPath, expectedJson, readerPath] = process.argv.slice(2);
+const { validateCandidateReleaseReadiness } = await import(pathToFileURL(readerPath));
+await validateCandidateReleaseReadiness({
+  environment: 'staging',
+  manifest: JSON.parse(fs.readFileSync(manifestPath, 'utf8')),
+  readiness: JSON.parse(fs.readFileSync(readyPath, 'utf8')),
+  privateSnapshotPath: snapshotPath,
+  expectedConfigIdentity: JSON.parse(expectedJson),
+});
+NODE
+
+node - "$MANIFEST_PATH" "$acs_health_probe" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, apiPath, acsPath] = process.argv.slice(2);
+const [manifestPath, acsPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-const api = JSON.parse(fs.readFileSync(apiPath, 'utf8'));
 const acs = JSON.parse(fs.readFileSync(acsPath, 'utf8'));
-const release = api.release ?? {};
-if (
-  release.releaseId !== manifest.releaseId ||
-  release.releaseSha !== manifest.components.api.sourceSha
-)
-  throw new Error('Staging API component identity does not match Manifest');
+// API release identity and ConfigIdentity are validated above by validateCandidateReleaseReadiness.
 if (acs.environment !== 'staging' || acs.releaseId !== manifest.releaseId || acs.sourceSha !== manifest.components.acs.sourceSha)
   throw new Error('Staging ACS identity does not match Manifest');
 if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging' || acs.lifecycle?.enabled !== true || acs.lifecyclePolicyMode !== 'enforce')

@@ -248,6 +248,7 @@ export function ToolControlsManager(): JSX.Element {
   const [searchApiKeyText, setSearchApiKeyText] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [revision, setRevision] = useState("");
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -260,6 +261,7 @@ export function ToolControlsManager(): JSX.Element {
   }, []);
 
   const hydrate = useCallback((response: ToolControlsAdminResponse) => {
+    if (response.revision) setRevision(response.revision);
     const nextToolControls = normalizeToolControls(response.toolControls);
     // 把 catalog 里带回来的 descriptionOverride 合并回 draft，保证详情页看到最新 override
     for (const tool of response.tools) {
@@ -353,7 +355,8 @@ export function ToolControlsManager(): JSX.Element {
     try {
       const toolControls = buildToolControlsPayload(toolControlsDraft);
       const webTools = buildWebToolsPayload(webToolsDraft, toolControlsDraft, allowedContentTypesText, allowedHostsText, blockedHostsText, searchApiKeyText);
-      const response = await updateToolControlsConfig({ toolControls, webTools });
+      if (!revision) throw new Error("配置版本尚未加载，请先刷新");
+      const response = await updateToolControlsConfig({ toolControls, webTools, expectedRevision: revision });
       hydrate(response);
       setSavedAt(Date.now());
       setError(null);
@@ -362,16 +365,17 @@ export function ToolControlsManager(): JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [allowedContentTypesText, allowedHostsText, blockedHostsText, hydrate, searchApiKeyText, toolControlsDraft, webToolsDraft]);
+  }, [allowedContentTypesText, allowedHostsText, blockedHostsText, hydrate, revision, searchApiKeyText, toolControlsDraft, webToolsDraft]);
 
   const saveSingleTool = useCallback(async (
     toolId: string,
     payload: { enabled?: boolean; descriptionOverride?: ToolDescriptionOverride | null },
   ) => {
-    // 单工具 PUT 不受 dirty 状态影响：description override / 快捷开关自己有独立保存生命周期。
-    const response = await updateSingleTool(toolId, payload);
+    // 单工具 PUT 有独立保存生命周期，但仍携带 revision 防止覆盖较新的治理变更。
+    if (!revision) throw new Error("配置版本尚未加载，请先刷新");
+    const response = await updateSingleTool(toolId, { ...payload, expectedRevision: revision });
     hydrate(response);
-  }, [hydrate]);
+  }, [hydrate, revision]);
 
   const draftVisibleTools = useMemo(
     () => listDraftVisibleTools(tools, toolControlsDraft, webToolsDraft),

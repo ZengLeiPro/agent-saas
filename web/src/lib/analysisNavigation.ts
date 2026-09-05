@@ -42,6 +42,7 @@ const icons: Readonly<Record<string, LucideIcon>> = {
   activity: Activity,
   history: EntityIcons.audit,
   chart: EntityIcons.analytics,
+  quota: EntityIcons.credits,
 };
 
 function analysisItem(page: ManagementPageDefinition): AnalysisNavigationItem {

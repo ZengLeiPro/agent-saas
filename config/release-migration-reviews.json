@@ -1,0 +1,447 @@
+{
+  "schemaVersion": 1,
+  "reviews": [
+    {
+      "baselineSha": "9f8531e697e68f39d07e846872586dad841125ca",
+      "files": [
+        {
+          "path": "server/src/app/codexSubscriptionConfigSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4d75952d4a3c65df0c94cbe217b7774ad44e4d1bc7f4ca0903c15138a4b44136",
+          "classification": "no-schema-change",
+          "reason": "从配置主文件抽出的 Zod 配置定义；无 SQL、建表或回填。"
+        },
+        {
+          "path": "server/src/app/config.ts",
+          "baselineDigest": "sha256:7b232ba94234534c80b90be7ca003c071ed3a75d2181f0bb550a5b050f149192",
+          "targetDigest": "sha256:ba1c75ebb1259b96449111ddd3ebeda49c37dcfc21aa1b3fd4320fd0b469f4ec",
+          "classification": "no-schema-change",
+          "reason": "配置解析和字段定义调整；writerCapability 是运行前置配置，不执行数据库迁移。"
+        },
+        {
+          "path": "server/src/app/modelQuotaSourceSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:afb78574da5d2e916166535061558b47256e7db91774dd67d836adae12d8191f",
+          "classification": "no-schema-change",
+          "reason": "套餐额度来源的 Zod 配置定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/app/sessionAutomationConfig.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4494959391b9cf06342b7372a4c0bce68021178c643d26597ee78e539817376b",
+          "classification": "no-schema-change",
+          "reason": "会话自动化开关的类型和默认值，默认关闭；无 SQL。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/store.ts",
+          "baselineDigest": "sha256:8c3df94963b1d0f1541df2d1080b4b96df1499a6d50fe69e0ab0b87ba8655418",
+          "targetDigest": "sha256:0273cb9d7dfac4bc73ac58bd983020d7dbb13139a3e4a12ef9e677e2363d9b43",
+          "classification": "no-schema-change",
+          "reason": "init 仍委托治理迁移；差异为消息筛选、状态和 JSON 字段的运行期读写，无新启动 SQL。"
+        },
+        {
+          "path": "server/src/data/agentDwsMessages/types.ts",
+          "baselineDigest": "sha256:f016910e5dace5ed4204cb26b6713b6171da4d97fabe534a47ba965da67d8631",
+          "targetDigest": "sha256:ef9925bd775254757216de406c799e9ad319abf3ef47e89cb359003c47b4d928",
+          "classification": "no-schema-change",
+          "reason": "消息身份和回执类型定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/billing/pgBillingStore.ts",
+          "baselineDigest": "sha256:e6412bd759d8a0de71bb2f35864443521cc3b7465158ca10240b3474e426ca3d",
+          "targetDigest": "sha256:ff657a5d9076a72faf63622c1fba77ab50b7b3cc2aed07a866eb27d81039bab9",
+          "classification": "no-schema-change",
+          "reason": "计价函数提取及换算调整，数据库初始化语句未改。"
+        },
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:7b66409def5a89d2c8172594266c61e8ef168380226f55cc1190c342aefc1604",
+          "targetDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "classification": "no-schema-change",
+          "reason": "类型导入和 satisfies 调整，数据库初始化语句未改。"
+        },
+        {
+          "path": "server/src/data/entitlements/types.ts",
+          "baselineDigest": "sha256:3477de456af56a1964cf5c656cb295fe2f80cc4e56fb673097cabc78a2928e35",
+          "targetDigest": "sha256:147e65ebcd35b499283ba19d7cb5ef2117d971bf89885813e5f43e5ac5b156b1",
+          "classification": "no-schema-change",
+          "reason": "权限类型和常量定义，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
+          "targetDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
+          "targetDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:ef9534237aaad294f2d33beb3efe603f47ff6754877eb3789ec1d5aba07e5fd8",
+          "classification": "expand",
+          "reason": "仅新增技能展示表及索引；不改旧表，重复执行由治理版本账本保证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v39OrgGroupBindingIdentityMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:aafa7307bd61db021e35fb4a69d34e82efb88d1d7a02c78695500b4318c83dc1",
+          "classification": "expand",
+          "reason": "增加四个可空身份列；仅回填匹配账号且创建时间不早于身份纪元的 binding，旧纪元保留空值。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v40DwsDeliveryAccountIdentityMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b39f41c0200b6564a0e61ffa851d4085b9199e40094f28e4e805a588355d9d59",
+          "classification": "expand",
+          "reason": "增加四个可空身份列及允许全空/全非空的 CHECK；旧行和旧写入全空合法，不完整新身份被拒绝。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:68f676fa41e06b1a9df425e51257f098129cc3408bf3e5d03464b6d1cd50417c",
+          "classification": "no-schema-change",
+          "reason": "新增运行期绑定 UPSERT；结构由 v39 提供，无启动迁移。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/deliveryClaims.ts",
+          "baselineDigest": "sha256:0cd937e2296785ff0148497870702bbf1be639bffbc3c2749f4f91969ea6c489",
+          "targetDigest": "sha256:5a5296ebdfdcd169bf9a7a67cd93883b6563e4a67d5b107afdc7b337f45ddf48",
+          "classification": "no-schema-change",
+          "reason": "运行期投递租约、身份校验和恢复查询，无启动迁移。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/store.ts",
+          "baselineDigest": "sha256:f419fe9752d418c4462bafd689b3e324e476dc5254ed83a4ab6937de37f31042",
+          "targetDigest": "sha256:06b78f40dc08c36a504c88d0744eae520bcd41c5b641a84b752bffe54ced7b74",
+          "classification": "no-schema-change",
+          "reason": "init 仍委托治理迁移；差异为绑定和投递的运行期读写，新增列由 v39/v40 提供。"
+        },
+        {
+          "path": "server/src/data/orgGroupAgents/storeMappers.ts",
+          "baselineDigest": "sha256:3bf438407040b8164b7a80e8fedceeae63b49a8560efd71c0454877643034ffd",
+          "targetDigest": "sha256:8cc337419b9904defe8a0e002ef4b99661f92425fc8647f8af5886f1e0655032",
+          "classification": "no-schema-change",
+          "reason": "身份字段的行映射与校验，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/skillPresentations/builtins.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2cafd79d97d31075c28db57a9b4648729ee5bf82d4b933533654c96a0045397d",
+          "classification": "no-schema-change",
+          "reason": "导入并定型中文内置展示数据，无 SQL。"
+        },
+        {
+          "path": "server/src/data/skillPresentations/builtins.zh-CN.json",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f78d71e18f297cc387a1dd90cc53c7494524e68181d58c5c3d4c6af8cd1ac75c",
+          "classification": "no-schema-change",
+          "reason": "技能中文展示数据；不是 SQL 资源。"
+        },
+        {
+          "path": "server/src/data/skillPresentations/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:38a12276ffb59e54f75c77d6706110bd6cd09cbd2431416709547d860dfa303f",
+          "classification": "expand",
+          "reason": "启动先执行治理迁移，再向 v38 新表 INSERT ON CONFLICT DO NOTHING；不覆盖已有展示内容。DELETE 仅是显式运行期编辑方法。"
+        },
+        {
+          "path": "server/src/data/skillPresentations/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:80d903c316512ff8c695ddb2d9f107bfe45da77315e870446565a5f92ab52b5b",
+          "classification": "no-schema-change",
+          "reason": "展示数据类型和冲突错误类，无数据库执行。"
+        },
+        {
+          "path": "server/src/data/transcripts/meta.ts",
+          "baselineDigest": "sha256:862f2d9727c796cca5d97a929145b97faa9f1d64850c1cbeb88ab0d11da1c596",
+          "targetDigest": "sha256:93bfda97ab2ad9d8fd049525fffdd9e37fb9406838904ee94b4e0bdbb1040b5c",
+          "classification": "no-schema-change",
+          "reason": "文件系统孤立元数据处理，无数据库迁移。"
+        },
+        {
+          "path": "server/src/data/usage/pricing.ts",
+          "baselineDigest": "sha256:0c872353cc1f0f9687eb6a6a4755860aeed7bbcd782800d0fff281bef939c88c",
+          "targetDigest": "sha256:793ecfc742f3aedbcb23194da045581804c1cc19f3826d296cba8208e4f5590a",
+          "classification": "no-schema-change",
+          "reason": "价格换算纯函数调整，无数据库迁移。"
+        },
+        {
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
+          "classification": "expand",
+          "reason": "新增独立额度快照表及查询索引，advisory lock 串行 init；重复初始化通过，prune 是运行期维护方法。"
+        },
+        {
+          "path": "server/src/release/configIdentity.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:014591b19bd7f92edc31c40d9ae002ee930d05756d28054b41eb852d04e7d752",
+          "classification": "no-schema-change",
+          "reason": "配置投影、摘要和凭据元数据读取，无数据库迁移。"
+        },
+        {
+          "path": "server/src/release/environmentSafety.ts",
+          "baselineDigest": "sha256:4d1f2137965efa2d9f4dc1fbb47b267392e7800bb01825f5e022b1742ae10c67",
+          "targetDigest": "sha256:8dd36cfec73ef3f3ab70f7d9ad49c1a55ec372b756c731d52faa6e93d93759b3",
+          "classification": "no-schema-change",
+          "reason": "环境和内联凭据校验，无数据库迁移。"
+        },
+        {
+          "path": "server/src/release/runtimeIdentity.ts",
+          "baselineDigest": "sha256:7d472cd02d9f87305b181bf3bf9e68deed3b41f55d39f5823298bc49644c99b2",
+          "targetDigest": "sha256:a6c9412f7750869f6902cbbe934c3aba01f57096ca95d2928ab13af43c2fd31b",
+          "classification": "no-schema-change",
+          "reason": "发布身份读取校验，无数据库迁移。"
+        },
+        {
+          "path": "server/src/runtime/background/backgroundTaskRuntime.ts",
+          "baselineDigest": "sha256:1baeb24ddf9ba59ad87d7e90e7b4e9be254cac091e326614849ec501719b4725",
+          "targetDigest": "sha256:79730bb5720b7d6493905f60b9e3ec0a57965aa450068c18a404312f242119b9",
+          "classification": "no-schema-change",
+          "reason": "后台租约接口增加 workerId/leaseToken，无启动 SQL 差异。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:5cc42678d21c9a7e2276435a1b3a29c5864a6478fb23a913118afc672de3db73",
+          "targetDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "classification": "expand",
+          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。"
+        },
+        {
+          "path": "server/src/runtime/pgSessionLock.ts",
+          "baselineDigest": "sha256:df5e96123c2272972e4f75ae002a0ed279a505b44970f59bf22f9d17a5b202b6",
+          "targetDigest": "sha256:3fbc7a43c887442ebfe1cc6090a820facf18c5e4420f68763d29523ad9d57a4e",
+          "classification": "expand",
+          "reason": "旧锁表保留 session_id 唯一约束，新增 tenant lease 表及双向互斥触发器；主键调整仍支持旧 ON CONFLICT(session_id)，真实旧锁和新锁互斥、旧版回滚重启通过。"
+        },
+        {
+          "path": "server/src/runtime/runRecoveryQueries.ts",
+          "baselineDigest": "sha256:9d2c82508b329fa1443b31ea405351eb2e42043ad510e16d7239b51a236cf477",
+          "targetDigest": "sha256:9d2c82508b329fa1443b31ea405351eb2e42043ad510e16d7239b51a236cf477",
+          "classification": "no-schema-change",
+          "reason": "旧纯 SELECT 助手仍在仓库，但调用改到 tenant-aware 助手；不可把查询重接视作删除数据库迁移。"
+        },
+        {
+          "path": "server/src/runtime/runStatusCas.ts",
+          "baselineDigest": "sha256:76eb15c6601cd0eb0460e9af9aeada2f85b776c631a5eaab0ac49925804c8606",
+          "targetDigest": "sha256:5b2daa7315440e08f4bf632c39b062de2068114ea0830057610a48f1140cd5ae",
+          "classification": "no-schema-change",
+          "reason": "终态 CAS 与 JSON outbox 修复的运行期 UPDATE，无初始化 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runStore.ts",
+          "baselineDigest": "sha256:849287420d84312e48b3f8b5140d0374443ef46597dfb46f086b32825ad3b434",
+          "targetDigest": "sha256:d836e96f72f0c2f8bade2d7884f7484eeb591c164c7db12cb8bb2e526c739a17",
+          "classification": "expand",
+          "reason": "初始化委托已审核的 runStoreSchema；其余为租户查询、租约参数、运行期方法重接，contract 仅显式调用可执行。"
+        },
+        {
+          "path": "server/src/runtime/runStoreLivenessQueries.ts",
+          "baselineDigest": "sha256:a721fc3f446c06058854ee5f8938813acc2c19a8501987413f437c4c083847f9",
+          "targetDigest": "sha256:770bbd44e13081b5fbd8671705d0983ef730cc18ab7c454675245ceb1167022b",
+          "classification": "no-schema-change",
+          "reason": "租约续期和终态补偿的运行期 SELECT/UPDATE，无初始化 SQL。"
+        },
+        {
+          "path": "server/src/runtime/runStoreQueries.ts",
+          "baselineDigest": "sha256:b66475545434bd1743cac88543d38b45145d4f514b3007e964ee8cd8ac8ba458",
+          "targetDigest": "sha256:379cdc7feb8fb42d0d395c82986bd5e67c53393d622adc46af14fde6aabf5c78",
+          "classification": "no-schema-change",
+          "reason": "运行期查询增加租户条件、lease token 和恢复方法重接；无启动迁移。"
+        },
+        {
+          "path": "server/src/runtime/runStoreRecoveryQueries.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cbbc5827170afd767a742a52dbe4b12bf8ac182045e849f8745ea7fe13bdac0e",
+          "classification": "no-schema-change",
+          "reason": "新增 tenant-aware 恢复 SELECT 助手，无 DDL。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:18235aca2e4b3f232772e6ea94390672ac6eca00da33e2e9ae0024601be39bed",
+          "targetDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "classification": "expand",
+          "reason": "普通启动仅 expand：增加可空辅助身份列、索引、能力登记、RLS 和兼容触发器；旧原始键保留。需显式非特权 writer 注册。真实旧代码入队、带数据升级和回滚通过；contract 单独执行，未在本次调用。"
+        },
+        {
+          "path": "server/src/runtime/runStoreTenantRolling.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f32ef4881502807817c76c6137d2517db42d877c7fb4e10a173bff7593b2ee97",
+          "classification": "no-schema-change",
+          "reason": "运行期原始键 advisory lock、同租户幂等查询和停止 UPSERT，无启动迁移。"
+        },
+        {
+          "path": "server/src/runtime/runStoreTypes.ts",
+          "baselineDigest": "sha256:3c1cb4ab8049d64078fd348b476e553cb1da2c8dadbcaafa95cca0235da8dd66",
+          "targetDigest": "sha256:104335a8c1305e6a99448a4be3fee76868b04c28c0be7025d938215bc01fbd46",
+          "classification": "no-schema-change",
+          "reason": "类型与 writerCapability 配置声明，无数据库执行。"
+        },
+        {
+          "path": "server/src/runtime/runTerminalLifecycle.ts",
+          "baselineDigest": "sha256:f6a253104bffba03bb2a02c28fa983262ec218d0aee165d22fc92684f0710878",
+          "targetDigest": "sha256:e7863da5f7e346eab25277add4854f9a7bb130606dc409b69c3f721bb62b06a1",
+          "classification": "no-schema-change",
+          "reason": "释放租约 UPDATE 增加 lease token 校验，无启动迁移。"
+        },
+        {
+          "path": "server/src/runtime/runTerminalOutboxStore.ts",
+          "baselineDigest": "sha256:4a50e5f2b5d3c69dd65c30fe9e2a44dd4fb732f6b98e5b37c117762f73d35fb9",
+          "targetDigest": "sha256:c3824037b92cd6b0cdcf1d06b8fe0d85f6add6740a32610034c0fc298f87623b",
+          "classification": "no-schema-change",
+          "reason": "新增 outbox claim 续租的运行期 JSON UPDATE，无启动迁移。"
+        },
+        {
+          "path": "server/src/runtime/sessionAutomationBudgetProgress.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b60772c0b016c763fcb7f8991e18962fe96fc0ec363890b2bd2936081e8bd88e",
+          "classification": "no-schema-change",
+          "reason": "运行期预算聚合查询及进度归约，无初始化 SQL。"
+        },
+        {
+          "path": "server/src/runtime/sessionAutomationInFlight.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:581e88d4efd4dcaea38f98d2de37d5235d7e24d2639c90c8cdf806ddbe71fd1f",
+          "classification": "no-schema-change",
+          "reason": "纯终态归约函数，无 SQL。"
+        },
+        {
+          "path": "server/src/runtime/sessionAutomationStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a1c728b95c4032c55690f0c56cba793e19f91c2dec3f252abefbe5a392f58c00",
+          "classification": "expand",
+          "reason": "新自动化 Store 的 init 委托 sessionAutomationStoreSchema；其余是新表上的运行期读写。"
+        },
+        {
+          "path": "server/src/runtime/sessionAutomationStoreSchema.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18381d196676533b7efa392c211e91d3a886ca5f6dfa8bfe9a68a5238285a950",
+          "classification": "expand",
+          "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
+        },
+        {
+          "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
+          "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
+          "targetDigest": "sha256:09a8a6c3ec0e046dd100d137c6e2ca3a16207bc259ebf34c45f590aff75b19b9",
+          "classification": "no-schema-change",
+          "reason": "WebSocket 内存连接、字节预算、计时器和恢复约束调整；无 SQL 或数据库结构变更。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesStreamBudget.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:fcb21b682db0be904e79323bd716aa0d3e0f22e0e9ad6ccb8a410b153cf1c164",
+          "classification": "no-schema-change",
+          "reason": "新增纯内存模型事件预算计数器与保护错误；无数据库访问或初始化迁移。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesTransport.ts",
+          "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
+          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "classification": "no-schema-change",
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/迁移审核记录-20260905.md",
+          "digest": "sha256:d4798eb0fe726b39b21ef98f4a54b7fd76c027de0d5d6596d259164c1df04f3c"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationBaseline.ts",
+          "digest": "sha256:7d0443b65ddc50d37429f3ee430f4deaa9e05465acf873ea60e038785d776eec"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:ae2b1638f17ccb4fb724a819f8a0a45e04751c6b5f675bbcf2681ea84558e98d"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:2664748c5292182e323a71664f3ac089ff8f24f29fe2f232cb4f80f6b4002c97"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantContract.pg.test.ts",
+          "digest": "sha256:6d477f346ac0d5a388d3c9148b230558568a0e537529eb172b85bdbc941b2933"
+        },
+        {
+          "path": "server/src/__tests__/pgSessionLock.pg.test.ts",
+          "digest": "sha256:7796232df301474b9d35e61a8d1a8695ce2dd336a9df83204d50b11999dba199"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/runtime/sessionAutomation.pg.test.ts",
+          "digest": "sha256:8de8e478a98d2ff92e094b228071516e47326a9cdc6651fdebef8112ca8703ff"
+        },
+        {
+          "path": "docs/release/模型流修复无结构变更审核-20260905.md",
+          "digest": "sha256:b37a301cb4be2a4c243ab3dd4894d8f645d3d3a9cd45ca9e59b0fe5e8bae3162"
+        },
+        {
+          "path": "server/src/__tests__/responsesStreamBudget.test.ts",
+          "digest": "sha256:efb8f26247e3f2aa7c83df3a86fb8e81f226fa2ea7a9518684f421484c787349"
+        },
+        {
+          "path": "server/src/__tests__/codexResponsesWebSocketPool.test.ts",
+          "digest": "sha256:fbd8e308ec059f2079153310434d60b306a570376674cac395beb942bfc0c826"
+        },
+        {
+          "path": "server/src/__tests__/codexStreamGuardTransport.test.ts",
+          "digest": "sha256:7c9fc4df15f16feaa0f65f58897616684b420a838be8b5de0c4b3a560c37190f"
+        }
+      ]
+    },
+    {
+      "baselineSha": "77592b55171df5ee16516d3fdb5c590b0576c1ed",
+      "files": [
+        {
+          "path": "server/src/runtime/responses/codexResponsesWebSocketPool.ts",
+          "baselineDigest": "sha256:f431fefff4ff198cef5677c1829d9fe5b0ac6905e59d60ca5d7d338a1677917b",
+          "targetDigest": "sha256:09a8a6c3ec0e046dd100d137c6e2ca3a16207bc259ebf34c45f590aff75b19b9",
+          "classification": "no-schema-change",
+          "reason": "WebSocket 内存连接、字节预算、计时器和恢复约束调整；无 SQL 或数据库结构变更。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesStreamBudget.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:fcb21b682db0be904e79323bd716aa0d3e0f22e0e9ad6ccb8a410b153cf1c164",
+          "classification": "no-schema-change",
+          "reason": "新增纯内存模型事件预算计数器与保护错误；无数据库访问或初始化迁移。"
+        },
+        {
+          "path": "server/src/runtime/responses/responsesTransport.ts",
+          "baselineDigest": "sha256:98aff918699e6dc7cb21b6338f8875089bc73d8e9910a50a9ad707c388d4ae8f",
+          "targetDigest": "sha256:b9a1ae5383d14b19c7d5641d214f2783a7c446ea531385f6c87b36f72047edb0",
+          "classification": "no-schema-change",
+          "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/模型流修复无结构变更审核-20260905.md",
+          "digest": "sha256:b37a301cb4be2a4c243ab3dd4894d8f645d3d3a9cd45ca9e59b0fe5e8bae3162"
+        },
+        {
+          "path": "server/src/__tests__/responsesStreamBudget.test.ts",
+          "digest": "sha256:efb8f26247e3f2aa7c83df3a86fb8e81f226fa2ea7a9518684f421484c787349"
+        },
+        {
+          "path": "server/src/__tests__/codexResponsesWebSocketPool.test.ts",
+          "digest": "sha256:fbd8e308ec059f2079153310434d60b306a570376674cac395beb942bfc0c826"
+        },
+        {
+          "path": "server/src/__tests__/codexStreamGuardTransport.test.ts",
+          "digest": "sha256:7c9fc4df15f16feaa0f65f58897616684b420a838be8b5de0c4b3a560c37190f"
+        }
+      ]
+    }
+  ]
+}

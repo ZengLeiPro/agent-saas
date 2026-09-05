@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
 import ts from 'typescript';
 import { canonicalJson, SHA_PATTERN } from './artifact-lib.mjs';
+import { loadMigrationReviews } from './migration-reviews.mjs';
 
 const MIGRATION_PATHS = [
   /^server\/src\/data\/(?:.+\/)?migrations?\.ts$/u,
@@ -66,6 +67,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/feishu/store.ts',
   'server/src/memory/consolidation/scannerStatus.ts',
   'server/src/memory/consolidation/store.ts',
+  'server/src/quota/providerQuotaSnapshotStore.ts',
   'server/src/runtime/alertStateStore.ts',
   'server/src/runtime/artifactShareStore.ts',
   'server/src/runtime/artifactStore.ts',
@@ -144,6 +146,7 @@ function gitRead(execFileSync, cwd, args) {
     execFileSync('git', args, {
       cwd,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
       // A repository filename must never be interpreted as pathspec syntax.
       env: { ...process.env, GIT_LITERAL_PATHSPECS: '1' },
     }),
@@ -4257,8 +4260,22 @@ export function createMigrationPlan({
 
   const newlyReachable = new Set([...targetClosure].filter((path) => !baselineClosure.has(path)));
   const noLongerReachable = [...baselineClosure].filter((path) => !targetClosure.has(path));
+  let reviews = { entries: new Map(), digest: null };
+  try {
+    reviews = loadMigrationReviews({
+      baseline,
+      baselineSnapshot: snapshotFor(baseline),
+      targetSnapshot: snapshotFor(target),
+    });
+  } catch (error) {
+    blockingReasons.push(`Migration review validation failed: ${error.message}`);
+  }
   candidatePaths.push(...newlyReachable);
   for (const path of noLongerReachable) {
+    if (reviews.entries.get(path)?.classification === 'no-schema-change') {
+      candidatePaths.push(path);
+      continue;
+    }
     blockingReasons.push(
       `Migration execution provider ${path} is no longer reachable; provider removal or rewiring requires a separate contract release.`,
     );
@@ -4273,6 +4290,20 @@ export function createMigrationPlan({
   ].sort();
   const inventory = [];
   for (const path of paths) {
+    const reviewed = reviews.entries.get(path);
+    if (reviewed) {
+      if (reviewed.classification === 'contract') {
+        blockingReasons.push(`Migration ${path} has a reviewed contract change and requires a separate contract release.`);
+      }
+      inventory.push({
+        path,
+        baselineBlobDigest: reviewed.baselineDigest,
+        targetBlobDigest: reviewed.targetDigest,
+        classification: reviewed.classification,
+        reviewDigest: reviews.digest,
+      });
+      continue;
+    }
     let content;
     try {
       content = gitRead(execFileSync, cwd, ['show', `${target}:${path}`]);
@@ -4348,7 +4379,8 @@ export function createMigrationPlan({
     });
   }
 
-  const phase = paths.length === 0 ? 'none' : 'expand';
+  const phase = paths.some((path) => reviews.entries.get(path)?.classification !== 'no-schema-change')
+    ? 'expand' : 'none';
   const planBody = {
     schemaVersion: 2,
     baselineSha: baseline,

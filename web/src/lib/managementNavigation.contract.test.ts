@@ -28,9 +28,9 @@ describe('管理后台导航契约', () => {
     expect(managementPagesFor('config', 'platform')).toHaveLength(12);
   });
 
-  it('分析面只注册有真实页面的组织 4 项、平台 8 项', () => {
+  it('分析面只注册有真实页面的组织 4 项、平台 9 项', () => {
     expect(managementPagesFor('analytics', 'organization')).toHaveLength(4);
-    expect(managementPagesFor('analytics', 'platform')).toHaveLength(8);
+    expect(managementPagesFor('analytics', 'platform')).toHaveLength(9);
   });
 
   it('同一用量路由按 URL 语义拆为分析与预算配置', () => {

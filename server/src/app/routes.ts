@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { compensateAutomationSession, ensureAutomationSession } from './sessionAutomationSessionFactory.js'; import { createSessionAutomationAttachmentBinding } from './sessionAutomationAttachmentBinding.js';
 import type { Express, Request, Response } from 'express';
 import type { AppRuntime } from './runtime.js'; import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
-import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
+import { publishAdminCommittedConfigIdentity, registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
@@ -16,10 +16,10 @@ import {
   getUserPublicModelList,
   resolveContextAccountingFromModels,
 } from './models.js';
-import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { enforcePlatformWritePolicy } from '../auth/platformGovernance.js';
 import { createRuntimeTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
+import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 import {
   createHealthRouter,
   createUploadRouter,
@@ -88,7 +88,7 @@ import {
 } from './governanceOffboarding.js';
 import { archivePersonalWorkspace } from './governancePersonalDataRetention.js';
 import { createModelsAdminRouter } from '../routes/modelsAdmin.js';
-import { createCodexSubscriptionAdminRouter } from '../routes/codexSubscriptionAdmin.js';
+import { registerModelProviderAdminRoutes } from './modelProviderAdminRoutes.js';
 import { createTenantRemoteHandsAdminRouter } from '../routes/tenantRemoteHandsAdmin.js';
 import { createRuntimeOperationsAdminRouter } from '../routes/runtimeOperationsAdmin.js';
 import { createToolControlsAdminRouter } from '../routes/toolControlsAdmin.js';
@@ -114,20 +114,18 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // - 控制面与查询类路由由 app 统一注册
   // 兼容原权限治理挂载点；平台管理员现已统一为完整权限。
   app.use('/api', enforcePlatformWritePolicy);
-  const {
-    config,
-    agentCwd,
-    sharedDir,
-    tenantSkillsRootDir,
-    sessionBasePath,
-    dingtalkDeps,
-    cronRuntime,
-    dispatchMetricsStore,
-  } = runtime;
+  const { config, agentCwd, sharedDir, tenantSkillsRootDir, sessionBasePath,
+    dingtalkDeps, cronRuntime, dispatchMetricsStore } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
-  const { configMutationService, getEffectiveConfigStatus, getAdminConfigStatus } = createRuntimeConfigGovernance({
-    config, processCwd, processRole: runtime.processRole,
-  });
+  const { configMutationService, getEffectiveConfigStatus, getAdminConfigStatus } =
+    createRuntimeConfigGovernance({
+      config,
+      processCwd,
+      processRole: runtime.processRole,
+      recoveryGate: runtime.configRuntimeRecoveryGate,
+      onConfigCommitted: (text, permit) => publishAdminCommittedConfigIdentity(runtime, text, permit),
+      onConfigInvalidated: runtime.invalidateSharedConfigIdentity,
+    });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
   const legacyWriteGate = runtime.governanceWriteGate ?? {
     assertLegacyWriteAllowed: async () => {
@@ -159,7 +157,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getIsDraining: () => channelManager.draining,
       getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
-      getEffectiveConfigStatus,
+      getEffectiveConfigStatus, getConfigIdentitySummary: runtime.refreshConfigIdentitySummary ? () => runtime.refreshConfigIdentitySummary!() : runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
       ...(runtime.egressConfigStore
         ? {
             getEnvironmentSafetyAttested: () =>
@@ -177,7 +175,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       ...createSessionAutomationAttachmentBinding(runtime), broadcastToUser: (userId, payload) => channelManager.getChannel<WebChannel>('web')?.getWsServer()?.broadcastToUser(userId, payload) }));
   }
   app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
-  // App update: version check + APK download
+  // App update: version check + APK download.
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
   app.use('/api/upload', tenantFeatureGuard(runtime.tenantStore, 'filesEnabled', '文件能力'));
@@ -259,10 +257,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);
-  app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService }));
+  /* 每次强制刷新 STT SecretRef。 */ app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService, refreshSharedConfig: runtime.refreshVoiceTranscriptionConfig }));
   app.use('/api', createTtsRouter({ tts: config.tts }));
   app.use('/api/search', createSearchRouter({ agentCwd, userStore: runtime.userStore }));
-  // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）
+  // 场景库：所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段。
   app.use(
     '/api/scenarios',
     createScenariosRouter({
@@ -363,10 +361,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       deliveryService: dingtalkDeps.deliveryService,
     }),
   );
-  // 模型列表 API
+  // 模型列表与配置版本 CAS 管理 API；保存前先同步完整共享配置基线。
   if (config.models) {
-    configureModelPricing(config.models);
-    app.get('/api/models', (req: Request, res: Response) => {
+    configureModelPricing(config.models); app.get('/api/models', (req: Request, res: Response) => {
       const tenantSettings = req.user?.tenantId
         ? runtime.tenantStore?.getSettings(req.user.tenantId)
         : undefined;
@@ -383,35 +380,25 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         config,
         configMutationService,
         secretVault: runtime.secretVault,
+        requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
+        ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
+        // 热更新逻辑与 runtime-worker 侧共用同一实现，并先解析模型 SecretRef。
         onModelsUpdated: runtime.updateModelsConfig ?? ((models) => {
           applyModelsHotUpdate({ config, target: runtime, models });
         }),
-        onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
-        onSystemPromptOverridesUpdated: (next) =>
-          runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
+        onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText).then(() => undefined), onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
+        onSystemPromptOverridesUpdated: (next) => runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
       }),
     );
   }
-  app.use(
-    '/api/admin/codex-subscription',
-    createCodexSubscriptionAdminRouter({
-      processCwd,
-      config,
-      configMutationService,
-      credentialManager: runtime.codexCredentialManager,
-      deviceAuthService: runtime.codexDeviceAuthService,
-      closeWebSockets: (refs) => refs && runtime.codexWebSocketCredentialShutdown
-        ? runtime.codexWebSocketCredentialShutdown(refs)
-        : runtime.codexWebSocketShutdown?.(),
-    }),
-  );
+  registerModelProviderAdminRoutes(app, runtime, { processCwd, config, configMutationService });
   app.use(
     '/api/admin/tenant-remote-hands',
     createTenantRemoteHandsAdminRouter({
       processCwd,
       config,
-      configMutationService,
-      secretVault: runtime.secretVault,
+      configMutationService, secretVault: runtime.secretVault,
+      ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
     }),
   );
   app.use(
@@ -424,15 +411,15 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       runtimeSchedulerCapacity: runtime.runtimeSchedulerCapacity,
     }),
   );
-  app.use(
-    '/api/admin/tool-controls',
+  app.use('/api/admin/tool-controls',
     createToolControlsAdminRouter({
       processCwd,
       config,
       configMutationService,
-      secretVault: runtime.secretVault,
-      validateToolSettingsConfig: runtime.validateToolSettingsConfig,
-      onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+      requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
+      secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
+      validateToolSettingsConfig: runtime.validateToolSettingsConfig, onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+      onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText).then(() => undefined),
     }),
   );
   // 连接器映射词典（2026-08-03）：决定工具行怎么把命令行还原成业务语言、
@@ -650,7 +637,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       eventStore: runtime.runtimePgEventStore,
       toolInvocationStore: runtime.runtimeToolInvocationStore,
       systemMetricsStore: runtime.systemMetricsStore,
-      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
+      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(), getConfigIdentitySummary: runtime.refreshConfigIdentitySummary ? () => runtime.refreshConfigIdentitySummary!() : runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
     }),
   );
   app.use('/api/admin/system', requireAdmin, createSystemAdminRouter({

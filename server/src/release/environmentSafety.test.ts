@@ -33,6 +33,9 @@ const stagingEnv = {
   AGENT_SAAS_WEB_DIGEST: DIGEST,
   AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: DIGEST,
   AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: DIGEST,
+  // TASK-318：staging 必须携带发布期绑定的 expected config identity。
+  AGENT_SAAS_CONFIG_IDENTITY_DIGEST: `sha256:${'d'.repeat(64)}`,
+  AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: '1',
   AGENT_SAAS_STAGING_ROOT: stagingRoot,
   AGENT_SAAS_STAGING_RELEASE_ROOT: stagingReleaseRoot,
   AGENT_SAAS_STAGING_DATABASE_HOSTS: 'staging-db.internal',
@@ -375,6 +378,155 @@ describe('assertRuntimeEnvironmentSafety', () => {
   it('does not apply staging-specific assertions to production', () => {
     expect(
       assertRuntimeEnvironmentSafety(config({ cron: { enabled: true }, egress: undefined }), {
+        AGENT_SAAS_ENVIRONMENT: 'production',
+      }),
+    ).toMatchObject({ environment: 'production', safetyAttested: true });
+  });
+
+  it('staging requires a release-bound config identity and rejects malformed digests', () => {
+    const {
+      AGENT_SAAS_CONFIG_IDENTITY_DIGEST: _digest,
+      AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: _version,
+      ...envWithoutIdentity
+    } = stagingEnv;
+    expect(() =>
+      assertRuntimeEnvironmentSafety(config(), envWithoutIdentity, { processCwd }),
+    ).toThrow(/Staging requires a release-bound config identity/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config(),
+        {
+          ...stagingEnv,
+          AGENT_SAAS_CONFIG_IDENTITY_DIGEST: 'not-a-digest',
+        },
+        { processCwd },
+      ),
+    ).toThrow(/sha256 digest/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config(),
+        {
+          ...stagingEnv,
+          AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: '99',
+        },
+        { processCwd },
+      ),
+    ).toThrow(/schema version/);
+  });
+
+  it('production fails closed on inline secrets for fields with a SecretVault ref scheme', () => {
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          serverRemote: { baseUrl: 'http://127.0.0.1:3300', authToken: 'inline-token-value' },
+        }),
+        { AGENT_SAAS_ENVIRONMENT: 'production' },
+      ),
+    ).toThrow(/serverRemote\.authToken must use SecretVault ref/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          tenantRemoteHands: {
+            hands: [
+              {
+                id: 'hand-1',
+                baseUrl: 'https://acs.prod.internal',
+                authToken: 'inline-token-value',
+              },
+            ],
+          },
+        }),
+        { AGENT_SAAS_ENVIRONMENT: 'production' },
+      ),
+    ).toThrow(/hands\[0\]\.authToken must use SecretVault ref/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          stt: { enabled: true, apiKey: 'inline-api-key-value' },
+        }),
+        { AGENT_SAAS_ENVIRONMENT: 'production' },
+      ),
+    ).toThrow(/stt\.apiKey must use SecretVault ref/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({
+          secretVault: {
+            backend: 'encrypted-file',
+            filePath: '/etc/agent-saas/secrets.enc',
+            encryptionKey: 'inline-encryption-key',
+          },
+        }),
+        { AGENT_SAAS_ENVIRONMENT: 'production' },
+      ),
+    ).toThrow(/encryptionKey must use encryptionKeyEnv/);
+    const additionalInlineCases: Array<{
+      overrides: Record<string, unknown>;
+      expectedPath: RegExp;
+    }> = [
+      {
+        overrides: { clientDaemon: { authToken: 'inline-client-daemon-token' } },
+        expectedPath: /clientDaemon\.authToken/,
+      },
+      {
+        overrides: { stt: { ossAccessKeyId: 'inline-oss-id' } },
+        expectedPath: /stt\.ossAccessKeyId/,
+      },
+      {
+        overrides: { stt: { ossAccessKeySecret: 'inline-oss-secret' } },
+        expectedPath: /stt\.ossAccessKeySecret/,
+      },
+      {
+        overrides: {
+          webTools: { search: { enabled: true, provider: 'tavily', apiKey: 'inline-search-key' } },
+        },
+        expectedPath: /webTools\.search\.apiKey/,
+      },
+      {
+        overrides: {
+          webTools: {
+            search: {
+              enabled: true,
+              provider: 'tavily',
+              apiKeyRef: 'primary-search-ref',
+              global: { provider: 'brave', apiKey: 'inline-global-search-key' },
+            },
+          },
+        },
+        expectedPath: /webTools\.search\.global\.apiKey/,
+      },
+      {
+        overrides: {
+          imageGenTools: { gptImage2: { enabled: true, apiKey: 'inline-gpt-image-key' } },
+        },
+        expectedPath: /imageGenTools\.gptImage2\.apiKey/,
+      },
+      {
+        overrides: {
+          imageGenTools: { seedream: { enabled: true, apiKey: 'inline-seedream-key' } },
+        },
+        expectedPath: /imageGenTools\.seedream\.apiKey/,
+      },
+      {
+        overrides: {
+          secretVault: {
+            backend: 'http',
+            baseUrl: 'https://vault.prod.internal',
+            authToken: 'inline-http-vault-token',
+          },
+        },
+        expectedPath: /secretVault\.authToken/,
+      },
+    ];
+    for (const entry of additionalInlineCases) {
+      expect(() =>
+        assertRuntimeEnvironmentSafety(config(entry.overrides), {
+          AGENT_SAAS_ENVIRONMENT: 'production',
+        }),
+      ).toThrow(entry.expectedPath);
+    }
+    // 没有选中任何受管字段时，production 门禁不误伤普通字符串配置。
+    expect(
+      assertRuntimeEnvironmentSafety(config({ cron: { enabled: true } }), {
         AGENT_SAAS_ENVIRONMENT: 'production',
       }),
     ).toMatchObject({ environment: 'production', safetyAttested: true });

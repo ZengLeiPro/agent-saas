@@ -11,6 +11,9 @@ vi.mock('@/lib/authFetch', () => ({ authFetch: vi.fn() }));
 const account = {
   accountId: 'account/member',
   displayName: '群前台账号',
+  profileId: 'corp-a:member-a',
+  corpId: 'corp-a',
+  dingtalkUserId: 'member-a',
   status: 'active',
 } as AgentDwsAccount;
 
@@ -64,6 +67,26 @@ const workspace = {
         access: { triggerRoles: ['member'], approvalRoles: ['org_admin'] },
         speech: { proactive: false, requireMention: true },
       },
+      effectiveConfigComputation: {
+        publishedAgent: {
+          skillIds: ['skill-1', 'skill-2'],
+          knowledgeSkillIds: [],
+          sourceIds: ['source-1', 'source-2'],
+          executionMode: 'dispatcher',
+          enabled: true,
+        },
+        channelCeiling: {
+          toolNames: ['ContextGet', 'ContextSearch', 'DwsBusiness'],
+          contextSourceIds: ['source-1', 'source-2'],
+          contextDirectoryAvailable: true,
+        },
+        groupNarrowing: {},
+        liveOverrides: {
+          bindingEnabled: true,
+          liveDeny: true,
+          accountStatus: 'active',
+        },
+      },
     },
   ],
   workspaces: [
@@ -104,6 +127,13 @@ const workspace = {
       memories: [],
     },
   ],
+  observedGroups: [
+    {
+      conversationId: 'group-1',
+      lastEventAt: '2026-09-04T00:00:00.000Z',
+      bindingId: 'binding-1',
+    },
+  ],
   deliveries: [
     {
       deliveryId: 'delivery/1',
@@ -125,6 +155,8 @@ describe('GroupAgentWorkspacePanel', () => {
           return jsonResponse(workspace);
         if (String(path).includes('/group-workspace?') && init?.method === 'PATCH')
           return jsonResponse({ ok: true });
+        if (String(path).includes('/group-workspace/bindings?') && init?.method === 'POST')
+          return jsonResponse({ ok: true }, 201);
         if (String(path).includes('/group-workspace/memories?') && init?.method === 'POST')
           return jsonResponse({ ok: true }, 201);
         if (String(path).includes('/action?') && init?.method === 'POST')
@@ -137,7 +169,58 @@ describe('GroupAgentWorkspacePanel', () => {
       });
   });
 
-  it('展示 attempt 证据并使用编码后的资源路径重试', async () => {
+  it('active 账号可从 Personal Stream 已观测群创建 shadow binding', async () => {
+    const user = userEvent.setup();
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (String(path).includes('/group-workspace?') && !init?.method)
+        return jsonResponse({
+          ...workspace,
+          observedGroups: [{
+            conversationId: 'group/unbound',
+            lastEventAt: '2026-09-04T01:00:00.000Z',
+            bindingId: null,
+          }],
+        });
+      if (String(path).includes('/group-workspace/bindings?') && init?.method === 'POST')
+        return jsonResponse({ ok: true }, 201);
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    await user.click(await screen.findByRole('combobox', { name: '已观测群' }));
+    await user.click(await screen.findByRole('option', { name: /group\/unbound/ }));
+    await user.click(screen.getByRole('button', { name: '创建群配置' }));
+
+    await waitFor(() => expect(vi.mocked(authFetch).mock.calls.some(([path, init]) => (
+      path === '/api/agent-dws-accounts/account%2Fmember/group-workspace/bindings?tenantId=tenant-a'
+      && init?.method === 'POST'
+      && JSON.parse(String(init.body)).conversationId === 'group/unbound'
+    ))).toBe(true));
+  });
+
+  it('paused 账号保留管理入口，但明确禁用新群配置创建', async () => {
+    vi.mocked(authFetch).mockImplementation(async (path) => {
+      if (String(path).includes('/group-workspace?')) return jsonResponse({
+        ...workspace,
+        observedGroups: [{
+          conversationId: 'group/unbound',
+          lastEventAt: '2026-09-04T01:00:00.000Z',
+          bindingId: null,
+        }],
+      });
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel
+      tenantId="tenant-a"
+      accounts={[{ ...account, status: 'paused' } as AgentDwsAccount]}
+    />);
+
+    expect(await screen.findByText(/可查看并停用已有配置/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '创建群配置' }).hasAttribute('disabled')).toBe(true);
+    cleanup();
+  });
+
+  it('展示 attempt 证据，并使用编码后的资源路径重试任务', async () => {
     const user = userEvent.setup();
     render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
 
@@ -253,11 +336,20 @@ describe('GroupAgentWorkspacePanel', () => {
     );
   });
 
-  it('保存完整群配置：身份、上下文、可见范围与角色', async () => {
+  it('保存完整群配置：身份、上下文、可见范围、角色与 doc 资源', async () => {
     const user = userEvent.setup();
     render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
 
     const displayName = await screen.findByLabelText('前台显示名');
+    expect((screen.getByRole('switch', { name: '技能：skill-1' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    expect((screen.getByRole('switch', { name: '工具：ContextSearch' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    expect((screen.getByRole('switch', { name: '知识源：source-1' }) as HTMLButtonElement).dataset.state)
+      .toBe('checked');
+    await user.click(screen.getByRole('switch', { name: '技能：skill-2' }));
+    await user.click(screen.getByRole('switch', { name: '工具：ContextGet' }));
+    await user.click(screen.getByRole('switch', { name: '知识源：source-2' }));
     await user.clear(displayName);
     await user.type(displayName, '客户资料助手');
     const instructions = screen.getByLabelText('群 Agent 指令');
@@ -265,7 +357,7 @@ describe('GroupAgentWorkspacePanel', () => {
     await user.type(instructions, '只处理报价资料');
     await user.click(screen.getByRole('switch', { name: '启用企业上下文' }));
     await user.click(screen.getByRole('switch', { name: '读取 Agent 级记忆' }));
-    await user.click(screen.getByRole('switch', { name: '启用钉钉业务工具' }));
+    await user.click(screen.getByRole('switch', { name: '工具：DwsBusiness' }));
     await user.type(screen.getByLabelText('钉钉资源范围'), 'doc:doc-a');
     await user.click(screen.getByRole('combobox', { name: '任务可见范围' }));
     await user.click(await screen.findByRole('option', { name: '仅发起人可见' }));
@@ -279,9 +371,10 @@ describe('GroupAgentWorkspacePanel', () => {
       effectiveConfig: {
         identity: { displayName: '客户资料助手' },
         instructions: { system: '只处理报价资料' },
-        knowledge: { contextEnabled: false },
+        knowledge: { contextEnabled: false, sourceIds: ['source-1', 'source-2'] },
         capabilities: {
-          toolNames: ['ContextSearch', 'DwsBusiness'],
+          skillIds: ['skill-1', 'skill-2'],
+          toolNames: ['ContextSearch', 'ContextGet', 'DwsBusiness'],
           dwsResourceIds: ['doc:doc-a'],
         },
         memory: { readAgent: false, readConversation: true, adminWriteConversation: true },
@@ -290,6 +383,57 @@ describe('GroupAgentWorkspacePanel', () => {
       },
     });
     expect(screen.getByText('当前仅支持群内 @ 前台账号触发；必须 @，不支持主动发言。')).toBeTruthy();
+  });
+
+  it('激活配置中的非 doc DWS 资源在前端即拒绝且不会提交 PATCH', async () => {
+    const user = userEvent.setup();
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    const resourceInput = await screen.findByLabelText('钉钉资源范围');
+    await user.click(screen.getByRole('switch', { name: '立即阻断' }));
+    await user.type(resourceInput, 'drive:folder-a');
+    await user.click(screen.getByRole('button', { name: '保存群配置' }));
+
+    expect(await screen.findByText('共享群 DWS 资源目前仅支持 doc:<nodeId>')).toBeTruthy();
+    expect(vi.mocked(authFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+
+  it('非候选能力不可新增，既有越界值只能显式移除', async () => {
+    const narrowedWorkspace = structuredClone(workspace);
+    narrowedWorkspace.bindings[0].effectiveConfig.capabilities.skillIds.push('skill-legacy');
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (String(path).includes('/group-workspace?') && !init?.method)
+        return jsonResponse(narrowedWorkspace);
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByRole('switch', { name: '技能：skill-1' })).toBeTruthy();
+    expect(screen.queryByRole('switch', { name: '技能：skill-not-published' })).toBeNull();
+    const legacy = screen.getByRole('switch', { name: '技能：移除非目录值 skill-legacy' });
+    expect((legacy as HTMLButtonElement).dataset.state).toBe('checked');
+    expect(screen.getByText('以下既有值不在当前目录中，只能保留或移除，不能新增：')).toBeTruthy();
+  });
+
+  it('空能力目录与不可用知识源目录展示明确限制并保留既有值', async () => {
+    const emptyWorkspace = structuredClone(workspace);
+    emptyWorkspace.bindings[0].effectiveConfigComputation.publishedAgent.skillIds = [];
+    emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.toolNames = [];
+    emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.contextDirectoryAvailable = false;
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (String(path).includes('/group-workspace?') && !init?.method)
+        return jsonResponse(emptyWorkspace);
+      return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
+    });
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByText('当前 Agent 未发布可选技能，无法为该群新增技能。')).toBeTruthy();
+    expect(screen.getByText('当前群入口未开放可选工具。')).toBeTruthy();
+    expect(screen.getByText('知识源目录暂不可用；已保留当前配置，请刷新或检查账号的 Context 授权。')).toBeTruthy();
+    expect(screen.getByText('当前保留：source-1')).toBeTruthy();
+    expect(screen.getByText(/共享群目前只验证了钉钉文档命令/)).toBeTruthy();
+    expect(screen.getByText(/doc:<nodeId>/)).toBeTruthy();
+    expect(screen.queryByText(/drive:/)).toBeNull();
   });
 
   it('任务控制调用 amend、pause、resume、review 与 reassign API', async () => {

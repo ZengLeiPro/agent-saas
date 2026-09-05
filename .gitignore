@@ -108,3 +108,6 @@ e2e/playwright-report/
 # Chaos 门禁报告产物（CI 上传为 artifact，不入库）
 .chaos-reports/
 server/.chaos-reports/
+
+# vitest 分片 blob（CI 覆盖率合并中间产物）
+coverage-blobs/

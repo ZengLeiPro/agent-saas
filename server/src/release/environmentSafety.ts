@@ -3,6 +3,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { AppConfig } from '../app/config.js';
 import { isStagingServerEgressSafe } from '../runtime/egressPolicy.js';
+import { assertProductionManagedCredentialSafety } from './configIdentity.js';
 import { readRuntimeIdentity, type RuntimeIdentity } from './runtimeIdentity.js';
 
 export interface RuntimeEnvironmentSafetyOptions {
@@ -76,6 +77,12 @@ export function assertRuntimeEnvironmentSafety(
   options: RuntimeEnvironmentSafetyOptions = {},
 ): RuntimeIdentity {
   const identity = readRuntimeIdentity(env);
+  if (identity.environment === 'production') {
+    // TASK-318：Production 对「已有 SecretVault ref 安全方案」的 inline secret
+    // fail closed（显式注册表判定，不按字段名猜测）。
+    assertProductionManagedCredentialSafety(config);
+    return { ...identity, safetyAttested: true };
+  }
   if (identity.environment !== 'staging') return { ...identity, safetyAttested: true };
 
   const failures: string[] = [];

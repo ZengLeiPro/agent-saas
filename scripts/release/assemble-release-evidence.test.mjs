@@ -15,8 +15,24 @@ import {
 } from './runtime-dependency.mjs';
 
 const SHA = RELEASE_EVIDENCE_SHA;
+const CONFIG_IDENTITY = {
+  schemaVersion: 1,
+  status: 'consistent',
+  releaseId: 'release-previous',
+  expected: {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+  },
+  observed: {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+    credentialVersionDigest: null,
+    versionResolution: 'resolved',
+    secretRefCount: 0,
+  },
+};
 
-async function fixture() {
+async function fixture(authoritative = createValidReleaseEvidence()) {
   const root = await mkdtemp(join(tmpdir(), 'release-evidence-'));
   await writeFile(join(root, 'server.tgz'), 'server');
   await writeFile(join(root, 'web.tgz'), 'web');
@@ -60,12 +76,12 @@ async function fixture() {
   };
   const index = { ...body, aggregateDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
   await writeFile(join(root, 'index.json'), JSON.stringify(index));
-  await writeFile(join(root, 'authoritative.json'), JSON.stringify(createValidReleaseEvidence()));
+  await writeFile(join(root, 'authoritative.json'), JSON.stringify(authoritative));
   return root;
 }
 
-test('binds strict built artifact index/SBOM URIs to the internally selected release', async () => {
-  const root = await fixture();
+test('binds artifacts and preserves authoritative ConfigIdentity in the selected release', async () => {
+  const root = await fixture(createValidReleaseEvidence({ configIdentity: CONFIG_IDENTITY }));
   const value = await assembleReleaseEvidence({
     authoritative: join(root, 'authoritative.json'),
     index: join(root, 'index.json'),
@@ -82,6 +98,7 @@ test('binds strict built artifact index/SBOM URIs to the internally selected rel
     'oss://agent-saas-releases/rc-20260826-22/server.tgz',
   );
   assert.equal(value.migrationPlan.contract, 'separate_release');
+  assert.deepEqual(value.configIdentity, CONFIG_IDENTITY);
   assert.equal(
     value.builtArtifacts.runtimeDependencies.uri,
     'oss://agent-saas-releases/rc-20260826-22/runtime-dependencies.json',

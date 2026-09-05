@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   createValidLegacyReleaseEvidence,
@@ -76,7 +77,35 @@ test('continues to accept immutable legacy Taskboard Integration evidence', () =
   assert.equal(validateReleaseEvidenceDocument(legacy).releaseSha, RELEASE_EVIDENCE_SHA);
 });
 
+const relationshipContradictions = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/config-identity-relationship-contradictions.json', import.meta.url),
+  ),
+);
+const configIdentityCases = JSON.parse(
+  readFileSync(new URL('./fixtures/config-identity-summary-cases.json', import.meta.url), 'utf8'),
+).cases;
+
+for (const fixtureCase of configIdentityCases) {
+  test(`release evidence Config Identity fixture ${fixtureCase.valid.releaseEvidence ? 'accepts' : 'rejects'} ${fixtureCase.name}`, () => {
+    const value = structuredClone(createValidReleaseEvidence());
+    value.configIdentity = structuredClone(fixtureCase.summary);
+    const { evidenceDigest: _previousDigest, ...body } = value;
+    value.evidenceDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+
+    if (fixtureCase.valid.releaseEvidence) {
+      assert.deepEqual(validateReleaseEvidenceDocument(value).configIdentity, fixtureCase.summary);
+    } else {
+      assert.throws(() => validateReleaseEvidenceDocument(value), /schema is invalid/u);
+    }
+  });
+}
+
 const invalidMutations = [
+  ...Object.entries(relationshipContradictions).map(([name, summary]) => [
+    `config identity unresolved-version contradiction: ${name}`,
+    (value) => (value.configIdentity = summary),
+  ]),
   ['release PR SHA', (value) => (value.releasePullRequest.mergeCommitOid = 'b'.repeat(40))],
   ['release PR membership', (value) => (value.sourcePullRequests = [202])],
   ['merge receipt', (value) => delete value.checks.mergeReceipt],
@@ -95,6 +124,59 @@ const invalidMutations = [
   ],
   ['affected component name', (value) => value.affectedComponents.push('unknown')],
   ['API/Worker coupling', (value) => (value.affectedComponents = ['api'])],
+  [
+    'partial config identity',
+    (value) => (value.configIdentity = { schemaVersion: 1, status: 'consistent' }),
+  ],
+  [
+    'config identity without release binding',
+    (value) =>
+      (value.configIdentity = {
+        schemaVersion: 1,
+        status: 'consistent',
+        expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
+        },
+      }),
+  ],
+  [
+    'config identity expected binding disappeared',
+    (value) =>
+      (value.configIdentity = {
+        schemaVersion: 1,
+        status: 'unverifiable',
+        reason: 'expected_not_bound',
+        releaseId: 'rc-evidence-test',
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
+        },
+      }),
+  ],
+  [
+    'impossible consistent config identity',
+    (value) =>
+      (value.configIdentity = {
+        schemaVersion: 1,
+        status: 'consistent',
+        expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'unavailable',
+          secretRefCount: 1,
+        },
+      }),
+  ],
 ];
 
 for (const [name, mutate] of invalidMutations) {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { governanceLatestMigrations } from './latestMigrations.js';
 import { governanceV38SkillPresentationStatements } from './v38SkillPresentationMigration.js';
 
-describe('治理库 v38 技能展示信息迁移', () => {
+describe('治理库 V38 技能展示信息迁移', () => {
   it('创建展示信息表、作用域约束和查询索引', () => {
     const sql = governanceV38SkillPresentationStatements('test_governance').join('\n');
     expect(sql).toContain('test_governance_skill_presentations');
@@ -16,8 +16,10 @@ describe('治理库 v38 技能展示信息迁移', () => {
     expect(sql).toContain('test_governance_skill_presentations_audience_idx');
   });
 
-  it('登记为当前最新迁移', () => {
+  it('登记为 V38 迁移', () => {
     const migrations = governanceLatestMigrations('test_governance');
-    expect(migrations.at(-1)?.version).toBe(38);
+    expect(migrations.find((migration) => migration.version === 38)?.statements).toEqual(
+      governanceV38SkillPresentationStatements('test_governance'),
+    );
   });
 });

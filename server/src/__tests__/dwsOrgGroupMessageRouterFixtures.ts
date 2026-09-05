@@ -1,9 +1,24 @@
-import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
-import type { DwsDeliveryIntent, OrgAgentChannelBinding } from '../data/orgGroupAgents/index.js';
+import { vi } from 'vitest';
+
+import type { AgentRunDispatch } from '../agent/index.js';
+import type {
+  AgentDwsAccountRecord,
+  AgentDwsAccountStore,
+} from '../data/agentDwsAccounts/index.js';
+import type {
+  AgentDwsInboxRecord,
+  AgentDwsMessageStore,
+} from '../data/agentDwsMessages/index.js';
+import type {
+  DwsDeliveryIntent,
+  OrgAgentChannelBinding,
+  OrgGroupAgentStore,
+} from '../data/orgGroupAgents/index.js';
+import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import type { DwsRequesterResolution } from '../dws/requesterIdentityResolver.js';
 
-export const now = '2026-09-04T00:00:00.000Z';
+export const now = '2026-08-14T00:00:00.000Z';
+const injectedNowMs = Date.parse(now) + 60_000;
 
 export interface DwsOrgGroupRouterHarnessOptions {
   liveDeny?: boolean;
@@ -11,6 +26,9 @@ export interface DwsOrgGroupRouterHarnessOptions {
   requesterOutcome?: DwsRequesterResolution;
   senderReceipt?: Record<string, unknown> | null;
   claimed?: AgentDwsInboxRecord;
+  /** Claims and current authorization decisions returned across runOnce calls. */
+  claimedSequence?: AgentDwsInboxRecord[];
+  authorizationSequence?: Array<{ allowed: boolean; reason?: string }>;
   triggerRoles?: Array<'member' | 'org_admin'>;
   governanceRole?: 'member' | 'org_admin' | null;
   workVisibility?: 'conversation' | 'requester_only';
@@ -23,6 +41,7 @@ export interface DwsOrgGroupRouterHarnessOptions {
   memories?: Array<Record<string, unknown>>;
   frontReplyDeadlineMs?: number;
   dispatchGate?: Promise<void>;
+  /** Simulates a process failure before any provider transport can start. */
   failFirstDeliveryClaim?: boolean;
   systemInstructions?: string;
   existingRun?: Record<string, unknown>;
@@ -46,6 +65,10 @@ export function createBinding(options: DwsOrgGroupRouterHarnessOptions): OrgAgen
     conversationSpaceId: 'space-a',
     serviceSessionId: 'service-session-a',
     workspaceId: 'ws_tenant-a__agent_agent-a',
+    accountIdentity: {
+      profileId: 'corp-a:agent-self', corpId: 'corp-a', dingtalkUserId: 'agent-self',
+      identityUpdatedAt: now,
+    },
     policy: {
       enabled: true,
       membership: options.guestReadOnly ? 'members_and_guests' : 'members',
@@ -126,6 +149,7 @@ export const account: AgentDwsAccountRecord = {
   runtimeStatus: 'ready',
   eventKinds: ['at_me'],
   revision: 1,
+  identityUpdatedAt: now,
   createdAt: now,
   createdBy: 'admin',
   updatedAt: now,
@@ -200,5 +224,352 @@ export function workOrder(overrides: Record<string, unknown> = {}): Record<strin
     createdAt: now,
     updatedAt: now,
     ...overrides,
+  };
+}
+
+
+export function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
+  const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
+  const claimedQueue = [...(options.claimedSequence ?? [claimed])];
+  const messageStore = {
+    claimNext: vi.fn(async () => claimedQueue.shift() ?? null),
+    renewLease: vi.fn().mockResolvedValue(true),
+    getOrCreateBinding: vi.fn(),
+    markDispatchStarted: vi
+      .fn()
+      .mockImplementation(
+        async (_id: string, _owner: string, _fence: number, sessionId: string, runId: string) => ({
+          ...claimed,
+          sessionId,
+          runId,
+        }),
+      ),
+    saveDispatchResult: vi
+      .fn()
+      .mockImplementation(async (_id: string, _owner: string, _fence: number, text: string) => ({
+        ...claimed,
+        state: 'reply_pending',
+        responseText: text,
+      })),
+    saveRejectionResult: vi.fn().mockImplementation(async (
+      _id: string, _owner: string, _fence: number, text: string, reasonCode: string,
+    ) => ({ ...claimed, state: 'reply_pending', replyKind: 'access_rejection',
+      responseText: text, rejectionReasonCode: reasonCode })),
+    markReplyAttemptStarted: vi.fn().mockImplementation(async () => ({
+      ...claimed,
+      state: 'reply_pending',
+      replyStartedAt: now,
+    })),
+    complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
+    reject: vi.fn().mockImplementation(async (
+      _id: string, _owner: string, _fence: number, rejectionReasonCode: string,
+    ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
+    blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter' }),
+    markReplyUnknown: vi.fn().mockResolvedValue({
+      ...claimed, state: 'dead_letter', disposition: 'delivery_unknown' }),
+    fail: vi.fn().mockResolvedValue(undefined),
+    defer: vi.fn().mockResolvedValue(undefined),
+    releaseClaim: vi.fn(),
+    pinLegacyIdentityOrTerminate: vi.fn(),
+    init: vi.fn(),
+    ingest: vi.fn().mockResolvedValue({ record: claimed, created: true }),
+    listForAccount: vi.fn(),
+    hasObservedGroup: vi.fn(),
+    deleteForTenant: vi.fn(),
+  } as unknown as AgentDwsMessageStore;
+  const binding = createBinding(options);
+  // Durable intents survive the simulated router process failure across runOnce calls.
+  const storedDeliveries = new Map<string, typeof delivery>();
+  let deliverySequence = 0;
+  let deliveryClaimSequence = 0;
+  const orgStore = {
+    reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
+    claimNextDelivery: vi.fn(async () => {
+      if (claimedQueue[0]?.state === 'reply_pending') return null;
+      return [...storedDeliveries.values()].find(
+        candidate => candidate.deliveryState === 'pending',
+      ) ?? null;
+    }),
+    ensureShadowBinding: vi.fn().mockResolvedValue(binding),
+    getBinding: vi.fn().mockResolvedValue(binding),
+    getOrCreateWorkConversation: vi.fn().mockResolvedValue({
+      workConversationId: 'workconv-a',
+      tenantId: 'tenant-a',
+      bindingId: 'channel-binding-a',
+      rootKey: 'mid-a',
+      rootMessageId: 'mid-a',
+      sessionId: 'session-a',
+      state: 'active',
+      createdAt: now,
+      updatedAt: now,
+    }),
+    findWorkConversationByMessage: vi.fn().mockResolvedValue(null),
+    getWorkConversation: vi
+      .fn()
+      .mockImplementation(async (_tenantId: string, workConversationId: string) => {
+        if (workConversationId === 'workconv-a') {
+          return {
+            workConversationId,
+            tenantId: 'tenant-a',
+            bindingId: 'channel-binding-a',
+            rootKey: 'mid-a',
+            rootMessageId: 'mid-a',
+            sessionId: 'session-a',
+            state: 'active',
+            createdAt: now,
+            updatedAt: now,
+          };
+        }
+        const routed = [options.shortWorkOrder, ...(options.workOrders ?? [])].find(
+          (candidate) => candidate?.workConversationId === workConversationId,
+        );
+        if (routed) {
+          return {
+            workConversationId,
+            tenantId: 'tenant-a',
+            bindingId: 'channel-binding-a',
+            rootKey: 'routed-message',
+            sessionId: 'session-routed',
+            state: 'active',
+            createdAt: now,
+            updatedAt: now,
+          };
+        }
+        return null;
+      }),
+    pinInboxContext: vi.fn(),
+    pinInboxRouting: vi.fn(),
+    getWorkOrder: vi.fn().mockResolvedValue({
+      workOrderId: 'work-a',
+      tenantId: 'tenant-a',
+      agentId: 'agent-a',
+      bindingId: 'channel-binding-a',
+      workConversationId: 'workconv-a',
+      title: '整理采购异常',
+      resultEnvelope: { summary: '敏感结果' },
+      state: 'completed',
+      currentAttemptNo: 1,
+      visibility: options.workVisibility ?? 'conversation',
+      createdByActor: {
+        kind: 'external_user',
+        provider: 'dingtalk',
+        corpId: 'corp-a',
+        openId: 'requester-open-id',
+        assurance: 'mapped',
+        mappedUserId: 'user-a',
+        role: 'member',
+      },
+    }),
+    getWorkOrderByShortId: vi
+      .fn()
+      .mockImplementation(async (_tenantId: string, _agentId: string, shortId: string) =>
+        options.shortWorkOrder?.shortId === shortId ? options.shortWorkOrder : null,
+      ),
+    listWorkOrders: vi.fn().mockResolvedValue(options.workOrders ?? []),
+    listWorkAttempts: vi.fn().mockResolvedValue([
+      {
+        attemptId: 'attempt-a',
+        workOrderId: 'work-a',
+        runtimeRunId: 'bg-a',
+        attemptNo: 1,
+        status: 'completed',
+      },
+    ]),
+    listMemories: vi
+      .fn()
+      .mockImplementation(
+        async (query: {
+          memoryScope?: string;
+          status?: string;
+          bindingId?: string;
+          workConversationId?: string;
+        }) =>
+          (options.memories ?? []).filter(
+            (memory) =>
+              (!query.memoryScope || memory.memoryScope === query.memoryScope) &&
+              (!query.status || memory.status === query.status) &&
+              (!query.bindingId || memory.bindingId === query.bindingId) &&
+              (!query.workConversationId || memory.workConversationId === query.workConversationId),
+          ),
+      ),
+    createDelivery: vi.fn().mockImplementation(async (input: Record<string, unknown>) => {
+      const key = String(input.idempotencyKey);
+      const existing = storedDeliveries.get(key);
+      if (existing) return existing;
+      deliverySequence += 1;
+      const created = {
+        ...delivery,
+        ...input,
+        deliveryId: deliverySequence === 1 ? 'delivery-a' : `delivery-${deliverySequence}`,
+        deliveryState: 'pending' as const,
+        attempt: 0,
+        leaseFence: 0,
+      };
+      storedDeliveries.set(key, created);
+      return created;
+    }),
+    claimDelivery: vi.fn().mockImplementation(async (deliveryId: string) => {
+      deliveryClaimSequence += 1;
+      if (options.failFirstDeliveryClaim && deliveryClaimSequence === 1) {
+        throw new Error('simulated process crash before delivery claim');
+      }
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (!current || current.deliveryState !== 'pending')
+        throw new Error('DWS_DELIVERY_NOT_CLAIMABLE');
+      const claimedDelivery = {
+        ...current,
+        deliveryState: 'sending' as const,
+        attempt: current.attempt + 1,
+        leaseFence: current.leaseFence + 1,
+      };
+      storedDeliveries.set(current.idempotencyKey, claimedDelivery);
+      return claimedDelivery;
+    }),
+    getDelivery: vi
+      .fn()
+      .mockImplementation(
+        async (_tenantId: string, deliveryId: string) =>
+          [...storedDeliveries.values()].find((candidate) => candidate.deliveryId === deliveryId) ??
+          null,
+      ),
+    markDeliveryProviderStarted: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (!current) throw new Error('DWS_DELIVERY_LEASE_LOST');
+      return current;
+    }),
+    releaseClaimedDeliveryForRetry: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (!current) throw new Error('DWS_DELIVERY_LEASE_LOST');
+      const released = { ...current, deliveryState: 'pending' as const };
+      storedDeliveries.set(current.idempotencyKey, released);
+      return released;
+    }),
+    markDeliverySent: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (current)
+        storedDeliveries.set(current.idempotencyKey, {
+          ...current,
+          deliveryState: 'sent' as const,
+        });
+    }),
+    markDeliveryUnknown: vi.fn().mockImplementation(async (deliveryId: string) => {
+      const current = [...storedDeliveries.values()].find(
+        (candidate) => candidate.deliveryId === deliveryId,
+      );
+      if (current)
+        storedDeliveries.set(current.idempotencyKey, {
+          ...current,
+          deliveryState: 'unknown' as const,
+        });
+    }),
+    markDeliveryDeadLetter: vi.fn(),
+    // Mirrors the production recovery split after cancellation.
+    cancelUnstartedDeliveriesForInbox: vi.fn(async (
+      _tenantId: string,
+      inboxId: string,
+      reason: string,
+    ) => {
+      let cancelled = 0;
+      for (const [key, candidate] of storedDeliveries) {
+        if (candidate.inboxId !== inboxId || candidate.deliveryState !== 'pending') continue;
+        storedDeliveries.set(key, {
+          ...candidate,
+          deliveryState: 'dead_letter' as const,
+          lastError: reason,
+        });
+        cancelled += 1;
+      }
+      return cancelled;
+    }),
+    getReplyRecoveryStateForInbox: vi.fn(async (_tenantId: string, inboxId: string) => {
+      const matches = [...storedDeliveries.values()].filter(candidate => (
+        candidate.inboxId === inboxId && candidate.deliveryKind === 'front_reply'
+      ));
+      if (matches.some(candidate => candidate.deliveryState === 'unknown')) return 'unknown';
+      if (matches.some(candidate => candidate.deliveryState === 'sent')) return 'sent';
+      return matches.length > 0 ? 'unstarted' : 'none';
+    }),
+  } as unknown as OrgGroupAgentStore;
+  const dispatch = vi.fn((_message, context, _options, hooks) =>
+    (async function* () {
+      if (options.dispatchGate) await options.dispatchGate;
+      await hooks?.onResult?.({ resultText: '完成' });
+      yield { type: 'session_init' as const, sessionId: context.resumeSessionId };
+      yield { type: 'done' as const };
+    })(),
+  ) as unknown as AgentRunDispatch;
+  const sender = {
+    send: vi.fn(async (
+      _account: unknown,
+      _event: unknown,
+      _text: string,
+      _key: string,
+      onProviderStart?: () => Promise<void>,
+    ) => {
+      await onProviderStart?.();
+      return options.senderReceipt === null
+        ? undefined
+        : (options.senderReceipt ?? { status: 'accepted', acceptedAt: now });
+    }),
+  };
+  const logger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() };
+  const authorizationQueue = [...(options.authorizationSequence ?? [{ allowed: true }])];
+  const authorizeRequester = vi.fn(async () => authorizationQueue.shift() ?? { allowed: true });
+  const resolveRequester = vi.fn().mockResolvedValue({
+    id: 'user-a',
+    username: 'user',
+    role: 'user',
+    tenantId: 'tenant-a',
+  });
+  const router = new AgentDwsMessageRouter({
+    agentCwd: '/tmp',
+    messageStore,
+    orgGroupAgentStore: orgStore,
+    orgAgentStore: {
+      get: vi.fn().mockReturnValue({ id: 'agent-a', tenantId: 'tenant-a', enabled: true }),
+    } as never,
+    accountStore: {
+      getForTenant: vi.fn().mockResolvedValue(account),
+    } as unknown as AgentDwsAccountStore,
+    dispatch,
+    resolveDefaultModel: () => ({ ref: 'models/test', model: 'test' }),
+    resolveRequester,
+    resolveRequesterGovernanceRole: vi
+      .fn()
+      .mockResolvedValue(
+        options.governanceRole === null ? undefined : (options.governanceRole ?? 'member'),
+      ),
+    ...(options.requesterOutcome
+      ? { resolveRequesterOutcome: vi.fn().mockResolvedValue(options.requesterOutcome) }
+      : {}),
+    authorizeRequester,
+    authorizeCompletionRequester: vi
+      .fn()
+      .mockResolvedValue(options.completionRequesterAuthorized ?? true),
+    auditRequesterRejection: vi.fn(),
+    auditToolPolicyRejection: vi.fn(),
+    sender,
+    ...(options.existingRun
+      ? {
+          runStore: { get: vi.fn().mockResolvedValue(options.existingRun) } as never,
+        }
+      : {}),
+    isOrgAgentRuntimeV2Ready: () => true,
+    logger,
+    now: () => injectedNowMs,
+    leaseTtlMs: 60_000,
+    leaseRenewMs: 30_000,
+    ...(options.frontReplyDeadlineMs ? { frontReplyDeadlineMs: options.frontReplyDeadlineMs } : {}),
+  });
+  return {
+    router, messageStore, orgStore, dispatch, sender, resolveRequester, authorizeRequester, logger,
   };
 }

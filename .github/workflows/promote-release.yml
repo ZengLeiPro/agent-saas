@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v6
+      - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -231,12 +231,23 @@ jobs:
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
-          reader=read-production-state.mjs
-          [ "$PROMOTION_RETRY_MODE" = retry_after_change ] && reader=read-live-production-components.mjs
+          api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
+          worker_action="$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")"
+          baseline_plan="$(node scripts/release/promotion-config-identity-state.mjs plan \
+            --retry-mode "$PROMOTION_RETRY_MODE" --api-action "$api_action" \
+            --runtime-worker-action "$worker_action")"
+          reader="$(printf '%s' "$baseline_plan" | jq -r .reader)"
+          reader_stage="$(printf '%s' "$baseline_plan" | jq -r .configIdentityStage)"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/$reader' --output '$remote/production-before.json' >/dev/null"
+            "node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null"
           scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-before.json" \
             "$RUNNER_TEMP/production-before.json"
+          # This gate is deliberately before promotionGate, payload prefetch, the durable promoting
+          # marker, receipts, and every production mutation.
+          migration_gate="$(node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
+            --manifest "$RUNNER_TEMP/manifest.json" \
+            --production-state "$RUNNER_TEMP/production-before.json")"
+          legacy_api_requires_upgrade="$(printf '%s' "$migration_gate" | jq -r .legacyApiRequiresUpgrade)"
           pnpm exec tsx server/src/release/promotionGateCli.ts \
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
             --production-state "$RUNNER_TEMP/production-before.json" \
@@ -245,7 +256,8 @@ jobs:
           if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
             jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
               "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
-            if diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
+            if [ "$legacy_api_requires_upgrade" = false ] && \
+               diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
                 <(jq -S . "$RUNNER_TEMP/production-target.json") >/dev/null; then
               production_already_target=true
             fi
@@ -468,8 +480,23 @@ jobs:
             echo 'ACS already equals the immutable target; keep without restart'
             exit 0
           fi
+          rollback_output="$RUNNER_TEMP/deploy-acs-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+          rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs"
+          rollback_sentinel="AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=acs GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+          rm -f "$rollback_output" "$rollback_local_marker"
+          set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            2>&1 | tee "$rollback_output"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          if grep -Fx -- "$rollback_sentinel" "$rollback_output" >/dev/null; then
+            if ! install -m 0600 /dev/null "$rollback_local_marker"; then
+              echo 'WARN: failed to persist ACS runner rollback-attempted fallback marker' >&2
+            fi
+          fi
+          if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
+          exit "${pipeline_status[1]}"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -532,8 +559,23 @@ jobs:
             echo 'API and Runtime Worker already equal the immutable target; keep without cutover'
             exit 0
           fi
+          rollback_output="$RUNNER_TEMP/deploy-app-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+          rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-app"
+          rollback_sentinel="AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=app GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+          rm -f "$rollback_output" "$rollback_local_marker"
+          set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app VERIFY_ONLY='$verify_only' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app VERIFY_ONLY='$verify_only' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            2>&1 | tee "$rollback_output"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          if grep -Fx -- "$rollback_sentinel" "$rollback_output" >/dev/null; then
+            if ! install -m 0600 /dev/null "$rollback_local_marker"; then
+              echo 'WARN: failed to persist App runner rollback-attempted fallback marker' >&2
+            fi
+          fi
+          if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
+          exit "${pipeline_status[1]}"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -725,6 +767,8 @@ jobs:
             --arg configFingerprint "$MANIFEST_DIGEST" \
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > "$RUNNER_TEMP/web-assets/release-identity.json"
+          web_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web"
+          rm -f "$web_rollback_attempted_marker"
           had_index=false; had_identity=false
           if run_with_web_lock aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/index.html" \
             --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
@@ -740,8 +784,11 @@ jobs:
             had_identity=true
           fi
           restore_web_entry() {
-            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.attempted"
             local failed=0 readback="$RUNNER_TEMP/web-rollback-readback"
+            if ! install -m 0600 /dev/null "$web_rollback_attempted_marker"; then
+              echo "WARN: failed to persist Web rollback-attempted marker" >&2
+            fi
+            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.attempted"
             rm -rf "$readback"
             mkdir -p "$readback"
             if [ "$had_identity" = true ]; then
@@ -845,6 +892,9 @@ jobs:
           # 复用 durable promoting 之前已上传的只读 reader，并重新取得共享主机锁；
           # live read、identity commit 与现场确认必须处于同一锁租约，避免 TOCTOU。
           remote="$PROMOTION_REMOTE"
+          api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
+          config_identity_readback_stage=steady-state
+          [ "$api_action" = deploy ] && config_identity_readback_stage=candidate-readback
           identity_lock_ready="/tmp/promotion-identity-lock-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.ready"
           identity_lock_release="/tmp/promotion-identity-lock-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.release"
           identity_lock_log="$RUNNER_TEMP/identity-lock.log"
@@ -935,7 +985,7 @@ jobs:
           fi
           identity_lock_ready_confirmed=true
 
-          run_identity_ssh "sudo node '$remote/read-live-production-components.mjs'" \
+          run_identity_ssh "sudo node '$remote/read-live-production-components.mjs' --config-identity-stage '$config_identity_readback_stage'" \
             > "$RUNNER_TEMP/production-after.json"
           jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
             "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
@@ -944,12 +994,27 @@ jobs:
             echo 'target_match=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-after.json")" = consistent
+          expected_config_release_id="$RELEASE_ID"
+          if [ "$api_action" = keep ]; then
+            expected_config_release_id="$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-before.json")"
+          fi
+          test "$expected_config_release_id" != null
+          test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-after.json")" = "$expected_config_release_id"
           if [ -n "${PRODUCTION_DEPLOYMENT_ID:-}" ]; then
             run_identity_ssh \
               "sudo node '$PROMOTION_REMOTE/write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'"
           fi
-          run_identity_ssh "sudo node '$remote/read-production-state.mjs'" \
+          run_identity_ssh \
+            "sudo node '$remote/read-production-state.mjs' --config-identity-stage steady-state" \
             > "$RUNNER_TEMP/production-confirmed.json"
+          test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-confirmed.json")" = consistent
+          test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-confirmed.json")" = \
+            "$expected_config_release_id"
+          config_identity_projection='.configIdentity | {schemaVersion,status,expected,observed,releaseId}'
+          diff -u \
+            <(jq -S "$config_identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
+            <(jq -S "$config_identity_projection" "$RUNNER_TEMP/production-after.json")
           identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
           diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
             <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
@@ -966,6 +1031,11 @@ jobs:
           if [ -s "$RUNNER_TEMP/production-after.json" ]; then
             observation_complete=true
             observed="$(jq -c .components "$RUNNER_TEMP/production-after.json")"
+          fi
+          config_identity_confirmed=false
+          if [ "${{ steps.readback.outcome }}" = success ] && \
+             [ "${{ steps.readback.outputs.target_match }}" = true ]; then
+            config_identity_confirmed=true
           fi
           target="$(jq -c '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' "$RUNNER_TEMP/manifest.json")"
           before="$(jq -c .components "$RUNNER_TEMP/production-before.json")"
@@ -1004,10 +1074,11 @@ jobs:
             '{web:{attempted:$webAttempted,succeeded:$webSucceeded},acs:{attempted:$acsAttempted,succeeded:$acsSucceeded},app:{attempted:$appAttempted,succeeded:$appSucceeded}}')"
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
+            --argjson configIdentityConfirmed "$config_identity_confirmed" \
             --arg externalSideEffects "$external_side_effects" \
             --argjson rollbackReceipts "$rollback_receipts" \
             --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackReceipts:$rollbackReceipts,databaseChange:$databaseChange}' \
+            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,configIdentityConfirmed:$configIdentityConfirmed,externalSideEffects:$externalSideEffects,rollbackReceipts:$rollbackReceipts,databaseChange:$databaseChange}' \
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 

@@ -238,7 +238,7 @@ describe('capability enable transaction', () => {
     expect((await test.readConfig()).webTools.enabled).toBe(false);
   });
 
-  it('候选配置没有引用本次暂存的 Secret 时拒绝提交并撤销该 Secret', async () => {
+  it('候选配置没有引用暂存 Secret 时在提交前拒绝并撤销该 Secret', async () => {
     const test = await fixture();
     await expectEnableError(
       runCapabilityEnableTransaction(
@@ -261,6 +261,52 @@ describe('capability enable transaction', () => {
 
     expect((await test.readConfig()).webTools.enabled).toBe(false);
     await expect(test.vault.getSecret(test.stagedRefs[0]!, READER)).rejects.toThrow('secret revoked');
+  });
+
+  it('候选配置提交前构建失败时仍撤销暂存 Secret', async () => {
+    const test = await fixture();
+    await expectEnableError(
+      runCapabilityEnableTransaction(
+        test.options({
+          buildCandidate: () => {
+            throw new Error('候选配置构建失败');
+          },
+        }),
+      ),
+      'CAPABILITY_RUNTIME_NOT_READY',
+    );
+
+    expect((await test.readConfig()).webTools.enabled).toBe(false);
+    await expect(test.vault.getSecret(test.stagedRefs[0]!, READER)).rejects.toThrow(
+      'secret revoked',
+    );
+  });
+
+  it('配置已提交但 publication 失败时保留正被配置引用的暂存 Secret', async () => {
+    const test = await fixture();
+    const mutationService = new AdminConfigMutationService({
+      configPath: test.configPath,
+      processCwd: test.root,
+      environment: 'staging',
+      processRole: 'ws-only',
+      now: () => new Date('2026-09-01T00:00:00.000Z'),
+      onCommitted: () => {
+        throw new Error('trusted publication failed');
+      },
+    });
+
+    const error = await expectEnableError(
+      runCapabilityEnableTransaction(test.options({ mutationService })),
+      'CAPABILITY_RUNTIME_NOT_READY',
+    );
+
+    expect(error.message).toContain('trusted publication failed');
+    expect(error.details.unrevokedSecrets).toBe(1);
+    expect((await test.readConfig()).webTools.enabled).toBe(true);
+    expect(test.effective.config.webTools?.enabled).toBe(true);
+    await expect(test.vault.getSecret(test.stagedRefs[0]!, READER)).resolves.toBe(
+      'brave-live-key',
+    );
   });
 
   it('运行时回滚失败时保留暂存 Secret 并报运行未就绪', async () => {

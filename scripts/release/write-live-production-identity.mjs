@@ -38,7 +38,12 @@ export function buildLiveProductionIdentity({ live, previousIdentity, topology }
     environment: 'production',
     gitSha: components.api.gitSha,
     configSchemaVersion: 1,
+    // legacy 字段：语义不变（组件矩阵 digest，不是配置身份；正式路径以
+    // write-production-identity.mjs 写入的 Manifest digest 为准）。
     configFingerprint: digestBuffer(Buffer.from(canonicalJson(components))),
+    // TASK-318：trusted runtime identity 只固化 Release expected side；live
+    // observation 的四态 summary 属于 Production State，不得混入此字段。
+    ...(live.configIdentity?.expected ? { configIdentity: live.configIdentity.expected } : {}),
     components: timedComponents,
     topology: { observedAt, ...topology },
   };

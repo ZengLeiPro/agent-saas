@@ -64,6 +64,57 @@ class FakeWebSocket extends EventTarget {
   }
 }
 
+describe('WebSocket 预算与确定性清理', () => {
+  it('cancel 不依赖 close 事件，迟到 message 不再 enqueue', async () => {
+    const socket = new FakeWebSocket();
+    vi.spyOn(socket, 'close').mockImplementation(() => { socket.readyState = 3; });
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([])));
+    await waitForSend(socket);
+    socket.emit({ type: 'response.created', response: { id: 'partial' } });
+    const result = await pending;
+    await result.response.body!.cancel();
+    for (const type of ['message', 'error']) expect(socket.listenerCount(type)).toBe(0);
+    // 连接池的永久 close 清理监听仍在；当前 request 的 close 监听已经移除。
+    expect(socket.listenerCount('close')).toBe(1);
+    expect(() => socket.emit({ type: 'response.output_text.delta', delta: 'late' })).not.toThrow();
+    pool.close();
+  });
+  it('已收 completed 的下游拒绝可强制清 anchor，下次新连接全量发送', async () => {
+    const first = new FakeWebSocket();
+    const second = new FakeWebSocket();
+    const connector = connectorFor(first, second);
+    const pool = new CodexResponsesWebSocketPool(connector);
+    const pending = pool.execute(request(body([])));
+    await waitForSend(first);
+    complete(first, 'rejected');
+    const result = await pending;
+    await result.response.text();
+    result.invalidate();
+    const next = pool.execute(request(body([])));
+    await waitForSend(second);
+    expect(JSON.parse(second.sent[0]!)).not.toHaveProperty('previous_response_id');
+    complete(second, 'accepted');
+    await (await next).response.text();
+    expect(connector).toHaveBeenCalledTimes(2);
+    pool.close();
+  });
+  it('消费者尚未读取时累计 wire 仍截断且关闭连接', async () => {
+    const socket = new FakeWebSocket();
+    const pool = new CodexResponsesWebSocketPool(connectorFor(socket));
+    const pending = pool.execute(request(body([])));
+    await waitForSend(socket);
+    socket.emit({ type: 'response.created', response: { id: 'wire' } });
+    const result = await pending;
+    const event = { type: 'response.function_call_arguments.delta', delta: 'x'.repeat(1024 * 1024) };
+    for (let i = 0; i < 33; i++) socket.emit(event);
+    await expect(result.response.text()).rejects.toMatchObject({ code: 'MODEL_STREAM_WIRE_LIMIT' });
+    expect(socket.readyState).toBe(3);
+    expect(socket.listenerCount('message')).toBe(0);
+    pool.close();
+  });
+});
+
 function eventWith(type: string, values: Record<string, unknown>): Event {
   const event = new Event(type);
   for (const [key, value] of Object.entries(values)) {

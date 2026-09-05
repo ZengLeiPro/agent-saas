@@ -33,6 +33,7 @@ let httpServer: Server | undefined;
 let kbPreviewScheduler: KbPreviewScheduler | undefined;
 let runtimePerformanceSampler: RuntimePerformanceSampler | undefined;
 let runtimeReadyFileTimer: NodeJS.Timeout | undefined;
+let runtimeReadyFileSyncPending = false;
 
 const eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
 eventLoopDelayMonitor.enable();
@@ -103,13 +104,39 @@ function writeAuthorityAckFile(): void {
   fs.renameSync(`${ackFile}.candidate`, ackFile);
 }
 
-function syncRuntimeWorkerReadyFile(): void {
+async function syncRuntimeWorkerReadyFile(): Promise<void> {
   const readyFile = process.env.AGENT_SAAS_READYFILE;
-  if (!readyFile) return;
+  if (!readyFile || runtimeReadyFileSyncPending) return;
+  runtimeReadyFileSyncPending = true;
+  let identityRefreshWatchdog: NodeJS.Timeout | undefined;
   try {
-    projectRuntimeWorkerReadyFile(readyFile, runtime?.getRuntimeAdmissionSnapshot?.());
+    if (runtime?.refreshConfigIdentitySummary) {
+      // 快速的无变化轮询不抖 readyfile；Vault 慢或挂起超过 1 秒则有界 fail-closed。
+      identityRefreshWatchdog = setTimeout(() => {
+        try { fs.rmSync(readyFile, { force: true }); } catch {}
+      }, 1_000);
+      identityRefreshWatchdog.unref?.();
+    }
+    const configIdentitySummary = runtime?.refreshConfigIdentitySummary
+      ? await runtime.refreshConfigIdentitySummary()
+      : runtime?.getConfigIdentitySummary?.();
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      runtime?.getRuntimeAdmissionSnapshot?.(),
+      configIdentitySummary,
+      runtime?.isPrivateConfigIdentitySummaryCurrent() ?? false,
+    );
   } catch (err) {
-    serverLogger.warn(`Failed to project runtime worker readiness ${readyFile}: ${err instanceof Error ? err.message : String(err)}`);
+    // 内存身份、私有快照或准入证据任一读取失败时撤销旧 ready，避免 stale readiness 继续切流。
+    try { fs.rmSync(readyFile, { force: true }); } catch {}
+    serverLogger.warn(
+      `Failed to project runtime worker readiness ${readyFile}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  } finally {
+    if (identityRefreshWatchdog) clearTimeout(identityRefreshWatchdog);
+    runtimeReadyFileSyncPending = false;
   }
 }
 
@@ -161,8 +188,8 @@ async function startServer(): Promise<void> {
     if (processRole === 'runtime-worker') {
       runtime.startCronCoordinator();
       kbPreviewScheduler = startKbPreviewScheduler(runtime.processCwd);
-      syncRuntimeWorkerReadyFile();
-      runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000);
+      await syncRuntimeWorkerReadyFile();
+      runtimeReadyFileTimer = setInterval(() => { void syncRuntimeWorkerReadyFile(); }, 1_000);
       runtimeReadyFileTimer.unref?.();
     } else {
       writeReadyFile();

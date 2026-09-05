@@ -60,8 +60,9 @@ export function promotionPhaseConfigIdentityStage(manifest, phase) {
   if (!['deploy', 'keep'].includes(api) || api !== worker) {
     throw new Error('Manifest API and Runtime Worker actions must match');
   }
-  // ACS/App 前仍可能运行首次升级的旧 API；Web 阶段必须已具备新版私有快照。
-  return phase !== 'web' && api === 'deploy' ? 'legacy-api-upgrade-retry-baseline' : 'steady-state';
+  // App 部署后，私有快照已生效，整套 trusted identity 要等 Web 收敛后才提交。
+  if (api === 'keep') return 'steady-state';
+  return phase === 'web' ? 'candidate-readback' : 'legacy-api-upgrade-retry-baseline';
 }
 
 function allowedPhaseMatrices(manifest, phase) {

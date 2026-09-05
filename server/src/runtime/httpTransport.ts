@@ -14,7 +14,7 @@ import type {
 } from './handProtocol.js';
 import { controlPlaneFetch } from './controlPlaneFetch.js';
 
-const DEFAULT_INVOKE_TIMEOUT_MS = 60_000;
+export const DEFAULT_INVOKE_TIMEOUT_MS = 60_000;
 const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
 /**
  * 连接类瞬时失败重试退避（2026-07-15 零停机部署批次）。

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { deriveTenantQualifiedClientDaemonHandId } from '../runtime/clientDaemonProtocol.js';
 import { PgHandStore, SERVER_REMOTE_HAND_LEASE_MS } from '../runtime/handStore.js';
 import { deriveTenantHandId } from '../runtime/runtimeHandRegistration.js';
+import { tenantHandRuntimeStatus } from '../agent/tenantRemoteHandSelection.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -215,6 +216,9 @@ describePg('PgHandStore lease 与 provision authority 治理', () => {
       provisionDispatchClaim: 'dispatch-token-1', provisionResult: 'result_unknown',
       reconcileRequired: true, dispatchAuthorized: true,
     } });
+    expect(tenantHandRuntimeStatus(claimed!)).toBe('provisioning');
+    expect(tenantHandRuntimeStatus(claimed!, Date.parse(claimed!.metadata.provisionDispatchClaimedAt as string) + 60_000)).toBe('unhealthy');
+    expect((await getHand('dispatch-authority'))?.status).toBe('unhealthy');
     expect(await claimProvisionDispatch(
       'dispatch-authority', 'generation-1', 'dispatch-token-2', claimed!.updatedAt,
     )).toBeNull();

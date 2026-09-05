@@ -69,7 +69,7 @@ import { parseProvablyReadOnlyRgCommand, resolveShellCallPolicy } from './shellR
 import { withWorkspaceFileMutationQueue } from './workspaceFileMutationQueue.js';
 import { readWorkspaceFile } from './workspaceRead.js';
 import { resolveWorkspacePrincipal } from './workspacePrincipal.js';
-import { isTenantRemoteHand, selectCurrentTenantRemoteHand } from './tenantRemoteHandSelection.js';
+import { isTenantRemoteHand, selectCurrentTenantRemoteHand, tenantHandRuntimeStatus } from './tenantRemoteHandSelection.js';
 import { assertSandboxReadAllowed, findDeniedPathMention } from './serverLocalSandboxPolicy.js';
 const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
@@ -1154,7 +1154,7 @@ class WorkspaceToolProvider implements ToolProvider {
         });
       }
       const currentRuntime = selectCurrentTenantRemoteHand(tenantHands);
-      if (tenantHands.every((hand) => hand.status === 'unhealthy')) {
+      if (tenantHands.every((hand) => tenantHandRuntimeStatus(hand) === 'unhealthy')) {
         return workspaceReadyStatusResponse({
           status: 'failed',
           workspaceId: currentRuntime?.workspaceId,

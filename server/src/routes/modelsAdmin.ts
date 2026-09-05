@@ -23,6 +23,7 @@ import {
 } from '../config/adminConfigMutationService.js';
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import { guardrailForModelsUpdate, validateGuardrailModels } from './modelsAdminGuardrail.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 import {
   assertQuotaSourcesComplete,
@@ -66,6 +67,7 @@ type ModelsAdminUpdate = {
   memoryIndexProvided: boolean;
   titleGenerator: TitleGeneratorAppConfig | undefined;
   titleGeneratorProvided: boolean;
+  guardrail: AppConfig['guardrail'];
   systemPrompts: SystemPromptsConfig;
   titleSystemPromptProvided: boolean;
 };
@@ -318,6 +320,7 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
   }
 
   if (titleGeneratorProvided) merged.titleGenerator = bodyRecord.titleGenerator;
+  if (Object.prototype.hasOwnProperty.call(bodyRecord, 'guardrail')) merged.guardrail = bodyRecord.guardrail;
 
   if (titleSystemPromptProvided) {
     if (typeof bodyRecord.titleSystemPrompt !== 'string' || !bodyRecord.titleSystemPrompt.trim()) {
@@ -331,17 +334,13 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
     else delete merged.systemPrompts;
   }
 
+  const current = parseAppConfig(rawRecord);
+  const candidate = parseAppConfig(merged);
+  if (candidate.models) merged.guardrail = guardrailForModelsUpdate(current, candidate.models, candidate.guardrail);
   const parsed = parseAppConfig(merged);
   if (!parsed.models) throw new Error('models 未配置');
   validateTitleGeneratorModels(parsed.models, parsed.titleGenerator);
-  if (parsed.guardrail?.model) {
-    const available = new Set(parsed.models.groups.flatMap((group) => (
-      group.models.map((model) => `${group.id}/${model.id}`)
-    )));
-    for (const ref of [parsed.guardrail.model, ...(parsed.guardrail.fallbackModels ?? [])]) {
-      if (!available.has(ref)) throw new Error(`门禁模型引用不存在：${ref}`);
-    }
-  }
+  validateGuardrailModels(parsed.models, parsed.guardrail);
   assertQuotaSourcesComplete(parsed.models);
   return {
     candidateConfig: parsed,
@@ -350,6 +349,7 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
     memoryIndexProvided,
     titleGenerator: parsed.titleGenerator,
     titleGeneratorProvided,
+    guardrail: parsed.guardrail,
     systemPrompts: parsed.systemPrompts ?? {},
     titleSystemPromptProvided,
   };
@@ -377,6 +377,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       models: redactModels(diskConfig.models),
       memoryIndex: redactMemoryIndex(diskConfig.memory?.index ?? null),
       titleGenerator: titleGeneratorView(diskConfig),
+      guardrail: diskConfig.guardrail ?? null,
       titleSystemPrompt: titleSystemPromptView(diskConfig),
       publicModelList: getPublicModelList(diskConfig.models),
     });
@@ -395,7 +396,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       const result = await configMutationService.mutate({
         actor: requestContext.actor,
         expectedRevision: expectedRevisions[0],
-        changedPaths: ['models', 'memory.index', 'titleGenerator', 'systemPrompts.utility.title'],
+        changedPaths: ['models', 'memory.index', 'titleGenerator', 'guardrail', 'systemPrompts.utility.title'],
         validateBaseline: async (configText, _current) => {
           const revision = configRevision(configText);
           if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) {
@@ -454,6 +455,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
             if (memoryEdits.length > 0) updatedText = applyEdits(updatedText, memoryEdits);
           }
           if (nextUpdate.titleGeneratorProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['titleGenerator'], nextUpdate.titleGenerator, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+          if (nextUpdate.guardrail) updatedText = applyEdits(updatedText, modify(updatedText, ['guardrail'], nextUpdate.guardrail, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           if (nextUpdate.titleSystemPromptProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['systemPrompts'], Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           return updatedText;
         },
@@ -479,6 +481,8 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           else delete options.config.memory;
           if (candidate.titleGenerator) options.config.titleGenerator = candidate.titleGenerator;
           else delete options.config.titleGenerator;
+          if (candidate.guardrail) options.config.guardrail = candidate.guardrail;
+          else delete options.config.guardrail;
           if (candidate.systemPrompts) options.config.systemPrompts = candidate.systemPrompts;
           else delete options.config.systemPrompts;
           if (!commitPreparedConfig) {
@@ -505,6 +509,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),
+        guardrail: options.config.guardrail ?? null,
         titleSystemPrompt: titleSystemPromptView(options.config),
         publicModelList: getPublicModelList(result.config.models!),
       });

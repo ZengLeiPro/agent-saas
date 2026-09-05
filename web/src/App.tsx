@@ -441,7 +441,7 @@ function App() {
           }
         }}
         onConfirm={() => {
-          void handleDeleteSession();
+          return handleDeleteSession();
         }}
         isAdmin={isAdmin}
         count={deleteSessionCount}

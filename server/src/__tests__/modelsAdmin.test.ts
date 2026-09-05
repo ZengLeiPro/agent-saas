@@ -207,6 +207,50 @@ describe('models admin router', () => {
     });
   });
 
+  it.each([
+    ['inline', undefined], ['inline', ''], ['inline', '   '],
+    ['vault', undefined], ['vault', ''], ['vault', '   '],
+  ])('记忆凭据为 %s、提交 Key 为 %j 时保留凭据并保存模型修改', async (storage, apiKey) => {
+    const rawConfig = baseRawConfig();
+    const secretVault = new InMemorySecretVault();
+    const embedding = rawConfig.memory.index.embedding as { apiKey?: string; apiKeyRef?: string };
+    if (storage === 'vault') {
+      const secret = await secretVault.putSecret(
+        GLOBAL_OWNER_ID, 'memory_index', 'old-embedding-key',
+        { actor: 'system', userId: 'models_config_admin', scopes: ['secret:memory_index:write'] },
+      );
+      delete embedding.apiKey;
+      embedding.apiKeyRef = secret.id;
+    }
+    const putSecret = vi.spyOn(secretVault, 'putSecret');
+    const revokeSecret = vi.spyOn(secretVault, 'revokeSecret');
+
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const view = await readJson(await fetch(`${baseUrl}/api/admin/models`));
+      expect(view.memoryIndex.embedding).toMatchObject({ hasApiKey: true });
+      expect(view.memoryIndex.embedding.apiKey).toBeUndefined();
+      expect(view.memoryIndex.embedding.apiKeyRef).toBeUndefined();
+      view.models.groups[0].name = '修改后的分组';
+      view.memoryIndex.embedding.apiKey = apiKey;
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: view.models, memoryIndex: view.memoryIndex, expectedRevision: view.revision }),
+      });
+      expect(response.status).toBe(200);
+      const written = JSON.parse(readFileSync(configPath, 'utf8'));
+      expect(written.models.groups[0].name).toBe('修改后的分组');
+      expect(written.memory.index.embedding).toEqual(rawConfig.memory.index.embedding);
+      const savedView = await readJson(await fetch(`${baseUrl}/api/admin/models`));
+      expect(savedView.models.groups[0].name).toBe('修改后的分组');
+      expect(savedView.memoryIndex.embedding.hasApiKey).toBe(true);
+      expect(savedView.memoryIndex.embedding.apiKey).toBeUndefined();
+      expect(savedView.memoryIndex.embedding.apiKeyRef).toBeUndefined();
+      expect(putSecret).not.toHaveBeenCalled();
+      expect(revokeSecret).not.toHaveBeenCalled();
+    }, { secretVault });
+  });
+
   it('stores a newly submitted model API key in SecretVault and resolves it only for runtime', async () => {
     const secretVault = new InMemorySecretVault();
     await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {

@@ -9,7 +9,8 @@ import type { RuntimeFailureKind, RuntimeRecoveryAction } from '../types/runtime
  * 1. 普通/未知失败只说「Agent 开小差了，请发送「继续」」——用户能做的只有这一件事；
  * 2. 结构化策略拒绝（cyber_policy 之类，服务端已归类为 policy_rejection /
  *    recoveryAction=switch_model）绝不能提示「继续」，同一个模型再来一次仍会被拒；
- * 3. 配额型 429（shared canonical 已解析为 rate_limited）显示重置时间与「切换模型」入口。
+ * 3. 配额型 429（canonical quota_exhausted，或兜底的 rate_limited）显示重置时间
+ *    与「切换模型」入口，绝不提示「继续」——窗口重置前继续必然再失败。
  *
  * 分类只读**已归类的结构化字段**（severity / failureKind / recoveryAction /
  * canonicalFailure.kind），绝不从错误文本里猜——错误文本既不稳定也不安全。
@@ -38,6 +39,11 @@ export interface ClientFailureCopyInput {
   failureKind?: RuntimeFailureKind;
   recoveryAction?: RuntimeRecoveryAction;
   canonicalFailure?: CanonicalError;
+  /**
+   * 配额窗口的绝对重置时刻（ISO 8601）。服务端从上游结构化字段解析后随终态下发；
+   * 优先于 canonicalFailure.resetAt / retryAfterMs 相对倒计时。
+   */
+  resetAt?: string;
 }
 
 export const GENERIC_FAILURE_MESSAGE = 'Agent 开小差了，请发送「继续」';
@@ -48,6 +54,27 @@ const SWITCH_MODEL_ACTION: SharedPresentationRecoveryAction = {
   label: '切换模型',
 };
 
+/**
+ * 绝对重置时刻 → 设备时区的 HH:mm。
+ * 无效 / 缺省 / 已过期一律返回 undefined——宁可不显示，也不显示一个错的时刻。
+ */
+export function formatQuotaResetClock(resetAt: string | undefined, nowMs = Date.now()): string | undefined {
+  if (typeof resetAt !== 'string' || !resetAt.trim()) return undefined;
+  const parsed = Date.parse(resetAt);
+  if (!Number.isFinite(parsed) || parsed <= nowMs) return undefined;
+  const at = new Date(parsed);
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+}
+
+/** 配额提示：优先绝对时刻，拿不到再回落相对倒计时。 */
+function quotaResetHint(
+  resetAt: string | undefined,
+  retryAfterMs: number | undefined,
+): string | undefined {
+  const clock = formatQuotaResetClock(resetAt);
+  return clock ? `额度将在 ${clock} 重置` : formatQuotaResetHint(retryAfterMs);
+}
+
 /** 相对重置时间：与时区/本地化无关，跨端一致且可单测。 */
 export function formatQuotaResetHint(retryAfterMs: number | undefined): string | undefined {
   if (retryAfterMs === undefined || !Number.isFinite(retryAfterMs) || retryAfterMs <= 0)
@@ -57,7 +84,12 @@ export function formatQuotaResetHint(retryAfterMs: number | undefined): string |
   return `额度将在 ${Math.ceil(retryAfterMs / 3_600_000)} 小时后重置`;
 }
 
+function isQuotaExhausted(input: ClientFailureCopyInput): boolean {
+  return input.failureKind === 'quota_exhausted' || input.canonicalFailure?.kind === 'quota_exhausted';
+}
+
 function isPolicyRejection(input: ClientFailureCopyInput): boolean {
+  if (isQuotaExhausted(input)) return false;
   return (
     input.failureKind === 'policy_rejection' ||
     input.recoveryAction === 'switch_model' ||
@@ -76,6 +108,19 @@ export function selectClientFailureCopy(input: ClientFailureCopyInput): ClientFa
     };
   }
 
+  // 配额优先于策略判定：配额型终态同样带 recoveryAction=switch_model，
+  // 若走策略分支会丢掉重置时刻这条唯一有效信息。
+  if (isQuotaExhausted(input)) {
+    const hint = quotaResetHint(input.resetAt ?? input.canonicalFailure?.resetAt, input.canonicalFailure?.retryAfterMs);
+    return {
+      kind: 'quota',
+      title: input.canonicalFailure?.title ?? '模型额度已用尽',
+      message: input.canonicalFailure?.safeMessage ?? '当前模型额度已用尽，请切换其他模型。',
+      ...(hint ? { hint } : {}),
+      action: SWITCH_MODEL_ACTION,
+    };
+  }
+
   if (isPolicyRejection(input)) {
     return {
       kind: 'policy',
@@ -86,7 +131,7 @@ export function selectClientFailureCopy(input: ClientFailureCopyInput): ClientFa
   }
 
   if (input.canonicalFailure?.kind === 'rate_limited') {
-    const hint = formatQuotaResetHint(input.canonicalFailure.retryAfterMs);
+    const hint = quotaResetHint(input.resetAt ?? input.canonicalFailure.resetAt, input.canonicalFailure.retryAfterMs);
     return {
       kind: 'quota',
       title: input.canonicalFailure.title,

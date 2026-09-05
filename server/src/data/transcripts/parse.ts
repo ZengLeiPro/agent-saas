@@ -11,6 +11,7 @@ import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
 import { truncateReplayToolResultContent } from "../../runtime/replayEventBounds.js";
 import { isValidAttachmentId } from '@agent/shared';
 import type { MessageAttachmentDisplay } from '@agent/shared';
+import type { RuntimeFailureKind } from '../../types/index.js';
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";
 import {
@@ -50,7 +51,7 @@ export interface TranscriptSubagentActivity {
   toolUseCount?: number;
   turnCount?: number;
   errorMessage?: string;
-  failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
+  failureKind?: RuntimeFailureKind; recoveryAction?: 'switch_model';
   resultPreview?: string;
 }
 export interface TranscriptBlock {

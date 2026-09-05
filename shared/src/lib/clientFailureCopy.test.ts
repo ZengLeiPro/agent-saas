@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   GENERIC_FAILURE_MESSAGE,
   POLICY_FAILURE_MESSAGE,
+  formatQuotaResetClock,
   formatQuotaResetHint,
   selectClientFailureCopy,
 } from './clientFailureCopy';
@@ -115,5 +116,77 @@ describe('formatQuotaResetHint', () => {
     expect(formatQuotaResetHint(0)).toBeUndefined();
     expect(formatQuotaResetHint(undefined)).toBeUndefined();
     expect(formatQuotaResetHint(Number.NaN)).toBeUndefined();
+  });
+});
+
+describe('配额耗尽文案（quota_exhausted + resetAt）', () => {
+  function clockOf(offsetMs: number): { iso: string; hhmm: string } {
+    const at = new Date(Date.now() + offsetMs);
+    return {
+      iso: at.toISOString(),
+      hhmm: `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`,
+    };
+  }
+
+  it('formatQuotaResetClock：按设备时区输出 HH:mm，无效/过期返回 undefined', () => {
+    const { iso, hhmm } = clockOf(2 * 3600_000);
+    expect(formatQuotaResetClock(iso)).toBe(hhmm);
+    expect(formatQuotaResetClock(new Date(Date.now() - 60_000).toISOString())).toBeUndefined();
+    expect(formatQuotaResetClock('nope')).toBeUndefined();
+    expect(formatQuotaResetClock(undefined)).toBeUndefined();
+  });
+
+  it('resetAt 优先输出绝对时刻，且恢复动作是「切换模型」而不是「继续」', () => {
+    const { iso, hhmm } = clockOf(3 * 3600_000);
+    const copy = selectClientFailureCopy({
+      presentation: failedPresentation,
+      failureKind: 'quota_exhausted',
+      recoveryAction: 'switch_model',
+      resetAt: iso,
+    });
+    expect(copy.kind).toBe('quota');
+    expect(copy.hint).toBe(`额度将在 ${hhmm} 重置`);
+    // 绝不给「发送『继续』」这条在窗口重置前必然再失败的建议
+    expect(copy.message).not.toBe(GENERIC_FAILURE_MESSAGE);
+    expect(copy.message).not.toContain('发送');
+    expect(copy.action).toEqual({ kind: 'switch_model', label: '切换模型' });
+  });
+
+  it('配额判定优先于策略判定：同带 switch_model 时不会被误归为 policy', () => {
+    const copy = selectClientFailureCopy({
+      presentation: {
+        ...failedPresentation,
+        recoveryAction: { kind: 'switch_model' as const, label: '切换模型' },
+      },
+      canonicalFailure: mapCanonicalError({ code: 'usage_limit_reached' }),
+    });
+    expect(copy.kind).toBe('quota');
+    expect(copy.message).not.toBe(POLICY_FAILURE_MESSAGE);
+  });
+
+  it('拿不到 resetAt 时回落现有相对倒计时；两者都没有则只给结论', () => {
+    const relative = selectClientFailureCopy({
+      presentation: failedPresentation,
+      canonicalFailure: mapCanonicalError({ code: 'usage_limit_reached', retryAfterMs: 90 * 60_000 }),
+    });
+    expect(relative.hint).toBe(formatQuotaResetHint(90 * 60_000));
+
+    const bare = selectClientFailureCopy({
+      presentation: failedPresentation,
+      failureKind: 'quota_exhausted',
+    });
+    expect(bare.kind).toBe('quota');
+    expect(bare.hint).toBeUndefined();
+    expect(bare.action).toEqual({ kind: 'switch_model', label: '切换模型' });
+  });
+
+  it('普通限流（rate_limited 兜底）同样能吃 resetAt，行为不回退', () => {
+    const { iso, hhmm } = clockOf(45 * 60_000);
+    const copy = selectClientFailureCopy({
+      presentation: failedPresentation,
+      canonicalFailure: mapCanonicalError({ status: 429, resetAt: iso }),
+    });
+    expect(copy.kind).toBe('quota');
+    expect(copy.hint).toBe(`额度将在 ${hhmm} 重置`);
   });
 });

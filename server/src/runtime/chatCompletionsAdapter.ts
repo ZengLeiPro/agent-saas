@@ -24,7 +24,7 @@ import {
 } from './agentPlanDefense.js';
 import { modelSupportsImage, readImagePartOrPlaceholder, toTextOnlyContent } from './imageAttachments.js';
 import { ToolCallRepairStreamGate, toolCallRepairProviderLabel } from './toolCallRepair.js';
-import { classifyModelFailure } from './runtimeFailure.js';
+import { classifyModelFailure, parseQuotaResetAt, quotaExhaustedReasonCode } from './runtimeFailure.js';
 
 const logger = createLogger('Cache');
 const CHAT_COMPLETIONS_RETRY_DELAYS_MS = [250, 1_000] as const;
@@ -35,6 +35,8 @@ class ChatCompletionsHttpError extends Error {
     readonly status: number,
     readonly retryable: boolean,
     readonly code?: string,
+    /** 结构化配额重置时刻（ISO）；解析不到就没有 */
+    readonly quotaResetAt?: string,
   ) {
     super(`Chat Completions HTTP ${status}`);
     this.name = 'ChatCompletionsHttpError';
@@ -211,7 +213,7 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
         }
         if (!willRetry) {
           if (error instanceof ChatCompletionsHttpError) {
-            const failureProtocol = classifyModelFailure(error.code, retryBlockedReason);
+            const failureProtocol = classifyModelFailure(error.code, retryBlockedReason, error.quotaResetAt);
             throw new ModelProviderError(
               error.message,
               error.status,
@@ -221,6 +223,8 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
               0,
               failureProtocol?.failureKind,
               failureProtocol?.recoveryAction,
+              undefined,
+              failureProtocol?.quotaResetAt,
             );
           }
           throw error;
@@ -539,16 +543,27 @@ export class ChatCompletionsModelAdapter implements ModelAdapter {
   }
 }
 
-function parseChatCompletionsErrorCode(text: string): string | undefined {
+/** 只读结构化字段：error.code / error.type 与 error.resets_at / resets_in_seconds。 */
+function parseChatCompletionsError(text: string): { code?: string; quotaResetAt?: string } {
   try {
     const body = JSON.parse(text) as unknown;
-    if (!body || typeof body !== 'object') return undefined;
+    if (!body || typeof body !== 'object') return {};
     const error = (body as { error?: unknown }).error;
-    if (!error || typeof error !== 'object') return undefined;
-    const code = (error as { code?: unknown }).code;
-    return typeof code === 'string' && code.trim() ? code.trim() : undefined;
+    if (!error || typeof error !== 'object') return {};
+    const record = error as { code?: unknown; type?: unknown; resets_at?: unknown; resets_in_seconds?: unknown };
+    const raw = typeof record.code === 'string' && record.code.trim()
+      ? record.code
+      : typeof record.type === 'string' ? record.type : undefined;
+    const quotaResetAt = parseQuotaResetAt({
+      resetsAt: record.resets_at,
+      resetsInSeconds: record.resets_in_seconds,
+    });
+    return {
+      ...(raw?.trim() ? { code: raw.trim() } : {}),
+      ...(quotaResetAt ? { quotaResetAt } : {}),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -561,12 +576,17 @@ async function fetchChatCompletions(
   if (response.ok) return response;
 
   const text = await response.text().catch(() => '');
+  const parsed = parseChatCompletionsError(text);
+  // 结构化错误码优先（含 usage_limit_reached）；文本正则只作遗留兜底，且只影响重试决策。
   const quotaExhausted = response.status === 429
-    && /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i.test(text);
+    && (!!quotaExhaustedReasonCode(parsed.code)
+      || /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i.test(text));
   throw new ChatCompletionsHttpError(
     response.status,
     RETRYABLE_CHAT_COMPLETIONS_HTTP_STATUSES.has(response.status) && !quotaExhausted,
-    parseChatCompletionsErrorCode(text),
+    parsed.code,
+    parsed.quotaResetAt
+      ?? parseQuotaResetAt({ retryAfterSeconds: Number(response.headers.get('retry-after')) }),
   );
 }
 

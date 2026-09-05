@@ -97,6 +97,8 @@ export interface ApiLastRunState {
   error?: string;
   failureKind?: RuntimeFailureKind;
   recoveryAction?: RuntimeRecoveryAction;
+  /** 配额窗口绝对重置时刻（ISO）；仅 failureKind='quota_exhausted' 时可能有 */
+  quotaResetAt?: string;
   /** 该 run_state_changed 事件的 ISO timestamp */
   finishedAt?: string;
   /** Server-owned M40-02 projection; absent means legacy unknown. */

@@ -205,6 +205,8 @@ export type MessageItem =
       severity?: 'error' | 'cancelled' | 'billing';
       failureKind?: RuntimeFailureKind;
       recoveryAction?: RuntimeRecoveryAction;
+      /** 配额窗口绝对重置时刻（ISO）；仅 failureKind='quota_exhausted' 时可能有 */
+      quotaResetAt?: string;
       /** M40-05 sanitized cross-transport authority; safe to persist and restore. */
       canonicalFailure?: CanonicalError;
       /** 终态所属 runtime run；用于 live 与 durable refresh 稳定去重。 */

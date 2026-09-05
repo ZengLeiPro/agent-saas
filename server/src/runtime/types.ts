@@ -327,6 +327,8 @@ export type ModelEvent =
     terminalStatus?: ModelTerminalStatus;
     incompleteReason?: string;
     errorCode?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+    quotaResetAt?: string;
     /** Provider 结构化失败消息；只用于恢复判定和后台诊断，不直接展示给客户。 */
     errorMessage?: string;
     /** 本次 provider 请求与 attempt 的诊断关联键。 */
@@ -398,6 +400,8 @@ export class ModelProviderError extends Error {
     readonly modelRequestId: string,
     readonly attemptId: string,
     readonly emittedOutputCount: number, readonly failureKind?: RuntimeFailureKind, readonly recoveryAction?: RuntimeRecoveryAction, readonly partialContent?: string,
+    /** 仅 failureKind='quota_exhausted'：上游结构化字段给出的配额重置时刻（ISO） */
+    readonly quotaResetAt?: string,
   ) {
     super(message);
   }
@@ -727,6 +731,8 @@ export type PlatformEvent =
      * 导致仅凭 sessionId 无法在审计中复盘失败原因。本字段补齐这条断链。
      */
     error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+    quotaResetAt?: string;
   }
   | {
     id: string;
@@ -799,6 +805,8 @@ export type PlatformEvent =
     status: RunStatus;
     previousStatus?: RunStatus;
     reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction;
+    /** 仅 failureKind='quota_exhausted'：配额窗口绝对重置时刻（ISO） */
+    quotaResetAt?: string;
   }
   | SessionReadStateChangedEvent
   | {

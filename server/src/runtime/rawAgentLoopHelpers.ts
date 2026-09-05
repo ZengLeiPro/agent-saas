@@ -13,7 +13,7 @@ import {
 } from './types.js';
 import type { OutboundEvent } from '../types/index.js';
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
-import { POLICY_REJECTION_CUSTOMER_MESSAGE, type RuntimeFailureProtocol } from './runtimeFailure.js';
+import { POLICY_REJECTION_CUSTOMER_MESSAGE, QUOTA_EXHAUSTED_CUSTOMER_MESSAGE, type RuntimeFailureProtocol } from './runtimeFailure.js';
 import {
   buildMcpCapabilityDescription,
   buildMcpNamespaceName,
@@ -70,7 +70,11 @@ export function getInvalidPromptRequestBlockedFailure(error: unknown): InvalidPr
 
 export function getStructuredModelFailure(error: unknown): RuntimeFailureProtocol | undefined {
   if (!(error instanceof ModelProviderError) || !error.failureKind || !error.recoveryAction) return undefined;
-  return { failureKind: error.failureKind, recoveryAction: error.recoveryAction };
+  return {
+    failureKind: error.failureKind,
+    recoveryAction: error.recoveryAction,
+    ...(error.quotaResetAt ? { quotaResetAt: error.quotaResetAt } : {}),
+  };
 }
 
 export function describeRuntimeFailure(
@@ -87,16 +91,21 @@ export function describeRuntimeFailure(
   const diagnosticMessage = error instanceof Error ? error.message : String(error);
   const failureProtocol = getStructuredModelFailure(error);
   const preservedTurnText = pendingTurnText || (failureProtocol?.failureKind === 'policy_rejection' && error instanceof ModelProviderError ? error.partialContent ?? '' : '');
+  // 配额型终态同样必须换成客户面文案：原始技术串（HTTP 429 usage_limit_reached）
+  // 既不可读，也会让用户以为「继续」还有用。
   const message = failureProtocol?.failureKind === 'policy_rejection'
     ? POLICY_REJECTION_CUSTOMER_MESSAGE
-    : isInvalidPromptRequestBlocked(error)
-      ? invalidPromptCustomerMessage
-      : diagnosticMessage;
+    : failureProtocol?.failureKind === 'quota_exhausted'
+      ? QUOTA_EXHAUSTED_CUSTOMER_MESSAGE
+      : isInvalidPromptRequestBlocked(error)
+        ? invalidPromptCustomerMessage
+        : diagnosticMessage;
   return {
     diagnosticMessage,
     message,
     preservedTurnText,
     surfacedMessage: failureProtocol?.failureKind === 'policy_rejection'
+      || failureProtocol?.failureKind === 'quota_exhausted'
       ? message
       : preservedTurnText
         ? `${message}；已保留本次未完成正文，可发送“继续”接着完成。`
@@ -129,6 +138,7 @@ export function assertSuccessfulModelTerminal(completed: Extract<ModelEvent, { t
         completed.failureKind,
         completed.recoveryAction,
         completed.failureKind === 'policy_rejection' ? completed.content : undefined,
+        completed.quotaResetAt,
       );
     }
     throw new Error(

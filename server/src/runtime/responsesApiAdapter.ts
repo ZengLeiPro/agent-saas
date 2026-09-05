@@ -41,7 +41,7 @@ import {
   unescapeDeepseekArguments,
 } from './agentPlanDefense.js';
 import { resolveModelOutputTransactionMode } from './modelOutputTransaction.js';
-import { classifyModelFailure } from './runtimeFailure.js';
+import { classifyModelFailure, parseQuotaResetAt, quotaExhaustedReasonCode } from './runtimeFailure.js';
 import type { FinishedOutcome, FinishedPatch } from './responsesAttemptDiagnostics.js';
 import {
   ResponsesAttemptDiagnostics,
@@ -518,14 +518,18 @@ export class ResponsesApiAdapter implements ModelAdapter {
         await waitForRetry(retryDelayMs, requestSignal);
         continue;
       }
-      const failureProtocol = classifyModelFailure(providerError.code, retryBlockedReason);
+      // Retry-After 只在解析不到 resets_at/resets_in_seconds 时兜底。
+      const quotaResetAt = providerError.quotaResetAt
+        ?? parseQuotaResetAt({ retryAfterSeconds: Number(attemptResponse.headers.get('retry-after')) });
+      const failureProtocol = classifyModelFailure(providerError.code, retryBlockedReason, quotaResetAt);
       throw new ModelProviderError(
         providerDiagnosticMessage,
         attemptResponse.status,
         providerError.code ?? `HTTP_${attemptResponse.status}`,
         modelRequestId,
         attemptDiagnostics.attemptId,
-        0, failureProtocol?.failureKind, failureProtocol?.recoveryAction,
+        0, failureProtocol?.failureKind, failureProtocol?.recoveryAction, undefined,
+        failureProtocol?.quotaResetAt,
       );
     }
     if (!response || !activeAttempt) {
@@ -1842,13 +1846,27 @@ function providerErrorDiagnosticMessage(status: number, code: string | undefined
   return `Responses API HTTP ${status}${safeCode ? ` (${safeCode})` : ''}`;
 }
 
-function extractProviderError(text: string): { code?: string; message?: string } {
+function extractProviderError(text: string): {
+  code?: string;
+  message?: string;
+  /** 结构化配额重置时刻（ISO）；只从 error.resets_at / resets_in_seconds 解析，不碰文本 */
+  quotaResetAt?: string;
+} {
   try {
     const parsed = JSON.parse(text) as Record<string, any>;
     const error = parsed.error ?? parsed;
+    // Codex/OpenAI 把配额码放在 error.type（usage_limit_reached），火山放在 error.code。
+    const code = typeof error?.code === 'string' && error.code.trim()
+      ? error.code
+      : typeof error?.type === 'string' ? error.type : undefined;
+    const quotaResetAt = parseQuotaResetAt({
+      resetsAt: error?.resets_at,
+      resetsInSeconds: error?.resets_in_seconds,
+    });
     return {
-      ...(typeof error?.code === 'string' ? { code: compactDiagnosticMessage(error.code) } : {}),
+      ...(code ? { code: compactDiagnosticMessage(code) } : {}),
       ...(typeof error?.message === 'string' ? { message: compactDiagnosticMessage(error.message) } : {}),
+      ...(quotaResetAt ? { quotaResetAt } : {}),
     };
   } catch {
     const message = compactDiagnosticMessage(text);
@@ -1886,7 +1904,11 @@ function isInvalidEncryptedContent(status: number, code: string | undefined, mes
 
 // 429 里额度/配额耗尽类：需要人工充值或扩配额才能恢复，重试只会连续撞同一堵墙。
 // 限流（RPM/TPM）、服务过载、模型加载中都不属于这一类，退避后通常可恢复。
+//
+// 分两层：结构化错误码白名单（唯一用于客户面归类的依据，含 2026-08-24 漏掉的
+// usage_limit_reached）+ 遗留文本兜底（只影响是否重试，不影响客户面分类）。
 function isQuotaExhausted(code: string | undefined, message: string): boolean {
+  if (quotaExhaustedReasonCode(code)) return true;
   return /quota[_\s-]?exceeded|insufficient[_\s-]?quota|exhausted its free trial|额度(?:已)?(?:用尽|耗尽)/i
     .test(`${code ?? ''} ${message}`);
 }

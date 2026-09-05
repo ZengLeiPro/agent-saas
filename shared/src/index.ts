@@ -866,7 +866,7 @@ export type { FileTypeCategory, FileTypeVisual } from './lib/fileTypeVisual';
 export {
   DEFAULT_RUNTIME_FAILURE_MESSAGE,
   MODEL_REQUEST_FAILURE_MESSAGE,
-  POLICY_REJECTION_FAILURE_MESSAGE,
+  POLICY_REJECTION_FAILURE_MESSAGE, QUOTA_EXHAUSTED_FAILURE_MESSAGE,
   INSUFFICIENT_CREDITS_FAILURE_MESSAGE,
   formatRuntimeFailureMessage,
   isInsufficientCreditsFailure,
@@ -891,7 +891,7 @@ export {
   GENERIC_FAILURE_MESSAGE,
   POLICY_FAILURE_MESSAGE,
   formatQuotaResetHint,
-  selectClientFailureCopy,
+  selectClientFailureCopy, formatQuotaResetClock,
 } from './lib/clientFailureCopy';
 export type {
   ClientFailureCopy,

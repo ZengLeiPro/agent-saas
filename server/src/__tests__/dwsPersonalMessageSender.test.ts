@@ -131,7 +131,7 @@ describe('DwsPersonalMessageSender command builder', () => {
   });
 });
 
-describe('DwsPersonalMessageSender transport', () => {
+describe('DwsPersonalMessageSender transport boundary', () => {
   it('从 Shell stdout 固化 outbound message reference 供引用续话关联', () => {
     expect(extractDwsMessageReceipt(
       'Exit code: 0\n\n[stdout]\n{"result":{"message_id":"outbound-1","processQueryKey":"query-1"}}',
@@ -192,6 +192,25 @@ describe('DwsPersonalMessageSender transport', () => {
       sandboxResources: { cpu: '1', memoryMb: 2048 },
       workload: { class: 'interactive' },
     });
+  });
+
+  it('invoke envelope 构造失败时不跨越 provider 边界', async () => {
+    const invoke = successfulInvoke();
+    const onProviderStart = vi.fn(async () => undefined);
+    const sender = new DwsPersonalMessageSender({
+      agentCwd: '/mnt/agent-saas/workspaces',
+      resolveServerRemote: vi.fn(async () => ({
+        baseUrl: 'http://hand.internal', authToken: 'token',
+      })),
+      transportFactory: vi.fn(() => ({ invoke })),
+      createInvocationId: () => { throw new Error('invocation id unavailable'); },
+    });
+
+    await expect(
+      sender.send(account, personalEvent(), '回复', 'idem-envelope', onProviderStart),
+    ).rejects.toThrow('invocation id unavailable');
+    expect(onProviderStart).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -45,6 +45,7 @@ export function sanitizeDeliveryReceipt(value: Record<string, unknown>): Record<
 /** Linearizes the millisecond-normalized account identity fence with provider start. */
 export async function startDeliveryProviderAttempt(
   pool: pg.Pool, deliveriesTable: string, accountsTable: string,
+  bindingsTable: string, managedAgentsTable: string,
   deliveryId: string, owner: string, fence: number,
 ): Promise<DwsDeliveryIntent> {
   const result = await pool.query(
@@ -62,6 +63,30 @@ export async function startDeliveryProviderAttempt(
           AND account.dingtalk_user_id=delivery.account_dingtalk_user_id
           AND date_trunc('milliseconds', account.identity_updated_at)
             =date_trunc('milliseconds', delivery.account_identity_updated_at)
+      )
+      AND (
+        (delivery.binding_id IS NULL AND delivery.agent_id IS NULL
+          AND delivery.policy_revision IS NULL)
+        OR EXISTS (
+          SELECT 1 FROM ${bindingsTable} AS binding
+          JOIN ${managedAgentsTable} AS agent
+            ON agent.tenant_id=binding.tenant_id AND agent.agent_id=binding.agent_id
+          WHERE binding.tenant_id=delivery.tenant_id
+            AND binding.account_id=delivery.account_id
+            AND binding.conversation_id=delivery.conversation_id
+            AND binding.binding_id=delivery.binding_id
+            AND binding.agent_id=delivery.agent_id
+            AND binding.revision=delivery.policy_revision
+            AND binding.activation_state='active' AND binding.enabled=TRUE
+            AND binding.policy_json->>'enabled'='true'
+            AND COALESCE(binding.policy_json->>'liveDeny','false')='false'
+            AND binding.account_profile_id=delivery.account_profile_id
+            AND binding.account_corp_id=delivery.account_corp_id
+            AND binding.account_dingtalk_user_id=delivery.account_dingtalk_user_id
+            AND date_trunc('milliseconds', binding.account_identity_updated_at)
+              =date_trunc('milliseconds', delivery.account_identity_updated_at)
+            AND agent.status='enabled'
+        )
       )
     RETURNING delivery.*`,
     [deliveryId, owner, fence],

@@ -11,7 +11,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('组织群 Agent PostgreSQL 不变量', () => {
+describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
   const prefix = `orggroup_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgOrgGroupAgentStore;
@@ -736,6 +736,29 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     await expect(inbox.fail(
       claimed!.inboxId, 'worker-max-attempts', claimed!.leaseFence, new Error('provider unavailable'),
     )).resolves.toMatchObject({ state: 'dead_letter', responseText: '最终回复' });
+  });
+
+  it('provider-start 与当前 binding liveDeny/revision 原子线性化', async () => {
+    const binding = await store.getBinding('tenant-a', 'account-a', 'group-a');
+    const intent = await store.createDelivery({
+      tenantId: 'tenant-a', accountId: 'account-a', accountIdentity,
+      conversationId: 'group-a', agentId: 'agent-a', bindingId: binding!.bindingId,
+      policyRevision: binding!.revision, source: 'command', deliveryKind: 'front_reply',
+      disposition: 'replied', destination: { provider: 'dingtalk', accountId: 'account-a',
+        conversationId: 'group-a', kind: 'group' }, content: '旧策略正文',
+      idempotencyKey: 'delivery-live-deny-fence',
+    });
+    const claimed = await store.claimDelivery(intent.deliveryId, 'worker-fence', 60_000);
+    await pool.query(`UPDATE ${prefix}_org_agent_channel_bindings SET
+      policy_json=jsonb_set(policy_json,'{liveDeny}','true'::jsonb),revision=revision+1
+      WHERE binding_id=$1`, [binding!.bindingId]);
+
+    await expect(store.markDeliveryProviderStarted(
+      intent.deliveryId, 'worker-fence', claimed.leaseFence,
+    )).rejects.toThrow('DWS_DELIVERY_LEASE_LOST');
+    await expect(store.releaseClaimedDeliveryForRetry(
+      intent.deliveryId, 'worker-fence', claimed.leaseFence, new Error('live deny'), 1_000, 5,
+    )).resolves.toMatchObject({ deliveryState: 'pending' });
   });
 
   it('未固定 topic 的旧消息会阻塞同群已固定 topic 的后续消息', async () => {

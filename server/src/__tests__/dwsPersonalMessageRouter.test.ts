@@ -373,11 +373,10 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       account,
       expect.objectContaining({ eventId: 'event-a', conversationId: 'cid-a' }),
       '今天已完成三项工作。',
-      expect.stringMatching(/^agent-dws-reply-/),
+      expect.stringMatching(/^agent-dws-reply-/), expect.any(Function),
     );
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
-
   it('非 v1 行缺少入站账号身份快照时仍 fail closed，不执行也不回复', async () => {
     const { router, dispatch, sender, messageStore } = setup({
       claimed: { ...item, payload: {} },
@@ -392,7 +391,6 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       expect.objectContaining({ message: expect.stringContaining('identity is missing') }),
     );
   });
-
   it('v2 已持久化回复在崩溃重领后不重复 dispatch，并继续发送与完成', async () => {
     const recovered = {
       ...item,
@@ -411,7 +409,8 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(messageStore.saveDispatchResult).not.toHaveBeenCalled();
     expect(messageStore.markReplyAttemptStarted).toHaveBeenCalledOnce();
     expect(sender.send).toHaveBeenCalledWith(
-      account, expect.objectContaining({ eventId: item.eventId }), '崩溃前已持久化回复', expect.any(String),
+      account, expect.objectContaining({ eventId: item.eventId }), '崩溃前已持久化回复',
+      expect.any(String), expect.any(Function),
     );
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
@@ -548,7 +547,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       account,
       expect.objectContaining({ eventId: 'background-task-completion:bg-1' }),
       '任务 T-1234ABCD 已完成。',
-      expect.any(String),
+      expect.any(String), expect.any(Function),
     );
   });
 
@@ -583,7 +582,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       runId: expect.stringMatching(/^agent-dws-run-/), toolName: 'Shell',
     }));
     expect(sender.send).toHaveBeenCalledWith(
-      account, expect.any(Object), '已说明无法执行。', expect.any(String),
+      account, expect.any(Object), '已说明无法执行。', expect.any(String), expect.any(Function),
     );
   });
 
@@ -673,6 +672,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(dispatch).not.toHaveBeenCalled();
     expect(sender.send).toHaveBeenCalledWith(
       account, expect.any(Object), '已生成的回复', expect.stringMatching(/^agent-dws-reply-/),
+      expect.any(Function),
     );
   });
 
@@ -694,7 +694,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       'inbox-a', expect.any(String), 1, '从 EventStore 恢复的回复',
     );
     expect(sender.send).toHaveBeenCalledWith(
-      account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String),
+      account, expect.any(Object), '从 EventStore 恢复的回复', expect.any(String), expect.any(Function),
     );
   });
 

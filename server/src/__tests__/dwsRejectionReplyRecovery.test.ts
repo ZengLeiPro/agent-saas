@@ -34,6 +34,7 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
   requesterAllowed?: boolean;
   outcome?: { status: 'unavailable'; reason: string };
   withDeliveryStore?: boolean;
+  authorizationSequence?: Array<{ allowed: boolean; reason?: string }>;
 } = {}) {
   const queue = [...claimed];
   const messageStore = {
@@ -58,13 +59,21 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
       ...claimed[0], state: 'dead_letter', disposition: 'delivery_unknown',
     }),
     fail: vi.fn().mockResolvedValue({ ...claimed[0], state: 'retry_wait' }),
-    complete: vi.fn(), getOrCreateBinding: vi.fn(),
-    markDispatchStarted: vi.fn(),
+    complete: vi.fn(), getOrCreateBinding: vi.fn().mockResolvedValue({ sessionId: 'session-a' }),
+    markDispatchStarted: vi.fn(async () => claimed[0]),
     saveDispatchResult: vi.fn(), defer: vi.fn(), releaseClaim: vi.fn(), init: vi.fn(), ingest: vi.fn(),
     listForAccount: vi.fn(), hasObservedGroup: vi.fn(), listActiveForAccount: vi.fn(),
     deleteForTenant: vi.fn(),
   } as unknown as AgentDwsMessageStore;
-  const sender = { send: vi.fn().mockResolvedValue({ status: 'accepted', acceptedAt: now }) };
+  const providerSend = vi.fn();
+  const sender = { send: vi.fn(async (
+    _account: unknown, _event: unknown, _text: string, _key: string,
+    onProviderStart?: () => Promise<void>,
+  ) => {
+    await onProviderStart?.();
+    providerSend();
+    return { status: 'accepted', acceptedAt: now };
+  }) };
   const orgGroupAgentStore = options.withDeliveryStore
     ? {
         reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
@@ -73,7 +82,10 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
       } as unknown as OrgGroupAgentStore
     : undefined;
   const dispatch = vi.fn();
-  const authorizeRequester = vi.fn().mockResolvedValue(
+  const authorizeRequester = vi.fn();
+  for (const authorization of options.authorizationSequence ?? [])
+    authorizeRequester.mockResolvedValueOnce(authorization);
+  authorizeRequester.mockResolvedValue(
     options.requesterAllowed === false
       ? { allowed: false, reason: 'ASSIGNMENT_DENIED' }
       : { allowed: true },
@@ -90,7 +102,7 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
     auditRequesterRejection: vi.fn(), auditToolPolicyRejection: vi.fn(), sender,
     ...(orgGroupAgentStore ? { orgGroupAgentStore } : {}),
   });
-  return { router, messageStore, sender, dispatch, authorizeRequester, orgGroupAgentStore };
+  return { router, messageStore, sender, providerSend, dispatch, authorizeRequester, orgGroupAgentStore };
 }
 
 describe('Agent DWS rejection reply recovery', () => {
@@ -110,7 +122,7 @@ describe('Agent DWS rejection reply recovery', () => {
       'inbox-a', expect.any(String), 2, 'ASSIGNMENT_DENIED',
     );
     expect(test.sender.send).toHaveBeenLastCalledWith(
-      account, expect.any(Object), '已持久化拒绝', expect.any(String),
+      account, expect.any(Object), '已持久化拒绝', expect.any(String), expect.any(Function),
     );
     expect(test.dispatch).not.toHaveBeenCalled();
   });
@@ -161,6 +173,27 @@ describe('Agent DWS rejection reply recovery', () => {
     expect(test.sender.send).not.toHaveBeenCalled();
   });
 
+  it('长运行回复在 provider 前发现 Assignment 已撤销时不发送旧正文', async () => {
+    const normal = { ...item, eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const, replyKind: 'normal' as const,
+      responseText: '旧授权下生成的机密正文', replyStartedAt: now };
+    const test = setup([normal], {
+      requester: true,
+      authorizationSequence: [
+        { allowed: true }, { allowed: false, reason: 'ASSIGNMENT_DENIED' },
+      ],
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.authorizeRequester).toHaveBeenCalledTimes(2);
+    expect(test.messageStore.blockReply).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1, 'ASSIGNMENT_DENIED',
+    );
+    expect(test.providerSend).not.toHaveBeenCalled();
+    expect(test.messageStore.complete).not.toHaveBeenCalled();
+  });
+
   it('拒绝型 reply_pending 即使身份恢复，也只恢复原拒绝投递', async () => {
     const rejected = { ...item, state: 'reply_pending' as const,
       replyKind: 'access_rejection' as const, responseText: '原拒绝正文',
@@ -171,7 +204,7 @@ describe('Agent DWS rejection reply recovery', () => {
 
     expect(test.authorizeRequester).not.toHaveBeenCalled();
     expect(test.sender.send).toHaveBeenCalledWith(
-      account, expect.any(Object), '原拒绝正文', expect.any(String),
+      account, expect.any(Object), '原拒绝正文', expect.any(String), expect.any(Function),
     );
     expect(test.messageStore.reject).toHaveBeenCalledWith(
       'inbox-a', expect.any(String), 1, 'REQUESTER_IDENTITY_UNMAPPED',

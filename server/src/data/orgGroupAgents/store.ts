@@ -65,6 +65,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   private readonly conversationsTable: string;
   private readonly inboxTable: string;
   private readonly accountsTable: string;
+  private readonly managedAgentsTable: string;
   private readonly deliveriesTable: string;
   private readonly workOrdersTable: string;
   private readonly attemptsTable: string;
@@ -79,6 +80,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     this.conversationsTable = `${this.prefix}_org_agent_work_conversations`;
     this.inboxTable = `${this.prefix}_agent_dws_event_inbox`;
     this.accountsTable = `${this.prefix}_agent_dws_accounts`;
+    this.managedAgentsTable = `${this.prefix}_managed_agents`;
     this.deliveriesTable = `${this.prefix}_agent_dws_delivery_intents`;
     this.workOrdersTable = `${this.prefix}_org_agent_work_orders`;
     this.attemptsTable = `${this.prefix}_org_agent_work_attempts`;
@@ -383,7 +385,9 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   ): Promise<DwsDeliveryIntent> {
     assertTexts(deliveryId, owner);
     return startDeliveryProviderAttempt(
-      this.pool, this.deliveriesTable, this.accountsTable, deliveryId, owner, fence,
+      this.pool, this.deliveriesTable, this.accountsTable,
+      this.bindingsTable, this.managedAgentsTable,
+      deliveryId, owner, fence,
     );
   }
 

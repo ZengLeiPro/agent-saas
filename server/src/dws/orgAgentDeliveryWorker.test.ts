@@ -168,7 +168,7 @@ function harness(input?: {
   };
 }
 
-describe('deliverNextOrgAgentIntent', () => {
+describe('deliverNextOrgAgentIntent provider fences', () => {
   it('没有待投递 intent 时返回 false', async () => {
     const test = harness({ pending: false });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(false);
@@ -218,6 +218,27 @@ describe('deliverNextOrgAgentIntent', () => {
       1_000,
       5,
     );
+  });
+
+  it('sender 准备期间 liveDeny 生效时 provider fence 阻断实际发送', async () => {
+    const test = harness();
+    const providerInvoke = vi.fn();
+    vi.mocked(test.store.markDeliveryProviderStarted).mockRejectedValueOnce(
+      new Error('DWS_DELIVERY_LEASE_LOST'),
+    );
+    test.sender.send.mockImplementationOnce(async (
+      _account, _event, _text, _key, onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      providerInvoke();
+      return { status: 'accepted' };
+    });
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(providerInvoke).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
   });
 
   it('marks provider receipt ambiguity unknown and excludes automatic retry', async () => {

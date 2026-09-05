@@ -56,7 +56,8 @@ import {
 import type { DwsPersonalEvent } from './personalEventGateway.js';
 import { deliverNextOrgAgentIntent } from './orgAgentDeliveryWorker.js';
 import {
-  finalizeReplyDelivery, OrgAgentVisibleReplyService, settleFrontReply,
+  finalizeReplyDelivery, OrgAgentProviderAuthorizationRevokedError,
+  OrgAgentVisibleReplyService, settleFrontReply,
 } from './orgAgentVisibleReply.js';
 import type { DwsPersonalMessageSenderLike } from './personalMessageSender.js';
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
@@ -661,30 +662,28 @@ export class AgentDwsMessageRouter {
     ) {
       throw new Error('Agent DWS account identity changed before reply');
     }
-    const replyDelivery = await settleFrontReply(
-      frontReplyDeadline,
-      () =>
-        this.visibleReply.send(
-          replyAccount,
-          item,
-          responseText,
-          shared,
-          'front_reply',
-          'replied',
-          'first',
-        ),
-      () =>
-        this.visibleReply.send(
-          replyAccount,
-          item,
-          responseText,
-          shared,
-          'front_reply',
-          'replied',
-          'final',
-        ),
+    const authorizeBeforeProvider = !shared && requester && !serviceEvent
+      ? () => this.options.authorizeRequester({ account: replyAccount, requester, sessionId, runId })
+      : undefined;
+    const sendReply = (phase: 'first' | 'final') => this.visibleReply.send(
+      replyAccount, item, responseText, shared, 'front_reply', 'replied', phase,
+      undefined, authorizeBeforeProvider,
     );
-    if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, replyDelivery))) return;
+    let replyDelivery;
+    try {
+      replyDelivery = await settleFrontReply(
+        frontReplyDeadline, () => sendReply('first'), () => sendReply('final'),
+      );
+    } catch (error) {
+      if (!(error instanceof OrgAgentProviderAuthorizationRevokedError)) throw error;
+      await this.rejectAccess(replyAccount, {
+        ...item, state: 'reply_pending', replyKind: 'normal', responseText,
+      }, error.reason, requester ?? undefined);
+      return;
+    }
+    if (!(await finalizeReplyDelivery(
+      this.options.messageStore, this.workerId, item, replyDelivery,
+    ))) return;
     await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
     this.options.logger?.info(
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,

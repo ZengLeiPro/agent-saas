@@ -28,6 +28,12 @@ import {
 
 const FRONT_REPLY_FALLBACK = '收到，我正在处理，完成后会在这里回复结果。';
 
+export class OrgAgentProviderAuthorizationRevokedError extends Error {
+  constructor(readonly reason: string) {
+    super(`ORG_AGENT_PROVIDER_AUTHORIZATION_REVOKED:${reason}`);
+  }
+}
+
 /** A final reply may follow only a confirmed-sent fallback, never an unknown provider attempt. */
 export async function settleFrontReply(
   deadline: { cancel(): Promise<DwsDeliveryIntent | undefined> } | undefined,
@@ -129,13 +135,20 @@ export class OrgAgentVisibleReplyService {
     disposition: 'replied' | 'rejected',
     replyPhase: 'first' | 'final' = 'first',
     sourceOverride?: DwsDeliveryIntent['source'],
+    authorizeBeforeProvider?: () => Promise<{ allowed: boolean; reason?: string }>,
   ): Promise<DwsDeliveryIntent | undefined> {
     const idempotencyKey = deterministicId(
       replyPhase === 'first' ? 'agent-dws-reply' : 'agent-dws-final',
       `${item.accountId}:${item.eventId}`,
     );
     if (!this.options.orgGroupAgentStore) {
-      await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey);
+      await this.options.sender.send(account, inboxEvent(item), text, idempotencyKey, async () => {
+        const authorization = await authorizeBeforeProvider?.();
+        if (authorization && !authorization.allowed)
+          throw new OrgAgentProviderAuthorizationRevokedError(
+            authorization.reason ?? 'ACCESS_DENIED',
+          );
+      });
       return undefined;
     }
     const visibility = shared?.completionWork?.visibility ?? shared?.binding.policy.taskVisibility;
@@ -256,6 +269,11 @@ export class OrgAgentVisibleReplyService {
         claimed.content,
         claimed.idempotencyKey,
         async () => {
+          const authorization = await authorizeBeforeProvider?.();
+          if (authorization && !authorization.allowed)
+            throw new OrgAgentProviderAuthorizationRevokedError(
+              authorization.reason ?? 'ACCESS_DENIED',
+            );
           await this.options.orgGroupAgentStore!.markDeliveryProviderStarted(
             delivery.deliveryId,
             this.workerId,

@@ -95,7 +95,7 @@ function harness() {
   return { accountStore, store, sender, service };
 }
 
-describe('OrgAgentVisibleReplyService', () => {
+describe('OrgAgentVisibleReplyService delivery fences', () => {
   it('统一把 unknown/dead-letter 转成人工核对，并拒绝把 pending 当成功', async () => {
     const messageStore = { markReplyUnknown: vi.fn().mockResolvedValue(undefined) } as never;
     await expect(finalizeReplyDelivery(
@@ -155,6 +155,28 @@ describe('OrgAgentVisibleReplyService', () => {
       1_000,
       5,
     );
+  });
+
+  it('sender 准备期间停用 binding 时 provider fence 阻断实际发送', async () => {
+    const test = harness();
+    const providerInvoke = vi.fn();
+    vi.mocked(test.store.markDeliveryProviderStarted).mockRejectedValueOnce(
+      new Error('DWS_DELIVERY_LEASE_LOST'),
+    );
+    vi.mocked(test.sender.send).mockImplementationOnce(async (
+      _account, _event, _text, _key, onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      providerInvoke();
+      return { status: 'accepted' };
+    });
+
+    await expect(
+      test.service.send(account, item, '完成', undefined, 'front_reply', 'replied'),
+    ).rejects.toThrow('DWS_DELIVERY_LEASE_LOST');
+    expect(providerInvoke).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
   });
 
   it('sender 本地准备失败时释放为 pending，不误记 provider unknown', async () => {

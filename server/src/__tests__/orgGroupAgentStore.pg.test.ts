@@ -740,10 +740,15 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
 
   it('provider-start 与当前 binding liveDeny/revision 原子线性化', async () => {
     const binding = await store.getBinding('tenant-a', 'account-a', 'group-a');
+    const conversation = await pool.query(`SELECT work_conversation_id FROM
+      ${prefix}_org_agent_work_conversations WHERE binding_id=$1 LIMIT 1`, [binding!.bindingId]);
     const intent = await store.createDelivery({
       tenantId: 'tenant-a', accountId: 'account-a', accountIdentity,
       conversationId: 'group-a', agentId: 'agent-a', bindingId: binding!.bindingId,
-      policyRevision: binding!.revision, source: 'command', deliveryKind: 'front_reply',
+      conversationSpaceId: binding!.conversationSpaceId,
+      workConversationId: String(conversation.rows[0].work_conversation_id),
+      policyRevision: binding!.revision, visibility: 'conversation',
+      source: 'command', deliveryKind: 'front_reply',
       disposition: 'replied', destination: { provider: 'dingtalk', accountId: 'account-a',
         conversationId: 'group-a', kind: 'group' }, content: '旧策略正文',
       idempotencyKey: 'delivery-live-deny-fence',

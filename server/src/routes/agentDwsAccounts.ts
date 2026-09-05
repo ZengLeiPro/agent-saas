@@ -296,11 +296,10 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     const effectiveConfig = mergeGroupWorkspaceEffectiveConfig(
       currentBinding.effectiveConfig, parsed.data.effectiveConfig,
     );
-    const dwsCapabilityError = groupDwsCapabilityError(
-      effectiveConfig, parsed.data.enabled && !parsed.data.policy.liveDeny,
-    );
+    const enforceActivation = parsed.data.enabled && !parsed.data.policy.liveDeny;
+    const dwsCapabilityError = groupDwsCapabilityError(effectiveConfig, enforceActivation);
     if (dwsCapabilityError) return res.status(400).json({ error: dwsCapabilityError });
-    if (parsed.data.enabled) {
+    if (parsed.data.enabled && !parsed.data.policy.liveDeny) {
       const agent = options.orgAgentStore.get(account.agentId);
       if (!agent || agent.tenantId !== tenantId || !agent.enabled)
         return res.status(409).json({ error: '组织智能体当前不可用' });

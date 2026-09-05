@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsInboxRecord } from '../data/agentDwsMessages/index.js';
+import type {
+  AgentDwsInboxRecord,
+  AgentDwsMessageStore,
+} from '../data/agentDwsMessages/index.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import type { UserIdentity } from '../types/index.js';
 import type { SharedGroupContext } from './orgAgentSharedGroupContext.js';
@@ -107,6 +110,21 @@ export function assertDwsReplyAttemptFresh(
   if (Date.now() - Date.parse(replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
     throw new Error(`Agent DWS ${kind} idempotency window expired; manual reconciliation required`);
   }
+}
+
+export async function prepareRoutingClarificationReply(
+  store: AgentDwsMessageStore,
+  item: AgentDwsInboxRecord,
+  owner: string,
+  currentText: string,
+): Promise<string> {
+  const responseText = item.state === 'reply_pending' ? item.responseText : currentText;
+  if (!responseText) throw new Error('Agent DWS routing clarification reply is missing');
+  if (item.state !== 'reply_pending')
+    await store.saveDispatchResult(item.inboxId, owner, item.leaseFence, responseText);
+  const attempt = await store.markReplyAttemptStarted(item.inboxId, owner, item.leaseFence);
+  assertDwsReplyAttemptFresh(attempt.replyStartedAt, 'reply');
+  return responseText;
 }
 
 export function persistedRejectionReason(item: AgentDwsInboxRecord): string | undefined {

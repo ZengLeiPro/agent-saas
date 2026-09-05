@@ -34,7 +34,8 @@ export interface OrgAgentDeliveryWorkerOptions {
 /**
  * Drains identity-pinned durable outbound intents independently from their inbound event.
  * Unknown deliveries are deliberately excluded: only an administrator can prove that an
- * unknown provider attempt was not sent and move it back to pending.
+ * unknown provider attempt was not sent and move it back to pending. The sender marks
+ * provider start only after deterministic local transport preparation has succeeded.
  */
 export async function deliverNextOrgAgentIntent(
   options: OrgAgentDeliveryWorkerOptions,
@@ -43,6 +44,7 @@ export async function deliverNextOrgAgentIntent(
   const delivery = await options.store.claimNextDelivery(options.workerId, options.leaseTtlMs);
   if (!delivery) return false;
 
+  // Only failures after the sender crosses its transport boundary are ambiguous.
   let providerStarted = false;
   try {
     const account = await options.accountStore.getForTenant(delivery.tenantId, delivery.accountId);
@@ -178,18 +180,20 @@ export async function deliverNextOrgAgentIntent(
       }
     }
 
-    await options.store.markDeliveryProviderStarted(
-      delivery.deliveryId,
-      options.workerId,
-      delivery.leaseFence,
-    );
-    providerStarted = true;
     try {
       const receipt = await options.sender.send(
         account,
         deliveryEvent(delivery),
         delivery.content,
         delivery.idempotencyKey,
+        async () => {
+          await options.store.markDeliveryProviderStarted(
+            delivery.deliveryId,
+            options.workerId,
+            delivery.leaseFence,
+          );
+          providerStarted = true;
+        },
       );
       if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
       await options.store.markDeliverySent(
@@ -199,6 +203,7 @@ export async function deliverNextOrgAgentIntent(
         receipt,
       );
     } catch (error) {
+      if (!providerStarted) throw error;
       await options.store.markDeliveryUnknown(
         delivery.deliveryId,
         options.workerId,

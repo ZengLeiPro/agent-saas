@@ -3,321 +3,16 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRunDispatch } from '../agent/index.js';
-import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
-import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
-import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 import {
   account,
-  createBinding,
   deferred,
   delivery,
-  type DwsOrgGroupRouterHarnessOptions,
   item,
   now,
+  setup,
   workOrder,
 } from './dwsOrgGroupMessageRouterFixtures.js';
-
-function setup(options: DwsOrgGroupRouterHarnessOptions = {}) {
-  const claimed = options.claimed ?? { ...item, content: options.content ?? item.content };
-  const messageStore = {
-    claimNext: vi.fn().mockResolvedValueOnce(claimed).mockResolvedValue(null),
-    renewLease: vi.fn().mockResolvedValue(true),
-    getOrCreateBinding: vi.fn(),
-    markDispatchStarted: vi
-      .fn()
-      .mockImplementation(
-        async (_id: string, _owner: string, _fence: number, sessionId: string, runId: string) => ({
-          ...claimed,
-          sessionId,
-          runId,
-        }),
-      ),
-    saveDispatchResult: vi
-      .fn()
-      .mockImplementation(async (_id: string, _owner: string, _fence: number, text: string) => ({
-        ...claimed,
-        state: 'reply_pending',
-        responseText: text,
-      })),
-    saveRejectionResult: vi.fn().mockImplementation(async (
-      _id: string, _owner: string, _fence: number, text: string, reasonCode: string,
-    ) => ({ ...claimed, state: 'reply_pending', replyKind: 'access_rejection',
-      responseText: text, rejectionReasonCode: reasonCode })),
-    markReplyAttemptStarted: vi
-      .fn()
-      .mockResolvedValue({ ...claimed, state: 'reply_pending', replyStartedAt: now }),
-    complete: vi.fn().mockResolvedValue({ ...claimed, state: 'completed' }),
-    reject: vi.fn().mockImplementation(async (
-      _id: string, _owner: string, _fence: number, rejectionReasonCode: string,
-    ) => ({ ...claimed, state: 'completed', disposition: 'rejected', rejectionReasonCode })),
-    blockReply: vi.fn().mockResolvedValue({ ...claimed, state: 'dead_letter' }),
-    markReplyUnknown: vi.fn().mockResolvedValue({
-      ...claimed, state: 'dead_letter', disposition: 'delivery_unknown' }),
-    fail: vi.fn().mockResolvedValue(undefined),
-    defer: vi.fn().mockResolvedValue(undefined),
-    releaseClaim: vi.fn(),
-    pinLegacyIdentityOrTerminate: vi.fn(),
-    init: vi.fn(),
-    ingest: vi.fn().mockResolvedValue({ record: claimed, created: true }),
-    listForAccount: vi.fn(),
-    hasObservedGroup: vi.fn(),
-    deleteForTenant: vi.fn(),
-  } as unknown as AgentDwsMessageStore;
-  const binding = createBinding(options);
-  const storedDeliveries = new Map<string, typeof delivery>();
-  let deliverySequence = 0;
-  let deliveryClaimSequence = 0;
-  const orgStore = {
-    reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
-    claimNextDelivery: vi.fn().mockResolvedValue(null),
-    ensureShadowBinding: vi.fn().mockResolvedValue(binding),
-    getBinding: vi.fn().mockResolvedValue(binding),
-    getOrCreateWorkConversation: vi.fn().mockResolvedValue({
-      workConversationId: 'workconv-a',
-      tenantId: 'tenant-a',
-      bindingId: 'channel-binding-a',
-      rootKey: 'mid-a',
-      rootMessageId: 'mid-a',
-      sessionId: 'session-a',
-      state: 'active',
-      createdAt: now,
-      updatedAt: now,
-    }),
-    findWorkConversationByMessage: vi.fn().mockResolvedValue(null),
-    getWorkConversation: vi
-      .fn()
-      .mockImplementation(async (_tenantId: string, workConversationId: string) => {
-        if (workConversationId === 'workconv-a') {
-          return {
-            workConversationId,
-            tenantId: 'tenant-a',
-            bindingId: 'channel-binding-a',
-            rootKey: 'mid-a',
-            rootMessageId: 'mid-a',
-            sessionId: 'session-a',
-            state: 'active',
-            createdAt: now,
-            updatedAt: now,
-          };
-        }
-        const routed = [options.shortWorkOrder, ...(options.workOrders ?? [])].find(
-          (candidate) => candidate?.workConversationId === workConversationId,
-        );
-        if (routed) {
-          return {
-            workConversationId,
-            tenantId: 'tenant-a',
-            bindingId: 'channel-binding-a',
-            rootKey: 'routed-message',
-            sessionId: 'session-routed',
-            state: 'active',
-            createdAt: now,
-            updatedAt: now,
-          };
-        }
-        return null;
-      }),
-    pinInboxContext: vi.fn(),
-    pinInboxRouting: vi.fn(),
-    getWorkOrder: vi.fn().mockResolvedValue({
-      workOrderId: 'work-a',
-      tenantId: 'tenant-a',
-      agentId: 'agent-a',
-      bindingId: 'channel-binding-a',
-      workConversationId: 'workconv-a',
-      title: '整理采购异常',
-      resultEnvelope: { summary: '敏感结果' },
-      state: 'completed',
-      currentAttemptNo: 1,
-      visibility: options.workVisibility ?? 'conversation',
-      createdByActor: {
-        kind: 'external_user',
-        provider: 'dingtalk',
-        corpId: 'corp-a',
-        openId: 'requester-open-id',
-        assurance: 'mapped',
-        mappedUserId: 'user-a',
-        role: 'member',
-      },
-    }),
-    getWorkOrderByShortId: vi
-      .fn()
-      .mockImplementation(async (_tenantId: string, _agentId: string, shortId: string) =>
-        options.shortWorkOrder?.shortId === shortId ? options.shortWorkOrder : null,
-      ),
-    listWorkOrders: vi.fn().mockResolvedValue(options.workOrders ?? []),
-    listWorkAttempts: vi.fn().mockResolvedValue([
-      {
-        attemptId: 'attempt-a',
-        workOrderId: 'work-a',
-        runtimeRunId: 'bg-a',
-        attemptNo: 1,
-        status: 'completed',
-      },
-    ]),
-    listMemories: vi
-      .fn()
-      .mockImplementation(
-        async (query: {
-          memoryScope?: string;
-          status?: string;
-          bindingId?: string;
-          workConversationId?: string;
-        }) =>
-          (options.memories ?? []).filter(
-            (memory) =>
-              (!query.memoryScope || memory.memoryScope === query.memoryScope) &&
-              (!query.status || memory.status === query.status) &&
-              (!query.bindingId || memory.bindingId === query.bindingId) &&
-              (!query.workConversationId || memory.workConversationId === query.workConversationId),
-          ),
-      ),
-    createDelivery: vi.fn().mockImplementation(async (input: Record<string, unknown>) => {
-      const key = String(input.idempotencyKey);
-      const existing = storedDeliveries.get(key);
-      if (existing) return existing;
-      deliverySequence += 1;
-      const created = {
-        ...delivery,
-        ...input,
-        deliveryId: deliverySequence === 1 ? 'delivery-a' : `delivery-${deliverySequence}`,
-        deliveryState: 'pending' as const,
-        attempt: 0,
-        leaseFence: 0,
-      };
-      storedDeliveries.set(key, created);
-      return created;
-    }),
-    claimDelivery: vi.fn().mockImplementation(async (deliveryId: string) => {
-      deliveryClaimSequence += 1;
-      if (options.failFirstDeliveryClaim && deliveryClaimSequence === 1) {
-        throw new Error('simulated process crash before delivery claim');
-      }
-      const current = [...storedDeliveries.values()].find(
-        (candidate) => candidate.deliveryId === deliveryId,
-      );
-      if (!current || current.deliveryState !== 'pending')
-        throw new Error('DWS_DELIVERY_NOT_CLAIMABLE');
-      const claimedDelivery = {
-        ...current,
-        deliveryState: 'sending' as const,
-        attempt: current.attempt + 1,
-        leaseFence: current.leaseFence + 1,
-      };
-      storedDeliveries.set(current.idempotencyKey, claimedDelivery);
-      return claimedDelivery;
-    }),
-    getDelivery: vi
-      .fn()
-      .mockImplementation(
-        async (_tenantId: string, deliveryId: string) =>
-          [...storedDeliveries.values()].find((candidate) => candidate.deliveryId === deliveryId) ??
-          null,
-      ),
-    markDeliveryProviderStarted: vi.fn().mockImplementation(async (deliveryId: string) => {
-      const current = [...storedDeliveries.values()].find(
-        (candidate) => candidate.deliveryId === deliveryId,
-      );
-      if (!current) throw new Error('DWS_DELIVERY_LEASE_LOST');
-      return current;
-    }),
-    releaseClaimedDeliveryForRetry: vi.fn().mockImplementation(async (deliveryId: string) => {
-      const current = [...storedDeliveries.values()].find(
-        (candidate) => candidate.deliveryId === deliveryId,
-      );
-      if (!current) throw new Error('DWS_DELIVERY_LEASE_LOST');
-      const released = { ...current, deliveryState: 'pending' as const };
-      storedDeliveries.set(current.idempotencyKey, released);
-      return released;
-    }),
-    markDeliverySent: vi.fn().mockImplementation(async (deliveryId: string) => {
-      const current = [...storedDeliveries.values()].find(
-        (candidate) => candidate.deliveryId === deliveryId,
-      );
-      if (current)
-        storedDeliveries.set(current.idempotencyKey, {
-          ...current,
-          deliveryState: 'sent' as const,
-        });
-    }),
-    markDeliveryUnknown: vi.fn().mockImplementation(async (deliveryId: string) => {
-      const current = [...storedDeliveries.values()].find(
-        (candidate) => candidate.deliveryId === deliveryId,
-      );
-      if (current)
-        storedDeliveries.set(current.idempotencyKey, {
-          ...current,
-          deliveryState: 'unknown' as const,
-        });
-    }),
-    markDeliveryDeadLetter: vi.fn(),
-  } as unknown as OrgGroupAgentStore;
-  const dispatch = vi.fn((_message, context, _options, hooks) =>
-    (async function* () {
-      if (options.dispatchGate) await options.dispatchGate;
-      await hooks?.onResult?.({ resultText: '完成' });
-      yield { type: 'session_init' as const, sessionId: context.resumeSessionId };
-      yield { type: 'done' as const };
-    })(),
-  ) as unknown as AgentRunDispatch;
-  const sender = {
-    send: vi
-      .fn()
-      .mockResolvedValue(
-        options.senderReceipt === null
-          ? undefined
-          : (options.senderReceipt ?? { status: 'accepted', acceptedAt: now }),
-      ),
-  };
-  const logger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() };
-  const resolveRequester = vi.fn().mockResolvedValue({
-    id: 'user-a',
-    username: 'user',
-    role: 'user',
-    tenantId: 'tenant-a',
-  });
-  const router = new AgentDwsMessageRouter({
-    agentCwd: '/tmp',
-    messageStore,
-    orgGroupAgentStore: orgStore,
-    orgAgentStore: {
-      get: vi.fn().mockReturnValue({ id: 'agent-a', tenantId: 'tenant-a', enabled: true }),
-    } as never,
-    accountStore: {
-      getForTenant: vi.fn().mockResolvedValue(account),
-    } as unknown as AgentDwsAccountStore,
-    dispatch,
-    resolveDefaultModel: () => ({ ref: 'models/test', model: 'test' }),
-    resolveRequester,
-    resolveRequesterGovernanceRole: vi
-      .fn()
-      .mockResolvedValue(
-        options.governanceRole === null ? undefined : (options.governanceRole ?? 'member'),
-      ),
-    ...(options.requesterOutcome
-      ? { resolveRequesterOutcome: vi.fn().mockResolvedValue(options.requesterOutcome) }
-      : {}),
-    authorizeRequester: vi.fn().mockResolvedValue({ allowed: true }),
-    authorizeCompletionRequester: vi
-      .fn()
-      .mockResolvedValue(options.completionRequesterAuthorized ?? true),
-    auditRequesterRejection: vi.fn(),
-    auditToolPolicyRejection: vi.fn(),
-    sender,
-    ...(options.existingRun
-      ? {
-          runStore: { get: vi.fn().mockResolvedValue(options.existingRun) } as never,
-        }
-      : {}),
-    isOrgAgentRuntimeV2Ready: () => true,
-    logger,
-    leaseTtlMs: 60_000,
-    leaseRenewMs: 30_000,
-    ...(options.frontReplyDeadlineMs ? { frontReplyDeadlineMs: options.frontReplyDeadlineMs } : {}),
-  });
-  return { router, messageStore, orgStore, dispatch, sender, resolveRequester, logger };
-}
 
 describe('AgentDwsMessageRouter organization group discovery/binding', () => {
   it('uses an Agent-owned WorkConversation and durable delivery', async () => {
@@ -359,6 +54,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       expect.any(Object),
       '完成',
       legacyProviderKey,
+      expect.any(Function),
     );
     expect(test.orgStore.markDeliveryProviderStarted).toHaveBeenCalledOnce();
     expect(test.orgStore.markDeliverySent).toHaveBeenCalledOnce();
@@ -379,7 +75,8 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     expect(test.messageStore.reject).toHaveBeenCalledWith(
       'inbox-a', expect.any(String), 1, 'ORG_AGENT_CHANNEL_UNCONFIGURED');
     expect(test.sender.send).toHaveBeenCalledWith(
-      expect.any(Object), expect.any(Object), expect.stringContaining('群尚未配置'), expect.any(String));
+      expect.any(Object), expect.any(Object), expect.stringContaining('群尚未配置'),
+      expect.any(String), expect.any(Function));
     await test.router.stop();
   });
 
@@ -417,6 +114,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       expect.any(Object),
       expect.stringContaining('W-123456ABCDEF'),
       expect.any(String),
+      expect.any(Function),
     );
   });
 
@@ -446,10 +144,11 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       expect.any(Object),
       expect.stringContaining('W-987654ABCDEF'),
       expect.any(String),
+      expect.any(Function),
     );
   });
 
-  it('writes and sends a durable clarification instead of dispatching an ambiguous continuation', async () => {
+  it('persists and sends one clarification instead of dispatching an ambiguous continuation', async () => {
     const first = workOrder({ shortId: 'W-123456ABCDEF', title: '采购异常核对' });
     const second = workOrder({
       workOrderId: 'work-route-b',
@@ -473,6 +172,114 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       expect.any(Object),
       expect.stringContaining('W-987654ABCDEF'),
       expect.any(String),
+      expect.any(Function),
+    );
+    expect(test.messageStore.complete).toHaveBeenCalledOnce();
+  });
+
+  it('创建 delivery 后崩溃并撤销授权时，router 先取消旧正文且 worker 无法 drain', async () => {
+    const pendingReply = {
+      ...item,
+      state: 'reply_pending' as const,
+      replyKind: 'normal' as const,
+      responseText: '旧授权上下文生成的正文',
+      replyStartedAt: now,
+      attempt: 2,
+      leaseFence: 2,
+    };
+    const test = setup({
+      failFirstDeliveryClaim: true,
+      claimedSequence: [item, pendingReply],
+      authorizationSequence: [
+        { allowed: true },
+        { allowed: false, reason: 'ASSIGNMENT_DENIED' },
+      ],
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(false);
+    expect(test.orgStore.createDelivery).toHaveBeenCalledOnce();
+    expect(test.sender.send).not.toHaveBeenCalled();
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+    expect(test.orgStore.cancelUnstartedDeliveriesForInbox).toHaveBeenCalledWith(
+      'tenant-a',
+      'inbox-a',
+      'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED',
+    );
+    expect(test.messageStore.blockReply).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 2, 'ASSIGNMENT_DENIED',
+    );
+    expect(await test.orgStore.getDelivery('tenant-a', 'delivery-a')).toMatchObject({
+      deliveryState: 'dead_letter',
+      lastError: 'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED',
+    });
+    await expect(test.router.runOnce()).resolves.toBe(false);
+    expect(test.sender.send).not.toHaveBeenCalled();
+  });
+
+  it('routing clarification 在 provider 前失败后可从 reply_pending 重领发送', async () => {
+    const first = workOrder({ shortId: 'W-123456ABCDEF', title: '采购异常核对' });
+    const second = workOrder({
+      workOrderId: 'work-route-b', shortId: 'W-987654ABCDEF',
+      workConversationId: 'workconv-route-b', title: '供应商资料补全',
+    });
+    const persisted = '首次生成后已持久化的 routing clarification';
+    const test = setup({
+      workOrders: [first, second],
+      failFirstDeliveryClaim: true,
+      claimedSequence: [
+        { ...item, content: '继续这个任务' },
+        {
+          ...item, content: '继续这个任务', state: 'reply_pending', replyKind: 'normal',
+          responseText: persisted, replyStartedAt: now, attempt: 2, leaseFence: 2,
+        },
+      ],
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(false);
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.messageStore.saveDispatchResult).toHaveBeenCalledOnce();
+    expect(test.messageStore.fail).toHaveBeenCalledOnce();
+    expect(test.sender.send).toHaveBeenCalledWith(
+      expect.any(Object), expect.any(Object), expect.stringContaining('W-987654ABCDEF'),
+      expect.any(String), expect.any(Function),
+    );
+    expect(test.messageStore.complete).toHaveBeenLastCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 2,
+    );
+  });
+
+  it('routing clarification 重领时复用持久化正文且不重复保存', async () => {
+    const first = workOrder({ shortId: 'W-123456ABCDEF', title: '采购异常核对' });
+    const second = workOrder({
+      workOrderId: 'work-route-b',
+      shortId: 'W-987654ABCDEF',
+      workConversationId: 'workconv-route-b',
+      title: '供应商资料补全',
+    });
+    const test = setup({
+      claimed: {
+        ...item,
+        content: '继续这个任务',
+        state: 'reply_pending',
+        replyKind: 'normal',
+        responseText: '已持久化澄清正文',
+        replyStartedAt: now,
+      },
+      workOrders: [first, second],
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.messageStore.saveDispatchResult).not.toHaveBeenCalled();
+    expect(test.messageStore.markReplyAttemptStarted).toHaveBeenCalledOnce();
+    expect(test.sender.send).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      '已持久化澄清正文',
+      expect.any(String),
+      expect.any(Function),
     );
     expect(test.messageStore.complete).toHaveBeenCalledOnce();
   });
@@ -500,6 +307,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       expect.any(Object),
       expect.stringContaining('找不到你可访问的任务 W-ABCDEF123456'),
       expect.any(String),
+      expect.any(Function),
     );
   });
 
@@ -783,6 +591,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       }),
       '任务「整理采购异常」已完成：敏感结果',
       expect.any(String),
+      expect.any(Function),
     );
   });
 

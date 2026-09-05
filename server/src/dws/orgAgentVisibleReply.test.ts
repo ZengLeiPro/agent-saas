@@ -74,7 +74,18 @@ function harness() {
     releaseClaimedDeliveryForRetry: vi.fn().mockResolvedValue(delivery),
   } as unknown as OrgGroupAgentStore;
   const accountStore = { getForTenant: vi.fn().mockResolvedValue(account) };
-  const sender = { send: vi.fn().mockResolvedValue({ status: 'accepted' }) };
+  const sender = {
+    send: vi.fn(async (
+      _account: unknown,
+      _event: unknown,
+      _text: string,
+      _key: string,
+      onProviderStart?: () => Promise<void>,
+    ) => {
+      await onProviderStart?.();
+      return { status: 'accepted' };
+    }),
+  };
   const service = new OrgAgentVisibleReplyService(
     { accountStore: accountStore as never, orgGroupAgentStore: store, sender },
     'worker-a',
@@ -97,7 +108,7 @@ describe('OrgAgentVisibleReplyService', () => {
     )).rejects.toThrow('AGENT_DWS_REPLY_DELIVERY_NOT_SENT:pending');
   });
 
-  it('发送前持久化 provider phase 并在成功后记录 receipt', async () => {
+  it('sender 跨越 transport 边界时持久化 provider phase 并在成功后记录 receipt', async () => {
     const test = harness();
     await test.service.send(account, item, '完成', undefined, 'front_reply', 'replied');
     expect(test.store.markDeliveryProviderStarted).toHaveBeenCalledWith(
@@ -108,11 +119,11 @@ describe('OrgAgentVisibleReplyService', () => {
     expect(test.sender.send).toHaveBeenCalledOnce();
     expect(
       vi.mocked(test.store.markDeliveryProviderStarted).mock.invocationCallOrder[0],
-    ).toBeLessThan(test.sender.send.mock.invocationCallOrder[0]!);
+    ).toBeLessThan(vi.mocked(test.store.markDeliverySent).mock.invocationCallOrder[0]!);
     expect(test.store.markDeliverySent).toHaveBeenCalledOnce();
   });
 
-  it('direct intent 创建后账号切换为 B 时在 provider start 前 fail-closed', async () => {
+  it('direct intent 创建后账号切换为 B 时在 provider transport 前 fail-closed', async () => {
     const test = harness();
     test.accountStore.getForTenant.mockResolvedValueOnce({
       ...account, profileId: 'corp-b:front-b', corpId: 'corp-b', dingtalkUserId: 'front-b',
@@ -135,7 +146,7 @@ describe('OrgAgentVisibleReplyService', () => {
     await expect(
       test.service.send(account, item, '完成', undefined, 'front_reply', 'replied'),
     ).rejects.toThrow('db down');
-    expect(test.sender.send).not.toHaveBeenCalled();
+    expect(test.sender.send).toHaveBeenCalledOnce();
     expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledWith(
       'delivery-a',
       'worker-a',
@@ -146,9 +157,30 @@ describe('OrgAgentVisibleReplyService', () => {
     );
   });
 
+  it('sender 本地准备失败时释放为 pending，不误记 provider unknown', async () => {
+    const test = harness();
+    vi.mocked(test.sender.send).mockRejectedValueOnce(new Error('resolve remote failed'));
+
+    await expect(
+      test.service.send(account, item, '完成', undefined, 'front_reply', 'replied'),
+    ).rejects.toThrow('resolve remote failed');
+    expect(test.store.markDeliveryProviderStarted).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledOnce();
+  });
+
   it('provider 已开始后的歧义返回 unknown durable intent 供人工核对', async () => {
     const test = harness();
-    vi.mocked(test.sender.send).mockRejectedValueOnce(new Error('provider unavailable'));
+    vi.mocked(test.sender.send).mockImplementationOnce(async (
+      _account,
+      _event,
+      _text,
+      _key,
+      onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      throw new Error('provider unavailable');
+    });
     vi.mocked(test.store.markDeliveryUnknown).mockResolvedValueOnce({
       ...delivery, deliveryState: 'unknown', providerAttemptPhase: 'provider_started',
     });

@@ -14,6 +14,7 @@ export function deliveryRetryDelayMs(attempt: number): number {
 
 export interface DeliveryClaimTables {
   deliveries: string;
+  inbox: string;
   workOrders: string;
   attempts: string;
 }
@@ -222,6 +223,25 @@ export async function claimDeliveryIntent(
   return result.rows[0] ? mapDelivery(result.rows[0] as Record<string, unknown>) : null;
 }
 
+export async function cancelUnstartedDeliveryIntentsForInbox(
+  pool: pg.Pool,
+  deliveriesTable: string,
+  tenantId: string,
+  inboxId: string,
+  reason: string,
+): Promise<number> {
+  const result = await pool.query(
+    `UPDATE ${deliveriesTable}
+    SET delivery_state='dead_letter',lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+        last_error=$3,completed_at=NOW(),updated_at=NOW()
+    WHERE tenant_id=$1 AND inbox_id=$2 AND provider_started_at IS NULL
+      AND (delivery_state='pending'
+        OR (delivery_state='sending' AND provider_attempt_phase='before_provider'))`,
+    [tenantId, inboxId, compactDeliveryError(reason)],
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function claimNextDeliveryIntent(
   pool: pg.Pool,
   tables: DeliveryClaimTables,
@@ -233,6 +253,12 @@ export async function claimNextDeliveryIntent(
       SELECT delivery_id FROM ${tables.deliveries} pending_delivery
       WHERE delivery_state='pending'
         AND (next_attempt_at IS NULL OR next_attempt_at<=NOW())
+        AND (pending_delivery.inbox_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM ${tables.inbox} inbound
+          WHERE inbound.tenant_id=pending_delivery.tenant_id
+            AND inbound.inbox_id=pending_delivery.inbox_id
+            AND inbound.state IN ('reply_pending','dead_letter')
+        ))
         AND (delivery_kind<>'task_completion' OR EXISTS (
           SELECT 1 FROM ${tables.workOrders} work
           JOIN ${tables.attempts} attempt

@@ -48,6 +48,7 @@ import {
   matchesInboxAccountIdentity,
   normalizeEventTimestamp,
   persistedRejectionReason,
+  prepareRoutingClarificationReply,
   rejectionMessage,
   safeLogId,
   serviceIdentity,
@@ -555,19 +556,14 @@ export class AgentDwsMessageRouter {
       return;
     }
     if (shared?.routingClarification) {
-      await this.options.messageStore.saveDispatchResult(
-        item.inboxId,
+      const clarificationText = await prepareRoutingClarificationReply(
+        this.options.messageStore,
+        item,
         this.workerId,
-        item.leaseFence,
         shared.routingClarification,
       );
-      await this.options.messageStore.markReplyAttemptStarted(
-        item.inboxId,
-        this.workerId,
-        item.leaseFence,
-      );
       const clarificationDelivery = await this.visibleReply.send(
-        account, item, shared.routingClarification, shared, 'front_reply', 'replied',
+        account, item, clarificationText, shared, 'front_reply', 'replied',
       );
       if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, clarificationDelivery))) return;
       await this.options.messageStore.complete(item.inboxId, this.workerId, item.leaseFence);
@@ -709,6 +705,10 @@ export class AgentDwsMessageRouter {
     });
     // 普通 reply_pending 的已持久化正文可能来自旧授权上下文，当前拒绝时必须隔离并转人工核对。
     if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
+      await this.visibleReply.cancelPendingForInbox(
+        item,
+        `ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:${reason}`,
+      );
       await this.options.messageStore.blockReply(
         item.inboxId, this.workerId, item.leaseFence, reason,
       );

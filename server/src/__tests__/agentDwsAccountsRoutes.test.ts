@@ -368,7 +368,7 @@ describe('Agent DWS accounts routes', () => {
     expect(store.create).not.toHaveBeenCalled();
   });
 
-  it('活动 Runtime Worker 未声明群任务协议 v2 时安全拒绝激活群绑定', async () => {
+  it('liveDeny 关闭时仍要求活动 Runtime Worker 声明群任务协议 v2', async () => {
     const store = new FakeAccountStore();
     store.records.push(makeAccount({
       status: 'active',

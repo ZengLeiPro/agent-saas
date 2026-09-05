@@ -314,7 +314,13 @@ export interface OrgGroupAgentStore {
   createDelivery(input: DwsDeliveryIntentCreate): Promise<DwsDeliveryIntent>;
   claimDelivery(deliveryId: string, owner: string, ttlMs: number): Promise<DwsDeliveryIntent>;
   claimNextDelivery(owner: string, ttlMs: number): Promise<DwsDeliveryIntent | null>;
+  cancelUnstartedDeliveriesForInbox(
+    tenantId: string,
+    inboxId: string,
+    reason: string,
+  ): Promise<number>;
   reconcileAllExpiredDeliveries(limit?: number): Promise<number>;
+  /** Crosses the durable boundary immediately before provider transport invocation. */
   markDeliveryProviderStarted(
     deliveryId: string,
     owner: string,

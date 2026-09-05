@@ -130,7 +130,16 @@ function harness(input?: {
       ]),
   } as unknown as OrgGroupAgentStore;
   const sender = {
-    send: vi.fn().mockResolvedValue(input?.receipt ?? { status: 'accepted', acceptedAt: 'now' }),
+    send: vi.fn(async (
+      _account: unknown,
+      _event: unknown,
+      _text: string,
+      _key: string,
+      onProviderStart?: () => Promise<void>,
+    ): Promise<Record<string, unknown> | undefined> => {
+      await onProviderStart?.();
+      return input?.receipt ?? { status: 'accepted', acceptedAt: 'now' };
+    }),
   };
   return {
     store,
@@ -166,7 +175,7 @@ describe('deliverNextOrgAgentIntent', () => {
     expect(test.sender.send).not.toHaveBeenCalled();
   });
 
-  it('sends a claimed intent and persists its receipt', async () => {
+  it('sends a claimed intent and persists its receipt after provider start', async () => {
     const test = harness();
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
     expect(test.sender.send).toHaveBeenCalledWith(
@@ -178,6 +187,7 @@ describe('deliverNextOrgAgentIntent', () => {
       }),
       '处理完成',
       'delivery-key',
+      expect.any(Function),
     );
     expect(test.store.markDeliverySent).toHaveBeenCalledWith(
       'delivery-1',
@@ -192,9 +202,36 @@ describe('deliverNextOrgAgentIntent', () => {
     );
   });
 
-  it('marks provider receipt ambiguity unknown and never retries it automatically', async () => {
+  it('retries deterministic sender preparation failures before provider transport', async () => {
+    const test = harness();
+    test.sender.send.mockRejectedValueOnce(new Error('workspace mount unavailable'));
+
+    await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
+
+    expect(test.store.markDeliveryProviderStarted).not.toHaveBeenCalled();
+    expect(test.store.markDeliveryUnknown).not.toHaveBeenCalled();
+    expect(test.store.releaseClaimedDeliveryForRetry).toHaveBeenCalledWith(
+      'delivery-1',
+      'worker-1',
+      7,
+      expect.any(Error),
+      1_000,
+      5,
+    );
+  });
+
+  it('marks provider receipt ambiguity unknown and excludes automatic retry', async () => {
     const test = harness({ receipt: undefined });
-    test.sender.send.mockResolvedValueOnce(undefined);
+    test.sender.send.mockImplementationOnce(async (
+      _account,
+      _event,
+      _text,
+      _key,
+      onProviderStart,
+    ) => {
+      await onProviderStart?.();
+      return undefined;
+    });
     await expect(deliverNextOrgAgentIntent(test.options)).resolves.toBe(true);
     expect(test.store.markDeliveryUnknown).toHaveBeenCalledWith(
       'delivery-1',

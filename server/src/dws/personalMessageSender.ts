@@ -39,6 +39,7 @@ export interface DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
+    onProviderStart?: () => Promise<void>,
   ): Promise<Record<string, unknown> | undefined>;
 }
 
@@ -55,6 +56,7 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     event: DwsPersonalEvent,
     text: string,
     idempotencyKey: string,
+    onProviderStart?: () => Promise<void>,
   ): Promise<Record<string, unknown> | undefined> {
     // Build and validate before resolving credentials or touching the transport.
     const command = buildDwsPersonalMessageCommand(account, event, text, idempotencyKey);
@@ -69,6 +71,9 @@ export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
     if (!mountSubPath) throw new Error('无法解析 Agent DWS connector workspace 挂载路径');
     const workspaceId = deriveDwsPrincipalWorkspaceId(principal);
 
+    // Everything above is deterministic local preparation. Once this callback succeeds,
+    // transport.invoke may have reached the provider even if it later throws.
+    await onProviderStart?.();
     const response = await transport.invoke({
       toolName: 'Shell',
       input: { command, timeoutMs: DWS_MESSAGE_TIMEOUT_MS },

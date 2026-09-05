@@ -24,6 +24,7 @@ import {
   requiredRow, validateDestination, validateEffectiveConfig, validatePolicy,
 } from './storeMappers.js';
 import {
+  cancelUnstartedDeliveryIntentsForInbox,
   claimDeliveryIntent,
   claimNextDeliveryIntent,
   compactDeliveryError,
@@ -353,6 +354,21 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_DELIVERY_LEASE_MS)
       throw new Error('DWS_DELIVERY_INVALID');
     return claimNextDeliveryIntent(this.pool, this.deliveryTables(), owner, ttlMs);
+  }
+
+  async cancelUnstartedDeliveriesForInbox(
+    tenantId: string,
+    inboxId: string,
+    reason: string,
+  ): Promise<number> {
+    assertTexts(tenantId, inboxId, reason);
+    return cancelUnstartedDeliveryIntentsForInbox(
+      this.pool,
+      this.deliveriesTable,
+      tenantId,
+      inboxId,
+      reason,
+    );
   }
 
   async reconcileAllExpiredDeliveries(limit = 100): Promise<number> {
@@ -953,6 +969,7 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
   private deliveryTables() {
     return {
       deliveries: this.deliveriesTable,
+      inbox: this.inboxTable,
       workOrders: this.workOrdersTable,
       attempts: this.attemptsTable,
     };

@@ -250,17 +250,19 @@ export class OrgAgentVisibleReplyService {
     }
     let providerStarted = false;
     try {
-      await this.options.orgGroupAgentStore.markDeliveryProviderStarted(
-        delivery.deliveryId,
-        this.workerId,
-        claimed.leaseFence,
-      );
-      providerStarted = true;
       const receipt = await this.options.sender.send(
-        account,
+        currentAccount,
         outboundEvent(item, claimed.destination),
         claimed.content,
         claimed.idempotencyKey,
+        async () => {
+          await this.options.orgGroupAgentStore!.markDeliveryProviderStarted(
+            delivery.deliveryId,
+            this.workerId,
+            claimed.leaseFence,
+          );
+          providerStarted = true;
+        },
       );
       if (!receipt) throw new Error('DWS_DELIVERY_RECEIPT_MISSING');
       return await this.options.orgGroupAgentStore.markDeliverySent(
@@ -287,6 +289,15 @@ export class OrgAgentVisibleReplyService {
       );
       throw error;
     }
+  }
+
+  /** Prevents stale direct replies from surviving a newly denied inbound request. */
+  async cancelPendingForInbox(item: AgentDwsInboxRecord, reason: string): Promise<void> {
+    await this.options.orgGroupAgentStore?.cancelUnstartedDeliveriesForInbox(
+      item.tenantId,
+      item.inboxId,
+      reason,
+    );
   }
 
   private async isLive(shared: SharedGroupContext, delivery: DwsDeliveryIntent): Promise<boolean> {

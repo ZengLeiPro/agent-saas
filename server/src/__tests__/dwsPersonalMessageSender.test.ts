@@ -156,7 +156,8 @@ describe('DwsPersonalMessageSender transport', () => {
       transportFactory,
     });
 
-    await sender.send(account, personalEvent(), '已处理', 'idem-1');
+    const onProviderStart = vi.fn(async () => undefined);
+    await sender.send(account, personalEvent(), '已处理', 'idem-1', onProviderStart);
 
     expect(resolveServerRemote).toHaveBeenCalledWith({
       id: 'adws-1',
@@ -171,6 +172,9 @@ describe('DwsPersonalMessageSender transport', () => {
       authToken: 'remote-token',
       invokeTimeoutMs: 70_000,
     });
+    expect(onProviderStart).toHaveBeenCalledOnce();
+    expect(onProviderStart.mock.invocationCallOrder[0])
+      .toBeLessThan(invoke.mock.invocationCallOrder[0]!);
     expect(invoke).toHaveBeenCalledOnce();
     const request = invoke.mock.calls[0]![0];
     expect(request.toolName).toBe('Shell');
@@ -188,6 +192,31 @@ describe('DwsPersonalMessageSender transport', () => {
       sandboxResources: { cpu: '1', memoryMb: 2048 },
       workload: { class: 'interactive' },
     });
+  });
+
+  it.each([
+    {
+      name: 'resolveServerRemote',
+      create: (onProviderStart: () => Promise<void>) => new DwsPersonalMessageSender({
+        agentCwd: '/mnt/agent-saas/workspaces',
+        resolveServerRemote: vi.fn(async () => { throw new Error('remote unavailable'); }),
+        transportFactory: vi.fn(() => ({ invoke: successfulInvoke() })),
+      }).send(account, personalEvent(), '回复', 'idem-local', onProviderStart),
+    },
+    {
+      name: 'transport factory',
+      create: (onProviderStart: () => Promise<void>) => new DwsPersonalMessageSender({
+        agentCwd: '/mnt/agent-saas/workspaces',
+        resolveServerRemote: vi.fn(async () => ({
+          baseUrl: 'http://hand.internal', authToken: 'token',
+        })),
+        transportFactory: vi.fn(() => { throw new Error('transport unavailable'); }),
+      }).send(account, personalEvent(), '回复', 'idem-local', onProviderStart),
+    },
+  ])('$name 本地准备失败时保持在 provider 边界前', async ({ create }) => {
+    const onProviderStart = vi.fn(async () => undefined);
+    await expect(create(onProviderStart)).rejects.toThrow();
+    expect(onProviderStart).not.toHaveBeenCalled();
   });
 
   it('远端 reply 失败时抛脱敏错误，且不 fallback 避免双发', async () => {

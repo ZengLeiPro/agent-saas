@@ -5,6 +5,7 @@ import type {
   AgentDwsInboxRecord,
   AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
+import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import { AgentDwsMessageRouter } from '../dws/personalMessageRouter.js';
 
 const now = new Date().toISOString();
@@ -32,6 +33,7 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
   requester?: boolean;
   requesterAllowed?: boolean;
   outcome?: { status: 'unavailable'; reason: string };
+  withDeliveryStore?: boolean;
 } = {}) {
   const queue = [...claimed];
   const messageStore = {
@@ -63,6 +65,13 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
     deleteForTenant: vi.fn(),
   } as unknown as AgentDwsMessageStore;
   const sender = { send: vi.fn().mockResolvedValue({ status: 'accepted', acceptedAt: now }) };
+  const orgGroupAgentStore = options.withDeliveryStore
+    ? {
+        reconcileAllExpiredDeliveries: vi.fn().mockResolvedValue(0),
+        claimNextDelivery: vi.fn().mockResolvedValue(null),
+        cancelUnstartedDeliveriesForInbox: vi.fn().mockResolvedValue(1),
+      } as unknown as OrgGroupAgentStore
+    : undefined;
   const dispatch = vi.fn();
   const authorizeRequester = vi.fn().mockResolvedValue(
     options.requesterAllowed === false
@@ -79,8 +88,9 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
       : {}),
     authorizeRequester,
     auditRequesterRejection: vi.fn(), auditToolPolicyRejection: vi.fn(), sender,
+    ...(orgGroupAgentStore ? { orgGroupAgentStore } : {}),
   });
-  return { router, messageStore, sender, dispatch, authorizeRequester };
+  return { router, messageStore, sender, dispatch, authorizeRequester, orgGroupAgentStore };
 }
 
 describe('Agent DWS rejection reply recovery', () => {
@@ -121,17 +131,33 @@ describe('Agent DWS rejection reply recovery', () => {
     expect(test.messageStore.reject).not.toHaveBeenCalled();
   });
 
-  it('普通 reply_pending 遇 Assignment deny 时不发送旧正文', async () => {
-    const normal = { ...item, state: 'reply_pending' as const, replyKind: 'normal' as const,
-      responseText: '机密正常回复', replyStartedAt: now };
-    const test = setup([normal], { requester: true, requesterAllowed: false });
+  it('普通 reply_pending 遇 Assignment deny 时先取消旧投递再隔离正文', async () => {
+    const normal = {
+      ...item,
+      eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const,
+      replyKind: 'normal' as const,
+      responseText: '机密正常回复',
+      replyStartedAt: now,
+    };
+    const test = setup([normal], {
+      requester: true,
+      requesterAllowed: false,
+      withDeliveryStore: true,
+    });
 
     await expect(test.router.runOnce()).resolves.toBe(true);
 
     expect(test.authorizeRequester).toHaveBeenCalledOnce();
+    expect(test.orgGroupAgentStore?.cancelUnstartedDeliveriesForInbox).toHaveBeenCalledWith(
+      'tenant-a', 'inbox-a', 'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED:ASSIGNMENT_DENIED',
+    );
     expect(test.messageStore.blockReply).toHaveBeenCalledWith(
       'inbox-a', expect.any(String), 1, 'ASSIGNMENT_DENIED',
     );
+    expect(
+      vi.mocked(test.orgGroupAgentStore!.cancelUnstartedDeliveriesForInbox).mock.invocationCallOrder[0],
+    ).toBeLessThan(vi.mocked(test.messageStore.blockReply).mock.invocationCallOrder[0]!);
     expect(test.sender.send).not.toHaveBeenCalled();
   });
 

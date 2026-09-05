@@ -531,7 +531,50 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     );
   });
 
-  it('uses SKIP LOCKED claims so concurrent delivery workers never own the same intent', async () => {
+  it('后台 worker 跳过 reply_pending 关联投递，授权拒绝可取消所有 provider 前正文', async () => {
+    await pool.query(`UPDATE ${prefix}_agent_dws_delivery_intents
+      SET delivery_state='dead_letter',completed_at=NOW()
+      WHERE delivery_state='pending'`);
+    const inbox = new PgAgentDwsMessageStore(pool, prefix);
+    const ingested = await inbox.ingest({
+      tenantId: 'tenant-a', accountId: 'account-a', eventId: 'reply-auth-revoked',
+      eventType: 'user_im_message_receive_o2o_all', conversationId: 'direct-auth-revoked',
+      messageId: 'message-auth-revoked', senderOpenDingtalkId: 'member-a', content: 'hi',
+    }, { schemaVersion: 2, source: 'dws_personal_stream', accountIdentity: {
+      profileId: accountIdentity.profileId, corpId: accountIdentity.corpId,
+      dingtalkUserId: accountIdentity.dingtalkUserId,
+    } });
+    const claimedInbox = await inbox.claimNext('inbox-worker-auth', 60_000);
+    await inbox.saveDispatchResult(
+      claimedInbox!.inboxId, 'inbox-worker-auth', claimedInbox!.leaseFence, '旧授权正文',
+    );
+    const direct = await store.createDelivery({
+      accountIdentity,
+      tenantId: 'tenant-a', inboxId: ingested.record.inboxId, accountId: 'account-a',
+      conversationId: 'direct-auth-revoked', source: 'command', deliveryKind: 'front_reply',
+      disposition: 'replied', destination: { provider: 'dingtalk', accountId: 'account-a',
+        conversationId: 'direct-auth-revoked', kind: 'direct', peerOpenId: 'member-a' },
+      content: '旧授权正文', idempotencyKey: 'delivery-auth-revoked',
+    });
+
+    await expect(store.claimNextDelivery('background-worker', 60_000)).resolves.toBeNull();
+    await store.claimDelivery(direct.deliveryId, 'immediate-worker', 60_000);
+    await expect(store.cancelUnstartedDeliveriesForInbox(
+      'tenant-a', ingested.record.inboxId, 'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED',
+    )).resolves.toBe(1);
+    await inbox.blockReply(
+      claimedInbox!.inboxId,
+      'inbox-worker-auth',
+      claimedInbox!.leaseFence,
+      'ASSIGNMENT_DENIED',
+    );
+    await expect(store.getDelivery('tenant-a', direct.deliveryId)).resolves.toMatchObject({
+      deliveryState: 'dead_letter',
+      lastError: 'ORG_AGENT_DIRECT_DELIVERY_AUTHORIZATION_REVOKED',
+    });
+  });
+
+  it('uses SKIP LOCKED claims so concurrent delivery workers never own one intent', async () => {
     for (const suffix of ['b', 'c'])
       await store.createDelivery({
         accountIdentity,
@@ -625,7 +668,7 @@ describePg('组织群 Agent PostgreSQL 不变量', () => {
     expect(blocked).toBeNull();
   });
 
-  it('真实 store 在普通与拒绝回复发送失败后按退避重领 reply_pending', async () => {
+  it('真实 store 在普通与拒绝回复发送失败后按退避重领 reply_pending 状态', async () => {
     const inbox = new PgAgentDwsMessageStore(pool, prefix);
     for (const replyKind of ['normal', 'access_rejection'] as const) {
       const eventId = `reply-retry-${replyKind}`;

@@ -420,10 +420,26 @@ jobs:
             scripts/release/verify-installed-release.mjs \
             scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs scripts/release/verify-promotion-phase-state.mjs \
-            scripts/release/artifact-lib.mjs \
+            scripts/release/artifact-lib.mjs scripts/release/reuse-promotion-artifacts.mjs \
             "$upload_root/"
           if [ "$PRODUCTION_ALREADY_TARGET" != true ]; then
-            cp "$RUNNER_TEMP/selected/"*.tgz "$upload_root/artifacts/"
+            reusable_list="$RUNNER_TEMP/reusable-artifacts.txt"
+            : > "$reusable_list"
+            node scripts/release/reuse-promotion-artifacts.mjs plan "$RUNNER_TEMP/manifest.json" \
+              > "$RUNNER_TEMP/reusable-artifact-plan.tsv"
+            while IFS=$'\t' read -r filename digest source; do
+              if ssh -o ConnectTimeout=10 -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+                "sudo test -f '$source' && sudo test ! -L '$source' && test \"\$(sudo sha256sum '$source' | cut -d' ' -f1)\" = '$digest'"; then
+                printf '%s\n' "$filename" >> "$reusable_list"
+              fi
+            done < "$RUNNER_TEMP/reusable-artifact-plan.tsv"
+            for archive in "$RUNNER_TEMP/selected/"*.tgz; do
+              if grep -Fx "$(basename "$archive")" "$reusable_list" >/dev/null; then
+                echo "Reusing digest-verified production archive: $(basename "$archive")"
+              else
+                cp "$archive" "$upload_root/artifacts/"
+              fi
+            done
             unit_files=("$RUNNER_TEMP/selected-units/"*)
             if [ -e "${unit_files[0]}" ]; then
               cp "${unit_files[@]}" "$upload_root/"
@@ -441,6 +457,7 @@ jobs:
              test \"\$(sudo sha256sum '$root_archive' | cut -d' ' -f1)\" = '$archive_digest' && \
              sudo rm -rf '$remote' && sudo install -d -m 0700 '$remote' && \
              sudo tar --no-same-owner --no-same-permissions -xzf '$root_archive' -C '$remote' && \
+             { [ '$PRODUCTION_ALREADY_TARGET' = true ] || sudo node '$remote/reuse-promotion-artifacts.mjs' hydrate '$remote/manifest.json' '$remote'; } && \
              sudo chown -R root:root '$remote' && sudo chmod -R a-w '$remote' && \
              sudo test -f '$remote/deploy-production-release.sh' && \
              sudo test ! -L '$remote/deploy-production-release.sh' && \

@@ -20,6 +20,10 @@ import { useScrollToTop } from '../../src/hooks/useScrollToTop';
 import { useRuntimeRecovery } from '../../src/hooks/useRuntimeRecovery';
 import { useAgentSwitch } from '../../src/hooks/useAgentSwitch';
 import { MessageList } from '../../src/components/chat/MessageList';
+import { EmptyChatRecommendCards } from '../../src/components/chat/EmptyChatRecommendCards';
+import { ExpertWelcome } from '../../src/components/chat/ExpertWelcome';
+import { useScenarioDeepLink } from '../../src/hooks/useScenarioDeepLink';
+import { resolveActiveExpertPresentation } from '../../src/lib/activeExpertPresentation';
 import { SubagentTranscriptSheet } from '../../src/components/chat/SubagentTranscriptSheet';
 import {
   SubagentTranscriptProvider,
@@ -407,6 +411,16 @@ export default function ChatDetailScreen() {
 
   const interactionDisabled = Boolean(chat.activeAgentTargetUnavailableReason || !chat.activeAgentTarget);
 
+  // 场景直达：deep link 命中的起手指令预填进输入框（只预填，不自动发送）。
+  useScenarioDeepLink(useCallback((prompt: string) => { chat.setInput(prompt); }, [chat.setInput]));
+
+  // 空会话态：企业专家会话展示其起手任务，否则回落到岗位场景推荐卡。
+  const activeExpert = useMemo(
+    () => resolveActiveExpertPresentation(chat.agentTargetCatalog, headerAgentTarget),
+    [chat.agentTargetCatalog, headerAgentTarget],
+  );
+  const showEmptyState = chat.messages.length === 0 && !chat.isLoadingMessages && !chat.loading;
+
   const transcriptValue = useMemo(
     () => ({ openTranscript: (target: SubagentTranscriptTarget) => setTranscriptTarget(target) }),
     [],
@@ -476,6 +490,13 @@ export default function ChatDetailScreen() {
       ) : null}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
       {/* 反馈入口的数据面开关：无会话或后端 503 时 value=null，气泡里的按钮零渲染 */}
+      {showEmptyState ? (
+        activeExpert ? (
+          <ExpertWelcome expert={activeExpert} onPrefill={chat.setInput} />
+        ) : (
+          <EmptyChatRecommendCards onTryScenario={(prompt) => chat.setInput(prompt)} />
+        )
+      ) : null}
       <MessageFeedbackProvider sessionId={chat.sessionId}>
       <SubagentTranscriptProvider value={transcriptValue}>
       <MessageList

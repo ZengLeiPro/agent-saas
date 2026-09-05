@@ -2,6 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
+    // 构建时 @kaiyan/ky-app-contract 走 node_modules 的 dist d.ts（skipLibCheck），
+    // 不需要也不允许 Node 类型：本包必须纯浏览器可用。
+    "types": [],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,

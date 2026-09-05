@@ -4,7 +4,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": [],
+    // typecheck 走 paths 直接读兄弟包 ky-app-contract 的 src/，其中 hash.ts 用 node:crypto，
+    // 因此这里需要 node 类型。发布产物（tsconfig.build.json）把 types 覆盖回 []，
+    // 保证 dist 不依赖任何 Node 专属 API。
+    "types": ["node"],
     "strict": true,
     "skipLibCheck": true,
     "isolatedModules": true,

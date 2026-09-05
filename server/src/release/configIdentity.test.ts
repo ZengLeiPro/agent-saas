@@ -102,6 +102,7 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
     'oss-access-key-secret-value',
     'doubao-tts-api-key-value',
     'webpush-private-key-value',
+    'apns-private-key-value',
     'db-password-s3cr3t',
     'dingtalk-app-secret-value',
     'embedding-api-key-value',
@@ -153,6 +154,13 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
         publicKey: 'pub',
         privateKey: 'webpush-private-key-value',
         subject: 'mailto:a@b.c',
+      },
+      apns: {
+        enabled: true,
+        teamId: 'TEAM',
+        keyId: 'KEY',
+        privateKey: '-----BEGIN PRIVATE KEY-----\napns-private-key-value\n-----END PRIVATE KEY-----',
+        bundleId: 'com.agentsaas.mobile',
       },
       memory: {
         index: {

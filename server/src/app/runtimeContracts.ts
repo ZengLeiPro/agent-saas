@@ -121,6 +121,7 @@ import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import type { BillingService } from '../data/billing/service.js';
 import type { WebPushService } from '../webPush/service.js';
+import type { ApnsService } from '../apns/service.js';
 import type { createAuthMiddleware } from '../auth/middleware.js';
 
 /**
@@ -342,6 +343,7 @@ export interface AppRuntime {
   agentOptionsConfig: AgentOptionsConfig;
   tokenUsageStore?: TokenUsageStore;
   webPushService?: WebPushService;
+  apnsService?: ApnsService;
   /** PG-backed credit billing service. Undefined for file/runtime dev backends. */
   billingService?: BillingService;
   /** 独立、append-only 的治理审计；未装配时高风险变更必须 fail closed。 */

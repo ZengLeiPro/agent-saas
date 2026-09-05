@@ -21,7 +21,7 @@ const mocked = vi.hoisted(() => {
   const userRoleRouter = { id: 'user-role-router' };
   const dingtalkRouter = { id: 'dingtalk-router' };
   const cronRouter = { id: 'cron-router' };
-  const webPushRouter = { id: 'web-push-router' };
+  const pushNotificationRouter = { id: 'push-notification-router' };
   const taskboardRouter = { id: 'taskboard-router' };
   const groupsRouter = { id: 'groups-router' };
   const tenantRemoteHandsAdminRouter = { id: 'tenant-remote-hands-admin-router' };
@@ -60,7 +60,7 @@ const mocked = vi.hoisted(() => {
     userRoleRouter,
     dingtalkRouter,
     cronRouter,
-    webPushRouter,
+    pushNotificationRouter,
     taskboardRouter,
     groupsRouter,
     tenantRemoteHandsAdminRouter,
@@ -97,7 +97,7 @@ const mocked = vi.hoisted(() => {
     createUserRoleRouter: vi.fn(() => userRoleRouter),
     createDingtalkSessionRouter: vi.fn(() => dingtalkRouter),
     createCronRouter: vi.fn(() => cronRouter),
-    createWebPushRouter: vi.fn(() => webPushRouter),
+    createPushNotificationRouter: vi.fn(() => pushNotificationRouter),
     createTaskboardRouter: vi.fn(() => taskboardRouter),
     createGroupsRouter: vi.fn(() => groupsRouter),
     createTenantRemoteHandsAdminRouter: vi.fn(() => tenantRemoteHandsAdminRouter),
@@ -134,7 +134,7 @@ vi.mock('../routes/index.js', () => ({
   createContextAdminRouter: mocked.createContextAdminRouter,
   createUserRoleRouter: mocked.createUserRoleRouter,
   createCronRouter: mocked.createCronRouter,
-  createWebPushRouter: mocked.createWebPushRouter,
+  createPushNotificationRouter: mocked.createPushNotificationRouter,
   createTaskboardRouter: mocked.createTaskboardRouter,
   createGroupsRouter: mocked.createGroupsRouter,
   createPreviewRoutes: mocked.createPreviewRoutes,
@@ -218,7 +218,7 @@ describe('registerRoutes', () => {
     mocked.createUserRoleRouter.mockClear();
     mocked.createDingtalkSessionRouter.mockClear();
     mocked.createCronRouter.mockClear();
-    mocked.createWebPushRouter.mockClear();
+    mocked.createPushNotificationRouter.mockClear();
     mocked.createTaskboardRouter.mockClear();
     mocked.createGroupsRouter.mockClear();
     mocked.createTenantRemoteHandsAdminRouter.mockClear();
@@ -371,8 +371,8 @@ describe('registerRoutes', () => {
       '/api/admin/context-plane', mocked.requireAdmin, mocked.contextAdminRouter,
     );
     expect(app.use).toHaveBeenCalledWith('/api/tenant/expert-templates', expect.any(Function));
-    expect(mocked.createWebPushRouter).toHaveBeenCalledWith(undefined);
-    expect(app.use).toHaveBeenCalledWith('/api/web-push', mocked.webPushRouter);
+    expect(mocked.createPushNotificationRouter).toHaveBeenCalledWith({ webPush: undefined, apns: undefined });
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.pushNotificationRouter);
     expect(mocked.createTaskboardRouter).toHaveBeenCalledWith({
       service: undefined,
       executionService: undefined,

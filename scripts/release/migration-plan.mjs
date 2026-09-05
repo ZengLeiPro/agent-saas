@@ -32,6 +32,7 @@ const GOVERNANCE_MIGRATION_PROVIDER_PATH =
 const PRODUCTION_SCHEMA_MODULE_PATH =
   /^server\/src\/(?!.*(?:__tests__|\.test\.|\.pg\.test\.))[^/].*\.(?:[cm]?[jt]s)$/iu;
 export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
+  'server/src/apns/store.ts',
   'server/src/app/runtimeGovernanceConnectors.ts',
   'server/src/connectors/googleWorkspace.ts',
   'server/src/data/agentDwsAccounts/store.ts',

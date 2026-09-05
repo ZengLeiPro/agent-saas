@@ -1,11 +1,11 @@
 import type { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
 import type { PlatformEvent } from '../runtime/types.js';
-import type { WebPushService } from './service.js';
+import type { PushSender } from '../push/sender.js';
 
 export async function notifyWebPushForRuntimeEvent(
   event: PlatformEvent,
   deps: {
-    service: WebPushService;
+    service: PushSender;
     sessionStore: PgSessionProjectionStore;
   },
 ): Promise<void> {

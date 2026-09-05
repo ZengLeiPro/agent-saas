@@ -180,6 +180,7 @@ const SECRET_VALUE_FIELDS: ReadonlyArray<PathPattern> = [
   ['alerting', 'dingtalkRobot', 'appSecret'],
   ['tts', 'doubaoApiKey'],
   ['webPush', 'privateKey'],
+  ['apns', 'privateKey'],
   ['secretVault', 'encryptionKey'],
   ['secretVault', 'authToken'],
 ];

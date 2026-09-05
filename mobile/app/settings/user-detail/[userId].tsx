@@ -23,7 +23,7 @@ import { getServerUrl } from '../../../src/platform/mobileConfig';
 import { isProductionProfile } from '../../../src/v1/v1Capabilities';
 import { getV1BuildProfile } from '../../../src/v1/v1Runtime';
 import { canCommitSelfProfileResponse, selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
-import { useColors, spacing, typography, radius } from '../../../src/theme';
+import { useColors, spacing, typography, radius, fontScale, fontWeight } from '../../../src/theme';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -126,15 +126,15 @@ export default function UserDetailScreen() {
       justifyContent: 'center',
     },
     avatarText: {
+      ...fontScale.xl2,
       color: colors.primaryForeground,
-      fontSize: 30,
-      fontWeight: '700',
+      fontWeight: fontWeight.bold,
     },
     displayName: {
       ...typography.subtitle,
+      ...fontScale.xl,
       color: colors.foreground,
-      fontWeight: '600',
-      fontSize: 20,
+      fontWeight: fontWeight.semibold,
       marginTop: spacing.sm,
     },
     subName: {
@@ -154,8 +154,8 @@ export default function UserDetailScreen() {
       backgroundColor: colors.muted,
     },
     roleText: {
-      fontSize: 12,
-      fontWeight: '500',
+      ...fontScale.xs,
+      fontWeight: fontWeight.medium,
     },
     adminText: {
       color: colors.primary,

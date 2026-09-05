@@ -343,3 +343,19 @@ describe('健康探测', () => {
     expect(harness.alerts).toHaveLength(0);
   });
 });
+
+describe('无安装实例时的密钥轮换', () => {
+  it('没有 enabled 实例时「全部已验证」为空真，允许切换（否则全新环境永远无法轮换）', async () => {
+    const { impl } = recordingFetch(() => ackResponse({ ok: true }));
+    const harness = await rig({ fetchImpl: impl });
+    // 把唯一的实例停用，模拟「还没有任何定制项目」的环境。
+    await harness.systems.updateInstallationStatus({
+      installationId: TEST_IID, status: 'disabled', actor: 'u_seed',
+    });
+    const rotated = await harness.dispatcher.rotateAndProbe();
+    expect(rotated.probed).toBe(0);
+    const promoted = await harness.dispatcher.promoteWhenAllVerified(rotated.newKid);
+    expect(promoted).toEqual({ promoted: true, pending: [] });
+    expect((await harness.signingKeys.findByStatus('active'))!.kid).toBe(rotated.newKid);
+  });
+});

@@ -171,7 +171,9 @@ export class KyAppEventDispatcher {
       );
       if (!verified) pending.push(installation.installationId);
     }
-    if (installations.length === 0 || pending.length > 0) return { promoted: false, pending };
+    // 没有任何 enabled 实例时「全部已验证」是空真：此时必须允许切换，
+    // 否则全新环境（还没装第一个定制项目）永远无法轮换 SAT 签名密钥。
+    if (pending.length > 0) return { promoted: false, pending };
     await this.options.keys.promote(newKid, newKid);
     return { promoted: true, pending: [] };
   }

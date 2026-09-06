@@ -192,6 +192,18 @@ jobs:
           node scripts/staging/summarize-e2e.mjs test-results/staging-results.json \
             "$RUNNER_TEMP/staging-acceptance-summary.json"
 
+      # WP4 定制软件壳的协议 E2E（规范 §9.3-10/15/16、§11.1、§14.1 WP4 DoD）。
+      # 对端是仓库自带的 `web/demo/` mock 定制项目，壳与子端分挂 127.0.0.1 / localhost
+      # （真跨源），**不依赖 Staging、不打任何线上服务、不需要 secrets**。放在本 workflow
+      # 只为共用「手动触发 + 上一步已装好的 chromium」。上面那套失败也要跑，否则壳侧回归
+      # 会被 Staging 的偶发失败一起挡住。
+      - name: Run KY app shell browser E2E
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          pnpm exec playwright test -c e2e/ky-app-shell.playwright.config.ts
+
       - name: Clean and read back Staging acceptance fixtures
         if: always()
         run: |
@@ -255,6 +267,7 @@ jobs:
           path: |
             test-results/
             playwright-report/
+            e2e/playwright-report-ky-app-shell/
             ${{ runner.temp }}/staging-web-identity.json
             ${{ runner.temp }}/staging-api-ready.json
             ${{ runner.temp }}/staging-acs-health.json

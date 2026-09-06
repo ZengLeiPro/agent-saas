@@ -3,15 +3,15 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 354259,
+    "startupJsGzipBytes": 356580,
     "startupCssGzipBytes": 34963,
-    "startupJsBrotliBytes": 282113,
+    "startupJsBrotliBytes": 283668,
     "startupCssBrotliBytes": 27673,
-    "largestJsGzipBytes": 354259,
+    "largestJsGzipBytes": 356580,
     "largestCssGzipBytes": 34963,
-    "largestJsBrotliBytes": 282113,
+    "largestJsBrotliBytes": 283668,
     "largestCssBrotliBytes": 27673,
-    "largestJs": "assets/index-DktBHugd.js",
+    "largestJs": "assets/index-CfwSODem.js",
     "largestCss": "assets/index-CDFZj6l4.css"
   },
   "tolerance": {
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "P5-2/P5-3 会话、消息与 useChatAppState 共同内核下沉 shared：Web 改为消费共享 hook（useMessageBuffer/useSessionHistoryPaging/useStreamWatchdog/useModelSelection 等），启动包累计 +1.7KB gzip（同一逻辑不再两端各一份）",
-  "updatedAt": "2026-09-05"
+  "reason": "WP4 Phase A：壳路由 /apps/:iid/* 与左栏定制软件入口进 startup（urlSync 复用 @kaiyan/ky-app-contract 的 normalizeAppPath），AppHost 本体已 lazy",
+  "updatedAt": "2026-09-06"
 }

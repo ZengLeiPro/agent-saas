@@ -91,6 +91,12 @@ export interface AppHostDeps {
   clearTimer?: (handle: number) => void;
 }
 
+/** 需应答消息的应答；缓存它才能在重复 `(type,id)` 到达时原样重放。 */
+interface OutgoingReply {
+  type: string;
+  payload: unknown;
+}
+
 interface PendingNavigation {
   navId: string;
   resolve: (result: { ok: boolean; reason?: string; path?: string }) => void;
@@ -107,8 +113,12 @@ export class AppHostController {
   private frameWindow: Window | null = null;
   private grant: HandshakeGrant | null = null;
 
-  /** §5.3 重复 `(type,id)` 重放缓存：ready / token.request / link.open 三类需应答消息共用。 */
-  private readonly replies = new ReplayCache<void>();
+  /**
+   * §5.3 重复 `(type,id)` 重放缓存：ready / token.request / link.open 三类需应答消息共用。
+   * 缓存的是**应答信封本身**，重复消息到达时原样再发一次 —— 只缓存副作用、
+   * 不重发应答的话，子端等不到回话，等于把重复当丢弃处理，正是规范禁止的做法。
+   */
+  private readonly replies = new ReplayCache<OutgoingReply | null>();
   private readyTimer: number | null = null;
   private initAckTimer: number | null = null;
   private initResends = 0;
@@ -177,7 +187,8 @@ export class AppHostController {
     if (sameInstallation && this.snapshot.phase === 'active') {
       if (appPath !== this.appPath) {
         this.appPath = appPath;
-        await this.navigate(appPath);
+        // 不 await：`route.result` 最长要等 5 s，挂载流程不该被子端的应答堵住
+        void this.navigate(appPath);
       }
       return;
     }
@@ -281,7 +292,7 @@ export class AppHostController {
         this.onInitAck();
         return;
       case 'token.request':
-        await this.onceById(envelope, () => this.onTokenRequest(envelope));
+        await this.onceById(envelope, () => this.onTokenRequest());
         return;
       case 'route.result':
         this.onRouteResult(envelope, payload);
@@ -296,7 +307,7 @@ export class AppHostController {
         this.onAgentOpen(payload);
         return;
       case 'link.open':
-        await this.onceById(envelope, () => this.onLinkOpen(envelope, payload));
+        await this.onceById(envelope, () => this.onLinkOpen(payload));
         return;
       case 'toast':
         this.onToast(payload);
@@ -310,12 +321,18 @@ export class AppHostController {
   }
 
   /**
-   * §5.3：需应答消息按 `(type,id)` 去重 —— 重复的重放同一应答，副作用只跑一次。
+   * §5.3：需应答消息按 `(type,id)` 去重 —— **副作用只跑一次，应答每次都重放**。
    * 没带 `id` 的按「不需要应答」处理，直接执行（子端不指望回话）。
    */
-  private onceById(envelope: IncomingEnvelope, run: () => Promise<void>): Promise<void> {
-    if (!envelope.id) return run();
-    return this.replies.runOnce(replayKey(envelope.type, envelope.id), run);
+  private async onceById(
+    envelope: IncomingEnvelope,
+    run: () => Promise<OutgoingReply | null>,
+  ): Promise<void> {
+    const reply = envelope.id
+      ? await this.replies.runOnce(replayKey(envelope.type, envelope.id), run)
+      : await run();
+    if (!reply) return;
+    this.post(reply.type, reply.payload, envelope.id ? { id: envelope.id } : {});
   }
 
   // ---- ready → verify → init（shell.html:311-339）----
@@ -323,15 +340,15 @@ export class AppHostController {
   private async onReady(
     envelope: IncomingEnvelope,
     payload: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<OutgoingReply | null> {
     // §8.3 / §9.3-16：壳只接受 contractVersion=1，其余进错误页
     if (payload.contractVersion !== CONTRACT_VERSION) {
       this.fail('contract_version_mismatch');
-      return;
+      return null;
     }
     const installation = this.installation;
     const nonce = this.nonce;
-    if (!installation || !nonce) return;
+    if (!installation || !nonce) return null;
     this.cancel(this.readyTimer);
     this.readyTimer = null;
     this.patch({ phase: 'ready' });
@@ -345,9 +362,9 @@ export class AppHostController {
     } catch {
       this.report('attestation_failed', 'verify_rejected');
       this.fail('handshake_failed');
-      return;
+      return null;
     }
-    if (this.disposed || this.installation !== installation) return;
+    if (this.disposed || this.installation !== installation) return null;
     this.grant = grant;
 
     // §5.2：`ready.path` 作 canonical，壳用 replaceState 把 URL 洗成它
@@ -359,34 +376,38 @@ export class AppHostController {
 
     this.initReplyToId = envelope.id ?? `init-${this.now}`;
     this.patch({ phase: 'init' });
-    this.sendInit();
+    // §5.4-4 的重发定时器只在首次 ready 时上弦；重复 ready 走重放，不会再进到这里
+    this.armInitAckTimer();
+    return { type: 'init', payload: this.initPayload() };
   }
 
   /**
    * `init` 载荷是**字段白名单**：只有 SAT 与最小用户信息，
    * 壳会话 JWT、authEpoch、租户 id、偏好设置一概不下发（施工总则 §3.2-7）。
    */
-  private sendInit(): void {
+  private initPayload(): Record<string, unknown> {
     const grant = this.grant;
     const installation = this.installation;
-    if (!grant || !installation) return;
-    this.post(
-      'init',
-      {
-        token: grant.token,
-        tokenExp: grant.tokenExp,
-        user: {
-          id: grant.user.id,
-          displayName: grant.user.displayName,
-          isTenantAdmin: grant.user.isTenantAdmin,
-        },
-        theme: this.deps.theme(),
-        locale: this.deps.locale ?? 'zh-CN',
-        installationId: installation.installationId,
-        contractVersion: CONTRACT_VERSION,
+    if (!grant || !installation) return {};
+    return {
+      token: grant.token,
+      tokenExp: grant.tokenExp,
+      user: {
+        id: grant.user.id,
+        displayName: grant.user.displayName,
+        isTenantAdmin: grant.user.isTenantAdmin,
       },
-      { id: this.initReplyToId ?? undefined },
-    );
+      theme: this.deps.theme(),
+      locale: this.deps.locale ?? 'zh-CN',
+      installationId: installation.installationId,
+      contractVersion: CONTRACT_VERSION,
+    };
+  }
+
+  /** 重发（§5.4-4）。首发走 `onceById` 的应答通道，这里只管超时补发。 */
+  private resendInit(): void {
+    if (!this.grant) return;
+    this.post('init', this.initPayload(), { id: this.initReplyToId ?? undefined });
     this.armInitAckTimer();
   }
 
@@ -400,7 +421,7 @@ export class AppHostController {
         return;
       }
       this.initResends += 1;
-      this.sendInit();
+      this.resendInit();
     }, INIT_ACK_TIMEOUT_MS);
   }
 
@@ -412,23 +433,17 @@ export class AppHostController {
 
   // ---- token.request → token.refresh | token.refresh.error（shell.html:350-364）----
 
-  private async onTokenRequest(envelope: IncomingEnvelope): Promise<void> {
+  private async onTokenRequest(): Promise<OutgoingReply | null> {
     const installation = this.installation;
-    if (!installation) return;
+    if (!installation) return null;
     try {
       const grant = await this.singleFlightRefresh(installation.installationId);
       this.grant = grant;
-      this.post(
-        'token.refresh',
-        { token: grant.token, tokenExp: grant.tokenExp },
-        {
-          id: envelope.id,
-        },
-      );
+      return { type: 'token.refresh', payload: { token: grant.token, tokenExp: grant.tokenExp } };
     } catch (error) {
       const reason = refreshErrorReason(error);
-      this.post('token.refresh.error', { reason }, { id: envelope.id });
       this.applyRefreshFailure(reason);
+      return { type: 'token.refresh.error', payload: { reason } };
     }
   }
 
@@ -526,12 +541,9 @@ export class AppHostController {
     });
   }
 
-  private async onLinkOpen(
-    envelope: IncomingEnvelope,
-    payload: Record<string, unknown>,
-  ): Promise<void> {
+  private async onLinkOpen(payload: Record<string, unknown>): Promise<OutgoingReply | null> {
     const installation = this.installation;
-    if (!installation) return;
+    if (!installation) return null;
     const verdict = checkExternalLink(payload.url, installation.externalLinkHosts);
     if (!verdict.ok) {
       this.report(
@@ -539,17 +551,15 @@ export class AppHostController {
         verdict.reason as LinkRejectReason,
         String(payload.url).slice(0, 200),
       );
-      this.post('link.result', { ok: false }, { id: envelope.id });
-      return;
+      return { type: 'link.result', payload: { ok: false } };
     }
     const confirm = this.deps.confirm ?? ((message: string) => window.confirm(message));
     if (!confirm(externalLinkConfirmText(verdict.displayHost ?? ''))) {
-      this.post('link.result', { ok: false }, { id: envelope.id });
-      return;
+      return { type: 'link.result', payload: { ok: false } };
     }
     const open = this.deps.openLink;
     const opened = open ? open(verdict.url ?? '') : false;
-    this.post('link.result', { ok: opened }, { id: envelope.id });
+    return { type: 'link.result', payload: { ok: opened } };
   }
 
   private onToast(payload: Record<string, unknown>): void {

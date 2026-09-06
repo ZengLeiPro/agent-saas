@@ -235,6 +235,38 @@ export function buildMcpPresentation(toolName: string, input: Record<string, unk
   return { title: `${system} · ${tool}`, detail, status: 'ok' };
 }
 
+/**
+ * 定制项目能力摘要（WP3，规范 §6.1）。
+ *
+ * 工具名恒为 `app__<systemId>__<capabilityId>`（§4.5，`-`/`.` 已规范化成 `_`）。
+ * 与 MCP 同样只有入参可用：Phase A 的 provider 还不产出结果回执，
+ * 因此这里只给「哪个系统的什么能力、带了哪些关键参数」，不编造条数与耗时。
+ * Phase B 的 `envelope.ts` 会让 provider 自产带 `resultLink`/`outputBytes` 的
+ * presentation，届时 `buildToolPresentation` 的 `existing` 短路会优先于本函数。
+ */
+export function buildAppPresentation(
+  toolName: string,
+  input: Record<string, unknown>,
+): ToolPresentation | null {
+  if (!toolName.startsWith('app__')) return null;
+  const [systemId, ...rest] = toolName.slice('app__'.length).split('__');
+  const capabilityId = rest.join('__');
+  if (!systemId || !capabilityId) return null;
+  const detail: PresentationDetailLine[] = [{ k: '能力', v: capabilityId }];
+  const keys = Object.keys(input).slice(0, 4);
+  keys.forEach((key, index) => {
+    const value = input[key];
+    if (value === undefined || value === null || typeof value === 'object') return;
+    const text = String(value);
+    detail.push({
+      tree: index === keys.length - 1 ? '└' : '├',
+      k: key,
+      v: text.length > 80 ? `${text.slice(0, 80)}…` : text,
+    });
+  });
+  return { title: `${systemId} · ${capabilityId}`, detail, status: 'ok' };
+}
+
 type Rule = (input: Record<string, unknown>) => ToolPresentation | null;
 
 /**
@@ -560,6 +592,11 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
       + '但 MCP 结果没有统一 metadata 契约，拿不到写入条数、单据号与回读结果，'
       + '因此不算 covered——要到 covered 需要各 server 回传结构化回执（ToolReceipt）',
   },
+  {
+    tool: 'app__*',
+    state: 'covered',
+    producedIn: 'mapping',
+  },
 ] as const;
 
 /**
@@ -569,6 +606,12 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
  * 07-25：Shell/Write 接截断前 metadata（9→7）；Read/Edit 补 provider metadata（7→5）；
  * WebSearch/WebFetch/GenerateImage/Agent 接各自真实结果（5→1）。仅剩 Skill，刻意不做。
  * 调高它需要 code review 显式批准——这正是 `[CITE]` 当年缺的那道闸门。
+ *
+ * **09-06：3→2（WP3 Phase B 履约）**。Phase A 新登记 `app__*` 时借支了一格
+ * （provider 还不执行能力调用，拿不到真实回执），并写死「Phase B 接通 envelope.ts
+ * 后必须减回 2」。Phase B 的 `kyapp/gateway/envelope.ts` 已让 provider 在截断前自产
+ * presentation —— `receipt.id = lcid`、`outputBytes`、`meta.resultLink`、成功/失败
+ * 状态全部来自真实回执，故 `app__*` 转 covered，预算按约定减回 2。
  *
  * **07-26 例外，1→2**：新登记 `mcp__*`。理由是它此前根本不在表内（连接器动作
  * 显示为 `MCP:server/tool`，是演示与真实之间最大的一处落差），这次把它显式纳入
@@ -608,8 +651,8 @@ export function buildToolPresentation(
     }
     const rule = RULES[toolName];
     if (rule) return rule(input) ?? undefined;
-    // MCP 工具名是动态的（mcp__<server>__<tool>），走前缀规则而不是精确表
-    return buildMcpPresentation(toolName, input) ?? undefined;
+    // MCP 与定制项目能力的工具名都是动态的，走前缀规则而不是精确表
+    return buildMcpPresentation(toolName, input) ?? buildAppPresentation(toolName, input) ?? undefined;
   } catch {
     // 摘要是锦上添花，任何异常都不得影响工具执行结果本身
     return undefined;

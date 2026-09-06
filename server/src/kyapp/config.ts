@@ -44,6 +44,35 @@ export const DEFAULT_PROBE = {
 export const DEFAULT_EVENT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * WP3 Capability Gateway 的默认值（规范 §6.1/§6.2）。
+ * 全部走 `config.json` 的 `kyApp.gateway`，**不新增任何环境变量**。
+ */
+export const DEFAULT_GATEWAY = {
+  /** 单会话内 `app__` 工具数上限：超出则按 (systemId, capabilityId) 字典序截断并记日志。 */
+  maxToolsPerSession: 64,
+  /** 建快照时拉 `/ky/v1/me` 的超时（§4.2 壳侧同一端点）。 */
+  meTimeoutMs: 5_000,
+  /** §6.2-5：逻辑调用总截止 60 s。 */
+  logicalCallDeadlineMs: 60_000,
+  /** §6.2-5：`executions/{lcid}` 轮询间隔 2 s。 */
+  executionPollIntervalMs: 2_000,
+  /** §6.2-3：审批记录 10 分钟过期。 */
+  approvalTtlMs: 10 * 60 * 1000,
+  /** §6.2-6：响应体 > 6,000 字节 → `response_too_large`。 */
+  maxResponseBytes: 6_000,
+} as const;
+
+/** §6.2-7 限流与熔断默认值。 */
+export const DEFAULT_GATEWAY_LIMITS = {
+  perInstallationConcurrency: 8,
+  perRunPerCapability: 20,
+  perTenantPerMinute: 300,
+  perTenantPerDay: 5_000,
+  breakerFailureThreshold: 20,
+  breakerCooldownMs: 5 * 60 * 1000,
+} as const;
+
+/**
  * 规范 §3.6：目录变更流保留 30 天。
  *
  * 投影节拍默认 **60 秒**（总控 2026-09-06 拍板）：§3.4 允许「延迟 ≤ 轮询间隔，默认 5 分钟」，
@@ -98,6 +127,32 @@ const probeSchema = z
   })
   .strict();
 
+const gatewayLimitsSchema = z
+  .object({
+    perInstallationConcurrency: z.number().int().min(1).max(64).optional(),
+    perRunPerCapability: z.number().int().min(1).max(200).optional(),
+    perTenantPerMinute: z.number().int().min(1).max(100_000).optional(),
+    perTenantPerDay: z.number().int().min(1).max(1_000_000).optional(),
+    breakerFailureThreshold: z.number().int().min(1).max(1_000).optional(),
+    breakerCooldownMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  })
+  .strict();
+
+/** `kyApp.gateway`：WP3 Capability Gateway 子域（规范 §6）。 */
+const gatewaySchema = z
+  .object({
+    /** 关掉即不投影任何 `app__` 工具（其余 kyApp 功能不受影响）。默认开。 */
+    enabled: z.boolean().optional(),
+    maxToolsPerSession: z.number().int().min(1).max(200).optional(),
+    meTimeoutMs: z.number().int().min(1_000).max(15_000).optional(),
+    logicalCallDeadlineMs: z.number().int().min(5_000).max(300_000).optional(),
+    executionPollIntervalMs: z.number().int().min(500).max(30_000).optional(),
+    approvalTtlMs: z.number().int().min(60_000).max(1_800_000).optional(),
+    maxResponseBytes: z.number().int().min(1_000).max(64_000).optional(),
+    limits: gatewayLimitsSchema.optional(),
+  })
+  .strict();
+
 const eventsSchema = z
   .object({
     retryWindowMs: z
@@ -135,6 +190,7 @@ export const kyAppConfigSchema = z
     satTtlSeconds: satTtlSchema.optional(),
     probe: probeSchema.optional(),
     events: eventsSchema.optional(),
+    gateway: gatewaySchema.optional(),
     /** WP2b 组织目录变更流（§3.6）。整域缺省即全部取默认值，不需要新增任何环境变量。 */
     directory: directorySchema.optional(),
     /**
@@ -158,8 +214,57 @@ export interface KyAppPlatformConfig {
   satTtlSeconds: { user: number; agent: number; platform: number };
   probe: { liveIntervalMs: number; readyIntervalMs: number; failureThreshold: number };
   events: { retryWindowMs: number };
+  gateway: KyAppGatewayConfig;
   directory: { retentionDays: number; reconcileIntervalMs: number };
   allowInsecureOutbound: boolean;
+}
+
+/** §6.2-7 的四道闸门额度。单列成类型，Gateway 的 `policy.ts` 只依赖它。 */
+export interface KyAppGatewayLimits {
+  perInstallationConcurrency: number;
+  perRunPerCapability: number;
+  perTenantPerMinute: number;
+  perTenantPerDay: number;
+  breakerFailureThreshold: number;
+  breakerCooldownMs: number;
+}
+
+/** 解析后的 Gateway 子域；消费方直接取值，不再判缺省。 */
+export interface KyAppGatewayConfig {
+  enabled: boolean;
+  maxToolsPerSession: number;
+  meTimeoutMs: number;
+  logicalCallDeadlineMs: number;
+  executionPollIntervalMs: number;
+  approvalTtlMs: number;
+  maxResponseBytes: number;
+  limits: KyAppGatewayLimits;
+}
+
+function resolveGateway(raw: KyAppRawConfig['gateway']): KyAppGatewayConfig {
+  return {
+    enabled: raw?.enabled !== false,
+    maxToolsPerSession: raw?.maxToolsPerSession ?? DEFAULT_GATEWAY.maxToolsPerSession,
+    meTimeoutMs: raw?.meTimeoutMs ?? DEFAULT_GATEWAY.meTimeoutMs,
+    logicalCallDeadlineMs: raw?.logicalCallDeadlineMs ?? DEFAULT_GATEWAY.logicalCallDeadlineMs,
+    executionPollIntervalMs:
+      raw?.executionPollIntervalMs ?? DEFAULT_GATEWAY.executionPollIntervalMs,
+    approvalTtlMs: raw?.approvalTtlMs ?? DEFAULT_GATEWAY.approvalTtlMs,
+    maxResponseBytes: raw?.maxResponseBytes ?? DEFAULT_GATEWAY.maxResponseBytes,
+    limits: {
+      perInstallationConcurrency:
+        raw?.limits?.perInstallationConcurrency ??
+        DEFAULT_GATEWAY_LIMITS.perInstallationConcurrency,
+      perRunPerCapability:
+        raw?.limits?.perRunPerCapability ?? DEFAULT_GATEWAY_LIMITS.perRunPerCapability,
+      perTenantPerMinute:
+        raw?.limits?.perTenantPerMinute ?? DEFAULT_GATEWAY_LIMITS.perTenantPerMinute,
+      perTenantPerDay: raw?.limits?.perTenantPerDay ?? DEFAULT_GATEWAY_LIMITS.perTenantPerDay,
+      breakerFailureThreshold:
+        raw?.limits?.breakerFailureThreshold ?? DEFAULT_GATEWAY_LIMITS.breakerFailureThreshold,
+      breakerCooldownMs: raw?.limits?.breakerCooldownMs ?? DEFAULT_GATEWAY_LIMITS.breakerCooldownMs,
+    },
+  };
 }
 
 export class KyAppConfigError extends Error {
@@ -225,6 +330,7 @@ export function resolveKyAppConfig(rawConfig: unknown): KyAppPlatformConfig | nu
       failureThreshold: raw.probe?.failureThreshold ?? DEFAULT_PROBE.failureThreshold,
     },
     events: { retryWindowMs: raw.events?.retryWindowMs ?? DEFAULT_EVENT_RETRY_WINDOW_MS },
+    gateway: resolveGateway(raw.gateway),
     directory: {
       retentionDays: raw.directory?.retentionDays ?? DEFAULT_DIRECTORY.retentionDays,
       reconcileIntervalMs:

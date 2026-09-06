@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
+import { GOVERNANCE_SCHEMA_VERSION, governanceMigrationVersions } from '../data/governance-schema/migrations.js';
 import { RunPreflightService } from '../runtime/runPreflight.js';
 import { AccessEvaluator } from '../governance/access/evaluator.js';
 import {
@@ -561,7 +561,7 @@ describe('Run Resolution Snapshot 敏感内容围栏', () => {
       queries.push(sql);
       if (sql.includes('SELECT version FROM')) {
         return {
-          rows: Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1)
+          rows: governanceMigrationVersions()
             .filter(version => version !== 5)
             .map(version => ({ version })),
         };

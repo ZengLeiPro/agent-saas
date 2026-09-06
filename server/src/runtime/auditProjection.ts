@@ -89,6 +89,19 @@ CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
   duration_ms                BIGINT  NOT NULL,
   execution_invocations_json VARCHAR,
   error                      VARCHAR,
+  -- WP3 §6.2-8：定制项目能力调用的审计扩展。只有 app__ 工具会写，其余行全为 NULL。
+  -- input_hash / output_hash 只存 sha256，绝不存明文入参与结果。
+  app_user_id       VARCHAR,
+  app_installation_id VARCHAR,
+  app_capability_id VARCHAR,
+  app_lcid          VARCHAR,
+  app_request_id    VARCHAR,
+  app_dig           VARCHAR,
+  app_input_hash    VARCHAR,
+  app_output_hash   VARCHAR,
+  app_output_bytes  BIGINT,
+  app_error_code    VARCHAR,
+  app_origin        VARCHAR,
   PRIMARY KEY (tenant_id, id)
 );
 `;
@@ -105,6 +118,27 @@ ALTER TABLE tool_audit ADD COLUMN tenant_id VARCHAR DEFAULT '${LEGACY_TENANT_ID}
 const ALTER_TOOL_AUDIT_SKILL = `
 ALTER TABLE tool_audit ADD COLUMN skill_name VARCHAR;
 `;
+
+/**
+ * WP3 §6.2-8 的 11 列。旧 DuckDB 文件逐列补齐；DuckDB 的 ADD COLUMN 无 IF NOT EXISTS，
+ * 因此调用方要先 `tableHasColumn` 判定（与 tenant_id / skill_name 同一套路）。
+ */
+const ALTER_TOOL_AUDIT_APP_COLUMNS: ReadonlyArray<{ column: string; sql: string }> = [
+  ['app_user_id', 'VARCHAR'],
+  ['app_installation_id', 'VARCHAR'],
+  ['app_capability_id', 'VARCHAR'],
+  ['app_lcid', 'VARCHAR'],
+  ['app_request_id', 'VARCHAR'],
+  ['app_dig', 'VARCHAR'],
+  ['app_input_hash', 'VARCHAR'],
+  ['app_output_hash', 'VARCHAR'],
+  ['app_output_bytes', 'BIGINT'],
+  ['app_error_code', 'VARCHAR'],
+  ['app_origin', 'VARCHAR'],
+].map(([column, type]) => ({
+  column: column!,
+  sql: `ALTER TABLE tool_audit ADD COLUMN ${column} ${type};`,
+}));
 
 const SCHEMA_WATERMARK = `
 CREATE TABLE IF NOT EXISTS projection_watermark (
@@ -123,7 +157,9 @@ const TOOL_AUDIT_COLUMNS = `
   id, timestamp, session_id, run_id, tenant_id, source_file_path,
   tool_call_id, tool_id, tool_name, skill_name, risk, approval_id,
   authorization_source, authorization_json, execution_target, status,
-  duration_ms, execution_invocations_json, error
+  duration_ms, execution_invocations_json, error,
+  app_user_id, app_installation_id, app_capability_id, app_lcid, app_request_id,
+  app_dig, app_input_hash, app_output_hash, app_output_bytes, app_error_code, app_origin
 `;
 
 const SCHEMA_INDEXES = [
@@ -136,6 +172,9 @@ const SCHEMA_INDEXES = [
   // PR 10：(tenant, *) 复合索引为 admin 跨 session / 跨 runId 加 tenantId where 提速
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tenant_run  ON tool_audit(tenant_id, run_id);`,
   `CREATE INDEX IF NOT EXISTS idx_tool_audit_tenant_sess ON tool_audit(tenant_id, session_id);`,
+  // WP3：按安装实例做能力用量与故障排查（app_installation_id 为 NULL 的行不进索引热区）
+  `CREATE INDEX IF NOT EXISTS idx_tool_audit_app_install  ON tool_audit(app_installation_id, timestamp);`,
+  `CREATE INDEX IF NOT EXISTS idx_tool_audit_app_lcid     ON tool_audit(app_lcid);`,
 ];
 
 export class AuditProjection {
@@ -158,6 +197,9 @@ export class AuditProjection {
     }
     if (!toolAuditHadSkill && !await this.tableHasColumn('tool_audit', 'skill_name')) {
       await this.db.run(ALTER_TOOL_AUDIT_SKILL);
+    }
+    for (const { column, sql } of ALTER_TOOL_AUDIT_APP_COLUMNS) {
+      if (!await this.tableHasColumn('tool_audit', column)) await this.db.run(sql);
     }
     if (!watermarkHadTenantBoundary) {
       if (!await this.tableHasColumn('projection_watermark', 'tenant_ids_json')) {
@@ -451,12 +493,16 @@ export class AuditProjection {
              id, timestamp, session_id, run_id, tenant_id, source_file_path,
              tool_call_id, tool_id, tool_name, skill_name, risk, approval_id,
              authorization_source, authorization_json, execution_target, status,
-             duration_ms, execution_invocations_json, error
+             duration_ms, execution_invocations_json, error,
+             app_user_id, app_installation_id, app_capability_id, app_lcid, app_request_id,
+             app_dig, app_input_hash, app_output_hash, app_output_bytes, app_error_code, app_origin
            ) VALUES (
              $1, CAST($2 AS TIMESTAMP), $3, $4, $5, $6,
              $7, $8, $9, $10, $11, $12,
              $13, $14, $15, $16,
-             $17, $18, $19
+             $17, $18, $19,
+             $20, $21, $22, $23, $24,
+             $25, $26, $27, $28, $29, $30
            ) ON CONFLICT (tenant_id, id) DO NOTHING;`,
           [
             e.id,
@@ -479,6 +525,17 @@ export class AuditProjection {
             BigInt(e.durationMs),
             e.executionInvocations ? JSON.stringify(e.executionInvocations) : null,
             e.error ?? null,
+            e.userId ?? null,
+            e.installationId ?? null,
+            e.capabilityId ?? null,
+            e.lcid ?? null,
+            e.requestId ?? null,
+            e.dig ?? null,
+            e.inputHash ?? null,
+            e.outputHash ?? null,
+            e.outputBytes === undefined ? null : BigInt(e.outputBytes),
+            e.errorCode ?? null,
+            e.origin ?? null,
           ],
         );
         inserted += 1;

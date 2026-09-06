@@ -26,10 +26,48 @@ import type {
   EventStore,
   PlatformEvent,
 } from './types.js';
+import { APP_CAPABILITY_AUDIT_KEYS, type AppCapabilityAuditFields } from './toolAuditEvent.js';
 
 type ToolAuditEvent = Extract<PlatformEvent, { type: 'tool_audit' }>;
 
-export interface RuntimeAuditEntry {
+/** 只挑存在的键，保持「没有就不写这个键」的既有序列化语义。 */
+function pickAppCapabilityAuditFields(
+  source: Partial<AppCapabilityAuditFields>,
+): AppCapabilityAuditFields {
+  const picked: Record<string, unknown> = {};
+  for (const key of APP_CAPABILITY_AUDIT_KEYS) {
+    const value = source[key];
+    if (value !== undefined && value !== null) picked[key] = value;
+  }
+  return picked as AppCapabilityAuditFields;
+}
+
+/** DuckDB 列名 → `AppCapabilityAuditFields` 键。 */
+const APP_AUDIT_COLUMN_BY_KEY = {
+  userId: 'app_user_id',
+  installationId: 'app_installation_id',
+  capabilityId: 'app_capability_id',
+  lcid: 'app_lcid',
+  requestId: 'app_request_id',
+  dig: 'app_dig',
+  inputHash: 'app_input_hash',
+  outputHash: 'app_output_hash',
+  outputBytes: 'app_output_bytes',
+  errorCode: 'app_error_code',
+  origin: 'app_origin',
+} as const satisfies Record<keyof AppCapabilityAuditFields, string>;
+
+function readAppCapabilityAuditRow(row: Record<string, unknown>): AppCapabilityAuditFields {
+  const entry: Record<string, unknown> = {};
+  for (const key of APP_CAPABILITY_AUDIT_KEYS) {
+    const value = row[APP_AUDIT_COLUMN_BY_KEY[key]];
+    if (value === null || value === undefined || value === '') continue;
+    entry[key] = key === 'outputBytes' ? Number(value) : String(value);
+  }
+  return entry as AppCapabilityAuditFields;
+}
+
+export interface RuntimeAuditEntry extends AppCapabilityAuditFields {
   id: string;
   timestamp: string;
   runId: string;
@@ -122,6 +160,8 @@ export function toRuntimeAuditEntry(event: ToolAuditEvent): RuntimeAuditEntry {
     durationMs: event.durationMs,
     ...(event.executionInvocations?.length ? { executionInvocations: event.executionInvocations } : {}),
     ...(event.error ? { error: event.error } : {}),
+    // WP3 §6.2-8：定制项目能力调用的扩展字段原样透传（非 app__ 工具全为 undefined）。
+    ...pickAppCapabilityAuditFields(event),
   };
 }
 
@@ -480,7 +520,18 @@ const SELECT_COLUMNS = `
   status,
   duration_ms,
   execution_invocations_json,
-  error
+  error,
+  app_user_id,
+  app_installation_id,
+  app_capability_id,
+  app_lcid,
+  app_request_id,
+  app_dig,
+  app_input_hash,
+  app_output_hash,
+  app_output_bytes,
+  app_error_code,
+  app_origin
 `;
 
 function buildSelectSql(whereClauses: string[], options: AuditQueryOptions): string {
@@ -558,5 +609,6 @@ function rowToRuntimeAuditEntry(row: Record<string, unknown>): RuntimeAuditEntry
   if (row.error != null && row.error !== '') {
     entry.error = String(row.error);
   }
+  Object.assign(entry, readAppCapabilityAuditRow(row as Record<string, unknown>));
   return entry;
 }

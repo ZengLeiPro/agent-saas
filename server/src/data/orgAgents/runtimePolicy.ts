@@ -81,6 +81,17 @@ export const orgAgentRuntimePolicySchema = z.object({
     denyServers: [],
     denyTools: [],
   }),
+  apps: z.object({
+    systemAllowlist: stringIdListSchema.nullable().default(null),
+    capabilityAllowlist: stringIdListSchema.nullable().default(null),
+    denySystems: stringIdListSchema.default([]),
+    denyCapabilities: stringIdListSchema.default([]),
+  }).strict().default({
+    systemAllowlist: null,
+    capabilityAllowlist: null,
+    denySystems: [],
+    denyCapabilities: [],
+  }),
   execution: z.object({
     allowedTargets: z.array(executionTargetSchema).max(4).nullable().default(null),
   }).strict().default({ allowedTargets: null }),
@@ -147,6 +158,12 @@ export const DEFAULT_ORG_AGENT_RUNTIME_POLICY = Object.freeze({
     denyServers: [],
     denyTools: [],
   },
+  apps: {
+    systemAllowlist: null,
+    capabilityAllowlist: null,
+    denySystems: [],
+    denyCapabilities: [],
+  },
   execution: { allowedTargets: null },
 } satisfies OrgAgentRuntimePolicy);
 
@@ -169,6 +186,16 @@ export function parseOrgAgentRuntimePolicy(input: unknown): OrgAgentRuntimePolic
       toolAllowlist: parsed.mcp.toolAllowlist ? uniqueSorted(parsed.mcp.toolAllowlist) : null,
       denyServers: uniqueSorted(parsed.mcp.denyServers),
       denyTools: uniqueSorted(parsed.mcp.denyTools),
+    },
+    apps: {
+      systemAllowlist: parsed.apps.systemAllowlist
+        ? uniqueSorted(parsed.apps.systemAllowlist)
+        : null,
+      capabilityAllowlist: parsed.apps.capabilityAllowlist
+        ? uniqueSorted(parsed.apps.capabilityAllowlist)
+        : null,
+      denySystems: uniqueSorted(parsed.apps.denySystems),
+      denyCapabilities: uniqueSorted(parsed.apps.denyCapabilities),
     },
     execution: {
       allowedTargets: parsed.execution.allowedTargets
@@ -195,6 +222,27 @@ export function normalizeOrgAgentRuntimePolicy(input: unknown): OrgAgentRuntimeP
  * config is re-parsed by the Profile schema so cross-field rules (notably the
  * mandatory WaitForWorkspaceReady gate) cannot be bypassed by an intersection.
  */
+/** 合并 `apps` 名单；结果无任何限制时返回空对象（不写 `apps` 键）。 */
+function mergeAppsPolicy(
+  shared: AgentRuntimeProfileConfig['apps'],
+  policy: OrgAgentRuntimePolicy['apps'],
+): Pick<AgentRuntimeProfileConfig, 'apps'> | Record<string, never> {
+  const merged = {
+    systemAllowlist: intersectNullable(shared?.systemAllowlist ?? null, policy.systemAllowlist),
+    capabilityAllowlist: intersectNullable(
+      shared?.capabilityAllowlist ?? null,
+      policy.capabilityAllowlist,
+    ),
+    denySystems: union(shared?.denySystems ?? [], policy.denySystems),
+    denyCapabilities: union(shared?.denyCapabilities ?? [], policy.denyCapabilities),
+  };
+  const unrestricted = merged.systemAllowlist === null
+    && merged.capabilityAllowlist === null
+    && merged.denySystems.length === 0
+    && merged.denyCapabilities.length === 0;
+  return unrestricted ? {} : { apps: merged };
+}
+
 export function mergeOrgAgentRuntimePolicy(
   shared: AgentRuntimeProfileConfig,
   input: OrgAgentRuntimePolicy | undefined,
@@ -243,6 +291,9 @@ export function mergeOrgAgentRuntimePolicy(
       denyServers: union(shared.mcp.denyServers, policy.mcp.denyServers),
       denyTools: union(shared.mcp.denyTools, policy.mcp.denyTools),
     },
+    // 组织 Profile 侧 `apps` 是 optional（不进 config digest，见 agentProfiles/types.ts）：
+    // 双方都没有限制时**整块不输出**，合并结果与本次改动前逐字节一致。
+    ...mergeAppsPolicy(shared.apps, policy.apps),
     execution: {
       allowedTargets: intersectNullable(
         shared.execution.allowedTargets,

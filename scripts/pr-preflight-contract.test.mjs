@@ -18,6 +18,8 @@ test('分片脚本保留原 PR preflight 的全部门禁', () => {
     // WP2a：v41 迁移与定制项目 store 的 PG 合约必须在 postgres 任务显式清单里。
     'src/__tests__/entitlementScopeBaseline.pg.test.ts',
     'src/kyapp/systems/store.pg.test.ts',
+    // WP3：v43 会话工具快照表的跨进程合约。
+    'src/kyapp/gateway/snapshotStore.pg.test.ts',
     'src/kyapp/__tests__/kyAppStores.pg.test.ts',
     // WP2b：v42 迁移与目录变更日志/投影的 PG 合约同样必须在 postgres 任务显式清单里。
     'src/kyapp/directory/store.pg.test.ts',

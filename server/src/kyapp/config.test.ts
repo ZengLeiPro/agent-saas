@@ -64,6 +64,47 @@ describe('kyApp 平台配置域', () => {
     ).toThrow(KyAppConfigError);
   });
 
+  it('WP3 gateway 子域：缺省取规范默认值，显式配置逐项覆盖，未知键被拒', () => {
+    const fallback = resolveKyAppConfig({ kyApp: { environment: 'prod' } });
+    expect(fallback?.gateway).toEqual({
+      enabled: true,
+      maxToolsPerSession: 64,
+      meTimeoutMs: 5_000,
+      logicalCallDeadlineMs: 60_000,
+      executionPollIntervalMs: 2_000,
+      approvalTtlMs: 10 * 60 * 1000,
+      maxResponseBytes: 6_000,
+      limits: {
+        perInstallationConcurrency: 8,
+        perRunPerCapability: 20,
+        perTenantPerMinute: 300,
+        perTenantPerDay: 5_000,
+        breakerFailureThreshold: 20,
+        breakerCooldownMs: 5 * 60 * 1000,
+      },
+    });
+
+    const overridden = resolveKyAppConfig({
+      kyApp: {
+        environment: 'prod',
+        gateway: { enabled: false, maxToolsPerSession: 8, limits: { perTenantPerMinute: 30 } },
+      },
+    });
+    expect(overridden?.gateway.enabled).toBe(false);
+    expect(overridden?.gateway.maxToolsPerSession).toBe(8);
+    expect(overridden?.gateway.limits.perTenantPerMinute).toBe(30);
+    // 未显式覆盖的子项仍走默认值
+    expect(overridden?.gateway.limits.perInstallationConcurrency).toBe(8);
+    expect(overridden?.gateway.maxResponseBytes).toBe(6_000);
+
+    expect(() =>
+      resolveKyAppConfig({ kyApp: { environment: 'prod', gateway: { unknown: 1 } } }),
+    ).toThrow(KyAppConfigError);
+    expect(() =>
+      resolveKyAppConfig({ kyApp: { environment: 'prod', gateway: { maxResponseBytes: 10 } } }),
+    ).toThrow(KyAppConfigError);
+  });
+
   it('WP2b 目录子域：缺省取 §3.6/§3.4 默认值，可覆盖，越界与未知键被拒', () => {
     // 整域缺省 → 30 天保留 + 5 分钟投影节拍，无需任何新增环境变量。
     expect(resolveKyAppConfig({ kyApp: { environment: 'prod' } })?.directory).toEqual({

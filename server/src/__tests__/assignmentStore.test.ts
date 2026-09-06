@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PgAssignmentStore, resolveAssignment } from '../data/assignments/index.js';
-import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
+import { GOVERNANCE_SCHEMA_VERSION, governanceMigrationVersions } from '../data/governance-schema/migrations.js';
 import type { OrgAgentRecord } from '../data/orgAgents/types.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
@@ -74,7 +74,7 @@ describe('Resource Assignment、Personal Preference 与当前 migration ledger',
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_assignments');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_user_resource_preferences');
     expect(sql).toContain("assignee_type = 'everyone' AND assignee_id IS NULL");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(governanceMigrationVersions().length);
   });
 
   it('legacy username 仅在同租户唯一命中时转 immutable userId；未解析 deny 记 issue 且不误授权同名账号', async () => {

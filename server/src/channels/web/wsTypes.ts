@@ -1,3 +1,4 @@
+import type { WsToolConfirmationCard } from '@agent/shared';
 /**
  * WebSocket Message Protocol Types
  *
@@ -238,7 +239,7 @@ export type WsDownstreamEvent =
     | { type: 'block_end'; blockType: WsBlockType; toolName?: string }
     | { type: 'tool_execution'; phase: 'started' | 'progress' | 'completed'; toolName?: string; toolId?: string; invocationId?: string; status?: 'success' | 'error' | 'cancelled'; durationMs?: number; content?: string; error?: string }
     | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean }
-    | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
+    | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string; confirmation?: WsToolConfirmationCard }
     | { type: 'ask_user'; interactionId: string; version?: number; order?: number; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
     | { type: 'subagent_end'; toolId: string; agentType?: string; status?: 'completed' | 'failed' | 'cancelled' | 'timeout'; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
@@ -254,7 +255,7 @@ export type WsDownstreamEvent =
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
-    | { type: 'pending_interactions'; sessionId?: string; interactions: Array<{ interactionId: string; type: string; version: number; order: number; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
+    | { type: 'pending_interactions'; sessionId?: string; interactions: Array<{ interactionId: string; type: string; version: number; order: number; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string; confirmation?: WsToolConfirmationCard }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string; networkGeneration?: number }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; version?: number; order?: number; status?: 'resolved' | 'rejected' | 'failed' | 'cancelled' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean }

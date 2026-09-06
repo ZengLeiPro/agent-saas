@@ -271,6 +271,7 @@ export function defaultOrgAgentRuntimePolicy(): OrgAgentRuntimePolicy {
     },
     tools: { allowlist: null, denylist: [] },
     mcp: { serverAllowlist: null, toolAllowlist: null, denyServers: [], denyTools: [] },
+    apps: { systemAllowlist: null, capabilityAllowlist: null, denySystems: [], denyCapabilities: [] },
     execution: { allowedTargets: null },
   };
 }

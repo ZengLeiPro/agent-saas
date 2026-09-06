@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
+import { GOVERNANCE_SCHEMA_VERSION, governanceMigrationVersions } from '../data/governance-schema/migrations.js';
 import { PgSkillGovernanceStore, assertGovernedSkillDefinitionSafe } from '../data/skillGovernance/index.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
@@ -165,7 +165,7 @@ describe('Governed Skill + Candidate 发布链', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_governed_skill_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_skill_candidates');
     expect(sql).toContain("status IN ('draft', 'submitted', 'approved', 'rejected', 'published')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(governanceMigrationVersions().length);
   });
 
   it('personal Skill 强制 immutable owner；tenant Skill 建 stable ID', async () => {

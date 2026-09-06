@@ -114,6 +114,8 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
   const toolAllowlistLimited = value.tools.allowlist !== null;
   const mcpServerLimited = value.mcp.serverAllowlist !== null;
   const mcpToolLimited = value.mcp.toolAllowlist !== null;
+  const appSystemLimited = value.apps.systemAllowlist !== null;
+  const appCapabilityLimited = value.apps.capabilityAllowlist !== null;
   const executionLimited = value.execution.allowedTargets !== null;
 
   return (
@@ -290,6 +292,26 @@ export function OrgAgentRuntimeSection({ value, onChange }: OrgAgentRuntimeSecti
           </div>
           <PolicyListField label="拒绝 Server" hint="每行一个 MCP Server 名。" value={value.mcp.denyServers} onChange={denyServers => patch('mcp', { ...value.mcp, denyServers })} />
           <PolicyListField label="拒绝 MCP 工具" hint="每行一个工具名或完整 key。" value={value.mcp.denyTools} onChange={denyTools => patch('mcp', { ...value.mcp, denyTools })} />
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-md border border-dashed p-3">
+        <div className="text-sm font-medium">定制系统策略</div>
+        <p className="text-xs leading-5 text-muted-foreground">
+          控制这个企业专家能用哪些定制系统的能力。写规范化后的标识（连字符和点都写成下划线）。
+          注意：上面的「工具允许列表」一旦开启，未列名的定制系统能力会被一并滤掉。
+        </p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3"><span className="text-sm">限制系统</span><Switch checked={appSystemLimited} onCheckedChange={checked => patch('apps', { ...value.apps, systemAllowlist: checked ? [] : null })} /></div>
+            {appSystemLimited ? <PolicyListField label="系统允许列表" hint="每行一个系统标识，如 demo_erp。" value={value.apps.systemAllowlist ?? []} onChange={systemAllowlist => patch('apps', { ...value.apps, systemAllowlist })} /> : null}
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3"><span className="text-sm">限制能力</span><Switch checked={appCapabilityLimited} onCheckedChange={checked => patch('apps', { ...value.apps, capabilityAllowlist: checked ? [] : null })} /></div>
+            {appCapabilityLimited ? <PolicyListField label="能力允许列表" hint="每行一个能力标识或完整工具名。" value={value.apps.capabilityAllowlist ?? []} onChange={capabilityAllowlist => patch('apps', { ...value.apps, capabilityAllowlist })} /> : null}
+          </div>
+          <PolicyListField label="拒绝系统" hint="每行一个系统标识。" value={value.apps.denySystems} onChange={denySystems => patch('apps', { ...value.apps, denySystems })} />
+          <PolicyListField label="拒绝能力" hint="每行一个能力标识或完整工具名。" value={value.apps.denyCapabilities} onChange={denyCapabilities => patch('apps', { ...value.apps, denyCapabilities })} />
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { PgGovernanceMigrationRunner, GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
+import { PgGovernanceMigrationRunner, GOVERNANCE_SCHEMA_VERSION, governanceMigrationVersions } from '../data/governance-schema/migrations.js';
 import { governanceV39OrgGroupBindingIdentityStatements } from '../data/governance-schema/v39OrgGroupBindingIdentityMigration.js';
 import { governanceV40DwsDeliveryAccountIdentityStatements } from '../data/governance-schema/v40DwsDeliveryAccountIdentityMigration.js';
 import { PgProviderQuotaSnapshotStore } from '../quota/providerQuotaSnapshotStore.js';
@@ -151,7 +151,7 @@ describePg('真实生产基线的迁移与回滚兼容性', () => {
         )
       ).rows,
     ).toEqual(
-      Array.from({ length: GOVERNANCE_SCHEMA_VERSION - 36 }, (_, index) => ({ version: 37 + index })),
+      governanceMigrationVersions().filter((version) => version > 36).map((version) => ({ version })),
     );
     const quota = new PgProviderQuotaSnapshotStore(pool, { tablePrefix: prefix });
     await quota.init();

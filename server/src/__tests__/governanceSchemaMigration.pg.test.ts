@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   GOVERNANCE_SCHEMA_VERSION,
+  governanceMigrationVersions,
   PgGovernanceMigrationRunner,
   type GovernancePgPool,
 } from '../data/governance-schema/migrations.js';
@@ -107,7 +108,7 @@ describePg('Governance Schema 当前版本 PostgreSQL 升级、身份迁移、�
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map((row) => Number(row.version))).toEqual(
-      Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1),
+      governanceMigrationVersions(),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -596,7 +597,7 @@ describePg('Governance Schema 当前版本 PostgreSQL 升级、身份迁移、�
       `SELECT version FROM ${legacyPrefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map((row) => Number(row.version))).toEqual(
-      Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1),
+      governanceMigrationVersions(),
     );
     const retentionTable = await pool.query<{ name: string | null }>(
       'SELECT to_regclass($1) AS name',

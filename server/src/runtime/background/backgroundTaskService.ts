@@ -536,7 +536,13 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         orgAgentSnapshot ? resolveOrgAgentRuntimeSkillIds(orgAgentSnapshot) : [],
         undefined,
         [],
-        { runId: record.runId, sessionId: taskSession.sessionId, userId: taskSession.userId },
+        {
+          runId: record.runId,
+          sessionId: taskSession.sessionId,
+          userId: taskSession.userId,
+          // WP3：定制项目能力快照按 (sessionId, installationId, digest) 冻结，后台任务同样要传。
+          ...(taskSession.tenantId ? { tenantId: taskSession.tenantId } : {}),
+        },
       );
       const identity = sessionIdentity(taskSession);
       const connectorRunEnv = await buildConnectorRunEnv(this.config, identity);

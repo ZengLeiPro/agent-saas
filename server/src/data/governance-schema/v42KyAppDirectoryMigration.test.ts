@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { governanceLatestMigrations } from './latestMigrations.js';
-import { GOVERNANCE_SCHEMA_VERSION } from './migrations.js';
 import { governanceV42KyAppDirectoryStatements } from './v42KyAppDirectoryMigration.js';
 
 describe('治理库 V42 组织目录变更流迁移', () => {
@@ -45,12 +44,10 @@ describe('治理库 V42 组织目录变更流迁移', () => {
     }
   });
 
-  it('登记为 V42 迁移，且是当前最新版本', () => {
+  it('固定登记为 V42，不依赖后续迁移是否已经加入', () => {
     const migrations = governanceLatestMigrations('test_governance');
     expect(migrations.find((migration) => migration.version === 42)?.statements).toEqual(
       governanceV42KyAppDirectoryStatements('test_governance'),
     );
-    expect(GOVERNANCE_SCHEMA_VERSION).toBe(42);
-    expect(Math.max(...migrations.map((migration) => migration.version))).toBe(42);
   });
 });

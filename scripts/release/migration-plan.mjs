@@ -70,6 +70,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/kyapp/directory/changeLog.ts',
   'server/src/kyapp/directory/projection.ts',
   'server/src/kyapp/events/store.ts',
+  'server/src/kyapp/gateway/snapshotStore.ts',
   'server/src/kyapp/installations/credentialStore.ts',
   'server/src/kyapp/installations/runtimeStore.ts',
   'server/src/kyapp/keys/store.ts',

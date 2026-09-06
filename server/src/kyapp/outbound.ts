@@ -47,6 +47,13 @@ export interface KyAppOutboundRequest {
   /** JSON 请求体；给出即自动带 `Content-Type: application/json`。 */
   jsonBody?: unknown;
   requestId: string;
+  /**
+   * 本次请求的超时（毫秒）。**只能收紧、不能放宽**：与实例级超时取小值。
+   * 能力可在 manifest 声明 `timeoutMs`（§4.3 ≤ 15,000）。
+   */
+  timeoutMs?: number;
+  /** 外部取消（逻辑调用总截止、run 中止）。与超时定时器共同作用。 */
+  signal?: AbortSignal;
 }
 
 export interface KyAppOutboundResult {
@@ -55,6 +62,11 @@ export interface KyAppOutboundResult {
   text: string;
   /** JSON 解析结果；解析失败为 `null`。 */
   json: unknown;
+  /**
+   * `Retry-After` 响应头（毫秒）。§6.2-5 的 429 重试要用它，
+   * 解析不出或不是正数即 `null`。HTTP-date 形式也支持。
+   */
+  retryAfterMs: number | null;
 }
 
 export interface KyAppOutboundOptions {
@@ -83,6 +95,23 @@ function allowsInsecureLoopback(options: KyAppOutboundOptions, url: URL): boolea
 
 export interface KyAppOutbound {
   request(input: KyAppOutboundRequest): Promise<KyAppOutboundResult>;
+}
+
+/** `Retry-After`：delta-seconds 或 HTTP-date。非正数、解析失败一律 `null`。 */
+export function parseRetryAfterMs(
+  raw: string | null | undefined,
+  now: number = Date.now(),
+): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (/^\d+$/u.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+  }
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return null;
+  const delta = at - now;
+  return delta > 0 ? delta : null;
 }
 
 export function createKyAppOutbound(options: KyAppOutboundOptions): KyAppOutbound {
@@ -136,7 +165,15 @@ export function createKyAppOutbound(options: KyAppOutboundOptions): KyAppOutboun
       if (input.jsonBody !== undefined) headers['content-type'] = 'application/json';
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      // 调用方超时只能收紧：manifest 声明的能力超时不得放宽实例级 15 s 硬上限。
+      const effectiveTimeoutMs =
+        input.timeoutMs === undefined ? timeoutMs : Math.min(timeoutMs, Math.max(1, input.timeoutMs));
+      const timer = setTimeout(() => controller.abort(), effectiveTimeoutMs);
+      const onExternalAbort = () => controller.abort();
+      if (input.signal) {
+        if (input.signal.aborted) controller.abort();
+        else input.signal.addEventListener('abort', onExternalAbort, { once: true });
+      }
       let response: Response;
       try {
         response = await fetchImpl(target, {
@@ -150,12 +187,13 @@ export function createKyAppOutbound(options: KyAppOutboundOptions): KyAppOutboun
         const aborted = controller.signal.aborted;
         throw new KyAppOutboundError(
           aborted
-            ? `出站请求超过 ${timeoutMs} 毫秒`
+            ? `出站请求超过 ${effectiveTimeoutMs} 毫秒`
             : `出站请求失败：${error instanceof Error ? error.message : String(error)}`,
           aborted ? 'timeout' : 'upstream_unavailable',
         );
       } finally {
         clearTimeout(timer);
+        input.signal?.removeEventListener('abort', onExternalAbort);
       }
 
       // `redirect:'manual'` 下 3xx 会原样返回；跟随重定向会绕过 host 白名单与私网校验，一律拒绝。
@@ -172,7 +210,12 @@ export function createKyAppOutbound(options: KyAppOutboundOptions): KyAppOutboun
       } catch {
         json = null;
       }
-      return { status: response.status, text, json };
+      return {
+        status: response.status,
+        text,
+        json,
+        retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
+      };
     },
   };
 }

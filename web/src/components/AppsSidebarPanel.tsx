@@ -9,17 +9,14 @@
  * 点击后走土制路由（`navigateApps` → pushState + 合成 popstate），
  * 由 `useChatUrlSync` 的 popstate 订阅把 `activeTab` 切到 `apps`。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { AppWindow } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { navigateApps } from '@/lib/urlSync';
 import { useAppsShellState } from '@/hooks/useAppsShellState';
-import {
-  fetchMySystems,
-  type MySystemInstallation,
-  type MySystemsResponse,
-} from '@/lib/systemsApi';
+import { useMySystems } from '@/hooks/useMySystems';
+import type { MySystemInstallation } from '@/lib/systemsApi';
 import type { AppTab } from '@/types/sidebar';
 import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from './DesktopSessionSidebarControls';
 
@@ -61,44 +58,21 @@ export function isRenderableIconGlyph(icon: string | null): icon is string {
 export interface AppsSidebarPanelProps {
   /** 与其它一级导航一致：跳转前收起展开中的分组。 */
   beforeNavigate?: () => void;
-  /** 测试注入点；生产恒为 `fetchMySystems`。 */
-  loadInstallations?: () => Promise<MySystemsResponse>;
 }
 
 /**
  * 选中态直接读 URL（`useAppsShellState`）而不是 `activeTab` prop：
  * 同一个 `apps` 标签下有多个安装实例，只有 URL 分得清停在哪一个。
+ *
+ * 安装实例列表走壳内单一来源（`useMySystems`），与 AppHost 共享同一次
+ * `GET /api/systems/mine`，避免两边拿到不同快照后互相打架。
  */
-export function AppsSidebarPanel({
-  beforeNavigate,
-  loadInstallations = fetchMySystems,
-}: AppsSidebarPanelProps) {
+export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
   const { activeInstallationId } = useAppsShellState();
-  const [items, setItems] = useState<AppsNavItem[]>([]);
-  const [failed, setFailed] = useState(false);
-  const [reloadToken, setReloadToken] = useState(0);
-  const loadRef = useRef(loadInstallations);
-  loadRef.current = loadInstallations;
-
-  useEffect(() => {
-    let cancelled = false;
-    setFailed(false);
-    loadRef
-      .current()
-      .then((response) => {
-        if (cancelled) return;
-        setItems(buildAppsNavItems(response.installations));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        // §6.6：客户面不写技术归因，只给「暂时取不到 + 重试」。
-        setItems([]);
-        setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadToken]);
+  const { status, installations, reload } = useMySystems();
+  const items = useMemo(() => buildAppsNavItems(installations), [installations]);
+  // §6.6：客户面不写技术归因，只给「暂时取不到 + 重试」。
+  const failed = status === 'failed';
 
   const handleOpen = useCallback(
     (installationId: string) => {
@@ -121,7 +95,7 @@ export function AppsSidebarPanel({
             'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm',
             NAV_ITEM_UNSELECTED,
           )}
-          onClick={() => setReloadToken((token) => token + 1)}
+          onClick={reload}
         >
           暂时无法加载，点此重试
         </button>

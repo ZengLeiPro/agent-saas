@@ -8,10 +8,11 @@
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { baseNavItems, getSidebarNavItems } from '@/types/sidebar';
-import type { MySystemInstallation } from '@/lib/systemsApi';
+import { __setMySystemsLoaderForTests } from '@/lib/mySystemsSource';
+import type { MySystemInstallation, MySystemsResponse } from '@/lib/systemsApi';
 import { AppsSidebarPanel, buildAppsNavItems, isRenderableIconGlyph } from './AppsSidebarPanel';
 
 function installation(overrides: Partial<MySystemInstallation> = {}): MySystemInstallation {
@@ -76,43 +77,46 @@ describe('icon 渲染判定', () => {
 });
 
 describe('AppsSidebarPanel 渲染与导航', () => {
+  // 取数走壳内单一来源（`lib/mySystemsSource.ts`），测试从那里注入替身：
+  // 这样「左栏与 AppHost 共享同一次 GET」这条不变量在测试里也成立。
+  function useLoader(loader: () => Promise<MySystemsResponse>): void {
+    __setMySystemsLoaderForTests(loader);
+  }
+
   beforeEach(() => {
     window.history.replaceState({}, '', '/');
   });
 
+  afterEach(() => {
+    __setMySystemsLoaderForTests(null);
+  });
+
   it('渲染每个安装实例一项', async () => {
-    render(
-      <AppsSidebarPanel
-        loadInstallations={async () => ({
-          installations: [
-            installation(),
-            installation({ installationId: 'inst-2', systemId: 'wms', name: '仓库' }),
-          ],
-        })}
-      />,
-    );
+    useLoader(async () => ({
+      installations: [
+        installation(),
+        installation({ installationId: 'inst-2', systemId: 'wms', name: '仓库' }),
+      ],
+    }));
+    render(<AppsSidebarPanel />);
     expect((await screen.findByTestId('apps-nav-inst-1')).textContent).toContain('客户管理');
     expect(screen.getByTestId('apps-nav-inst-2').textContent).toContain('仓库');
   });
 
   it('没有可见系统时整块不渲染（含 /api/systems/mine 404 → 空列表）', async () => {
-    const { container } = render(
-      <AppsSidebarPanel loadInstallations={async () => ({ installations: [] })} />,
-    );
+    useLoader(async () => ({ installations: [] }));
+    const { container } = render(<AppsSidebarPanel />);
     await waitFor(() => expect(container.querySelector('nav')).toBeNull());
   });
 
   it('拉取失败只给客户面文案与重试，不写技术归因', async () => {
     let attempts = 0;
-    render(
-      <AppsSidebarPanel
-        loadInstallations={async () => {
-          attempts += 1;
-          if (attempts === 1) throw new Error('HTTP 500');
-          return { installations: [installation()] };
-        }}
-      />,
-    );
+    useLoader(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('HTTP 500');
+      return { installations: [installation()] };
+    });
+    render(<AppsSidebarPanel />);
     const retry = await screen.findByText('暂时无法加载，点此重试');
     expect(screen.queryByText(/HTTP|500|error/i)).toBeNull();
     await userEvent.click(retry);
@@ -126,9 +130,8 @@ describe('AppsSidebarPanel 渲染与导航', () => {
     };
     window.addEventListener('popstate', handler);
     try {
-      render(
-        <AppsSidebarPanel loadInstallations={async () => ({ installations: [installation()] })} />,
-      );
+      useLoader(async () => ({ installations: [installation()] }));
+      render(<AppsSidebarPanel />);
       await userEvent.click(await screen.findByTestId('apps-nav-inst-1'));
       expect(window.location.pathname).toBe('/apps/inst-1');
       expect(popstates).toBe(1);
@@ -139,16 +142,13 @@ describe('AppsSidebarPanel 渲染与导航', () => {
 
   it('选中态以 URL 为准：同一 apps 标签下只有当前安装实例高亮', async () => {
     window.history.replaceState({}, '', '/apps/inst-2/orders');
-    render(
-      <AppsSidebarPanel
-        loadInstallations={async () => ({
-          installations: [
-            installation(),
-            installation({ installationId: 'inst-2', systemId: 'wms', name: '仓库' }),
-          ],
-        })}
-      />,
-    );
+    useLoader(async () => ({
+      installations: [
+        installation(),
+        installation({ installationId: 'inst-2', systemId: 'wms', name: '仓库' }),
+      ],
+    }));
+    render(<AppsSidebarPanel />);
     const selected = await screen.findByTestId('apps-nav-inst-2');
     expect(selected.className).toContain('bg-brand-accent-soft');
     expect(screen.getByTestId('apps-nav-inst-1').className).not.toContain('bg-brand-accent-soft');

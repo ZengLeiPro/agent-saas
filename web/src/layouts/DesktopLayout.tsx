@@ -22,9 +22,10 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useDesktopLayoutProtection } from "./useDesktopLayoutProtection";
-import { getDesktopHeaderTitle } from "./desktopHeaderTitle";
+import { APPS_TAB_UNAVAILABLE_TITLE, getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAppsShellState } from "@/hooks/useAppsShellState";
+import { useMySystems } from "@/hooks/useMySystems";
 const ManagementWorkspaceContent = lazy(() => import('@/components/ManagementShell/ManagementWorkspaceContent').then(m => ({ default: m.ManagementWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
@@ -196,6 +197,18 @@ export function DesktopLayout(props: LayoutProps) {
   const [cronHeaderNavigationTarget, setCronHeaderNavigationTarget] = useState<HTMLDivElement | null>(null);
   const [cronHeaderActionsTarget, setCronHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
+  // 定制软件壳路由：独立订阅同一条 popstate 通道，不经 useChatAppState（§5.2）
+  const { appsRoute } = useAppsShellState();
+  // 安装实例走壳内单一来源，与左栏入口共享同一次 GET /api/systems/mine
+  const { status: appsStatus, installations: appsInstallations } = useMySystems();
+  const appsInstallation = useMemo(
+    () => appsInstallations.find((item) => item.installationId === appsRoute?.installationId) ?? null,
+    [appsInstallations, appsRoute?.installationId],
+  );
+  // §6.6：header 显示《系统名》；列表已就绪却查无此实例 = 已停用 / 不再可见 → 「暂不可用」
+  const appsTitle = appsInstallation?.name
+    ?? (appsRoute && appsStatus === "ready" ? APPS_TAB_UNAVAILABLE_TITLE : null);
+
   const headerTitle = useMemo(() => getDesktopHeaderTitle({
     activeTab,
     isTrashPreview,
@@ -205,10 +218,8 @@ export function DesktopLayout(props: LayoutProps) {
     activeOrgAgent,
     orgAgentIdentityLoading,
     agentProfile,
-  }), [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
-
-  // 定制软件壳路由：独立订阅同一条 popstate 通道，不经 useChatAppState（§5.2）
-  const { appsRoute } = useAppsShellState();
+    appsTitle,
+  }), [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading, appsTitle]);
 
   // mount-once-visited：首次切换到 tab 后永久挂载
   const [cronMounted, setCronMounted] = useState(false);

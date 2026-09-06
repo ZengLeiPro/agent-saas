@@ -17,7 +17,12 @@ import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationS
 import { governanceTablePrefix } from './governanceTablePrefix.js';
 export { governanceTablePrefix } from './governanceTablePrefix.js';
 
-export const GOVERNANCE_SCHEMA_VERSION = 41;
+/**
+ * 最高迁移版本号。**不等于迁移条数**：并行 WP 各占一个版本号，
+ * 合并前本分支的序列可以有空洞（WP3 取 43，42 在并行的 WP2b 上）。
+ * 需要「全部版本号」或「迁移条数」的地方一律用 `governanceMigrationVersions()`。
+ */
+export const GOVERNANCE_SCHEMA_VERSION = 43;
 
 export type GovernancePgPool = pg.Pool;
 type GovernanceMigration = {
@@ -947,6 +952,14 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 35, statements: governanceV35Statements(prefix) },
     ...governanceLatestMigrations(prefix),
   ];
+}
+
+/**
+ * 全部迁移版本号（升序，可能有空洞）。
+ * runner 按「已应用版本集合」判定（见 `run()`），缺号的迁移在合并后会被自动补上。
+ */
+export function governanceMigrationVersions(): number[] {
+  return migrations(governanceTablePrefix()).map((migration) => migration.version);
 }
 
 export class PgGovernanceMigrationRunner {

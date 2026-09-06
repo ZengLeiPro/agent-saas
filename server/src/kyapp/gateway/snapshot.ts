@@ -15,6 +15,7 @@ import { toolName as buildAppToolName } from '@kaiyan/ky-app-contract';
 import type { Manifest, ManifestCapability, RiskLevel } from '@kaiyan/ky-app-contract';
 
 import type { KyAppGatewayConfig } from '../config.js';
+import type { AppToolSnapshotStore } from './snapshotStore.js';
 
 /** 快照里的一条能力（工具投影与后续调用所需的全部事实）。 */
 export interface AppCapabilityEntry {
@@ -80,6 +81,13 @@ export interface AppSnapshotSource {
 export interface AppToolSnapshotServiceOptions {
   source: AppSnapshotSource;
   config: Pick<KyAppGatewayConfig, 'enabled' | 'maxToolsPerSession'>;
+  /**
+   * 跨进程持久化（总控 2026-09-06 拍板，偏差 3-A-05 → 3-B-01）。
+   * 缺省 = 只有进程内 Map（单进程测试用）。生产必须注入，否则
+   * 审批恢复（Web 进程）与后台任务（runtime worker 进程）会各建一份快照，
+   * 工具面漂移 → `prompt_cache_key` 失配。
+   */
+  store?: AppToolSnapshotStore;
   /** 缓存的会话数上限，防长跑进程无界增长。 */
   maxSessions?: number;
   now?: () => number;
@@ -148,21 +156,93 @@ export class AppToolSnapshotService {
     const key = computeKey(installations);
     if (cached && cached.key === key) return cached;
 
-    return this.remember(await this.build(input, installations, key, cached));
+    // 跨进程：本进程没有（或 key 不符），先看别的进程有没有为这个会话冻结过同一份工具面。
+    const persisted = await this.loadPersisted(input, key);
+    if (persisted) return this.remember(persisted);
+
+    const built = await this.build(input, installations, key, cached);
+    return this.remember(await this.persist(built));
   }
 
-  /** 新会话之外的两个失效入口之一：`installation.*` 事件。 */
+  /**
+   * 新会话之外的两个失效入口之一：`installation.*` 事件。
+   * 进程内同步清；落库那份异步删（失败只记日志——下一次 digest 比对会兜住，
+   * 因为 `registeredDigest` 变化本身就会让 key 不匹配而重建）。
+   */
   invalidateInstallation(installationId: string): void {
     for (const [sessionId, snapshot] of this.snapshots) {
       if (snapshot.entries.some((entry) => entry.installationId === installationId)) {
         this.snapshots.delete(sessionId);
       }
     }
+    void this.options.store?.deleteByInstallation(installationId).catch((error: unknown) => {
+      this.options.logger?.warn(
+        `[ky-app-gateway] 快照失效（installation ${installationId}）落库删除失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   }
 
   /** 会话结束/删除时的显式清理（不属于规范的失效条件，只是回收内存）。 */
   forgetSession(sessionId: string): void {
     this.snapshots.delete(sessionId);
+  }
+
+  /**
+   * 读落库快照。**只有 key 完全相同才认**：key 变了说明 `registeredDigest` 组合变了，
+   * 按 §6.1 本来就该重建。租户/用户不符一律不认（防会话 id 复用带来的越权）。
+   */
+  private async loadPersisted(
+    input: { sessionId: string; tenantId: string; userId: string },
+    key: string,
+  ): Promise<AppToolSnapshot | null> {
+    const store = this.options.store;
+    if (!store) return null;
+    try {
+      const row = await store.load(input.sessionId);
+      if (!row || row.key !== key) return null;
+      if (row.tenantId !== input.tenantId || row.userId !== input.userId) return null;
+      return {
+        sessionId: row.sessionId,
+        tenantId: row.tenantId,
+        userId: row.userId,
+        key: row.key,
+        entries: row.entries,
+        degraded: row.degraded,
+        createdAt: row.createdAt,
+      };
+    } catch (error) {
+      // 落库不可用不能拖垮 run：退回进程内语义（本进程自建一份）。
+      this.options.logger?.warn(
+        `[ky-app-gateway] 读取会话工具快照失败 ${input.sessionId}：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * 写落库快照，返回**最终生效**的那一份 —— 并发时首个写入者获胜，
+   * 后到者拿回先到者那一份，两个进程收敛到逐字节相同的工具面。
+   */
+  private async persist(snapshot: AppToolSnapshot): Promise<AppToolSnapshot> {
+    const store = this.options.store;
+    if (!store) return snapshot;
+    try {
+      const saved = await store.save({
+        sessionId: snapshot.sessionId,
+        tenantId: snapshot.tenantId,
+        userId: snapshot.userId,
+        key: snapshot.key,
+        entries: [...snapshot.entries],
+        degraded: snapshot.degraded,
+        createdAt: snapshot.createdAt,
+      });
+      return { ...snapshot, entries: saved.entries, degraded: saved.degraded, key: saved.key };
+    } catch (error) {
+      this.options.logger?.warn(
+        `[ky-app-gateway] 写入会话工具快照失败 ${snapshot.sessionId}：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return snapshot;
+    }
   }
 
   /** 只读视图，供测试与诊断。 */

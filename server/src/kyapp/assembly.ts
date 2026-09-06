@@ -28,6 +28,7 @@ import { KyAppSigningKeyService } from './keys/service.js';
 import { createKyAppOutbound, type KyAppOutbound } from './outbound.js';
 import { AppToolSnapshotService } from './gateway/snapshot.js';
 import { createKyAppSnapshotSource } from './gateway/snapshotSource.js';
+import { PgAppToolSnapshotStore } from './gateway/snapshotStore.js';
 import { AppCapabilityToolProvider } from './gateway/toolProvider.js';
 import { setAppCapabilityGateway } from './gateway/runtimeBinding.js';
 import { KyAppSatIssuer } from './sat/issuer.js';
@@ -215,9 +216,12 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       return { authEpoch: binding.authEpoch, generation: binding.generation };
     },
   });
+  // 跨进程快照落库（v43 表）：Web/API 与 runtime worker 必须看到同一份工具面。
+  const snapshotStore = new PgAppToolSnapshotStore(base);
   const snapshots = new AppToolSnapshotService({
     source: snapshotSource,
     config: config.gateway,
+    store: snapshotStore,
     now,
     logger: { warn: (message) => serverLogger.warn(message) },
   });

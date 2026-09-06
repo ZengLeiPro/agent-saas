@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GOVERNANCE_SCHEMA_VERSION,
+  governanceMigrationVersions,
   PgGovernanceMigrationRunner,
 } from '../data/governance-schema/migrations.js';
 import { governanceV22Statements } from '../data/governance-schema/v22Migration.js';
@@ -88,7 +89,7 @@ describe('Governance schema migration SQL fixtures', () => {
       .map(item => Number(item.params?.[0]));
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
     expect(insertedVersions).toEqual(
-      Array.from({ length: GOVERNANCE_SCHEMA_VERSION - 22 }, (_, index) => index + 23),
+      governanceMigrationVersions().filter((version) => version > 22),
     );
     expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
@@ -191,7 +192,7 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(createIndex).toBeGreaterThanOrEqual(0);
     expect(alterIndex).toBeGreaterThan(createIndex);
     expect([...applied].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: GOVERNANCE_SCHEMA_VERSION }, (_, index) => index + 1),
+      governanceMigrationVersions(),
     );
   });
 

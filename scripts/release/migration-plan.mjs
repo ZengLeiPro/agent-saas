@@ -68,6 +68,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/feishu/store.ts',
   'server/src/kyapp/attest/nonceStore.ts',
   'server/src/kyapp/events/store.ts',
+  'server/src/kyapp/gateway/snapshotStore.ts',
   'server/src/kyapp/installations/credentialStore.ts',
   'server/src/kyapp/installations/runtimeStore.ts',
   'server/src/kyapp/keys/store.ts',

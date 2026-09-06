@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { PgCredentialStore } from '../data/credentials/store.js';
 import { CredentialInvariantError } from '../data/credentials/types.js';
-import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
+import { GOVERNANCE_SCHEMA_VERSION, governanceMigrationVersions } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -171,7 +171,7 @@ describe('Credential 治理事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_credential_commits');
     expect(sql).toContain('PRIMARY KEY (tenant_id,operation,idempotency_key)');
     expect(sql).toContain('UNIQUE (tenant_id,operation,nonce_digest)');
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(governanceMigrationVersions().length);
   });
 
   it('create 强制 secretRef/owner/kind，重复 secretRef fail closed', async () => {

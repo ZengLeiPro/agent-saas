@@ -23,6 +23,7 @@ import { createKyAppJwksHandler, createKyAppKeysRouter } from '../kyapp/routes/k
 import { createKyAppMineRouter } from '../kyapp/routes/mine.js';
 import { createKyAppSystemsRouter } from '../kyapp/routes/systems.js';
 import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.js';
+import { createKyAppToolRegistrationDryRun } from '../kyapp/gateway/registrationDryRun.js';
 import { serverLogger } from '../utils/logger.js';
 import type { AppRuntime } from './runtime.js';
 
@@ -79,9 +80,9 @@ export function registerKyAppRoutes(
     createKyAppSystemsRouter({
       systems: assembly.systems,
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
-      ...(options.toolRegistrationDryRun
-        ? { toolRegistrationDryRun: options.toolRegistrationDryRun }
-        : {}),
+      // WP3 填充 WP2a 预留的钩子：未显式注入时用 Gateway 自带的真实注册 dry-run
+      // （`skipped` 不等于通过，所以这里必须给默认值，不能留空）。
+      toolRegistrationDryRun: options.toolRegistrationDryRun ?? createKyAppToolRegistrationDryRun(),
     }),
   );
   app.use(

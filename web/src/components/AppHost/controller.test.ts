@@ -221,6 +221,38 @@ describe('握手 loading → attesting → ready → init → active', () => {
     await rig.send(readyEnvelope({ path: '/orders/list' }));
     expect(rig.paths).toEqual([{ path: '/orders/list', mode: 'replace' }]);
   });
+
+  /**
+   * `onAppPath` 会把 URL 变更通知给订阅者，订阅者（`useAppsShellState`）更新后
+   * React 的挂载 effect 会带着新路径再调一次 `mount()`。这条回灌落在握手途中，
+   * 若按「路径变了就重新握手」处理，就是换 nonce 换 src、iframe 重载 ——
+   * 上一句 `ready.path` canonical 直接把自己的握手打断，永远收敛不了。
+   */
+  it('握手在途时同实例的路径回灌不重新握手（不换 nonce、不重载 iframe）', async () => {
+    const rig = createRig();
+    await rig.controller.mount(installation, '/orders');
+    await rig.send(readyEnvelope({ path: '/orders/list' }));
+    const srcAfterReady = rig.controller.state.frameSrc;
+
+    // 模拟 `onAppPath` → notifyRouteChange → 挂载 effect 再次 mount
+    await rig.controller.mount(installation, '/orders/list');
+
+    expect(rig.api.nonce).toHaveBeenCalledTimes(1);
+    expect(rig.controller.state.frameSrc).toBe(srcAfterReady);
+    expect(rig.controller.state.phase).toBe('init');
+  });
+
+  it('active 后同实例换路径仍然走 route.navigate（守卫没有把正常导航一起挡掉）', async () => {
+    const rig = createRig();
+    await rig.controller.mount(installation, '/');
+    await rig.send(readyEnvelope());
+    await rig.send({ ns: 'ky', v: 1, type: 'init.ack', id: 'ready-1' });
+    expect(rig.controller.state.phase).toBe('active');
+
+    await rig.controller.mount(installation, '/orders');
+    expect(rig.lastOf('route.navigate')?.payload).toEqual({ path: '/orders' });
+    expect(rig.api.nonce).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('握手失败（§6.6 第一行）', () => {

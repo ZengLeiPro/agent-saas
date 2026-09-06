@@ -22,8 +22,7 @@ import { reportAppShellEvent } from '@/lib/appShellAudit';
 import { requestAgentOpen } from '@/lib/agentOpenBus';
 import { loadMySystems } from '@/lib/mySystemsSource';
 import {
-  replaceAppsUrl,
-  pushAppsUrl,
+  navigateApps,
   SECURITY_RELEVANT_PATH_REJECTIONS,
   type AppsRouteState,
 } from '@/lib/urlSync';
@@ -106,9 +105,14 @@ export function AppHost({ appsRoute }: AppHostProps) {
         onAppPath: (path, mode) => {
           const installationId = currentInstallationIdRef.current;
           if (!installationId) return;
-          const next = { installationId, appPath: path };
-          if (mode === 'push') pushAppsUrl(next);
-          else replaceAppsUrl(next);
+          // 必须走 `navigateApps`（push/replace **+ notifyRouteChange**），不能直接用
+          // `pushAppsUrl`/`replaceAppsUrl`：那两个只动 history，不通知订阅者。
+          // 少这一声通知的后果不是「data-app-path 显示得不对」这么轻 —— 子端自发跳转后
+          // `useAppsShellState` 还停在旧路由，用户再按浏览器后退键时 `sameRoute()` 判定
+          // 「没变」，壳就不会给子端发 `route.navigate`，**后退键对应用内导航整个失效**。
+          // 不会自激：`onRouteChanged`/`onReady` 都先更新了 `this.appPath`，
+          // 回灌进来的 `mount()` 在同实例同路径上直接早返回。
+          navigateApps({ installationId, appPath: path }, { replace: mode === 'replace' });
         },
         onPermissionMaybeChanged: () => {
           void loadMySystems({ force: true }).catch(() => {

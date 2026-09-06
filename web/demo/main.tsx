@@ -20,8 +20,8 @@ import { SidebarNav } from '@/components/DesktopSessionSidebarControls';
 import { useAppsShellState } from '@/hooks/useAppsShellState';
 import { useMySystems } from '@/hooks/useMySystems';
 import { buildAppsHeaderTitle, getDesktopHeaderTitle } from '@/layouts/desktopHeaderTitle';
-import { pushAppHistoryState } from '@/lib/appHistory';
-import { notifyRouteChange } from '@/lib/urlSync';
+import { pushAppHistoryState, replaceAppHistoryUrl } from '@/lib/appHistory';
+import { notifyRouteChange, parseUrl } from '@/lib/urlSync';
 import { cn } from '@/lib/utils';
 import '@/index.css';
 
@@ -39,6 +39,24 @@ function Demo() {
   useEffect(() => {
     if (activeTab === 'apps' && !appsMounted) setAppsMounted(true);
   }, [activeTab, appsMounted]);
+
+  /**
+   * 洗 URL（`canonicalPath`）。生产里这一步在 `useChatUrlSync`
+   * （`setPendingCanonicalPath` → `replaceAppHistoryState`），那条链要整套聊天状态才跑得起来。
+   * 演示态只把**同一条规则**接到同一个时机上：判定与规范化仍然是生产的
+   * `parseUrl()` / `normalizeAppPath()`，这里只负责在解析结果给出 canonical 时 replaceState。
+   */
+  useEffect(() => {
+    const wash = () => {
+      const canonical = parseUrl().canonicalPath;
+      if (canonical && canonical !== `${window.location.pathname}${window.location.search}`) {
+        replaceAppHistoryUrl(canonical);
+      }
+    };
+    wash();
+    window.addEventListener('popstate', wash);
+    return () => window.removeEventListener('popstate', wash);
+  }, []);
 
   const installation =
     installations.find((item) => item.installationId === appsRoute?.installationId) ?? null;

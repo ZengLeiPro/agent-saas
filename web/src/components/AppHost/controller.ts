@@ -192,6 +192,17 @@ export class AppHostController {
       }
       return;
     }
+    /**
+     * 同实例、握手还在路上（attesting/ready/init）：**不重新握手**。
+     * 重新握手 = 换 nonce 换 src = iframe 重载，握手期间被打断一次就永远收敛不了。
+     * 而这条路径是真会走到的：`onReady` 拿 `ready.path` 做 canonical 时会
+     * `replaceState` 并通知订阅者，回灌回来的 `mount()` 携带的正是新路径。
+     * 路径以壳这边记的为准，`ready.path` 那一步已经把它对齐过了。
+     */
+    const handshakeInFlight =
+      this.snapshot.phase !== 'idle' && this.snapshot.phase !== 'active' && !this.snapshot.failure;
+    if (sameInstallation && handshakeInFlight) return;
+
     this.appPath = appPath;
     await this.handshake();
   }

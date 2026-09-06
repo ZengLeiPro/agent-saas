@@ -1,4 +1,4 @@
-name: 1 · ACS CI
+name: ACS CI
 
 on:
   pull_request:

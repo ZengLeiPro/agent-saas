@@ -5,7 +5,7 @@ import { FakeSigningKeyStore } from '../__tests__/signingKeyStoreDouble.js';
 import { KyAppSigningKeyService, KyAppSigningKeyError } from './service.js';
 
 function createService(now = () => Date.parse('2026-09-06T00:00:00Z')) {
-  const store = new FakeSigningKeyStore();
+  const store = new FakeSigningKeyStore(now);
   const vault = new InMemorySecretVault();
   let counter = 0;
   const service = new KyAppSigningKeyService({

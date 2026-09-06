@@ -8,6 +8,8 @@ import type { KyAppSigningKeyRecord, KyAppSigningKeyStatus } from '../keys/store
 export class FakeSigningKeyStore {
   readonly records = new Map<string, KyAppSigningKeyRecord>();
 
+  constructor(private readonly now: () => number = Date.now) {}
+
   async get(kid: string): Promise<KyAppSigningKeyRecord | null> {
     return this.records.get(kid) ?? null;
   }
@@ -30,7 +32,7 @@ export class FakeSigningKeyStore {
     status: 'active' | 'next';
   }): Promise<KyAppSigningKeyRecord> {
     if (await this.findByStatus(input.status)) throw new Error(`已存在 ${input.status} 密钥`);
-    const now = new Date().toISOString();
+    const now = new Date(this.now()).toISOString();
     const record: KyAppSigningKeyRecord = {
       ...input,
       createdAt: now,
@@ -46,7 +48,7 @@ export class FakeSigningKeyStore {
   async promote(kid: string, retireAfterMs: number): Promise<KyAppSigningKeyRecord> {
     const target = this.records.get(kid);
     if (!target || target.status !== 'next') throw new Error('只有 next 状态的密钥可以提升');
-    const now = Date.now();
+    const now = this.now();
     for (const record of this.records.values()) {
       if (record.status !== 'active') continue;
       record.status = 'retiring';
@@ -62,7 +64,7 @@ export class FakeSigningKeyStore {
     const record = this.records.get(kid);
     if (!record) throw new Error(`未知 kid ${kid}`);
     record.status = 'revoked';
-    record.revokedAt = new Date().toISOString();
+    record.revokedAt = new Date(this.now()).toISOString();
     return record;
   }
 

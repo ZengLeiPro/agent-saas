@@ -19,6 +19,7 @@ import {
   AdminConfigMutationService,
   ConfigConflictError,
   ConfigMutationCommittedError,
+  ProductionConfigPublishRequiredError,
   ConfigRuntimeRecoveryError,
   configFingerprint,
 } from '../config/adminConfigMutationService.js';
@@ -62,6 +63,24 @@ async function fixture(callbacks: {
 }
 
 describe('AdminConfigMutationService', () => {
+  it('生产 Runtime 拒绝普通在线写盘，要求受控配置发布', async () => {
+    const test = await fixture();
+    const service = new AdminConfigMutationService({
+      configPath: test.configPath,
+      processCwd: test.root,
+      environment: 'production',
+      processRole: 'ws-only',
+    });
+    const error = await service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => text,
+      applyRuntime: () => {},
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ProductionConfigPublishRequiredError);
+    expect(error).toMatchObject({ code: 'PRODUCTION_CONFIG_PUBLISH_REQUIRED' });
+  });
+
   it('atomically applies a validated update and records a redacted audit', async () => {
     const test = await fixture();
     const applyRuntime = vi.fn();

@@ -21,7 +21,7 @@ import {
   createSharedConfigRefresher,
   type SharedConfigRefresher,
 } from './sharedConfigRefresher.js';
-import { applyModelsHotUpdate, prepareModelsHotUpdate } from './modelsHotUpdate.js';
+import { applyModelsHotUpdate, prepareModelsHotUpdateTransaction } from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
@@ -54,6 +54,7 @@ export function createModelResolvers(params: {
   defaultTitleModel?: string;
   /** 模型配置跨进程刷新后，替换门禁模型链。 */
   onGuardrailModelConfigsUpdated: (next: GuardrailModelConfig[]) => void;
+  getGuardrailModelConfigs: () => readonly GuardrailModelConfig[];
   /** config.json 中系统提示语先规范化，再返回无失败的注册表提交。 */
   prepareSystemPromptOverridesUpdate: (next: NonNullable<AppConfig['systemPrompts']>) => () => void;
   /** webTools 变化后准备无副作用的执行侧提交；配置候选确认后再原子应用。 */
@@ -66,6 +67,9 @@ export function createModelResolvers(params: {
   prepareSttUpdate?: (
     next: AppConfig['stt'],
   ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
+  prepareMemoryPollingUpdate?: (
+    next: NonNullable<AppConfig['memory']>['polling'],
+  ) => () => void;
   /** Codex 配置变化后，undefined 表示关闭全池，否则只关闭指定 credential refs。 */
   onCodexSubscriptionUpdated?: (credentialRefs?: readonly string[]) => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
@@ -98,6 +102,7 @@ export function createModelResolvers(params: {
       titleGeneratorConfigs: params.titleGeneratorConfigs,
       ...(params.defaultTitleModel ? { defaultTitleModel: params.defaultTitleModel } : {}),
       updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
+      getGuardrailModelConfigs: params.getGuardrailModelConfigs,
     },
     prepareSystemPromptOverridesUpdate: params.prepareSystemPromptOverridesUpdate,
     ...(params.prepareToolControlsUpdate
@@ -107,6 +112,9 @@ export function createModelResolvers(params: {
       ? { prepareWebToolsUpdate: params.prepareWebToolsUpdate }
       : {}),
     ...(params.prepareSttUpdate ? { prepareSttUpdate: params.prepareSttUpdate } : {}),
+    ...(params.prepareMemoryPollingUpdate
+      ? { prepareMemoryPollingUpdate: params.prepareMemoryPollingUpdate }
+      : {}),
     ...(params.onCodexSubscriptionUpdated
       ? { onCodexSubscriptionUpdated: params.onCodexSubscriptionUpdated }
       : {}),
@@ -115,18 +123,28 @@ export function createModelResolvers(params: {
       const resolved = params.resolveRuntimeModels
         ? await params.resolveRuntimeModels(nextConfig.models)
         : nextConfig.models;
-      const commitDerivedModels = prepareModelsHotUpdate({
+      const previousRuntimeModels = runtimeModels;
+      if (!previousRuntimeModels) throw new Error('模型执行侧缺少已生效回滚快照');
+      const transaction = prepareModelsHotUpdateTransaction({
         config: nextConfig,
         target: {
           titleGeneratorConfigs: params.titleGeneratorConfigs,
           ...(params.defaultTitleModel ? { defaultTitleModel: params.defaultTitleModel } : {}),
           updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
+          getGuardrailModelConfigs: params.getGuardrailModelConfigs,
         },
         models: resolved,
+        previousModels: previousRuntimeModels,
       });
-      return () => {
-        runtimeModels = resolved;
-        commitDerivedModels();
+      return {
+        commit: () => {
+          runtimeModels = resolved;
+          transaction.commit();
+        },
+        rollback: () => {
+          runtimeModels = previousRuntimeModels;
+          transaction.rollback();
+        },
       };
     },
     ...(params.onConfigReloaded ? { onConfigReloaded: params.onConfigReloaded } : {}),

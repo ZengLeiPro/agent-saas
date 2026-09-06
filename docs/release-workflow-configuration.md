@@ -42,7 +42,7 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 `ACR_READ_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
 `OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、`PRODUCTION_OBSERVATION_TOKEN`、
 `RELEASE_EVIDENCE_WRITE_TOKEN`。ACR 两项只允许读取 build record、构建日志与 image metadata；
-ACS workflow 会遍历 ACR build-record API 的全部分页，用短 tag 筛选全局唯一候选，并从 build-record 日志 fetch 阶段的 `commit info` 行绑定源 commit（ACR 只打印 7 位缩写 SHA 与分支，日志中没有阶段字段和完整 SHA，因此校验为「缩写 ≥7 位且是请求 SHA 的前缀、分支为 main」）；分页总数漂移、记录缺失或重复都会 fail closed。解析 digest 前后还要再次遍历全部分页，确认候选 tag 仍只有一个固定的 `BuildRecordId`，并对 tag 做两次稳定读回。最终部署只使用 digest reference。ACR API 不直接返回 build-record digest，因此代码保证仍依赖现场 ACR 写权限只授予受控构建链，禁止人工或其他身份重定向候选 tag。
+ACS workflow 会遍历 ACR build-record API 的全部分页，用短 tag 筛选全局唯一候选，并从 build-record 日志 fetch 阶段的 `commit info` 行绑定源 commit（ACR 只打印 7 位缩写 SHA 与分支，日志中没有阶段字段和完整 SHA，因此校验为「缩写 ≥7 位且是请求 SHA 的前缀、分支为 main」）；分页总数因并发构建变化时会从第一页重新读取，连续三次仍无法取得稳定快照才 fail closed，记录缺失或重复也不会放行。解析 digest 前后还要再次遍历全部分页，确认候选 tag 仍只有一个固定的 `BuildRecordId`，并对 tag 做两次稳定读回。最终部署只使用 digest reference。ACR API 不直接返回 build-record digest，因此代码保证仍依赖现场 ACR 写权限只授予受控构建链，禁止人工或其他身份重定向候选 tag。
 
 可选恢复 Secret：`ACS_WEBHOOK_REDELIVERY_TOKEN`。它只供 ACS compatibility 在当前 SHA 的 ACR
 自动构建记录缺失时补投一次 GitHub webhook；必须配置在 `production` Environment，并限制为仅对

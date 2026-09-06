@@ -98,16 +98,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -136,6 +136,13 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
@@ -220,6 +227,27 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -535,6 +563,14 @@
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
+        },
+        {
           "path": "server/src/runtime/sessionAutomation.pg.test.ts",
           "digest": "sha256:8de8e478a98d2ff92e094b228071516e47326a9cdc6651fdebef8112ca8703ff"
         }
@@ -588,16 +624,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -605,6 +641,13 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -619,6 +662,27 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -757,6 +821,14 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         }
       ]
     },
@@ -808,16 +880,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -825,6 +897,13 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -839,6 +918,27 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -940,6 +1040,14 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         }
       ]
     },
@@ -991,16 +1099,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1008,6 +1116,13 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -1022,6 +1137,27 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -1123,6 +1259,14 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         }
       ]
     },
@@ -1167,16 +1311,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1186,11 +1330,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -1284,6 +1456,14 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         }
       ]
     },
@@ -1328,16 +1508,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1347,11 +1527,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -1445,6 +1653,14 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         }
       ]
     },
@@ -1489,16 +1705,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1508,11 +1724,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -1606,6 +1850,14 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         }
       ]
     },
@@ -1727,16 +1979,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -1765,6 +2017,13 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
@@ -1849,6 +2108,27 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -2137,8 +2417,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -2201,16 +2489,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2220,11 +2508,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -2329,8 +2645,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -2400,16 +2724,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2419,11 +2743,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -2537,8 +2889,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -2608,16 +2968,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2627,11 +2987,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -2745,8 +3133,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -2781,16 +3177,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2800,11 +3196,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -2871,8 +3295,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -2907,16 +3339,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2926,11 +3358,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -2997,8 +3457,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -3033,16 +3501,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3052,11 +3520,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -3123,8 +3619,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -3159,16 +3663,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3178,11 +3682,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -3249,8 +3781,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -3278,16 +3818,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3297,11 +3837,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -3357,8 +3925,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
@@ -3386,16 +3962,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
           "classification": "expand",
-          "reason": "RC64（99b7496f）基线复审：仅追加 v41 调度，v36～v40 序号和语句不变；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "RC64（99b7496f）基线复审：仅追加 v41 调度，v36～v40 序号和语句不变；文件两端内容与已审核的 8cd1254e 基线完全相同。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
           "classification": "expand",
-          "reason": "RC64（99b7496f）基线复审：版本号 40→41，执行器与旧迁移未改；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "RC64（99b7496f）基线复审：版本号 40→41，执行器与旧迁移未改；文件两端内容与已审核的 8cd1254e 基线完全相同。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3405,11 +3981,39 @@
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
           "path": "server/src/kyapp/attest/nonceStore.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
           "path": "server/src/kyapp/events/store.ts",
@@ -3465,8 +4069,16 @@
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
         {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:0b169b3eba470972fafa431666683045c21b2b7858ba3ca9afb805811f656f1e"
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",

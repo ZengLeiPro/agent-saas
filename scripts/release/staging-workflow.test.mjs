@@ -57,6 +57,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
     readFile(workflowPath, 'utf8'),
     readFile(acrWaitPath, 'utf8'),
   ]);
+  assert.match(workflow, /^name: 部署测试环境$/mu);
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
@@ -249,7 +250,7 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
     readFile(stagingBindingPath, 'utf8'),
     readFile(e2eAuthPath, 'utf8'),
   ]);
-  assert.match(workflow, /name: 预发验收/u);
+  assert.match(workflow, /^name: 测试环境验收$/mu);
   assert.match(workflow, /NODE_VERSION: '22\.23\.1'/u);
   assert.match(workflow, /node-version: \$\{\{ env\.NODE_VERSION \}\}/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);

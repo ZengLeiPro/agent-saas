@@ -1,4 +1,4 @@
-name: 5 · 发布到生产环境
+name: Release · 发布到生产环境
 
 # 与 CI/ACS 兼容直发共享互斥组，覆盖基线读取、分阶段切换和最终 readback。
 

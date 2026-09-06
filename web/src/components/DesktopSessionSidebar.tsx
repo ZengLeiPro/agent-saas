@@ -59,6 +59,7 @@ import type { SessionGroup, SessionListEntry } from "@/types/sessionGroup";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
 import type { DesktopSessionSidebarProps } from "./desktopSessionSidebarTypes";
 import { SessionRow } from "./DesktopSessionSidebarRow";
+import { AppsSidebarPanel } from "@/components/AppsSidebarPanel";
 import {
   CompactSessionGroupLeadingIcon,
   SessionGroupGlyph,
@@ -1335,6 +1336,7 @@ export function DesktopSessionSidebar({
           beforeNavigate={() => setSingleExpandedGroupKey(null)}
           constrainNewButton={false}
         />
+        <AppsSidebarPanel beforeNavigate={() => setSingleExpandedGroupKey(null)} />
         {renderSessionSearchBox("inline")}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 flex flex-col bg-background" style={{ transform: singleExpandedGroup ? "translateX(-100%)" : "translateX(0)", transition: "transform 233ms cubic-bezier(.25,.1,.25,1)" }}>
@@ -1565,6 +1567,7 @@ export function DesktopSessionSidebar({
             onNew={onNew}
             onTabChange={onTabChange}
           />
+          <AppsSidebarPanel />
           {/* 导航与分组之间的分隔线 */}
           <div className="mx-2 my-1 border-t" />
 

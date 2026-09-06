@@ -278,6 +278,11 @@ export class KyAppCredentialManager {
     );
   }
 
+  /** WP5 管理视图与可恢复 onboarding 只读生命周期元数据；不触碰 Vault 明文。 */
+  async listMetadata(installationId: string): Promise<KyAppServiceCredentialRecord[]> {
+    return this.options.store.listCredentials(installationId);
+  }
+
   /**
    * 取平台侧校验安装证明所需的密钥材料：current + 仍在 24 小时窗口内的 previous。
    * 返回明文密钥字节，调用方用后即弃，不缓存、不落日志。

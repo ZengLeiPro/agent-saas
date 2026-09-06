@@ -37,6 +37,14 @@ describe('platformIncidentPolicy', () => {
     ])).toEqual([
       { kind: 'memory_consolidation_scanner_lag', severity: 'high', title: 'beyond grace' },
     ]);
+    expect(selectExternalSystemIncidents('ky_app_installation', [
+      { kind: 'ky_app_credits_low', severity: 'high', title: 'three days remaining' },
+      { kind: 'ky_app_credits_exhausted', severity: 'high', title: 'credits exhausted' },
+      { kind: 'billing_audit', severity: 'high', title: 'unrelated' },
+    ])).toEqual([
+      { kind: 'ky_app_credits_low', severity: 'high', title: 'three days remaining' },
+      { kind: 'ky_app_credits_exhausted', severity: 'high', title: 'credits exhausted' },
+    ]);
     expect(selectExternalSystemIncidents('agent-saas-acs-orchestrator', [
       { kind: 'acs_sandbox_stale_image_prewarm', severity: 'medium', title: 'prewarm failed' },
       { kind: 'acs_sandbox_running_near_quota', severity: 'high', title: 'capacity exhausted' },

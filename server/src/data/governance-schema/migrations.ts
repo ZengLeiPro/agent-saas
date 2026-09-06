@@ -24,7 +24,7 @@ export { governanceTablePrefix } from './governanceTablePrefix.js';
  * 最高迁移版本号。发布分支必须保持版本连续，防止并行工作包遗漏迁移。
  * 需要「全部版本号」或「迁移条数」的地方一律用 `governanceMigrationVersions()`。
  */
-export const GOVERNANCE_SCHEMA_VERSION = 43;
+export const GOVERNANCE_SCHEMA_VERSION = 44;
 
 export type GovernancePgPool = pg.Pool;
 type GovernanceMigration = {

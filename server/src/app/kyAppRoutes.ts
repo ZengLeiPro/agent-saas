@@ -12,10 +12,15 @@
  * 壳层稳定的空 read model 由 `registerRoutes` 在鉴权装配完成后统一兜底。
  */
 import type { Express } from 'express';
+import { existsSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 import { buildKyAppAssembly, type KyAppAssembly } from '../kyapp/assembly.js';
 import { loadKyAppConfig, resolveKyAppConfig, KyAppConfigError } from '../kyapp/config.js';
 import { createKyAppDirectoryRouter } from '../kyapp/routes/directory.js';
+import { KyAppMemberImporter } from '../kyapp/delivery/memberImport.js';
+import { KyAppOnboardService } from '../kyapp/delivery/onboard.js';
+import { createKyAppDeliveryRouter } from '../kyapp/routes/delivery.js';
 import {
   createKyAppHandshakeRouter,
   createTenantAdminResolver,
@@ -106,6 +111,69 @@ export function registerKyAppRoutes(
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,
+    }),
+  );
+  const onboard =
+    runtime.tenantStore &&
+    runtime.userStore &&
+    runtime.membershipStore &&
+    runtime.directoryGroupStore &&
+    runtime.billingService &&
+    assembly.directorySource
+      ? new KyAppOnboardService({
+          store: assembly.deliveryStore,
+          systems: assembly.systems,
+          installations: assembly.installations,
+          credentials: assembly.credentials,
+          runtimeStore: assembly.runtimeStore,
+          tenants: runtime.tenantStore,
+          users: runtime.userStore,
+          memberships: runtime.membershipStore,
+          memberImporter: new KyAppMemberImporter({
+            users: runtime.userStore,
+            memberships: runtime.membershipStore,
+            groups: runtime.directoryGroupStore,
+            directory: assembly.directorySource,
+          }),
+          billing: runtime.billingService,
+          sharedDir: runtime.sharedDir,
+          ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
+          ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
+          toolRegistrationDryRun:
+            options.toolRegistrationDryRun ?? createKyAppToolRegistrationDryRun(),
+          runSmoke: (installationId, fixture) => assembly.diagnostics.run(installationId, fixture),
+          verifyTenantSkills: async (tenantId, manifest) => {
+            const installed: string[] = [];
+            const missing: string[] = [];
+            for (const item of manifest.skills ?? []) {
+              const skillId = basename(dirname(item.path));
+              const expectedPath = `skills/${skillId}/SKILL.md`;
+              if (
+                item.path !== expectedPath ||
+                !existsSync(
+                  join(runtime.tenantSkillsRootDir, tenantId, 'skills', skillId, 'SKILL.md'),
+                )
+              ) {
+                missing.push(item.path);
+              } else {
+                installed.push(skillId);
+              }
+            }
+            return { installed, missing };
+          },
+        })
+      : undefined;
+  app.use(
+    KY_APP_CONTRACT_BASE_PATH,
+    createKyAppDeliveryRouter({
+      store: assembly.deliveryStore,
+      systems: assembly.systems,
+      installations: assembly.installations,
+      credentials: assembly.credentials,
+      ...(onboard ? { onboard } : {}),
+      ...(assembly.deliveryMetrics ? { metrics: assembly.deliveryMetrics } : {}),
+      diagnostics: assembly.diagnostics,
+      ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     }),
   );
   app.use(

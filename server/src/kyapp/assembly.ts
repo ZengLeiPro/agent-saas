@@ -8,6 +8,9 @@
  * 前置条件任一不满足即返回 `null`，整套功能关闭（路由不注册、后台循环不启动）：
  * `kyApp` 配置域缺失、治理库不是 PG、SecretVault 未装配。
  */
+import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+
 import type { AppRuntime } from './../app/runtime.js';
 import type { KyAppPlatformConfig } from './config.js';
 import { PgKyAppNonceStore } from './attest/nonceStore.js';
@@ -15,6 +18,10 @@ import { KyAppHandshakeService } from './attest/handshake.js';
 import { PgKyAppDirectoryChangeLog } from './directory/changeLog.js';
 import { DirectoryProjector, GovernanceDirectorySource } from './directory/projection.js';
 import { PgDirectorySnapshotSource } from './directory/snapshot.js';
+import { PgKyAppDeliveryStore } from './delivery/store.js';
+import { KyAppDeliveryMetrics } from './delivery/metrics.js';
+import { KyAppBalanceMonitor } from './delivery/balanceMonitor.js';
+import { KyAppDiagnostics } from './delivery/diagnostics.js';
 import { PgKyAppOutboundEventStore } from './events/store.js';
 import { KyAppEventDispatcher } from './events/dispatcher.js';
 import { KyAppHealthProber } from './health/prober.js';
@@ -66,6 +73,10 @@ export interface KyAppAssembly {
   directorySource: GovernanceDirectorySource | null;
   /** WP2b 快照分页的数据源（读投影态表，不建表、不参与迁移）。 */
   directorySnapshots: PgDirectorySnapshotSource | null;
+  /** WP5 可恢复交付编排、交付清单与离场计划。 */
+  deliveryStore: PgKyAppDeliveryStore;
+  deliveryMetrics: KyAppDeliveryMetrics | null;
+  diagnostics: KyAppDiagnostics;
   outbound: KyAppOutbound;
   worker: KyAppWorker;
   /** WP3 Capability Gateway：会话工具快照 + `app__` 工具 provider（规范 §6.1）。 */
@@ -160,6 +171,35 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     credentials,
     issuer,
     now,
+    ...(runtime.governanceAuditStore
+      ? {
+          onSecurityEvent: (event) => {
+            void systems
+              .getInstallation(event.installationId)
+              .then(async (installation) => {
+                await runtime.governanceAuditStore!.append({
+                  correlationId: `ky-app-attest:${randomUUID()}`,
+                  actorType: 'service',
+                  actorUserId: '__ky_app_handshake__',
+                  actorPersona: 'service',
+                  action: `ky_app.${event.kind}`,
+                  targetType: 'system_installation',
+                  targetId: event.installationId,
+                  ...(installation ? { targetTenantId: installation.tenantId } : {}),
+                  purpose: 'installation_attestation_security_event',
+                  result: 'failed',
+                  reason: event.reason,
+                  metadata: { userId: event.userId },
+                });
+              })
+              .catch((error) =>
+                serverLogger.warn(
+                  `[ky-app] 安装证明失败审计写入失败：${error instanceof Error ? error.message : String(error)}`,
+                ),
+              );
+          },
+        }
+      : {}),
   });
 
   // WP2b：目录投影的账号事实源是 users.json，`userStore` 缺失就整体不启用，
@@ -174,6 +214,18 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       ? new DirectoryProjector({ ...base, changeLog: directoryChangeLog, source: directorySource })
       : null;
   const directorySnapshots = directoryChangeLog ? new PgDirectorySnapshotSource(base) : null;
+  const deliveryStore = new PgKyAppDeliveryStore(pool, tablePrefix);
+  const deliveryMetrics =
+    runtime.billingService && runtime.userStore && runtime.tenantStore
+      ? new KyAppDeliveryMetrics({
+          billing: runtime.billingService,
+          eventsTable: runtime.runtimePgEventStore!.eventsTable,
+          deliveries: deliveryStore,
+          users: runtime.userStore,
+          tenants: runtime.tenantStore,
+          loginLogPath: resolve(runtime.processCwd, './data/login-logs.jsonl'),
+        })
+      : null;
 
   const alerts = createKyAppAlertSink(runtime.alertNotifier);
   const dispatcher = new KyAppEventDispatcher({
@@ -233,6 +285,15 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
           },
         }
       : {}),
+    ...(deliveryMetrics
+      ? {
+          balanceMaintenance: new KyAppBalanceMonitor({
+            store: deliveryStore,
+            metrics: deliveryMetrics,
+            alerts,
+          }),
+        }
+      : {}),
   });
 
   // WP3 Capability Gateway（规范 §6.1）。`/me` 用 act=user SAT 直取；
@@ -270,14 +331,15 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     const membership = await runtime.membershipStore.getMembership(tenantId, userId);
     return membership?.status === 'active' && membership.persona === 'org_admin';
   };
+  const logicalCalls = new AppLogicalCallRunner({
+    issuer,
+    outbound,
+    config: config.gateway,
+    now,
+    logger: { warn: (message) => serverLogger.warn(message) },
+  });
   const gatewayInvoker = createAppCapabilityInvoker({
-    runner: new AppLogicalCallRunner({
-      issuer,
-      outbound,
-      config: config.gateway,
-      now,
-      logger: { warn: (message) => serverLogger.warn(message) },
-    }),
+    runner: logicalCalls,
     policy: gatewayPolicy,
     approvals: gatewayApprovals,
     config: config.gateway,
@@ -296,6 +358,22 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     approvalTtlMs: config.gateway.approvalTtlMs,
     approvals: gatewayApprovals,
   };
+  const diagnostics = new KyAppDiagnostics({
+    systems,
+    installations,
+    credentials,
+    issuer,
+    outbound,
+    logicalCalls,
+    audience: config.issuer,
+    resolveAuthBinding: (userId) => {
+      const binding = runtime.authEpochAuthority?.current(userId);
+      if (!binding || binding.fenced) return null;
+      return { authEpoch: binding.authEpoch, generation: binding.generation };
+    },
+    isTenantAdmin: isTenantAdminForGateway,
+    now,
+  });
   setAppCapabilityGateway(config.gateway.enabled ? gateway : null);
 
   // 让 `runtimeAssignmentResourceResolver` 的 system_installation 分支拿到真实 store。
@@ -323,9 +401,12 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     directoryProjector,
     directorySource,
     directorySnapshots,
+    deliveryStore,
+    deliveryMetrics,
     outbound,
     worker,
     gateway,
+    diagnostics,
     async start() {
       // 全部 store 共用同一套 governance 迁移（含 WP2b 的 v42 目录两表）；
       // 跑一次即可，其余靠 IF NOT EXISTS 幂等。

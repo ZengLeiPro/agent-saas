@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "Admin Runner 治理层：launcher 回执目录必须由部署环境显式注入且不得落入密封 release 树；每次调用 nonce 由 launcher 注入子进程供 governance bootstrap 拒绝直跑；WP1 ky-app-cli/create-ky-app：doctor 与模板的数据库、端口与测试开关",
-  "updatedAt": "2026-09-05",
+  "reason": "WP5 ky-app-cli 平台交付命令：KY_PLATFORM_URL 明确选择目标平台，KY_PLATFORM_TOKEN 仅通过进程环境传入管理员凭据，禁止出现在命令行、文件与日志",
+  "updatedAt": "2026-09-06",
   "domains": {
     "server": {
       "budget": 64,
@@ -196,7 +196,7 @@
       ]
     },
     "packages": {
-      "budget": 17,
+      "budget": 19,
       "names": [
         "DATABASE_URL",
         "KY_DIRECTORY_URL",
@@ -209,6 +209,8 @@
         "KY_JWKS_URL",
         "KY_LOCAL_LOGIN_ENABLED",
         "KY_ORIGIN",
+        "KY_PLATFORM_TOKEN",
+        "KY_PLATFORM_URL",
         "KY_SERVICE_CREDENTIAL",
         "KY_SHELL_ORIGIN",
         "KY_SYSTEM_ID",

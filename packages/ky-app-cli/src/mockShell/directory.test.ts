@@ -63,7 +63,8 @@ describe('createMockDirectory', () => {
     expect(first.snapshotSeq).toBe(10);
     expect((first.users as unknown[]).length).toBe(2);
     expect((first.groups as unknown[]).length).toBe(1);
-    expect(first.pageToken).toBe('1');
+    expect(typeof first.pageToken).toBe('string');
+    expect(first.pageToken).not.toBe('1');
 
     const second = (await (
       await get(directory, `/directory/snapshot?pageToken=${String(first.pageToken)}`)
@@ -73,6 +74,32 @@ describe('createMockDirectory', () => {
     expect((second.users as unknown[]).length).toBe(1);
     expect((second.groups as unknown[]).length).toBe(0);
     expect(second.pageToken).toBeUndefined();
+  });
+
+  it('pageToken 绑定快照序号且不可篡改', async () => {
+    const directory = make(2);
+    const first = (await (await get(directory, '/directory/snapshot')).json()) as {
+      pageToken: string;
+    };
+    directory.setSnapshot({
+      snapshotSeq: 11,
+      groups: [],
+      users: [
+        { userId: 'u4', displayName: 'u4', status: 'active', isTenantAdmin: false, groupIds: [] },
+      ],
+    });
+    expect(
+      (await get(directory, `/directory/snapshot?pageToken=${encodeURIComponent(first.pageToken)}`))
+        .status,
+    ).toBe(410);
+    expect(
+      (
+        await get(
+          directory,
+          `/directory/snapshot?pageToken=${encodeURIComponent(`${first.pageToken}x`)}`,
+        )
+      ).status,
+    ).toBe(410);
   });
 
   it('变更流按 after 过滤、按 limit 截断并给出 hasMore', async () => {

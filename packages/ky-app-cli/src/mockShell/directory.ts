@@ -4,6 +4,8 @@
  * 只实现被测项目消费端需要的三个端点，形状严格按附录 L；一致性测试通过
  * `setSnapshot` / `pushEvents` / `expireCursor` 等方法驱动状态。
  */
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 import type { DirectoryEvent, DirectoryGroup, DirectoryUser } from '@kaiyan/ky-app-contract';
 
 /** 分发式 Omit：`DirectoryEvent` 是判别联合，直接 `Omit` 会把各分支的独有字段吃掉。 */
@@ -54,6 +56,21 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function error(code: 'unauthorized' | 'not_found', status: 401 | 404): Response {
+  return json(
+    {
+      ok: false,
+      error: {
+        code,
+        retryable: false,
+        message: code === 'unauthorized' ? '服务凭据无效' : '接口不存在',
+        requestId: 'mock-directory',
+      },
+    },
+    status,
+  );
+}
+
 export function createMockDirectory(options: MockDirectoryOptions): MockDirectory {
   const pageSize = options.pageSize ?? 2;
   let users: DirectoryUser[] = [];
@@ -67,9 +84,44 @@ export function createMockDirectory(options: MockDirectoryOptions): MockDirector
   let acked = false;
   const calls: string[] = [];
 
+  function signPageToken(index: number): string {
+    const payload = Buffer.from(
+      JSON.stringify({ index, snapshotSeq, exp: Date.now() + 5 * 60_000 }),
+    ).toString('base64url');
+    const signature = createHmac('sha256', options.serviceCredential)
+      .update(payload)
+      .digest('base64url');
+    return `${payload}.${signature}`;
+  }
+
+  function readPageToken(token: string): number | null {
+    const [payload, signature, extra] = token.split('.');
+    if (!payload || !signature || extra) return null;
+    const expected = createHmac('sha256', options.serviceCredential).update(payload).digest();
+    const actual = Buffer.from(signature, 'base64url');
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+    try {
+      const value = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+        index?: unknown;
+        snapshotSeq?: unknown;
+        exp?: unknown;
+      };
+      if (
+        !Number.isInteger(value.index) ||
+        Number(value.index) < 0 ||
+        value.snapshotSeq !== snapshotSeq ||
+        Number(value.exp) <= Date.now()
+      )
+        return null;
+      return Number(value.index);
+    } catch {
+      return null;
+    }
+  }
+
   function snapshotPage(pageToken: string | null): Response {
-    const index = pageToken === null ? 0 : Number.parseInt(pageToken, 10);
-    if (!Number.isInteger(index) || index < 0) return json({ code: 'cursor_expired' }, 410);
+    const index = pageToken === null ? 0 : readPageToken(pageToken);
+    if (index === null) return json({ code: 'snapshot_expired', requestId: 'mock-directory' }, 410);
     const start = index * pageSize;
     const slice = users.slice(start, start + pageSize);
     const hasMore = start + pageSize < users.length;
@@ -79,7 +131,7 @@ export function createMockDirectory(options: MockDirectoryOptions): MockDirector
       users: slice,
       groups: index === 0 ? groups : [],
     };
-    if (hasMore) body.pageToken = String(index + 1);
+    if (hasMore) body.pageToken = signPageToken(index + 1);
     return json(body);
   }
 
@@ -133,7 +185,7 @@ export function createMockDirectory(options: MockDirectoryOptions): MockDirector
 
       const authorization = request.headers.get('authorization');
       if (authorization !== `Bearer ${options.serviceCredential}`) {
-        return json({ ok: false, error: { code: 'unauthorized' } }, 401);
+        return error('unauthorized', 401);
       }
 
       if (url.pathname === `${BASE}/directory/snapshot`) {
@@ -168,7 +220,7 @@ export function createMockDirectory(options: MockDirectoryOptions): MockDirector
         return json({ ok: true });
       }
 
-      return json({ ok: false, error: { code: 'not_found' } }, 404);
+      return error('not_found', 404);
     },
   };
 }

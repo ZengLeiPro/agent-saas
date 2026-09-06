@@ -15,6 +15,7 @@
  *    保证客户与模型看到的永远是按 code 渲染的自有文案。
  */
 import type { AuthorizedToolCall, ToolCallContext, ToolResult } from '../../agent/toolRuntime.js';
+import { recordAppCapabilityUsage } from '../../runtime/appCapabilityUsageAttribution.js';
 import type { KyAppGatewayConfig } from '../config.js';
 import { AppApprovalRegistry, approvalParamsHash } from './approval.js';
 import { buildAppToolResult, type AppInvocationOutcome } from './envelope.js';
@@ -142,6 +143,12 @@ export function createAppCapabilityInvoker(
           error instanceof Error ? error.message : String(error),
         );
       }
+
+      // §6.4：用量归因（不单独扣积分，只进 usage-events 的 raw_usage_json）。
+      recordAppCapabilityUsage(runId, {
+        installationId: entry.installationId,
+        capabilityId: entry.capabilityId,
+      });
 
       try {
         // 6. 逻辑调用状态机。

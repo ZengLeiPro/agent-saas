@@ -5,7 +5,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PermissionBlock } from './PermissionBlock';
-import { deriveConfirmationCard } from './AppConfirmationCard';
+import { deriveConfirmationCard } from './appConfirmation';
 
 const WRITE_TOOL = 'app__demo_erp__order_create';
 
@@ -26,7 +26,7 @@ function renderBlock(overrides: Partial<Parameters<typeof PermissionBlock>[0]> =
 }
 
 describe('AppConfirmationCard', () => {
-  it('渲染系统名、参数摘要与「确认后立即生效、不可撤销」', () => {
+  it('渲染系统名、参数摘要与「确认后立即生效、不可撤销」', async () => {
     renderBlock({
       confirmation: {
         systemName: '演示 ERP',
@@ -39,18 +39,18 @@ describe('AppConfirmationCard', () => {
         confirmWord: '确认',
       },
     });
-    expect(screen.getByText(/演示 ERP/)).toBeTruthy();
+    expect(await screen.findByText(/演示 ERP/)).toBeTruthy();
     expect(screen.getByText(/建订单/)).toBeTruthy();
     expect(screen.getByText('金额')).toBeTruthy();
     expect(screen.getByText('张三')).toBeTruthy();
     expect(screen.getByText('确认后立即生效、不可撤销。')).toBeTruthy();
   });
 
-  it('未键入确认字时「确认执行」不可点；键入后才可点', () => {
+  it('未键入确认字时「确认执行」不可点；键入后才可点', async () => {
     const { onAllow } = renderBlock({
       confirmation: { systemName: '演示 ERP', capabilityName: '建订单', confirmWord: '确认' },
     });
-    const confirm = screen.getByLabelText('确认执行') as HTMLButtonElement;
+    const confirm = (await screen.findByLabelText('确认执行')) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     fireEvent.click(confirm);
     expect(onAllow).not.toHaveBeenCalled();
@@ -61,22 +61,24 @@ describe('AppConfirmationCard', () => {
     expect(onAllow).toHaveBeenCalledTimes(1);
   });
 
-  it('键错确认字不放行', () => {
+  it('键错确认字不放行', async () => {
     const { onAllow } = renderBlock({
       confirmation: { systemName: '演示 ERP', confirmWord: '确认' },
     });
-    fireEvent.change(screen.getByLabelText('键入 确认 以继续'), { target: { value: '确认执行' } });
+    fireEvent.change(await screen.findByLabelText('键入 确认 以继续'), {
+      target: { value: '确认执行' },
+    });
     expect((screen.getByLabelText('确认执行') as HTMLButtonElement).disabled).toBe(true);
     expect(onAllow).not.toHaveBeenCalled();
   });
 
-  it('「取消」无需键入确认字', () => {
+  it('「取消」无需键入确认字', async () => {
     const { onDeny } = renderBlock({ confirmation: { systemName: '演示 ERP' } });
-    fireEvent.click(screen.getByLabelText('取消'));
+    fireEvent.click(await screen.findByLabelText('取消'));
     expect(onDeny).toHaveBeenCalledTimes(1);
   });
 
-  it('过期后展示「操作已取消，未写入任何数据」，且不再提供确认入口', () => {
+  it('过期后展示「操作已取消，未写入任何数据」，且不再提供确认入口', async () => {
     renderBlock({
       confirmation: {
         systemName: '演示 ERP',
@@ -85,13 +87,15 @@ describe('AppConfirmationCard', () => {
         timeoutNotice: '操作已取消，未写入任何数据。',
       },
     });
-    expect(screen.getByRole('alert').textContent).toContain('操作已取消，未写入任何数据。');
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      '操作已取消，未写入任何数据。',
+    );
     expect(screen.queryByLabelText('确认执行')).toBeNull();
   });
 
-  it('服务端没给卡片时按工具名与入参兜底推导，绝不退回两键卡片', () => {
+  it('服务端没给卡片时按工具名与入参兜底推导，绝不退回两键卡片', async () => {
     renderBlock();
-    expect(screen.getByTestId('app-confirmation-card')).toBeTruthy();
+    expect(await screen.findByTestId('app-confirmation-card')).toBeTruthy();
     expect(screen.getByText('确认后立即生效、不可撤销。')).toBeTruthy();
     // 旧的 Allow / Deny 两键不再出现在 app__ 写操作上。
     expect(screen.queryByLabelText('Allow')).toBeNull();
@@ -125,9 +129,9 @@ describe('AppConfirmationCard', () => {
     expect(card.params?.find((row) => row.label === 'c')).toBeUndefined();
   });
 
-  it('入参不是合法 JSON 时仍出卡片，只是没有参数摘要', () => {
+  it('入参不是合法 JSON 时仍出卡片，只是没有参数摘要', async () => {
     renderBlock({ toolInput: '{not json' });
-    expect(screen.getByTestId('app-confirmation-card')).toBeTruthy();
+    expect(await screen.findByTestId('app-confirmation-card')).toBeTruthy();
     expect(screen.getByText('本次操作没有需要确认的参数。')).toBeTruthy();
   });
 });

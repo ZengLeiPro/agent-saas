@@ -30,7 +30,7 @@ import { AppToolSnapshotService } from './gateway/snapshot.js';
 import { createKyAppSnapshotSource } from './gateway/snapshotSource.js';
 import { PgAppToolSnapshotStore } from './gateway/snapshotStore.js';
 import { AppCapabilityToolProvider } from './gateway/toolProvider.js';
-import { setAppCapabilityGateway } from './gateway/runtimeBinding.js';
+import { setAppCapabilityGateway, type AppCapabilityGatewayBinding } from './gateway/runtimeBinding.js';
 import { KyAppSatIssuer } from './sat/issuer.js';
 import { KyAppSuspensionRegistry } from './sat/suspension.js';
 import { PgKyAppSystemStore } from './systems/store.js';
@@ -56,7 +56,7 @@ export interface KyAppAssembly {
   outbound: KyAppOutbound;
   worker: KyAppWorker;
   /** WP3 Capability Gateway：会话工具快照 + `app__` 工具 provider（规范 §6.1）。 */
-  gateway: { snapshots: AppToolSnapshotService; provider: AppCapabilityToolProvider };
+  gateway: AppCapabilityGatewayBinding;
   /** 建表（幂等，跑 governance 迁移 runner）后再启动后台循环。 */
   start(): Promise<void>;
   stop(): void;
@@ -229,7 +229,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     snapshots,
     logger: { warn: (message) => serverLogger.warn(message) },
   });
-  const gateway = { snapshots, provider: gatewayProvider };
+  const gateway = { snapshots, provider: gatewayProvider, approvalTtlMs: config.gateway.approvalTtlMs };
   setAppCapabilityGateway(config.gateway.enabled ? gateway : null);
 
   // 让 `runtimeAssignmentResourceResolver` 的 system_installation 分支拿到真实 store。

@@ -110,9 +110,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -628,9 +635,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -876,9 +890,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -1087,9 +1108,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -1291,9 +1319,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -1480,9 +1515,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -1669,9 +1711,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -1935,9 +1984,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -2437,9 +2493,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -2664,9 +2727,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -2900,9 +2970,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -3101,9 +3178,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -3255,9 +3339,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -3409,9 +3500,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -3563,9 +3661,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -3710,9 +3815,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
@@ -3846,9 +3958,16 @@
           "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:267daa8cd6fbdbd3ec35d19ec3c464491d053ad1bbc007162e96b19ac1ad1b8f",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+        },
+        {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
+          "targetDigest": "sha256:013ad0ccf350dea586545265fd20f75ec58dd6be44b62e01f4d108e2477f305e",
           "classification": "expand",
           "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },

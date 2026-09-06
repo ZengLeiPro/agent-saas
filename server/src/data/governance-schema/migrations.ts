@@ -956,57 +956,15 @@ function migrations(prefix: string): GovernanceMigration[] {
 
 /**
  * 全部迁移版本号（升序，可能有空洞）。
- * runner 按「已应用版本集合」判定（见 `run()`），缺号的迁移在合并后会被自动补上。
+ * runner 按「已应用版本集合」判定，缺号的迁移在合并后会被自动补上。
  */
 export function governanceMigrationVersions(): number[] {
   return migrations(governanceTablePrefix()).map((migration) => migration.version);
 }
 
-export class PgGovernanceMigrationRunner {
-  readonly schemaVersionsTable: string;
-  readonly prefix: string;
-
-  constructor(private readonly pool: GovernancePgPool, tablePrefix?: string) {
-    this.prefix = governanceTablePrefix(tablePrefix);
-    this.schemaVersionsTable = `${this.prefix}_governance_schema_versions`;
-  }
-
-  async run(targetVersion = Number.POSITIVE_INFINITY): Promise<void> {
-    const client = await this.pool.connect();
-    const lockKey = `${this.schemaVersionsTable}:migrate`;
-    try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.schemaVersionsTable} (
-          version INTEGER PRIMARY KEY,
-          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      const appliedResult = await client.query<{ version: number }>(
-        `SELECT version FROM ${this.schemaVersionsTable} ORDER BY version`,
-      );
-      const applied = new Set(appliedResult.rows.map(row => Number(row.version)));
-
-      for (const migration of migrations(this.prefix)) {
-        if (migration.version > targetVersion || applied.has(migration.version)) continue;
-        await client.query('BEGIN');
-        try {
-          for (const statement of migration.statements) {
-            await client.query(statement);
-          }
-          await client.query(
-            `INSERT INTO ${this.schemaVersionsTable} (version) VALUES ($1)`,
-            [migration.version],
-          );
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => undefined);
-          throw error;
-        }
-      }
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
-      client.release();
-    }
-  }
+/** 给外提出去的 runner 用；本模块之外不应直接消费语句列表。 */
+export function governanceMigrationStatements(prefix: string) {
+  return migrations(prefix);
 }
+
+export { PgGovernanceMigrationRunner } from './migrationRunner.js';

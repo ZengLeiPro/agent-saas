@@ -19,7 +19,20 @@ import type { RiskLevel } from '@kaiyan/ky-app-contract';
 /** 登记表上限，防止长跑进程里无界增长（能力总量远小于这个数）。 */
 const MAX_ENTRIES = 4096;
 
-const riskByToolName = new Map<string, RiskLevel>();
+/**
+ * 登记的能力元数据。除风险档外还带客户面名字 —— §6.2-2 的确认卡片要在
+ * channel 侧拼「系统名 / 能力名 / 参数摘要」，而 `InteractionEvent` 里只有工具名。
+ */
+export interface AppCapabilityToolMeta {
+  risk: RiskLevel;
+  systemId: string;
+  systemName: string;
+  capabilityId: string;
+  capabilityName: string;
+  installationId: string;
+}
+
+const metaByToolName = new Map<string, AppCapabilityToolMeta>();
 
 /** 工具名/工具 id 是否属于定制项目能力（§4.5 前缀）。 */
 export function isAppCapabilityToolName(value: string | undefined | null): boolean {
@@ -27,22 +40,29 @@ export function isAppCapabilityToolName(value: string | undefined | null): boole
 }
 
 /** `AppCapabilityToolProvider` 构造描述符时登记；同名覆盖（发布门禁保证同名同义）。 */
-export function rememberAppCapabilityRisk(toolName: string, risk: RiskLevel): void {
+export function rememberAppCapabilityTool(toolName: string, meta: AppCapabilityToolMeta): void {
   if (!isAppCapabilityToolName(toolName)) return;
-  if (!riskByToolName.has(toolName) && riskByToolName.size >= MAX_ENTRIES) {
+  if (!metaByToolName.has(toolName) && metaByToolName.size >= MAX_ENTRIES) {
     // 满了就丢最早的一条：被丢掉的工具后续查不到 → fail-closed 弹确认，不会放宽。
-    const oldest = riskByToolName.keys().next();
-    if (!oldest.done) riskByToolName.delete(oldest.value);
+    const oldest = metaByToolName.keys().next();
+    if (!oldest.done) metaByToolName.delete(oldest.value);
   }
-  riskByToolName.set(toolName, risk);
+  metaByToolName.set(toolName, meta);
+}
+
+/** 已登记的能力元数据；未登记返回 `undefined`（调用方须 fail-closed）。 */
+export function lookupAppCapabilityTool(
+  toolName: string | undefined | null,
+): AppCapabilityToolMeta | undefined {
+  if (!isAppCapabilityToolName(toolName)) return undefined;
+  return metaByToolName.get(toolName as string);
 }
 
 /** 已登记的风险档；未登记返回 `undefined`（调用方须 fail-closed）。 */
 export function lookupAppCapabilityRisk(
   toolName: string | undefined | null,
 ): RiskLevel | undefined {
-  if (!isAppCapabilityToolName(toolName)) return undefined;
-  return riskByToolName.get(toolName as string);
+  return lookupAppCapabilityTool(toolName)?.risk;
 }
 
 /**
@@ -55,7 +75,7 @@ export function isAppReadOnlyTool(
 ): boolean {
   const names = [toolName, toolId].filter(isAppCapabilityToolName) as string[];
   if (names.length === 0) return false;
-  return names.every((name) => riskByToolName.get(name) === 'read_only');
+  return names.every((name) => metaByToolName.get(name)?.risk === 'read_only');
 }
 
 /**
@@ -73,5 +93,5 @@ export function requiresAppWriteConfirmation(
 
 /** 仅供测试：清空登记表。 */
 export function resetAppCapabilityRiskRegistryForTest(): void {
-  riskByToolName.clear();
+  metaByToolName.clear();
 }

@@ -29,9 +29,10 @@ import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
 import { decideAuthorizationModeTool } from './authorizationModeDecision.js';
+import { buildAppConfirmationCard, resolveAppApprovalTtlMs } from '../../kyapp/gateway/approval.js';
 import { requiresAppWriteConfirmation } from '../../kyapp/gateway/toolRiskRegistry.js';
 import { interactionStore } from './interactionStore.js';
-import { appendActiveInteractionResolved } from './activeInteractionPersistence.js';
+import { appendActiveInteractionResolved, createInteractionExpiryHandler } from './activeInteractionPersistence.js';
 import { persistedInteractionAccessError } from './persistedInteractionAccess.js';
 import {
   buildChatMessageActivityDetail,
@@ -3482,6 +3483,8 @@ export class WebChannel implements BaseChannel {
         }
 
         activeInteractionIds.add(event.interactionId);
+        // 规范 §6.2-2：定制项目写能力的二次确认卡片 + 10 分钟专用超时（不动全局 30 分钟）。
+        const confirmation = event.confirmation ?? buildAppConfirmationCard(event);
         const interactionPromise = interactionStore.create(event.interactionId, event.type, {
           sessionId: resolvedSessionId,
           runId: event.runId,
@@ -3496,18 +3499,14 @@ export class WebChannel implements BaseChannel {
           displayName: event.displayName,
           toolInput: event.toolInput,
           planContent,
-          onExpired: (expired) => {
-            if (!resolvedSessionId) return;
-            const reason = '等待用户响应超时，交互已过期';
-            const response = { message: reason };
-            void appendActiveInteractionResolved({
-              sessionId: resolvedSessionId, interactionId: event.interactionId,
-              pendingInteraction: expired, response,
-              tenantId: this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined,
-              userId: user?.sub, runtimeEventStoreFor: this.config.runtimeEventStoreFor,
-            }).catch((error) => chatLogger.warn(`expired interaction persistence failed interaction=${event.interactionId}: ${error instanceof Error ? error.message : String(error)}`));
-            send({ type: 'interaction_resolved', sessionId: resolvedSessionId, interactionId: event.interactionId, status: 'expired', response, reason, retryable: false });
-          },
+          ...(confirmation ? { confirmation, timeoutMs: resolveAppApprovalTtlMs() } : {}),
+          onExpired: createInteractionExpiryHandler({
+            sessionId: resolvedSessionId, interactionId: event.interactionId,
+            tenantId: this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined,
+            userId: user?.sub, runtimeEventStoreFor: this.config.runtimeEventStoreFor,
+            ...(confirmation?.timeoutNotice ? { reason: confirmation.timeoutNotice } : {}),
+            send,
+          }),
         });
         void interactionPromise.catch(() => undefined);
         const storedInteraction = interactionStore.get(event.interactionId)!;
@@ -3535,6 +3534,7 @@ export class WebChannel implements BaseChannel {
             toolInput: event.toolInput,
             questions: event.questions,
             ...(planContent ? { planContent } : {}),
+            ...(confirmation ? { confirmation } : {}),
           });
         }
         try {

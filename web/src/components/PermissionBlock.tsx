@@ -6,6 +6,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 import { truncateContent } from "./types";
+import {
+  AppConfirmationCard,
+  deriveConfirmationCard,
+  isAppCapabilityToolName,
+} from "./AppConfirmationCard";
+import type { WsToolConfirmationCard } from "@agent/shared";
 import "katex/dist/katex.min.css";
 
 const LazyMarkdown = lazy(async () => {
@@ -46,10 +52,17 @@ interface PermissionBlockProps {
   onDeny: () => void;
   disabled?: boolean;
   error?: string;
+  /**
+   * WP3 §6.2-2 的确认卡片。服务端 ws `permission_request.confirmation` 透传；
+   * 缺失时对 `app__` 工具按工具名与入参兜底推导（绝不退回无二次确认的两键卡片）。
+   */
+  confirmation?: WsToolConfirmationCard;
 }
 
-export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny, disabled = false, error }: PermissionBlockProps) {
+export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny, disabled = false, error, confirmation }: PermissionBlockProps) {
   const isPlanReview = toolName === PLAN_REVIEW_NAME && toolInput.length > 100;
+  const appCard = confirmation
+    ?? (isAppCapabilityToolName(toolName) ? deriveConfirmationCard(toolName, toolInput) : undefined);
   const [expanded, setExpanded] = useState(isPlanReview);
 
   const renderContent = () => {
@@ -96,8 +109,17 @@ export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny, 
         </div>
       </div>
       <CardContent className="pb-3 pt-0">
-        {renderContent()}
-        {status === "pending" && (
+        {appCard ? (
+          <AppConfirmationCard
+            card={appCard}
+            status={status}
+            disabled={disabled}
+            onAllow={onAllow}
+            onDeny={onDeny}
+          />
+        ) : null}
+        {appCard ? null : renderContent()}
+        {!appCard && status === "pending" && (
           <div className="flex gap-2">
             <Button size="sm" variant="outline" className="min-h-11 text-primary border-primary/30 hover:bg-primary/5" disabled={disabled} aria-label="Allow" onClick={onAllow}>
               <Check aria-hidden="true" className="size-3.5" />

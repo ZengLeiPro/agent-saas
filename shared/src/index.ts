@@ -87,6 +87,7 @@ export type {
   WsBlockType,
   WsAskUserQuestion,
   WsEvent,
+  WsToolConfirmationCard,
   RuntimeFailureKind,
   RuntimeRecoveryAction,
   SandboxWorkloadDescriptor,

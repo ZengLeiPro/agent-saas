@@ -20,6 +20,30 @@ export interface WsSyncRuntimeSnapshot {
     liveness?: RunLiveness;
 }
 
+/**
+ * WP3 §6.2-2：外部系统写操作的二次确认卡片。
+ *
+ * **全部字段可选、整块可选**：旧客户端（含 mobile，第一期不实现本卡片）
+ * 收到带该字段的 `permission_request` 必须能照常渲染「允许 / 拒绝」两键，
+ * 不得因为多了这个键而报错。
+ */
+export interface WsToolConfirmationCard {
+    /** 客户面「系统名」（manifest `name`）。 */
+    systemName?: string;
+    /** 能力的客户面名字。 */
+    capabilityName?: string;
+    /** 参数摘要，最多 6 行。 */
+    params?: Array<{ label: string; value: string }>;
+    /** true 表示要展示「确认后立即生效、不可撤销」。 */
+    irreversible?: boolean;
+    /** 需要用户逐字键入的确认字；缺省表示不要求键入。 */
+    confirmWord?: string;
+    /** 绝对过期时刻（epoch ms），前端据此显示倒计时。 */
+    expiresAtMs?: number;
+    /** 超时后展示的文案（「操作已取消，未写入任何数据」）。 */
+    timeoutNotice?: string;
+}
+
 export interface WsSyncPendingInteractionSnapshot {
     interactionId: string;
     type: 'ask_user' | 'permission_request' | 'approval';
@@ -35,6 +59,7 @@ export interface WsSyncPendingInteractionSnapshot {
     displayName?: string;
     toolInput?: Record<string, unknown>;
     planContent?: string;
+    confirmation?: WsToolConfirmationCard;
 }
 
 export interface WsSyncSessionSnapshot {
@@ -112,7 +137,7 @@ type WsEventPayload =
     // presentation/metadata：与历史加载（transcript）同源的「给人看」摘要与结构化执行事实。
     // 跨进程边界属不可信输入，前端必须过 normalizeToolPresentation / normalizeToolResultMetadata 再入渲染层
     | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean; presentation?: unknown; metadata?: unknown }
-    | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
+    | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string; confirmation?: WsToolConfirmationCard }
     | { type: 'ask_user'; interactionId: string; version?: number; order?: number; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
     | { type: 'subagent_end'; toolId: string; agentType?: string; status?: Exclude<SubagentStatus, 'running'>; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }

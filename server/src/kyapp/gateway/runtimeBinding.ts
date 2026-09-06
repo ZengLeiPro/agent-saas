@@ -16,6 +16,8 @@ import type { AppCapabilityToolProvider } from './toolProvider.js';
 export interface AppCapabilityGatewayBinding {
   provider: AppCapabilityToolProvider;
   snapshots: AppToolSnapshotService;
+  /** §6.2-3 的审批 TTL（`kyApp.gateway.approvalTtlMs`）。channel 侧建确认卡片时要用。 */
+  approvalTtlMs: number;
 }
 
 let current: AppCapabilityGatewayBinding | null = null;

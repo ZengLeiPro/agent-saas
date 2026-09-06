@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   isAppReadOnlyTool,
-  rememberAppCapabilityRisk,
+  rememberAppCapabilityTool,
   requiresAppWriteConfirmation,
   resetAppCapabilityRiskRegistryForTest,
 } from '../../kyapp/gateway/toolRiskRegistry.js';
@@ -25,6 +25,17 @@ const USER = { id: 'u-1', username: 'alice', role: 'user' as const, tenantId: 'o
 const READ_TOOL = buildAppToolName('demo-erp', 'order.search');
 const WRITE_TOOL = buildAppToolName('demo-erp', 'order.create');
 const UNKNOWN_TOOL = buildAppToolName('demo-erp', 'never-registered');
+
+function appToolMeta(risk: 'read_only' | 'external_write', capabilityId: string) {
+  return {
+    risk,
+    systemId: 'demo_erp',
+    systemName: '演示 ERP',
+    capabilityId,
+    capabilityName: risk === 'read_only' ? '查订单' : '建订单',
+    installationId: 'iid-1',
+  } as const;
+}
 
 function decide(
   toolName: string | undefined,
@@ -43,8 +54,8 @@ function decide(
 describe('decideAuthorizationModeTool —— 定制项目能力（规范 §6.1/§6.2）', () => {
   beforeEach(() => {
     resetAppCapabilityRiskRegistryForTest();
-    rememberAppCapabilityRisk(READ_TOOL, 'read_only');
-    rememberAppCapabilityRisk(WRITE_TOOL, 'external_write');
+    rememberAppCapabilityTool(READ_TOOL, appToolMeta('read_only', 'order_search'));
+    rememberAppCapabilityTool(WRITE_TOOL, appToolMeta('external_write', 'order_create'));
   });
 
   it('工具名走契约包 toolName()，前缀为 app__', () => {

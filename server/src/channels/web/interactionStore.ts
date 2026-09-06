@@ -1,4 +1,5 @@
 import type { WebSocket } from 'ws';
+import type { WsToolConfirmationCard } from '@agent/shared';
 import type { InteractionResponse } from '../../agent/types.js';
 import type { AskUserQuestion } from '../../types/index.js';
 
@@ -30,6 +31,8 @@ export interface PendingInteraction {
   toolInput?: Record<string, unknown>;
   /** ExitPlanMode 专用：plan 文件内容 */
   planContent?: string;
+  /** WP3 §6.2-2：外部系统写操作的二次确认卡片；重连补发 pending 快照时要带上。 */
+  confirmation?: WsToolConfirmationCard;
   onExpired?: (entry: PendingInteraction) => void;
 }
 
@@ -44,6 +47,11 @@ function shouldSurviveDisconnect(entry: PendingInteraction): boolean {
   return false;
 }
 
+/**
+ * 全局默认交互超时。**不要因为某一类交互需要更短的超时就改这个数**——
+ * WP3 §6.2-2 的 10 分钟是 `app__` 外部写操作专用的，
+ * 走 `create()` 的 per-interaction `timeoutMs`，不动这里。
+ */
 const INTERACTION_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface CompletedInteractionResponse {
@@ -137,9 +145,19 @@ export class InteractionStore {
       displayName?: string;
       toolInput?: Record<string, unknown>;
       planContent?: string;
+      confirmation?: WsToolConfirmationCard;
+      /**
+       * 本条交互专用超时（毫秒）。**只能比全局默认更短**：
+       * 放宽全局上限属于安全边界变更，必须改 `INTERACTION_TIMEOUT_MS` 而不是逐条传参。
+       */
+      timeoutMs?: number;
       onExpired?: (entry: PendingInteraction) => void;
     },
   ): Promise<InteractionResponse> {
+    const timeoutMs =
+      options?.timeoutMs === undefined
+        ? INTERACTION_TIMEOUT_MS
+        : Math.min(INTERACTION_TIMEOUT_MS, Math.max(1_000, options.timeoutMs));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const expired = this.take(interactionId);
@@ -147,7 +165,7 @@ export class InteractionStore {
           expired.onExpired?.(expired);
           reject(new Error('Interaction timed out'));
         }
-      }, INTERACTION_TIMEOUT_MS);
+      }, timeoutMs);
       timer.unref();
 
       const version = ++this.version;
@@ -170,6 +188,7 @@ export class InteractionStore {
         displayName: options?.displayName,
         toolInput: options?.toolInput,
         planContent: options?.planContent,
+        confirmation: options?.confirmation,
         onExpired: options?.onExpired,
       });
       this.addToSessionIndex(options?.sessionId, interactionId);
@@ -257,6 +276,7 @@ export class InteractionStore {
     displayName?: string;
     toolInput?: Record<string, unknown>;
     planContent?: string;
+    confirmation?: WsToolConfirmationCard;
   }> {
     const result: Array<{
       interactionId: string;
@@ -272,6 +292,7 @@ export class InteractionStore {
       displayName?: string;
       toolInput?: Record<string, unknown>;
       planContent?: string;
+      confirmation?: WsToolConfirmationCard;
     }> = [];
     for (const [id, entry] of this.pending) {
       if (entry.sessionId !== sessionId) continue;
@@ -290,6 +311,7 @@ export class InteractionStore {
         displayName: entry.displayName,
         toolInput: entry.toolInput,
         planContent: entry.planContent,
+        confirmation: entry.confirmation,
       });
     }
     return result;

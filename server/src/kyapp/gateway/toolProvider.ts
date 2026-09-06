@@ -25,7 +25,7 @@ import type {
   ToolResult,
 } from '../../agent/toolRuntime.js';
 import type { AppCapabilityEntry, AppToolSnapshotService } from './snapshot.js';
-import { rememberAppCapabilityRisk } from './toolRiskRegistry.js';
+import { rememberAppCapabilityTool } from './toolRiskRegistry.js';
 
 /** 描述符前缀：与 MCP 同一策略——先声明这是外部元数据，再放定制项目自己的描述。 */
 const APP_DESCRIPTION_PREFIX = [
@@ -131,7 +131,14 @@ export class AppCapabilityToolProvider implements ToolProvider {
 
 /** 能力 → 模型可见工具描述符。构造时登记风险档，供 channel 授权判定查表。 */
 export function toDescriptor(entry: AppCapabilityEntry): ToolDescriptor {
-  rememberAppCapabilityRisk(entry.toolName, entry.riskLevel);
+  rememberAppCapabilityTool(entry.toolName, {
+    risk: entry.riskLevel,
+    systemId: entry.systemId,
+    systemName: entry.systemName,
+    capabilityId: entry.capabilityId,
+    capabilityName: entry.capabilityName,
+    installationId: entry.installationId,
+  });
   const isWrite = entry.riskLevel === 'external_write';
   const fallbackDescription = `${entry.systemName} 的能力 ${entry.capabilityName}。`;
   const description = entry.description.trim() || fallbackDescription;

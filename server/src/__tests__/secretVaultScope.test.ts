@@ -144,4 +144,36 @@ describe('InMemorySecretVault actor boundary', () => {
       scopes: ['secret:mcp:write'],
     })).rejects.toThrow(/not infrastructure allowlisted/);
   });
+
+  it('WP2a 三类定制项目密钥进入基础设施 allowlist，system actor 只认 __system__ 服务主体', async () => {
+    const vault = new InMemorySecretVault();
+    const kinds = ['ky_app_sat_signing_key', 'ky_app_installation_key', 'ky_app_service_credential'];
+    for (const kind of kinds) {
+      const system = (operation: string): VaultCaller => ({
+        actor: 'system',
+        userId: '__system__',
+        scopes: [`secret:${kind}:${operation}`],
+      });
+      const ref = await vault.putSecret(GLOBAL_OWNER_ID, kind, 'plaintext', system('write'));
+      await expect(vault.getSecret(ref, system('read'))).resolves.toBe('plaintext');
+      await expect(vault.rotateSecret(ref, 'rotated', system('rotate'))).resolves.toMatchObject({
+        kind,
+      });
+      await expect(vault.getSecret(ref, system('read'))).resolves.toBe('rotated');
+      await expect(vault.revokeSecret(ref, system('revoke'))).resolves.toBeUndefined();
+
+      // system actor 下换成任何别的服务主体都拿不到。
+      await expect(vault.putSecret(GLOBAL_OWNER_ID, kind, 'x', {
+        actor: 'system',
+        userId: 'tool_controls_admin',
+        scopes: [`secret:${kind}:write`],
+      })).rejects.toThrow(/service principal mismatch/);
+      // proxy actor 缺精确 operation scope 时同样被拒（owner 维度的既有 ACL 不在本 WP 改动范围）。
+      await expect(vault.putSecret(GLOBAL_OWNER_ID, kind, 'x', {
+        actor: 'connector_proxy',
+        userId: 'someone',
+        scopes: [],
+      })).rejects.toThrow(new RegExp(`missing secret:${kind}:write`));
+    }
+  });
 });

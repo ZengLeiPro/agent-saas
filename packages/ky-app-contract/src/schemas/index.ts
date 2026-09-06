@@ -46,7 +46,16 @@ export interface SchemaValidationResult {
 
 // ajv 是 CJS：moduleResolution=NodeNext 下默认导入拿到的是 module.exports 命名空间，
 // 构造函数挂在 .default 上（ajv 同时把类本体赋给 module.exports，两种取法运行时等价）。
-const Ajv2020 = Ajv2020Module.default;
+// WP2a：agent-saas 的 server 工作区用 moduleResolution=bundler + esModuleInterop 引用本包源码，
+// 那里默认导入被定型成构造函数本体（没有 .default）。两种模块解析下都要能编译，
+// 因此按值取 .default、取不到回落到命名空间本身，并显式声明本文件真正用到的最小接口。
+interface Ajv2020Instance {
+  addSchema(schema: unknown): unknown;
+  getSchema(keyRef: string): ValidateFunction | undefined;
+}
+type Ajv2020Constructor = new (options: { allErrors: boolean; strict: boolean }) => Ajv2020Instance;
+const Ajv2020 = ((Ajv2020Module as { default?: unknown }).default ??
+  Ajv2020Module) as unknown as Ajv2020Constructor;
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 ajv.addSchema(errorSchemaJson);

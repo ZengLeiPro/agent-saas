@@ -19,6 +19,13 @@ export default defineConfig({
         new URL('../shared/src/schemas/releaseManifest.ts', import.meta.url),
       ),
       '@agent/shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url)),
+      // WP2a：契约包一律解析到源码，避免 pnpm injectWorkspacePackages 的复制副本过期。
+      '@kaiyan/ky-app-contract': fileURLToPath(
+        new URL('../packages/ky-app-contract/src/index.ts', import.meta.url),
+      ),
+      '@kaiyan/ky-app-server': fileURLToPath(
+        new URL('../packages/ky-app-server/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {

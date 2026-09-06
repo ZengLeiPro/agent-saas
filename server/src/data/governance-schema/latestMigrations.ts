@@ -3,6 +3,7 @@ import { governanceV37DeliveryAttemptPhaseStatements } from './v37DeliveryAttemp
 import { governanceV38SkillPresentationStatements } from './v38SkillPresentationMigration.js';
 import { governanceV39OrgGroupBindingIdentityStatements } from './v39OrgGroupBindingIdentityMigration.js';
 import { governanceV40DwsDeliveryAccountIdentityStatements } from './v40DwsDeliveryAccountIdentityMigration.js';
+import { governanceV41KyAppSystemStatements } from './v41KyAppSystemMigration.js';
 
 export function governanceLatestMigrations(prefix: string) {
   return [
@@ -11,5 +12,6 @@ export function governanceLatestMigrations(prefix: string) {
     { version: 38, statements: governanceV38SkillPresentationStatements(prefix) },
     { version: 39, statements: governanceV39OrgGroupBindingIdentityStatements(prefix) },
     { version: 40, statements: governanceV40DwsDeliveryAccountIdentityStatements(prefix) },
+    { version: 41, statements: governanceV41KyAppSystemStatements(prefix) },
   ];
 }

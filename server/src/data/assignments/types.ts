@@ -9,7 +9,9 @@ export type AssignmentResourceType =
   | 'org_knowledge'
   | 'org_memory'
   | 'connector'
-  | 'dws_delegation';
+  | 'dws_delegation'
+  // WP2a：定制项目安装实例（规范 §8.1），assigneeType 只写 everyone。
+  | 'system_installation';
 export type AssignmentAssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';
 export type AssignmentEffect = 'allow' | 'deny';
 export type AssignmentOrigin = 'direct' | 'migration' | 'policy_default';

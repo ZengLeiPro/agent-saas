@@ -40,6 +40,22 @@ export function createAssignmentResourceResolver(runtime: AppRuntime) {
       if (!runtime.connectorCatalogStore) return 'unavailable';
       return (await runtime.connectorCatalogStore.get(resourceId))?.status === 'published' ? 'valid' : 'not_found';
     }
+    if (resourceType === 'system_installation') {
+      // WP2a 规范 §8.1：安装实例可分配的前提是三表齐备——实例本身 enabled 且属于本组织、
+      // 系统定义已发布、该发布 digest 对应的版本行也是 published。
+      if (!runtime.kyAppSystemStore) return 'unavailable';
+      const installation = await runtime.kyAppSystemStore.getInstallation(resourceId);
+      if (!installation || installation.tenantId !== tenantId || installation.status !== 'enabled') {
+        return 'not_found';
+      }
+      const definition = await runtime.kyAppSystemStore.getDefinition(installation.systemId);
+      if (definition?.status !== 'published' || !definition.publishedDigest) return 'not_found';
+      const version = await runtime.kyAppSystemStore.getVersion(
+        installation.systemId,
+        definition.publishedDigest,
+      );
+      return version?.status === 'published' ? 'valid' : 'not_found';
+    }
     if (resourceType === 'org_knowledge') {
       if (!runtime.contextStore) return 'unavailable';
       const collection = (await runtime.contextStore.listCollections(tenantId))

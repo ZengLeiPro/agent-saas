@@ -10,7 +10,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
+describePg('Entitlement 资源范围基线 PostgreSQL 合约', () => {
   const prefix = `scopebase_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgEntitlementStore;
@@ -45,7 +45,7 @@ describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
     await pool.end();
   }, 30_000);
 
-  it('新组织初始化六类 v1 基线，新增三类为空 selected，回滚同步删除', async () => {
+  it('新组织初始化七类 v1 基线，新增四类为空 selected，回滚同步删除', async () => {
     await store.provisionTenantGovernance({
       tenantId: 'tenant-new',
       settings: DEFAULT_TENANT_SETTINGS,
@@ -54,7 +54,12 @@ describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
     const scopes = await store.listResourceScopes('tenant-new');
     expect(scopes.map((item) => item.resourceType)).toEqual([...ENTITLEMENT_RESOURCE_TYPES].sort());
     expect(scopes.every((item) => item.version === 1)).toBe(true);
-    for (const resourceType of ['agent_template', 'skill', 'environment_template']) {
+    for (const resourceType of [
+      'agent_template',
+      'skill',
+      'environment_template',
+      'integrated_system',
+    ]) {
       expect(scopes.find((item) => item.resourceType === resourceType)).toMatchObject({
         mode: 'selected',
         resourceIds: [],
@@ -83,12 +88,12 @@ describePg('Entitlement 六类范围基线 PostgreSQL 合约', () => {
     };
     await expect(store.backfillMissingResourceScopes(input)).resolves.toMatchObject({
       scopesInserted: 2,
-      scopesSkipped: 4,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length - 2,
       tenantsWithErrors: 0,
     });
     await expect(store.backfillMissingResourceScopes(input)).resolves.toMatchObject({
       scopesInserted: 0,
-      scopesSkipped: 6,
+      scopesSkipped: ENTITLEMENT_RESOURCE_TYPES.length,
       tenantsWithErrors: 0,
     });
     expect(

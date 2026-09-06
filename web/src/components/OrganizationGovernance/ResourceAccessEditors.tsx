@@ -9,7 +9,7 @@ import { governanceAccessApi, governanceApiErrorMessage, governanceResourcesApi 
 type EntitlementResourceType =
   'model' | 'tool' | 'agent_template' | 'skill' | 'connector' | 'environment_template';
 type AssignmentResourceType =
-  'skill' | 'credential' | 'environment_template' | 'connector' | 'dws_delegation';
+  'skill' | 'credential' | 'environment_template' | 'connector' | 'dws_delegation' | 'system_installation';
 type AssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';
 type AssignmentEffect = 'allow' | 'deny';
 

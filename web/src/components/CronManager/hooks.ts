@@ -14,6 +14,7 @@ import type {
 
 const API_BASE = "/api/cron";
 const DINGTALK_API_BASE = "/api/dingtalk";
+const FOREGROUND_STALE_MS = 30_000;
 
 
 function sortByNextRun(jobs: CronJob[]): CronJob[] {
@@ -50,6 +51,7 @@ function useCronResource<T>(
   load: () => Promise<T>,
   initialValue: T,
   refreshKey: "cronStatus" | "cronJobs" | "cronDingtalkSessions" | "cronModels",
+  active = true,
 ) {
   const [value, setValue] = useState<T>(initialValue);
   const [loading, setLoading] = useState(true);
@@ -91,28 +93,34 @@ function useCronResource<T>(
 
   useEffect(() => {
     mountedRef.current = true;
-    void refresh();
-
-    const refreshOnFocus = () => { void refresh(); };
-    const refreshOnVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnVisible);
     return () => {
       mountedRef.current = false;
       latestRequestIdRef.current += 1;
       inFlightRef.current = null;
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnVisible);
     };
-  }, [refresh]);
+  }, []);
 
   useEffect(() => {
+    if (!active) return;
+    void refresh();
+    let hiddenAt: number | null = null;
+    const refreshWhenStale = () => {
+      if (document.visibilityState !== "visible") {
+        hiddenAt = Date.now();
+        return;
+      }
+      if (hiddenAt !== null && Date.now() - hiddenAt >= FOREGROUND_STALE_MS) void refresh();
+      hiddenAt = null;
+    };
+    document.addEventListener("visibilitychange", refreshWhenStale);
+    return () => document.removeEventListener("visibilitychange", refreshWhenStale);
+  }, [active, refresh]);
+
+  useEffect(() => {
+    if (!active) return;
     registerRefresh(refreshBusKey, refresh);
     return () => unregisterRefresh(refreshBusKey);
-  }, [refresh, refreshBusKey]);
+  }, [active, refresh, refreshBusKey]);
 
   const refreshLatest = useCallback(async (): Promise<void> => {
     const pending = inFlightRef.current;
@@ -123,20 +131,22 @@ function useCronResource<T>(
   return { value, loading, error, refresh, refreshLatest };
 }
 
-export function useCronStatus() {
+export function useCronStatus(active = true) {
   const { value: status, loading, error, refresh, refreshLatest } = useCronResource<CronServiceStatus | null>(
     fetchCronStatus,
     null,
     "cronStatus",
+    active,
   );
   return { status, loading, error, refresh, refreshLatest };
 }
 
-export function useCronJobs() {
+export function useCronJobs(active = true) {
   const { value: jobs, loading, error, refresh, refreshLatest } = useCronResource<CronJob[]>(
     fetchCronJobs,
     [],
     "cronJobs",
+    active,
   );
 
   const addJob = async (create: CronJobCreate) => {
@@ -215,20 +225,22 @@ export function useRunHistory(jobId: string | null) {
   return { entries, loading, error };
 }
 
-export function useDingtalkSessions() {
+export function useDingtalkSessions(active = true) {
   const { value: sessions, loading, error, refresh } = useCronResource<DingtalkSessionSummary[]>(
     fetchDingtalkSessions,
     [],
     "cronDingtalkSessions",
+    active,
   );
   return { sessions, loading, error, refresh };
 }
 
-export function useModelList() {
+export function useModelList(active = true) {
   const { value: modelList } = useCronResource<ModelList | null>(
     fetchModelList,
     null,
     "cronModels",
+    active,
   );
   return modelList;
 }

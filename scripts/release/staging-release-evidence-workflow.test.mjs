@@ -29,9 +29,28 @@ test('Release Evidence is the first isolated stage of manual Staging RC deployme
   assert.ok(workflow.indexOf('prepare-evidence:') < workflow.indexOf('build-deploy-verify:'));
   assert.match(workflow, /prepare-evidence:[\s\S]*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true/u);
   assert.match(workflow, /RELEASE_SHA: \$\{\{ github\.sha \}\}/u);
-  assert.match(workflow, /actions\/workflows\/ci\.yml\/runs/u);
-  assert.match(workflow, /head_sha="\$RELEASE_SHA"/u);
-  assert.match(workflow, /\.conclusion == "success"/u);
+  const appCiGateStart = workflow.indexOf('- name: 等待应用 CI 成功并校验已合并的 GitHub PR');
+  const appCiGateEnd = workflow.indexOf('- name: 解析同一发布 SHA 的 ACS 证据');
+  assert.ok(appCiGateStart > 0 && appCiGateEnd > appCiGateStart);
+  const appCiGate = workflow.slice(appCiGateStart, appCiGateEnd);
+  assert.match(appCiGate, /actions\/workflows\/ci\.yml/u);
+  assert.match(appCiGate, /\.id \| type == "number" and \. > 0/u);
+  assert.match(appCiGate, /\.path == "\.github\/workflows\/ci\.yml"/u);
+  assert.match(appCiGate, /actions\/workflows\/\$app_ci_workflow_id\/runs/u);
+  assert.match(appCiGate, /head_sha="\$RELEASE_SHA"/u);
+  assert.equal(appCiGate.match(/\.workflow_id == \$workflow_id/gu)?.length, 2);
+  assert.doesNotMatch(appCiGate, /\.name\s*==/u);
+  assert.doesNotMatch(appCiGate, /App CI \/ Deploy/u);
+  assert.match(appCiGate, /app_ci_ready=false/u);
+  assert.match(appCiGate, /app_ci_ready=true/u);
+  assert.match(appCiGate, /等待 APP CI 超时/u);
+  assert.match(appCiGate, /结论为 \$app_ci_conclusion/u);
+  assert.match(appCiGate, /\.conclusion == "success"/u);
+  const finalReadbackIndex = appCiGate.indexOf('\' "$RUNNER_TEMP/app-ci-run.json" >/dev/null');
+  const exportRunIdIndex = appCiGate.indexOf(
+    'echo "APP_CI_RUN_ID=$app_ci_run_id" >> "$GITHUB_ENV"',
+  );
+  assert.ok(finalReadbackIndex > 0 && exportRunIdIndex > finalReadbackIndex);
   assert.match(workflow, /commits\/\$RELEASE_SHA\/pulls/u);
   assert.match(workflow, /merge_commit_sha == \$sha/u);
 });

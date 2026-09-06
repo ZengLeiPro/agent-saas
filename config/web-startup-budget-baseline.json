@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 359218,
-    "startupCssGzipBytes": 34992,
-    "startupJsBrotliBytes": 285690,
-    "startupCssBrotliBytes": 27682,
-    "largestJsGzipBytes": 359218,
-    "largestCssGzipBytes": 34992,
-    "largestJsBrotliBytes": 285690,
-    "largestCssBrotliBytes": 27682,
-    "largestJs": "assets/index-DRIpwVkI.js",
-    "largestCss": "assets/index-jx8BRBz5.css"
+    "startupJsGzipBytes": 359773,
+    "startupCssGzipBytes": 34957,
+    "startupJsBrotliBytes": 286394,
+    "startupCssBrotliBytes": 27699,
+    "largestJsGzipBytes": 359773,
+    "largestCssGzipBytes": 34957,
+    "largestJsBrotliBytes": 286394,
+    "largestCssBrotliBytes": 27699,
+    "largestJs": "assets/index-BLwcaqio.js",
+    "largestCss": "assets/index-Dr6-LwXD.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "WP4 壳与 WP3 确认卡片合并后，首屏需同时保留路由解析与审批消息投影",
+  "reason": "合并 WP4 Web 壳、WP3 确认卡片与前后台恢复状态机后，按最终产物重新登记启动预算",
   "updatedAt": "2026-09-06"
 }

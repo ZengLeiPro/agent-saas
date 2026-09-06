@@ -123,15 +123,26 @@ jobs:
           git fetch --quiet --no-tags origin main
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
 
+          # Workflow 显示名称会随侧边栏排序调整；发布门禁只绑定稳定的文件身份与数值 ID。
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml" \
+            > "$RUNNER_TEMP/app-ci-workflow.json"
+          jq -e '
+            (.id | type == "number" and . > 0) and
+            .path == ".github/workflows/ci.yml"
+          ' "$RUNNER_TEMP/app-ci-workflow.json" >/dev/null
+          app_ci_workflow_id="$(jq -r .id "$RUNNER_TEMP/app-ci-workflow.json")"
+
           app_ci_run=''
+          app_ci_ready=false
           for attempt in $(seq 1 180); do
             gh api --method GET \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/$app_ci_workflow_id/runs" \
               -f branch=main -f head_sha="$RELEASE_SHA" -f event=push -f per_page=20 \
               > "$RUNNER_TEMP/app-ci-runs.json"
-            app_ci_run="$(jq -c --arg sha "$RELEASE_SHA" '
+            app_ci_run="$(jq -c --arg sha "$RELEASE_SHA" \
+              --argjson workflow_id "$app_ci_workflow_id" '
               [.workflow_runs[] | select(
-                .name == "App CI / Deploy" and
+                .workflow_id == $workflow_id and
                 .head_sha == $sha and
                 .head_branch == "main" and
                 .event == "push"
@@ -139,31 +150,69 @@ jobs:
               sort_by(.run_number) | last // empty
             ' "$RUNNER_TEMP/app-ci-runs.json")"
             if [ -z "$app_ci_run" ]; then
+              if [ "$attempt" -eq 1 ] || [ $((attempt % 6)) -eq 0 ]; then
+                echo "等待 APP CI：尚未找到同一 SHA 的 main push run（$attempt/180）"
+              fi
               sleep 10
               continue
             fi
-            if [ "$(printf '%s' "$app_ci_run" | jq -r .status)" != completed ]; then
+
+            app_ci_run_id="$(printf '%s' "$app_ci_run" | jq -r .id)"
+            app_ci_status="$(printf '%s' "$app_ci_run" | jq -r .status)"
+            app_ci_conclusion="$(printf '%s' "$app_ci_run" | jq -r '.conclusion // "pending"')"
+            if [ "$app_ci_status" != completed ]; then
+              if [ "$attempt" -eq 1 ] || [ $((attempt % 6)) -eq 0 ]; then
+                echo "等待 APP CI run $app_ci_run_id：status=$app_ci_status（$attempt/180）"
+              fi
               sleep 10
               continue
             fi
-            test "$(printf '%s' "$app_ci_run" | jq -r .conclusion)" = success
+
+            if [ "$app_ci_conclusion" != success ]; then
+              printf '%s' "$app_ci_run" | jq '{
+                id, workflow_id, name, event, head_branch, head_sha,
+                status, conclusion, run_number, run_attempt, html_url
+              }' >&2
+              echo "::error::APP CI run $app_ci_run_id 已完成，但结论为 $app_ci_conclusion" >&2
+              exit 1
+            fi
+            app_ci_ready=true
             break
           done
-          test -n "$app_ci_run"
-          app_ci_run_id="$(printf '%s' "$app_ci_run" | jq -r .id)"
+
+          if [ "$app_ci_ready" != true ]; then
+            echo "::error::等待 APP CI 超时：workflow_id=$app_ci_workflow_id sha=$RELEASE_SHA" >&2
+            if [ -n "$app_ci_run" ]; then
+              printf '%s' "$app_ci_run" | jq '{
+                id, workflow_id, name, event, head_branch, head_sha,
+                status, conclusion, run_number, run_attempt, html_url
+              }' >&2
+            else
+              jq --arg sha "$RELEASE_SHA" '[
+                .workflow_runs[] | select(.head_sha == $sha) | {
+                  id, workflow_id, name, event, head_branch, head_sha,
+                  status, conclusion, run_number, run_attempt, html_url
+                }
+              ]' "$RUNNER_TEMP/app-ci-runs.json" >&2
+            fi
+            exit 1
+          fi
+
           printf '%s' "$app_ci_run_id" | grep -Eq '^[0-9]+$'
-          echo "APP_CI_RUN_ID=$app_ci_run_id" >> "$GITHUB_ENV"
 
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$app_ci_run_id" \
             > "$RUNNER_TEMP/app-ci-run.json"
-          jq -e --arg sha "$RELEASE_SHA" '
-            .name == "App CI / Deploy" and
+          jq -e --arg sha "$RELEASE_SHA" \
+            --argjson workflow_id "$app_ci_workflow_id" '
+            .workflow_id == $workflow_id and
             .event == "push" and
             .head_branch == "main" and
             .head_sha == $sha and
             .status == "completed" and
             .conclusion == "success"
           ' "$RUNNER_TEMP/app-ci-run.json" >/dev/null
+          echo "APP_CI_RUN_ID=$app_ci_run_id" >> "$GITHUB_ENV"
+          echo "已验证 APP CI run $app_ci_run_id"
 
           gh api -H 'Accept: application/vnd.github+json' \
             "repos/$GITHUB_REPOSITORY/commits/$RELEASE_SHA/pulls" \

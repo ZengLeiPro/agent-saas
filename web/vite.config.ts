@@ -60,6 +60,10 @@ export default defineConfig({
     },
   },
   build: {
+    // 启动包由 check:web-startup-budget 按请求数、gzip 与 brotli 体积执行更严格的
+    // baseline/absolute-ceiling ratchet。这里仅提高 Vite 的未压缩通用提示阈值，
+    // 避免为了消除 500 kB 告警而把单请求 app shell 人为拆成更多首屏请求。
+    chunkSizeWarningLimit: 1_250,
     modulePreload: {
       resolveDependencies: (_filename, deps) =>
         deps.filter((d) => !d.includes("vendor-markdown") && !d.includes("ResourceAccessEditors")),

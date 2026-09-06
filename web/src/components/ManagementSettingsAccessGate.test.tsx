@@ -101,7 +101,7 @@ describe("ManagementSettingsAccessGate", () => {
     expect(screen.queryByTestId(/management-settings-/)).toBeNull();
   });
 
-  it("refreshing allow 保持 child mount 并用全覆盖遮罩阻止交互", () => {
+  it("refreshing allow 保持 child mount 和交互，不显示全覆盖遮罩", () => {
     const mounted = vi.fn();
     const unmounted = vi.fn();
     function TrackedChild() {
@@ -123,8 +123,8 @@ describe("ManagementSettingsAccessGate", () => {
     expect(mounted).toHaveBeenCalledTimes(1);
     expect(unmounted).not.toHaveBeenCalled();
     const content = screen.getByTestId("management-content");
-    expect(content.parentElement?.hasAttribute("inert")).toBe(true);
-    expect(screen.getByTestId("management-settings-refreshing").className).toContain("absolute inset-0");
+    expect(content.parentElement?.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByTestId("management-settings-refreshing")).toBeNull();
   });
 
   it("持久 Gate 切 tenant→personal→tenant 不 remount，离开时 hidden/inert", () => {
@@ -243,12 +243,10 @@ describe("ManagementSettingsAccessGate", () => {
     expect(document.activeElement).toBe(screen.getByTestId("outside-dialog"));
 
     rerender(gate("tenant", "refreshing"));
-    expect(portalContainer.parentElement?.hasAttribute("inert")).toBe(true);
-    const refreshing = screen.getByTestId("management-settings-refreshing");
-    expect(refreshing.className).toContain("z-[200]");
-    expect(refreshing.closest("[inert]")).toBeNull();
+    expect(portalContainer.parentElement?.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByTestId("management-settings-refreshing")).toBeNull();
     expect(screen.getByTestId("draft-dialog")).toBeTruthy();
-    await waitFor(() => expect(document.body.style.pointerEvents).toBe(""));
+    await waitFor(() => expect(document.body.style.pointerEvents).toBe("none"));
 
     rerender(gate("tenant"));
     expect(screen.getByTestId("dialog-draft")).toHaveProperty("value", "保留此值");
@@ -293,7 +291,7 @@ describe("ManagementSettingsAccessGate", () => {
     consoleError.mockRestore();
   });
 
-  it("非持久 Gate refreshing 也把 Dialog 放进 inert 边界并由遮罩覆盖", () => {
+  it("非持久 Gate refreshing 保持 Dialog 可交互且不显示遮罩", () => {
     render(
       <ManagementSettingsAccessGate scope="platform" target="platform" access={access("refreshing", true)} onRetry={vi.fn()} onReturnPersonal={vi.fn()}>
         <Dialog defaultOpen>
@@ -308,8 +306,8 @@ describe("ManagementSettingsAccessGate", () => {
     const dialog = screen.getByTestId("refreshing-dialog");
     const portalContainer = screen.getByTestId("management-settings-platform-portal-container");
     expect(portalContainer.contains(dialog)).toBe(true);
-    expect(dialog.closest("[inert]")).toBe(portalContainer.parentElement);
-    expect(screen.getByTestId("management-settings-refreshing").className).toContain("z-[200]");
+    expect(dialog.closest("[inert]")).toBeNull();
+    expect(screen.queryByTestId("management-settings-refreshing")).toBeNull();
   });
 
   it("Gate 外普通页面 Dialog 仍默认 portal 到 body", () => {

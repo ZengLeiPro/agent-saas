@@ -52,16 +52,16 @@ export function CronScheduleView({
     [currentUserId],
   );
 
-  const { refreshLatest: refreshStatus } = useCronStatus();
-  const { jobs: allJobs, addJob, updateJob, deleteJob, runJob } = useCronJobs();
+  const { refreshLatest: refreshStatus } = useCronStatus(active);
+  const { jobs: allJobs, addJob, updateJob, deleteJob, runJob } = useCronJobs(active);
 
   const jobs = useMemo(() => allJobs, [allJobs]);
   useEffect(() => {
     onJobCountChange?.(jobs.filter((j) => j.enabled).length, jobs.length);
   }, [jobs, onJobCountChange]);
 
-  const { sessions: dingtalkSessions } = useDingtalkSessions();
-  const modelList = useModelList();
+  const { sessions: dingtalkSessions } = useDingtalkSessions(active);
+  const modelList = useModelList(active);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const requestedJobId = useMemo(() => new URLSearchParams(window.location.search).get('jobId'), []);
 

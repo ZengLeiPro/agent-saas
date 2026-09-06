@@ -139,6 +139,7 @@ export interface ChatAppState {
   controlAutomation: (request: AutomationControlRequest) => Promise<void>;
   refreshAutomation: (sessionId?: string | null) => Promise<void>;
   refreshCurrentSession: () => void;
+  refreshSessions: () => Promise<void>;
   resumeCurrentStream: () => Promise<void>;
   hasMoreSessions: boolean;
   isLoadingMoreSessions: boolean;

@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GovernancePersona, ManagementSnapshotResponseV1 } from "@agent/shared/types/governance";
 
 const governanceApiMocks = vi.hoisted(() => ({ fetchManagementSnapshot: vi.fn() }));
@@ -55,6 +55,10 @@ function deferred<T>() {
 
 beforeEach(() => {
   governanceApiMocks.fetchManagementSnapshot.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("useManagementSettingsAccess", () => {
@@ -162,7 +166,9 @@ describe("useManagementSettingsAccess", () => {
     expect(governanceApiMocks.fetchManagementSnapshot).not.toHaveBeenCalled();
   });
 
-  it("初次登录、进入、active focus 各请求一次，退出与 inactive focus 不请求", async () => {
+  it("初次登录和进入各请求一次，短 focus 合并、陈旧 focus 才重验", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     governanceApiMocks.fetchManagementSnapshot.mockResolvedValue(snapshot("org_admin", user, true, false, false));
     const { result, rerender } = renderHook(
       (currentOptions) => useManagementSettingsAccess(currentOptions),
@@ -181,10 +187,15 @@ describe("useManagementSettingsAccess", () => {
     rerender(options({ active: true }));
     await waitFor(() => expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(3));
     act(() => window.dispatchEvent(new FocusEvent("focus")));
+    expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(3);
+    now += 30_001;
+    act(() => window.dispatchEvent(new FocusEvent("focus")));
     await waitFor(() => expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(4));
   });
 
   it("focus 重验保留同 context 的旧 allow，deny 响应后立即关闭", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     const refreshed = deferred<ManagementSnapshotResponseV1>();
     governanceApiMocks.fetchManagementSnapshot
       .mockResolvedValueOnce(snapshot("org_admin", user, true, false, false))
@@ -192,31 +203,71 @@ describe("useManagementSettingsAccess", () => {
     const { result } = renderHook(() => useManagementSettingsAccess(options()));
     await waitFor(() => expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: true }));
 
+    now += 30_001;
     act(() => window.dispatchEvent(new FocusEvent("focus")));
     expect(result.current).toMatchObject({ status: "refreshing", tenantEntryAllowed: true });
     await act(async () => refreshed.resolve(snapshot("member", user, false, false, false)));
     await waitFor(() => expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: false }));
   });
 
-  it("同 context 并发重验的 stale response 不可覆盖新响应", async () => {
-    const stale = deferred<ManagementSnapshotResponseV1>();
-    const latest = deferred<ManagementSnapshotResponseV1>();
+  it("同 context 重验在请求进行中合并重复 focus", async () => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const pending = deferred<ManagementSnapshotResponseV1>();
     governanceApiMocks.fetchManagementSnapshot
       .mockResolvedValueOnce(snapshot("org_admin", user, true, false, false))
-      .mockReturnValueOnce(stale.promise)
-      .mockReturnValueOnce(latest.promise);
+      .mockReturnValueOnce(pending.promise);
     const { result } = renderHook(() => useManagementSettingsAccess(options()));
     await waitFor(() => expect(result.current.status).toBe("ready"));
 
+    now += 30_001;
     act(() => window.dispatchEvent(new FocusEvent("focus")));
     await waitFor(() => expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(2));
     act(() => window.dispatchEvent(new FocusEvent("focus")));
-    await waitFor(() => expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(3));
-    await act(async () => latest.resolve(snapshot("platform_admin", user, false, true, true)));
+    expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(2);
+    await act(async () => pending.resolve(snapshot("platform_admin", user, false, true, true)));
     await waitFor(() => expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: true, platformEntryAllowed: true }));
+  });
 
-    await act(async () => stale.resolve(snapshot("member", user, false, false, false)));
-    expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: true, platformEntryAllowed: true });
+  it.each([
+    ["网络失败", new TypeError("offline")],
+    ["503", Object.assign(new Error("unavailable"), { status: 503 })],
+  ])("同 context 后台重验遇到%s时保留旧 allow", async (_kind, transientError) => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    governanceApiMocks.fetchManagementSnapshot
+      .mockResolvedValueOnce(snapshot("org_admin", user, true, false, false))
+      .mockRejectedValueOnce(transientError);
+    const { result } = renderHook(() => useManagementSettingsAccess(options()));
+    await waitFor(() => expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: true }));
+
+    now += 30_001;
+    act(() => window.dispatchEvent(new FocusEvent("focus")));
+    await waitFor(() => expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: true }));
+  });
+
+  it.each([
+    ["403", Object.assign(new Error("forbidden"), { status: 403 })],
+    ["响应 subject 错配", null],
+  ] as const)("同 context 后台重验遇到%s时立即 fail-closed", async (_kind, rejected) => {
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    governanceApiMocks.fetchManagementSnapshot.mockResolvedValueOnce(snapshot("org_admin", user, true, false, false));
+    if (rejected) {
+      governanceApiMocks.fetchManagementSnapshot.mockRejectedValueOnce(rejected);
+    } else {
+      governanceApiMocks.fetchManagementSnapshot.mockResolvedValueOnce(
+        snapshot("org_admin", { id: "other-user", tenantId: user.tenantId }, true, false, false),
+      );
+    }
+    const { result } = renderHook(() => useManagementSettingsAccess(options()));
+    await waitFor(() => expect(result.current).toMatchObject({ status: "ready", tenantEntryAllowed: true }));
+
+    now += 30_001;
+    act(() => window.dispatchEvent(new FocusEvent("focus")));
+    await waitFor(() => expect(result.current).toMatchObject({ status: "error", tenantEntryAllowed: false, platformEntryAllowed: false }));
+    expect(governanceApiMocks.fetchManagementSnapshot).toHaveBeenCalledTimes(2);
   });
 
   it("active 与登录 context 同时变化只请求一次且立即 fail-closed", async () => {

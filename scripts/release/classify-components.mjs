@@ -44,6 +44,7 @@ const NON_RUNTIME_FILES = new Set([
   '.dockerignore',
   '.env.ecs.example',
   '.gitignore',
+  '.nvmrc',
   '.npmrc',
   '.prettierignore',
   '.prettierrc.json',

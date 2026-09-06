@@ -61,6 +61,12 @@ export interface KyAppInstallationServiceOptions {
    * 未注入即只做 DNS TXT 一条通道（见基线偏差记录）。
    */
   inspectCertificateSans?: (hostname: string) => Promise<string[]>;
+  /**
+   * WP3：安装实例状态或 `registeredDigest` 变化时的进程内通知。
+   * Capability Gateway 用它作为会话工具快照的失效入口（规范 §6.1）。
+   * 只做进程内失效，不承担跨进程一致性（跨进程靠下一次 run 比对 digest 自然重建）。
+   */
+  onInstallationStateChanged?: (installationId: string) => void;
   now?: () => number;
 }
 
@@ -245,6 +251,7 @@ export class KyAppInstallationService {
             now: new Date(this.now()),
           });
         }
+        this.notifyStateChanged(updated.installationId);
         await this.syncAssignments(updated, input.actor.sub);
         return {
           value: updated,
@@ -284,12 +291,22 @@ export class KyAppInstallationService {
           expectedRegisteredDigest: input.expectedRegisteredDigest,
           actor: input.actor.sub,
         });
+        this.notifyStateChanged(value.installationId);
         return {
           value,
           afterDigest: governanceDigest({ registeredDigest: value.registeredDigest }),
         };
       },
     );
+  }
+
+  /** 通知订阅者失效；订阅者抛错不影响安装实例状态机。 */
+  private notifyStateChanged(installationId: string): void {
+    try {
+      this.options.onInstallationStateChanged?.(installationId);
+    } catch {
+      // 失效通知是尽力而为：拿不到通知的会话下一次 run 比对 digest 也会重建。
+    }
   }
 
   async require(installationId: string): Promise<KyAppInstallation> {

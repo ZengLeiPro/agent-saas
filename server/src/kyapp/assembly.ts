@@ -26,10 +26,15 @@ import {
 import { PgKyAppSigningKeyStore } from './keys/store.js';
 import { KyAppSigningKeyService } from './keys/service.js';
 import { createKyAppOutbound, type KyAppOutbound } from './outbound.js';
+import { AppToolSnapshotService } from './gateway/snapshot.js';
+import { createKyAppSnapshotSource } from './gateway/snapshotSource.js';
+import { AppCapabilityToolProvider } from './gateway/toolProvider.js';
+import { setAppCapabilityGateway } from './gateway/runtimeBinding.js';
 import { KyAppSatIssuer } from './sat/issuer.js';
 import { KyAppSuspensionRegistry } from './sat/suspension.js';
 import { PgKyAppSystemStore } from './systems/store.js';
 import { KyAppWorker, createKyAppAlertSink, shouldRunKyAppWorker } from './worker.js';
+import { serverLogger } from '../utils/logger.js';
 
 export interface KyAppAssembly {
   config: KyAppPlatformConfig;
@@ -49,6 +54,8 @@ export interface KyAppAssembly {
   directory: KyAppInstallationDirectory;
   outbound: KyAppOutbound;
   worker: KyAppWorker;
+  /** WP3 Capability Gateway：会话工具快照 + `app__` 工具 provider（规范 §6.1）。 */
+  gateway: { snapshots: AppToolSnapshotService; provider: AppCapabilityToolProvider };
   /** 建表（幂等，跑 governance 迁移 runner）后再启动后台循环。 */
   start(): Promise<void>;
   stop(): void;
@@ -117,6 +124,8 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     systems,
     events: eventStore,
     now,
+    // `installation.*` 与 registeredDigest 变化是会话工具快照的两个失效入口（§6.1）。
+    onInstallationStateChanged: (installationId) => gateway.snapshots.invalidateInstallation(installationId),
     ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
     ...(runtime.membershipStore
@@ -184,6 +193,41 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     alerts,
   });
 
+  // WP3 Capability Gateway（规范 §6.1）。`/me` 用 act=user SAT 直取；
+  // runtime dispatch 手上没有会话 JWT，authBinding 按 AuthEpochAuthority 当前登录派生。
+  const snapshotSource = createKyAppSnapshotSource({
+    systems,
+    ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
+    issuer,
+    outbound,
+    config,
+    logger: { warn: (message) => serverLogger.warn(message) },
+    async isTenantAdmin({ tenantId, userId }) {
+      if (!runtime.membershipStore) return false;
+      const membership = await runtime.membershipStore.getMembership(tenantId, userId);
+      return membership?.status === 'active' && membership.persona === 'org_admin';
+    },
+    resolveAuthBinding: (userId) => {
+      const authority = runtime.authEpochAuthority;
+      if (!authority) return null;
+      const binding = authority.current(userId);
+      if (!binding || binding.fenced) return null;
+      return { authEpoch: binding.authEpoch, generation: binding.generation };
+    },
+  });
+  const snapshots = new AppToolSnapshotService({
+    source: snapshotSource,
+    config: config.gateway,
+    now,
+    logger: { warn: (message) => serverLogger.warn(message) },
+  });
+  const gatewayProvider = new AppCapabilityToolProvider({
+    snapshots,
+    logger: { warn: (message) => serverLogger.warn(message) },
+  });
+  const gateway = { snapshots, provider: gatewayProvider };
+  setAppCapabilityGateway(config.gateway.enabled ? gateway : null);
+
   // 让 `runtimeAssignmentResourceResolver` 的 system_installation 分支拿到真实 store。
   (runtime as { kyAppSystemStore?: PgKyAppSystemStore }).kyAppSystemStore = systems;
   // 登出 / 撤销 / 禁用后立即停签 user SAT（§3.1 残留风险）。
@@ -207,6 +251,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     directory,
     outbound,
     worker,
+    gateway,
     async start() {
       // 六个 store 共用同一套 governance 迁移；跑一次即可，其余靠 IF NOT EXISTS 幂等。
       await systems.init();
@@ -215,6 +260,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     },
     stop() {
       worker.stop();
+      setAppCapabilityGateway(null);
     },
   };
 }

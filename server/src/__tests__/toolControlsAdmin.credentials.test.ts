@@ -101,6 +101,29 @@ describe('tool controls admin WebSearch credential lifecycle', () => {
     while (servers.length > 0) servers.pop()?.close();
   });
 
+  it('保存豆包两源排队设置，经 schema、凭据解析与热更新后仍保留', async () => {
+    const secretVault = new InMemorySecretVault();
+    const onToolSettingsUpdated = vi.fn(async () => undefined);
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ toolControls: {}, webTools: { enabled: true, search: {
+          provider: 'volcengine', apiKey: 'new-plan-key', enableWaiting: true, maxWaitTimeMs: 7000,
+          global: { provider: 'volcengine', apiKey: 'global-plan-key', enableWaiting: false, maxWaitTimeMs: 3000, searchEngine: 'search_std' },
+        } } }),
+      });
+      const body = await readJson(response);
+      expect(response.status, JSON.stringify(body)).toBe(200);
+      expect(body.webTools.search).toMatchObject({ enableWaiting: true, maxWaitTimeMs: 7000,
+        global: { enableWaiting: false, maxWaitTimeMs: 3000, searchEngine: 'search_std' } });
+      expect(JSON.stringify(body)).not.toContain('plan-key');
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.webTools.search.apiKey).toBeUndefined();
+      expect(runtimeConfig.webTools?.search?.maxWaitTimeMs).toBe(7000);
+      expect(onToolSettingsUpdated).toHaveBeenCalled();
+    }, { secretVault, onToolSettingsUpdated });
+  });
+
   it('does not expose a legacy inline global WebSearch apiKey', async () => {
     const raw: any = baseRawConfig();
     raw.webTools.search.global = { provider: 'tavily', apiKey: 'global-legacy-secret' };

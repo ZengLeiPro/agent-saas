@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { serializeSearchSource } from "./webSearchSettings";
 import { ToolDetailPanel } from "@/components/ToolControlsManager/ToolDetailPanel";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -43,8 +44,6 @@ import { useAuth } from "@/contexts/AuthContext";
 const DEFAULT_SEARCH: WebToolsSearchConfig = {
   enabled: true,
   provider: "volcengine",
-  timeoutMs: 8_000,
-  maxResults: 5,
 };
 
 const DEFAULT_FETCH: WebToolsFetchConfig = {
@@ -174,7 +173,7 @@ function assertIntegerRange(label: string, value: number | undefined, min: numbe
   }
 }
 
-function buildWebToolsPayload(
+export function buildWebToolsPayload(
   draft: WebToolsConfig,
   toolControls: ToolControlsConfig,
   allowedContentTypesText: string,
@@ -199,13 +198,9 @@ function buildWebToolsPayload(
   const searchEnabled = isWebToolEnabledInDraft(toolControls, draft, "WebSearch");
   const searchPayload: WebToolsSearchConfig = {};
   if (!searchEnabled) searchPayload.enabled = false;
-  if (search.provider && search.provider !== DEFAULT_SEARCH.provider) searchPayload.provider = search.provider;
-  if (search.endpoint?.trim()) searchPayload.endpoint = search.endpoint.trim();
-  if (searchApiKeyText.trim()) searchPayload.apiKey = searchApiKeyText.trim();
-  else if (search.apiKeyRef?.trim()) searchPayload.apiKeyRef = search.apiKeyRef.trim();
-  else if (search.hasApiKey) searchPayload.hasApiKey = true;
-  if (search.timeoutMs !== undefined && search.timeoutMs !== DEFAULT_SEARCH.timeoutMs) searchPayload.timeoutMs = search.timeoutMs;
-  if (search.maxResults !== undefined && search.maxResults !== DEFAULT_SEARCH.maxResults) searchPayload.maxResults = search.maxResults;
+  Object.assign(searchPayload, serializeSearchSource(search, searchApiKeyText));
+  if (search.global === null) searchPayload.global = null;
+  else if (search.global) searchPayload.global = serializeSearchSource(search.global, search.global.apiKey ?? "");
   if (searchEnabled || Object.keys(searchPayload).length > 1 || searchPayload.enabled !== false) {
     webToolsPayload.search = searchPayload;
   }
@@ -373,9 +368,21 @@ export function ToolControlsManager(): JSX.Element {
   ) => {
     // 单工具 PUT 有独立保存生命周期，但仍携带 revision 防止覆盖较新的治理变更。
     if (!revision) throw new Error("配置版本尚未加载，请先刷新");
-    const response = await updateSingleTool(toolId, { ...payload, expectedRevision: revision });
-    hydrate(response);
-  }, [hydrate, revision]);
+    setSaving(true);
+    try {
+      const response = await updateSingleTool(toolId, { ...payload, expectedRevision: revision });
+      if (response.revision) setRevision(response.revision);
+      setTools(response.tools);
+      const savedTool = response.tools.find((tool) => tool.id === toolId);
+      // 描述单独保存不能覆盖尚未提交的搜索源、密钥与开关草稿。
+      setToolControlsDraft((current) => ({
+        ...current,
+        tools: { ...current.tools, [toolId]: { ...current.tools?.[toolId], descriptionOverride: savedTool?.descriptionOverride } },
+      }));
+    } finally {
+      setSaving(false);
+    }
+  }, [revision]);
 
   const draftVisibleTools = useMemo(
     () => listDraftVisibleTools(tools, toolControlsDraft, webToolsDraft),
@@ -410,6 +417,12 @@ export function ToolControlsManager(): JSX.Element {
         markDirty={markDirty}
         onBack={() => setSelectedToolId(null)}
         saveSingleTool={saveSingleTool}
+        onSaveSettings={() => { void save(); }}
+        settingsDirty={dirty}
+        settingsSaving={saving}
+        settingsError={error}
+        settingsSaved={savedAt !== null}
+
       />
     );
   }
@@ -459,6 +472,7 @@ export function ToolControlsManager(): JSX.Element {
               </div>
               <Switch
                 checked={toolControlsDraft.enabled !== false}
+                disabled={platformReadOnly || saving}
                 onCheckedChange={(checked) => updateToolControls((current) => ({ ...current, enabled: checked }))}
               />
             </div>
@@ -525,7 +539,7 @@ export function ToolControlsManager(): JSX.Element {
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={switchChecked}
-                            disabled={toolControlsDraft.enabled === false}
+                            disabled={platformReadOnly || saving || toolControlsDraft.enabled === false}
                             onCheckedChange={(checked) => updateTool(tool.id, checked)}
                             onClick={(e) => e.stopPropagation()}
                             aria-label={`启用 ${tool.name}`}

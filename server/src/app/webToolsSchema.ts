@@ -34,6 +34,9 @@ export function buildWebToolsSchemas(
     timeoutMs: z.number().int().positive().max(60_000).optional(),
     maxResults: z.number().int().min(1).max(10).optional(),
     searchDepth: z.enum(['basic', 'advanced']).optional(),
+    searchEngine: z.string().min(1).optional(),
+    enableWaiting: z.boolean().optional(),
+    maxWaitTimeMs: z.number().int().min(1).max(10_000).optional(),
   }).superRefine((value, ctx) => {
     applyApiKeyCredentialRefine(value, ctx, { pathPrefix: ['global'], allowEmpty: true });
   }).optional();
@@ -48,6 +51,8 @@ export function buildWebToolsSchemas(
     /** 智谱计费档位：search_std ¥0.01/次、search_pro ¥0.03/次。 */
     searchEngine: z.string().min(1).optional(),
     searchDepth: z.enum(['basic', 'advanced']).optional(),
+    enableWaiting: z.boolean().optional(),
+    maxWaitTimeMs: z.number().int().min(1).max(10_000).optional(),
     global: globalSearch,
   }).superRefine((value, ctx) => {
     applyApiKeyCredentialRefine(value, ctx, { allowEmpty: true });

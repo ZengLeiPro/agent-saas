@@ -82,12 +82,16 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
   router.get('/health', (req, res) => {
     const draining = options.getIsDraining?.() ?? false;
     if (!req.user) {
-      res.json({ status: draining ? 'draining' : 'ok' });
+      res.json({
+        status: draining ? 'draining' : 'ok',
+        authEnabled: config.auth?.enabled === true,
+      });
       return;
     }
     const mem = process.memoryUsage();
     res.json({
       status: draining ? 'draining' : 'ok',
+      authEnabled: config.auth?.enabled === true,
       uptime: Math.floor(process.uptime()),
       memory: {
         rss: Math.round(mem.rss / 1024 / 1024),

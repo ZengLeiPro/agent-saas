@@ -526,7 +526,7 @@ export function DesktopLayout(props: LayoutProps) {
           )}
         </header>
 
-        {!isOnline && (
+        {isOnline === false && (
           <div className="shrink-0 bg-warning px-4 py-1.5 text-center text-xs font-medium text-foreground">
             网络未连接
           </div>

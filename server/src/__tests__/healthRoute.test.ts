@@ -74,6 +74,21 @@ describe('health router', () => {
     for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
+  it('publishes the non-sensitive auth capability on public health', async () => {
+    const disabled = await startHealthServer({}, { ...APP_CONFIG, auth: { enabled: false } });
+    const enabled = await startHealthServer({}, { ...APP_CONFIG, auth: { enabled: true } });
+    servers.push(disabled, enabled);
+
+    await expect((await disabled.request('/api/health')).json()).resolves.toMatchObject({
+      status: 'ok',
+      authEnabled: false,
+    });
+    await expect((await enabled.request('/api/health')).json()).resolves.toMatchObject({
+      status: 'ok',
+      authEnabled: true,
+    });
+  });
+
   it('reports the same fail-closed TTS capability used by server and clients', async () => {
     const requestUser = { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-a' };
     const disabled = await startHealthServer(

@@ -8,7 +8,8 @@
  * 3. 顺带把后台循环挂起来（仅 runtime worker 角色），并把停止钩子挂进 `AppRuntime`，
  *    由 `index.ts` 的 `shutdownCleanup` 统一调用（与 `notionAuthFlowShutdown` 等同一模式）。
  *
- * `kyApp` 未配置（或治理库不是 PG、SecretVault 未装配）→ 整体不注册，返回 `false`。
+ * `kyApp` 未配置（或治理库不是 PG、SecretVault 未装配）→ 真实能力路由不注册，返回 `null`；
+ * 壳层稳定的空 read model 由 `registerRoutes` 在鉴权装配完成后统一兜底。
  */
 import type { Express } from 'express';
 
@@ -40,6 +41,17 @@ export interface RegisterKyAppRoutesOptions {
   toolRegistrationDryRun?: KyAppToolRegistrationDryRun;
   /** 测试注入：跳过建表与后台循环。 */
   autoStart?: boolean;
+}
+
+/**
+ * The Web shell always consumes this read model. Keep the endpoint stable when
+ * the optional kyApp subsystem is disabled so absence is represented by an
+ * empty capability set rather than a noisy 404 feature probe.
+ */
+export function registerUnavailableMineRoute(app: Express): void {
+  app.get('/api/systems/mine', (_req, res) => {
+    res.json({ installations: [] });
+  });
 }
 
 /**

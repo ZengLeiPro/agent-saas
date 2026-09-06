@@ -12,6 +12,7 @@ import type { Server } from "node:http";
 import jwt from "jsonwebtoken";
 
 import { createAuthMiddleware } from "../auth/middleware.js";
+import { registerUnavailableMineRoute } from "../app/kyAppRoutes.js";
 
 const JWT_SECRET = "test-secret-test-secret-test-secret";
 
@@ -39,6 +40,7 @@ describe("auth middleware public routes", () => {
     app.get("/api/mcp/oauth/callback", (_req, res) => res.json({ ok: true }));
     app.get("/api/mcp/oauth/client-metadata", (_req, res) => res.json({ ok: true }));
     app.get("/api/protected", (_req, res) => res.json({ ok: true }));
+    registerUnavailableMineRoute(app);
     app.get("/api/taskboard/tasks/:taskId/attachments/:attachmentId", (_req, res) => res.json({ ok: true }));
     app.get("/api/taskboard/tasks/:taskId/attachments", (_req, res) => res.json({ ok: true }));
 
@@ -124,5 +126,18 @@ describe("auth middleware public routes", () => {
 
   it("非公开路径无 token 仍 401（放行未扩大化）", async () => {
     expect((await fetch(`${baseUrl}/api/protected`)).status).toBe(401);
+  });
+
+  it("停用的 kyApp read model 仍受全局鉴权保护", async () => {
+    expect((await fetch(`${baseUrl}/api/systems/mine`)).status).toBe(401);
+    const token = jwt.sign(
+      { sub: "user-1", username: "alice", role: "user", tenantId: "tenant-1" },
+      JWT_SECRET,
+    );
+    const response = await fetch(`${baseUrl}/api/systems/mine`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ installations: [] });
   });
 });

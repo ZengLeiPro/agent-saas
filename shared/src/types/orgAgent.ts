@@ -46,6 +46,21 @@ export interface OrgAgentRuntimePolicy {
     denyServers: string[];
     denyTools: string[];
   };
+  /**
+   * 定制项目能力（`app__<systemId>__<capabilityId>`，WP3 / 规范 §6.1），与 `mcp` 平行。
+   * 名单里写**规范化后**的 systemId / capabilityId（`-`/`.` 都变 `_`），
+   * `capabilityAllowlist` / `denyCapabilities` 也接受完整工具名。
+   *
+   * 注意：`tools.allowlist` 非空时会**静默滤掉**任何未列名工具，包括全部 `app__*`。
+   * 要给专职 Agent 开定制项目能力，要么让 `tools.allowlist` 为 null，
+   * 要么把对应工具名一并写进 `tools.allowlist`。
+   */
+  apps: {
+    systemAllowlist: string[] | null;
+    capabilityAllowlist: string[] | null;
+    denySystems: string[];
+    denyCapabilities: string[];
+  };
   execution: { allowedTargets: OrgAgentExecutionTarget[] | null };
 }
 

@@ -3,15 +3,18 @@
  * 回放消息走**与真实会话完全相同**的渲染路径（这里是 `chat/MessageList`），
  * 演示能表达的形态 = 真实会话能表达的形态；剧本只提供数据，不另起一套皮。
  *
- * 剧本来源见 `lib/capabilities/replayScript.ts`：目录接口自带的 presentation
- * 章节，或按公开业务定义合成的 6 章兜底。头部常驻「合成场景演示」标识与
- * limitation 文案，不暗示已连接客户系统。
+ * 剧本有两个来源，优先级从高到低：
+ * 1. shared 的手写 Hero 剧本（`shared/src/scenarios/replay/`，与 Web 同一份数据），
+ *    由 `HeroReplayBody` 渲染；
+ * 2. 目录接口自带的 presentation 章节或按公开业务定义合成的 6 章兜底
+ *    （`lib/capabilities/replayScript.ts`），头部常驻「合成场景演示」标识与
+ *    limitation 文案，不暗示已连接客户系统。
  *
  * 人审是工作流的一部分：`interaction.kind === 'confirm'` 的章节会阻断「下一步」，
  * 必须点「批准并继续」才推进（Web 回放器同语义）。
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Modal, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CatalogScenarioPublic } from '@agent/shared';
 import { MessageList } from '../chat/MessageList';
@@ -22,6 +25,8 @@ import {
   replayMessagesUpTo,
   replayStepRequiresApproval,
 } from '../../lib/capabilities/replayScript';
+import { loadHeroReplayScript, type ReplayScript } from '../../lib/capabilities/heroReplay';
+import { HeroReplayBody } from './HeroReplayBody';
 
 export interface ScenarioReplayModalProps {
   scenario: CatalogScenarioPublic | null;
@@ -29,6 +34,62 @@ export interface ScenarioReplayModalProps {
 }
 
 export function ScenarioReplayModal({ scenario, onClose }: ScenarioReplayModalProps) {
+  const [hero, setHero] = useState<ReplayScript | null>(null);
+  const [resolved, setResolved] = useState(false);
+
+  // 场景一变就重新解析：手写剧本命中就用 Hero，未命中回落章节合成。
+  useEffect(() => {
+    if (!scenario) {
+      setHero(null);
+      setResolved(false);
+      return;
+    }
+    let cancelled = false;
+    setHero(null);
+    setResolved(false);
+    loadHeroReplayScript(scenario)
+      .then((script) => {
+        if (cancelled) return;
+        setHero(script);
+        setResolved(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setHero(null);
+        setResolved(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scenario]);
+
+  if (!scenario) return null;
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose} testID="scenario-replay-modal">
+      {!resolved ? (
+        <View style={LOADING_STYLES.root}>
+          <ActivityIndicator testID="scenario-replay-loading" />
+        </View>
+      ) : hero ? (
+        <HeroReplayBody script={hero} onClose={onClose} />
+      ) : (
+        <SyntheticReplayBody scenario={scenario} onClose={onClose} />
+      )}
+    </Modal>
+  );
+}
+
+const LOADING_STYLES = StyleSheet.create({
+  root: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+});
+
+function SyntheticReplayBody({
+  scenario,
+  onClose,
+}: {
+  scenario: CatalogScenarioPublic;
+  onClose: () => void;
+}) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [stepIndex, setStepIndex] = useState(0);
@@ -105,11 +166,10 @@ export function ScenarioReplayModal({ scenario, onClose }: ScenarioReplayModalPr
     onClose();
   }, [onClose]);
 
-  if (!scenario || !script) return null;
+  if (!script) return null;
 
   return (
-    <Modal visible animationType="slide" onRequestClose={close} testID="scenario-replay-modal">
-      <View style={styles.root}>
+    <View style={styles.root}>
         <View style={styles.header}>
           <View style={styles.headerRow}>
             <Text style={styles.title} numberOfLines={1}>
@@ -165,8 +225,7 @@ export function ScenarioReplayModal({ scenario, onClose }: ScenarioReplayModalPr
               testID="replay-next"
             />
           </View>
-        </View>
       </View>
-    </Modal>
+    </View>
   );
 }

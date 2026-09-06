@@ -8,14 +8,14 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ScenarioReplayView } from './ScenarioReplayView';
 import source from './ScenarioReplayView.tsx?raw';
-import { knowledgeQaScript } from './knowledgeQaScript';
-import { deadlineWatchScript } from './deadlineWatchScript';
-import type { ReplayScript } from './types';
+import { knowledgeQaScript } from '@agent/shared/scenarios/replay/knowledgeQaScript';
+import { deadlineWatchScript } from '@agent/shared/scenarios/replay/deadlineWatchScript';
+import type { ReplayScript } from '@agent/shared/scenarios/replay/types';
 import { makeWorkflowScenario } from '../workflowTestFixtures';
 import {
   buildTechnicalInquiryTraceScript,
   TECHNICAL_INQUIRY_TRACE_SCENARIO_ID,
-} from './technicalInquiryTraceScript';
+} from '@agent/shared/scenarios/replay/technicalInquiryTraceScript';
 
 let mobileViewport = false;
 

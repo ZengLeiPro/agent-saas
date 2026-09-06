@@ -64,6 +64,7 @@ export type {
   WsSyncPendingInteractionSnapshot,
   WsSyncRuntimeSnapshot,
   WsSyncSessionSnapshot,
+  WsToolConfirmationCard,
 } from "./ws";
 export type {
   RuntimeFailureKind,

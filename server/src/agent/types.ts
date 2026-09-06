@@ -69,6 +69,11 @@ export interface InteractionEvent {
   displayName?: string;
   toolInput?: Record<string, unknown>;
   questions?: AskUserQuestion[];
+  /**
+   * WP3 §6.2-2：外部系统写操作的二次确认卡片。**可选**——
+   * 只有 `app__` 的 `external_write` 才有，其余工具与旧调用方一律不带。
+   */
+  confirmation?: import('@agent/shared').WsToolConfirmationCard;
 }
 
 export interface InteractionResponse {

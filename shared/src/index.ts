@@ -87,6 +87,7 @@ export type {
   WsBlockType,
   WsAskUserQuestion,
   WsEvent,
+  WsToolConfirmationCard,
   RuntimeFailureKind,
   RuntimeRecoveryAction,
   SandboxWorkloadDescriptor,
@@ -655,6 +656,7 @@ export {
   isSkillTool,
   normalizeInternalToolNameStrategy,
   resolveMcpToolNameStrategy,
+  resolveAppToolNameStrategy,
   resolveSkillToolNameStrategy,
   composeToolNameResolver,
 } from './lib/toolDisplay';

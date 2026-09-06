@@ -13,11 +13,18 @@ import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
-import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationSql } from '../../context/lifecycle/migration.js';
+import {
+  buildContextRetentionMigrationSql,
+  buildContextRetentionRetryMigrationSql,
+} from '../../context/lifecycle/migration.js';
 import { governanceTablePrefix } from './governanceTablePrefix.js';
 export { governanceTablePrefix } from './governanceTablePrefix.js';
 
-export const GOVERNANCE_SCHEMA_VERSION = 41;
+/**
+ * 最高迁移版本号。发布分支必须保持版本连续，防止并行工作包遗漏迁移。
+ * 需要「全部版本号」或「迁移条数」的地方一律用 `governanceMigrationVersions()`。
+ */
+export const GOVERNANCE_SCHEMA_VERSION = 43;
 
 export type GovernancePgPool = pg.Pool;
 type GovernanceMigration = {
@@ -49,14 +56,22 @@ function migrations(prefix: string): GovernanceMigration[] {
   const resourceReferences = `${prefix}_resource_references`;
   const managedAgents = `${prefix}_managed_agents`;
   const managedAgentVersions = `${prefix}_managed_agent_versions`;
-  const governedSkills = `${prefix}_governed_skills`, governedSkillVersions = `${prefix}_governed_skill_versions`, skillCandidates = `${prefix}_skill_candidates`;
-  const changeJobs = `${prefix}_governance_change_jobs`, changeJobDomains = `${prefix}_governance_change_job_domains`;
-  const migrationControl = `${prefix}_governance_migration_control`, migrationDomains = `${prefix}_governance_migration_domains`;
+  const governedSkills = `${prefix}_governed_skills`,
+    governedSkillVersions = `${prefix}_governed_skill_versions`,
+    skillCandidates = `${prefix}_skill_candidates`;
+  const changeJobs = `${prefix}_governance_change_jobs`,
+    changeJobDomains = `${prefix}_governance_change_job_domains`;
+  const migrationControl = `${prefix}_governance_migration_control`,
+    migrationDomains = `${prefix}_governance_migration_domains`;
   const shadowDifferences = `${prefix}_governance_shadow_differences`;
-  const contentAccessGrants = `${prefix}_content_access_grants`, projectionOutbox = `${prefix}_governance_projection_outbox`;
-  const environmentInstances = `${prefix}_environment_instances`, guardrailEvents = `${prefix}_guardrail_events`;
-  const directoryGroups = `${prefix}_directory_groups`, directoryGroupMembers = `${prefix}_directory_group_members`;
-  const oauthGrants = `${prefix}_oauth_grants`, oauthApprovalRecords = `${prefix}_oauth_approval_records`;
+  const contentAccessGrants = `${prefix}_content_access_grants`,
+    projectionOutbox = `${prefix}_governance_projection_outbox`;
+  const environmentInstances = `${prefix}_environment_instances`,
+    guardrailEvents = `${prefix}_guardrail_events`;
+  const directoryGroups = `${prefix}_directory_groups`,
+    directoryGroupMembers = `${prefix}_directory_group_members`;
+  const oauthGrants = `${prefix}_oauth_grants`,
+    oauthApprovalRecords = `${prefix}_oauth_approval_records`;
   const nativeOAuthHandoffs = `${prefix}_native_oauth_handoffs`;
 
   return [
@@ -892,8 +907,16 @@ function migrations(prefix: string): GovernanceMigration[] {
     {
       version: 18,
       statements: governanceV18Statements({
-        prefix, changeJobs, changeJobDomains, assignments, directoryGroups, directoryGroupMembers, memberships,
-        oauthGrants, oauthApprovalRecords, nativeOAuthHandoffs,
+        prefix,
+        changeJobs,
+        changeJobDomains,
+        assignments,
+        directoryGroups,
+        directoryGroupMembers,
+        memberships,
+        oauthGrants,
+        oauthApprovalRecords,
+        nativeOAuthHandoffs,
       }),
     },
     ...agentDwsMigrations(prefix),
@@ -905,8 +928,10 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 26, statements: buildContextPhase4MigrationSql(prefix) },
     {
       version: 27,
-      statements: [`ALTER TABLE ${changeJobDomains}
-        ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`],
+      statements: [
+        `ALTER TABLE ${changeJobDomains}
+        ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`,
+      ],
     },
     { version: 28, statements: buildContextRetentionMigrationSql(prefix) },
     {
@@ -949,51 +974,14 @@ function migrations(prefix: string): GovernanceMigration[] {
   ];
 }
 
-export class PgGovernanceMigrationRunner {
-  readonly schemaVersionsTable: string;
-  readonly prefix: string;
-
-  constructor(private readonly pool: GovernancePgPool, tablePrefix?: string) {
-    this.prefix = governanceTablePrefix(tablePrefix);
-    this.schemaVersionsTable = `${this.prefix}_governance_schema_versions`;
-  }
-
-  async run(targetVersion = Number.POSITIVE_INFINITY): Promise<void> {
-    const client = await this.pool.connect();
-    const lockKey = `${this.schemaVersionsTable}:migrate`;
-    try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.schemaVersionsTable} (
-          version INTEGER PRIMARY KEY,
-          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      const appliedResult = await client.query<{ version: number }>(
-        `SELECT version FROM ${this.schemaVersionsTable} ORDER BY version`,
-      );
-      const applied = new Set(appliedResult.rows.map(row => Number(row.version)));
-
-      for (const migration of migrations(this.prefix)) {
-        if (migration.version > targetVersion || applied.has(migration.version)) continue;
-        await client.query('BEGIN');
-        try {
-          for (const statement of migration.statements) {
-            await client.query(statement);
-          }
-          await client.query(
-            `INSERT INTO ${this.schemaVersionsTable} (version) VALUES ($1)`,
-            [migration.version],
-          );
-          await client.query('COMMIT');
-        } catch (error) {
-          await client.query('ROLLBACK').catch(() => undefined);
-          throw error;
-        }
-      }
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
-      client.release();
-    }
-  }
+/** 全部迁移版本号（严格升序且连续）。 */
+export function governanceMigrationVersions(): number[] {
+  return migrations(governanceTablePrefix()).map((migration) => migration.version);
 }
+
+/** 给外提出去的 runner 用；本模块之外不应直接消费语句列表。 */
+export function governanceMigrationStatements(prefix: string) {
+  return migrations(prefix);
+}
+
+export { PgGovernanceMigrationRunner } from './migrationRunner.js';

@@ -216,6 +216,11 @@ export function unavailableToolMessage(toolName: string): string {
   if (toolName.startsWith('mcp__')) {
     return `MCP tool unavailable: ${toolName}（当前授权/租户策略/全局开关不允许，或该工具 schema 已变化；请重新授权或新建会话后重试）`;
   }
+  // WP3：定制项目能力（规范 §6.1）。工具面按会话冻结，因此「不在本轮」= 系统停用 /
+  // 能力关闭 / 登记 digest 变了，客户面统一按「新会话生效」引导，不写技术归因。
+  if (toolName.startsWith('app__')) {
+    return `tool unavailable: ${toolName}（该系统的这个能力当前不可用；能力变更将在新会话生效）`;
+  }
   return `tool unavailable: ${toolName}（不在本轮可用工具集中）`;
 }
 

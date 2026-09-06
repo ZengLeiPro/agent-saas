@@ -4,6 +4,8 @@ import { governanceV38SkillPresentationStatements } from './v38SkillPresentation
 import { governanceV39OrgGroupBindingIdentityStatements } from './v39OrgGroupBindingIdentityMigration.js';
 import { governanceV40DwsDeliveryAccountIdentityStatements } from './v40DwsDeliveryAccountIdentityMigration.js';
 import { governanceV41KyAppSystemStatements } from './v41KyAppSystemMigration.js';
+import { governanceV42KyAppDirectoryStatements } from './v42KyAppDirectoryMigration.js';
+import { governanceV43KyAppSessionToolSnapshotStatements } from './v43KyAppSessionToolSnapshotMigration.js';
 
 export function governanceLatestMigrations(prefix: string) {
   return [
@@ -13,5 +15,7 @@ export function governanceLatestMigrations(prefix: string) {
     { version: 39, statements: governanceV39OrgGroupBindingIdentityStatements(prefix) },
     { version: 40, statements: governanceV40DwsDeliveryAccountIdentityStatements(prefix) },
     { version: 41, statements: governanceV41KyAppSystemStatements(prefix) },
+    { version: 42, statements: governanceV42KyAppDirectoryStatements(prefix) },
+    { version: 43, statements: governanceV43KyAppSessionToolSnapshotStatements(prefix) },
   ];
 }

@@ -351,6 +351,7 @@ function EffectiveSummary({ config, platformTools }: { config: Record<string, un
   const context = (config.context ?? {}) as { modules?: string[] };
   const skills = (config.skills ?? {}) as { defaultSkillIds?: string[]; allowlist?: string[] | null; denylist?: string[] };
   const mcp = (config.mcp ?? {}) as { serverAllowlist?: string[] | null; toolAllowlist?: string[] | null; denyServers?: string[]; denyTools?: string[] };
+  const apps = (config.apps ?? {}) as { systemAllowlist?: string[] | null; capabilityAllowlist?: string[] | null; denySystems?: string[]; denyCapabilities?: string[] };
   const memory = (config.memory ?? {}) as { scope?: string };
   const execution = (config.execution ?? {}) as { allowedTargets?: string[] | null };
   const catalog = new Set(platformTools.catalog);
@@ -371,6 +372,7 @@ function EffectiveSummary({ config, platformTools }: { config: Record<string, un
       <div>工具：平台当前有效 {effective.length} 项{tools.allowlist ? ` / 配置档允许 ${tools.allowlist.length} 项` : ""}{tools.denylist?.length ? `，配置档禁止 ${tools.denylist.length} 项` : ""}</div>
       <div>技能：默认/推荐 {skills.defaultSkillIds?.length ?? 0} 项；{skills.allowlist ? `允许 ${skills.allowlist.length} 项` : "继承现有有效集"}{skills.denylist?.length ? `，禁止 ${skills.denylist.length} 项` : ""}</div>
       <div>MCP：{mcp.serverAllowlist ? `${mcp.serverAllowlist.length} 个 Server` : "继承现有 Server"}{mcp.toolAllowlist ? ` / ${mcp.toolAllowlist.length} 个工具` : ""}{(mcp.denyServers?.length || mcp.denyTools?.length) ? `，禁止 ${(mcp.denyServers?.length ?? 0) + (mcp.denyTools?.length ?? 0)} 项` : ""}</div>
+      <div>定制系统：{apps.systemAllowlist ? `${apps.systemAllowlist.length} 个系统` : "继承现有系统"}{apps.capabilityAllowlist ? ` / ${apps.capabilityAllowlist.length} 个能力` : ""}{(apps.denySystems?.length || apps.denyCapabilities?.length) ? `，禁止 ${(apps.denySystems?.length ?? 0) + (apps.denyCapabilities?.length ?? 0)} 项` : ""}</div>
       <div>执行环境：{execution.allowedTargets?.join(" / ") || "继承当前入口"}</div>
       <div>Shell：{capabilities.shell ? "开放（不是权限边界）" : "关闭"}</div>
       <div>后台 / 交互 / 子 Agent / 排程：{["backgroundTasks", "interaction", "subagents", "scheduling"].filter((key) => capabilities[key]).join(" / ") || "均关闭"}</div>

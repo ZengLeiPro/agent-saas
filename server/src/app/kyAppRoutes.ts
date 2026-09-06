@@ -14,6 +14,7 @@ import type { Express } from 'express';
 
 import { buildKyAppAssembly, type KyAppAssembly } from '../kyapp/assembly.js';
 import { loadKyAppConfig, resolveKyAppConfig, KyAppConfigError } from '../kyapp/config.js';
+import { createKyAppDirectoryRouter } from '../kyapp/routes/directory.js';
 import {
   createKyAppHandshakeRouter,
   createTenantAdminResolver,
@@ -24,6 +25,7 @@ import { createKyAppMineRouter } from '../kyapp/routes/mine.js';
 import { createKyAppShellEventsRouter } from '../kyapp/routes/shellEvents.js';
 import { createKyAppSystemsRouter } from '../kyapp/routes/systems.js';
 import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.js';
+import { createKyAppToolRegistrationDryRun } from '../kyapp/gateway/registrationDryRun.js';
 import { serverLogger } from '../utils/logger.js';
 import type { AppRuntime } from './runtime.js';
 
@@ -80,9 +82,9 @@ export function registerKyAppRoutes(
     createKyAppSystemsRouter({
       systems: assembly.systems,
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
-      ...(options.toolRegistrationDryRun
-        ? { toolRegistrationDryRun: options.toolRegistrationDryRun }
-        : {}),
+      // WP3 填充 WP2a 预留的钩子：未显式注入时用 Gateway 自带的真实注册 dry-run
+      // （`skipped` 不等于通过，所以这里必须给默认值，不能留空）。
+      toolRegistrationDryRun: options.toolRegistrationDryRun ?? createKyAppToolRegistrationDryRun(),
     }),
   );
   app.use(
@@ -117,6 +119,18 @@ export function registerKyAppRoutes(
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     }),
   );
+  // WP2b 组织目录（§3.6）：`userStore` 缺失时整套目录不装配，此处也就不注册。
+  if (assembly.directoryChangeLog && assembly.directorySnapshots) {
+    app.use(
+      KY_APP_CONTRACT_BASE_PATH,
+      createKyAppDirectoryRouter({
+        credentials: assembly.credentials,
+        getInstallation: (installationId) => assembly.systems.getInstallation(installationId),
+        snapshots: assembly.directorySnapshots,
+        changes: assembly.directoryChangeLog,
+      }),
+    );
+  }
   app.use(
     '/api',
     createKyAppMineRouter({

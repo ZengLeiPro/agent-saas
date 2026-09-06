@@ -62,10 +62,12 @@ test('收尾模式跳过全部部署动作，沿用生产锁与同一次审批',
     'utf8',
   );
   const blocks = workflow.split(/(?=      - name: )/u);
-  const first = blocks.findIndex((block) => block.includes('- name: Fail-closed revalidate'));
-  const last = blocks.findIndex((block) => block.includes('- name: Record truthful final outcome'));
+  const first = blocks.findIndex((block) =>
+    block.includes('- name: 以失败关闭方式复核确定性测试环境证据并记录人工批准'),
+  );
+  const last = blocks.findIndex((block) => block.includes('- name: 记录真实最终结果'));
   for (const block of blocks.slice(first, last + 1)) {
-    if (block.includes('- name: Configure production SSH')) continue;
+    if (block.includes('- name: 配置生产环境 SSH')) continue;
     assert.match(block, /if: env\.PROMOTION_FINALIZATION_MODE == 'promote'/u, block.split('\n')[0]);
   }
   assert.match(

@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import { cn } from "@/lib/utils";
-import { getReplayScript } from "./replay/registry";
+import { getReplayScript } from "@agent/shared/scenarios/replay/registry";
 import { isHookScenario } from "./workflowUi";
 import type { WorkflowScenarioCardProps } from "./WorkflowScenarioCard";
 

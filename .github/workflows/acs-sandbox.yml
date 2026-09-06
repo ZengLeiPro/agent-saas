@@ -1,4 +1,4 @@
-name: ACS CI / Deploy
+name: ACS CI
 
 on:
   pull_request:
@@ -32,12 +32,12 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout pull request revision
+      - name: 检出拉取请求版本
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Classify ACS impact
+      - name: 判定 ACS 影响范围
         id: impact
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -79,32 +79,32 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         if: steps.impact.outputs.required == 'true'
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         if: steps.impact.outputs.required == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         if: steps.impact.outputs.required == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck server and orchestrator
+      - name: 检查服务端与编排器类型
         if: steps.impact.outputs.required == 'true'
         run: |
           pnpm -F server typecheck
           pnpm -F acs-orchestrator typecheck
 
-      - name: Test orchestrator
+      - name: 测试编排器
         if: steps.impact.outputs.required == 'true'
         run: pnpm -F acs-orchestrator test
 
-      - name: Test server ACS lifecycle and admission contracts
+      - name: 测试服务端 ACS 生命周期与准入契约
         if: steps.impact.outputs.required == 'true'
         run: >-
           pnpm -F server exec vitest run
@@ -130,14 +130,14 @@ jobs:
           src/dws/businessToolProvider.test.ts
           src/dws/requesterIdentityResolver.test.ts
 
-      - name: Test ACS staging and production lifecycle gates
+      - name: 测试 ACS 测试及生产环境生命周期门禁
         if: steps.impact.outputs.required == 'true'
         run: >-
           node --test
           scripts/release/staging-workflow.test.mjs
           scripts/release/promotion-workflow.test.mjs
 
-      - name: Test ACS operational scripts
+      - name: 测试 ACS 运维脚本
         if: steps.impact.outputs.required == 'true'
         run: >-
           python3 -m unittest
@@ -145,7 +145,7 @@ jobs:
           scripts/test_acr_webhook_redelivery.py
 
   changes:
-    name: Classify ACS Impact
+    name: 判定 ACS 影响范围
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: github.event_name != 'pull_request'
@@ -156,14 +156,14 @@ jobs:
       reason: ${{ steps.filter.outputs.reason }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       # 所有 main push 的分类逻辑与 build-deploy 部署必要性门禁共用
       # .github/scripts/acs-classify.sh，避免触发路径与部署判定漂移。
-      - name: Classify changed files
+      - name: 判定变更文件范围
         id: filter
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -222,37 +222,37 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   contract-check:
-    name: ACS Contract Check
+    name: ACS 契约检查
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.contract_check == 'true'
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck server and orchestrator
+      - name: 检查服务端与编排器类型
         run: |
           pnpm -F server typecheck
           pnpm -F acs-orchestrator typecheck
 
-      - name: Test orchestrator
+      - name: 测试编排器
         run: pnpm -F acs-orchestrator test
 
-      - name: Test server ACS lifecycle and admission contracts
+      - name: 测试服务端 ACS 生命周期与准入契约
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/acsDeployWorkflowContract.test.ts
@@ -277,13 +277,13 @@ jobs:
           src/dws/businessToolProvider.test.ts
           src/dws/requesterIdentityResolver.test.ts
 
-      - name: Test ACS staging and production lifecycle gates
+      - name: 测试 ACS 测试及生产环境生命周期门禁
         run: >-
           node --test
           scripts/release/staging-workflow.test.mjs
           scripts/release/promotion-workflow.test.mjs
 
-      - name: Test ACS operational scripts
+      - name: 测试 ACS 运维脚本
         run: >-
           python3 -m unittest
           scripts/test_acs_operational_scripts.py
@@ -302,37 +302,37 @@ jobs:
   #   (branches:main, Dockerfile /, tag=${GIT_PUSH_DATE:yyyyMMddHHmm}-${GIT_COMMIT_ID:6},
   #   linux/amd64, push webhook 自动构建、海外源智能加速开启、缓存开启)。
   gate:
-    name: Gate (typecheck + test)
+    name: 门禁（类型检查 + 测试）
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.publish == 'true'
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck orchestrator and server
+      - name: 检查编排器与服务端类型
         run: |
           pnpm -F acs-orchestrator typecheck
           pnpm -F server typecheck
 
-      - name: Test orchestrator
+      - name: 测试编排器
         run: pnpm -F acs-orchestrator test
 
-      - name: Test server ACS lifecycle and admission contracts
+      - name: 测试服务端 ACS 生命周期与准入契约
         run: >-
           pnpm -F server exec vitest run
           src/__tests__/acsDeployWorkflowContract.test.ts
@@ -357,20 +357,20 @@ jobs:
           src/dws/businessToolProvider.test.ts
           src/dws/requesterIdentityResolver.test.ts
 
-      - name: Test ACS staging and production lifecycle gates
+      - name: 测试 ACS 测试及生产环境生命周期门禁
         run: >-
           node --test
           scripts/release/staging-workflow.test.mjs
           scripts/release/promotion-workflow.test.mjs
 
-      - name: Test ACS operational scripts
+      - name: 测试 ACS 运维脚本
         run: >-
           python3 -m unittest
           scripts/test_acs_operational_scripts.py
           scripts/test_acr_webhook_redelivery.py
 
   build-deploy:
-    name: ACR Cloud Build and Deploy
+    name: ACR 云构建与部署
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 75
@@ -398,12 +398,12 @@ jobs:
       RELEASE_RECORD_OSS_REGION: cn-shenzhen
 
     steps:
-      - name: Checkout exact dispatch commit
+      - name: 检出手动触发的精确提交
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Verify dispatch still targets latest main
+      - name: 确认手动触发仍指向最新 main
         run: |
           set -euo pipefail
           git fetch --quiet --no-tags origin main
@@ -414,7 +414,7 @@ jobs:
           fi
           echo "Dispatch target is current main: $GITHUB_SHA"
 
-      - name: Configure SSH
+      - name: 配置 SSH
         run: |
           set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
@@ -440,7 +440,7 @@ jobs:
       # 路径, 明确 skip（不部署、不 prewarm）。任何读取/解析失败一律
       # fail-open 继续部署——门禁失效不得阻塞发布。
       # 强制部署: gh workflow run acs-sandbox.yml -f force=true
-      - name: Deploy necessity gate
+      - name: 部署必要性门禁
         id: necessity
         env:
           FORCE_DEPLOY: ${{ inputs.force }}
@@ -524,7 +524,7 @@ jobs:
             echo "deploy skipped: no ACS-relevant change since $prod_sha6"
           fi
 
-      - name: Install aliyun CLI
+      - name: 安装阿里云 CLI
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           # 下载/解包放 RUNNER_TEMP: 本 step 已在 checkout 之后, 落在工作目录
@@ -541,7 +541,7 @@ jobs:
       # 避免 orchestrator 源码与 sandbox image 版本错配。ACR 若没有为本 SHA
       # 创建记录，3 分钟内快速失败；记录进入队列后最多等待 20 分钟，开始
       # 构建后另给 30 分钟，避免排队时间提前耗尽实际构建预算。
-      - name: Wait for ACR auto-build of HEAD (poll every 30s)
+      - name: 等待 ACR 自动构建 HEAD（每 30 秒轮询）
         id: wait
         if: steps.necessity.outputs.deploy_needed == 'true'
         env:
@@ -721,7 +721,7 @@ jobs:
             sleep 30
           done
 
-      - name: Resolve immutable ACS image
+      - name: 解析不可变 ACS 镜像
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
@@ -775,22 +775,22 @@ jobs:
             echo "ACS_IMAGE_TAG=$image_tag"
           } >> "$GITHUB_ENV"
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         if: steps.necessity.outputs.deploy_needed == 'true'
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         if: steps.necessity.outputs.deploy_needed == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install deployment dependencies
+      - name: 安装部署依赖
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Pack and identify orchestrator and managed unit release
+      - name: 打包并标识编排器及托管单元版本
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
@@ -848,7 +848,7 @@ jobs:
             echo "COMPAT_RELEASE_ID=$release_id"
           } >> "$GITHUB_ENV"
 
-      - name: Persist immutable ACS baseline
+      - name: 持久化不可变 ACS 基线
         if: steps.necessity.outputs.deploy_needed == 'true'
         env:
           ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
@@ -864,7 +864,7 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/acs-artifact-index.json" "$destination/artifact-index.json"
 
-      - name: Upload and seal orchestrator release
+      - name: 上传并封存编排器版本
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
@@ -891,7 +891,7 @@ jobs:
           trap - EXIT
           # The final always() step owns cross-step root staging cleanup after sealing succeeds.
 
-      - name: Deploy orchestrator with drain and smoke
+      - name: 部署编排器并执行排空与冒烟检查
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
@@ -909,7 +909,7 @@ jobs:
             "$ECS_USER@$ECS_HOST" \
             "RELEASE_TGZ='$remote/payload.tgz' RELEASE_STAGING_DIR='$remote' SEAL_STAGED_PAYLOAD_SCRIPT='$remote/seal-root-staged-payload.sh' SEAL_STAGED_PAYLOAD_SCRIPT_SHA256='$seal_script_digest' IMAGE='$ACS_IMAGE_REFERENCE' IMAGE_TAG='$ACS_IMAGE_TAG' IMAGE_DIGEST='$ACS_IMAGE_DIGEST' ORCHESTRATOR_ARTIFACT_DIGEST='$ORCHESTRATOR_ARTIFACT_DIGEST' COMPAT_RELEASE_ID='$COMPAT_RELEASE_ID' ECS_DEPLOY_ROOT='$ECS_DEPLOY_ROOT' ACS_SERVICE_NAME='$ACS_SERVICE_NAME' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' GITHUB_SHA='$GITHUB_SHA' bash -s" < scripts/deploy-acs-orchestrator.sh
 
-      - name: Clean sealed ACS Production staging
+      - name: 清理已封存的 ACS 生产暂存区
         if: always() && steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail

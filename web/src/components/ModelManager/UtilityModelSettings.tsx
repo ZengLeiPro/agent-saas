@@ -61,7 +61,8 @@ export function useUtilityModelSettings() {
   const buildPayload = useCallback(
     () => ({
       ...titlePayload(),
-      ...(guardrail ? { guardrail } : {}),
+      // 显式提交 null，允许管理员清除已经失效或协议不兼容的存量门禁配置。
+      guardrail,
     }),
     [titlePayload, guardrail],
   );
@@ -76,14 +77,19 @@ export function UtilityModelSettings(props: {
 }) {
   const { settings, groups, readOnly, onDirty } = props;
   const guardrail = settings.guardrail;
-  const options = groups.flatMap((group) =>
-    group.models
-      .filter(
-        (model) => (model.protocol ?? group.protocol ?? 'chat_completions') === 'chat_completions',
-      )
-      .map((model) => ({ ref: `${group.id}/${model.id}`, label: `${group.name}/${model.name}` })),
-  );
+  const configuredModels = groups.flatMap((group) => group.models.map((model) => ({
+    ref: `${group.id}/${model.id}`,
+    label: `${group.name}/${model.name}`,
+    protocol: model.protocol ?? group.protocol ?? 'chat_completions',
+  })));
+  const options = configuredModels.filter((model) => model.protocol === 'chat_completions');
   const chain = guardrail ? [guardrail.model, ...(guardrail.fallbackModels ?? [])] : [];
+  const unavailableLabel = (ref: string) => {
+    const configured = configuredModels.find((model) => model.ref === ref);
+    return configured
+      ? `协议不兼容（门禁仅支持 Chat Completions）：${configured.label}`
+      : `引用已失效：${ref}`;
+  };
   const updateChain = (next: string[]) => {
     if (!guardrail) return;
     settings.setGuardrail({ ...guardrail, model: next[0]!, fallbackModels: next.slice(1) });
@@ -92,15 +98,41 @@ export function UtilityModelSettings(props: {
   return (
     <>
       <TitleGeneratorSettings {...props} />
-      {guardrail && (
-        <Card className="h-fit">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">专职 Agent 门禁模型</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              用于判断请求是否属于专职 Agent 的工作范围；主模型失败后按顺序尝试备用模型。
-            </p>
+      <Card className="h-fit">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">专职 Agent 门禁模型</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            用于判断请求是否属于专职 Agent 的工作范围；主模型失败后按顺序尝试备用模型。
+          </p>
+          {!guardrail ? (
+            <div className="space-y-3 rounded-md border border-dashed p-3">
+              <p className="text-xs text-muted-foreground">
+                门禁模型当前未启用。启用前至少需要一个 Chat Completions 模型。
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={readOnly || options.length === 0}
+                onClick={() => {
+                  const first = options[0];
+                  if (!first) return;
+                  settings.setGuardrail({ model: first.ref, fallbackModels: [] });
+                  onDirty();
+                }}
+              >
+                启用门禁模型
+              </Button>
+            </div>
+          ) : (
+            <>
+              {options.length === 0 && (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  当前没有可用的 Chat Completions 模型。请将一个模型切换为 Chat Completions，或停用门禁模型后再保存。
+                </p>
+              )}
             {chain.map((ref, index) => (
               <div key={index} className="flex items-center gap-2">
                 <Label htmlFor={`guardrail-model-${index}`} className="shrink-0">
@@ -116,7 +148,7 @@ export function UtilityModelSettings(props: {
                   }
                 >
                   {!options.some((option) => option.ref === ref) && (
-                    <option value={ref}>引用已失效：{ref}</option>
+                    <option value={ref}>{unavailableLabel(ref)}</option>
                   )}
                   {options.map((option) => (
                     <option
@@ -153,9 +185,22 @@ export function UtilityModelSettings(props: {
             >
               增加门禁备用模型
             </Button>
-          </CardContent>
-        </Card>
-      )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={readOnly}
+                onClick={() => {
+                  settings.setGuardrail(null);
+                  onDirty();
+                }}
+              >
+                停用门禁模型
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </>
   );
 }

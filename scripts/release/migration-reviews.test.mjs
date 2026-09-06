@@ -36,7 +36,10 @@ function fixture(classification = 'expand') {
 function withDocument(f) {
   return {
     ...f.targets,
-    [MIGRATION_REVIEWS_PATH]: JSON.stringify({ schemaVersion: 1, reviews: [f.review] }),
+    [MIGRATION_REVIEWS_PATH]: JSON.stringify({
+      schemaVersion: 1,
+      reviews: f.reviews ?? [f.review],
+    }),
   };
 }
 function snapshot(tree) {
@@ -77,15 +80,63 @@ function plan(f, extra = {}) {
   });
 }
 
-test('审核结论只绑定完整生产 SHA 和两端文件摘要', () => {
+test('精确审核绑定完整生产 SHA 和两端文件摘要', () => {
   const f = fixture();
   assert.equal(load(f).entries.get(PATH).classification, 'expand');
-  assert.equal(load(f, 'c'.repeat(40)).entries.size, 0);
   for (const side of ['baselines', 'targets']) {
     const changed = fixture();
     changed[side][PATH] += '\n// changed';
     assert.throws(() => load(changed), /source changed/u);
   }
+});
+
+test('生产 SHA 仅含无关变化时按两端内容与证据复用审核', () => {
+  const f = fixture();
+  const actualBaseline = 'c'.repeat(40);
+  const loaded = load(f, actualBaseline);
+  assert.equal(loaded.entries.get(PATH).classification, 'expand');
+  assert.notEqual(loaded.digest, load(f).digest);
+
+  for (const side of ['baselines', 'targets']) {
+    const changed = fixture();
+    changed[side][PATH] += '\n// migration input changed';
+    assert.equal(load(changed, actualBaseline).entries.size, 0);
+  }
+  const changedEvidence = fixture();
+  changedEvidence.targets[EVIDENCE] += '\n审核证据变化';
+  assert.equal(load(changedEvidence, actualBaseline).entries.size, 0);
+});
+
+test('精确记录失效时禁止绕到内容兼容的旧记录', () => {
+  const f = fixture();
+  const reusable = structuredClone(f.review);
+  reusable.baselineSha = 'c'.repeat(40);
+  f.review.files[0].targetDigest = digest('stale target');
+  f.reviews = [reusable, f.review];
+  assert.throws(() => load(f), /source changed/u);
+});
+
+test('内容兼容记录结论冲突时阻断，且选择覆盖范围最小的记录', () => {
+  const f = fixture();
+  const extraPath = 'server/src/data/extra/migrations.ts';
+  f.baselines[extraPath] = f.targets[extraPath] = 'export const unchanged = true;';
+  const broad = structuredClone(f.review);
+  broad.baselineSha = 'c'.repeat(40);
+  broad.files.push({
+    path: extraPath,
+    baselineDigest: digest(f.baselines[extraPath]),
+    targetDigest: digest(f.targets[extraPath]),
+    classification: 'no-schema-change',
+    reason: '本次升级未修改。',
+  });
+  const narrow = structuredClone(f.review);
+  narrow.baselineSha = 'd'.repeat(40);
+  f.reviews = [narrow, broad];
+  const loaded = load(f, 'e'.repeat(40));
+  assert.deepEqual([...loaded.entries], [[PATH, narrow.files[0]]]);
+
+  broad.files[0].classification = 'contract';
+  assert.throws(() => load(f, 'e'.repeat(40)), /reviews conflict/u);
 });
 
 test('证据修改、重复路径、非法分类和缺失摘要均阻断', () => {

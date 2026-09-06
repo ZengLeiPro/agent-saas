@@ -19,6 +19,7 @@ import type { ChannelContext, InboundMessage, OutboundEvent } from '../types/ind
 import type { RunStatus } from './runStore.js';
 import type { HandStatus } from './handStore.js';
 import type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
+import type { ToolAuditPlatformEvent } from './toolAuditEvent.js';
 import type { OrgAgentWorkerRunContext } from './orgAgentWorkerCapability.js';
 export type { SessionReadStateChangedEvent } from './sessionReadStateChangedEvent.js';
 export type {
@@ -673,33 +674,7 @@ export type PlatformEvent =
      */
     metadata?: Record<string, unknown>;
   }
-  | {
-    id: string;
-    timestamp: string;
-    type: 'tool_audit';
-    runId: string;
-    sessionId: string;
-    /**
-     * 组织 slug（PR 10 跨组织隔离）。
-     * - 写入：rawAgentLoop emit 时从 args.context.channelContext.user.tenantId 注入；缺失兜底平台根组织
-     * - 读取：旧 jsonl 行没有该字段 → 投影到 DuckDB 时归 legacy tenant；admin route 按 caller.tenantId 过滤
-     * - 字段标 optional 仅为前向兼容旧 jsonl；新写入路径必带
-     */
-    tenantId?: string;
-    toolCallId: string;
-    toolId: string;
-    toolName: string;
-    /** Skill 工具实际加载的技能名；其它工具为空。 */
-    skillName?: string;
-    risk: ToolRisk;
-    approvalId?: string;
-    authorization: ToolAuthorization;
-    executionTarget: ExecutionTargetKind;
-    status: 'success' | 'error';
-    durationMs: number;
-    executionInvocations?: ExecutionInvocationAudit[];
-    error?: string;
-  }
+  | ToolAuditPlatformEvent
   | {
     id: string;
     timestamp: string;

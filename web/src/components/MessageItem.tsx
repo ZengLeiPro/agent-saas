@@ -1008,6 +1008,7 @@ export const MessageItem = memo(function MessageItem({
       <PermissionBlock
         toolName={message.toolName}
         toolInput={message.toolInput}
+        {...(message.confirmation ? { confirmation: message.confirmation } : {})}
         status={message.status}
         onAllow={() => onPermissionResponse?.(message.interactionId, true)}
         onDeny={() => onPermissionResponse?.(message.interactionId, false)}

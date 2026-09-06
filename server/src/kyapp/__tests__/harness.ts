@@ -24,6 +24,8 @@ import type { PgKyAppInstallationRuntimeStore } from '../installations/runtimeSt
 import { KyAppSigningKeyService } from '../keys/service.js';
 import type { PgKyAppSigningKeyStore } from '../keys/store.js';
 import { createKyAppOutbound, type KyAppOutbound } from '../outbound.js';
+import { MemoryDirectorySnapshotSource } from '../directory/snapshot.js';
+import { createKyAppDirectoryRouter } from '../routes/directory.js';
 import { createKyAppHandshakeRouter } from '../routes/handshake.js';
 import { createKyAppInstallationsRouter } from '../routes/installations.js';
 import { createKyAppJwksHandler, createKyAppKeysRouter } from '../routes/keys.js';
@@ -36,6 +38,7 @@ import type { PgKyAppSystemStore } from '../systems/store.js';
 import type { PgKyAppOutboundEventStore } from '../events/store.js';
 import type { KyAppToolRegistrationDryRun } from '../systems/publishGate.js';
 import { FakeSigningKeyStore } from './signingKeyStoreDouble.js';
+import { MemoryDirectoryChangeLog } from './directoryDoubles.js';
 import {
   MemoryKyAppCredentialStore,
   MemoryKyAppDirectory,
@@ -144,6 +147,9 @@ export interface KyAppTestRig {
   dispatcher: KyAppEventDispatcher;
   prober: KyAppHealthProber;
   outbound: KyAppOutbound;
+  /** WP2b：快照分页数据源与变更日志的内存替身（路由与消费端都是生产代码）。 */
+  directorySnapshots: MemoryDirectorySnapshotSource;
+  directoryChanges: MemoryDirectoryChangeLog;
   audit: GovernanceAuditStore;
   auditEvents: Array<Record<string, unknown>>;
   alerts: Array<{ kind: string; installationId: string }>;
@@ -165,6 +171,8 @@ export interface KyAppTestRigOptions {
   ) => Promise<{ persona: 'member' | 'org_admin'; status: 'active' | 'disabled' } | null>;
   /** `listEffectiveResourceIds` 的返回；缺省放行全部 enabled 实例。 */
   visibleInstallationIds?: string[];
+  /** WP2b 快照页大小；缺省 2，逼出分页。 */
+  directoryPageSize?: number;
 }
 
 function memoryAudit(sink: Array<Record<string, unknown>>): GovernanceAuditStore {
@@ -193,6 +201,8 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   const nonces = new InMemoryKyAppNonceStore();
   const signingKeys = new FakeSigningKeyStore(now);
   const directory = new MemoryKyAppDirectory(systems);
+  const directorySnapshots = new MemoryDirectorySnapshotSource();
+  const directoryChanges = new MemoryDirectoryChangeLog();
   const auditEvents: Array<Record<string, unknown>> = [];
   const audit = memoryAudit(auditEvents);
   const alerts: Array<{ kind: string; installationId: string }> = [];
@@ -339,6 +349,18 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   app.use('/api/app-contract/v1', createKyAppKeysRouter({ keys, dispatcher, audit }));
   app.use('/api/app-contract/v1', createKyAppShellEventsRouter({ audit }));
   app.use(
+    '/api/app-contract/v1',
+    createKyAppDirectoryRouter({
+      credentials,
+      getInstallation: (installationId) => systems.getInstallation(installationId),
+      snapshots: directorySnapshots,
+      changes: directoryChanges,
+      now,
+      // 页大小调到 2，保证一致性测试一定会分页（与 mockShell/directory.ts 默认值同口径）。
+      pageSize: options.directoryPageSize ?? 2,
+    }),
+  );
+  app.use(
     '/api',
     createKyAppMineRouter({
       systems: systems as unknown as PgKyAppSystemStore,
@@ -375,6 +397,8 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     dispatcher,
     prober,
     outbound,
+    directorySnapshots,
+    directoryChanges,
     audit,
     auditEvents,
     alerts,

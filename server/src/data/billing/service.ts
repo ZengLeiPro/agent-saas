@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentRunDispatch, AgentRunHooks, AgentRunOptions, SdkResultModelUsage } from '../../agent/types.js';
 import type { ChannelContext, InboundMessage, OutboundEvent } from '../../types/index.js';
 import type { UserStore } from '../users/store.js';
+import { readAppCapabilityUsage } from '../../runtime/appCapabilityUsageAttribution.js';
 import {
   CREDIT_MICRO,
   DEFAULT_CREDIT_VALUE_YUAN_MICRO,
@@ -486,6 +487,16 @@ export class BillingService {
     // memory_consolidate）：租户未显式开启扣费时 billable=false。
     const memoryPollExempt = (row.runToolProfile === 'memory_poll' || row.runToolProfile === 'memory_consolidate')
       && this.options.isMemoryPollBillable?.(row.tenantId) !== true;
+    // WP3 §6.4：本 run 用过的定制项目能力（installationId/capabilityId）随
+    // raw_usage_json 落库，零迁移；不参与任何计费判定。
+    const appCapabilities = readAppCapabilityUsage(runId);
+    const rawUsageJson =
+      appCapabilities.length > 0
+        && typeof inputFields.rawUsageJson === 'object'
+        && inputFields.rawUsageJson !== null
+        && !Array.isArray(inputFields.rawUsageJson)
+        ? { ...(inputFields.rawUsageJson as Record<string, unknown>), appCapabilities }
+        : inputFields.rawUsageJson;
     const input: ProjectedRuntimeUsageInput = {
       idempotencyKey: inputFields.idempotencyKey,
       tenantId: row.tenantId,
@@ -499,7 +510,7 @@ export class BillingService {
       ...(inputFields.actualModel ? { actualModel: inputFields.actualModel } : {}),
       requestIndex: row.globalSequence,
       usage: inputFields.usage,
-      rawUsageJson: inputFields.rawUsageJson,
+      rawUsageJson,
       occurredAt: row.timestamp,
     };
     const inserted = await this.options.store.insertUsageEvent(input);

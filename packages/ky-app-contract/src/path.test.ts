@@ -7,6 +7,7 @@ import {
   normalizeAppPath,
   normalizePathname,
   normalizeToolSegment,
+  parseToolName,
   toolName,
 } from './path.js';
 
@@ -101,6 +102,30 @@ describe('matchPathPrefix', () => {
     expect(matchPathPrefix('/anything', ['/'])).toBe(false);
     expectPathCode(() => assertPathPrefix('/api/app'), 'not_a_prefix');
     expect(() => assertPathPrefix('/api/app/')).not.toThrow();
+  });
+});
+
+describe('parseToolName（§4.5 逆向拆解）', () => {
+  it('拆回规范化后的分段，round-trip 与 toolName 一致', () => {
+    expect(parseToolName(toolName('demo-erp', 'order.search'))).toEqual({
+      systemSegment: 'demo_erp',
+      capabilitySegment: 'order_search',
+    });
+  });
+
+  it('能力段含双下划线时原样拼回', () => {
+    expect(parseToolName('app__erp__order__search')).toEqual({
+      systemSegment: 'erp',
+      capabilitySegment: 'order__search',
+    });
+  });
+
+  it('非 app__ 前缀或缺段一律返回 null', () => {
+    expect(parseToolName('mcp__github__search')).toBeNull();
+    expect(parseToolName('Read')).toBeNull();
+    expect(parseToolName('app__erp')).toBeNull();
+    expect(parseToolName('app__')).toBeNull();
+    expect(parseToolName('app____cap')).toBeNull();
   });
 });
 

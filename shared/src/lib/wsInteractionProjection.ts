@@ -57,6 +57,7 @@ function requestToMessage(
       ...(order !== undefined ? { interactionOrder: order } : {}),
       toolName: name,
       toolInput: description,
+      ...(request.confirmation ? { confirmation: request.confirmation } : {}),
       status: 'pending',
     };
   }

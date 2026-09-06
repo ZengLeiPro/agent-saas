@@ -75,7 +75,7 @@ import {
   resolveAgentProfileMaxTurns,
   type BoundAgentRuntimeProfile, appendDispatcherInstructionSection, resolveAgentModePolicy,
 } from './agentProfiles.js';
-import { McpClientToolProvider } from '../mcp/clientToolProvider.js';
+import { pushExternalToolProviders, type RuntimeToolWarmupContext } from './runtimeExternalToolProviders.js';
 import type { McpClientManager } from '../mcp/clientManager.js';
 import type { McpProxy } from '../mcp/proxy.js';
 import type { ToolProvider } from '../agent/toolRuntime.js';
@@ -384,7 +384,7 @@ export async function collectRuntimeTooling(
   requiredSkillIds: readonly string[] = [],
   subagentDeps?: SubagentToolingDeps,
   preferredSkillIds: readonly string[] = [],
-  mcpWarmupContext?: { runId: string; sessionId: string; userId: string },
+  warmupContext?: RuntimeToolWarmupContext,
 ): Promise<{
   providers: ToolProvider[];
 }> {
@@ -454,19 +454,8 @@ export async function collectRuntimeTooling(
   if (config.cronService || config.taskboard) providers.push(new CronToolProvider({
     service: config.cronService ?? (() => undefined), ...(config.sessionCatalog ? { sessionCatalog: config.sessionCatalog } : {}), ...(config.taskboard ? { taskboard: config.taskboard } : {}),
   }));
-  // 6. MCP 工具（带超时兜底，单 server hang 不会卡 dispatch 主路径）
-  if (config.mcpProxy || config.mcpClientManager) {
-    const mcpProvider = new McpClientToolProvider(config.mcpProxy ?? config.mcpClientManager!);
-    try {
-      await mcpProvider.warmup({
-        username,
-        ...(mcpWarmupContext ?? {}),
-      });
-    } catch {
-      // MCP 预热失败只影响本轮 MCP tool schema，不阻断主路径。
-    }
-    providers.push(mcpProvider);
-  }
+  // 6. 外部系统工具（MCP + 定制项目能力）：装配见 runtimeExternalToolProviders.ts。
+  await pushExternalToolProviders({ providers, config, username, warmupContext });
   // 6.5 durable 后台任务查询/取消。只在 PG background runtime 已装配时暴露；
   // 子 agent runner 会通过无条件剥夺清单再次移除，禁止后台任务嵌套治理。
   if (config.backgroundTasks && isToolEnabled(config.toolControls, 'Agent')) {
@@ -1240,7 +1229,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       orgAgent ? resolveOrgAgentRuntimeSkillIds(orgAgent) : [],
       { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
-      sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId } : undefined,
+      sessionRecord.userId ? { runId, sessionId, userId: sessionRecord.userId, tenantId: sessionRecord.tenantId } : undefined,
     );
     const instructionSections = options.skipSystemPrompt
       ? [{ key: 'minimal', name: '最小系统提示语', content: config.getSystemPrompt?.('main.minimal') ?? MINIMAL_SYSTEM_PROMPT }]
@@ -1861,7 +1850,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
-        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
+        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId, tenantId: sessionRecord.tenantId }
         : undefined,
     );
     // 记忆写入策略：resume 只读会话 pin；TaskBoard 固定只读且不进入 L2。
@@ -2345,7 +2334,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       { executionTransportRegistry, tenantHandResolver, agentModePolicy: resolveAgentModePolicy(orgAgent?.runtime?.executionMode) },
       boundProfile?.version.config.skills.defaultSkillIds ?? [],
       sessionRecord.userId
-        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId }
+        ? { runId: resumeRunId, sessionId: request.sessionId, userId: sessionRecord.userId, tenantId: sessionRecord.tenantId }
         : undefined,
     );
     // 记忆写入策略：resume 只读会话 pin；TaskBoard 固定只读且不进入 L2。

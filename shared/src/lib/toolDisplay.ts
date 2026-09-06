@@ -60,6 +60,27 @@ export const resolveMcpToolNameStrategy: ToolNameStrategy = ({ currentName }) =>
   return `MCP:${rest}`;
 };
 
+/**
+ * 定制项目能力工具（WP3，规范 §4.5/§6.1）：`app__<systemId>__<capabilityId>`。
+ * 与 MCP 策略平行，但客户面**不出现「MCP」这类技术词**——直接给「系统/能力」。
+ * systemId/capabilityId 在工具名里已经把 `-`/`.` 规范化成 `_`，这里原样展示，
+ * 真正的中文名由后端 presentation 与 descriptor.displayName 负责。
+ */
+export const resolveAppToolNameStrategy: ToolNameStrategy = ({ currentName }) => {
+  if (!currentName.startsWith('app__')) {
+    return undefined;
+  }
+
+  const parts = currentName.split('__');
+  if (parts.length >= 3) {
+    const systemId = parts[1];
+    const capabilityId = parts.slice(2).join('__');
+    return `${systemId}/${capabilityId}`;
+  }
+
+  return currentName.slice('app__'.length) || 'unknown';
+};
+
 export const resolveSkillToolNameStrategy: ToolNameStrategy = ({ currentName, toolInput }) => {
   if (currentName.startsWith('技能：') || currentName.startsWith('技能:')) {
     return undefined;
@@ -103,11 +124,13 @@ export function composeToolNameResolver(strategies: ToolNameStrategy[]): ToolNam
  * Display-layer tool name resolver (composable strategies):
  * 1) Normalize internal tool names (bash → Bash)
  * 2) Format MCP tool names (mcp__server__tool → MCP:server/tool)
- * 3) Localize and parameterize skill names (Skill → 技能：commit)
+ * 3) Format app capability tool names (app__erp__order_search → erp/order_search)
+ * 4) Localize and parameterize skill names (Skill → 技能：commit)
  */
 export const resolveDisplayToolName: ToolNameResolver = composeToolNameResolver([
   normalizeInternalToolNameStrategy,
   resolveMcpToolNameStrategy,
+  resolveAppToolNameStrategy,
   resolveSkillToolNameStrategy,
 ]);
 

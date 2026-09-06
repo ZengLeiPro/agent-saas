@@ -172,3 +172,25 @@ export function toolName(systemId: string, capabilityId: string): string {
   }
   return name;
 }
+
+/** `toolName()` 的逆向拆解结果（分段已是规范化形态，`-`/`.` 均已变 `_`）。 */
+export interface ParsedToolName {
+  /** 规范化后的 systemId（不是原始 manifest systemId）。 */
+  systemSegment: string;
+  /** 规范化后的 capabilityId。 */
+  capabilitySegment: string;
+}
+
+/**
+ * §4.5 工具名拆解。不是 `app__` 前缀、或缺任一段 → `null`。
+ *
+ * 注意返回的是**规范化后**的分段：`toolName()` 把 `-`/`.` 都换成了 `_`，
+ * 该变换不可逆，因此比对时两边都要用规范化形态（`normalizeToolSegment`）。
+ */
+export function parseToolName(value: string): ParsedToolName | null {
+  if (!value.startsWith(TOOL_NAME_PREFIX)) return null;
+  const [systemSegment, ...rest] = value.slice(TOOL_NAME_PREFIX.length).split('__');
+  const capabilitySegment = rest.join('__');
+  if (!systemSegment || !capabilitySegment) return null;
+  return { systemSegment, capabilitySegment };
+}

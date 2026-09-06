@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeInternalToolNameStrategy,
+  resolveAppToolNameStrategy,
   resolveMcpToolNameStrategy,
   resolveSkillToolNameStrategy,
   composeToolNameResolver,
@@ -34,6 +35,29 @@ describe('normalizeInternalToolNameStrategy', () => {
 
   it('未知工具名返回 undefined', () => {
     expect(normalizeInternalToolNameStrategy({ ...base, toolName: 'FooBar', currentName: 'FooBar' })).toBeUndefined();
+  });
+});
+
+describe('resolveAppToolNameStrategy', () => {
+  it('app__system__capability → system/capability', () => {
+    expect(resolveAppToolNameStrategy({ ...base, toolName: '', currentName: 'app__demo_erp__order_search' }))
+      .toBe('demo_erp/order_search');
+  });
+
+  it('能力段含双下划线时正确拼回', () => {
+    expect(resolveAppToolNameStrategy({ ...base, toolName: '', currentName: 'app__erp__order__search' }))
+      .toBe('erp/order__search');
+  });
+
+  it('段数不足走 rest 兜底', () => {
+    expect(resolveAppToolNameStrategy({ ...base, toolName: '', currentName: 'app__solo' })).toBe('solo');
+    expect(resolveAppToolNameStrategy({ ...base, toolName: '', currentName: 'app__' })).toBe('unknown');
+  });
+
+  it('非 app 前缀返回 undefined，且不与 mcp 策略互相干扰', () => {
+    expect(resolveAppToolNameStrategy({ ...base, toolName: '', currentName: 'Read' })).toBeUndefined();
+    expect(resolveAppToolNameStrategy({ ...base, toolName: '', currentName: 'mcp__cron__manage' })).toBeUndefined();
+    expect(resolveMcpToolNameStrategy({ ...base, toolName: '', currentName: 'app__erp__x' })).toBeUndefined();
   });
 });
 

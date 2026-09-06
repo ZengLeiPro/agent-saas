@@ -8,7 +8,7 @@ import {
   PgGovernanceMigrationControlStore,
   governanceProjectionDigest,
 } from '../data/migrationControl/index.js';
-import { GOVERNANCE_SCHEMA_VERSION } from '../data/governance-schema/migrations.js';
+import { GOVERNANCE_SCHEMA_VERSION, governanceMigrationVersions } from '../data/governance-schema/migrations.js';
 
 const NOW = '2026-08-08T00:00:00.000Z';
 
@@ -134,7 +134,7 @@ describe('Governance Migration Control', () => {
     expect(sql).toContain('CREATE TRIGGER test_assignment_delete_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_preference_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_entitlement_projection_outbox');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(GOVERNANCE_SCHEMA_VERSION);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(governanceMigrationVersions().length);
   });
 
   it('tenantless shadow difference 使用同一空 tenant scope 自动 resolve', async () => {

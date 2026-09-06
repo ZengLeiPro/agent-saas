@@ -6,6 +6,8 @@ import type {
   ToolResult,
   ToolRuntime,
 } from '../agent/toolRuntime.js';
+import { parseToolName } from '@kaiyan/ky-app-contract';
+
 import { parseMcpToolKey } from '../mcp/clientManager.js';
 import {
   getBuiltinCompatibleConfigDigests,
@@ -310,6 +312,19 @@ class AgentProfileFilteredToolRuntime implements ToolRuntime {
         && !config.mcp.toolAllowlist.includes(descriptor.id)) return false;
       if (config.mcp.denyServers.includes(mcp.serverName)) return false;
       if (config.mcp.denyTools.includes(mcp.toolName) || config.mcp.denyTools.includes(descriptor.id)) return false;
+    }
+
+    // WP3：定制项目能力（`app__<systemId>__<capabilityId>`，规范 §6.1）。与 mcp 块同构：
+    // 名单里写规范化后的分段（`-`/`.` → `_`），capability 名单同时接受完整工具名。
+    const app = parseToolName(descriptor.id) ?? parseToolName(descriptor.name);
+    const apps = config.apps;
+    if (app && apps) {
+      if (apps.systemAllowlist && !apps.systemAllowlist.includes(app.systemSegment)) return false;
+      if (apps.capabilityAllowlist && !apps.capabilityAllowlist.includes(app.capabilitySegment)
+        && !apps.capabilityAllowlist.includes(descriptor.id)) return false;
+      if (apps.denySystems.includes(app.systemSegment)) return false;
+      if (apps.denyCapabilities.includes(app.capabilitySegment)
+        || apps.denyCapabilities.includes(descriptor.id)) return false;
     }
     return true;
   }

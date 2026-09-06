@@ -56,7 +56,7 @@ test('ACS triggers and docs keep production deployment manual on latest main wit
     deploy,
     /if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'/u,
   );
-  assert.match(deploy, /Verify dispatch still targets latest main/u);
+  assert.match(deploy, /确认手动触发仍指向最新 main/u);
   assert.match(deploy, /latest_main_sha[\s\S]*"\$latest_main_sha" != "\$GITHUB_SHA"/u);
   assert.match(
     deploy,
@@ -150,7 +150,7 @@ test('the immutable RC promotion workflow remains the release-bound production e
 
 test('ECS pack declaration produces an archive containing the compatibility authority helper', async () => {
   const workflow = await readFile(new URL('ci.yml', root), 'utf8');
-  const packStart = workflow.indexOf('      - name: Pack and identify ECS release\n');
+  const packStart = workflow.indexOf('      - name: 打包并标识 ECS 版本\n');
   const packEnd = workflow.indexOf('\n      - name:', packStart + 1);
   assert.ok(packStart >= 0 && packEnd > packStart);
   const pack = workflow.slice(packStart, packEnd);

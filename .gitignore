@@ -102,6 +102,7 @@ __pycache__/
 .playwright-cli/
 e2e/test-results/
 e2e/playwright-report/
+e2e/playwright-report-ky-app-shell/
 /test-results/
 /playwright-report/
 

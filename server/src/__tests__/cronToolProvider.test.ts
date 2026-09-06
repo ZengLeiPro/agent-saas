@@ -64,6 +64,7 @@ describe('CronToolProvider', () => {
   it('description 只保留 taskboard action 协议，不重复阶段职责', () => {
     const description = cronManageToolDescriptor.description;
     expect(description).toContain('execution.pull_request.set');
+    expect(description).toContain('唯一的非 Draft PR（没有有效 PR 时才创建，禁止重复）');
     expect(description).toContain('integration.sources');
     expect(description).toContain('execution.finish({targetStatus, body})');
     expect(description).toContain('不接受旧 status 字段');

@@ -14,6 +14,7 @@
       .warn { background: #fef3c7; color: #92400e; }
       .ok { background: #dcfce7; color: #166534; }
       .state { margin-top: 16px; font-size: 12px; color: #6b7280; }
+      #spacer { height: 2400px; }
     </style>
   </head>
   <body>
@@ -36,40 +37,117 @@
         'use strict';
         // 照 §5.4 的子端行为：读 ky_iid / ky_nonce → 每 1 s 重发 ready（≤10 s）→ 收到 init 回 init.ack。
         // 演示态不签真的 attest JWT（壳侧的 verify 也是桩）。
+        //
+        // **E2E 控制面（Phase C）**：默认行为与目视验收时完全一致；测试通过
+        // `page.addInitScript` 注入 `window.__kyPlan` 改写握手行为，通过
+        // `frame.evaluate(() => window.__ky.send(...))` 直接发任意信封。
+        // 之所以把控制面放在子端而不是壳里：被测对象是**壳**，壳一行都不能为测试让路。
         var params = new URLSearchParams(location.search);
         var iid = params.get('ky_iid') || '';
         var nonce = params.get('ky_nonce') || '';
         var state = document.getElementById('state');
         var acked = false;
         var readyTimer = null;
+        var readyStopTimer = null;
 
-        function post(message) {
-          // 真实子端 SDK 用登记好的壳 origin；mock 用 '*' —— 壳侧的
-          // origin + event.source 校验不受影响，那才是安全边界所在。
-          parent.postMessage(message, '*');
+        var plan = Object.assign(
+          {
+            /** §9.3-16：改成 2 应让壳进错误页。 */
+            contractVersion: 1,
+            /** false → 一条 ready 都不发，用于验壳侧 10 s 上限（§5.4）。 */
+            sendReady: true,
+            /** §5.4：每 1 s 重发，≤10 s。 */
+            readyResendMs: 1000,
+            readyResendLimitMs: 10000,
+            /** false → 永不回 init.ack，用于验壳侧重发（≤3 次）后判失败。 */
+            ackInit: true,
+            /** 前 N 条 init 不回 ack，第 N+1 条才回；用于验「重发后仍能收敛到 active」。 */
+            ackInitAfter: 0,
+            /** 收到 route.navigate 自动回 route.result{ok:true}。 */
+            autoRouteResult: true,
+            /** 回完 route.result 再发一条带同一 navId 的 route.changed（§5.2 回声）。 */
+            autoRouteChangedEcho: true,
+            /** 撑高页面，供「切走再切回保留滚动位置」用。 */
+            tall: false,
+          },
+          window.__kyPlan || {},
+        );
+
+        var api = {
+          plan: plan,
+          /** 每次真实文档加载都换一个值：iframe 被卸载重挂会变，用来钉死 §5.5。 */
+          loadId: String(Date.now()) + '-' + Math.random().toString(36).slice(2),
+          iid: iid,
+          nonce: nonce,
+          /** 收到的每一条壳→子信封（已过 ns/v 过滤）。 */
+          log: [],
+          /** 自己发出去的每一条子→壳信封。 */
+          sent: [],
+          counters: { readySent: 0, initReceived: 0, initAckSent: 0, routeNavigate: 0 },
+          send: function (message) {
+            // 真实子端 SDK 用登记好的壳 origin；mock 用 '*' —— 壳侧的
+            // origin + event.source 校验不受影响，那才是安全边界所在。
+            api.sent.push(message);
+            parent.postMessage(message, '*');
+          },
+          /** 最近一条指定 type 的信封（测试用）。 */
+          last: function (type) {
+            for (var i = api.log.length - 1; i >= 0; i -= 1) {
+              if (api.log[i].type === type) return api.log[i];
+            }
+            return null;
+          },
+          count: function (type) {
+            return api.log.filter(function (item) { return item.type === type; }).length;
+          },
+          buildReady: buildReady,
+          sendReady: sendReady,
+          stopReadyResend: stopReadyResend,
+        };
+        window.__ky = api;
+
+        if (plan.tall) {
+          var spacer = document.createElement('div');
+          spacer.id = 'spacer';
+          document.querySelector('main').appendChild(spacer);
         }
 
-        function sendReady() {
-          post({
+        function buildReady() {
+          return {
             ns: 'ky',
             v: 1,
             type: 'ready',
             id: 'ready-' + nonce,
             payload: {
-              contractVersion: 1,
+              contractVersion: plan.contractVersion,
               path: location.pathname === '/mock-app.html' ? '/' : location.pathname,
               installationId: iid,
               attestation: 'demo.attest.' + nonce,
             },
-          });
+          };
+        }
+
+        function sendReady() {
+          api.counters.readySent += 1;
+          api.send(buildReady());
+        }
+
+        function stopReadyResend() {
+          if (readyTimer) { clearInterval(readyTimer); readyTimer = null; }
+          if (readyStopTimer) { clearTimeout(readyStopTimer); readyStopTimer = null; }
         }
 
         window.addEventListener('message', function (event) {
           var data = event.data;
           if (!data || data.ns !== 'ky' || data.v !== 1) return;
+          api.log.push(data);
+
           if (data.type === 'init') {
-            if (readyTimer) { clearInterval(readyTimer); readyTimer = null; }
-            post({ ns: 'ky', v: 1, type: 'init.ack', id: data.id });
+            stopReadyResend();
+            api.counters.initReceived += 1;
+            if (!plan.ackInit || api.counters.initReceived <= plan.ackInitAfter) return;
+            api.counters.initAckSent += 1;
+            api.send({ ns: 'ky', v: 1, type: 'init.ack', id: data.id });
             if (!acked) {
               acked = true;
               var user = (data.payload && data.payload.user) || {};
@@ -77,12 +155,25 @@
                 '已连接 KY Agent · 当前用户 ' + (user.displayName || '?') +
                 ' · 安装实例 ' + (data.payload && data.payload.installationId);
             }
+            return;
+          }
+
+          if (data.type === 'route.navigate') {
+            api.counters.routeNavigate += 1;
+            if (!plan.autoRouteResult) return;
+            var path = (data.payload && data.payload.path) || '/';
+            api.send({ ns: 'ky', v: 1, type: 'route.result', id: data.id, payload: { ok: true, path: path } });
+            if (plan.autoRouteChangedEcho) {
+              api.send({ ns: 'ky', v: 1, type: 'route.changed', navId: data.navId, payload: { path: path } });
+            }
           }
         });
 
-        sendReady();
-        readyTimer = setInterval(sendReady, 1000);
-        setTimeout(function () { if (readyTimer) clearInterval(readyTimer); }, 10000);
+        if (plan.sendReady) {
+          sendReady();
+          readyTimer = setInterval(sendReady, plan.readyResendMs);
+          readyStopTimer = setTimeout(stopReadyResend, plan.readyResendLimitMs);
+        }
       })();
     </script>
   </body>

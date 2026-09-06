@@ -120,15 +120,30 @@ export function AppHost({ appsRoute }: AppHostProps) {
       }),
   );
 
+  /**
+   * §5.5/§11.1「切走再切回保留页面与滚动位置」的落点。
+   *
+   * 切到 Agent 标签时壳 URL 离开 `/apps/**`，`appsRoute` 变 null。若按它渲染，
+   * 下面的 `!appsRoute` 分支会把 iframe 整个从 DOM 摘掉 —— 子端重载、滚动位置与
+   * 页内状态全部丢失，`DesktopLayout` 那边「惰性挂载 + hidden 隐藏不卸载」也就白做了。
+   * 因此**渲染**认「最后一次停留过的路由」，**副作用**（握手、URL 回写）仍然只认
+   * 真实的 `appsRoute`：隐藏期间不重新握手，子端自己跳路由也不会把用户从聊天里拽走。
+   */
+  const [stickyRoute, setStickyRoute] = useState<AppsRouteState | null>(appsRoute);
+  useEffect(() => {
+    if (appsRoute) setStickyRoute(appsRoute);
+  }, [appsRoute]);
+  const renderRoute = appsRoute ?? stickyRoute;
+
   const installation =
-    installations.find((item) => item.installationId === appsRoute?.installationId) ?? null;
+    installations.find((item) => item.installationId === renderRoute?.installationId) ?? null;
   const openable = installation !== null && isSystemOpenable(installation);
   /**
    * §5.5/§6.6：**停用不是「从列表里消失」**，服务端会把停用实例连同 `state` 一起返回，
    * 所以这里既拿得到《系统名》，也分得清「停用/暂不可用」与「正在更新」（收掉 4-B-04）。
    * 列表已就绪却查无此实例，才是「已删除 / 不再对本人可见」那一档，回落无名文案。
    */
-  const stateFailureKind: AppHostFailureKind | null = !appsRoute || status !== 'ready'
+  const stateFailureKind: AppHostFailureKind | null = !renderRoute || status !== 'ready'
     ? null
     : installation === null
       ? 'unavailable'
@@ -199,8 +214,9 @@ export function AppHost({ appsRoute }: AppHostProps) {
       data-testid="app-host"
       data-app-host-mount={mountId}
       data-app-host-phase={snapshot.phase}
-      data-installation-id={appsRoute?.installationId ?? ''}
-      data-app-path={appsRoute?.appPath ?? ''}
+      data-installation-id={renderRoute?.installationId ?? ''}
+      data-app-path={renderRoute?.appPath ?? ''}
+      data-app-host-visible={appsRoute ? 'true' : 'false'}
     >
       {snapshot.notice && (
         <div
@@ -225,7 +241,7 @@ export function AppHost({ appsRoute }: AppHostProps) {
         </div>
       )}
 
-      {!appsRoute ? (
+      {!renderRoute ? (
         <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
           请选择一个定制软件
         </div>

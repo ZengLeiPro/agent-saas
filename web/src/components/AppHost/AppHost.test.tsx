@@ -231,6 +231,35 @@ describe('§5.5 切走再切回保持挂载', () => {
     expect(screen.getByTestId('apps-region').classList.contains('hidden')).toBe(false);
   });
 
+  /**
+   * 上一条把 `path` 钉死不变，只切 `hidden` —— 那不是生产里发生的事。
+   * 生产里切到 Agent 标签是**壳 URL 离开 `/apps/**`**，`appsRoute` 随之变 null，
+   * 于是 `hidden` 与「AppHost 收到 null」是同时发生的。这一条按真实顺序回放。
+   */
+  it('切走时 appsRoute 变 null，iframe 仍是同一个 DOM 节点（§11.1 保留页面与滚动位置）', async () => {
+    useInstallations();
+    const { rerender } = render(<Region hidden={false} path="/apps/inst-1/orders" />);
+    const frame = await screen.findByTestId('app-host-frame');
+    const src = frame.getAttribute('src');
+
+    // 切到 Agent 标签：URL 离开 /apps/**，同时整块被 hidden。
+    // 「握手已 active 后切回来子端不重载」由 Phase C 的 E2E 钉死（这里造不出 active）。
+    rerender(<Region hidden path={null} />);
+    expect(screen.getByTestId('apps-region').classList.contains('hidden')).toBe(true);
+    expect(screen.getByTestId('app-host-frame')).toBe(frame);
+    expect(screen.getByTestId('app-host').getAttribute('data-app-host-visible')).toBe('false');
+
+    expect(screen.getByTestId('app-host-frame').getAttribute('src')).toBe(src);
+  });
+
+  it('切走时不渲染「请选择一个定制软件」占位（占位会顶掉 iframe）', async () => {
+    useInstallations();
+    const { rerender } = render(<Region hidden={false} path="/apps/inst-1/orders" />);
+    await screen.findByTestId('app-host-frame');
+    rerender(<Region hidden path={null} />);
+    expect(screen.getByTestId('app-host').textContent).not.toContain('请选择一个定制软件');
+  });
+
   it('条件卸载会换来新的挂载序号（反证上一条不是恒真断言）', async () => {
     useInstallations();
     const { unmount } = render(<Region hidden={false} path="/apps/inst-1/orders" />);

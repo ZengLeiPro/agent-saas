@@ -11,7 +11,37 @@ declare global {
   interface Window {
     __demoScenario?: string;
     __demoAppOrigin?: string;
+    /** Phase C E2E 的 API 计划：只加延迟与失败注入，不改任何成功路径的形状。 */
+    __demoApiPlan?: DemoApiPlan;
   }
+}
+
+/**
+ * E2E 用的平台 API 计划（`page.addInitScript` 注入）。
+ * 默认全空 —— 不注入时演示态行为与目视验收时逐字节一致。
+ */
+export interface DemoApiPlan {
+  /** 让 `handshake/nonce` 慢下来（验「src 设置→init.ack ≤3 s」的口径起点）。 */
+  nonceDelayMs?: number;
+  /** 让 `handshake/verify` 慢下来（子端会在此期间按 1 s 重发 ready）。 */
+  verifyDelayMs?: number;
+  /** 让续期端点慢下来（验 401 单飞：并发 token.request 只打一次）。 */
+  tokenDelayMs?: number;
+  /** SAT 剩余寿命（秒），默认 300。 */
+  tokenExpSeconds?: number;
+  /** 续期端点直接失败，用于 §5.4 的四个 `token.refresh.error` reason。 */
+  tokenError?: { status: number; code?: string };
+}
+
+function plan(): DemoApiPlan {
+  return window.__demoApiPlan ?? {};
+}
+
+function delay(ms: number | undefined): Promise<void> {
+  if (!ms) return Promise.resolve();
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 /**
  * 唯一标记串。`web/scripts/check-oss-dist.mjs` 断言生产产物里搜不到它 ——
@@ -70,25 +100,55 @@ function installations(): unknown[] {
 const CALLS: string[] = [];
 (window as unknown as { __demoCalls: string[] }).__demoCalls = CALLS;
 
+/** 每次调用一行，带方法与时刻；E2E 靠它数「续期只打了一次」。 */
+export interface DemoApiCall {
+  method: string;
+  path: string;
+  at: number;
+}
+const CALL_LOG: DemoApiCall[] = [];
+(window as unknown as { __demoApiLog: DemoApiCall[] }).__demoApiLog = CALL_LOG;
+
+let satSeq = 0;
+
+function grant(path: string): Response {
+  const installationId = /installations\/([^/]+)\//u.exec(path)?.[1] ?? 'tsi_crm_01';
+  satSeq += 1;
+  return json({
+    // 每次签发换一个值：子端才能分辨「续期真的换了令牌」而不是原样重放
+    token: `demo.sat.token.${satSeq}`,
+    tokenExp: Math.floor(Date.now() / 1000) + (plan().tokenExpSeconds ?? 300),
+    user: { id: 'u_demo', displayName: '张三', isTenantAdmin: false },
+    installationId,
+    contractVersion: 1,
+  });
+}
+
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  CALLS.push(`${init.method ?? 'GET'} ${path}`);
+  const method = init.method ?? 'GET';
+  CALLS.push(`${method} ${path}`);
+  CALL_LOG.push({ method, path, at: Date.now() });
 
   if (path === '/api/systems/mine') return json({ installations: installations() });
 
   if (path.endsWith('/handshake/nonce')) {
+    await delay(plan().nonceDelayMs);
     if (scenario() === 'handshake-failed') return json({ error: { code: 'unavailable' } }, 503);
     return json({ nonce: 'demo-nonce-'.padEnd(32, '0'), expiresAt: '' });
   }
 
-  if (path.endsWith('/handshake/verify') || path.endsWith('/token')) {
-    const installationId = /installations\/([^/]+)\//u.exec(path)?.[1] ?? 'tsi_crm_01';
-    return json({
-      token: 'demo.sat.token',
-      tokenExp: Math.floor(Date.now() / 1000) + 300,
-      user: { id: 'u_demo', displayName: '张三', isTenantAdmin: false },
-      installationId,
-      contractVersion: 1,
-    });
+  if (path.endsWith('/handshake/verify')) {
+    await delay(plan().verifyDelayMs);
+    return grant(path);
+  }
+
+  if (path.endsWith('/token')) {
+    await delay(plan().tokenDelayMs);
+    const failure = plan().tokenError;
+    if (failure) {
+      return json({ error: { code: failure.code ?? 'forbidden', message: '' } }, failure.status);
+    }
+    return grant(path);
   }
 
   if (path.endsWith('/shell-events')) return new Response(null, { status: 204 });

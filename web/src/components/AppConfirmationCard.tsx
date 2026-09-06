@@ -10,7 +10,7 @@
  * 宁可少一点中文名，也不能让写操作退回到没有二次确认的两键卡片。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { Check, TriangleAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { WsToolConfirmationCard } from '@agent/shared';
@@ -62,7 +62,7 @@ export function AppConfirmationCard({
       data-testid="app-confirmation-card"
     >
       <div className="mb-2 flex items-center gap-2">
-        <AlertTriangle aria-hidden="true" className="size-4 text-warning" />
+        <TriangleAlert aria-hidden="true" className="size-4 text-warning" />
         <span className="text-sm font-medium">
           即将在《{card.systemName ?? '外部系统'}》中执行「{card.capabilityName ?? '写操作'}」
         </span>

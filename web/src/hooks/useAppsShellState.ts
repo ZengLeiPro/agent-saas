@@ -20,7 +20,13 @@ export function readAppsRoute(): AppsRouteState | null {
 function sameRoute(left: AppsRouteState | null, right: AppsRouteState | null): boolean {
   if (left === right) return true;
   if (!left || !right) return false;
-  return left.installationId === right.installationId && left.appPath === right.appPath;
+  return (
+    left.installationId === right.installationId &&
+    left.appPath === right.appPath &&
+    // 拒绝原因也算路由的一部分：同一个 `/apps/x`（脏 path 已回落）连着来两次，
+    // 第二次也应该重新提示与记事件，否则连续踩坑只记第一次
+    left.rejectedReason === right.rejectedReason
+  );
 }
 
 export interface AppsShellState {

@@ -130,6 +130,42 @@ describe('§6.6 失败态', () => {
   });
 });
 
+describe('4-A-01 非法应用内路径', () => {
+  it('回落首页 + 轻提示，且不写技术归因', async () => {
+    useInstallations();
+    render(<Region hidden={false} path="/apps/inst-1/a/../b" />);
+    const notice = await screen.findByTestId('app-host-notice');
+    expect(notice.textContent).toContain('链接无效，已返回首页');
+    expect(notice.textContent).not.toMatch(/dot_segment|path|\.\./);
+    // 不进错误页：仍然照常握手打开应用根
+    expect(screen.queryByTestId('app-host-failure')).toBeNull();
+    expect(screen.getByTestId('app-host').getAttribute('data-app-path')).toBe('/');
+  });
+
+  it('可能是攻击尝试的原因落安全事件，手抖类不落', async () => {
+    useInstallations();
+    render(<Region hidden={false} path="/apps/inst-1/a%2fb" />);
+    await screen.findByTestId('app-host-notice');
+    const audited = () =>
+      authFetch.mock.calls
+        .map((call) => (call as unknown as [string, RequestInit])[1]?.body)
+        .filter((body): body is string => typeof body === 'string')
+        .map((body) => JSON.parse(body) as Record<string, unknown>);
+    await waitFor(() =>
+      expect(audited()).toContainEqual(
+        expect.objectContaining({ event: 'path_rejected', reason: 'percent_encoded_separator' }),
+      ),
+    );
+  });
+
+  it('合法路径不出条幅', async () => {
+    useInstallations();
+    render(<Region hidden={false} path="/apps/inst-1/orders" />);
+    await screen.findByTestId('app-host-frame');
+    expect(screen.queryByTestId('app-host-notice')).toBeNull();
+  });
+});
+
 describe('§5.5 切走再切回保持挂载', () => {
   it('切走只加 hidden class，DOM 节点与组件实例都不重建', async () => {
     useInstallations();

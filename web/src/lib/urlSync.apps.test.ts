@@ -18,6 +18,8 @@ import {
   parseUrl,
   pushAppsUrl,
   replaceAppsUrl,
+  classifyAppPath,
+  SECURITY_RELEVANT_PATH_REJECTIONS,
 } from '@/lib/urlSync';
 
 describe('壳路由解析 /apps/<iid>/<path>', () => {
@@ -28,6 +30,7 @@ describe('壳路由解析 /apps/<iid>/<path>', () => {
       installationId: 'inst-1',
       appPath: '/',
       canonicalPath: null,
+      rejectedReason: null,
     });
   });
 
@@ -128,6 +131,7 @@ describe('path 语法拒绝集（§5.2）', () => {
       installationId: 'inst-1',
       appPath: '/',
       canonicalPath: '/apps/inst-1',
+      rejectedReason: 'dot_segment',
     });
     expect(parseAppsPath('/apps/inst-1//x')?.appPath).toBe('/');
     expect(parseAppsPath('/apps/inst-1/a%2fb')?.appPath).toBe('/');
@@ -204,5 +208,43 @@ describe('壳路由写入 history', () => {
     }
     expect(seen).toBe(1);
     expect(window.location.pathname).toBe('/apps/inst-2/dashboard');
+  });
+});
+
+describe('4-A-01 非法 path 的拒绝原因（落安全事件的唯一依据）', () => {
+  it.each([
+    ['/apps/inst-1/a/../b', 'dot_segment'],
+    ['/apps/inst-1/..', 'dot_segment'],
+    ['/apps/inst-1/a%2fb', 'percent_encoded_separator'],
+    ['/apps/inst-1/a%2E%2E', 'percent_encoded_separator'],
+    ['/apps/inst-1/a\\b', 'backslash'],
+  ])('%s 回落应用根并给出原因 %s', (pathname, reason) => {
+    const route = parseAppsPath(pathname);
+    expect(route?.appPath).toBe('/');
+    expect(route?.rejectedReason).toBe(reason);
+    expect(route?.canonicalPath).toBe('/apps/inst-1');
+  });
+
+  it('合法 path 的 rejectedReason 为 null', () => {
+    expect(parseAppsPath('/apps/inst-1/orders')?.rejectedReason).toBeNull();
+    expect(parseAppsPath('/apps/inst-1')?.rejectedReason).toBeNull();
+  });
+
+  it('安全事件闭集只含总控点名的五类（%2f 与 %2e 共用一个码）', () => {
+    expect([...SECURITY_RELEVANT_PATH_REJECTIONS]).toEqual([
+      'scheme',
+      'dot_segment',
+      'percent_encoded_separator',
+      'backslash',
+    ]);
+    // 手抖类不记：记了只会淹没真正的攻击尝试
+    for (const noise of ['not_absolute', 'double_slash', 'whitespace', 'too_long', 'empty']) {
+      expect(SECURITY_RELEVANT_PATH_REJECTIONS).not.toContain(noise);
+    }
+  });
+
+  it('classifyAppPath 对 scheme 与不以 / 开头分别给码', () => {
+    expect(classifyAppPath('https://evil.example/x').rejectedReason).toBe('scheme');
+    expect(classifyAppPath('a/b').rejectedReason).toBe('not_absolute');
   });
 });

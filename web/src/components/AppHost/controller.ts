@@ -574,6 +574,16 @@ export class AppHostController {
     });
   }
 
+  /**
+   * 4-A-01：壳 URL 里出现非法应用内路径。路径已由 `parseAppsPath` 回落到应用根、
+   * 由统一 `replaceState` 通道洗干净，这里只补总控要的两件事 ——
+   * 一句不写技术归因的轻提示，以及可能是攻击尝试的那几类原因落安全事件。
+   */
+  noteInvalidPath(reason: string, securityRelevant: boolean): void {
+    if (securityRelevant) this.report('path_rejected', reason);
+    this.patch({ notice: { level: 'warning', message: INVALID_PATH_NOTICE } });
+  }
+
   dismissNotice(): void {
     this.patch({ notice: null });
   }

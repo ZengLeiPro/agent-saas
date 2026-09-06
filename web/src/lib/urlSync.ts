@@ -9,7 +9,7 @@ import {
   parseGovernanceUrl,
   type GovernanceRouteState,
 } from '@/lib/governanceNavigation';
-import { PathError, normalizeAppPath } from '@kaiyan/ky-app-contract/browser';
+import { PathError, normalizeAppPath, type PathErrorCode } from '@kaiyan/ky-app-contract/browser';
 import { pushAppHistoryState, replaceAppHistoryState } from '@/lib/appHistory';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
 import { preferredTaskCenterPath } from '@/lib/taskCenterRoute';
@@ -106,7 +106,27 @@ export interface AppsRouteState {
   installationId: string;
   appPath: string;
   canonicalPath: string | null;
+  /**
+   * URL 里的应用内路径被判非法时的原因（合法为 null）。
+   *
+   * 总控对 4-A-01 的拍板：非法 path 仍然**回落应用根 + `replaceState` 洗 URL**
+   * （不进错误页 —— 绝大多数来自手改 URL 或旧书签，错误页会让人卡住），
+   * 但要多做两件事 —— 给一句轻提示、并把可能是攻击尝试的几类原因落安全事件。
+   * 原因本身留在这里，由 AppHost 决定怎么用。
+   */
+  rejectedReason: PathErrorCode | null;
 }
+
+/**
+ * 值得落安全事件的拒绝原因（总控 4-A-01 点名的五类，`%2f` 与 `%2e` 共用一个码）。
+ * `not_absolute` / `double_slash` 这类多半是手抖，记了只会淹没真正的攻击尝试。
+ */
+export const SECURITY_RELEVANT_PATH_REJECTIONS: readonly PathErrorCode[] = [
+  'scheme',
+  'dot_segment',
+  'percent_encoded_separator',
+  'backslash',
+];
 
 export function normalizeAdminSettingsSection(target: AdminSettingsTarget, section?: string | null): string {
   return isSettingsSectionId(target, section) ? section : settingsFallbackSection(target);
@@ -297,10 +317,18 @@ export function isValidAppPath(appPath: string): boolean {
 
 /** 非法 path 一律回落到应用根路径，由调用方 `replaceState` 到 canonical（不静默保留脏 URL）。 */
 function safeNormalizeAppPath(appPath: string): string {
+  return classifyAppPath(appPath).appPath;
+}
+
+/** 规范化并保留拒绝原因；原因是 4-A-01 落安全事件的唯一依据。 */
+export function classifyAppPath(appPath: string): {
+  appPath: string;
+  rejectedReason: PathErrorCode | null;
+} {
   try {
-    return normalizeAppPath(appPath);
+    return { appPath: normalizeAppPath(appPath), rejectedReason: null };
   } catch (error) {
-    if (error instanceof PathError) return '/';
+    if (error instanceof PathError) return { appPath: '/', rejectedReason: error.code };
     throw error;
   }
 }
@@ -328,10 +356,15 @@ export function parseAppsPath(pathname: string, search = '', hash = ''): AppsRou
   if (!rawInstallationId) return null;
   const installationId = decodeSegment(rawInstallationId);
   const rawPath = slashAt === -1 ? '' : tail.slice(slashAt);
-  const appPath = safeNormalizeAppPath(`${rawPath || '/'}${search}${hash}`);
+  const { appPath, rejectedReason } = classifyAppPath(`${rawPath || '/'}${search}${hash}`);
   const canonical = buildAppsUrl({ installationId, appPath });
   const current = `${pathname}${search}${hash}`;
-  return { installationId, appPath, canonicalPath: canonical === current ? null : canonical };
+  return {
+    installationId,
+    appPath,
+    canonicalPath: canonical === current ? null : canonical,
+    rejectedReason,
+  };
 }
 
 /**

@@ -21,7 +21,12 @@ import { useMySystems } from '@/hooks/useMySystems';
 import { reportAppShellEvent } from '@/lib/appShellAudit';
 import { requestAgentOpen } from '@/lib/agentOpenBus';
 import { loadMySystems } from '@/lib/mySystemsSource';
-import { replaceAppsUrl, pushAppsUrl, type AppsRouteState } from '@/lib/urlSync';
+import {
+  replaceAppsUrl,
+  pushAppsUrl,
+  SECURITY_RELEVANT_PATH_REJECTIONS,
+  type AppsRouteState,
+} from '@/lib/urlSync';
 import { cn } from '@/lib/utils';
 import { AppHostController, type AppHostSnapshot } from './controller';
 import { describeAppHostFailure } from './failureText';
@@ -123,6 +128,20 @@ export function AppHost({ appsRoute }: AppHostProps) {
       appsRoute.appPath,
     );
   }, [controller, installation, appsRoute]);
+
+  // 4-A-01：非法应用内路径已回落首页，这里补轻提示与安全事件。
+  // 放在挂载 effect 之后声明：`controller.mount` 会先把 installation 装上，
+  // 审计事件才有 installationId 可带。
+  const rejectedReason = appsRoute?.rejectedReason ?? null;
+  useEffect(() => {
+    if (!rejectedReason) return;
+    // 安装实例是审计事件的必填项，而它要等 `/api/systems/mine` 回来才知道；
+    // 因此把它放进依赖：先出提示，等实例到位再补上安全事件。
+    controller.noteInvalidPath(
+      rejectedReason,
+      (SECURITY_RELEVANT_PATH_REJECTIONS as readonly string[]).includes(rejectedReason),
+    );
+  }, [controller, rejectedReason, installation?.installationId]);
 
   // contentWindow 必须在第一条消息之前交给控制器，否则 event.source 校验会把
   // 合法的首条 ready 也拒掉。src 一变就重挂 window（iframe 换文档会换 contentWindow）。

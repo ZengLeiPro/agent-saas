@@ -12,6 +12,8 @@ import { expect, type Frame, type Page } from 'playwright/test';
 
 export const SHELL_ORIGIN = 'http://127.0.0.1:4190';
 export const APP_ORIGIN = 'http://localhost:4191';
+/** 真 SDK 子端（`web/demo/sdk-app.html`）的 origin，见 `serve.mjs` 的 `SDK_APP_PORT`。 */
+export const SDK_APP_ORIGIN = 'http://localhost:4192';
 export const CRM_IID = 'tsi_crm_01';
 export const WMS_IID = 'tsi_wms_01';
 /** 演示态 CRM 实例 manifest 里的 `externalLinkHosts`。 */
@@ -61,20 +63,49 @@ export interface KyEnvelope {
   payload?: Record<string, unknown>;
 }
 
+/** `web/demo/sdk-app.html` 的 `window.__kySdkPlan`。 */
+export interface SdkAppPlan {
+  /** 非空则在模块顶层（握手远未完成时）就发这条 `app.fetch`，验「`init` 前不发 API」。 */
+  preInitPath?: string;
+}
+
 export interface BootOptions {
   /** 壳路径，默认停在 CRM 实例的应用根。 */
   path?: string;
   scenario?: DemoScenario;
   api?: DemoApiPlan;
   app?: MockAppPlan;
+  /** 覆盖安装实例的 `origin`；换成 `SDK_APP_ORIGIN` 即把子端换成真 SDK 那一页。 */
+  appOrigin?: string;
+  sdk?: SdkAppPlan;
+}
+
+/** 真 SDK 子端里 `app.fetch()` 的结局（`window.__kySdk.results`）。 */
+export interface SdkFetchResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+  reason?: string;
+  message?: string;
+  at: number;
+  startedAt: number;
+}
+
+/** 定制项目后端桩收到的一条请求（`GET /__calls?key=`）。 */
+export interface SdkBackendCall {
+  method: string;
+  path: string;
+  auth: string | null;
+  at: number;
 }
 
 export async function boot(page: Page, options: BootOptions = {}): Promise<void> {
   const payload = {
     scenario: options.scenario ?? 'ok',
-    appOrigin: APP_ORIGIN,
+    appOrigin: options.appOrigin ?? APP_ORIGIN,
     api: options.api ?? {},
     app: options.app ?? {},
+    sdk: options.sdk ?? {},
   };
   await page.addInitScript((input: typeof payload) => {
     const win = window as unknown as Record<string, unknown>;
@@ -82,6 +113,7 @@ export async function boot(page: Page, options: BootOptions = {}): Promise<void>
     win.__demoAppOrigin = input.appOrigin;
     win.__demoApiPlan = input.api;
     win.__kyPlan = input.app;
+    win.__kySdkPlan = input.sdk;
 
     // ---- 握手相位时刻观察器（只在壳这一侧装；子端 frame 没有 app-host 节点）----
     // §9.3-15 的口径是「`src` 设置 → `init.ack` ≤ 3 s」，所以 t0 取 iframe 带着 src
@@ -153,6 +185,27 @@ export async function sendFromApp(frame: Frame, envelope: KyEnvelope): Promise<v
   await frame.evaluate((message) => {
     (window as unknown as { __ky: { send: (m: unknown) => void } }).__ky.send(message);
   }, envelope);
+}
+
+/** 真 SDK 那一页的 frame（等到 `window.__kySdk` 就绪）。 */
+export async function sdkFrame(page: Page): Promise<Frame> {
+  let found: Frame | undefined;
+  await expect
+    .poll(
+      () => {
+        found = page.frames().find((item) => item.url().startsWith(SDK_APP_ORIGIN));
+        return Boolean(found);
+      },
+      { timeout: 20_000, intervals: [50, 100, 200, 500] },
+    )
+    .toBe(true);
+  const frame = found as Frame;
+  await frame.waitForFunction(
+    () => Boolean((window as unknown as { __kySdk?: unknown }).__kySdk),
+    null,
+    { timeout: 20_000 },
+  );
+  return frame;
 }
 
 export function appState(frame: Frame): Promise<{

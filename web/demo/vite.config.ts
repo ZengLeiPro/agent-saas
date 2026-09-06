@@ -40,6 +40,13 @@ export default defineConfig({
         replacement: fileURLToPath(new URL('../../shared/src/index.ts', import.meta.url)),
       },
       {
+        // Phase C：`sdk-app.html` 用真 SDK 源码（包里没有 dist，也不该为跑测试去 build 它）
+        find: '@kaiyan/ky-app-browser',
+        replacement: fileURLToPath(
+          new URL('../../packages/ky-app-browser/src/index.ts', import.meta.url),
+        ),
+      },
+      {
         find: '@kaiyan/ky-app-contract/browser',
         replacement: fileURLToPath(
           new URL('../../packages/ky-app-contract/src/browser.ts', import.meta.url),
@@ -72,6 +79,8 @@ export default defineConfig({
         // 壳与 mock 子端各是一个入口；截图脚本把它们挂在两个不同 host 上，形成真跨源
         index: fileURLToPath(new URL('./index.html', import.meta.url)),
         mockApp: fileURLToPath(new URL('./mock-app.html', import.meta.url)),
+        // 真 SDK 子端：§9.3-10 的「`init` 前不发 API」「401 只重放安全读一次」要用
+        sdkApp: fileURLToPath(new URL('./sdk-app.html', import.meta.url)),
       },
     },
   },

@@ -45,12 +45,16 @@ for (const marker of forbiddenSwMarkers) {
 // ① 产物里不许出现演示态的桩标记；② 产物里不许出现 mock 子端页面或 demo 目录。
 const DEMO_STUB_MARKER = "ky-app-demo-stub-do-not-ship";
 const distEntries = await readdir(dist);
-for (const forbidden of ["mock-app.html", "demo"]) {
+for (const forbidden of ["mock-app.html", "sdk-app.html", "demo"]) {
   if (distEntries.includes(forbidden)) {
     throw new Error(`生产产物里出现了演示态资源：dist/${forbidden}（web/demo 不得进生产构建）`);
   }
 }
-if (index.includes(DEMO_STUB_MARKER) || index.includes("mock-app.html")) {
+if (
+  index.includes(DEMO_STUB_MARKER) ||
+  index.includes("mock-app.html") ||
+  index.includes("sdk-app.html")
+) {
   throw new Error("index.html 引用了演示态资源（web/demo 不得进生产构建）");
 }
 

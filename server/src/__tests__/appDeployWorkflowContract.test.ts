@@ -107,7 +107,7 @@ describe('App 生产部署门禁', () => {
     expect(triggerBlock).toContain('required: true');
     expect(triggerBlock).toContain('type: boolean');
     expect(triggerBlock).not.toContain('force_ecs:');
-    expect(plan).toContain('Confirm Web-only compatibility scope');
+    expect(plan).toContain('确认仅 Web 的兼容发布范围');
     expect(plan).toContain('block_server_compatibility');
     expect(plan).toContain('cannot atomically compensate ECS + Web across jobs');
     expect(ecs).toContain('needs: [build, deploy_plan]');

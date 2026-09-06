@@ -1,4 +1,4 @@
-name: 测试环境验收
+name: 4 · 测试环境验收
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ env:
 
 jobs:
   acceptance:
-    name: Run optional browser and Agent acceptance
+    name: 运行可选的浏览器与 Agent 验收
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -47,28 +47,30 @@ jobs:
       RELEASE_ID_INPUT: ${{ inputs.release_id }}
 
     steps:
-      - name: Validate acceptance dispatch
+      - name: 校验验收触发参数
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
           [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
           printf 'STAGING_RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
 
-      - name: Checkout immutable RC revision
+      - name: 检出不可变 RC 版本
         uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ inputs.release_id }}
           fetch-depth: 0
 
-      - uses: ./.github/actions/setup-pnpm
-      - name: Setup exact Runtime contract Node
+      - name: 配置 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 配置符合运行时契约的精确 Node 版本
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
 
-      - name: Validate exact RC subject
+      - name: 校验精确 RC 主体
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -92,14 +94,14 @@ jobs:
             echo "MANIFEST_DIGEST=$manifest_digest"
           } >> "$GITHUB_ENV"
 
-      - name: Install Alibaba Cloud CLI
+      - name: 安装阿里云 CLI
         run: |
           set -euo pipefail
           curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Authorize current runner for Staging SSH
+      - name: 为当前 Runner 授权测试环境 SSH
         run: |
           set -euo pipefail
           runner_ip="$(curl -4 -fsS --retry 5 https://api.ipify.org)"
@@ -118,7 +120,7 @@ jobs:
             --Description "GitHub Staging acceptance $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" \
             --ClientToken "staging-acceptance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >/dev/null
 
-      - name: Configure Staging SSH
+      - name: 配置测试环境 SSH
         run: |
           set -euo pipefail
           : "${STAGING_ECS_HOST:?Missing secret STAGING_ECS_HOST}"
@@ -141,7 +143,7 @@ jobs:
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
 
-      - name: Verify exact RC is still active on Staging
+      - name: 确认精确 RC 仍在测试环境生效
         run: |
           set -euo pipefail
           curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?run=$GITHUB_RUN_ID" \
@@ -159,7 +161,7 @@ jobs:
           test "$(printf '%s' "$binding_json" | jq -r .releaseSha)" = "$STAGING_RELEASE_SHA"
           test "$(printf '%s' "$binding_json" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
 
-      - name: Prepare browser and Agent acceptance suite
+      - name: 准备浏览器与 Agent 验收套件
         run: |
           set -euo pipefail
           touch "$RUNNER_TEMP/staging-acceptance-fixtures-touched"
@@ -167,7 +169,7 @@ jobs:
             > "$RUNNER_TEMP/staging-fixture-reset-before.json"
           pnpm exec playwright install --with-deps chromium
 
-      - name: Re-verify exact RC immediately before acceptance execution
+      - name: 验收执行前立即复核精确 RC
         run: |
           set -euo pipefail
           curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?critical=$GITHUB_RUN_ID" \
@@ -184,7 +186,7 @@ jobs:
             --acs-health "$RUNNER_TEMP/staging-acs-health-critical.json" \
             --expected-manifest-digest "$MANIFEST_DIGEST"
 
-      - name: Run browser and Agent acceptance suite
+      - name: 运行浏览器与 Agent 验收套件
         timeout-minutes: 80
         run: |
           set -euo pipefail
@@ -192,7 +194,7 @@ jobs:
           node scripts/staging/summarize-e2e.mjs test-results/staging-results.json \
             "$RUNNER_TEMP/staging-acceptance-summary.json"
 
-      - name: Clean and read back Staging acceptance fixtures
+      - name: 清理并回读测试环境验收夹具
         if: always()
         run: |
           set -euo pipefail
@@ -203,7 +205,7 @@ jobs:
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/staging-fixture-reset-after.json"
 
-      - name: Verify Staging Manifest and component identities remained unchanged
+      - name: 确认测试环境清单与组件身份保持不变
         if: always() && env.STAGING_RELEASE_SHA != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,7 +232,7 @@ jobs:
             --acs-health "$RUNNER_TEMP/staging-acs-health-final.json" \
             --expected-manifest-digest "$MANIFEST_DIGEST"
 
-      - name: Revoke temporary Staging SSH ingress
+      - name: 撤销临时测试环境 SSH 入站授权
         if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
         run: |
           set -euo pipefail
@@ -245,7 +247,7 @@ jobs:
             sleep 2
           done
 
-      - name: Upload optional Staging acceptance evidence
+      - name: 上传可选的测试环境验收证据
         if: always()
         uses: actions/upload-artifact@v4
         with:

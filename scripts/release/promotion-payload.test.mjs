@@ -11,7 +11,7 @@ const workflow = readFileSync(
   'utf8',
 );
 const uploadStep = workflow
-  .split('- name: Upload immutable deploy payload')[1]
+  .split('- name: 上传不可变部署载荷与 RC 绑定的托管单元')[1]
   .split('\n      - name:')[0];
 const remoteCommand = uploadStep.slice(uploadStep.indexOf('          ssh -i')).trim();
 const isRoot = process.getuid?.() === 0;

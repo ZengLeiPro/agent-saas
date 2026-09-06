@@ -16,8 +16,8 @@ test('Staging RC collects, publishes, and reads back fresh isolation evidence', 
   assert.match(deploymentJob, /diff <\(jq -S \. .*isolation-evidence-input\.json/u);
   assert.doesNotMatch(deploymentJob, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.ok(
-    workflow.indexOf('Verify live reverse-isolation evidence') <
-      workflow.indexOf('Record deterministic Staging deployment and verification'),
+    workflow.indexOf('校验在线反向隔离证据') <
+      workflow.indexOf('记录确定性的测试环境部署与校验结果'),
   );
 });
 

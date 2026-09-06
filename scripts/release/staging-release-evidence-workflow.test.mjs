@@ -41,13 +41,13 @@ test('Staging fails fast when the deployed Evidence Writer cannot accept the pro
   const version = workflow.match(/RELEASE_EVIDENCE_SCHEMA_VERSION: '(\d+)'/u);
   assert.ok(version);
   assert.equal(Number(version[1]), RELEASE_EVIDENCE_SCHEMA_VERSION);
-  assert.match(workflow, /Verify Evidence Writer schema compatibility/u);
+  assert.match(workflow, /校验证据写入器架构兼容性/u);
   assert.match(workflow, /\/capabilities/u);
   assert.match(workflow, /supportedReleaseEvidenceSchemaVersions/u);
   assert.match(workflow, /index\(\$required\) != null/u);
   assert.ok(
-    workflow.indexOf('Verify Evidence Writer schema compatibility') <
-      workflow.indexOf('Checkout immutable dispatch revision for evidence'),
+    workflow.indexOf('校验证据写入器架构兼容性') <
+      workflow.indexOf('检出用于生成证据的不可变触发版本'),
   );
 });
 
@@ -64,14 +64,14 @@ test('Staging Nginx exposes the authenticated Evidence Writer capability endpoin
 
 test('Staging evidence stage safely reuses or creates one immutable same-SHA record', async () => {
   const workflow = await readFile(stagingWorkflowPath, 'utf8');
-  assert.match(workflow, /Reuse immutable Release Evidence when present/u);
+  assert.match(workflow, /存在时复用不可变发布证据/u);
   assert.match(workflow, /validateReleaseEvidenceDocument/u);
   assert.match(workflow, /REUSE_RELEASE_EVIDENCE=true/u);
   assert.match(workflow, /acs-classify\.sh/u);
   assert.match(workflow, /actions\/workflows\/acs-sandbox\.yml\/runs/u);
   assert.match(workflow, /workflow: "Build & Check"/u);
   assert.match(workflow, /workflow: "ACS Impact Gate"/u);
-  assert.match(workflow, /Read live Production state without mutation/u);
+  assert.match(workflow, /只读获取在线生产状态/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_URI/u);
   assert.match(workflow, /RELEASE_RECORD_OSS_REGION/u);
   assert.match(workflow, /aliyun --secure oss ls[\s\S]*--region "\$RELEASE_RECORD_OSS_REGION"/u);

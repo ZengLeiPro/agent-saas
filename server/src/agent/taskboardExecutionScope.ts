@@ -5,7 +5,7 @@ const LEGACY_EXECUTION_ACTIONS = ['list', 'create', 'update', 'move', 'execute']
 const EXECUTION_USER_READ_ACTIONS = [
   'board.list', 'board.search', 'board.get',
   'task.list', 'task.search', 'task.get',
-  'comment.list', 'execution.list', 'execution.context',
+  'comment.list', 'comment.get', 'execution.list', 'execution.context',
 ] as const;
 
 /** Enforces the current active Execution as the sole authority for every Agent writeback. */

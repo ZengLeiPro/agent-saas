@@ -240,6 +240,10 @@ const executionContextSchema = z.object({
     cursor: z.string().regex(/^\d+$/).optional(),
     limit: z.number().int().min(1).max(500).optional(),
   }).strict().optional(),
+  comments: z.object({
+    mode: z.enum(['recent', 'full', 'digest'] as const).optional(),
+    limit: z.number().int().min(0).max(50).optional(),
+  }).strict().optional(),
 }).strict();
 const pageQueryFields = {
   page: numberQuerySchema(1, 1_000_000, 1),

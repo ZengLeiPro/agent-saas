@@ -22,6 +22,7 @@ import type {
 } from '../../../shared/src/types/taskboard.js';
 import type {
   TaskboardBoardSearchFilter,
+  TaskboardCommentSearchFilter,
   TaskboardContinuationContext,
   TaskboardContinuationDispatch,
   TaskboardContinuationDispatchPayload,
@@ -257,7 +258,7 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async searchComments(
     identity: TaskboardIdentity,
     taskId: string,
-    filter?: TaskboardPageFilter,
+    filter?: TaskboardCommentSearchFilter,
   ): Promise<TaskboardPage<TaskBoardComment>> {
     return (await this.service()).searchComments(identity, taskId, filter);
   }

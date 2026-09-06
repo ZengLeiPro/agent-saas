@@ -372,11 +372,13 @@ export function ProviderQuotaPage() {
   const points = useMemo(() => history?.points ?? [], [history?.points]);
   const collector = overview?.collector;
   const statusCounts = useMemo(() => {
-    const counts = { critical: 0, warning: 0 };
+    const counts = { collectionFailed: 0, exhausted: 0, credentialUnavailable: 0, warning: 0 };
     for (const item of overview?.items ?? []) {
-      const tone = accountStatus(item).tone;
-      if (tone === 'critical') counts.critical += 1;
-      if (tone === 'warning') counts.warning += 1;
+      const status = accountStatus(item);
+      if (status.label === '采集失败') counts.collectionFailed += 1;
+      if (status.label === '已耗尽') counts.exhausted += 1;
+      if (status.label === '凭据不可用') counts.credentialUnavailable += 1;
+      if (status.tone === 'warning') counts.warning += 1;
     }
     return counts;
   }, [overview?.items]);
@@ -423,10 +425,18 @@ export function ProviderQuotaPage() {
           <span>
             上次采集：{collector.lastRunAt ? formatTime(collector.lastRunAt) : '尚未运行'}
           </span>
-          {statusCounts.critical > 0 && (
+          {statusCounts.collectionFailed > 0 && (
             <span className="inline-flex items-center gap-1 text-danger-ink">
               <TriangleAlert className="size-3.5" />
-              {statusCounts.critical} 个账号已耗尽或不可用
+              {statusCounts.collectionFailed} 个账号采集失败
+            </span>
+          )}
+          {statusCounts.exhausted > 0 && (
+            <span className="text-danger-ink">{statusCounts.exhausted} 个账号额度已耗尽</span>
+          )}
+          {statusCounts.credentialUnavailable > 0 && (
+            <span className="text-danger-ink">
+              {statusCounts.credentialUnavailable} 个账号凭据不可用
             </span>
           )}
           {statusCounts.warning > 0 && (

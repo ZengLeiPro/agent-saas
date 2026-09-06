@@ -2839,7 +2839,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     providerQuotaRuntime = await createProviderQuotaRuntime({
       pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix,
       getModelsConfig: () => config.models, secretVault, codexCredentialManager,
-      enableCollector: enableSingletonWorkers, logger: serverLogger.child('ProviderQuota'),
+      enableCollector: enableSingletonWorkers, fetchImpl: egressFetch, logger: serverLogger.child('ProviderQuota'),
     });
   }
   if (config.dingtalk?.enabled) {

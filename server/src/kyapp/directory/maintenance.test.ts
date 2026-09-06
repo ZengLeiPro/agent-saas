@@ -107,6 +107,6 @@ describe('目录保留清理与投影的 worker 挂载', () => {
     expect((worker as unknown as { directoryTimer?: unknown }).directoryTimer).toBeDefined();
     worker.stop();
     expect((worker as unknown as { directoryTimer?: unknown }).directoryTimer).toBeUndefined();
-    expect(KY_APP_DIRECTORY_INTERVAL_MS).toBe(5 * 60 * 1000);
+    expect(KY_APP_DIRECTORY_INTERVAL_MS).toBe(60_000);
   });
 });

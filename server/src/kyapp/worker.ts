@@ -10,7 +10,7 @@
  * - 健康探测（默认每 15 s 一 tick，live/ready 的真实间隔由 prober 内部按 §4.6 节流）；
  * - 维护巡检（每小时）：凭据过期与轮换告警、退役签名密钥下线、过期 nonce 清理、停签窗口清理，
  *   以及 WP2b 目录变更流的 30 天保留清理（§3.6）；
- * - 目录投影（WP2b，默认每 5 分钟一拍，§3.4「延迟 ≤ 轮询间隔」）：把 users/membership/
+ * - 目录投影（WP2b，默认每 60 秒一拍；§3.4 上限 5 分钟，为 §11.2-3 的「5 分钟内」验收留余量）：把 users/membership/
  *   directoryGroups 三源差分成附录 L 的变更事件。目录相关两拍与其余节拍共用同一角色判定，
  *   **不新增任何环境变量**，节拍取值来自 `config.json` 的 `kyApp.directory`。
  */
@@ -29,7 +29,7 @@ export const KY_APP_ALERT_SOURCE = 'ky_app_installation';
 export const KY_APP_DISPATCH_INTERVAL_MS = 2_000;
 export const KY_APP_PROBE_INTERVAL_MS = 15_000;
 export const KY_APP_MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
-export const KY_APP_DIRECTORY_INTERVAL_MS = 5 * 60 * 1000;
+export const KY_APP_DIRECTORY_INTERVAL_MS = 60_000;
 
 export interface KyAppWorkerLogger {
   info: (message: string) => void;

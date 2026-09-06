@@ -71,7 +71,8 @@ describe('kyApp 平台配置域', () => {
       reconcileIntervalMs: DEFAULT_DIRECTORY.reconcileIntervalMs,
     });
     expect(DEFAULT_DIRECTORY.retentionDays).toBe(30);
-    expect(DEFAULT_DIRECTORY.reconcileIntervalMs).toBe(5 * 60 * 1000);
+    // 总控拍板：默认 60 秒，为 §11.2-3「停用后 5 分钟内无法进入」的验收留余量。
+    expect(DEFAULT_DIRECTORY.reconcileIntervalMs).toBe(60_000);
 
     expect(
       resolveKyAppConfig({

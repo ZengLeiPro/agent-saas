@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>SDK 子端（真 @kaiyan/ky-app-browser）</title>
+    <style>
+      body { margin: 0; font: 14px/1.7 system-ui, sans-serif; color: #1f2328; background: #fff; }
+      header { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; font-weight: 600; }
+      main { padding: 16px; }
+      .state { font-size: 12px; color: #6b7280; }
+    </style>
+  </head>
+  <body>
+    <header>SDK 子端 · 用于 §9.3-10「`init` 前不发 API」与「401 续期只重放安全读一次」</header>
+    <main>
+      <p class="state" id="state">握手中…</p>
+    </main>
+
+    <!--
+      与 `mock-app.html` 的分工：
+
+      - `mock-app.html` 是**手搓信封**的对端，用来把壳逼到各种协议边界（伪造来源、
+        重复 (type,id)、init.ack 不回、contractVersion=2 …）。被测对象是**壳**。
+      - 本页用的是**真 SDK**（`@kaiyan/ky-app-browser` 源码，vite alias 到 `src/index.ts`），
+        因为 §9.3-10 里「`init` 前不发 API」与「401 → 单飞续期 → 只自动重放安全读一次」
+        这两条的实现落在子端 SDK 的 `fetchWrapper.ts` / `tokenManager.ts` 上，
+        壳侧没有对应代码可测。放在真浏览器里跑，走的是真 iframe、真跨源 postMessage、
+        真 HTTP 401 —— 单测的 jsdom + 假 fetch 覆盖不到这条链路。
+
+      本页与 `mock-app.html` 一样只存在于 `web/demo/`，由
+      `web/scripts/check-oss-dist.mjs` 断言不进生产构建。
+    -->
+    <script type="module">
+      import { createKyApp } from '@kaiyan/ky-app-browser';
+
+      const plan = window.__kySdkPlan || {};
+      const state = document.getElementById('state');
+
+      /** 每一次 `app.fetch()` 的结局，测试按 key 取。 */
+      const results = {};
+      const errors = [];
+      const phases = [];
+
+      const app = createKyApp({
+        onPhaseChange(next) {
+          phases.push(next);
+          if (next === 'active') state.textContent = '已连接 KY Agent（真 SDK）';
+        },
+        onError(info) {
+          errors.push({ code: info.code, message: info.message });
+        },
+      });
+
+      /**
+       * 统一记账：成功记 status，失败记错误码。
+       * 不 throw —— 测试要的是「发生了什么」，不是让页面炸掉。
+       */
+      async function call(key, path, init) {
+        const started = performance.now();
+        try {
+          const response = await app.fetch(path, init);
+          results[key] = {
+            ok: response.ok,
+            status: response.status,
+            at: performance.now(),
+            startedAt: started,
+          };
+        } catch (error) {
+          results[key] = {
+            ok: false,
+            error: String((error && error.name) || 'Error'),
+            reason: String((error && error.reason) || ''),
+            message: String((error && error.message) || error),
+            at: performance.now(),
+            startedAt: started,
+          };
+        }
+        return results[key];
+      }
+
+      window.__kySdk = {
+        app,
+        results,
+        errors,
+        phases,
+        state: () => app.getState(),
+        counters: () => app.getState().counters,
+        get: (key, path) => call(key, path),
+        post: (key, path) => call(key, path, { method: 'POST', body: '{}' }),
+        /** 三条并发安全读，用来看 SDK 侧的单飞续期。 */
+        burst: (keys, paths) => Promise.all(keys.map((key, i) => call(key, paths[i]))),
+      };
+
+      // §9.3-10「`init` 前不发 API」：在模块顶层就发出去 —— 此刻握手一定还没完成
+      // （`createKyApp` 同步返回，attest 都还没回来）。SDK 的 `fetchWrapper` 必须把它
+      // 排队到 `active` 之后才真正打出网络请求。
+      if (typeof plan.preInitPath === 'string') {
+        void call('preInit', plan.preInitPath);
+      }
+    </script>
+  </body>
+</html>

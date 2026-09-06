@@ -5,7 +5,7 @@ import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolBlock, ToolResultBlock } from './ToolBlock';
-import { PermissionBlock } from './PermissionBlock';
+import { PermissionMessageItem } from './PermissionMessageItem';
 import { AskUserBlock } from './AskUserBlock';
 import { SubagentBlock } from './SubagentBlock';
 import { ExecutionHiddenPlaceholder } from './ActivityGroupBlock';
@@ -1005,12 +1005,9 @@ export const MessageItem = memo(function MessageItem({
 
   if (message.type === "permission_request") {
     return (
-      <PermissionBlock
-        toolName={message.toolName}
-        toolInput={message.toolInput}
-        status={message.status}
-        onAllow={() => onPermissionResponse?.(message.interactionId, true)}
-        onDeny={() => onPermissionResponse?.(message.interactionId, false)}
+      <PermissionMessageItem
+        message={message}
+        {...(onPermissionResponse ? { onPermissionResponse } : {})}
       />
     );
   }

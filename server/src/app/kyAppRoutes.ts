@@ -22,6 +22,7 @@ import {
 import { createKyAppInstallationsRouter } from '../kyapp/routes/installations.js';
 import { createKyAppJwksHandler, createKyAppKeysRouter } from '../kyapp/routes/keys.js';
 import { createKyAppMineRouter } from '../kyapp/routes/mine.js';
+import { createKyAppShellEventsRouter } from '../kyapp/routes/shellEvents.js';
 import { createKyAppSystemsRouter } from '../kyapp/routes/systems.js';
 import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.js';
 import { createKyAppToolRegistrationDryRun } from '../kyapp/gateway/registrationDryRun.js';
@@ -111,6 +112,13 @@ export function registerKyAppRoutes(
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     }),
   );
+  // 壳侧安全事件与 `agent.open` 审计（WP4）：与握手同一前缀，仍是「已登录会话 → 治理审计」。
+  app.use(
+    KY_APP_CONTRACT_BASE_PATH,
+    createKyAppShellEventsRouter({
+      ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
+    }),
+  );
   // WP2b 组织目录（§3.6）：`userStore` 缺失时整套目录不装配，此处也就不注册。
   if (assembly.directoryChangeLog && assembly.directorySnapshots) {
     app.use(
@@ -128,6 +136,9 @@ export function registerKyAppRoutes(
     createKyAppMineRouter({
       systems: assembly.systems,
       ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
+      // §4.6 的探测结果是壳侧「维护中 / digest 不一致」的唯一检测源（偏差 4-B-06）。
+      runtimeStore: assembly.runtimeStore,
+      failureThreshold: config.probe.failureThreshold,
     }),
   );
   // JWKS 挂 app 级：`/api` 之外天然公开，不经会话中间件（`index.ts:251` 只挂 `/api`）。

@@ -390,15 +390,47 @@ describe('registeredDigest CAS 与实例状态机', () => {
 });
 
 describe('/api/systems/mine', () => {
-  it('只返回本组织、enabled 且分配命中的实例', async () => {
+  /** 只取壳关心的三个字段，断言好读。 */
+  async function mine(harness: KyAppTestRig) {
+    const body = (await (await harness.request('/api/systems/mine')).json()) as {
+      installations: Array<Record<string, unknown>>;
+    };
+    return body.installations;
+  }
+
+  it('enabled 实例返回全字段，含 manifest 的 externalLinkHosts（归一化、去重）', async () => {
     const harness = await rig();
-    await seedPublishedInstallation(harness);
+    const registered = await harness.systems.registerVersion({
+      systemId: TEST_SYSTEM,
+      name: '演示 ERP',
+      manifest: buildManifest({
+        externalLinkHosts: ['Docs.Example.COM', ' docs.example.com ', 'help.example.com', 7],
+      }),
+      actor: 'u_seed',
+    });
+    await harness.systems.publishVersion({
+      systemId: TEST_SYSTEM,
+      digest: registered.version.digest,
+      expectedVersion: registered.definition.version,
+      actor: 'u_seed',
+    });
+    await harness.systems.createInstallation({
+      installationId: TEST_IID,
+      tenantId: TEST_TENANT,
+      systemId: TEST_SYSTEM,
+      baseUrl: TEST_ORIGIN,
+      origin: TEST_ORIGIN,
+      techContactUserId: 'u_tech',
+      actor: 'u_seed',
+    });
+    await harness.systems.updateInstallationStatus({
+      installationId: TEST_IID,
+      status: 'enabled',
+      actor: 'u_seed',
+    });
 
     harness.setUser(MEMBER);
-    const visible = (await (await harness.request('/api/systems/mine')).json()) as {
-      installations: Array<{ installationId: string; name: string; state: string }>;
-    };
-    expect(visible.installations).toEqual([
+    expect(await mine(harness)).toEqual([
       {
         installationId: TEST_IID,
         systemId: TEST_SYSTEM,
@@ -406,25 +438,122 @@ describe('/api/systems/mine', () => {
         icon: null,
         origin: TEST_ORIGIN,
         state: 'enabled',
+        // 4-B-01：白名单必须下发，否则壳侧 `link.open` 永久 fail-closed
+        externalLinkHosts: ['docs.example.com', 'help.example.com'],
       },
     ]);
+  });
 
-    // 别的组织看不到。
-    harness.setUser(OTHER_TENANT_ADMIN);
-    expect(
-      ((await (await harness.request('/api/systems/mine')).json()) as { installations: unknown[] })
-        .installations,
-    ).toEqual([]);
+  it('externalLinkHosts 缺省为空数组（fail-closed）', async () => {
+    const harness = await rig();
+    await seedPublishedInstallation(harness);
+    harness.setUser(MEMBER);
+    expect((await mine(harness))[0]).toMatchObject({ externalLinkHosts: [], state: 'enabled' });
+  });
 
-    // 停用后看不到。
+  // 规范 §5.5「`live` 失败/停用 → 标签保留『暂不可用』」、§6.6「系统被停用 → 标签『暂不可用』」。
+  // 服务端一旦把停用实例滤掉，壳就只能整项从侧边栏拿掉，也拿不到《系统名》（偏差 4-B-04）。
+  it('停用后实例仍然返回，只是 state=disabled，且系统名照旧', async () => {
+    const harness = await rig();
+    await seedPublishedInstallation(harness);
+
     harness.setUser(PLATFORM_ADMIN);
     await harness.request(`${BASE}/installations/${TEST_IID}/disable`, json('POST'));
-    harness.setUser(MEMBER);
-    expect(
-      ((await (await harness.request('/api/systems/mine')).json()) as { installations: unknown[] })
-        .installations,
-    ).toEqual([]);
 
+    harness.setUser(MEMBER);
+    expect(await mine(harness)).toEqual([
+      {
+        installationId: TEST_IID,
+        systemId: TEST_SYSTEM,
+        name: '演示 ERP',
+        icon: null,
+        origin: TEST_ORIGIN,
+        state: 'disabled',
+        externalLinkHosts: [],
+      },
+    ]);
+  });
+
+  it('系统定义下架也是 disabled（不是消失）', async () => {
+    const harness = await rig();
+    await seedPublishedInstallation(harness);
+    const definition = await harness.systems.getDefinition(TEST_SYSTEM);
+    await harness.systems.updateDefinitionStatus({
+      systemId: TEST_SYSTEM,
+      status: 'disabled',
+      expectedVersion: definition!.version,
+      actor: 'u_seed',
+    });
+    harness.setUser(MEMBER);
+    expect((await mine(harness))[0]).toMatchObject({ state: 'disabled', name: '演示 ERP' });
+  });
+
+  it('pending（域名还没验）不返回：客户从没在侧边栏见过它', async () => {
+    const harness = await rig();
+    const registered = await harness.systems.registerVersion({
+      systemId: TEST_SYSTEM,
+      name: '演示 ERP',
+      manifest: buildManifest(),
+      actor: 'u_seed',
+    });
+    await harness.systems.publishVersion({
+      systemId: TEST_SYSTEM,
+      digest: registered.version.digest,
+      expectedVersion: registered.definition.version,
+      actor: 'u_seed',
+    });
+    await harness.systems.createInstallation({
+      installationId: TEST_IID,
+      tenantId: TEST_TENANT,
+      systemId: TEST_SYSTEM,
+      baseUrl: TEST_ORIGIN,
+      origin: TEST_ORIGIN,
+      techContactUserId: 'u_tech',
+      actor: 'u_seed',
+    });
+    harness.setUser(MEMBER);
+    expect(await mine(harness)).toEqual([]);
+  });
+
+  // 偏差 4-B-06：壳侧「系统升级中 / digest 不一致」的检测源就是这里。
+  it('live=maintenance → maintenance；连续失败达阈值 → unavailable；digest 不一致 → needs_reregistration', async () => {
+    const harness = await rig();
+    const { digest } = await seedPublishedInstallation(harness);
+    harness.setUser(MEMBER);
+
+    await harness.runtimeStore.recordLive({ installationId: TEST_IID, status: 'maintenance' });
+    expect((await mine(harness))[0]).toMatchObject({ state: 'maintenance' });
+
+    // 阈值 5（`resolveKyAppConfig` 的 probe.failureThreshold）：第 4 次还不算
+    for (let i = 0; i < 4; i += 1) {
+      await harness.runtimeStore.recordLive({ installationId: TEST_IID, status: 'failed' });
+    }
+    expect((await mine(harness))[0]).toMatchObject({ state: 'enabled' });
+    await harness.runtimeStore.recordLive({ installationId: TEST_IID, status: 'failed' });
+    expect((await mine(harness))[0]).toMatchObject({ state: 'unavailable' });
+
+    await harness.runtimeStore.recordLive({ installationId: TEST_IID, status: 'ok' });
+    await harness.runtimeStore.recordReady({
+      installationId: TEST_IID,
+      status: 'ok',
+      manifestDigest: 'b'.repeat(64),
+    });
+    expect((await mine(harness))[0]).toMatchObject({ state: 'needs_reregistration' });
+
+    // digest 对上就回正常
+    await harness.runtimeStore.recordReady({
+      installationId: TEST_IID,
+      status: 'ok',
+      manifestDigest: digest,
+    });
+    expect((await mine(harness))[0]).toMatchObject({ state: 'enabled' });
+  });
+
+  it('别的组织看不到；匿名 401', async () => {
+    const harness = await rig();
+    await seedPublishedInstallation(harness);
+    harness.setUser(OTHER_TENANT_ADMIN);
+    expect(await mine(harness)).toEqual([]);
     harness.setUser(null);
     expect((await harness.request('/api/systems/mine')).status).toBe(401);
   });
@@ -433,10 +562,7 @@ describe('/api/systems/mine', () => {
     const harness = await rig({ visibleInstallationIds: [] });
     await seedPublishedInstallation(harness);
     harness.setUser(MEMBER);
-    expect(
-      ((await (await harness.request('/api/systems/mine')).json()) as { installations: unknown[] })
-        .installations,
-    ).toEqual([]);
+    expect(await mine(harness)).toEqual([]);
   });
 });
 

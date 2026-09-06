@@ -148,6 +148,11 @@ export function useChatUrlSync({
       setPendingCanonicalPath(null);
       return;
     }
+    // 定制软件壳路由 `/apps/<iid>/<path>` 的 URL 由 AppHost 侧按 §5.2 维护
+    // （`ready.path` 作 canonical、用户导航 pushState、回滚 replaceState）。
+    // 这里不能用 buildUrl 兜底：activeTab 之外没有安装实例与应用内路径，
+    // 兜底会把壳路径改写成 `/`，F5 深链与 route.changed 全部失效。
+    if (activeTab === 'apps') return;
     const expectedUrl = buildUrl(activeTab, activeTab === 'chat' ? sessionId : null);
     if (governanceRouteState) {
       const governanceUrl = buildGovernanceUrl(governanceRouteState);

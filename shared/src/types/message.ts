@@ -4,6 +4,7 @@ import type { PresentationBlock } from '../lib/presentation/types';
 import type { BusinessStepEventItem } from '../lib/extractTodos';
 import type { CanonicalError } from '../lib/canonicalError';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
+import type { WsToolConfirmationCard } from './ws';
 
 /**
  * 业务步骤节：从步骤 start 事件到其终态事件之间的所有渲染单元，
@@ -114,6 +115,7 @@ export type MessageItem =
       interactionOrder?: number;
       toolName: string;
       toolInput: string;
+      confirmation?: WsToolConfirmationCard;
       status: "pending" | "allowed" | "denied";
     }
   | {

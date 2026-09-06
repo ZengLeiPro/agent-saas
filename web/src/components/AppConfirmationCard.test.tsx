@@ -5,6 +5,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PermissionBlock } from './PermissionBlock';
+import { MessageItem } from './MessageItem';
 import { deriveConfirmationCard } from './appConfirmation';
 
 const WRITE_TOOL = 'app__demo_erp__order_create';
@@ -26,6 +27,28 @@ function renderBlock(overrides: Partial<Parameters<typeof PermissionBlock>[0]> =
 }
 
 describe('AppConfirmationCard', () => {
+  it('从消息投影带下来的卡片字段渲染客户面系统名', async () => {
+    render(
+      <MessageItem
+        index={0}
+        message={{
+          id: 'app-permission',
+          type: 'permission_request',
+          interactionId: 'write-1',
+          toolName: WRITE_TOOL,
+          toolInput: JSON.stringify({ amount: 100 }),
+          status: 'pending',
+          confirmation: {
+            systemName: '客户订单系统',
+            capabilityName: '创建销售订单',
+          },
+        }}
+      />,
+    );
+    expect(await screen.findByText(/客户订单系统/)).toBeTruthy();
+    expect(screen.getByText(/创建销售订单/)).toBeTruthy();
+  });
+
   it('渲染系统名、参数摘要与「确认后立即生效、不可撤销」', async () => {
     renderBlock({
       confirmation: {

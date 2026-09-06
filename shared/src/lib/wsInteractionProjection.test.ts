@@ -31,6 +31,35 @@ function createContext(messages: MessageItem[]): WsProcessingContext {
 }
 
 describe('interaction projection', () => {
+  it('把外部系统确认卡片原样投影，并且不为普通审批制造 undefined 字段', () => {
+    const confirmation = {
+      systemName: '演示 ERP',
+      capabilityName: '新建订单',
+      params: [{ label: '客户', value: '张三' }],
+      irreversible: true,
+    };
+    const projected = projectInteractionRequest([], {
+      type: 'permission_request',
+      interactionId: 'app-write',
+      toolName: 'app__demo_erp__order_create',
+      toolInput: { customer: '张三' },
+      confirmation,
+    });
+    expect(projected.find((message) => message.type === 'permission_request')).toMatchObject({
+      confirmation,
+    });
+
+    const ordinary = projectInteractionRequest([], {
+      type: 'permission_request',
+      interactionId: 'shell-write',
+      toolName: 'Shell',
+      toolInput: { command: 'echo ok' },
+    });
+    expect(ordinary.find((message) => message.type === 'permission_request')).not.toHaveProperty(
+      'confirmation',
+    );
+  });
+
   it.each([
     [true, 'allowed'],
     [false, 'denied'],

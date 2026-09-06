@@ -22,8 +22,11 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useDesktopLayoutProtection } from "./useDesktopLayoutProtection";
-import { getDesktopHeaderTitle } from "./desktopHeaderTitle";
+import { buildAppsHeaderTitle, getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppsShellState } from "@/hooks/useAppsShellState";
+import { useMySystems } from "@/hooks/useMySystems";
+import { useAgentOpenPrefill } from "@/hooks/useAgentOpenPrefill";
 const ManagementWorkspaceContent = lazy(() => import('@/components/ManagementShell/ManagementWorkspaceContent').then(m => ({ default: m.ManagementWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
@@ -34,6 +37,7 @@ const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m 
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SettingsContent = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsContent })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
+const AppHostPanel = lazy(() => import("@/components/AppHost").then(m => ({ default: m.AppHost })));
 import {
   CronManager, McpManagerPanel, ModelManagerPanel, SettingsDirtyBoundary,
   SkillManagerPanel, TenantManager, UsageDashboard,
@@ -194,6 +198,26 @@ export function DesktopLayout(props: LayoutProps) {
   const [cronHeaderNavigationTarget, setCronHeaderNavigationTarget] = useState<HTMLDivElement | null>(null);
   const [cronHeaderActionsTarget, setCronHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
+  // 定制软件壳路由：独立订阅同一条 popstate 通道，不经 useChatAppState（§5.2）
+  const { appsRoute } = useAppsShellState();
+  // 安装实例走壳内单一来源，与左栏入口共享同一次 GET /api/systems/mine
+  const { status: appsStatus, installations: appsInstallations } = useMySystems();
+  const appsInstallation = useMemo(
+    () => appsInstallations.find((item) => item.installationId === appsRoute?.installationId) ?? null,
+    [appsInstallations, appsRoute?.installationId],
+  );
+  // §6.6：header 显示《系统名》；停用/`live` 失败追加「暂不可用」标注（标签不消失）
+  const appsTitle = appsRoute
+    ? buildAppsHeaderTitle({
+        name: appsInstallation?.name ?? null,
+        state: appsInstallation?.state ?? null,
+        resolved: appsStatus === "ready",
+      })
+    : null;
+
+  // §5.4 agent.open：切到 Agent 标签 + 只预填（发送与否由用户决定）
+  useAgentOpenPrefill({ setInput, setActiveTab });
+
   const headerTitle = useMemo(() => getDesktopHeaderTitle({
     activeTab,
     isTrashPreview,
@@ -203,7 +227,8 @@ export function DesktopLayout(props: LayoutProps) {
     activeOrgAgent,
     orgAgentIdentityLoading,
     agentProfile,
-  }), [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
+    appsTitle,
+  }), [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading, appsTitle]);
 
   // mount-once-visited：首次切换到 tab 后永久挂载
   const [cronMounted, setCronMounted] = useState(false);
@@ -215,6 +240,7 @@ export function DesktopLayout(props: LayoutProps) {
   const [modelsMounted, setModelsMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
   const [capabilitiesMounted, setCapabilitiesMounted] = useState(false);
+  const [appsMounted, setAppsMounted] = useState(false);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
@@ -230,7 +256,8 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "mcp" && !mcpMounted) setMcpMounted(true);
     if (activeTab === "models" && !modelsMounted && isPlatformAdmin) setModelsMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
-  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, trashMounted, isAdmin, isPlatformAdmin]);
+    if (activeTab === "apps" && !appsMounted) setAppsMounted(true);
+  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, trashMounted, appsMounted, isAdmin, isPlatformAdmin]);
 
   // ---- 场景库「试一试」链路 ----
   // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
@@ -598,6 +625,15 @@ export function DesktopLayout(props: LayoutProps) {
                 onCloseRoleDetail={() => setRoleDetailId(null)}
                 actionsDisabled={loading}
               />
+            </Suspense>
+          </div>
+        )}
+        {appsMounted && (
+          // §5.5：定制软件切走再切回要保留页面与滚动位置 —— 与其它标签同款
+          // 「惰性挂载 + hidden 隐藏」，**禁止条件卸载 iframe**。
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "apps" && "hidden")}>
+            <Suspense fallback={SuspenseFallback}>
+              <AppHostPanel appsRoute={appsRoute} />
             </Suspense>
           </div>
         )}

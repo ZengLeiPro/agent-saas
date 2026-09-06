@@ -116,6 +116,10 @@ export function MobileLayout(props: LayoutProps) {
     setActiveTab("chat");
   }, [setActiveTab]);
   const handleMobileTabChange = useCallback((tab: AppTab) => {
+    // §10：定制软件（iframe 嵌入 + 握手）第一期只在桌面壳提供，移动端显式排除。
+    // 移动端的 pill tabs 只来自 `getSidebarNavItems`，`apps` 不在 `baseNavItems` 里，
+    // 正常路径下走不到这里；这条早退是防「以后有人从别处塞进来」的兜底。
+    if (tab === 'apps') return;
     if (tab === 'tenant-admin' || tab === 'platform-admin') {
       const area = tab === 'platform-admin' ? 'platform' : 'organization';
       const page = managementPagesFor('analytics', area)[0];

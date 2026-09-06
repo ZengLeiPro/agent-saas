@@ -1,0 +1,95 @@
+/**
+ * §5.4 `agent.open`：只预填不自动发送、标注「来自《系统名》」、500 字上限、纯文本。
+ */
+import { afterEach, describe, expect, it } from 'vitest';
+
+import {
+  buildAgentOpenPrefill,
+  consumePendingAgentOpen,
+  requestAgentOpen,
+  resetAgentOpenBus,
+  subscribeAgentOpen,
+} from './agentOpenBus';
+
+afterEach(() => {
+  resetAgentOpenBus();
+});
+
+describe('buildAgentOpenPrefill', () => {
+  it('标注永远在最前面', () => {
+    expect(buildAgentOpenPrefill({ prompt: '帮我催一下这单' }, '客户管理')).toBe(
+      '来自《客户管理》\n帮我催一下这单',
+    );
+  });
+
+  it('没有 prompt 也至少给出标注（用户知道是谁发起的）', () => {
+    expect(buildAgentOpenPrefill(undefined, '客户管理')).toBe('来自《客户管理》');
+    expect(buildAgentOpenPrefill({}, '客户管理')).toBe('来自《客户管理》');
+  });
+
+  it('context 按 实体 → 摘要 → prompt 的顺序拼', () => {
+    const text = buildAgentOpenPrefill(
+      {
+        prompt: '下一步做什么',
+        context: {
+          entity: { type: '订单', id: 'SO-9', label: '华东季度补货' },
+          summary: '已逾期 3 天',
+        },
+      },
+      '客户管理',
+    );
+    expect(text).toBe('来自《客户管理》\n订单：华东季度补货（SO-9）\n已逾期 3 天\n下一步做什么');
+  });
+
+  it('子端可控内容截断到 500 字，标注不被挤掉', () => {
+    const text = buildAgentOpenPrefill({ prompt: 'x'.repeat(5000) }, '客户管理');
+    expect(text.startsWith('来自《客户管理》\n')).toBe(true);
+    expect(text.length).toBe('来自《客户管理》\n'.length + 500);
+  });
+
+  it('控制字符被压成空格（防止伪装成多条消息 / 塞不可见指令）', () => {
+    const text = buildAgentOpenPrefill({ prompt: 'a\0b\x1bc\nd\te' }, '客户管理');
+    expect(text).toBe('来自《客户管理》\na b c d e');
+  });
+
+  it('非字符串字段一律忽略，不把 [object Object] 画给用户', () => {
+    const text = buildAgentOpenPrefill(
+      { prompt: { evil: true }, context: { entity: { type: 1, id: [], label: null } } },
+      '客户管理',
+    );
+    expect(text).toBe('来自《客户管理》');
+  });
+});
+
+describe('总线投递', () => {
+  it('已有订阅者时立即送达', () => {
+    const seen: string[] = [];
+    subscribeAgentOpen((request) => seen.push(request.text));
+    requestAgentOpen({ text: '来自《客户管理》', installationId: 'inst-1' });
+    expect(seen).toEqual(['来自《客户管理》']);
+  });
+
+  it('订阅者还没挂载时留在 pending，挂载后取走且只取一次', () => {
+    requestAgentOpen({ text: 'x', installationId: 'inst-1' });
+    expect(consumePendingAgentOpen()?.text).toBe('x');
+    expect(consumePendingAgentOpen()).toBeNull();
+  });
+
+  it('一个订阅者抛错不影响其它订阅者', () => {
+    const seen: string[] = [];
+    subscribeAgentOpen(() => {
+      throw new Error('炸了');
+    });
+    subscribeAgentOpen((request) => seen.push(request.installationId));
+    requestAgentOpen({ text: 'x', installationId: 'inst-9' });
+    expect(seen).toEqual(['inst-9']);
+  });
+
+  it('退订后不再收到', () => {
+    const seen: string[] = [];
+    const unsubscribe = subscribeAgentOpen((request) => seen.push(request.text));
+    unsubscribe();
+    requestAgentOpen({ text: 'x', installationId: 'inst-1' });
+    expect(seen).toEqual([]);
+  });
+});

@@ -24,6 +24,7 @@ export default defineConfig({
       "@agent/shared/schemas/configIdentity": fileURLToPath(new URL("../shared/src/schemas/configIdentity.ts", import.meta.url)),
       "@agent/shared/scenarios": fileURLToPath(new URL("../shared/src/scenarios", import.meta.url)),
       "@agent/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
+      "@kaiyan/ky-app-contract/browser": fileURLToPath(new URL("../packages/ky-app-contract/src/browser.ts", import.meta.url)),
       "virtual:pwa-register": fileURLToPath(new URL("./src/test/pwaRegisterMock.ts", import.meta.url)),
       "react/jsx-dev-runtime": hoistedReactJsxDevRuntime,
       "react/jsx-runtime": hoistedReactJsxRuntime,

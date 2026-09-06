@@ -52,7 +52,12 @@ export interface ChatSessionIndexItem {
   agentTargetUnavailableReason?: AgentTargetUnavailableReason;
 }
 
-export type AppTab = "chat" | "capabilities" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";
+/**
+ * `apps` = 定制软件标签（WP4，规范 §5）。它**不进 `baseNavItems`**：
+ * 定制软件是「每个安装实例一项」，条目要靠 `GET /api/systems/mine` 在 web 侧本地拼，
+ * 且移动端按 §10 显式排除。放进 baseNavItems 会让 mobile 也长出入口。
+ */
+export type AppTab = "chat" | "capabilities" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash" | "apps";
 
 export interface SidebarNavItem {
   tab: AppTab;

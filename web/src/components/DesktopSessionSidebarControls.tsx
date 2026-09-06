@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { useAgentCreditsGate } from "@/hooks/useAgentCreditsGate";
 import type { AppTab } from "@/types/sidebar";
 
 export const NAV_ITEM_SELECTED =
@@ -32,6 +33,9 @@ function getNavIcon(tab: AppTab) {
 }
 
 export function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading, onNew, onTabChange, beforeNavigate, constrainNewButton = true }: SidebarNavProps) {
+  // §6.4 壳层降级：额度耗尽只置灰 Agent 入口，定制软件（AppsSidebarPanel）照常可用。
+  // 判定在这里自取而不是由 DesktopSessionSidebar 传入：那个文件的行数棘轮余量为 0。
+  const credits = useAgentCreditsGate();
   if (!onTabChange) return null;
   return (
     <nav className="flex flex-col gap-1 px-2 pb-3">
@@ -43,7 +47,8 @@ export function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading,
             onNew(null);
             if (activeTab !== "chat") onTabChange("chat");
           }}
-          disabled={isLoading}
+          disabled={isLoading || credits.exhausted}
+          title={credits.exhausted ? credits.notice : undefined}
           className={cn(
             "flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors",
             isNewSessionActive ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED,
@@ -54,6 +59,11 @@ export function SidebarNav({ navItems, activeTab, isNewSessionActive, isLoading,
           <span>新建会话</span>
         </button>
       </div>
+      {credits.exhausted && (
+        <p data-testid="agent-credits-exhausted" className="px-2 py-1 text-xs text-amber-600 dark:text-amber-300">
+          {credits.notice}
+        </p>
+      )}
       {navItems.map(({ tab, label }) => {
         const Icon = getNavIcon(tab);
         return (

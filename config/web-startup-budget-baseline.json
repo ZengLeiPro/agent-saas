@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 355608,
-    "startupCssGzipBytes": 34950,
-    "startupJsBrotliBytes": 283247,
-    "startupCssBrotliBytes": 27661,
-    "largestJsGzipBytes": 355608,
-    "largestCssGzipBytes": 34950,
-    "largestJsBrotliBytes": 283247,
-    "largestCssBrotliBytes": 27661,
-    "largestJs": "assets/index-BW06YfT7.js",
-    "largestCss": "assets/index-CbcB631P.css"
+    "startupJsGzipBytes": 359773,
+    "startupCssGzipBytes": 34957,
+    "startupJsBrotliBytes": 286394,
+    "startupCssBrotliBytes": 27699,
+    "largestJsGzipBytes": 359773,
+    "largestCssGzipBytes": 34957,
+    "largestJsBrotliBytes": 286394,
+    "largestCssBrotliBytes": 27699,
+    "largestJs": "assets/index-BLwcaqio.js",
+    "largestCss": "assets/index-Dr6-LwXD.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "前后台恢复改为带退避与并发合并的统一状态机，首屏 gzip 增长约 1.3KB，保持单请求且远低于 600KB 绝对上限",
+  "reason": "合并 WP4 Web 壳、WP3 确认卡片与前后台恢复状态机后，按最终产物重新登记启动预算",
   "updatedAt": "2026-09-06"
 }

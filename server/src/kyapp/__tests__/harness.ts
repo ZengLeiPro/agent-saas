@@ -30,6 +30,7 @@ import { createKyAppHandshakeRouter } from '../routes/handshake.js';
 import { createKyAppInstallationsRouter } from '../routes/installations.js';
 import { createKyAppJwksHandler, createKyAppKeysRouter } from '../routes/keys.js';
 import { createKyAppMineRouter } from '../routes/mine.js';
+import { createKyAppShellEventsRouter } from '../routes/shellEvents.js';
 import { createKyAppSystemsRouter } from '../routes/systems.js';
 import { KyAppSatIssuer } from '../sat/issuer.js';
 import { KyAppSuspensionRegistry } from '../sat/suspension.js';
@@ -346,6 +347,7 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     }),
   );
   app.use('/api/app-contract/v1', createKyAppKeysRouter({ keys, dispatcher, audit }));
+  app.use('/api/app-contract/v1', createKyAppShellEventsRouter({ audit }));
   app.use(
     '/api/app-contract/v1',
     createKyAppDirectoryRouter({
@@ -360,7 +362,11 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   );
   app.use(
     '/api',
-    createKyAppMineRouter({ systems: systems as unknown as PgKyAppSystemStore, assignments }),
+    createKyAppMineRouter({
+      systems: systems as unknown as PgKyAppSystemStore,
+      assignments,
+      runtimeStore: runtimeStore as unknown as PgKyAppInstallationRuntimeStore,
+    }),
   );
   app.get(config.jwksPath, createKyAppJwksHandler(keys));
 

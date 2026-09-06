@@ -9,6 +9,7 @@ import {
   parseGovernanceUrl,
   type GovernanceRouteState,
 } from '@/lib/governanceNavigation';
+import { PathError, normalizeAppPath, type PathErrorCode } from '@kaiyan/ky-app-contract/browser';
 import { pushAppHistoryState, replaceAppHistoryState } from '@/lib/appHistory';
 import { maybeNavigateWithUpdate } from '@/lib/swUpdate';
 import { preferredTaskCenterPath } from '@/lib/taskCenterRoute';
@@ -93,6 +94,40 @@ export interface TenantAdminRouteState {
   canonicalPath: string | null;
 }
 
+/**
+ * 定制软件壳路由（§5.2）：壳 URL `/apps/<iid>/<path>`。
+ *
+ * `appPath` 是交给子端 iframe 的应用内路径，永远以单个 `/` 开头、已规范化
+ * （去尾斜杠、query 键排序、剔除保留参数 `ky`/`ky_iid`/`ky_nonce`）。
+ * 规范化与语法校验一律走 `@kaiyan/ky-app-contract` 的 `normalizeAppPath()`，
+ * 与子端 SDK（`@kaiyan/ky-app-browser`）是同一份实现，壳侧不另写一份。
+ */
+export interface AppsRouteState {
+  installationId: string;
+  appPath: string;
+  canonicalPath: string | null;
+  /**
+   * URL 里的应用内路径被判非法时的原因（合法为 null）。
+   *
+   * 总控对 4-A-01 的拍板：非法 path 仍然**回落应用根 + `replaceState` 洗 URL**
+   * （不进错误页 —— 绝大多数来自手改 URL 或旧书签，错误页会让人卡住），
+   * 但要多做两件事 —— 给一句轻提示、并把可能是攻击尝试的几类原因落安全事件。
+   * 原因本身留在这里，由 AppHost 决定怎么用。
+   */
+  rejectedReason: PathErrorCode | null;
+}
+
+/**
+ * 值得落安全事件的拒绝原因（总控 4-A-01 点名的五类，`%2f` 与 `%2e` 共用一个码）。
+ * `not_absolute` / `double_slash` 这类多半是手抖，记了只会淹没真正的攻击尝试。
+ */
+export const SECURITY_RELEVANT_PATH_REJECTIONS: readonly PathErrorCode[] = [
+  'scheme',
+  'dot_segment',
+  'percent_encoded_separator',
+  'backslash',
+];
+
 export function normalizeAdminSettingsSection(target: AdminSettingsTarget, section?: string | null): string {
   return isSettingsSectionId(target, section) ? section : settingsFallbackSection(target);
 }
@@ -110,6 +145,8 @@ export interface ParsedUrlState {
   adminSettings: AdminSettingsState | null;
   /** V2 治理控制台/个人设置的稳定路由；非治理页面为 null。 */
   governanceRoute: GovernanceRouteState | null;
+  /** 定制软件壳路由 `/apps/<iid>/<path>`（§5.2）；非定制软件页面为 null。 */
+  appsRoute: AppsRouteState | null;
   /** 旧 URL 或非法分区的纯函数 canonical 结果，由调用方统一 replaceState */
   canonicalPath: string | null;
 }
@@ -261,6 +298,75 @@ export function parseTenantAdminPath(pathname: string, search = ''): TenantAdmin
   return { section, canonicalPath };
 }
 
+/** 壳路由前缀；`/apps` 与 `/apps/` 都不构成一个安装实例路由。 */
+const APPS_ROUTE_PREFIX = '/apps/';
+
+/**
+ * 应用内路径是否满足 §5.2 的语法（以单个 `/` 开头、不以 `\` 开头、允许 query/hash；
+ * 禁 scheme、`//`、`..`、`%2f`/`%2e`、反斜杠）。判定完全委托给契约包，壳侧不重写规则。
+ */
+export function isValidAppPath(appPath: string): boolean {
+  try {
+    normalizeAppPath(appPath);
+    return true;
+  } catch (error) {
+    if (error instanceof PathError) return false;
+    throw error;
+  }
+}
+
+/** 非法 path 一律回落到应用根路径，由调用方 `replaceState` 到 canonical（不静默保留脏 URL）。 */
+function safeNormalizeAppPath(appPath: string): string {
+  return classifyAppPath(appPath).appPath;
+}
+
+/** 规范化并保留拒绝原因；原因是 4-A-01 落安全事件的唯一依据。 */
+export function classifyAppPath(appPath: string): {
+  appPath: string;
+  rejectedReason: PathErrorCode | null;
+} {
+  try {
+    return { appPath: normalizeAppPath(appPath), rejectedReason: null };
+  } catch (error) {
+    if (error instanceof PathError) return { appPath: '/', rejectedReason: error.code };
+    throw error;
+  }
+}
+
+/** 构造壳 URL `/apps/<iid>/<path>`；`appPath` 为根路径时省略尾部，得到 `/apps/<iid>`。 */
+export function buildAppsUrl(state: { installationId: string; appPath?: string | null }): string {
+  const installationId = encodeURIComponent(state.installationId);
+  const appPath = safeNormalizeAppPath(state.appPath ?? '/');
+  return appPath === '/'
+    ? `${APPS_ROUTE_PREFIX}${installationId}`
+    : `${APPS_ROUTE_PREFIX}${installationId}${appPath}`;
+}
+
+/**
+ * 解析壳路径 `/apps/<iid>/<path>`。返回 null 表示「不是定制软件路由」，交给后续分支。
+ *
+ * `hash` 由调用方显式传入（`parseUrl` 只拿 pathname + search），因为 §5.2 允许 path 携 hash，
+ * 而 F5 深链恢复时 hash 必须原样交回子端。
+ */
+export function parseAppsPath(pathname: string, search = '', hash = ''): AppsRouteState | null {
+  if (!pathname.startsWith(APPS_ROUTE_PREFIX)) return null;
+  const tail = pathname.slice(APPS_ROUTE_PREFIX.length);
+  const slashAt = tail.indexOf('/');
+  const rawInstallationId = slashAt === -1 ? tail : tail.slice(0, slashAt);
+  if (!rawInstallationId) return null;
+  const installationId = decodeSegment(rawInstallationId);
+  const rawPath = slashAt === -1 ? '' : tail.slice(slashAt);
+  const { appPath, rejectedReason } = classifyAppPath(`${rawPath || '/'}${search}${hash}`);
+  const canonical = buildAppsUrl({ installationId, appPath });
+  const current = `${pathname}${search}${hash}`;
+  return {
+    installationId,
+    appPath,
+    canonicalPath: canonical === current ? null : canonical,
+    rejectedReason,
+  };
+}
+
 /**
  * 跨 section 依然成立的「作用域」筛选键。
  *
@@ -303,13 +409,14 @@ export function preserveScopeSearch(options: { omit?: readonly string[]; search?
     : preserveSearchKeys(keys, options.search);
 }
 
-function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'governanceRoute' | 'canonicalPath'> & Partial<Pick<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'governanceRoute' | 'canonicalPath'>>): ParsedUrlState {
+function parsed(state: Omit<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'governanceRoute' | 'appsRoute' | 'canonicalPath'> & Partial<Pick<ParsedUrlState, 'adminSection' | 'adminEntityId' | 'tenantAdminSection' | 'governanceRoute' | 'appsRoute' | 'canonicalPath'>>): ParsedUrlState {
   return {
     ...state,
     adminSection: state.adminSection ?? null,
     adminEntityId: state.adminEntityId ?? null,
     tenantAdminSection: state.tenantAdminSection ?? null,
     governanceRoute: state.governanceRoute ?? null,
+    appsRoute: state.appsRoute ?? null,
     canonicalPath: state.canonicalPath ?? null,
   };
 }
@@ -369,6 +476,17 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
       canonicalPath: tenantAdmin.canonicalPath,
     });
   }
+  const appsRoute = parseAppsPath(pathname, search);
+  if (appsRoute) {
+    return parsed({
+      tab: 'apps',
+      sessionId: null,
+      settingsSection: null,
+      adminSettings: null,
+      appsRoute,
+      canonicalPath: appsRoute.canonicalPath,
+    });
+  }
   if (pathname === '/settings/skills') {
     return parsed({ tab: 'capabilities', sessionId: null, settingsSection: null, adminSettings: null, canonicalPath: '/capabilities/skills' });
   }
@@ -420,8 +538,22 @@ export function parseUrl(pathname = window.location.pathname, search = window.lo
   return parsed({ tab: 'chat', sessionId: null, settingsSection: null, adminSettings: null });
 }
 
-/** 构建 URL pathname */
-export function buildUrl(tab: AppTab, sessionId: string | null): string {
+/**
+ * 构建 URL pathname。
+ *
+ * 第三参只在 `tab === 'apps'` 时有意义（壳 URL 需要安装实例与应用内路径两段信息）；
+ * 缺省时 `apps` 走 fallback，与 `chat` 同为 `/`——调用方（useChatUrlSync）对 apps
+ * 标签显式早退，不会用这个 fallback 覆盖真实壳路径。
+ */
+export function buildUrl(
+  tab: AppTab,
+  sessionId: string | null,
+  appsRoute?: { installationId: string; appPath?: string | null } | null,
+): string {
+  if (tab === 'apps') {
+    if (appsRoute?.installationId) return buildAppsUrl(appsRoute);
+    return '/';
+  }
   if (tab === 'cron') return preferredTaskCenterPath();
   if (tab === 'tenants') return '/tenants';
   if (tab === 'tenant-admin') return '/tenant-admin';
@@ -648,6 +780,37 @@ export function navigatePlatformAdmin(state: { section?: PlatformAdminSection | 
 export function navigateTenantAdmin(state: { section?: TenantAdminSection | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   pushTenantAdminUrl(state);
   notifyRouteChange();
+}
+
+/** 定制软件壳路由 pushState（用户点标签 / 子端 `route.changed`） */
+export function pushAppsUrl(state: { installationId: string; appPath?: string | null }): void {
+  const next = buildAppsUrl(state);
+  if (currentAppsHref() !== next) {
+    pushAppHistoryState({}, next);
+  }
+}
+
+/** 定制软件壳路由 replaceState（初始化 / 重定向 / 回滚，§5.2） */
+export function replaceAppsUrl(state: { installationId: string; appPath?: string | null }): void {
+  const next = buildAppsUrl(state);
+  if (currentAppsHref() !== next) {
+    replaceAppHistoryState({}, next);
+  }
+}
+
+/** 定制软件标签跳转（push + 通知）；订阅者经同一 popstate 通道重解析。 */
+export function navigateApps(
+  state: { installationId: string; appPath?: string | null },
+  options: { replace?: boolean } = {},
+): void {
+  if (options.replace) replaceAppsUrl(state);
+  else pushAppsUrl(state);
+  notifyRouteChange();
+}
+
+/** 壳 URL 含 hash（§5.2 允许 path 携 hash），比较时不能只看 pathname + search。 */
+function currentAppsHref(): string {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
 
 /** 打开 tenant/platform 管理弹窗（push + 通知） */

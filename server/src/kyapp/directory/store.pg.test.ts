@@ -22,6 +22,7 @@ import {
   type DirectoryUserReader,
   type DirectoryUserSourceRecord,
 } from './projection.js';
+import { PgDirectorySnapshotSource } from './snapshot.js';
 import { DIRECTORY_FORBIDDEN_FIELD_PATTERN, type DirectoryUser } from './types.js';
 
 const { Pool } = pg;
@@ -488,5 +489,109 @@ describePg('定制项目组织目录变更日志与投影 PostgreSQL 合约', ()
     // 再清一次不会误删未过期的。
     expect(await changeLog.purgeExpired({ now })).toBe(0);
     expect((await changeLog.listAfter({ tenantId: tenant, afterSeq: 0 })).records).toHaveLength(2);
+  }, 60_000);
+
+  it('快照分页读投影态：各页 snapshotSeq 一致、分组在前、拼回完整目录且不含 PII', async () => {
+    const tenant = 'tenant-wp2b-snapshot';
+    const snapshots = new PgDirectorySnapshotSource({ pool, tablePrefix: prefix });
+
+    users.records = ['s-1', 's-2', 's-3'].map((id) =>
+      contaminate({
+        id,
+        username: id,
+        realName: `员工 ${id}`,
+        tenantId: tenant,
+        role: 'user',
+      }),
+    );
+    for (const id of ['s-1', 's-2', 's-3']) {
+      await pool.query(
+        `INSERT INTO ${membershipsTable}
+           (tenant_id,user_id,persona,is_owner,status,source,created_by,updated_by)
+         VALUES ($1,$2,'member',FALSE,'active','governance','system:test','system:test')
+         ON CONFLICT (user_id) DO NOTHING`,
+        [tenant, id],
+      );
+    }
+    await groupStore.upsertProjection({
+      groupId: 'sg-a',
+      tenantId: tenant,
+      source: 'governance',
+      displayName: '甲部门',
+      status: 'active',
+      memberUserIds: ['s-1'],
+    });
+    await groupStore.upsertProjection({
+      groupId: 'sg-b',
+      tenantId: tenant,
+      source: 'governance',
+      displayName: '乙部门',
+      parentGroupId: 'sg-a',
+      status: 'active',
+      memberUserIds: [],
+    });
+    const reconciled = await projector.reconcileTenant(tenant);
+    expect(reconciled.userUpserts + reconciled.groupUpserts).toBe(5);
+
+    const watermark = await changeLog.latestSeq(tenant);
+    expect(watermark).toBeGreaterThan(0);
+
+    const pages = [];
+    for (let page = 0; page < 10; page += 1) {
+      const result = await snapshots.readPage({ tenantId: tenant, page, pageSize: 2 });
+      pages.push(result);
+      if (!result.hasMore) break;
+    }
+    // 5 个实体 / 每页 2 → 3 页；所有页水位一致，且等于变更日志水位。
+    expect(pages).toHaveLength(3);
+    expect(pages.map((item) => item.snapshotSeq)).toEqual([watermark, watermark, watermark]);
+    expect(pages.map((item) => [item.groups.length, item.users.length])).toEqual([
+      [2, 0],
+      [0, 2],
+      [0, 1],
+    ]);
+    expect(pages.flatMap((item) => item.groups.map((entry) => entry.groupId))).toEqual([
+      'sg-a',
+      'sg-b',
+    ]);
+    expect(pages.flatMap((item) => item.users.map((entry) => entry.userId))).toEqual([
+      's-1',
+      's-2',
+      's-3',
+    ]);
+    // s-1 在 sg-a 里；层级关系也如实带出。
+    expect(pages.flatMap((item) => item.users).find((entry) => entry.userId === 's-1')?.groupIds)
+      .toEqual(['sg-a']);
+    expect(pages.flatMap((item) => item.groups).find((entry) => entry.groupId === 'sg-b'))
+      .toMatchObject({ parentGroupId: 'sg-a' });
+
+    // 从库里读出来的整份快照不含任何被污染字段。
+    const serialized = JSON.stringify(pages);
+    expect(serialized).not.toMatch(DIRECTORY_FORBIDDEN_FIELD_PATTERN);
+    expect(serialized).not.toContain('13800000000');
+
+    // 越界页码返回空页，不报错。
+    await expect(snapshots.readPage({ tenantId: tenant, page: 9, pageSize: 2 })).resolves
+      .toMatchObject({ snapshotSeq: watermark, users: [], groups: [], hasMore: false });
+  }, 60_000);
+
+  it('该组织变更日志被清空后，snapshotSeq 由投影态兜住而不退化成 0', async () => {
+    const tenant = 'tenant-wp2b-snapshot';
+    const snapshots = new PgDirectorySnapshotSource({ pool, tablePrefix: prefix });
+    const before = (await snapshots.readPage({ tenantId: tenant, page: 0, pageSize: 200 }))
+      .snapshotSeq;
+    expect(before).toBeGreaterThan(0);
+
+    // 模拟「连续 30 天无变更 → 该组织的事件被保留清理删光」。投影态不参与清理。
+    await pool.query(`DELETE FROM ${changeLogTable} WHERE tenant_id=$1`, [tenant]);
+    expect(await changeLog.latestSeq(tenant)).toBe(0);
+
+    const after = await snapshots.readPage({ tenantId: tenant, page: 0, pageSize: 200 });
+    // 水位不回退：消费端的 checkpoint 不会被打回 0 而重放整段历史。
+    expect(after.snapshotSeq).toBe(before);
+    expect(after.users).toHaveLength(3);
+    expect(after.groups).toHaveLength(2);
+    // 此时保留下界是 0，after=snapshotSeq 不会被判 cursor_expired（不会形成重快照死循环）。
+    expect(await changeLog.retentionFloorSeq(tenant)).toBe(0);
   }, 60_000);
 });

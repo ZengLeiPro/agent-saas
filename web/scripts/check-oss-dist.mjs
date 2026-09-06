@@ -14,6 +14,18 @@ if (
   throw new Error("index.html 缺少 agent.kaiyan.net 的 HTTP→HTTPS 客户端跳转");
 }
 
+// 规范 §5.1：壳站不得被嵌套。OSS 直出设不了 frame-ancestors / X-Frame-Options，
+// 也没有 CDN 可以前置（不要在这里假设 CDN 存在），因此内联 frame-busting 是唯一防线 ——
+// 构建产物里一旦丢了它，点击劫持就没有任何拦截，必须静态断言其存在。
+// 注：**不要**把这条搬去 check-live-oss.mjs 做线上响应头断言，OSS 设不了头，会永久红。
+if (
+  !index.includes("window.top !== window.self") ||
+  !index.includes('document.documentElement.style.display = "none"') ||
+  !index.includes("window.top.location.replace(window.self.location.href)")
+) {
+  throw new Error("index.html 缺少壳站 frame-busting（§5.1 禁止被嵌套）");
+}
+
 const forbiddenSwMarkers = [
   "api-sessions-list",
   "api-session-detail",

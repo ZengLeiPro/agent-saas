@@ -8,6 +8,20 @@
           `https://agent.kaiyan.net${window.location.pathname}${window.location.search}${window.location.hash}`,
         );
       }
+      // 壳站禁止被任何页面嵌套（规范 §5.1：frame-ancestors 'none' + X-Frame-Options: DENY）。
+      // Web 是 OSS 直出、当前没有 CDN 也设不了响应头（曾磊已定 ESA/CDN 跳过），
+      // 因此响应头落地前先用内联 JS frame-busting 顶住 —— 与上面 HTTP→HTTPS 守卫同一位置、同一写法，
+      // 必须在任何应用代码之前执行，否则点击劫持已经生效了。
+      if (window.top !== window.self) {
+        // 顶层跳转在 sandbox（无 allow-top-navigation）下会被拦，所以无论成败都把页面藏掉：
+        // 藏掉后攻击者的透明覆盖层没有可点的东西，点击劫持不成立。
+        document.documentElement.style.display = "none";
+        try {
+          window.top.location.replace(window.self.location.href);
+        } catch (error) {
+          /* 跨源或被 sandbox 拦下：保持隐藏即可 */
+        }
+      }
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="mobile-web-app-capable" content="yes" />

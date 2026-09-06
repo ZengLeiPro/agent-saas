@@ -53,9 +53,17 @@ describe('taskboard default prompts', () => {
       expect(prompt).not.toContain('execution.integration_candidate.push');
       expect(prompt).not.toContain('execution.review_subject.record');
     }
+    expect(TASKBOARD_DEFAULT_PROMPT).toContain('工作过程中不得写 Agent 进度评论');
+    expect(TASKBOARD_DEFAULT_PROMPT).toContain('普通文本回复不构成阶段完成');
+    expect(TASKBOARD_DEFAULT_PROMPT).toContain('不得仅因 CI、后台任务或工具结果暂时 pending 而结束 Run');
     expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('### Advisory Work');
     expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('### Remediation Work');
+    expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('execution.pull_request.inspect');
+    expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('只调用一次 execution.finish');
+    expect(TASKBOARD_DEFAULT_REVIEW_PROMPT).toContain('不得直接采信 Work 交接');
+    expect(TASKBOARD_DEFAULT_REVIEW_PROMPT).toContain('红 CI 仅在有直接证据');
     expect(TASKBOARD_DEFAULT_REVIEW_PROMPT).toContain('Remediation 通过时 finish(done)');
+    expect(TASKBOARD_DEFAULT_REVIEW_PROMPT).toContain('Delivery 通过时 finish(ready_to_merge)');
     expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('deleteRemoteBranch=false');
     expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('上游失败造成的 skipped/canceled 不算成功');
     expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('合并后适用 CI/CD 均成功');

@@ -1,7 +1,6 @@
 import pg from 'pg';
 
 import type {
-  TaskBoardComment,
   TaskBoardExecution,
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
@@ -82,38 +81,22 @@ export async function searchExecutions(
 
 interface TaskboardExecutionContextStore extends TaskboardExecutionSearchStore {
   getTask(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardTask>;
-  listComments(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardComment[]>;
-}
-
-export async function getExecutionContextByRunId(
-  store: TaskboardExecutionContextStore,
-  runId: string,
-): Promise<TaskboardExecutionContext | null> {
-  return getExecutionContext(store, 'run_id', runId);
 }
 
 export async function getExecutionContextBySessionId(
   store: TaskboardExecutionContextStore,
   sessionId: string,
 ): Promise<TaskboardExecutionContext | null> {
-  return getExecutionContext(store, 'session_id', sessionId);
-}
-
-async function getExecutionContext(
-  store: TaskboardExecutionContextStore,
-  column: 'run_id' | 'session_id',
-  value: string,
-): Promise<TaskboardExecutionContext | null> {
   const result = await store.pool.query(
     `SELECT e.*,b.tenant_id,b.owner_user_id,b.prompt AS board_prompt,b.stage_prompts AS board_stage_prompts
        FROM ${store.executionsTable} e
        JOIN ${store.tasksTable} t ON t.id=e.task_id
        JOIN ${store.boardsTable} b ON b.id=t.board_id
-      WHERE e.${column}=$1
+      WHERE e.session_id=$1
       ORDER BY CASE WHEN e.status IN ('queued', 'running', 'waiting_user', 'waiting_approval') THEN 0 ELSE 1 END,
                e.created_at DESC, e.id DESC
       LIMIT 1`,
-    [value],
+    [sessionId],
   );
   if (!result.rows[0]) return null;
   const row = result.rows[0];
@@ -129,7 +112,6 @@ async function getExecutionContext(
     task: await store.getTask(identity, execution.taskId),
     boardPrompt: String(row.board_prompt ?? ''),
     ...(Object.keys(stagePrompts).length ? { stagePrompts } : {}),
-    comments: await store.listComments(identity, execution.taskId),
     execution,
   };
 }

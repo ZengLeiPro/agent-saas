@@ -211,7 +211,8 @@ export interface TaskboardExecutionContext {
   boardPrompt: string;
   /** 各执行阶段（work/review/merge）特定提示语；与 boardPrompt 并存。 */
   stagePrompts?: Partial<Record<TaskBoardExecutionPurpose, string>>;
-  comments: TaskBoardComment[];
+  /** RunId continuation context 会填充；SessionId fencing context 不加载评论。 */
+  comments?: TaskBoardComment[];
   execution: TaskBoardExecution;
   continuation?: boolean;
 }

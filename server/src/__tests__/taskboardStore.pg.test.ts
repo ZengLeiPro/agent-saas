@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { TASKBOARD_DEFAULT_PROMPT } from '../../../shared/src/types/taskboard.js';
 import { PgRunStore, RunCreateConflictError } from '../runtime/runStore.js';
@@ -584,11 +584,15 @@ describePg('PgTaskboardStore contract', () => {
     const context = await store.getExecutionContextByRunId('run-a');
     expect(context?.task.status).toBe('in_progress');
     expect(context?.boardPrompt).toBe('按本看板规范执行。');
-    expect(context?.comments.at(-1)?.body).toBe('认领后补充的最新条件');
-    await expect(store.getExecutionContextBySessionId('session-a')).resolves.toMatchObject({
+    expect(context?.comments?.at(-1)?.body).toBe('认领后补充的最新条件');
+    const listCommentsSpy = vi.spyOn(store, 'listComments');
+    const sessionContext = await store.getExecutionContextBySessionId('session-a');
+    expect(sessionContext).toMatchObject({
       execution: { id: 'execution-a', runId: 'run-a', sessionId: 'session-a' },
       identity: { tenantId: alice.tenantId, ownerUserId: alice.ownerUserId },
     });
+    expect(sessionContext).not.toHaveProperty('comments');
+    expect(listCommentsSpy).not.toHaveBeenCalled();
     await expect(store.getExecutionContextBySessionId('missing-session')).resolves.toBeNull();
     await expect(store.setExecutionStatus('run-a', 'waiting_user')).resolves.toMatchObject({
       status: 'waiting_user',

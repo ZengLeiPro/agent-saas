@@ -69,6 +69,15 @@ async function fixture() {
   return structuredClone(await loadRuntimeDependencyContract());
 }
 
+test('developer Node selector and package engine match the Runtime contract', async () => {
+  const contract = await fixture();
+  const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
+  const nvmVersion = (await readFile('.nvmrc', 'utf8')).trim();
+
+  assert.equal(packageJson.engines.node, contract.node.version);
+  assert.equal(nvmVersion, contract.node.version);
+});
+
 test('same controlled input produces a stable dependency identity', async () => {
   const contract = await fixture();
   const first = createRuntimeDependencyIdentity(contract, SHA);

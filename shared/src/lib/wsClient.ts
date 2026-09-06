@@ -676,6 +676,11 @@ class WsClient {
     /** Called only after foreground reachability is explicitly true. */
     resumeNonEssentialTransport(): void {
         this.lifecycleSuspended = false;
+        // 短后台期间 socket 会保留，但 suspend 已停止 heartbeat；恢复时必须重新启动，
+        // 否则连接会长期显示 connected 却失去存活探测。
+        if (this.state === 'connected' && this.ws?.readyState === WebSocket.OPEN) {
+            this.startHeartbeat();
+        }
     }
 
     get isLifecycleSuspended(): boolean { return this.lifecycleSuspended; }

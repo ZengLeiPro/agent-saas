@@ -131,8 +131,28 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
+    expect(screen.getByText("正在以平台管理员身份管理：请选择组织")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "请先选择目标组织" })).toBeTruthy();
     expect(screen.queryByText(/组织预算面板 kaiyan-demo/)).toBeNull();
+  });
+
+  it("嵌入统一管理壳时不重复渲染组织作用域提示", () => {
+    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.tenants = [
+      { id: "pantheon", name: "万神殿" },
+      { id: "kaiyan-demo", name: "开沿演示" },
+    ];
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        governanceRoute={governanceRoute("organization.settings.general")}
+        governanceContentEmbedded
+      />,
+    );
+
+    expect(screen.queryByText("正在以平台管理员身份管理：请选择组织")).toBeNull();
+    expect(screen.getByRole("heading", { name: "请先选择目标组织" })).toBeTruthy();
   });
 
   it("平台管理员必须显式选择组织后才显示旧设置页的添加成员入口", async () => {

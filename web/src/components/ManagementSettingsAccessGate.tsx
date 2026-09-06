@@ -37,7 +37,6 @@ export function ManagementSettingsAccessGate({
 
   const label = scope === "tenant" ? "组织管理" : "平台管理";
   const allowed = scope === "tenant" ? access.tenantEntryAllowed : access.platformEntryAllowed;
-  const refreshingAllowed = access.status === "refreshing" && allowed;
   const mountedAllowed = allowed && (access.status === "ready" || access.status === "refreshing");
   if (mountedAllowed) {
     return (
@@ -48,37 +47,18 @@ export function ManagementSettingsAccessGate({
         inert={!active}
         data-testid={`management-settings-${scope}-workspace`}
       >
-        <div
-          className="h-full min-h-0"
-          aria-hidden={refreshingAllowed}
-          // @ts-expect-error -- inert is supported by React 19 but missing from the installed React 18 types
-          inert={refreshingAllowed}
-        >
+        <div className="h-full min-h-0">
           <div
             ref={attachPortalContainer}
             data-testid={`management-settings-${scope}-portal-container`}
           />
           <PortalContainerProvider
             container={portalContainer}
-            blocked={!active || refreshingAllowed}
+            blocked={!active}
           >
             {children}
           </PortalContainerProvider>
         </div>
-        {active && refreshingAllowed && (
-          <div
-            className="absolute inset-0 z-[200] flex items-center justify-center bg-card/85 px-6 backdrop-blur-[1px]"
-            data-testid="management-settings-refreshing"
-            role="status"
-            aria-live="polite"
-          >
-            <div className="text-center">
-              <Loader2 className="mx-auto mb-4 size-7 animate-spin text-muted-foreground" />
-              <h2 className="text-lg font-semibold">{label}权限更新中</h2>
-              <p className="mt-2 text-sm text-muted-foreground">正在获取最新管理权限，请稍候。</p>
-            </div>
-          </div>
-        )}
       </div>
     );
   }

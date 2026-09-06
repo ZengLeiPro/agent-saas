@@ -436,7 +436,9 @@ export function TenantAdminShell({
     if (!governanceRoute) return null;
     if (!effectiveTenantId) return (
       <div className="flex h-full min-h-0 flex-col bg-card">
-        <OrganizationScopeBanner route={governanceRoute} dirtyController={dirtyController} settingsMode />
+        {!governanceContentEmbedded && (
+          <OrganizationScopeBanner route={governanceRoute} dirtyController={dirtyController} settingsMode />
+        )}
         <div className="min-h-0 flex-1 overflow-auto">
           <GovernanceCapabilityNotice title="请先选择目标组织" mode="readonly" />
         </div>

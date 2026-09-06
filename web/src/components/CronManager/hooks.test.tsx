@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CronJob, CronServiceStatus } from "./types";
 
 const mocked = vi.hoisted(() => ({
@@ -66,6 +66,10 @@ describe("Cron hooks refresh consistency", () => {
       configurable: true,
       value: "visible",
     });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("挂载时分别拉取最新 status/jobs，且新实例不会复用旧实例数据", async () => {
@@ -182,23 +186,61 @@ describe("Cron hooks refresh consistency", () => {
     expect(result.current.entries[0]?.jobId).toBe("new");
   });
 
-  it("窗口 focus 或 document 从隐藏变为 visible 时后台刷新", async () => {
+  it("窗口 focus 和短暂隐藏不刷新，隐藏超过 30 秒才后台刷新", async () => {
     let requestCount = 0;
+    let now = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
     mocked.authFetch.mockImplementation(async () => jsonResponse(status(++requestCount)));
 
     const { result } = renderHook(() => useCronStatus());
     await waitFor(() => expect(result.current.status?.jobCount).toBe(1));
 
     act(() => window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(result.current.status?.jobCount).toBe(2));
+    expect(result.current.status?.jobCount).toBe(1);
 
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
-    expect(mocked.authFetch).toHaveBeenCalledTimes(2);
+    expect(mocked.authFetch).toHaveBeenCalledTimes(1);
 
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
-    await waitFor(() => expect(result.current.status?.jobCount).toBe(3));
+    expect(result.current.status?.jobCount).toBe(1);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    now += 30_001;
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await waitFor(() => expect(result.current.status?.jobCount).toBe(2));
+  });
+
+  it("顶层页面隐藏时不请求、不注册刷新，重新进入时只刷新一次", async () => {
+    mocked.authFetch.mockImplementation(async () => jsonResponse(status(1)));
+    const { result, rerender } = renderHook(
+      ({ active }: { active: boolean }) => useCronStatus(active),
+      { initialProps: { active: false } },
+    );
+
+    expect(result.current.status).toBeNull();
+    expect(mocked.authFetch).not.toHaveBeenCalled();
+    expect(mocked.registerRefresh).not.toHaveBeenCalled();
+
+    rerender({ active: true });
+    await waitFor(() => expect(result.current.status?.jobCount).toBe(1));
+    expect(mocked.authFetch).toHaveBeenCalledTimes(1);
+    expect(mocked.registerRefresh).toHaveBeenCalledTimes(1);
+
+    rerender({ active: false });
+    expect(mocked.unregisterRefresh).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(mocked.authFetch).toHaveBeenCalledTimes(1);
+
+    rerender({ active: true });
+    await waitFor(() => expect(mocked.authFetch).toHaveBeenCalledTimes(2));
+    expect(mocked.registerRefresh).toHaveBeenCalledTimes(2);
   });
 
   it("同一 hook 实例的并发 refresh 合并为同一个请求", async () => {
@@ -245,7 +287,7 @@ describe("Cron hooks refresh consistency", () => {
     const { result } = renderHook(() => useCronJobs());
     await waitFor(() => expect(result.current.jobs.map((item) => item.id)).toEqual(["old"]));
 
-    act(() => window.dispatchEvent(new Event("focus")));
+    act(() => { void result.current.refresh(); });
     await waitFor(() => expect(listRequests).toBe(2));
 
     let addPromise!: Promise<void>;

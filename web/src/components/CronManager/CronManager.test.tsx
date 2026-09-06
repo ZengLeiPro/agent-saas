@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   updateJob: vi.fn(async () => undefined),
   deleteJob: vi.fn(async () => undefined),
   runJob: vi.fn(async () => undefined),
+  cronActive: vi.fn(),
+  jobsActive: vi.fn(),
+  boardActive: vi.fn(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -22,14 +25,20 @@ vi.mock("@/hooks/useIsMobile", () => ({
 }));
 
 vi.mock("./hooks", () => ({
-  useCronStatus: () => ({ refresh: mocks.refreshStatus }),
-  useCronJobs: () => ({
-    jobs: [],
-    addJob: mocks.addJob,
-    updateJob: mocks.updateJob,
-    deleteJob: mocks.deleteJob,
-    runJob: mocks.runJob,
-  }),
+  useCronStatus: (active?: boolean) => {
+    mocks.cronActive(active);
+    return { refresh: mocks.refreshStatus };
+  },
+  useCronJobs: (active?: boolean) => {
+    mocks.jobsActive(active);
+    return {
+      jobs: [],
+      addJob: mocks.addJob,
+      updateJob: mocks.updateJob,
+      deleteJob: mocks.deleteJob,
+      runJob: mocks.runJob,
+    };
+  },
   useRunHistory: () => ({ entries: [], loading: false, error: null }),
   useDingtalkSessions: () => ({ sessions: [] }),
   useModelList: () => null,
@@ -40,12 +49,15 @@ vi.mock("./JobForm", () => ({
 }));
 
 vi.mock("@/components/TaskBoard", () => ({
-  TaskBoardView: () => (
-    <div>
-      任务看板视图
-      <input aria-label="看板草稿" defaultValue="" />
-    </div>
-  ),
+  TaskBoardView: ({ active }: { active?: boolean }) => {
+    mocks.boardActive(active);
+    return (
+      <div>
+        任务看板视图
+        <input aria-label="看板草稿" defaultValue="" />
+      </div>
+    );
+  },
 }));
 
 function ExternalHeaderHarness() {
@@ -66,8 +78,28 @@ function ExternalHeaderHarness() {
 
 describe("CronManager 桌面布局", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     window.localStorage.clear();
     window.history.replaceState({}, "", "/cron");
+  });
+
+  it("顶层 active 与内部视图组合后只激活当前可见资源", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CronManager active={false} />);
+    expect(mocks.cronActive).toHaveBeenLastCalledWith(false);
+    expect(mocks.jobsActive).toHaveBeenLastCalledWith(false);
+
+    rerender(<CronManager active />);
+    expect(mocks.cronActive).toHaveBeenLastCalledWith(true);
+    expect(mocks.jobsActive).toHaveBeenLastCalledWith(true);
+
+    await user.click(screen.getByRole("tab", { name: "任务看板" }));
+    expect(mocks.cronActive).toHaveBeenLastCalledWith(false);
+    expect(mocks.jobsActive).toHaveBeenLastCalledWith(false);
+    expect(mocks.boardActive).toHaveBeenLastCalledWith(true);
+
+    rerender(<CronManager active={false} />);
+    expect(mocks.boardActive).toHaveBeenLastCalledWith(false);
   });
 
   it("使用全局 Header 的唯一操作区，并在新建态原位切换操作", async () => {

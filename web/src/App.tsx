@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppLifecycle } from "@/hooks/useAppLifecycle";
 import { useActivityReporter } from "@/hooks/useActivityReporter";
 
-import { refreshAll } from "@/lib/refreshBus";
 import { saveSessionMessages } from "@/lib/messageCache";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useChatAppState } from "@/hooks/useChatAppState";
@@ -96,7 +95,7 @@ function App() {
     handleDragOver, handleDragLeave, handleDrop,
     handlePermissionResponse, handleAskUserResponse,
     modelList, selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell,
-    tokenUsage, contextUsage, connectionState, resumeCurrentStream,
+    tokenUsage, contextUsage, connectionState, refreshSessions,
     automationControllerNode, automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
@@ -308,16 +307,12 @@ function App() {
     if (target) startAgentTargetSession(target);
   }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, sessionId, settingsOpen, startAgentTargetSession]);
 
-  // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
+  // Web/PWA 生命周期：只在数据确已陈旧时做会话域静默刷新；传输续接由 WS connected handler 负责。
   const onResume = useCallback(() => {
-    // 运行中的会话只走 cursor replay；空闲会话由 refreshAll 的 session refresh 拉取 snapshot。
-    // 禁止同一时刻既刷新 transcript 又从旧 cursor replay，否则会重复追加同一批内容。
-    if (loading && sessionId) {
-      void resumeCurrentStream();
-      return;
-    }
-    void refreshAll();
-  }, [loading, resumeCurrentStream, sessionId]);
+    void refreshSessions();
+    // 当前 transcript 由重连后的 connected handler 选择 snapshot 或 cursor replay，
+    // 这里不再重复刷新，避免同一恢复周期两次覆盖消息数组。
+  }, [refreshSessions]);
 
   const onSuspend = useCallback(() => {
     if (sessionId && messages.length > 0) {

@@ -45,6 +45,7 @@ describe('systemsApi', () => {
         icon: 'box',
         origin: 'https://a.example.com',
         state: 'enabled',
+        externalLinkHosts: [],
       },
       {
         installationId: 'iid-2',
@@ -53,7 +54,36 @@ describe('systemsApi', () => {
         icon: null,
         origin: 'https://b.example.com',
         state: 'enabled',
+        externalLinkHosts: [],
       },
+    ]);
+  });
+
+  it('externalLinkHosts 容错解析：缺失或非字符串项一律不进白名单（fail-closed）', async () => {
+    authFetchMock.mockResolvedValue(
+      res(200, {
+        installations: [
+          {
+            installationId: 'iid-3',
+            systemId: 'crm',
+            origin: 'https://c.example.com',
+            externalLinkHosts: ['docs.example.com', 7, null, 'help.example.com'],
+          },
+          { installationId: 'iid-4', systemId: 'crm', origin: 'https://d.example.com' },
+          {
+            installationId: 'iid-5',
+            systemId: 'crm',
+            origin: 'https://e.example.com',
+            externalLinkHosts: 'docs.example.com',
+          },
+        ],
+      }),
+    );
+    const result = await fetchMySystems();
+    expect(result.installations.map((item) => item.externalLinkHosts)).toEqual([
+      ['docs.example.com', 'help.example.com'],
+      [],
+      [],
     ]);
   });
 

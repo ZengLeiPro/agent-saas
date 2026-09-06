@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 356580,
-    "startupCssGzipBytes": 34963,
-    "startupJsBrotliBytes": 283668,
-    "startupCssBrotliBytes": 27673,
-    "largestJsGzipBytes": 356580,
-    "largestCssGzipBytes": 34963,
-    "largestJsBrotliBytes": 283668,
-    "largestCssBrotliBytes": 27673,
-    "largestJs": "assets/index-CfwSODem.js",
-    "largestCss": "assets/index-CDFZj6l4.css"
+    "startupJsGzipBytes": 358190,
+    "startupCssGzipBytes": 34970,
+    "startupJsBrotliBytes": 285331,
+    "startupCssBrotliBytes": 27708,
+    "largestJsGzipBytes": 358190,
+    "largestCssGzipBytes": 34970,
+    "largestJsBrotliBytes": 285331,
+    "largestCssBrotliBytes": 27708,
+    "largestJs": "assets/index-cciZ5b7T.js",
+    "largestCss": "assets/index-B2HrG_c1.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "WP4 Phase A：壳路由 /apps/:iid/* 与左栏定制软件入口进 startup（urlSync 复用 @kaiyan/ky-app-contract 的 normalizeAppPath），AppHost 本体已 lazy",
+  "reason": "WP4 Phase B：壳侧模块进首屏 chunk —— 安装实例单一来源(mySystemsSource/useMySystems，左栏与 AppHost 共用)、agent.open 预填总线、积分耗尽判定与 §6.6 文案表。AppHost 本体(握手状态机+消息路由器+iframe)已确认在独立 lazy chunk(16.5KB)，未进首屏。+1610B gzip，距上限 450000 仍剩约 92KB。",
   "updatedAt": "2026-09-06"
 }

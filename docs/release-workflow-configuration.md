@@ -42,7 +42,7 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 `ACR_READ_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、
 `OSS_WEB_DEPLOY_AK_ID`、`OSS_WEB_DEPLOY_AK_SECRET`、`PRODUCTION_OBSERVATION_TOKEN`、
 `RELEASE_EVIDENCE_WRITE_TOKEN`。ACR 两项只允许读取 build record、构建日志与 image metadata；
-ACS workflow 会遍历 ACR build-record API 的全部分页，用短 tag 筛选全局唯一候选，并从 build-record 日志 fetch 阶段的 `commit info` 行绑定源 commit（ACR 只打印 7 位缩写 SHA 与分支，日志中没有阶段字段和完整 SHA，因此校验为「缩写 ≥7 位且是请求 SHA 的前缀、分支为 main」）；分页总数漂移、记录缺失或重复都会 fail closed。解析 digest 前后还要再次遍历全部分页，确认候选 tag 仍只有一个固定的 `BuildRecordId`，并对 tag 做两次稳定读回。最终部署只使用 digest reference。ACR API 不直接返回 build-record digest，因此代码保证仍依赖现场 ACR 写权限只授予受控构建链，禁止人工或其他身份重定向候选 tag。
+ACS workflow 会遍历 ACR build-record API 的全部分页，用短 tag 筛选全局唯一候选，并从 build-record 日志 fetch 阶段的 `commit info` 行绑定源 commit（ACR 只打印 7 位缩写 SHA 与分支，日志中没有阶段字段和完整 SHA，因此校验为「缩写 ≥7 位且是请求 SHA 的前缀、分支为 main」）；分页总数因并发构建变化时会从第一页重新读取，连续三次仍无法取得稳定快照才 fail closed，记录缺失或重复也不会放行。解析 digest 前后还要再次遍历全部分页，确认候选 tag 仍只有一个固定的 `BuildRecordId`，并对 tag 做两次稳定读回。最终部署只使用 digest reference。ACR API 不直接返回 build-record digest，因此代码保证仍依赖现场 ACR 写权限只授予受控构建链，禁止人工或其他身份重定向候选 tag。
 
 可选恢复 Secret：`ACS_WEBHOOK_REDELIVERY_TOKEN`。它只供 ACS compatibility 在当前 SHA 的 ACR
 自动构建记录缺失时补投一次 GitHub webhook；必须配置在 `production` Environment，并限制为仅对
@@ -57,7 +57,7 @@ App compatibility 的 `deploy_plan`、`deploy-ecs`、`deploy-web-oss` 与 ACS co
 GitHub 管理员审计。
 
 `PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份，当前只供
-`部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读使用；
+`部署测试环境` 的 `prepare-evidence` 前置 job 写后回读使用；
 `RELEASE_EVIDENCE_WRITE_TOKEN` 是专用于该前置 job 调用不可覆盖 `POST /release-evidence` 的独立写
 身份。二者禁止复用。写 Token 只进入使用 `production` Environment 的证据 job，不进入使用
 `staging` Environment 的实际部署 job 或 Production Promotion Workflow。
@@ -66,7 +66,7 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 `RELEASE_RECORD_OSS_URI`、`RELEASE_RECORD_OSS_REGION`。OSS Region 必须是对应 bucket 的实际
 地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。
 `PRODUCTION_OBSERVATION_URL` 目前仅作为同域 Evidence Service 的兼容基址，
-`部署预发 RC` 的证据前置 job 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
+`部署测试环境` 的证据前置 job 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
 读取 `/production-observation`，也不把 Agent、浏览器或业务验收放进部署门禁。
 
 ## 权威证据服务
@@ -75,7 +75,7 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 `daemon-packaging/systemd/agent-saas-release-evidence.service.template`，不是只保留 URL
 消费者。服务提供四个带 Bearer 鉴权的能力、生产和读取端点：
 
-- `/capabilities`：返回 Writer 当前及兼容的 Release Evidence Schema 版本；`部署预发 RC` 在
+- `/capabilities`：返回 Writer 当前及兼容的 Release Evidence Schema 版本；`部署测试环境` 在
   checkout、安装依赖和 OSS 基线绑定之前使用只读 Token 校验该能力，不兼容时快速失败。
 
 - `/release-evidence?sha=<full-sha>`：完整 SHA 对应的 GitHub 合并、CI、生产基线和迁移证据；
@@ -91,7 +91,7 @@ NAS mount、通知配置、生产 ACS 网络拒绝、ACK RBAC 与 PVC/PV；Produ
 Runner 使用 Staging 专用 RAM 身份发起带 `x-oss-forbid-overwrite` 的无损探针。完整证据随后传回
 Staging ECS，由仅存在于该 ECS 的 Evidence Writer 写 Token 通过本机回环地址 `POST`；GitHub
 Environment 只保存读 Token，既不保存也不传输写 Token。Workflow 再通过 HTTPS `GET` 回读并逐字段
-比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。`部署预发 RC` 的
+比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。`部署测试环境` 的
 `prepare-evidence` 前置 job 使用 `production` Environment，并同时注入用途隔离的写、读身份：
 producer 仅用写 Token 执行不可覆盖 `POST`，publisher 仅用读 Token 执行 `GET` 与 canonical 比较；
 两种 Token 均不进入后续 Staging 部署 job。相关端点都必须带
@@ -107,7 +107,7 @@ Release Evidence Schema 升级必须先独立发布兼容旧版和新版的 Writ
 确认新版已进入 `supportedReleaseEvidenceSchemaVersions`；随后才能启用对应版本的 Producer 和 RC
 Workflow。候选 RC 不得在证据门禁内自动升级自己的 Evidence Writer，避免未验证代码修改证据权威。
 
-`部署预发 RC` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
+`部署测试环境` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
 同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
 Workflow 相同的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。
 `acs-sandbox.yml` 的 `main` push 顶层不使用 `paths`；`.github/scripts/acs-classify.sh` 是唯一影响
@@ -216,7 +216,7 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   `build-deploy`；push/PR 均只执行 CI，不自动部署生产。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
-  `预发验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。
+  `测试环境验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。
 - GitHub main 与 RC tag ruleset 需一起应用 `config/github-main-ruleset.json`、
   `config/github-rc-tag-ruleset.json`；后者禁止更新或删除 `refs/tags/rc-*`。应用前导出旧规则作为回退。
 - main ruleset 按单人维护模式配置：不要求人工审批、CODEOWNER 审批或 Last Push Approval，但仍要求

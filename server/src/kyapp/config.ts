@@ -72,6 +72,21 @@ export const DEFAULT_GATEWAY_LIMITS = {
   breakerCooldownMs: 5 * 60 * 1000,
 } as const;
 
+/**
+ * 规范 §3.6：目录变更流保留 30 天。
+ *
+ * 投影节拍默认 **60 秒**（总控 2026-09-06 拍板）：§3.4 允许「延迟 ≤ 轮询间隔，默认 5 分钟」，
+ * 但 §11.2-3 的交付验收是「停用一名员工，**5 分钟内**无法再进入」——投影节拍取 5 分钟
+ * 正好卡在验收边界上，叠加定制项目自己的拉取间隔必然超时，因此收到 60 秒留余量。
+ *
+ * 语义澄清（别混为一谈）：**员工停用的即时生效靠 SAT 签发前置**（WP2a 已实现，秒级），
+ * 目录变更流只负责同步定制项目侧的本地缓存，不是停用的执行通道。
+ */
+export const DEFAULT_DIRECTORY = {
+  retentionDays: 30,
+  reconcileIntervalMs: 60_000,
+} as const;
+
 const absoluteUrl = z
   .string()
   .min(1)
@@ -149,6 +164,20 @@ const eventsSchema = z
   })
   .strict();
 
+const directorySchema = z
+  .object({
+    /** 变更流保留天数（§3.6 默认 30 天）；早于下界的游标一律要求重拉快照。 */
+    retentionDays: z.number().int().min(1).max(365).optional(),
+    /** 目录投影节拍（默认 60 s；§3.4 允许至 5 min，总控收紧为 60 s 以给 §11.2-3 验收留余量）。 */
+    reconcileIntervalMs: z
+      .number()
+      .int()
+      .min(30_000)
+      .max(6 * 60 * 60 * 1000)
+      .optional(),
+  })
+  .strict();
+
 /** `config.json` 中 `kyApp` 域的原始形态。 */
 export const kyAppConfigSchema = z
   .object({
@@ -162,6 +191,8 @@ export const kyAppConfigSchema = z
     probe: probeSchema.optional(),
     events: eventsSchema.optional(),
     gateway: gatewaySchema.optional(),
+    /** WP2b 组织目录变更流（§3.6）。整域缺省即全部取默认值，不需要新增任何环境变量。 */
+    directory: directorySchema.optional(),
     /**
      * 仅 staging/local 可开：允许向 http 的本机地址出站（规范 §6.3 自建出站安全）。
      * prod 打开一律视为配置错误。
@@ -184,6 +215,7 @@ export interface KyAppPlatformConfig {
   probe: { liveIntervalMs: number; readyIntervalMs: number; failureThreshold: number };
   events: { retryWindowMs: number };
   gateway: KyAppGatewayConfig;
+  directory: { retentionDays: number; reconcileIntervalMs: number };
   allowInsecureOutbound: boolean;
 }
 
@@ -221,7 +253,8 @@ function resolveGateway(raw: KyAppRawConfig['gateway']): KyAppGatewayConfig {
     maxResponseBytes: raw?.maxResponseBytes ?? DEFAULT_GATEWAY.maxResponseBytes,
     limits: {
       perInstallationConcurrency:
-        raw?.limits?.perInstallationConcurrency ?? DEFAULT_GATEWAY_LIMITS.perInstallationConcurrency,
+        raw?.limits?.perInstallationConcurrency ??
+        DEFAULT_GATEWAY_LIMITS.perInstallationConcurrency,
       perRunPerCapability:
         raw?.limits?.perRunPerCapability ?? DEFAULT_GATEWAY_LIMITS.perRunPerCapability,
       perTenantPerMinute:
@@ -298,6 +331,11 @@ export function resolveKyAppConfig(rawConfig: unknown): KyAppPlatformConfig | nu
     },
     events: { retryWindowMs: raw.events?.retryWindowMs ?? DEFAULT_EVENT_RETRY_WINDOW_MS },
     gateway: resolveGateway(raw.gateway),
+    directory: {
+      retentionDays: raw.directory?.retentionDays ?? DEFAULT_DIRECTORY.retentionDays,
+      reconcileIntervalMs:
+        raw.directory?.reconcileIntervalMs ?? DEFAULT_DIRECTORY.reconcileIntervalMs,
+    },
     allowInsecureOutbound: raw.allowInsecureOutbound === true,
   };
 }

@@ -1,4 +1,4 @@
-name: 部署预发 RC
+name: 3 · 部署测试环境
 
 on:
   workflow_dispatch:
@@ -53,7 +53,7 @@ jobs:
       PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state
 
     steps:
-      - name: Verify Evidence Writer configuration
+      - name: 校验证据写入器配置
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
           RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
@@ -69,7 +69,7 @@ jobs:
             *) echo 'PRODUCTION_OBSERVATION_URL must be HTTPS and end with /production-observation' >&2; exit 1 ;;
           esac
 
-      - name: Verify Evidence Writer schema compatibility
+      - name: 校验证据写入器架构兼容性
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
           RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
@@ -97,20 +97,23 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout immutable dispatch revision for evidence
+      - name: 检出用于生成证据的不可变触发版本
         uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - uses: ./.github/actions/setup-pnpm
-      - uses: actions/setup-node@v5
+      - name: 配置 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
 
-      - name: Wait for successful App CI and verify merged GitHub PR
+      - name: 等待应用 CI 成功并校验已合并的 GitHub PR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -187,7 +190,7 @@ jobs:
             sources: []
           }' "$RUNNER_TEMP/release-pr.json" > "$RUNNER_TEMP/merge.json"
 
-      - name: Resolve ACS evidence for the same Release SHA
+      - name: 解析同一发布 SHA 的 ACS 证据
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -248,7 +251,7 @@ jobs:
               ;;
           esac
 
-      - name: Reuse immutable Release Evidence when present
+      - name: 存在时复用不可变发布证据
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
           RELEASE_EVIDENCE_READ_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
@@ -293,7 +296,7 @@ jobs:
               ;;
           esac
 
-      - name: Configure pinned production read-only SSH
+      - name: 配置固定的生产只读 SSH
         if: env.REUSE_RELEASE_EVIDENCE != 'true'
         run: |
           set -euo pipefail
@@ -309,7 +312,7 @@ jobs:
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/production-known-host" >> ~/.ssh/known_hosts
 
-      - name: Read live Production state without mutation
+      - name: 只读获取在线生产状态
         if: env.REUSE_RELEASE_EVIDENCE != 'true'
         run: |
           set -euo pipefail
@@ -328,7 +331,7 @@ jobs:
             "$RUNNER_TEMP/production.json"
           test "$(jq -r .environment "$RUNNER_TEMP/production.json")" = production
 
-      - name: Install Alibaba Cloud CLI for production evidence
+      - name: 安装用于生产证据的阿里云 CLI
         if: env.REUSE_RELEASE_EVIDENCE != 'true'
         run: |
           set -euo pipefail
@@ -337,7 +340,7 @@ jobs:
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Bind immutable OSS artifacts to live Production
+      - name: 将不可变 OSS 产物绑定到在线生产环境
         if: env.REUSE_RELEASE_EVIDENCE != 'true'
         run: |
           set -euo pipefail
@@ -375,7 +378,7 @@ jobs:
             --indexes "$RUNNER_TEMP/baseline-indexes" \
             --output "$RUNNER_TEMP/baseline-artifacts.json"
 
-      - name: Generate, publish and read back immutable Release Evidence
+      - name: 生成、发布并回读不可变发布证据
         if: env.REUSE_RELEASE_EVIDENCE != 'true'
         env:
           PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
@@ -432,7 +435,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   build-deploy-verify:
-    name: Build and verify exact Staging RC
+    name: 构建并校验精确的测试环境 RC
     needs: prepare-evidence
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -458,7 +461,7 @@ jobs:
       DISPATCH_REASON: ${{ inputs.reason || 'manual staging release' }}
 
     steps:
-      - name: Lock dispatch SHA
+      - name: 锁定触发 SHA
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -477,20 +480,20 @@ jobs:
             echo "RELEASE_EXPIRES_AT=$expires_at"
           } >> "$GITHUB_ENV"
 
-      - name: Checkout immutable dispatch revision
+      - name: 检出不可变触发版本
         uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Verify SHA is trusted main history
+      - name: 确认 SHA 属于可信 main 历史
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
-      - name: Verify Staging resources are ready for first deployment
+      - name: 确认测试环境资源已准备好首次部署
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -509,21 +512,24 @@ jobs:
           }
           NODE
 
-      - uses: ./.github/actions/setup-pnpm
-      - uses: actions/setup-node@v5
+      - name: 配置 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
 
-      - name: Install Alibaba Cloud CLI
+      - name: 安装阿里云 CLI
         run: |
           set -euo pipefail
           curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Restore immutable RC on job re-run
+      - name: 任务重跑时恢复不可变 RC
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -556,7 +562,7 @@ jobs:
           echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
           echo 'REUSE_RC=true' >> "$GITHUB_ENV"
 
-      - name: Read authoritative candidate and production evidence
+      - name: 读取权威候选与生产证据
         if: env.REUSE_RC != 'true'
         run: |
           set -euo pipefail
@@ -580,7 +586,7 @@ jobs:
           fi
           diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
-      - name: Resolve exact ACS image when required
+      - name: 按需解析精确 ACS 镜像
         if: env.REUSE_RC != 'true'
         env:
           ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
@@ -597,7 +603,7 @@ jobs:
           fi
           echo "INCLUDE_ACS=$include_acs" >> "$GITHUB_ENV"
 
-      - name: Build immutable artifacts once
+      - name: 一次性构建不可变产物
         if: env.REUSE_RC != 'true'
         env:
           VITE_API_BASE: https://api.agent.kaiyan.net
@@ -612,7 +618,7 @@ jobs:
           node scripts/release/build-release.mjs "${args[@]}"
           node scripts/release/verify-artifact.mjs "$RUNNER_TEMP/release/artifact-index.json" "$GITHUB_SHA"
 
-      - name: Persist content-addressed artifacts
+      - name: 持久化内容寻址产物
         if: env.REUSE_RC != 'true'
         run: |
           set -euo pipefail
@@ -641,7 +647,7 @@ jobs:
               "$RUNNER_TEMP/release-saved/artifact-index.json" "$GITHUB_SHA"
           fi
 
-      - name: Create canonical Release Manifest
+      - name: 创建规范发布清单
         if: env.REUSE_RC != 'true'
         run: |
           set -euo pipefail
@@ -660,7 +666,7 @@ jobs:
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
           echo "MANIFEST_DIGEST=$manifest_digest" >> "$GITHUB_ENV"
 
-      - name: Materialize and verify selected Manifest artifacts
+      - name: 实例化并校验清单选定产物
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/selected"
@@ -703,7 +709,7 @@ jobs:
             '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}' \
             > "$RUNNER_TEMP/staging-runtime-summary.json"
 
-      - name: Create immutable RC tag, Release and built attestation
+      - name: 创建不可变 RC 标签、Release 与构建证明
         if: env.REUSE_RC != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -753,7 +759,7 @@ jobs:
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release/artifact-index.json" \
             "$snapshot_path"
 
-      - name: Create GitHub Staging Deployment
+      - name: 创建 GitHub 测试环境部署记录
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -767,7 +773,7 @@ jobs:
             -f state=in_progress -f environment=staging \
             -f environment_url="$STAGING_WEB_URL" >/dev/null
 
-      - name: Authorize current runner for Staging SSH
+      - name: 为当前 Runner 授权测试环境 SSH
         run: |
           set -euo pipefail
           runner_ip="$(curl -4 -fsS --retry 5 https://api.ipify.org)"
@@ -786,7 +792,7 @@ jobs:
             --Description "GitHub Staging SSH $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" \
             --ClientToken "staging-ssh-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >/dev/null
 
-      - name: Configure Staging SSH
+      - name: 配置测试环境 SSH
         run: |
           set -euo pipefail
           : "${STAGING_ECS_HOST:?Missing secret STAGING_ECS_HOST}"
@@ -809,7 +815,7 @@ jobs:
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/staging-known-host" >> ~/.ssh/known_hosts
 
-      - name: Deploy exact Staging API, Worker and ACS artifacts
+      - name: 部署精确的测试环境 API、Worker 与 ACS 产物
         run: |
           set -euo pipefail
           remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -826,7 +832,7 @@ jobs:
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
             "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote/deploy-staging-release.sh'"
 
-      - name: Publish exact Staging Web artifact last
+      - name: 最后发布精确的测试环境 Web 产物
         run: |
           set -euo pipefail
           rm -rf "$RUNNER_TEMP/web-assets" && mkdir -p "$RUNNER_TEMP/web-assets"
@@ -863,7 +869,7 @@ jobs:
             ' _
           curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
 
-      - name: Verify migrations and isolated Integration fixture
+      - name: 校验迁移与隔离的集成测试夹具
         run: |
           set -euo pipefail
           remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -881,7 +887,7 @@ jobs:
           integration_task_id="$(jq -r .fixture.taskId "$RUNNER_TEMP/staging-integration-fixture.json")"
           test "$integration_task_id" = staging-e2e-integration-task
 
-      - name: Verify live reverse-isolation evidence
+      - name: 校验在线反向隔离证据
         run: |
           set -euo pipefail
           : "${STAGING_ISOLATION_EVIDENCE_URL:?Missing staging variable}"
@@ -918,7 +924,7 @@ jobs:
             <(jq -S 'del(.observedAt)' "$RUNNER_TEMP/isolation-summary.json")
           echo "STAGING_ISOLATION_SUMMARY=$RUNNER_TEMP/isolation-summary.json" >> "$GITHUB_ENV"
 
-      - name: Record deterministic Staging deployment and verification
+      - name: 记录确定性的测试环境部署与校验结果
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -956,7 +962,7 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$STAGING_RELEASE_OSS_URI/records/$STAGING_RELEASE_ID/attestations/$(basename "$snapshot_path")"
 
-      - name: Revoke temporary Staging SSH ingress
+      - name: 撤销临时测试环境 SSH 入站授权
         if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
         run: |
           set -euo pipefail
@@ -971,7 +977,7 @@ jobs:
             sleep 2
           done
 
-      - name: Complete GitHub Staging Deployment
+      - name: 完成 GitHub 测试环境部署记录
         if: always() && env.STAGING_DEPLOYMENT_ID != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -982,7 +988,7 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
             -f state="$state" -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null
 
-      - name: Verify completed Staging evidence bundle
+      - name: 校验完整的测试环境证据包
         if: success()
         run: |
           set -euo pipefail
@@ -991,7 +997,7 @@ jobs:
             test -f "$RUNNER_TEMP/$evidence"
           done
 
-      - name: Upload independent Staging evidence
+      - name: 上传独立测试环境证据
         if: always()
         uses: actions/upload-artifact@v4
         with:

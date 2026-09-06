@@ -92,9 +92,9 @@ import {
   listComments as listStoredComments,
   listTasks as listStoredTasks,
   searchBoards as searchStoredBoards,
-  searchComments as searchStoredComments,
   searchTasks as searchStoredTasks,
 } from './storeSearch.js';
+import { searchComments as searchStoredComments } from './commentQuery.js';
 import { initializeTaskboardStore } from './storeSchema.js';
 import { loadBoard as loadStoredBoard, requireTaskWithBoard as requireStoredTaskWithBoard } from './storeTaskAccess.js';
 import { isStoredTaskWatched, setStoredTaskWatched } from './taskWatchStore.js';
@@ -125,7 +125,7 @@ import {
   type TaskboardExecutionStore,
   type TaskboardExpectedVersionInput,
   type TaskboardIdentity,
-  type TaskboardPage,
+  type TaskboardCommentSearchFilter, type TaskboardPage,
   type TaskboardPageFilter, type TaskboardRuntimeTerminalFact,
   type TaskboardService,
   type TaskboardTaskCreateResult,
@@ -701,7 +701,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     return listStoredComments(this, identity, taskId);
   }
 
-  async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardPageFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }
+  async searchComments(identity: TaskboardIdentity, taskId: string, filter: TaskboardCommentSearchFilter = {}): Promise<TaskboardPage<TaskBoardComment>> { return searchStoredComments(this, identity, taskId, filter); }
 
   async createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment> {
     return this.withTransaction(async (client) => {

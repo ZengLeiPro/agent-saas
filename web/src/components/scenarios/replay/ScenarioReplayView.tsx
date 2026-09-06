@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, RotateCcw, X } from "lucide-react";
 import {
-  mapSessionDetailToMessages,
   projectWorkflowTrace,
-  type ApiSessionDetail,
   type ApiTranscriptBlock,
-  type WorkflowTraceEventV1,
-  type WorkflowTraceGateRequestedEventV1,
 } from "@agent/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,8 +18,13 @@ import { useSystemPanel } from "@/hooks/useSystemPanel";
 import { ActionIcons, EntityIcons, StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
-import type { ReplayScript } from "./types";
-import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
+import type { ReplayScript } from "@agent/shared/scenarios/replay/types";
+import { buildLegacyReplayBlocks } from "@agent/shared/scenarios/replay/legacyTaskDemo";
+import {
+  collectReplayTraceEvents,
+  projectLegacyReplayMessages,
+  resolveReplayApproval,
+} from "@agent/shared/scenarios/replay/replayProjection";
 
 const ApprovalIcon = EntityIcons.admin;
 const ApprovalSuccessIcon = StatusIcons.success;
@@ -51,33 +52,6 @@ function typewriterChunkSize(length: number): number {
  *
  * 回放头部统一标识「回放」；内部 sources 只服务制作与估算，不在观众侧逐块披露。
  */
-
-function buildDetail(blocks: ApiTranscriptBlock[]): ApiSessionDetail {
-  return {
-    sessionId: "scenario-replay",
-    stats: { lines: blocks.length, parsedLines: blocks.length, parseErrors: 0 },
-    blocks,
-  };
-}
-
-type ReplayApproval = {
-  title: string;
-  description: string;
-  facts: Array<{ label: string; value: string }>;
-  approveLabel: string;
-  rejectLabel?: string;
-};
-
-function gateAsReplayApproval(gate?: WorkflowTraceGateRequestedEventV1): ReplayApproval | undefined {
-  if (!gate) return undefined;
-  return {
-    title: gate.title,
-    description: gate.description,
-    facts: gate.facts,
-    approveLabel: gate.approveLabel,
-    ...(gate.rejectLabel ? { rejectLabel: gate.rejectLabel } : {}),
-  };
-}
 
 /** 产物预览：数据源来自剧本，渲染与沙箱策略与真实 HTML 产物预览一致。 */
 function ArtifactPanel({ html, fileName, onClose, onBackToPanel }: { html: string; fileName: string; onClose: () => void; onBackToPanel?: () => void }) {
@@ -136,10 +110,7 @@ export function ScenarioReplayView({
   const currentStep = currentStepIndex >= 0 ? script.steps[currentStepIndex] : undefined;
   const currentDecision = currentStepIndex >= 0 ? decisions[currentStepIndex] : undefined;
   const traceMode = !!script.traceEntryEvents;
-  const currentTraceGate = currentStep?.trace?.events.find(
-    (event): event is WorkflowTraceGateRequestedEventV1 => event.type === "gate_requested",
-  );
-  const currentApproval = currentStep?.approval ?? gateAsReplayApproval(currentTraceGate);
+  const currentApproval = resolveReplayApproval(currentStep);
   const [traceViewOverride, setTraceViewOverride] = useState<string | null>(null);
 
   const visibleBlocks = useMemo(() => {
@@ -153,17 +124,10 @@ export function ScenarioReplayView({
     ]);
   }, [decisions, script, stepIndex, traceMode]);
 
-  const visibleTraceEvents = useMemo<WorkflowTraceEventV1[]>(() => {
-    if (!traceMode) return [];
-    const events = [...(script.traceEntryEvents ?? [])];
-    for (const [index, step] of script.steps.slice(0, stepIndex).entries()) {
-      if (!step.trace) continue;
-      events.push(...step.trace.events);
-      if (decisions[index] === "approved") events.push(...(step.trace.approvedEvents ?? []));
-      if (decisions[index] === "rejected") events.push(...(step.trace.rejectedEvents ?? []));
-    }
-    return events;
-  }, [decisions, script, stepIndex, traceMode]);
+  const visibleTraceEvents = useMemo(
+    () => (traceMode ? collectReplayTraceEvents(script, stepIndex, decisions) : []),
+    [decisions, script, stepIndex, traceMode],
+  );
   const traceProjection = useMemo(
     () => traceMode ? projectWorkflowTrace(visibleTraceEvents) : null,
     [traceMode, visibleTraceEvents],
@@ -199,9 +163,9 @@ export function ScenarioReplayView({
     return () => window.clearTimeout(timer);
   }, [activeTextBlock, streamedTextLengths, typewriterIntervalMs]);
 
-  const messages = useMemo(() => {
-    if (traceProjection) return traceProjection.messages;
-    const blocks = visibleBlocks.map((block) => {
+  // 打字机是 Web 独有的呈现节奏；剧本→消息的映射与移动端同一份（shared 投影）。
+  const applyTypewriter = useCallback(
+    (blocks: ApiTranscriptBlock[]) => blocks.map((block) => {
       if (block.kind !== "text") return block;
       const characters = splitText(block.content);
       const visibleLength = typewriterEnabled && !block.replayInstant
@@ -213,25 +177,17 @@ export function ScenarioReplayView({
         // 结构化展示块在正文完成后再出现，贴近真实流式事件的到达顺序。
         ...(visibleLength < characters.length ? { display: undefined } : {}),
       };
+    }),
+    [streamedTextLengths, typewriterEnabled],
+  );
+
+  const messages = useMemo(() => {
+    if (traceProjection) return traceProjection.messages;
+    return projectLegacyReplayMessages(script, stepIndex, decisions, {
+      transformBlocks: applyTypewriter,
+      ...(activeTextBlock?.id ? { streamingBlockId: activeTextBlock.id } : {}),
     });
-    const mapped = blocks.length ? mapSessionDetailToMessages(buildDetail(blocks)) : [];
-    const blockById = new Map(blocks.map((block) => [block.id, block]));
-    return mapped.map((message) => {
-      const sourceBlock = blockById.get(message.id);
-      if (message.type === "text" && sourceBlock?.kind === "text" && sourceBlock.replayInstant) {
-        return {
-          id: message.id,
-          type: "system_event" as const,
-          title: sourceBlock.title,
-          content: sourceBlock.content,
-          timestamp: message.timestamp,
-        };
-      }
-      return message.type === "text" && message.id === activeTextBlock?.id
-        ? { ...message, streaming: true }
-        : message;
-    });
-  }, [activeTextBlock?.id, streamedTextLengths, traceProjection, typewriterEnabled, visibleBlocks]);
+  }, [activeTextBlock?.id, applyTypewriter, decisions, script, stepIndex, traceProjection]);
 
   // Legacy 从 ToolPresentation fold；Trace V1 由同一语义事件前缀确定性生成完整快照。
   const { snapshot: legacySnapshot, pulse: legacyPulse, selectView: selectLegacyView } = useSystemPanel(messages);

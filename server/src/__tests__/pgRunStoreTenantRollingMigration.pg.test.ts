@@ -335,6 +335,44 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
     ]);
   });
 
+  it('serialises legacy raw-key inserts behind the native writer advisory lock', async () => {
+    if (!roleFenceAvailable) return; // Writer generation is decided by the DB role; without one this race cannot exist.
+    // The legacy writer arbitrates on the raw primary key only. The tenant unique index is not an
+    // arbiter, so a concurrent tenant-native insert of the same raw key used to surface as 23505
+    // instead of being absorbed by ON CONFLICT DO NOTHING (~2% of races in a 400-round stress run).
+    // The expand trigger now takes the same raw-key advisory lock the native writer holds.
+    const insertSql = `
+      INSERT INTO ${prefix}_message_submissions
+        (user_scope,client_message_id,run_id,session_id,delivery_mode,accepted_at)
+      VALUES ($1,$2,'lock-run','lock-session','queue',now())
+      ON CONFLICT (user_scope,client_message_id) DO NOTHING RETURNING run_id
+    `;
+    const holder = await pool.connect();
+    const legacyClient = await legacyPools.get('tenant-overlap')!.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        `${prefix}_message_submissions:raw-key`, 'lock-user\u001flock-key',
+      ]);
+      await legacyClient.query(`SET statement_timeout='700ms'`);
+      await expect(legacyClient.query(insertSql, ['lock-user', 'lock-key']))
+        .rejects.toMatchObject({ code: '57014' });
+      await holder.query('COMMIT');
+      await legacyClient.query('RESET statement_timeout');
+      await expect(legacyClient.query(insertSql, ['lock-user', 'lock-key']))
+        .resolves.toMatchObject({ rows: [{ run_id: 'lock-run' }] });
+      await expect(pool.query(`SELECT tenant_id,tenant_user_scope,tenant_client_message_id
+        FROM ${prefix}_message_submissions WHERE run_id='lock-run'`)).resolves.toMatchObject({
+        rows: [{ tenant_id: 'tenant-overlap', tenant_user_scope: 'lock-user', tenant_client_message_id: 'lock-key' }],
+      });
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await legacyClient.query('RESET statement_timeout').catch(() => undefined);
+      holder.release();
+      legacyClient.release();
+    }
+  });
+
   it('contracts idempotently behind database-observed drain evidence, then permits tenant-native coexistence', async () => {
     await expect(store.contractTenantSchema({
       expectedExpandVersion: 0, drainEvidenceId: 'missing',

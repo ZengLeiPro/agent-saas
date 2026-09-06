@@ -63,6 +63,19 @@ export interface TaskboardPageFilter {
   pageSize?: number;
 }
 
+export interface TaskboardCommentSearchFilter extends TaskboardPageFilter {
+  /** 分页模式下的排序方向；定位参数存在时忽略。默认 asc。 */
+  order?: 'asc' | 'desc';
+  /** 直接取最近 N 条，返回顺序仍为时间升序。 */
+  latest?: number;
+  /** digest 只返回目录行（正文截断为预览）。 */
+  view?: 'full' | 'digest';
+  /** 1-based 位置；负数表示倒数第几条（-1=最后一条）。 */
+  ordinal?: number;
+  /** 精确定位单条评论；跨轮稳定引用用它而不是 ordinal。 */
+  commentId?: string;
+}
+
 export interface TaskboardBoardSearchFilter extends TaskboardPageFilter {
   includeArchived?: boolean;
   search?: string;
@@ -198,7 +211,8 @@ export interface TaskboardExecutionContext {
   boardPrompt: string;
   /** 各执行阶段（work/review/merge）特定提示语；与 boardPrompt 并存。 */
   stagePrompts?: Partial<Record<TaskBoardExecutionPurpose, string>>;
-  comments: TaskBoardComment[];
+  /** RunId continuation context 会填充；SessionId fencing context 不加载评论。 */
+  comments?: TaskBoardComment[];
   execution: TaskBoardExecution;
   continuation?: boolean;
 }
@@ -434,7 +448,7 @@ export interface TaskboardService {
   searchComments(
     identity: TaskboardIdentity,
     taskId: string,
-    filter?: TaskboardPageFilter,
+    filter?: TaskboardCommentSearchFilter,
   ): Promise<TaskboardPage<TaskBoardComment>>;
   createComment(identity: TaskboardIdentity, taskId: string, input: TaskBoardCommentCreateInput): Promise<TaskBoardComment>;
   updateComment(identity: TaskboardIdentity, commentId: string, input: TaskBoardCommentPatchInput): Promise<TaskBoardComment>;

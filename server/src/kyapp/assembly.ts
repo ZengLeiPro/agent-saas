@@ -12,6 +12,9 @@ import type { AppRuntime } from './../app/runtime.js';
 import type { KyAppPlatformConfig } from './config.js';
 import { PgKyAppNonceStore } from './attest/nonceStore.js';
 import { KyAppHandshakeService } from './attest/handshake.js';
+import { PgKyAppDirectoryChangeLog } from './directory/changeLog.js';
+import { DirectoryProjector, GovernanceDirectorySource } from './directory/projection.js';
+import { PgDirectorySnapshotSource } from './directory/snapshot.js';
 import { PgKyAppOutboundEventStore } from './events/store.js';
 import { KyAppEventDispatcher } from './events/dispatcher.js';
 import { KyAppHealthProber } from './health/prober.js';
@@ -57,6 +60,12 @@ export interface KyAppAssembly {
   dispatcher: KyAppEventDispatcher;
   prober: KyAppHealthProber;
   directory: KyAppInstallationDirectory;
+  /** WP2b 目录变更日志；`userStore` 未装配时为 `null`（目录整体不启用）。 */
+  directoryChangeLog: PgKyAppDirectoryChangeLog | null;
+  directoryProjector: DirectoryProjector | null;
+  directorySource: GovernanceDirectorySource | null;
+  /** WP2b 快照分页的数据源（读投影态表，不建表、不参与迁移）。 */
+  directorySnapshots: PgDirectorySnapshotSource | null;
   outbound: KyAppOutbound;
   worker: KyAppWorker;
   /** WP3 Capability Gateway：会话工具快照 + `app__` 工具 provider（规范 §6.1）。 */
@@ -153,6 +162,19 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     now,
   });
 
+  // WP2b：目录投影的账号事实源是 users.json，`userStore` 缺失就整体不启用，
+  // 绝不拿一份空用户表去差分（那会投影出「全组织离职」的删除墓碑）。
+  const userStore = runtime.userStore;
+  const directoryChangeLog = userStore ? new PgKyAppDirectoryChangeLog(base) : null;
+  const directorySource = userStore
+    ? new GovernanceDirectorySource({ ...base, users: userStore })
+    : null;
+  const directoryProjector =
+    directoryChangeLog && directorySource
+      ? new DirectoryProjector({ ...base, changeLog: directoryChangeLog, source: directorySource })
+      : null;
+  const directorySnapshots = directoryChangeLog ? new PgDirectorySnapshotSource(base) : null;
+
   const alerts = createKyAppAlertSink(runtime.alertNotifier);
   const dispatcher = new KyAppEventDispatcher({
     config,
@@ -196,6 +218,21 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     nonces,
     suspensions,
     alerts,
+    directoryIntervalMs: config.directory.reconcileIntervalMs,
+    ...(directoryChangeLog && directoryProjector
+      ? {
+          directoryMaintenance: {
+            reconcile: async () => {
+              await directoryProjector.reconcileAll();
+            },
+            purgeExpired: (at: Date) =>
+              directoryChangeLog.purgeExpired({
+                now: at,
+                retentionDays: config.directory.retentionDays,
+              }),
+          },
+        }
+      : {}),
   });
 
   // WP3 Capability Gateway（规范 §6.1）。`/me` 用 act=user SAT 直取；
@@ -282,11 +319,16 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     dispatcher,
     prober,
     directory,
+    directoryChangeLog,
+    directoryProjector,
+    directorySource,
+    directorySnapshots,
     outbound,
     worker,
     gateway,
     async start() {
-      // 六个 store 共用同一套 governance 迁移；跑一次即可，其余靠 IF NOT EXISTS 幂等。
+      // 全部 store 共用同一套 governance 迁移（含 WP2b 的 v42 目录两表）；
+      // 跑一次即可，其余靠 IF NOT EXISTS 幂等。
       await systems.init();
       await keys.ensureActive();
       if (shouldRunKyAppWorker(runtime.processRole)) worker.start();

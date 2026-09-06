@@ -242,7 +242,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   ]);
   assert.match(appWorkflow, /baselines\/app-/u);
   assert.match(appWorkflow, /web_only_compatibility:/u);
-  assert.match(appWorkflow, /Confirm Web-only compatibility scope/u);
+  assert.match(appWorkflow, /确认仅 Web 的兼容发布范围/u);
   assert.match(appWorkflow, /block_server_compatibility/u);
   assert.match(appWorkflow, /cannot atomically compensate ECS \+ Web across jobs/u);
   assert.match(appWorkflow, /needs\.deploy_plan\.outputs\.ecs_required == 'false'/u);
@@ -260,12 +260,12 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /server-release-stage\/server\/runtime-dependencies\.json/u);
   assert.match(appWorkflow, /baselines\/web-/u);
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
-  assert.match(appWorkflow, /Acquire production host lock for the complete Web transaction/u);
+  assert.match(appWorkflow, /为完整 Web 事务获取生产主机锁/u);
   assert.doesNotMatch(appWorkflow, /agent-saas-production-runtime/u);
   assert.match(appWorkflow, /server_artifact_digest/u);
   assert.match(
     appWorkflow,
-    /Commit trusted Production identity after all compatibility targets converge/u,
+    /所有兼容目标收敛后提交可信生产身份/u,
   );
   assert.match(appWorkflow, /runtime worker rollout: required to converge/u);
   assert.match(appWorkflow, /GITHUB_RUN_ID='\$\{GITHUB_RUN_ID\}'/u);
@@ -308,17 +308,17 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   );
   assert.ok(
     appWorkflow.indexOf(
-      'Commit trusted Production identity after all compatibility targets converge',
+      '所有兼容目标收敛后提交可信生产身份',
     ) > appWorkflow.indexOf('Verify deployed Web'),
   );
   const identityCommitStart = appWorkflow.indexOf(
-    '      - name: Commit trusted Production identity after all compatibility targets converge',
+    '      - name: 所有兼容目标收敛后提交可信生产身份',
   );
   const rollbackStart = appWorkflow.indexOf(
-    '      - name: Restore previous recovery Web on failure',
+    '      - name: 失败时恢复先前的恢复用 Web',
   );
   const finalFailureStart = appWorkflow.indexOf(
-    '      - name: Fail compatibility transaction after compensated identity error',
+    '      - name: 身份错误完成补偿后将兼容事务标记为失败',
   );
   const identityCommit = appWorkflow.slice(identityCommitStart, rollbackStart);
   const rollback = appWorkflow.slice(rollbackStart, finalFailureStart);
@@ -356,10 +356,10 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.doesNotMatch(appWorkflow, /_releases\/\$GITHUB_SHA\/previous\/\$f/u);
   assert.match(appWorkflow, /recovery-web-target\.before/u);
   const recoverySnapshotStart = appWorkflow.indexOf(
-    '      - name: Snapshot trusted Production identity before Web transaction',
+    '      - name: 在 Web 事务前快照可信生产身份',
   );
   const webEntrySnapshotStart = appWorkflow.indexOf(
-    '      - name: Snapshot all mutable Web keys under continuously verified Production lock ownership',
+    '      - name: 在持续校验生产锁所有权下快照所有可变 Web 对象',
   );
   const recoverySnapshot = appWorkflow.slice(recoverySnapshotStart, webEntrySnapshotStart);
   assert.match(
@@ -503,12 +503,12 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsWorkflow, /acs-release-identity\.json/u);
   assert.doesNotMatch(acsWorkflow, /后续 main 推进不影响本次代码与镜像/u);
   const acsDeployStart = acsWorkflow.indexOf(
-    '      - name: Deploy orchestrator with drain and smoke',
+    '      - name: 部署编排器并执行排空与冒烟检查',
   );
-  const acsDeployEnd = acsWorkflow.indexOf('      - name: Clean sealed ACS Production staging');
+  const acsDeployEnd = acsWorkflow.indexOf('      - name: 清理已封存的 ACS 生产暂存区');
   const acsDeployStep = acsWorkflow.slice(acsDeployStart, acsDeployEnd);
   assert.match(acsWorkflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
-  assert.match(acsWorkflow, /Upload and seal orchestrator release/u);
+  assert.match(acsWorkflow, /上传并封存编排器版本/u);
   assert.match(
     acsWorkflow,
     /bash -s -- verify '\$payload_digest' '\$remote\/payload\.tgz' '\$remote'[\s\S]*seal-root-staged-payload\.sh/u,
@@ -527,7 +527,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsDeploy, /cp -a "\$RUNTIME_PREFLIGHT_DIR\/\." "\$candidate\/"/u);
   assert.doesNotMatch(acsDeploy, /tar -xzf "\$RELEASE_TGZ"/u);
   assert.doesNotMatch(acsWorkflow, /:\/tmp\/agent-saas-acs-release\.tgz/u);
-  assert.match(acsWorkflow, /Clean sealed ACS Production staging/u);
+  assert.match(acsWorkflow, /清理已封存的 ACS 生产暂存区/u);
   assert.match(
     acsWorkflow,
     /if: always\(\) && steps\.necessity\.outputs\.deploy_needed == 'true'/u,
@@ -655,21 +655,24 @@ test('holds one remote Production lock through compatibility Web commit and comp
   ]);
   assert.match(workflow, /PRODUCTION_STAGING_ROOT: \/run\/agent-saas-production-staging/u);
   const acquire = workflow.indexOf(
-    '      - name: Acquire production host lock for the complete Web transaction',
+    '      - name: 为完整 Web 事务获取生产主机锁',
   );
   const snapshot = workflow.indexOf(
-    '      - name: Snapshot trusted Production identity before Web transaction',
+    '      - name: 在 Web 事务前快照可信生产身份',
   );
-  const upload = workflow.indexOf('      - name: Upload to OSS', snapshot);
+  const upload = workflow.indexOf(
+    '      - name: 在持续校验生产锁所有权下上传到 OSS',
+    snapshot,
+  );
   const commit = workflow.indexOf(
-    '      - name: Commit trusted Production identity after all compatibility targets converge',
+    '      - name: 所有兼容目标收敛后提交可信生产身份',
   );
-  const compensate = workflow.indexOf('      - name: Restore previous recovery Web on failure');
+  const compensate = workflow.indexOf('      - name: 失败时恢复先前的恢复用 Web');
   const release = workflow.indexOf(
-    '      - name: Release and clean up production host lock after commit or compensation',
+    '      - name: 提交或补偿后释放并清理生产主机锁',
   );
   const fail = workflow.indexOf(
-    '      - name: Fail compatibility transaction after compensated identity error',
+    '      - name: 身份错误完成补偿后将兼容事务标记为失败',
   );
   assert.ok(
     acquire > 0 &&
@@ -733,8 +736,8 @@ test('pins every compatibility production SSH connection to the controlled host 
 
 test('seals recovery Web bytes with a runner-pinned digest in root-only staging', async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
-  const packageStart = workflow.indexOf('      - name: Package recovery Web release');
-  const verifyStart = workflow.indexOf('      - name: Verify recovery Web endpoint', packageStart);
+  const packageStart = workflow.indexOf('      - name: 打包恢复用 Web 版本');
+  const verifyStart = workflow.indexOf('      - name: 校验恢复用 Web 端点', packageStart);
   const recovery = workflow.slice(packageStart, verifyStart);
   assert.match(recovery, /RECOVERY_WEB_ARCHIVE_SHA256=\$\(sha256sum "\$archive"/u);
   assert.match(recovery, /PRODUCTION_STAGING_ROOT\/recovery-web-/u);
@@ -769,18 +772,21 @@ test('pins and probes the real OSS client capabilities used by immutable uploads
 test('snapshots, restores, and proves every mutable Web key class and metadata', async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
   const snapshotStart = workflow.indexOf(
-    '      - name: Snapshot all mutable Web keys under continuously verified Production lock ownership',
+    '      - name: 在持续校验生产锁所有权下快照所有可变 Web 对象',
   );
-  const uploadStart = workflow.indexOf('      - name: Upload to OSS', snapshotStart);
+  const uploadStart = workflow.indexOf(
+    '      - name: 在持续校验生产锁所有权下上传到 OSS',
+    snapshotStart,
+  );
   const identityStart = workflow.indexOf(
-    '      - name: Commit trusted Production identity after all compatibility targets converge',
+    '      - name: 所有兼容目标收敛后提交可信生产身份',
     uploadStart,
   );
   const restoreStart = workflow.indexOf(
-    '      - name: Restore all previous mutable Web keys under continuously verified Production lock ownership',
+    '      - name: 在持续校验生产锁所有权下恢复所有先前的可变 Web 对象',
   );
   const proofStart = workflow.indexOf(
-    '      - name: Prove previous Web and trusted identity after compensation',
+    '      - name: 补偿后验证先前 Web 与可信身份',
   );
   assert.ok(snapshotStart > 0 && uploadStart > snapshotStart && identityStart > uploadStart);
   const snapshot = workflow.slice(snapshotStart, uploadStart);
@@ -841,16 +847,16 @@ for (const [label, failurePoint] of [
   test(`compensates Web-only compatibility when ${label} fails`, async () => {
     const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
     const commitStart = workflow.indexOf(
-      '      - name: Commit trusted Production identity after all compatibility targets converge',
+      '      - name: 所有兼容目标收敛后提交可信生产身份',
     );
     const rollbackStart = workflow.indexOf(
-      '      - name: Restore previous recovery Web on failure',
+      '      - name: 失败时恢复先前的恢复用 Web',
     );
     const proofStart = workflow.indexOf(
-      '      - name: Prove previous Web and trusted identity after compensation',
+      '      - name: 补偿后验证先前 Web 与可信身份',
     );
     const failStart = workflow.indexOf(
-      '      - name: Fail compatibility transaction after compensated identity error',
+      '      - name: 身份错误完成补偿后将兼容事务标记为失败',
     );
     assert.ok(workflow.slice(commitStart, rollbackStart).includes(failurePoint));
     assert.match(

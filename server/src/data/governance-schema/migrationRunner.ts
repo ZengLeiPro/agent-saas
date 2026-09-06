@@ -1,7 +1,7 @@
 /**
  * 治理迁移执行器。从 `migrations.ts` 外提（该文件已逼近 1000 行的生产阈值），
- * 语义与外提前逐字一致：advisory lock 串行、按**已应用版本集合**判定，
- * 因此版本号序列允许有空洞（并行 WP 各占一个号，合并后自动补齐）。
+ * 语义与外提前逐字一致：advisory lock 串行、按**已应用版本集合**判定。
+ * 迁移清单本身由契约测试保证严格连续，避免并行工作包漏进发布分支。
  */
 import { governanceTablePrefix } from './governanceTablePrefix.js';
 import { governanceMigrationStatements, type GovernancePgPool } from './migrations.js';

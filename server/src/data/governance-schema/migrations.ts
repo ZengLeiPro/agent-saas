@@ -13,13 +13,15 @@ import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
-import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationSql } from '../../context/lifecycle/migration.js';
+import {
+  buildContextRetentionMigrationSql,
+  buildContextRetentionRetryMigrationSql,
+} from '../../context/lifecycle/migration.js';
 import { governanceTablePrefix } from './governanceTablePrefix.js';
 export { governanceTablePrefix } from './governanceTablePrefix.js';
 
 /**
- * 最高迁移版本号。**不等于迁移条数**：并行 WP 各占一个版本号，
- * 合并前本分支的序列可以有空洞（WP3 取 43，42 在并行的 WP2b 上）。
+ * 最高迁移版本号。发布分支必须保持版本连续，防止并行工作包遗漏迁移。
  * 需要「全部版本号」或「迁移条数」的地方一律用 `governanceMigrationVersions()`。
  */
 export const GOVERNANCE_SCHEMA_VERSION = 43;
@@ -54,14 +56,22 @@ function migrations(prefix: string): GovernanceMigration[] {
   const resourceReferences = `${prefix}_resource_references`;
   const managedAgents = `${prefix}_managed_agents`;
   const managedAgentVersions = `${prefix}_managed_agent_versions`;
-  const governedSkills = `${prefix}_governed_skills`, governedSkillVersions = `${prefix}_governed_skill_versions`, skillCandidates = `${prefix}_skill_candidates`;
-  const changeJobs = `${prefix}_governance_change_jobs`, changeJobDomains = `${prefix}_governance_change_job_domains`;
-  const migrationControl = `${prefix}_governance_migration_control`, migrationDomains = `${prefix}_governance_migration_domains`;
+  const governedSkills = `${prefix}_governed_skills`,
+    governedSkillVersions = `${prefix}_governed_skill_versions`,
+    skillCandidates = `${prefix}_skill_candidates`;
+  const changeJobs = `${prefix}_governance_change_jobs`,
+    changeJobDomains = `${prefix}_governance_change_job_domains`;
+  const migrationControl = `${prefix}_governance_migration_control`,
+    migrationDomains = `${prefix}_governance_migration_domains`;
   const shadowDifferences = `${prefix}_governance_shadow_differences`;
-  const contentAccessGrants = `${prefix}_content_access_grants`, projectionOutbox = `${prefix}_governance_projection_outbox`;
-  const environmentInstances = `${prefix}_environment_instances`, guardrailEvents = `${prefix}_guardrail_events`;
-  const directoryGroups = `${prefix}_directory_groups`, directoryGroupMembers = `${prefix}_directory_group_members`;
-  const oauthGrants = `${prefix}_oauth_grants`, oauthApprovalRecords = `${prefix}_oauth_approval_records`;
+  const contentAccessGrants = `${prefix}_content_access_grants`,
+    projectionOutbox = `${prefix}_governance_projection_outbox`;
+  const environmentInstances = `${prefix}_environment_instances`,
+    guardrailEvents = `${prefix}_guardrail_events`;
+  const directoryGroups = `${prefix}_directory_groups`,
+    directoryGroupMembers = `${prefix}_directory_group_members`;
+  const oauthGrants = `${prefix}_oauth_grants`,
+    oauthApprovalRecords = `${prefix}_oauth_approval_records`;
   const nativeOAuthHandoffs = `${prefix}_native_oauth_handoffs`;
 
   return [
@@ -897,8 +907,16 @@ function migrations(prefix: string): GovernanceMigration[] {
     {
       version: 18,
       statements: governanceV18Statements({
-        prefix, changeJobs, changeJobDomains, assignments, directoryGroups, directoryGroupMembers, memberships,
-        oauthGrants, oauthApprovalRecords, nativeOAuthHandoffs,
+        prefix,
+        changeJobs,
+        changeJobDomains,
+        assignments,
+        directoryGroups,
+        directoryGroupMembers,
+        memberships,
+        oauthGrants,
+        oauthApprovalRecords,
+        nativeOAuthHandoffs,
       }),
     },
     ...agentDwsMigrations(prefix),
@@ -910,8 +928,10 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 26, statements: buildContextPhase4MigrationSql(prefix) },
     {
       version: 27,
-      statements: [`ALTER TABLE ${changeJobDomains}
-        ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`],
+      statements: [
+        `ALTER TABLE ${changeJobDomains}
+        ADD COLUMN IF NOT EXISTS unresolved_items_json JSONB NOT NULL DEFAULT '[]'::jsonb`,
+      ],
     },
     { version: 28, statements: buildContextRetentionMigrationSql(prefix) },
     {
@@ -954,10 +974,7 @@ function migrations(prefix: string): GovernanceMigration[] {
   ];
 }
 
-/**
- * 全部迁移版本号（升序，可能有空洞）。
- * runner 按「已应用版本集合」判定，缺号的迁移在合并后会被自动补上。
- */
+/** 全部迁移版本号（严格升序且连续）。 */
 export function governanceMigrationVersions(): number[] {
   return migrations(governanceTablePrefix()).map((migration) => migration.version);
 }

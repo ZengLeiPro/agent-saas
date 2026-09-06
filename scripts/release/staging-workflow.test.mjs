@@ -57,6 +57,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
     readFile(workflowPath, 'utf8'),
     readFile(acrWaitPath, 'utf8'),
   ]);
+  assert.match(workflow, /^name: 3 · 部署测试环境$/mu);
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
@@ -72,8 +73,8 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   );
   assert.match(workflow, /environment: staging/u);
   const acrResolveStep = workflow.slice(
-    workflow.indexOf('- name: Resolve exact ACS image when required'),
-    workflow.indexOf('- name: Build immutable artifacts once'),
+    workflow.indexOf('- name: 按需解析精确 ACS 镜像'),
+    workflow.indexOf('- name: 一次性构建不可变产物'),
   );
   assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_ID/u);
   assert.match(acrResolveStep, /secrets\.ACR_READ_ACCESS_KEY_SECRET/u);
@@ -119,7 +120,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   const webEntryIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/index.html" --force');
   assert.ok(webIdentityIndex > 0 && webIdentityIndex < webEntryIndex);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
-  assert.match(workflow, /Materialize and verify selected Manifest artifacts/u);
+  assert.match(workflow, /实例化并校验清单选定产物/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.match(workflow, /\.artifacts\.stagingRuntimeAssets\.path/u);
   assert.match(workflow, /test "\$staging_runtime_path" = staging-runtime-assets\.tgz/u);
@@ -133,17 +134,17 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /\$\{\{ runner\.temp \}\}\/staging-runtime-summary\.json/u);
   assert.match(workflow, /publish-release-record\.mjs[\s\S]*\$RUNNER_TEMP\/selected/u);
   assert.ok(
-    workflow.indexOf('Materialize and verify selected Manifest artifacts') <
-      workflow.indexOf('Create immutable RC tag, Release and built attestation'),
+    workflow.indexOf('实例化并校验清单选定产物') <
+      workflow.indexOf('创建不可变 RC 标签、Release 与构建证明'),
   );
   assert.ok(
     workflow.indexOf('verify-selected-release-artifacts.mjs') <
       workflow.indexOf('publish-release-record.mjs'),
   );
-  assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);
+  assert.match(workflow, /name: 校验完整的测试环境证据包\s+if: success\(\)/u);
   assert.match(workflow, /test -f "\$RUNNER_TEMP\/\$evidence"/u);
   assert.match(workflow, /if-no-files-found: warn/u);
-  assert.match(workflow, /name: Authorize current runner for Staging SSH/u);
+  assert.match(workflow, /name: 为当前 Runner 授权测试环境 SSH/u);
   assert.match(workflow, /https:\/\/api\.ipify\.org/u);
   assert.match(workflow, /\.resources\.api\.securityGroupId/u);
   assert.match(workflow, /aliyun --region cn-shenzhen ecs AuthorizeSecurityGroup/u);
@@ -151,7 +152,7 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.doesNotMatch(workflow, /--SourceCidrIp 0\.0\.0\.0\/0/u);
   assert.match(
     workflow,
-    /name: Revoke temporary Staging SSH ingress\s+if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u,
+    /name: 撤销临时测试环境 SSH 入站授权\s+if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u,
   );
   assert.match(workflow, /aliyun --region cn-shenzhen ecs RevokeSecurityGroup/u);
   assert.match(workflow, /ssh-keyscan -T 10 -t ed25519/u);
@@ -170,10 +171,10 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /UNIT_DIR='\$remote'/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
   assert.doesNotMatch(workflow, /--clobber/u);
-  const deployIndex = workflow.indexOf('Deploy exact Staging API, Worker and ACS artifacts');
-  const migrationIndex = workflow.indexOf('Verify migrations and isolated Integration fixture');
-  const isolationIndex = workflow.indexOf('Verify live reverse-isolation evidence');
-  const recordIndex = workflow.indexOf('Record deterministic Staging deployment and verification');
+  const deployIndex = workflow.indexOf('部署精确的测试环境 API、Worker 与 ACS 产物');
+  const migrationIndex = workflow.indexOf('校验迁移与隔离的集成测试夹具');
+  const isolationIndex = workflow.indexOf('校验在线反向隔离证据');
+  const recordIndex = workflow.indexOf('记录确定性的测试环境部署与校验结果');
   assert.ok(
     deployIndex > 0 &&
       deployIndex < migrationIndex &&
@@ -249,28 +250,28 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
     readFile(stagingBindingPath, 'utf8'),
     readFile(e2eAuthPath, 'utf8'),
   ]);
-  assert.match(workflow, /name: 预发验收/u);
+  assert.match(workflow, /^name: 4 · 测试环境验收$/mu);
   assert.match(workflow, /NODE_VERSION: '22\.23\.1'/u);
   assert.match(workflow, /node-version: \$\{\{ env\.NODE_VERSION \}\}/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
-  assert.match(workflow, /Setup exact Runtime contract Node/u);
-  assert.match(workflow, /Verify exact RC is still active on Staging/u);
+  assert.match(workflow, /配置符合运行时契约的精确 Node 版本/u);
+  assert.match(workflow, /确认精确 RC 仍在测试环境生效/u);
   assert.match(workflow, /staging-web-identity\.json/u);
   assert.match(workflow, /staging-api-ready\.json/u);
   assert.match(workflow, /staging-acs-health\.json/u);
-  assert.match(workflow, /Prepare browser and Agent acceptance suite/u);
-  assert.match(workflow, /Re-verify exact RC immediately before acceptance execution/u);
+  assert.match(workflow, /准备浏览器与 Agent 验收套件/u);
+  assert.match(workflow, /验收执行前立即复核精确 RC/u);
   assert.match(workflow, /staging-web-identity-critical\.json/u);
   assert.match(workflow, /staging-api-ready-critical\.json/u);
   assert.match(workflow, /staging-acs-health-critical\.json/u);
   const criticalRecheck = workflow.indexOf(
-    '      - name: Re-verify exact RC immediately before acceptance execution',
+    '      - name: 验收执行前立即复核精确 RC',
   );
   const acceptanceExecution = workflow.indexOf(
-    '      - name: Run browser and Agent acceptance suite',
+    '      - name: 运行浏览器与 Agent 验收套件',
   );
   assert.ok(criticalRecheck > 0 && acceptanceExecution > criticalRecheck);
   assert.match(
@@ -279,11 +280,11 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   );
   assert.match(workflow, /playwright test -c e2e\/playwright\.config\.ts/u);
   assert.match(workflow, /summarize-e2e\.mjs/u);
-  assert.match(workflow, /Clean and read back Staging acceptance fixtures\s+if: always\(\)/u);
-  assert.match(workflow, /Verify Staging Manifest and component identities remained unchanged/u);
+  assert.match(workflow, /清理并回读测试环境验收夹具\s+if: always\(\)/u);
+  assert.match(workflow, /确认测试环境清单与组件身份保持不变/u);
   assert.ok(
-    workflow.indexOf('Verify Staging Manifest and component identities remained unchanged') <
-      workflow.indexOf('Revoke temporary Staging SSH ingress'),
+    workflow.indexOf('确认测试环境清单与组件身份保持不变') <
+      workflow.indexOf('撤销临时测试环境 SSH 入站授权'),
   );
   assert.match(workflow, /staging-web-identity-critical\.json/u);
   assert.match(workflow, /staging-web-identity-final\.json/u);

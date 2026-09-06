@@ -14,6 +14,7 @@ import type { Express } from 'express';
 
 import { buildKyAppAssembly, type KyAppAssembly } from '../kyapp/assembly.js';
 import { loadKyAppConfig, resolveKyAppConfig, KyAppConfigError } from '../kyapp/config.js';
+import { createKyAppDirectoryRouter } from '../kyapp/routes/directory.js';
 import {
   createKyAppHandshakeRouter,
   createTenantAdminResolver,
@@ -110,6 +111,18 @@ export function registerKyAppRoutes(
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     }),
   );
+  // WP2b 组织目录（§3.6）：`userStore` 缺失时整套目录不装配，此处也就不注册。
+  if (assembly.directoryChangeLog && assembly.directorySnapshots) {
+    app.use(
+      KY_APP_CONTRACT_BASE_PATH,
+      createKyAppDirectoryRouter({
+        credentials: assembly.credentials,
+        getInstallation: (installationId) => assembly.systems.getInstallation(installationId),
+        snapshots: assembly.directorySnapshots,
+        changes: assembly.directoryChangeLog,
+      }),
+    );
+  }
   app.use(
     '/api',
     createKyAppMineRouter({

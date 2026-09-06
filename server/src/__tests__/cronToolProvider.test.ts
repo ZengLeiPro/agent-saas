@@ -61,6 +61,19 @@ describe('CronToolProvider', () => {
     expect(disabled.list(context(OWNER))).toEqual([]);
   });
 
+  it('description 只保留 taskboard action 协议，不重复阶段职责', () => {
+    const description = cronManageToolDescriptor.description;
+    expect(description).toContain('execution.pull_request.set');
+    expect(description).toContain('唯一的非 Draft PR（没有有效 PR 时才创建，禁止重复）');
+    expect(description).toContain('integration.sources');
+    expect(description).toContain('execution.finish({targetStatus, body})');
+    expect(description).toContain('不接受旧 status 字段');
+    expect(description).toContain('comment.get({taskId})');
+    expect(description).not.toContain('Delivery Work 登记');
+    expect(description).not.toContain('Delivery Review 独立');
+    expect(description).not.toContain('Integration task 使用一个 durable work Agent');
+  });
+
   it('create 自动注入 owner 并返回详情', async () => {
     const result = await provider.invoke(call('CronManage', CREATE_INPUT), context(OWNER));
     const parsed = JSON.parse(result!.content) as { created: boolean; job: { id: string; name: string } };
@@ -292,7 +305,12 @@ describe('CronToolProvider', () => {
       execution,
     };
     const getExecutionContextByRunId = vi.fn(async () => executionContext);
-    const getExecutionContextBySessionId = vi.fn(async () => executionContext);
+    const getExecutionContextBySessionId = vi.fn(async (): Promise<TaskboardExecutionContext> => ({
+      identity: executionContext.identity,
+      task: executionContext.task,
+      boardPrompt: executionContext.boardPrompt,
+      execution: executionContext.execution,
+    }));
     const updateTaskBranchFromExecution = vi.fn(async (_identity, _runId, branch) => ({
       ...task, branch: branch ?? undefined, version: task.version + 1,
     }));

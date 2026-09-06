@@ -18,7 +18,7 @@
 #   HTTP 传输错误先即时重试 1 次，逻辑样本仍要求 health/API/WS 全部成功。
 # ============================================================================
 
-name: App CI / Deploy
+name: APP CI
 
 on:
   push:
@@ -48,7 +48,7 @@ jobs:
   # ── 门禁计划：PR 只跑受影响工作区 + affected 测试、不收集覆盖率；
   #    push main / dispatch 全量分片 + 覆盖率。两条 run 内容不同，不是重复劳动。
   ci_plan:
-    name: Preflight / Plan
+    name: 预检 / 规划
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -61,12 +61,12 @@ jobs:
       test_matrix: ${{ steps.plan.outputs.test_matrix }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Verify release component mapping for PR changes
+      - name: 校验 PR 变更与发布组件的映射
         if: github.event_name == 'pull_request'
         env:
           RELEASE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -75,7 +75,7 @@ jobs:
           node scripts/release/classify-components.mjs \
             --baseline "$RELEASE_BASE_SHA" --target "$RELEASE_TARGET_SHA"
 
-      - name: Plan affected gates and test shards
+      - name: 规划受影响门禁与测试分片
         id: plan
         run: >-
           node scripts/ci-plan.mjs
@@ -86,39 +86,39 @@ jobs:
           --summary "$GITHUB_STEP_SUMMARY"
 
   preflight_checks:
-    name: Preflight / Static checks
+    name: 预检 / 静态检查
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
         with:
           # 迁移审核必须使用真实生产基线的 Git 对象。
           fetch-depth: 0
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Run static checks
+      - name: 运行静态检查
         run: bash scripts/pr-preflight-task.sh checks
 
-      - name: Verify reviewed production migration baselines
+      - name: 校验已审核的生产迁移基线
         run: node scripts/release/check-reviewed-migrations.mjs
 
   # 每个分片是独立 Runner：server 4 片、web 2 片、shared 1 片。
   # 覆盖率以 blob 形式上传，由 Build & Check 用 vitest --merge-reports 合并。
   tests:
-    name: Preflight / Tests (${{ matrix.workspace }} ${{ matrix.shard }}/${{ matrix.total }})
+    name: 预检 / 测试（${{ matrix.workspace }} ${{ matrix.shard }}/${{ matrix.total }}）
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: ci_plan
@@ -145,29 +145,29 @@ jobs:
           --health-retries 12
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         if: matrix.workspace != 'none'
         uses: actions/checkout@v5
         with:
           # affected 模式的 vitest --changed=<base> 需要 PR base commit 在本地历史里。
           fetch-depth: 0
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         if: matrix.workspace != 'none'
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         if: matrix.workspace != 'none'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         if: matrix.workspace != 'none'
         run: pnpm install --frozen-lockfile
 
-      - name: Run ${{ matrix.workspace }} tests (${{ matrix.mode }}, shard ${{ matrix.shard }}/${{ matrix.total }})
+      - name: 运行 ${{ matrix.workspace }} 测试（${{ matrix.mode }}，分片 ${{ matrix.shard }}/${{ matrix.total }}）
         if: matrix.workspace != 'none'
         env:
           COVERAGE_REPORT_MODE: ci
@@ -180,7 +180,7 @@ jobs:
           "${{ needs.ci_plan.outputs.coverage }}"
 
       # 跨 Runner 合并覆盖率所需的 blob；中间 artifact 仅保留一天。
-      - name: Upload ${{ matrix.workspace }} coverage blob
+      - name: 上传 ${{ matrix.workspace }} 覆盖率数据块
         if: always() && matrix.workspace != 'none' && needs.ci_plan.outputs.coverage == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@v7
@@ -191,7 +191,7 @@ jobs:
           retention-days: 1
 
   postgres_contracts:
-    name: Preflight / PostgreSQL contracts
+    name: 预检 / PostgreSQL 契约
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: ci_plan
@@ -212,119 +212,119 @@ jobs:
           --health-retries 12
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Run PostgreSQL contracts
+      - name: 运行 PostgreSQL 契约检查
         env:
           TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
           MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
         run: bash scripts/pr-preflight-task.sh postgres
 
   web_production:
-    name: Preflight / Web production build
+    name: 预检 / Web 生产构建
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.web_production == 'true'
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Run Web production checks
+      - name: 运行 Web 生产检查
         run: bash scripts/pr-preflight-task.sh web
 
   # Metro 导出 iOS+Android bundle 是 Mobile 门禁里最慢的一步，独立成 job 与契约测试并行。
   mobile_router_export:
-    name: Preflight / Mobile router export
+    name: 预检 / 移动端路由导出
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: ci_plan
     if: needs.ci_plan.outputs.mobile == 'true'
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Export real iOS and Android Router bundles
+      - name: 导出真实 iOS 与 Android 路由包
         run: pnpm -F mobile check:router-export
 
   mobile_contract:
-    name: Preflight / Mobile + native release contract
+    name: 预检 / 移动端与原生发布契约
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: ci_plan
     if: needs.ci_plan.outputs.mobile == 'true'
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js 22.23.1 with workspace cache
+      - name: 配置 Node.js 22.23.1 与工作区缓存
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install frozen workspace dependencies
+      - name: 按锁文件安装工作区依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck Shared and Mobile
+      - name: 检查共享模块与移动端类型
         run: pnpm -F @agent/shared typecheck && pnpm -F mobile typecheck
 
-      - name: Lint native Maestro flows and M70 release plans
+      - name: 检查原生 Maestro 流程与 M70 发布计划
         run: pnpm -F mobile lint:maestro && pnpm -F mobile lint:m70-01 && pnpm -F mobile lint:m70-02
 
-      - name: Run M60-03 clean prebuild policy gate
+      - name: 运行 M60-03 清洁预构建策略门禁
         env:
           M60_03_ARTIFACT_DIR: .ci-artifacts/native-policy
         run: pnpm -F mobile test:m60-03:prebuild
 
-      - name: Upload bounded normalized M60-03 failure evidence
+      - name: 上传有界且规范化的 M60-03 失败证据
         if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -335,7 +335,7 @@ jobs:
 
       # 一次跑完 mobile vitest 与全部 M60/M70 node 契约测试；不再按里程碑重复执行子集。
       # Shared/Server 侧的 mobileTelemetry 契约由 Tests 分片覆盖。
-      - name: Run deterministic Mobile test suite
+      - name: 运行确定性移动端测试套件
         env:
           FORCE_COLOR: '0'
           NO_COLOR: '1'
@@ -367,10 +367,10 @@ jobs:
           rm -f "$raw" "$sanitized"
           exit "$status"
 
-      - name: Verify Expo dependency contract offline
+      - name: 离线校验 Expo 依赖契约
         run: EXPO_OFFLINE=1 pnpm -F mobile exec expo install --check
 
-      - name: Upload bounded sanitized failure log
+      - name: 上传有界且脱敏的失败日志
         if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -392,26 +392,26 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         if: needs.ci_plan.outputs.coverage == 'true'
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         if: needs.ci_plan.outputs.coverage == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         if: needs.ci_plan.outputs.coverage == 'true'
         run: pnpm install --frozen-lockfile
 
       # 下载失败不掩盖测试结果：测试本身由 tests 矩阵守门，blob 仅用于汇总覆盖率。
-      - name: Download coverage blobs
+      - name: 下载覆盖率数据块
         if: needs.ci_plan.outputs.coverage == 'true'
         continue-on-error: true
         uses: actions/download-artifact@v7
@@ -419,7 +419,7 @@ jobs:
           pattern: coverage-blob-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/coverage-blobs
 
-      - name: Merge sharded coverage
+      - name: 合并分片覆盖率
         if: needs.ci_plan.outputs.coverage == 'true'
         continue-on-error: true
         env:
@@ -438,12 +438,12 @@ jobs:
             bash scripts/pr-preflight-task.sh coverage-merge "$workspace"
           done
 
-      - name: Report coverage summary
+      - name: 生成覆盖率摘要
         if: always() && needs.ci_plan.outputs.coverage == 'true'
         continue-on-error: true
         run: pnpm coverage:summary
 
-      - name: Upload coverage artifact
+      - name: 上传覆盖率产物
         if: always() && needs.ci_plan.outputs.coverage == 'true'
         # 仓库 artifact 配额长期紧张（2026-07-03 曾爆配额全线 CI 红）。上传失败不判红：
         # 覆盖率主消费路径是 Step Summary，artifact 只是补充。只传小体积 lcov + json-summary。
@@ -461,7 +461,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Verify parallel preflight results
+      - name: 校验并行预检结果
         if: always()
         env:
           CI_PLAN_RESULT: ${{ needs.ci_plan.result }}
@@ -503,7 +503,7 @@ jobs:
           exit "$failed"
 
   deploy_plan:
-    name: Plan production deployment
+    name: 规划生产部署
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 5
@@ -520,13 +520,13 @@ jobs:
       PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
         with:
           # 必须覆盖生产 active SHA 到目标 SHA 的累计差异，不能只看最后一个 commit。
           fetch-depth: 0
 
-      - name: Confirm Web-only compatibility scope
+      - name: 确认仅 Web 的兼容发布范围
         if: inputs.web_only_compatibility != true
         run: |
           {
@@ -539,7 +539,7 @@ jobs:
           echo "::error title=Compatibility scope::Explicit Web-only confirmation is required"
           exit 1
 
-      - name: Configure SSH
+      - name: 配置 SSH
         run: |
           set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
@@ -557,7 +557,7 @@ jobs:
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
 
-      - name: Determine ECS deployment necessity
+      - name: 判定 ECS 部署必要性
         id: plan
         run: |
           set -euo pipefail
@@ -635,7 +635,7 @@ jobs:
           fi
 
   deploy-ecs:
-    name: Deploy to ECS
+    name: 部署到 ECS
     runs-on: ubuntu-latest
     environment: production
     # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
@@ -663,28 +663,28 @@ jobs:
     steps:
       # 部署产物不走 GitHub artifact（存储配额有限且用量重算延迟 6-12h，
       # 2026-07-03 曾因配额爆掉全线 CI 红）；deploy job 自构建后直接 scp。
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
         with:
           # Runtime Worker 必要性门禁要和生产当前 worker SHA 做完整 diff。
           fetch-depth: 0
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Build server production bundle
+      - name: 构建服务端生产包
         run: pnpm -F server build
 
-      - name: Pack and identify ECS release
+      - name: 打包并标识 ECS 版本
         id: pack
         run: |
           set -euo pipefail
@@ -727,7 +727,7 @@ jobs:
             echo "COMPAT_RELEASE_ID=$release_id"
           } >> "$GITHUB_ENV"
 
-      - name: Configure SSH
+      - name: 配置 SSH
         run: |
           set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
@@ -745,7 +745,7 @@ jobs:
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
 
-      - name: Install Alibaba Cloud CLI
+      - name: 安装阿里云 CLI
         run: |
           set -euo pipefail
           curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz \
@@ -753,7 +753,7 @@ jobs:
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Persist immutable Server baseline
+      - name: 持久化不可变服务端基线
         run: |
           set -euo pipefail
           : "${RELEASE_RECORD_OSS_URI:?Missing Release Record OSS URI}"
@@ -766,21 +766,21 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/server-artifact-index.json" "$destination/artifact-index.json"
 
-      - name: Determine runtime worker rollout
+      - name: 判定运行时 Worker 发布范围
         run: |
           # API 与 Runtime Worker 共享同一份 Server bundle。兼容部署若只切 API，
           # 新的生产身份契约就会立即变成混合版本，因此旧入口也必须成对滚动。
           echo "RUNTIME_WORKER_DEPLOY_REQUIRED=true" >> "$GITHUB_ENV"
           echo "runtime worker rollout: required to converge the shared Server bundle identity"
 
-      - name: Upload release
+      - name: 上传发布版本
         run: |
           scp -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             server-bundle.tgz \
             "$ECS_USER@$ECS_HOST:/tmp/agent-saas-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz"
 
-      - name: Start zero-downtime probe
+      - name: 启动零停机探测
         run: |
           # 部署期零停机探测（P2 门禁）：每轮同时探测 healthz、只读业务 API、WS 建连，
           # 每行记录 "epoch health_code api_status ws_status" 到 probe.log；
@@ -887,7 +887,7 @@ jobs:
           echo $! > "$RUNNER_TEMP/probe.pid"
           echo "probe started pid=$(cat "$RUNNER_TEMP/probe.pid") log=$RUNNER_TEMP/probe.log"
 
-      - name: Deploy and restart
+      - name: 部署并重启
         id: deploy
         timeout-minutes: 46
         run: |
@@ -2734,7 +2734,7 @@ jobs:
           exit 0
           REMOTE
 
-      - name: Assert zero downtime
+      - name: 确认零停机
         # deploy 失败时也要跑（打印探测报告），probe 未启动时在脚本内跳过
         if: always()
         env:
@@ -2815,7 +2815,7 @@ jobs:
   # 上传顺序：先 hash 资源（immutable，只增不删，兼容在途会话的旧 chunk 懒加载）,
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
   deploy-web-oss:
-    name: Deploy Web to OSS
+    name: 将 Web 部署到 OSS
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
@@ -2854,25 +2854,25 @@ jobs:
       PRODUCTION_LOCK_SCRIPT: /run/agent-saas-locks/production-lock-${{ github.run_id }}-${{ github.run_attempt }}.sh
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: Setup pnpm
+      - name: 配置 pnpm
         uses: ./.github/actions/setup-pnpm
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: Build frontend (split-domain)
+      - name: 构建前端（分域模式）
         run: pnpm -F web build:oss
 
-      - name: Pack and identify Web release
+      - name: 打包并标识 Web 版本
         run: |
           set -euo pipefail
           test -s web/dist/index.html
@@ -2887,7 +2887,7 @@ jobs:
             echo "COMPAT_RELEASE_ID=$release_id"
           } >> "$GITHUB_ENV"
 
-      - name: Install and verify OSS clients
+      - name: 安装并校验 OSS 客户端
         run: |
           set -euo pipefail
           curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
@@ -2905,7 +2905,7 @@ jobs:
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Persist immutable Web baseline
+      - name: 持久化不可变 Web 基线
         run: |
           set -euo pipefail
           : "${RELEASE_RECORD_OSS_URI:?Missing Release Record OSS URI}"
@@ -2915,7 +2915,7 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/web-artifact-index.json" "$destination/artifact-index.json"
 
-      - name: Write Web release identity
+      - name: 写入 Web 发布身份
         run: |
           jq -n \
             --arg releaseId "$COMPAT_RELEASE_ID" \
@@ -2925,7 +2925,7 @@ jobs:
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > web/dist/release-identity.json
 
-      - name: Configure recovery SSH
+      - name: 配置恢复用 SSH
         run: |
           set -euo pipefail
           : "${ECS_HOST:?Missing secret ECS_HOST}"
@@ -2943,7 +2943,7 @@ jobs:
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
 
-      - name: Acquire production host lock for the complete Web transaction
+      - name: 为完整 Web 事务获取生产主机锁
         run: |
           set -euo pipefail
           lock_log="/tmp/production-lock-$PRODUCTION_LOCK_TOKEN.log"
@@ -2967,7 +2967,7 @@ jobs:
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "cat '$lock_log'" >&2 || true
           exit 1
 
-      - name: Snapshot trusted Production identity before Web transaction
+      - name: 在 Web 事务前快照可信生产身份
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
@@ -2995,7 +2995,7 @@ jobs:
              printf '%s\\n' \"\$target\"" \
             > "$RUNNER_TEMP/recovery-web-target.before"
 
-      - name: Snapshot all mutable Web keys under continuously verified Production lock ownership
+      - name: 在持续校验生产锁所有权下快照所有可变 Web 对象
         run: |
           set -euo pipefail
           snapshot_web() {
@@ -3082,7 +3082,7 @@ jobs:
           PRODUCTION_LOCK_SSH_KEY=~/.ssh/ecs_recovery_key \
             bash scripts/release/run-with-production-lock-guard.sh bash -c snapshot_web
 
-      - name: Upload to OSS under continuously verified Production lock ownership
+      - name: 在持续校验生产锁所有权下上传到 OSS
         run: |
           set -euo pipefail
           upload_web() {
@@ -3129,7 +3129,7 @@ jobs:
           PRODUCTION_LOCK_SSH_KEY=~/.ssh/ecs_recovery_key \
             bash scripts/release/run-with-production-lock-guard.sh bash -c upload_web
 
-      - name: Verify live Web/API split-domain contract under the Production lock
+      - name: 在生产锁下校验在线 Web/API 分域契约
         run: |
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
@@ -3139,14 +3139,14 @@ jobs:
             "https://agent.kaiyan.net/release-identity.json?release=$COMPAT_RELEASE_ID" \
             | jq -e --arg digest "$WEB_ARTIFACT_DIGEST" '.environment=="production" and .webDigest==$digest'
 
-      - name: Package recovery Web release
+      - name: 打包恢复用 Web 版本
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz"
           tar -C web/dist -czf "$archive" .
           echo "RECOVERY_WEB_ARCHIVE_SHA256=$(sha256sum "$archive" | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
-      - name: Seal recovery Web release in root-only staging
+      - name: 在仅 root 可访问的暂存区封存恢复用 Web 版本
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz"
@@ -3169,7 +3169,7 @@ jobs:
             < scripts/release/seal-root-staged-payload.sh
           trap - EXIT
 
-      - name: Activate recovery Web release
+      - name: 启用恢复用 Web 版本
         run: |
           set -euo pipefail
           remote="$PRODUCTION_STAGING_ROOT/recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -3192,7 +3192,7 @@ jobs:
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
 
-      - name: Verify recovery Web endpoint
+      - name: 校验恢复用 Web 端点
         run: |
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
@@ -3207,7 +3207,7 @@ jobs:
           cmp web/dist/index.html "$RUNNER_TEMP/recovery-web.index.html"
           echo "recovery Web endpoint matches current OSS build"
 
-      - name: Snapshot successful Web release
+      - name: 快照成功的 Web 版本
         run: |
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
@@ -3219,7 +3219,7 @@ jobs:
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
 
-      - name: Commit trusted Production identity after all compatibility targets converge
+      - name: 所有兼容目标收敛后提交可信生产身份
         id: commit_trusted_identity
         continue-on-error: true
         run: |
@@ -3284,7 +3284,7 @@ jobs:
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo bash '$PRODUCTION_LOCK_SCRIPT' assert '$PRODUCTION_LOCK_TOKEN'"
           echo "Production identity committed once after Web/API/Worker/ACS live readback"
-      - name: Restore previous recovery Web on failure
+      - name: 失败时恢复先前的恢复用 Web
         if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
@@ -3303,7 +3303,7 @@ jobs:
              RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' bash -s" \
             < scripts/rollback-recovery-web.sh
 
-      - name: Restore all previous mutable Web keys under continuously verified Production lock ownership
+      - name: 在持续校验生产锁所有权下恢复所有先前的可变 Web 对象
         if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
@@ -3335,7 +3335,7 @@ jobs:
           PRODUCTION_LOCK_SSH_KEY=~/.ssh/ecs_recovery_key \
             bash scripts/release/run-with-production-lock-guard.sh bash -c restore_web
 
-      - name: Restore trusted Production identity on failure
+      - name: 失败时恢复可信生产身份
         if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
@@ -3375,7 +3375,7 @@ jobs:
              sudo mv /etc/agent-saas/runtime-identity.json.candidate /etc/agent-saas/runtime-identity.json && \
              sudo cmp '$remote/runtime-identity.before.json' /etc/agent-saas/runtime-identity.json"
 
-      - name: Prove previous Web and trusted identity after compensation
+      - name: 补偿后验证先前 Web 与可信身份
         if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
@@ -3476,7 +3476,7 @@ jobs:
             "$RUNNER_TEMP/web-recovery-restored/release-identity.json" >/dev/null
           echo "all previous OSS/recovery Web mutable keys and trusted Production identity authoritatively restored"
 
-      - name: Release and clean up production host lock after commit or compensation
+      - name: 提交或补偿后释放并清理生产主机锁
         if: always()
         run: |
           set -euo pipefail
@@ -3496,7 +3496,7 @@ jobs:
              rm -f '$lock_log'" || release_status=1
           exit "$release_status"
 
-      - name: Fail compatibility transaction after compensated identity error
+      - name: 身份错误完成补偿后将兼容事务标记为失败
         if: steps.commit_trusted_identity.outcome == 'failure'
         run: |
           echo "trusted Production identity commit/readback failed; locked compensation completed" >&2

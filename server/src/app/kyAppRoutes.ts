@@ -21,6 +21,7 @@ import {
 import { createKyAppInstallationsRouter } from '../kyapp/routes/installations.js';
 import { createKyAppJwksHandler, createKyAppKeysRouter } from '../kyapp/routes/keys.js';
 import { createKyAppMineRouter } from '../kyapp/routes/mine.js';
+import { createKyAppShellEventsRouter } from '../kyapp/routes/shellEvents.js';
 import { createKyAppSystemsRouter } from '../kyapp/routes/systems.js';
 import type { KyAppToolRegistrationDryRun } from '../kyapp/systems/publishGate.js';
 import { serverLogger } from '../utils/logger.js';
@@ -106,6 +107,13 @@ export function registerKyAppRoutes(
     createKyAppKeysRouter({
       keys: assembly.keys,
       dispatcher: assembly.dispatcher,
+      ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
+    }),
+  );
+  // 壳侧安全事件与 `agent.open` 审计（WP4）：与握手同一前缀，仍是「已登录会话 → 治理审计」。
+  app.use(
+    KY_APP_CONTRACT_BASE_PATH,
+    createKyAppShellEventsRouter({
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
     }),
   );

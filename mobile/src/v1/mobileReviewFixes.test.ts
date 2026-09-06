@@ -56,12 +56,14 @@ describe('TASK-375 移动端 V1 复核整改', () => {
 
   it('ACK 未确认 intent 保留幂等键，interaction 生命周期绑定原会话', () => {
     const source = readMobile('src/hooks/useChatAppState.ts');
+    // P5-3：交互回复提交与 ACK 对账按域拆到 useInteractionResponses，守卫语义不变
+    const interactions = readMobile('src/hooks/useInteractionResponses.ts');
 
     expect(source).toContain('entry.state = "verifying"');
     expect(source).toContain('message.clientMsgId,');
-    expect(source).toContain('pendingInteractionKey(currentSessionId, interactionId)');
-    expect(source).toContain('sessionId: pending.sessionId');
-    expect(source).toContain('if (sessionIdRef.current !== pending.sessionId) return');
+    expect(interactions).toContain('pendingInteractionKey(currentSessionId, interactionId)');
+    expect(interactions).toContain('sessionId: pending.sessionId');
+    expect(interactions).toContain('if (sessionIdRef.current !== pending.sessionId) return');
     expect(source).toContain('settleInteractionResponse(event.sessionId, event.interactionId)');
   });
 

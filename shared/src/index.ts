@@ -948,6 +948,7 @@ export * from './hooks/useSessionHistoryPaging';
 export * from './hooks/useSessionUsageStats';
 export * from './hooks/useSessionTitleMutations';
 export * from './hooks/useSessionListCacheWriter';
+export * from './hooks/chatAppKernels';
 
 // Store
 export { getChatStore, useChatStore, resetChatStore, INITIAL_BLOCK_STATE } from './store/index';

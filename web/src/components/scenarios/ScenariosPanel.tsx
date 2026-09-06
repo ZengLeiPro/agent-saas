@@ -27,8 +27,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ScenarioCard, ScenarioModeBadge, ScenarioRequireBadges } from "./ScenarioCard";
 import { WorkflowScenarioCard } from "./WorkflowScenarioCard";
 import { getWorkflowCardReplayScript, type ReplayScript } from "./replay";
-import { hasLazyReplayScript } from "./replay/availability";
-import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from "./replay/technicalInquiryTraceMeta";
+import { hasLazyReplayScript } from "@agent/shared/scenarios/replay/availability";
+import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from "@agent/shared/scenarios/replay/technicalInquiryTraceMeta";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
 import { RoleKitDetailPage } from "./RoleKitDetailPage";
 import { INDUSTRY_ALL, matchIndustry, type IndustryFilterValue } from "./useIndustryFilter";
@@ -119,7 +119,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
     props.onWorkflowSelected?.(scenario);
     if (action === "presentation") {
       if (scenario.id === TECHNICAL_INQUIRY_TRACE_SCENARIO_ID) {
-        void import("./replay/technicalInquiryTraceScript")
+        void import("@agent/shared/scenarios/replay/technicalInquiryTraceScript")
           .then(({ buildTechnicalInquiryTraceScript }) => {
             if (replayRequest.current === requestId) setReplay(buildTechnicalInquiryTraceScript(scenario));
           })
@@ -130,7 +130,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
       }
       // 七类 Hero 与钩子剧本体积大，按需装载；失败回落到详情弹窗
       if (hasLazyReplayScript(scenario.id)) {
-        void import("./replay/lazyRegistry")
+        void import("@agent/shared/scenarios/replay/lazyRegistry")
           .then(({ loadLazyReplayScript }) => loadLazyReplayScript(scenario.id))
           .then((script) => {
             if (replayRequest.current !== requestId) return;

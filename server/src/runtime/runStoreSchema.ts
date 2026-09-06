@@ -254,6 +254,14 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`
         CREATE OR REPLACE FUNCTION ${store.messageSubmissionsTable}_tenant_expand_fn() RETURNS trigger AS $$
         BEGIN
+          -- Legacy writers arbitrate only on the raw (user_scope, client_message_id) key, so a
+          -- concurrent tenant-native insert of the same key can collide on the non-arbiter
+          -- tenant index and raise 23505 instead of being absorbed by ON CONFLICT DO NOTHING.
+          -- Taking the same raw-key advisory lock the native writer holds (lockRawTenantKey)
+          -- serialises both writer generations before the conflict check; the native writer
+          -- already owns this lock, so re-taking it here is a no-op for that path.
+          PERFORM pg_advisory_xact_lock(hashtext('${store.messageSubmissionsTable}:raw-key'),
+            hashtext(NEW.user_scope || chr(31) || NEW.client_message_id));
           IF NEW.tenant_id IS NULL THEN
             SELECT tenant_id INTO NEW.tenant_id FROM ${store.runsTable}
             WHERE run_id=NEW.run_id AND session_id=NEW.session_id;

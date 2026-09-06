@@ -25,6 +25,9 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
     alias: [
       { find: /^@agent\/shared$/, replacement: resolve(__dirname, '../shared/src/index.ts') },
+      // 子路径同样走源码：node_modules 下的 injectWorkspacePackages 副本可能过期，
+      // 也不含新增文件（如 scenarios/replay/*）。
+      { find: /^@agent\/shared\/(.*)$/, replacement: resolve(__dirname, '../shared/src') + '/$1' },
       { find: 'react-native', replacement: resolve(__dirname, './src/test/reactNativeStub.tsx') },
     ],
   },

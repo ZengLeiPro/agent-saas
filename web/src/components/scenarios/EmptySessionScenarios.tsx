@@ -3,7 +3,7 @@ import { buildScenarioPrompt } from "@agent/shared";
 import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
-import { hasReplayScript } from "./replay/availability";
+import { hasReplayScript } from "@agent/shared/scenarios/replay/availability";
 import {
   matchRoleIdByPosition,
   pickRecommendedScenarios,

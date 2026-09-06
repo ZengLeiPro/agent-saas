@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  projectBusinessStepEvents,
-  projectWorkflowTrace,
-  workflowTraceV1Schema,
-} from '@agent/shared';
+import { projectBusinessStepEvents } from '../../lib/extractTodos';
+import { projectWorkflowTrace } from '../../lib/workflowTraceProjector';
+import { workflowTraceV1Schema } from '../../schemas/workflowTrace';
 import { makeWorkflowScenario } from '../workflowTestFixtures';
 import { getReplayScript } from './registry';
 import {

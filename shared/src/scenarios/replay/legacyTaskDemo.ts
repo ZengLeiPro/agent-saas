@@ -1,11 +1,8 @@
-import { derivePanelPulse, foldPanel } from "@agent/shared";
-import type {
-  ApiTranscriptBlock,
-  DetailLine,
-  TodoOutcome,
-  TodoStatus,
-  ToolPresentation,
-} from "@agent/shared";
+import { derivePanelPulse } from "../../lib/panelDelta";
+import { foldPanel } from "../../lib/systemPanel";
+import type { TodoOutcome, TodoStatus } from "../../lib/extractTodos";
+import type { DetailLine, ToolPresentation } from "../../lib/toolPresentation";
+import type { ApiTranscriptBlock } from "../../types";
 import type { ReplayScript, ReplayStep } from "./types";
 
 type ReplayDecision = "approved" | "rejected";

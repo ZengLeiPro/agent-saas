@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  foldPanel,
-  mapSessionDetailToMessages,
-  projectBusinessStepEvents,
-  type ApiSessionDetail,
-  type ApiTranscriptBlock,
-  type PanelPulse,
-} from "@agent/shared";
+import { projectBusinessStepEvents } from "../../lib/extractTodos";
+import { mapSessionDetailToMessages } from "../../lib/sessionsApi";
+import { foldPanel, type PanelPulse } from "../../lib/systemPanel";
+import { type ApiSessionDetail, type ApiTranscriptBlock } from "../../types";
 import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
 import {
   allReplayScripts,

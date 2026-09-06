@@ -50,7 +50,7 @@ import {
 export const TEST_TENANT = 't_demo';
 export const TEST_SYSTEM = 'demo-erp';
 export const TEST_IID = 'tsi_demo_01';
-export const TEST_ORIGIN = 'https://erp.example.com';
+export const TEST_ORIGIN = 'https://erp.apps.kaiyancn.com';
 export const PLATFORM_TENANT = 'pantheon';
 
 export const PLATFORM_ADMIN: JwtPayload = {

@@ -5574,6 +5574,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -5586,6 +5593,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -5671,6 +5685,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -5683,6 +5704,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:81262730ffdcd867b22a381d8e629e634f396f7ac637ec14129eab5995d79391",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -5768,6 +5796,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -5780,6 +5815,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:81262730ffdcd867b22a381d8e629e634f396f7ac637ec14129eab5995d79391",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -5808,6 +5850,48 @@
     {
       "baselineSha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
       "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
         {
           "path": "server/src/taskboard/storeExecutions.ts",
           "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",

@@ -1,4 +1,4 @@
-name: 4 · 测试环境验收
+name: 测试环境验收
 
 on:
   workflow_dispatch:

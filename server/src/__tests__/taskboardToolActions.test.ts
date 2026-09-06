@@ -37,6 +37,56 @@ describe('CronManage taskboard actions', () => {
     expect(executionService.listExecutions).toHaveBeenCalledWith(identity, task.id);
   });
 
+  it('comment.list 透传定位参数，comment.get 缺省取最后一条', async () => {
+    const { service, options } = rig();
+    const comment = {
+      id: 'comment-9', taskId: task.id, body: '最近一条阶段报告', authorType: 'agent' as const,
+      authorId: 'agent-1', authorName: 'agent', version: 1, ordinal: 9, bodyChars: 16,
+      createdAt: task.createdAt, updatedAt: task.updatedAt,
+    };
+    vi.mocked(service.searchComments).mockResolvedValue({ items: [comment], page: 1, pageSize: 1, total: 9, hasMore: false });
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.list', taskId: task.id, latest: 3, view: 'digest', order: 'desc',
+    })).resolves.toMatchObject({ count: 1, total: 9, comments: [comment] });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, {
+      page: undefined, pageSize: undefined, order: 'desc', latest: 3, view: 'digest',
+    });
+
+    await expect(invokeTaskboardAction(options, identity, { action: 'comment.get', taskId: task.id }))
+      .resolves.toEqual({ comment, total: 9 });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, { ordinal: -1 });
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.get', taskId: task.id, ordinal: 4,
+    })).resolves.toEqual({ comment, total: 9 });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, { ordinal: 4 });
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.get', taskId: task.id, commentId: 'comment-9', ordinal: 4,
+    })).resolves.toEqual({ comment, total: 9 });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, { commentId: 'comment-9' });
+
+    vi.mocked(service.searchComments).mockResolvedValue({ items: [], page: 1, pageSize: 1, total: 9, hasMore: false });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.get', taskId: task.id, ordinal: 99,
+    })).rejects.toThrow('指定的评论不存在');
+  });
+
+  it('看板 Execution 的 comment.get 缺省落到当前任务', async () => {
+    const { service, options } = rig();
+    const comment = {
+      id: 'comment-3', taskId: task.id, body: '交接说明', authorType: 'agent' as const,
+      authorId: 'agent-1', authorName: 'agent', version: 1, ordinal: 3,
+      createdAt: task.createdAt, updatedAt: task.updatedAt,
+    };
+    vi.mocked(service.searchComments).mockResolvedValue({ items: [comment], page: 1, pageSize: 1, total: 3, hasMore: false });
+
+    await expect(invokeTaskboardAction(options, identity, { action: 'comment.get' }, executionScope('work')))
+      .resolves.toEqual({ comment, total: 3 });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, { ordinal: -1 });
+  });
+
   it('Execution 只用 finish 原子写交接评论并指定下一状态', async () => {
     const { service, options } = rig();
     const scope = executionScope('review', 2);

@@ -10,8 +10,10 @@ import {
   projectToolResultContentForTranscript,
 } from '../runtime/transcriptToolResultBudget.js';
 import type { PlatformEvent } from '../runtime/types.js';
+import { COMMENT_PREVIEW_CHARS } from '../taskboard/commentQuery.js';
 import {
   EXECUTION_CONTEXT_COMMENTS_LIMIT,
+  EXECUTION_CONTEXT_COMMENTS_MAX_CHARS,
   EXECUTION_CONTEXT_EXECUTIONS_LIMIT,
   EXECUTION_CONTEXT_MAX_CHARS,
   EXECUTION_CONTEXT_PAYLOAD_MAX_CHARS,
@@ -205,6 +207,35 @@ describe('execution context budget', () => {
       returned: EXECUTION_CONTEXT_EXECUTIONS_LIMIT,
       total: executions.length,
     });
+  });
+
+  it('digests the oldest comment bodies once comments exceed their own budget', () => {
+    const comments = Array.from({ length: 40 }, (_, index) => ({
+      id: `c${index}`,
+      taskId: 'task-1',
+      body: `阶段报告 ${index}：${'详'.repeat(4_000)}`,
+      authorType: 'agent',
+      authorId: 'agent-1',
+      authorName: 'agent',
+      version: 1,
+      createdAt: '2026-09-06T00:00:00.000Z',
+      updatedAt: '2026-09-06T00:00:00.000Z',
+    }) as unknown as TaskBoardComment);
+
+    const bounded = applyExecutionContextBudget({
+      changes: [],
+      comments,
+      commentTotal: comments.length,
+      hasMore: false,
+    });
+
+    expect(JSON.stringify(bounded.comments).length).toBeLessThanOrEqual(EXECUTION_CONTEXT_COMMENTS_MAX_CHARS);
+    // 最新一条必须留全文，被降级的只能是更旧的。
+    expect(bounded.comments![bounded.comments!.length - 1]!.body).toBe(comments[comments.length - 1]!.body);
+    expect(bounded.comments![0]!.body).toHaveLength(COMMENT_PREVIEW_CHARS);
+    expect(bounded.comments![0]!.bodyTruncated).toBe(true);
+    expect(bounded.truncation?.comments?.total).toBe(comments.length);
+    expect(bounded.truncation?.comments?.digested).toBeGreaterThan(0);
   });
 
   it('omits comments and executions entirely when they were not requested', () => {

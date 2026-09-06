@@ -12,11 +12,10 @@ import type { RepositoryProvider } from './repositoryProvider.js';
 import { rowToIntegrationSource } from './integrationSourceMapper.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
 import { resolveExecutionContextWorkflowContract } from './executionContextContract.js';
-import { applyExecutionContextBudget } from './executionContextBudget.js';
+import { applyExecutionContextBudget, EXECUTION_CONTEXT_COMMENTS_LIMIT } from './executionContextBudget.js';
+import { loadContextComments } from './commentQuery.js';
 import { fenceTaskExecutions } from './workflow/commandService.js';
 import {
-  commentExecutionJoin,
-  rowToComment,
   rowToExecution,
   rowToTask,
   toIso,
@@ -50,6 +49,11 @@ export interface TaskboardV2StoreOptions {
 }
 
 const SORT_GAP = 1024;
+/**
+ * execution.context 默认只回传最近一条评论全文。看板 Execution 会接续同一会话上下文，
+ * 更早的阶段报告通常已在会话里；需要原文时用 comment.get({ordinal}) 单独取。
+ */
+const DEFAULT_CONTEXT_COMMENT_LIMIT = 1;
 
 export async function listBoardMembers(
   options: TaskboardV2StoreOptions,
@@ -456,15 +460,15 @@ export async function getExecutionContextV2(
       )
       : { rows: [] as Record<string, unknown>[] };
     const page = changeRows.rows.slice(0, limit);
+    const commentOptions = input.comments ?? {};
     const comments = include.has('comments')
-      ? await client.query(
-        `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
-                comment_execution.comment_execution_purpose
-           FROM ${options.commentsTable} c
-          ${commentExecutionJoin(options.changesTable, options.executionsTable)}
-          WHERE c.task_id=$1 AND ${visibleCommentPredicate('c', options.changesTable)}
-          ORDER BY c.created_at,c.id`,
-        [taskId],
+      ? await loadContextComments(
+        client,
+        options,
+        taskId,
+        commentOptions.mode ?? 'recent',
+        commentOptions.limit ?? DEFAULT_CONTEXT_COMMENT_LIMIT,
+        EXECUTION_CONTEXT_COMMENTS_LIMIT,
       )
       : undefined;
     const executions = include.has('executions')
@@ -484,7 +488,7 @@ export async function getExecutionContextV2(
     );
     const bounded = applyExecutionContextBudget({
       changes: page.map(rowToChange),
-      ...(comments ? { comments: comments.rows.map(rowToComment) } : {}),
+      ...(comments ? { comments: comments.comments, commentTotal: comments.total } : {}),
       ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
       hasMore: changeRows.rows.length > limit,
     });

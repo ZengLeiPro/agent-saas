@@ -44,6 +44,7 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'task.restore',
   'task.dispatch',
   'comment.list',
+  'comment.get',
   'comment.create',
   'comment.update',
   'comment.delete',
@@ -71,6 +72,7 @@ export const TASKBOARD_READ_ACTIONS = [
   'task.search',
   'task.get',
   'comment.list',
+  'comment.get',
   'execution.list',
   'execution.context',
   'integration.sources',
@@ -118,6 +120,20 @@ export interface TaskboardManageInput {
   nextTaskId?: string;
   page?: number;
   pageSize?: number;
+  /** comment.list 分页排序方向，默认 asc。 */
+  order?: 'asc' | 'desc';
+  /** comment.list 直接取最近 N 条，返回顺序仍为时间升序。 */
+  latest?: number;
+  /** comment.list 视图；digest 只返回目录行。 */
+  view?: 'full' | 'digest';
+  /** comment.get 定位：1-based 位置，负数为倒数第几条。 */
+  ordinal?: number;
+  /** comment.get 定位：评论 id（跨轮稳定）。 */
+  commentId?: string;
+  /** execution.context 的评论模式；默认 recent。 */
+  commentMode?: 'recent' | 'full' | 'digest';
+  /** execution.context 下 recent 模式保留全文的条数。 */
+  commentLimit?: number;
   /** create/task.create 时立即把新任务派发给独立 work Agent。 */
   dispatch?: boolean;
   include?: Array<'task' | 'board' | 'comments' | 'executions' | 'activity' | 'integrationSources'>;
@@ -277,10 +293,22 @@ export async function invokeTaskboardAction(
       };
     case 'task.dispatch':
       return dispatchTask(service, options.executionService?.(), identity, input, false);
+    case 'comment.get': {
+      const taskId = input.taskId ?? scope.execution?.task.id ?? requireId(input, 'taskId');
+      const located = await service.searchComments(identity, taskId, input.commentId
+        ? { commentId: input.commentId }
+        : { ordinal: input.ordinal ?? -1 });
+      const comment = located.items[0];
+      if (!comment) throw new TaskboardValidationError('指定的评论不存在');
+      return { comment, total: located.total };
+    }
     case 'comment.list': {
       const result = await service.searchComments(identity, requireId(input, 'taskId'), {
         page: input.page,
         pageSize: input.pageSize,
+        ...(input.order ? { order: input.order } : {}),
+        ...(input.latest !== undefined ? { latest: input.latest } : {}),
+        ...(input.view ? { view: input.view } : {}),
       });
       return {
         count: result.items.length,
@@ -336,6 +364,14 @@ export async function invokeTaskboardAction(
           ...(input.cursor ? { cursor: input.cursor } : {}),
           ...(input.limit ? { limit: input.limit } : {}),
         },
+        ...(input.commentMode || input.commentLimit !== undefined
+          ? {
+            comments: {
+              ...(input.commentMode ? { mode: input.commentMode } : {}),
+              ...(input.commentLimit !== undefined ? { limit: input.commentLimit } : {}),
+            },
+          }
+          : {}),
       }) as unknown as Record<string, unknown>;
     }
     case 'execution.pull_request.set': {

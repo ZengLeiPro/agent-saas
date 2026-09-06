@@ -369,6 +369,12 @@ export interface TaskBoardComment {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** 当前可见评论集合内按时间升序的 1-based 位置；评论被删除后会漂移，跨轮引用请用 id。 */
+  ordinal?: number;
+  /** 正文完整字符数；body 为预览时据此判断是否需要取全文。 */
+  bodyChars?: number;
+  /** body 只是预览，完整正文需 comment.get 单独读取。 */
+  bodyTruncated?: boolean;
 }
 
 export interface TaskBoardExecution {
@@ -429,12 +435,14 @@ export interface TaskBoardExecutionIntegrationAgent {
 export type TaskBoardExecutionContextBoard = Omit<TaskBoard, "prompt" | "stagePrompts">;
 
 /** execution.context 上下文预算生效时的收口说明；字段缺省表示整页原样返回。 */
+export type TaskBoardContextCommentMode = "recent" | "full" | "digest";
+
 export interface TaskBoardExecutionContextTruncation {
   /** payload 超出单条预算、已摘要化的 change 数。 */
   summarizedChangePayloads?: number;
   /** 因总字符预算未返回的 change 数；已体现在 hasMore/nextCursor。 */
   droppedChanges?: number;
-  comments?: { returned: number; total: number };
+  comments?: { returned: number; total: number; digested?: number };
   executions?: { returned: number; total: number };
 }
 
@@ -610,6 +618,11 @@ export interface TaskBoardExecutionContextInput {
   history?: {
     mode: TaskBoardContextHistoryMode;
     cursor?: string;
+    limit?: number;
+  };
+  comments?: {
+    /** recent=最近 limit 条全文+更早目录行（默认）；full=全部全文；digest=全部目录行。 */
+    mode?: TaskBoardContextCommentMode;
     limit?: number;
   };
 }

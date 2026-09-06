@@ -39,6 +39,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
 import { AudioTranscribeSettingsCard } from "@/components/ToolControlsManager/AudioTranscribeSettingsCard";
 import { ImageGenSettingsCard } from "@/components/ToolControlsManager/ImageGenSettingsCard";
+import { WebSearchParamsSection } from "./WebSearchParamsSection";
 import { ImageGenPricingCard } from "@/components/ToolControlsManager/ImageGenPricingCard";
 
 /**
@@ -67,6 +68,11 @@ export interface ToolDetailPanelProps {
   setSearchApiKeyText: (value: string) => void;
   markDirty: () => void;
   onBack: () => void;
+  onSaveSettings: () => void;
+  settingsDirty: boolean;
+  settingsSaving: boolean;
+  settingsError: string | null;
+  settingsSaved: boolean;
   // 单工具 PUT: description override + 状态刷新
   saveSingleTool: (
     toolId: string,
@@ -86,39 +92,6 @@ const RISK_META: Record<
 const APPROVAL_META: Record<ToolCatalogItem["approvalMode"], string> = {
   never: "无需审批",
   web: "需 Web 审批",
-};
-
-const SEARCH_PROVIDER_OPTIONS: Array<{
-  value: NonNullable<WebToolsSearchConfig["provider"]>;
-  label: string;
-  keyRefPlaceholder: string;
-  endpointPlaceholder: string;
-}> = [
-  {
-    value: "volcengine",
-    label: "火山豆包搜索 Custom版",
-    keyRefPlaceholder: "volcengine-web-search-api-key",
-    endpointPlaceholder: "https://open.feedcoopapi.com/search_api/web_search",
-  },
-  {
-    value: "brave",
-    label: "Brave Search",
-    keyRefPlaceholder: "brave-search-api-key",
-    endpointPlaceholder: "https://api.search.brave.com/res/v1/web/search",
-  },
-  {
-    value: "tencent_wsa",
-    label: "腾讯云联网搜索 WSA",
-    keyRefPlaceholder: "tencent-wsa-api-key",
-    endpointPlaceholder: "https://api.wsa.cloud.tencent.com/SearchPro",
-  },
-];
-
-const DEFAULT_SEARCH: WebToolsSearchConfig = {
-  enabled: true,
-  provider: "volcengine",
-  timeoutMs: 8_000,
-  maxResults: 5,
 };
 
 const DEFAULT_FETCH: WebToolsFetchConfig = {
@@ -201,7 +174,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col">
       <div className="flex items-center gap-3 border-b py-3">
-        <Button variant="ghost" size="sm" onClick={onBack} className="gap-1">
+        <Button variant="ghost" size="sm" onClick={onBack} disabled={props.settingsSaving || overrideSaving} className="gap-1">
           <ArrowLeft className="size-3.5" />
           返回工具列表
         </Button>
@@ -220,8 +193,10 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">启用</span>
           <Switch
-            checked={tool.enabled}
-            disabled={platformReadOnly || props.toolControls.enabled === false}
+            checked={props.toolControls.tools?.[tool.id]?.enabled !== false
+              && (tool.id === "WebSearch" ? props.webToolsDraft.search?.enabled !== false
+                : tool.id === "WebFetch" ? props.webToolsDraft.fetch?.enabled !== false : tool.enabled)}
+            disabled={platformReadOnly || props.settingsSaving || props.toolControls.enabled === false}
             onCheckedChange={onToggleEnabled}
             aria-label={`启用 ${tool.name}`}
           />
@@ -229,6 +204,17 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto py-4">
+        {(tool.id === "WebSearch" || tool.id === "WebFetch") && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={props.onSaveSettings} disabled={platformReadOnly || props.settingsSaving || !props.settingsDirty}>
+              {props.settingsSaving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+              保存并生效
+            </Button>
+            {props.settingsDirty && <span className="text-xs text-muted-foreground">有未保存更改</span>}
+            {props.settingsSaved && !props.settingsDirty && <span className="text-xs text-muted-foreground">已保存并热生效</span>}
+            {props.settingsError && <p role="alert" className="text-sm text-destructive">{props.settingsError}</p>}
+          </div>
+        )}
         {/* ═════ 第 1 段：技术契约（只读） ═════ */}
         <Card>
           <CardHeader className="pb-3">
@@ -354,7 +340,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={platformReadOnly || overrideSaving}
+                    disabled={platformReadOnly || props.settingsSaving || overrideSaving}
                     onClick={() => { void doClearOverride(); }}
                   >
                     清除覆盖
@@ -362,7 +348,7 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                 )}
                 <Button
                   size="sm"
-                  disabled={platformReadOnly || overrideSaving || !overrideDirty || !overrideText.trim()}
+                  disabled={platformReadOnly || props.settingsSaving || overrideSaving || !overrideDirty || !overrideText.trim()}
                   onClick={() => {
                     if (overrideMode === "replace") {
                       setConfirmOpen(true);
@@ -385,14 +371,14 @@ export function ToolDetailPanel(props: ToolDetailPanelProps): JSX.Element {
                   该操作会立即影响所有租户的下一次会话——若替换文本没有覆盖到工具核心用途，模型可能停止调用该工具。
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)} disabled={overrideSaving}>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmOpen(false)} disabled={props.settingsSaving || overrideSaving}>
                     取消
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
                     onClick={() => { void doSaveOverride(); }}
-                    disabled={overrideSaving}
+                    disabled={props.settingsSaving || overrideSaving}
                   >
                     确认替换
                   </Button>
@@ -448,84 +434,6 @@ function renderRuntimeParamsSection(props: ToolDetailPanelProps): JSX.Element {
       </CardHeader>
       <CardContent className="text-xs text-muted-foreground">
         该工具没有额外的运行时参数——契约由代码里的 zod schema 完整约束，UI 无需暴露可配项。
-      </CardContent>
-    </Card>
-  );
-}
-
-function WebSearchParamsSection(props: ToolDetailPanelProps): JSX.Element {
-  const { webToolsDraft, updateSearch, markDirty, searchApiKeyText, setSearchApiKeyText } = props;
-  const search = webToolsDraft.search ?? DEFAULT_SEARCH;
-  const provider = search.provider ?? DEFAULT_SEARCH.provider ?? "volcengine";
-  const providerOption = SEARCH_PROVIDER_OPTIONS.find((option) => option.value === provider) ?? SEARCH_PROVIDER_OPTIONS[0];
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">运行时参数（WebSearch）</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
-          修改后走顶部 <b>保存并生效</b> 按钮统一提交（webTools 属于顶层配置，需整包保存）。
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Provider</Label>
-            <Select value={provider} onValueChange={(v) => updateSearch({ provider: v as typeof provider, endpoint: undefined })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {SEARCH_PROVIDER_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <Label>API Key Ref</Label>
-            <Input
-              value={search.apiKeyRef ?? ""}
-              onChange={(e) => updateSearch({ apiKeyRef: e.target.value, hasApiKey: search.hasApiKey })}
-              placeholder={providerOption.keyRefPlaceholder}
-            />
-            {search.hasApiKey && !search.apiKeyRef && !searchApiKeyText && (
-              <p className="text-xs text-muted-foreground">已有明文 apiKey，保存时由后端保留。</p>
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <Label>API Key</Label>
-            <Input
-              type="password"
-              autoComplete="new-password"
-              value={searchApiKeyText}
-              onChange={(e) => { setSearchApiKeyText(e.target.value); markDirty(); }}
-              placeholder="留空则使用 API Key Ref 或保留已有明文 key"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Endpoint</Label>
-            <Input
-              value={search.endpoint ?? ""}
-              onChange={(e) => updateSearch({ endpoint: e.target.value })}
-              placeholder={providerOption.endpointPlaceholder}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Timeout ms</Label>
-            <Input
-              type="number" min={1} max={60_000}
-              value={search.timeoutMs ?? ""}
-              onChange={(e) => updateSearch({ timeoutMs: numberOrUndefined(e.target.value) })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Max results</Label>
-            <Input
-              type="number" min={1} max={10}
-              value={search.maxResults ?? ""}
-              onChange={(e) => updateSearch({ maxResults: numberOrUndefined(e.target.value) })}
-            />
-          </div>
-        </div>
       </CardContent>
     </Card>
   );

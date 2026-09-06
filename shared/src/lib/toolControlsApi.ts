@@ -1,10 +1,9 @@
 import { authFetch } from './authFetch';
 import { parseJsonResponse } from './parseJsonResponse';
 
-export type WebSearchProvider = 'brave' | 'volcengine' | 'tencent_wsa';
+export type WebSearchProvider = 'brave' | 'volcengine' | 'tencent_wsa' | 'zhipu' | 'tavily';
 
-export interface WebToolsSearchConfig {
-  enabled?: boolean;
+export interface WebToolsSearchSourceConfig {
   provider?: WebSearchProvider;
   endpoint?: string;
   apiKey?: string;
@@ -12,6 +11,16 @@ export interface WebToolsSearchConfig {
   hasApiKey?: boolean;
   timeoutMs?: number;
   maxResults?: number;
+  searchEngine?: string;
+  searchDepth?: 'basic' | 'advanced';
+  enableWaiting?: boolean;
+  maxWaitTimeMs?: number;
+}
+
+export interface WebToolsSearchConfig extends WebToolsSearchSourceConfig {
+  enabled?: boolean;
+  /** null 显式移除境外源；省略则由管理 API 保留既有配置。 */
+  global?: WebToolsSearchSourceConfig | null;
 }
 
 export interface WebToolsFetchConfig {

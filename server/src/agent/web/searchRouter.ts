@@ -1,3 +1,4 @@
+import { WebSearchInputError } from './searchProviderTypes.js';
 import { runWebSearch } from './searchProviders.js';
 import type {
   WebSearchInput,
@@ -97,9 +98,9 @@ export async function runRoutedWebSearch(
     recordSuccess(primaryId);
     return { ...output, requestedScope: scope, degraded: false };
   } catch (error) {
-    recordFailure(primaryId, error);
     // 调用方主动取消不算 provider 故障，也不该触发降级重试。
-    if (input.signal?.aborted) throw error;
+    if (input.signal?.aborted || error instanceof WebSearchInputError) throw error;
+    recordFailure(primaryId, error);
     if (!fallback) throw error;
 
     const fallbackId = fallback.provider ?? 'volcengine';
@@ -109,6 +110,7 @@ export async function runRoutedWebSearch(
       recordSuccess(fallbackId);
       return { ...output, requestedScope: scope, degraded: true, primaryError };
     } catch (fallbackError) {
+      if (input.signal?.aborted || fallbackError instanceof WebSearchInputError) throw fallbackError;
       recordFailure(fallbackId, fallbackError);
       const message = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
       throw new Error(`WebSearch 两个来源均失败。首选(${primaryId})：${primaryError}；备用(${fallbackId})：${message}`, {

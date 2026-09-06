@@ -38,6 +38,9 @@ export interface WebSearchProviderConfig {
   searchEngine?: string;
   /** Tavily 检索深度：basic=1 credit、advanced=2 credits。仅 tavily 使用。 */
   searchDepth?: 'basic' | 'advanced';
+  /** 火山账号级服务端排队，避免多 Worker 瞬时请求直接触发 QPS 限流。 */
+  enableWaiting?: boolean;
+  maxWaitTimeMs?: number;
 }
 
 export interface WebSearchOutput {
@@ -46,4 +49,18 @@ export interface WebSearchOutput {
   results: WebSearchResultItem[];
   fetchedAt: string;
   truncated: boolean;
+  diagnostics?: {
+    attempts: number;
+    tookMs: number;
+    requestId?: string;
+    logId?: string;
+  };
+}
+
+/** 输入不满足搜索源约束，不计入服务故障，也不触发备用源调用。 */
+export class WebSearchInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WebSearchInputError';
+  }
 }

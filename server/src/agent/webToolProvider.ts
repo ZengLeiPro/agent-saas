@@ -203,6 +203,7 @@ export class WebToolProvider implements ToolProvider {
     }
     const searchConfig = this.config.search ?? {};
     const scope = input.scope ?? 'cn';
+    const selectedConfig = scope === 'global' && searchConfig.global?.apiKey ? searchConfig.global : searchConfig;
     const output = await runRoutedWebSearch(
       {
         ...searchConfig,
@@ -210,7 +211,7 @@ export class WebToolProvider implements ToolProvider {
       },
       {
         query: input.query,
-        count: input.count ?? Math.min(searchConfig.maxResults ?? 5, 10),
+        count: input.count ?? Math.min(selectedConfig.maxResults ?? 5, 10),
         ...(input.freshness ? { freshness: input.freshness } : {}),
         ...(input.allowedDomains ? { allowedDomains: input.allowedDomains } : {}),
         ...(input.blockedDomains ? { blockedDomains: input.blockedDomains } : {}),
@@ -228,6 +229,7 @@ export class WebToolProvider implements ToolProvider {
       resultCount: output.results.length,
       truncated: output.truncated,
       fetchedAt: output.fetchedAt,
+      ...(output.diagnostics ? { diagnostics: output.diagnostics } : {}),
       // 降级对模型可见：拿到的可能不是它请求的那一侧来源，避免据此误判「境外无资料」。
       ...(output.degraded ? { degraded: true } : {}),
       ...(linklessCount > 0

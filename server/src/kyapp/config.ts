@@ -187,6 +187,16 @@ export interface KyAppPlatformConfig {
   allowInsecureOutbound: boolean;
 }
 
+/** §6.2-7 的四道闸门额度。单列成类型，Gateway 的 `policy.ts` 只依赖它。 */
+export interface KyAppGatewayLimits {
+  perInstallationConcurrency: number;
+  perRunPerCapability: number;
+  perTenantPerMinute: number;
+  perTenantPerDay: number;
+  breakerFailureThreshold: number;
+  breakerCooldownMs: number;
+}
+
 /** 解析后的 Gateway 子域；消费方直接取值，不再判缺省。 */
 export interface KyAppGatewayConfig {
   enabled: boolean;
@@ -196,14 +206,7 @@ export interface KyAppGatewayConfig {
   executionPollIntervalMs: number;
   approvalTtlMs: number;
   maxResponseBytes: number;
-  limits: {
-    perInstallationConcurrency: number;
-    perRunPerCapability: number;
-    perTenantPerMinute: number;
-    perTenantPerDay: number;
-    breakerFailureThreshold: number;
-    breakerCooldownMs: number;
-  };
+  limits: KyAppGatewayLimits;
 }
 
 function resolveGateway(raw: KyAppRawConfig['gateway']): KyAppGatewayConfig {

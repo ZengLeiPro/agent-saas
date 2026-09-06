@@ -594,12 +594,8 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
   },
   {
     tool: 'app__*',
-    state: 'partial',
+    state: 'covered',
     producedIn: 'mapping',
-    gap: 'WP3 Phase A 按 `app__<systemId>__<capabilityId>` 前缀产出「系统 · 能力 + 关键入参」摘要。'
-      + 'Phase A 的 provider 还不执行能力调用（逻辑调用状态机在 Phase B 的 lcid.ts），'
-      + '因此拿不到 outputBytes / meta.resultLink / outcome 这些截断前的真实回执。'
-      + 'Phase B 让 provider 在 envelope.ts 里自产 presentation 后即可转 covered 并把预算减回 2',
   },
 ] as const;
 
@@ -611,17 +607,18 @@ export const PRESENTATION_SOURCES: readonly PresentationSourceEntry[] = [
  * WebSearch/WebFetch/GenerateImage/Agent 接各自真实结果（5→1）。仅剩 Skill，刻意不做。
  * 调高它需要 code review 显式批准——这正是 `[CITE]` 当年缺的那道闸门。
  *
- * **09-06 例外，2→3（WP3 Phase A）**：新登记 `app__*`（定制项目能力）。理由同 `mcp__*`：
- * 它此前不在表内，本次显式纳入治理并给出入参侧摘要；但 Phase A 的 Gateway provider
- * 还不执行能力调用，拿不到 `outputBytes`/`meta.resultLink`/`outcome`，
- * 诚实标 partial 而不是硬凑 covered。**Phase B 接通 envelope.ts 后必须减回 2。**
+ * **09-06：3→2（WP3 Phase B 履约）**。Phase A 新登记 `app__*` 时借支了一格
+ * （provider 还不执行能力调用，拿不到真实回执），并写死「Phase B 接通 envelope.ts
+ * 后必须减回 2」。Phase B 的 `kyapp/gateway/envelope.ts` 已让 provider 在截断前自产
+ * presentation —— `receipt.id = lcid`、`outputBytes`、`meta.resultLink`、成功/失败
+ * 状态全部来自真实回执，故 `app__*` 转 covered，预算按约定减回 2。
  *
  * **07-26 例外，1→2**：新登记 `mcp__*`。理由是它此前根本不在表内（连接器动作
  * 显示为 `MCP:server/tool`，是演示与真实之间最大的一处落差），这次把它显式纳入
  * 治理并给出入参侧摘要，但 MCP 缺统一 metadata 契约，诚实标记为 partial
  * 而不是硬凑成 covered。各 server 回传结构化回执后，这个数应回到 1。
  */
-export const PRESENTATION_TODO_BUDGET = 3;
+export const PRESENTATION_TODO_BUDGET = 2;
 
 /**
  * 在工具执行结果上补一份「给人看」摘要。

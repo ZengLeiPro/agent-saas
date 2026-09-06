@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import { navigateApps } from '@/lib/urlSync';
 import { useAppsShellState } from '@/hooks/useAppsShellState';
 import { useMySystems } from '@/hooks/useMySystems';
-import type { MySystemInstallation } from '@/lib/systemsApi';
+import { isSystemOpenable, type MySystemInstallation, type MySystemState } from '@/lib/systemsApi';
 import type { AppTab } from '@/types/sidebar';
 import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from './DesktopSessionSidebarControls';
 
@@ -26,12 +26,28 @@ export interface AppsNavItem {
   installationId: string;
   label: string;
   icon: string | null;
+  state: MySystemState;
+  /** 能不能真的进去；`false` 时标签仍然渲染（§5.5「标签保留」），只是标注「暂不可用」。 */
+  openable: boolean;
+}
+
+/**
+ * §5.5「`live` 失败/停用 → 标签保留『暂不可用』」/ §6.6「系统被停用 → 标签『暂不可用』」。
+ * 「更新中」不属于这一档：§6.6 给的是条幅 + 「正在更新，暂不可操作」，
+ * 侧边栏保持原样，进去以后才看到条幅。
+ */
+export const APPS_NAV_UNAVAILABLE_MARK = '暂不可用';
+
+export function appsNavStateMark(state: MySystemState): string | null {
+  return state === 'disabled' || state === 'unavailable' ? APPS_NAV_UNAVAILABLE_MARK : null;
 }
 
 /**
  * 安装实例列表 → 左栏导航项。
  *
- * 纯函数，可见性完全由服务端算好（`systemsApi.ts` 的注释），这里不做二次过滤，
+ * 纯函数，可见性完全由服务端算好（`systemsApi.ts` 的注释），这里不做二次过滤 ——
+ * **尤其不能把非 `enabled` 的实例滤掉**：规范 §5.5/§6.6 要求停用的系统标签留在原位、
+ * 显示《系统名》+「暂不可用」。滤掉等于整项从侧边栏消失（曾经的实现就是这个错）。
  * 只做展示层兜底：名称缺失时回落 `systemId`（`asInstallation()` 已保证非空）。
  */
 export function buildAppsNavItems(installations: readonly MySystemInstallation[]): AppsNavItem[] {
@@ -40,6 +56,8 @@ export function buildAppsNavItems(installations: readonly MySystemInstallation[]
     installationId: installation.installationId,
     label: installation.name || installation.systemId,
     icon: installation.icon,
+    state: installation.state,
+    openable: isSystemOpenable(installation),
   }));
 }
 
@@ -102,14 +120,20 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
       )}
       {items.map((item) => {
         const selected = activeInstallationId === item.installationId;
+        const mark = appsNavStateMark(item.state);
         return (
           <button
             key={item.installationId}
             type="button"
             data-testid={`apps-nav-${item.installationId}`}
+            data-state={item.state}
+            // 仍然可点：点进去看到「《系统名》暂不可用」比点不动更能让人明白发生了什么，
+            // 也对应 §6.6 的「标签『暂不可用』」而不是「标签消失」。真正的准入在 AppHost。
+            aria-disabled={mark !== null}
             className={cn(
               'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm font-medium transition-colors',
               selected ? NAV_ITEM_SELECTED : NAV_ITEM_UNSELECTED,
+              mark !== null && 'opacity-60',
             )}
             onClick={() => handleOpen(item.installationId)}
           >
@@ -124,6 +148,14 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
               <AppWindow className="size-4 shrink-0" aria-hidden="true" />
             )}
             <span className="min-w-0 truncate">{item.label}</span>
+            {mark !== null && (
+              <span
+                data-testid={`apps-nav-mark-${item.installationId}`}
+                className="ml-auto shrink-0 rounded px-1 text-[10px] font-normal text-muted-foreground"
+              >
+                {mark}
+              </span>
+            )}
           </button>
         );
       })}

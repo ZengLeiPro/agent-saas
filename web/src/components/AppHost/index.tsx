@@ -27,9 +27,10 @@ import {
   SECURITY_RELEVANT_PATH_REJECTIONS,
   type AppsRouteState,
 } from '@/lib/urlSync';
+import { isSystemOpenable, type MySystemState } from '@/lib/systemsApi';
 import { cn } from '@/lib/utils';
 import { AppHostController, type AppHostSnapshot } from './controller';
-import { describeAppHostFailure } from './failureText';
+import { describeAppHostFailure, type AppHostFailureKind } from './failureText';
 import { openExternalLink } from './linkPolicy';
 import * as handshakeApi from './handshakeApi';
 
@@ -39,6 +40,24 @@ import * as handshakeApi from './handshakeApi';
  * 把序号渲染到 DOM 上，测试才能钉死「切走再切回没有重挂载」。
  */
 let mountSequence = 0;
+
+/**
+ * 非 `enabled` 的实例状态 → §6.6 的客户面失败种类。
+ * `disabled`/`unavailable` 是「暂不可用」（停用 / `live` 失败，§5.5 同一行）；
+ * `maintenance`/`needs_reregistration` 是「正在更新，暂不可操作」（§6.6 条幅行，可重试）。
+ * 这里是偏差 4-B-06「壳侧无检测源」的接线点：检测源就是 `/api/systems/mine` 的 `state`。
+ */
+export function failureKindForState(state: MySystemState): AppHostFailureKind | null {
+  switch (state) {
+    case 'enabled':
+      return null;
+    case 'maintenance':
+    case 'needs_reregistration':
+      return 'system_updating';
+    default:
+      return 'unavailable';
+  }
+}
 
 /** 没有 CDN、没有主题系统时的默认值；有了再从 documentElement 读。 */
 function currentTheme(): string {
@@ -103,8 +122,17 @@ export function AppHost({ appsRoute }: AppHostProps) {
 
   const installation =
     installations.find((item) => item.installationId === appsRoute?.installationId) ?? null;
-  // §6.6：列表已就绪却查无此实例 = 已停用 / 不再对本人可见
-  const unavailable = Boolean(appsRoute) && status === 'ready' && installation === null;
+  const openable = installation !== null && isSystemOpenable(installation);
+  /**
+   * §5.5/§6.6：**停用不是「从列表里消失」**，服务端会把停用实例连同 `state` 一起返回，
+   * 所以这里既拿得到《系统名》，也分得清「停用/暂不可用」与「正在更新」（收掉 4-B-04）。
+   * 列表已就绪却查无此实例，才是「已删除 / 不再对本人可见」那一档，回落无名文案。
+   */
+  const stateFailureKind: AppHostFailureKind | null = !appsRoute || status !== 'ready'
+    ? null
+    : installation === null
+      ? 'unavailable'
+      : failureKindForState(installation.state);
 
   useEffect(() => () => controller.dispose(), [controller]);
 
@@ -117,7 +145,8 @@ export function AppHost({ appsRoute }: AppHostProps) {
   }, [controller]);
 
   useEffect(() => {
-    if (!appsRoute || !installation) return;
+    // 不可进入的实例一律不握手：不生成 nonce、不挂 iframe、不签 SAT。
+    if (!appsRoute || !installation || !openable) return;
     void controller.mount(
       {
         installationId: installation.installationId,
@@ -127,7 +156,7 @@ export function AppHost({ appsRoute }: AppHostProps) {
       },
       appsRoute.appPath,
     );
-  }, [controller, installation, appsRoute]);
+  }, [controller, installation, openable, appsRoute]);
 
   // 4-A-01：非法应用内路径已回落首页，这里补轻提示与安全事件。
   // 放在挂载 effect 之后声明：`controller.mount` 会先把 installation 装上，
@@ -156,9 +185,12 @@ export function AppHost({ appsRoute }: AppHostProps) {
     controller.setFrameWindow(frameRef.current?.contentWindow ?? null);
   }, [controller, snapshot.frameSrc]);
 
-  const failure = unavailable
-    ? // 查无此实例时连名字都拿不到，`describeAppHostFailure` 会回落成「该系统」
-      { kind: 'unavailable' as const, ...describeAppHostFailure('unavailable', null) }
+  const failure = stateFailureKind
+    ? {
+        kind: stateFailureKind,
+        // 查无此实例时才拿不到名字，`describeAppHostFailure` 回落成「该系统」
+        ...describeAppHostFailure(stateFailureKind, installation?.name ?? null),
+      }
     : snapshot.failure;
 
   return (
@@ -209,6 +241,13 @@ export function AppHost({ appsRoute }: AppHostProps) {
               data-testid="app-host-retry"
               className="rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"
               onClick={() => {
+                // 状态是服务端算的，重试要重新问服务端；只有握手类失败才重走握手。
+                if (stateFailureKind) {
+                  void loadMySystems({ force: true }).catch(() => {
+                    /* 失败态由单一来源广播 */
+                  });
+                  return;
+                }
                 void controller.retry();
               }}
             >

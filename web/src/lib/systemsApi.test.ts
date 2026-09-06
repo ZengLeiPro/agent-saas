@@ -53,7 +53,8 @@ describe('systemsApi', () => {
         name: 'wms',
         icon: null,
         origin: 'https://b.example.com',
-        state: 'enabled',
+        // 服务端没给 state → 回落 `unavailable`（fail-closed），不是 `enabled`
+        state: 'unavailable',
         externalLinkHosts: [],
       },
     ]);

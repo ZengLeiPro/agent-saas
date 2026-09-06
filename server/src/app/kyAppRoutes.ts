@@ -122,6 +122,9 @@ export function registerKyAppRoutes(
     createKyAppMineRouter({
       systems: assembly.systems,
       ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
+      // §4.6 的探测结果是壳侧「维护中 / digest 不一致」的唯一检测源（偏差 4-B-06）。
+      runtimeStore: assembly.runtimeStore,
+      failureThreshold: config.probe.failureThreshold,
     }),
   );
   // JWKS 挂 app 级：`/api` 之外天然公开，不经会话中间件（`index.ts:251` 只挂 `/api`）。

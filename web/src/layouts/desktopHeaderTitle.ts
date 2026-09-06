@@ -1,3 +1,4 @@
+import type { MySystemState } from '@/lib/systemsApi';
 import type { LayoutProps } from './types';
 
 const TAB_TITLES: Partial<Record<LayoutProps['activeTab'], string>> = {
@@ -19,6 +20,26 @@ const TAB_TITLES: Partial<Record<LayoutProps['activeTab'], string>> = {
 export const APPS_TAB_FALLBACK_TITLE = '定制软件';
 /** §6.6：系统被停用 / `live` 失败 → 标签「暂不可用」（不写技术归因）。 */
 export const APPS_TAB_UNAVAILABLE_TITLE = '暂不可用';
+
+/**
+ * 定制软件标签的 header 标题。
+ *
+ * §5.5/§6.6 的关键点：停用**不是**把标签拿掉，而是「标签保留 +《系统名》+ 暂不可用」。
+ * 服务端现在会把停用实例连同 `state` 一起返回，所以这里能同时给出名字与标注。
+ * 「更新中」不加标注：那一档 §6.6 给的是条幅，header 保持《系统名》。
+ */
+export function buildAppsHeaderTitle(input: {
+  name: string | null | undefined;
+  state: MySystemState | null | undefined;
+  /** `/api/systems/mine` 是否已就绪；未就绪时不要提前下「暂不可用」的结论。 */
+  resolved: boolean;
+}): string | null {
+  const name = (input.name ?? '').trim();
+  const unavailable = input.state === 'disabled' || input.state === 'unavailable';
+  if (name !== '') return unavailable ? `${name} · ${APPS_TAB_UNAVAILABLE_TITLE}` : name;
+  // 名字都拿不到 = 查无此实例（已删除 / 不再对本人可见）
+  return input.resolved ? APPS_TAB_UNAVAILABLE_TITLE : null;
+}
 
 interface DesktopHeaderTitleOptions {
   activeTab: LayoutProps['activeTab'];

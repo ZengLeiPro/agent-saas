@@ -95,13 +95,55 @@ describe('§5.1 iframe 属性一字不差', () => {
 });
 
 describe('§6.6 失败态', () => {
-  it('系统停用 / 不再可见 → 「暂不可用」，不给重试按钮', async () => {
+  it('查无此实例（已删除 / 不再可见）→ 「暂不可用」，不给重试按钮', async () => {
     useInstallations([]);
     render(<Region hidden={false} path="/apps/inst-404/orders" />);
     const failure = await screen.findByTestId('app-host-failure');
     expect(failure.textContent).toContain('暂不可用');
     expect(screen.queryByTestId('app-host-retry')).toBeNull();
     expect(screen.queryByTestId('app-host-frame')).toBeNull();
+  });
+
+  // §5.5/§6.6：停用的实例服务端仍会返回（带 state），所以壳这里**拿得到系统名**。
+  // 这条同时是偏差 4-B-04（「拿不到《系统名》」）的回归钉子。
+  it.each(['disabled', 'unavailable'] as const)(
+    'state=%s → 《系统名》暂不可用，不挂 iframe、不发握手请求',
+    async (state) => {
+      useInstallations([installationFixture({ state })]);
+      render(<Region hidden={false} path="/apps/inst-1/orders" />);
+      const failure = await screen.findByTestId('app-host-failure');
+      expect(failure.textContent).toContain('《客户管理》暂不可用');
+      expect(failure.textContent).not.toContain('该系统');
+      expect(screen.queryByTestId('app-host-frame')).toBeNull();
+      expect(authFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  // 偏差 4-B-06 接线：检测源就是 `/api/systems/mine` 的 `state`
+  it.each(['maintenance', 'needs_reregistration'] as const)(
+    'state=%s → 《系统名》正在更新，暂不可操作 + 重试',
+    async (state) => {
+      useInstallations([installationFixture({ state })]);
+      render(<Region hidden={false} path="/apps/inst-1/orders" />);
+      const failure = await screen.findByTestId('app-host-failure');
+      expect(failure.textContent).toContain('《客户管理》正在更新，暂不可操作');
+      expect(failure.textContent).not.toMatch(/digest|maintenance|ready/i);
+      expect(screen.getByTestId('app-host-retry')).not.toBeNull();
+      expect(screen.queryByTestId('app-host-frame')).toBeNull();
+    },
+  );
+
+  it('状态类失败的重试重新问服务端，而不是重走握手', async () => {
+    let calls = 0;
+    __setMySystemsLoaderForTests(async () => {
+      calls += 1;
+      return {
+        installations: [installationFixture({ state: calls === 1 ? 'maintenance' : 'enabled' })],
+      };
+    });
+    render(<Region hidden={false} path="/apps/inst-1/orders" />);
+    await userEvent.click(await screen.findByTestId('app-host-retry'));
+    await screen.findByTestId('app-host-frame');
   });
 
   it('握手失败 → 系统名 + 已通知技术支持 + 重试按钮，且不写技术归因', async () => {

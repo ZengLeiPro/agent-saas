@@ -13,7 +13,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { baseNavItems, getSidebarNavItems } from '@/types/sidebar';
 import { __setMySystemsLoaderForTests } from '@/lib/mySystemsSource';
 import type { MySystemInstallation, MySystemsResponse } from '@/lib/systemsApi';
-import { AppsSidebarPanel, buildAppsNavItems, isRenderableIconGlyph } from './AppsSidebarPanel';
+import {
+  APPS_NAV_UNAVAILABLE_MARK,
+  AppsSidebarPanel,
+  appsNavStateMark,
+  buildAppsNavItems,
+  isRenderableIconGlyph,
+} from './AppsSidebarPanel';
 
 function installation(overrides: Partial<MySystemInstallation> = {}): MySystemInstallation {
   return {
@@ -50,8 +56,22 @@ describe('buildAppsNavItems', () => {
       installation({ installationId: 'inst-2', systemId: 'wms', name: '仓库', icon: null }),
     ]);
     expect(items).toEqual([
-      { tab: 'apps', installationId: 'inst-1', label: '客户管理', icon: '📦' },
-      { tab: 'apps', installationId: 'inst-2', label: '仓库', icon: null },
+      {
+        tab: 'apps',
+        installationId: 'inst-1',
+        label: '客户管理',
+        icon: '📦',
+        state: 'enabled',
+        openable: true,
+      },
+      {
+        tab: 'apps',
+        installationId: 'inst-2',
+        label: '仓库',
+        icon: null,
+        state: 'enabled',
+        openable: true,
+      },
     ]);
   });
 
@@ -61,6 +81,26 @@ describe('buildAppsNavItems', () => {
 
   it('空列表产出空数组', () => {
     expect(buildAppsNavItems([])).toEqual([]);
+  });
+
+  // §5.5「`live` 失败/停用 → 标签保留『暂不可用』」/ §6.6「系统被停用 → 标签『暂不可用』」。
+  // 这条钉的是回归：曾经的实现把非 enabled 实例在服务端就滤掉，标签整项从侧边栏消失。
+  it.each(['disabled', 'unavailable', 'maintenance', 'needs_reregistration'] as const)(
+    '%s 的实例仍然产出一条标签，且带得出《系统名》',
+    (state) => {
+      const items = buildAppsNavItems([installation({ state })]);
+      expect(items).toHaveLength(1);
+      expect(items[0].label).toBe('客户管理');
+      expect(items[0].openable).toBe(false);
+    },
+  );
+
+  it('只有 disabled / unavailable 标「暂不可用」，更新中不标（§6.6 给的是条幅）', () => {
+    expect(appsNavStateMark('enabled')).toBeNull();
+    expect(appsNavStateMark('disabled')).toBe(APPS_NAV_UNAVAILABLE_MARK);
+    expect(appsNavStateMark('unavailable')).toBe(APPS_NAV_UNAVAILABLE_MARK);
+    expect(appsNavStateMark('maintenance')).toBeNull();
+    expect(appsNavStateMark('needs_reregistration')).toBeNull();
   });
 });
 
@@ -139,6 +179,23 @@ describe('AppsSidebarPanel 渲染与导航', () => {
     } finally {
       window.removeEventListener('popstate', handler);
     }
+  });
+
+  it('系统停用后标签不消失：仍显示《系统名》+「暂不可用」', async () => {
+    useLoader(async () => ({
+      installations: [
+        installation({ state: 'disabled' }),
+        installation({ installationId: 'inst-2', systemId: 'wms', name: '仓储管理' }),
+      ],
+    }));
+    render(<AppsSidebarPanel />);
+    const row = await screen.findByTestId('apps-nav-inst-1');
+    expect(row.textContent).toContain('客户管理');
+    expect(row.textContent).toContain(APPS_NAV_UNAVAILABLE_MARK);
+    expect(row.getAttribute('aria-disabled')).toBe('true');
+    // 另一项照常，且没有任何技术归因字样
+    expect(screen.getByTestId('apps-nav-inst-2').textContent).toContain('仓储管理');
+    expect(screen.queryByText(/停用|disabled|403|HTTP/i)).toBeNull();
   });
 
   it('选中态以 URL 为准：同一 apps 标签下只有当前安装实例高亮', async () => {

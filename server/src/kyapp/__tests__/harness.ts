@@ -340,7 +340,11 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   app.use('/api/app-contract/v1', createKyAppShellEventsRouter({ audit }));
   app.use(
     '/api',
-    createKyAppMineRouter({ systems: systems as unknown as PgKyAppSystemStore, assignments }),
+    createKyAppMineRouter({
+      systems: systems as unknown as PgKyAppSystemStore,
+      assignments,
+      runtimeStore: runtimeStore as unknown as PgKyAppInstallationRuntimeStore,
+    }),
   );
   app.get(config.jwksPath, createKyAppJwksHandler(keys));
 

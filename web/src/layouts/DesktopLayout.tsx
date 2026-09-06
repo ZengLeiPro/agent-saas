@@ -22,7 +22,7 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useDesktopLayoutProtection } from "./useDesktopLayoutProtection";
-import { APPS_TAB_UNAVAILABLE_TITLE, getDesktopHeaderTitle } from "./desktopHeaderTitle";
+import { buildAppsHeaderTitle, getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAppsShellState } from "@/hooks/useAppsShellState";
 import { useMySystems } from "@/hooks/useMySystems";
@@ -206,9 +206,14 @@ export function DesktopLayout(props: LayoutProps) {
     () => appsInstallations.find((item) => item.installationId === appsRoute?.installationId) ?? null,
     [appsInstallations, appsRoute?.installationId],
   );
-  // §6.6：header 显示《系统名》；列表已就绪却查无此实例 = 已停用 / 不再可见 → 「暂不可用」
-  const appsTitle = appsInstallation?.name
-    ?? (appsRoute && appsStatus === "ready" ? APPS_TAB_UNAVAILABLE_TITLE : null);
+  // §6.6：header 显示《系统名》；停用/`live` 失败追加「暂不可用」标注（标签不消失）
+  const appsTitle = appsRoute
+    ? buildAppsHeaderTitle({
+        name: appsInstallation?.name ?? null,
+        state: appsInstallation?.state ?? null,
+        resolved: appsStatus === "ready",
+      })
+    : null;
 
   // §5.4 agent.open：切到 Agent 标签 + 只预填（发送与否由用户决定）
   useAgentOpenPrefill({ setInput, setActiveTab });

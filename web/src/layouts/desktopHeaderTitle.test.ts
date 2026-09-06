@@ -3,7 +3,7 @@ import type { AgentTarget, OrgAgentSummary } from '@agent/shared';
 
 import type { ChatSessionIndexItem } from '@/types/sidebar';
 
-import { getDesktopHeaderTitle } from './desktopHeaderTitle';
+import { buildAppsHeaderTitle, getDesktopHeaderTitle } from './desktopHeaderTitle';
 
 const personalTarget: AgentTarget = { kind: 'personal', tenantId: 'tenant-1' };
 const orgTarget: AgentTarget = { kind: 'org-agent', tenantId: 'tenant-1', orgAgentId: 'agent-1' };
@@ -109,5 +109,32 @@ describe('定制软件标签的标题（§6.6）', () => {
     for (const appsTitle of [undefined, null, '']) {
       expect(getDesktopHeaderTitle(makeOptions({ activeTab: 'apps', appsTitle }))).toBe('定制软件');
     }
+  });
+});
+
+describe('buildAppsHeaderTitle（§5.5 标签保留 + 显示系统名）', () => {
+  it('停用 / live 失败：系统名照旧显示，后面追加「暂不可用」', () => {
+    for (const state of ['disabled', 'unavailable'] as const) {
+      expect(buildAppsHeaderTitle({ name: '客户管理', state, resolved: true })).toBe(
+        '客户管理 · 暂不可用',
+      );
+    }
+  });
+
+  it('更新中不加标注：§6.6 那一行给的是条幅，不是标签文字', () => {
+    for (const state of ['maintenance', 'needs_reregistration'] as const) {
+      expect(buildAppsHeaderTitle({ name: '客户管理', state, resolved: true })).toBe('客户管理');
+    }
+  });
+
+  it('正常态就是系统名', () => {
+    expect(buildAppsHeaderTitle({ name: '客户管理', state: 'enabled', resolved: true })).toBe(
+      '客户管理',
+    );
+  });
+
+  it('查无此实例（连名字都没有）才回落纯「暂不可用」；未就绪时不下结论', () => {
+    expect(buildAppsHeaderTitle({ name: null, state: null, resolved: true })).toBe('暂不可用');
+    expect(buildAppsHeaderTitle({ name: null, state: null, resolved: false })).toBeNull();
   });
 });

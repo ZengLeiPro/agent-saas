@@ -1451,6 +1451,7 @@ port_for_color() { [ "$1" = blue ] && echo 3200 || echo 3201; }
 # （durable run 的交棒/收尾由进程自身的 drain deadline 决定），绝不强停；等待发生在
 # governance fence 与任何生产写入之前，超时即 fail closed，不留下半提交状态。
 IDLE_SLOT_DRAIN_WAIT_SECONDS=1800
+API_CANDIDATE_READY_WAIT_SECONDS=180
 wait_for_idle_app_slots() {
   local api_idle="$1" worker_idle="$2"
   local run_root="${AGENT_SAAS_WORKER_RUN_ROOT:-/run}"
@@ -1515,6 +1516,10 @@ hand_off_retired_authority() {
 deploy_app() {
   local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle
   local api_idle_previous worker_idle_previous api_env worker_env rollback_root server_unit worker_unit
+  local api_candidate_unit api_candidate_ready_path api_candidate_probe_error_path
+  local api_candidate_ready=false api_candidate_wait_started api_candidate_deadline
+  local api_candidate_remaining api_candidate_request_timeout api_candidate_elapsed
+  local api_candidate_next_heartbeat api_candidate_systemd_state
   local had_api_env=false had_worker_env=false had_nginx=false nginx_changed=false app_committed=false
   local planned_api_active planned_worker_active
   planned_api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
@@ -1808,13 +1813,55 @@ EOF
     "/run/agent-saas-server-$api_idle.ready" \
     "/run/agent-saas-server-$api_idle.draining" \
     "/run/agent-saas-server-$api_idle.config-identity.json"
+  api_candidate_unit="agent-saas-server@$api_idle"
   systemctl enable --now "agent-saas-server@$api_idle"
   api_candidate_ready_path="/tmp/api-candidate-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
-  rm -f "$api_candidate_ready_path"
-  for _ in $(seq 1 180); do
-    if curl -fsS "http://127.0.0.1:$api_idle_port/api/healthz/ready" >"$api_candidate_ready_path"; then break; fi
-    sleep 1
+  api_candidate_probe_error_path="${api_candidate_ready_path%.json}.curl-error"
+  rm -f "$api_candidate_ready_path" "$api_candidate_probe_error_path"
+  api_candidate_wait_started=$SECONDS
+  api_candidate_deadline=$((api_candidate_wait_started + API_CANDIDATE_READY_WAIT_SECONDS))
+  api_candidate_next_heartbeat=15
+  while [ "$SECONDS" -lt "$api_candidate_deadline" ]; do
+    api_candidate_remaining=$((api_candidate_deadline - SECONDS))
+    api_candidate_request_timeout=5
+    if [ "$api_candidate_remaining" -lt "$api_candidate_request_timeout" ]; then
+      api_candidate_request_timeout=$api_candidate_remaining
+    fi
+    if curl -fsS --connect-timeout 1 --max-time "$api_candidate_request_timeout" \
+      "http://127.0.0.1:$api_idle_port/api/healthz/ready" \
+      >"$api_candidate_ready_path" 2>"$api_candidate_probe_error_path"; then
+      api_candidate_ready=true
+      api_candidate_elapsed=$((SECONDS - api_candidate_wait_started))
+      echo "Candidate API $api_idle ready after ${api_candidate_elapsed}s"
+      break
+    fi
+    api_candidate_elapsed=$((SECONDS - api_candidate_wait_started))
+    if [ "$api_candidate_elapsed" -ge "$api_candidate_next_heartbeat" ] \
+      && [ "$SECONDS" -lt "$api_candidate_deadline" ]; then
+      api_candidate_systemd_state="$(systemctl show "$api_candidate_unit" --no-pager \
+        --property=ActiveState --property=SubState --property=Result \
+        --property=ExecMainCode --property=ExecMainStatus --property=NRestarts \
+        2>/dev/null | tr '\n' ' ' || true)"
+      echo "Waiting for candidate API $api_idle on 127.0.0.1:$api_idle_port (${api_candidate_elapsed}s/${API_CANDIDATE_READY_WAIT_SECONDS}s); ${api_candidate_systemd_state:-systemd state unavailable}"
+      api_candidate_next_heartbeat=$((api_candidate_elapsed + 15))
+    fi
+    if [ "$SECONDS" -lt "$api_candidate_deadline" ]; then
+      sleep 1
+    fi
   done
+  if [ "$api_candidate_ready" != true ]; then
+    echo "ERROR: candidate API $api_idle did not become ready on 127.0.0.1:$api_idle_port within ${API_CANDIDATE_READY_WAIT_SECONDS}s" >&2
+    if [ -s "$api_candidate_probe_error_path" ]; then
+      echo 'Last readiness probe error:' >&2
+      tail -n 1 "$api_candidate_probe_error_path" >&2
+    fi
+    systemctl show "$api_candidate_unit" --no-pager \
+      --property=ActiveState --property=SubState --property=Result \
+      --property=ExecMainCode --property=ExecMainStatus --property=NRestarts >&2 || true
+    rm -f "$api_candidate_ready_path" "$api_candidate_probe_error_path"
+    exit 1
+  fi
+  rm -f "$api_candidate_probe_error_path"
   node --input-type=module - "$MANIFEST_PATH" "$api_candidate_ready_path" \
     "/run/agent-saas-server-$api_idle.config-identity.json" "$config_identity" \
     "$config_identity_reader" <<'NODE'

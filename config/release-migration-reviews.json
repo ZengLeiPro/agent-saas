@@ -479,6 +479,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -573,6 +580,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -774,6 +785,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -840,6 +858,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -1020,6 +1042,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -1070,6 +1099,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -1250,6 +1283,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -1300,6 +1340,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -1466,6 +1510,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -1508,6 +1559,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -1674,6 +1729,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -1716,6 +1778,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -1882,6 +1948,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -1924,6 +1997,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -2447,6 +2524,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -2501,6 +2585,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -2674,6 +2762,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -2740,6 +2835,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -2941,6 +3040,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -2995,6 +3101,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -3196,6 +3306,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -3250,6 +3367,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -3381,6 +3502,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -3423,6 +3551,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -3554,6 +3686,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -3596,6 +3735,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -3727,6 +3870,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -3769,6 +3919,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -3900,6 +4054,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -3942,6 +4103,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -4059,6 +4224,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -4097,6 +4269,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -4214,6 +4390,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -4252,6 +4435,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -4292,6 +4479,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -4306,6 +4500,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },
@@ -4339,6 +4537,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
         }
       ],
       "evidence": [
@@ -4349,6 +4554,10 @@
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardStore.pg.test.ts",
+          "digest": "sha256:0dde09e3e5ea059608fd3a9e1a06dba9a56ff2e9c2d2316db76c4c6e28e2bfcc"
         }
       ]
     },

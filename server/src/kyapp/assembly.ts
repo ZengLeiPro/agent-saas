@@ -14,6 +14,7 @@ import { PgKyAppNonceStore } from './attest/nonceStore.js';
 import { KyAppHandshakeService } from './attest/handshake.js';
 import { PgKyAppDirectoryChangeLog } from './directory/changeLog.js';
 import { DirectoryProjector, GovernanceDirectorySource } from './directory/projection.js';
+import { PgDirectorySnapshotSource } from './directory/snapshot.js';
 import { PgKyAppOutboundEventStore } from './events/store.js';
 import { KyAppEventDispatcher } from './events/dispatcher.js';
 import { KyAppHealthProber } from './health/prober.js';
@@ -53,6 +54,8 @@ export interface KyAppAssembly {
   directoryChangeLog: PgKyAppDirectoryChangeLog | null;
   directoryProjector: DirectoryProjector | null;
   directorySource: GovernanceDirectorySource | null;
+  /** WP2b 快照分页的数据源（读投影态表，不建表、不参与迁移）。 */
+  directorySnapshots: PgDirectorySnapshotSource | null;
   outbound: KyAppOutbound;
   worker: KyAppWorker;
   /** 建表（幂等，跑 governance 迁移 runner）后再启动后台循环。 */
@@ -156,6 +159,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     directoryChangeLog && directorySource
       ? new DirectoryProjector({ ...base, changeLog: directoryChangeLog, source: directorySource })
       : null;
+  const directorySnapshots = directoryChangeLog ? new PgDirectorySnapshotSource(base) : null;
 
   const alerts = createKyAppAlertSink(runtime.alertNotifier);
   const dispatcher = new KyAppEventDispatcher({
@@ -241,6 +245,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     directoryChangeLog,
     directoryProjector,
     directorySource,
+    directorySnapshots,
     outbound,
     worker,
     async start() {

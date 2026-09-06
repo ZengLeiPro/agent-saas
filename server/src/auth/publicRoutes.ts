@@ -44,6 +44,10 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   // WP2a：定制项目用服务凭据 Bearer 确认新签发的凭据（规范 §3.6）。
   // 它没有会话 JWT，鉴权在 router 内按 token 的 sha256 比对完成。
   { method: 'POST', path: /^\/app-contract\/v1\/installations\/[^/]+\/credential-ack$/ },
+  // WP2b：组织目录快照与变更流同样用服务凭据 Bearer + scope 自鉴权（规范 §3.6），
+  // 没有会话 JWT。鉴权与限速都在 `kyapp/routes/directory.ts` 内收口。
+  { method: 'GET', path: '/app-contract/v1/directory/snapshot' },
+  { method: 'GET', path: '/app-contract/v1/directory/changes' },
 ];
 
 export function isPublicRoute(req: Request): boolean {

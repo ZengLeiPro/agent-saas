@@ -358,7 +358,7 @@ describe('ACS deployment and classifier contract', () => {
       'webChannelPersistentInteractionRecovery',
     ];
     expect(
-      workflow.match(/- name: Test server ACS lifecycle and admission contracts/gu),
+      workflow.match(/- name: 测试服务端 ACS 生命周期与准入契约/gu),
     ).toHaveLength(3);
     for (const contract of serverContracts) {
       expect(
@@ -372,7 +372,7 @@ describe('ACS deployment and classifier contract', () => {
     ])
       expect(workflow.split(contract)).toHaveLength(4);
     expect(
-      workflow.match(/- name: Test ACS staging and production lifecycle gates/gu),
+      workflow.match(/- name: 测试 ACS 测试及生产环境生命周期门禁/gu),
     ).toHaveLength(3);
     expect(workflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(3);
     expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(3);
@@ -398,11 +398,11 @@ describe('ACS deployment and classifier contract', () => {
   });
 
   it('在等待镜像前拒绝落后 main 的 dispatch，并在确认后打包 managed unit', () => {
-    const checkoutIndex = workflow.indexOf('- name: Checkout exact dispatch commit');
-    const verifyIndex = workflow.indexOf('- name: Verify dispatch still targets latest main');
+    const checkoutIndex = workflow.indexOf('- name: 检出手动触发的精确提交');
+    const verifyIndex = workflow.indexOf('- name: 确认手动触发仍指向最新 main');
     const waitIndex = workflow.indexOf('- name: Wait for ACR auto-build of HEAD');
     const packIndex = workflow.indexOf(
-      '- name: Pack and identify orchestrator and managed unit release',
+      '- name: 打包并标识编排器及托管单元版本',
     );
 
     expect(checkoutIndex).toBeGreaterThan(-1);
@@ -424,8 +424,8 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow).toContain('ACR build record disappeared');
     expect(workflow).toContain('build_record_found=true');
     expect(workflow).toContain('实际部署前的独立门禁会拒绝这个旧 dispatch');
-    const deployStart = workflow.indexOf('- name: Deploy orchestrator with drain and smoke');
-    const cleanupStart = workflow.indexOf('- name: Clean sealed ACS Production staging');
+    const deployStart = workflow.indexOf('- name: 部署编排器并执行排空与冒烟检查');
+    const cleanupStart = workflow.indexOf('- name: 清理已封存的 ACS 生产暂存区');
     const deployStep = workflow.slice(deployStart, cleanupStart);
     expect(deployStep).toContain('git fetch --no-tags origin main');
     expect(deployStep).toContain('if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then');
@@ -441,7 +441,7 @@ describe('ACS deployment and classifier contract', () => {
   it('先按 6 位 tag 选候选，再用 GIT_CLONE 日志绑定完整 SHA', () => {
     const waitStep = workflow.slice(
       workflow.indexOf('- name: Wait for ACR auto-build of HEAD'),
-      workflow.indexOf('- name: Resolve immutable ACS image'),
+      workflow.indexOf('- name: 解析不可变 ACS 镜像'),
     );
     expect(workflow).toContain('SHA6="${GITHUB_SHA:0:6}"');
     expect(workflow).toContain('MAX_MISSING_POLLS=6');

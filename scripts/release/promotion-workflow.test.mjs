@@ -75,8 +75,8 @@ function productionWebEntrypoints(workflow) {
 test('durable promoting marker interruptions always converge through needs_human', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const approvalStep = workflow.slice(
-    workflow.indexOf('- name: Fail-closed revalidate deterministic Staging evidence'),
-    workflow.indexOf('- name: Configure production SSH'),
+    workflow.indexOf('- name: 以失败关闭方式复核确定性测试环境证据并记录人工批准'),
+    workflow.indexOf('- name: 配置生产环境 SSH'),
   );
   ordered(approvalStep, [
     'if [ "$latest_state" = promoting ]; then',
@@ -88,8 +88,8 @@ test('durable promoting marker interruptions always converge through needs_human
   ]);
 
   const markerStep = workflow.slice(
-    workflow.indexOf('- name: Mark and persist promotion started'),
-    workflow.indexOf('- name: Create GitHub Production Deployment'),
+    workflow.indexOf('- name: 生产写入前标记并持久化发布已开始状态'),
+    workflow.indexOf('- name: 创建 GitHub 生产部署记录'),
   );
   ordered(markerStep, [
     '--state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"',
@@ -102,7 +102,7 @@ test('durable promoting marker interruptions always converge through needs_human
 
 test('promotion accepts only an approved release id and shares the production runtime lock', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  assert.match(workflow, /^name: 发布到生产环境$/mu);
+  assert.match(workflow, /^name: 5 · 发布到生产环境$/mu);
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
   assert.doesNotMatch(workflow, /^\s+(?:release_sha|artifact_url|image_tag):/mu);
@@ -157,8 +157,8 @@ test('promotion accepts only an approved release id and shares the production ru
 
 test('Web rollback marker is written only by the armed restore path', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const start = workflow.indexOf('- name: Publish Web entry last and retain prior hashed assets');
-  const end = workflow.indexOf('- name: Persist Web operation receipt', start);
+  const start = workflow.indexOf('- name: 最后发布 Web 入口并保留旧版哈希资源');
+  const end = workflow.indexOf('- name: 持久化 Web 操作回执', start);
   const web = workflow.slice(start, end);
   const markerWrite = 'install -m 0600 /dev/null "$web_rollback_attempted_marker"';
   assert.equal(web.split(markerWrite).length - 1, 1);
@@ -178,13 +178,13 @@ test('deploy output creates exact run-attempt fallback evidence without swallowi
   for (const phase of ['acs', 'app']) {
     const start = workflow.indexOf(
       phase === 'acs'
-        ? '- name: Deploy exact ACS Orchestrator and Sandbox digest first'
-        : '- name: Deploy API blue-green and hand off Runtime Worker',
+        ? '- name: 优先部署精确的 ACS 编排器与沙箱摘要'
+        : '- name: 蓝绿部署 API 并交接运行时 Worker',
     );
     const end = workflow.indexOf(
       phase === 'acs'
-        ? '- name: Persist ACS operation receipt'
-        : '- name: Persist API and Worker operation receipts',
+        ? '- name: 持久化 ACS 操作回执'
+        : '- name: 持久化 API 与 Worker 操作回执',
       start,
     );
     const deployStep = workflow.slice(start, end);
@@ -217,8 +217,8 @@ test('deploy output creates exact run-attempt fallback evidence without swallowi
 
 test('reconcile derives strict ACS/App/Web rollback receipts', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const start = workflow.indexOf('- name: Reconcile component outcome');
-  const end = workflow.indexOf('- name: Record truthful final outcome', start);
+  const start = workflow.indexOf('- name: 核对组件结果');
+  const end = workflow.indexOf('- name: 记录真实最终结果', start);
   const reconcile = workflow.slice(start, end);
   assert.match(reconcile, /rollback-web\.attempted/u);
   assert.match(reconcile, /rollback-web\.succeeded/u);
@@ -276,9 +276,9 @@ test('remote workspaces and approval attestations are isolated by run attempt', 
 test('trusted identity write is followed by a strict stable ConfigIdentity confirmation', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const start = workflow.indexOf(
-    '- name: Read every live component and commit trusted identity only on complete convergence',
+    '- name: 读取全部在线组件并仅在完全收敛后提交可信身份',
   );
-  const end = workflow.indexOf('- name: Reconcile component outcome', start);
+  const end = workflow.indexOf('- name: 核对组件结果', start);
   assert.ok(start >= 0 && end > start, 'readback step must be present');
   const readback = workflow.slice(start, end);
   assert.match(
@@ -296,7 +296,7 @@ test('trusted identity write is followed by a strict stable ConfigIdentity confi
     '<(jq -S "$config_identity_projection" "$RUNNER_TEMP/production-after.json")',
   ]);
 
-  const reconcileEnd = workflow.indexOf('- name: Record truthful final outcome', end);
+  const reconcileEnd = workflow.indexOf('- name: 记录真实最终结果', end);
   assert.ok(reconcileEnd > end, 'reconcile step must be present');
   const reconcile = workflow.slice(end, reconcileEnd);
   ordered(reconcile, [
@@ -311,9 +311,9 @@ test('trusted identity write is followed by a strict stable ConfigIdentity confi
 
 test('final outcome preserves fail-closed reconciliation and trusted identity evidence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const start = workflow.indexOf('- name: Record truthful final outcome');
+  const start = workflow.indexOf('- name: 记录真实最终结果');
   const end = workflow.indexOf(
-    '- name: Record fail-closed outcome before production mutation',
+    '- name: 在生产变更前记录失败关闭结果',
     start,
   );
   assert.ok(start >= 0 && end > start, 'final outcome step must be present');
@@ -431,14 +431,14 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
     'node scripts/release/verify-promotion-entry.mjs "$RUNNER_TEMP/manifest.json"',
-    '- name: Fail-closed revalidate deterministic Staging evidence and record human approval',
-    '- name: Read authoritative live production prefix before any write',
-    '- name: Prefetch, verify, and safely extract selected Manifest artifacts',
-    '- name: Mark and persist promotion started before any production write',
-    '- name: Upload immutable deploy payload and RC-bound managed units',
-    '- name: Deploy exact ACS Orchestrator and Sandbox digest first',
-    '- name: Deploy API blue-green and hand off Runtime Worker',
-    '- name: Publish Web entry last and retain prior hashed assets',
+    '- name: 以失败关闭方式复核确定性测试环境证据并记录人工批准',
+    '- name: 写入前读取权威在线生产前缀',
+    '- name: 预取、校验并安全解压清单选定产物与 ACS 身份',
+    '- name: 生产写入前标记并持久化发布已开始状态',
+    '- name: 上传不可变部署载荷与 RC 绑定的托管单元',
+    '- name: 优先部署精确的 ACS 编排器与沙箱摘要',
+    '- name: 蓝绿部署 API 并交接运行时 Worker',
+    '- name: 最后发布 Web 入口并保留旧版哈希资源',
   ]);
   assert.match(workflow, /components\.acs\.sandboxImageDigest/u);
   assert.match(workflow, /verify-promotion-acs-selection\.mjs/u);
@@ -460,12 +460,12 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(
     workflow,
-    /Read every live component[\s\S]*if: [^\n]*always\(\) && env\.PROMOTION_STARTED == 'true'/u,
+    /读取全部在线组件并仅在完全收敛后提交可信身份[\s\S]*if: [^\n]*always\(\) && env\.PROMOTION_STARTED == 'true'/u,
   );
   assert.match(workflow, /steps\.deploy_acs\.outcome[^\n]*!= skipped/u);
   const readbackBlock = workflow
-    .split('Read every live component', 2)[1]
-    .split('Reconcile component outcome', 1)[0];
+    .split('读取全部在线组件并仅在完全收敛后提交可信身份', 2)[1]
+    .split('核对组件结果', 1)[0];
   assert.match(readbackBlock, /remote="\$PROMOTION_REMOTE"/u);
   assert.doesNotMatch(readbackBlock, /release-preflight-/u);
   assert.doesNotMatch(readbackBlock, /mkdir -p|scp -i/u);
@@ -504,7 +504,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /\.artifacts\[\] \| \.path/u);
   assert.doesNotMatch(workflow, /selected\/artifact-index\.json/u);
   assert.match(workflow, /runtimeDependencies\.server\.uri/u);
-  assert.match(workflow, /Manifest, artifact index and Release record from OSS/u);
+  assert.match(workflow, /校验 OSS 中的不可变清单、产物索引与 Release 记录/u);
   assert.match(workflow, /verify-selected-release-artifacts\.mjs/u);
   assert.ok(
     workflow.indexOf('node scripts/release/verify-artifact.mjs') <
@@ -684,8 +684,8 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /\[ "\$api_action" = deploy \]/u);
   // Web 锁断言只检查发布步骤，避免命中其他 SSH 辅助函数。
   const webStep = workflow.slice(
-    workflow.indexOf('- name: Publish Web entry last'),
-    workflow.indexOf('- name: Persist Web operation receipt'),
+    workflow.indexOf('- name: 最后发布 Web 入口并保留旧版哈希资源'),
+    workflow.indexOf('- name: 持久化 Web 操作回执'),
   );
   assert.equal(webStep.match(/cleanup_web_on_exit\(\)/gu)?.length, 1);
   assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
@@ -783,14 +783,14 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   );
   assert.match(webStep, /wait "\$web_lock_pid" 2>\/dev\/null \|\| true/u);
   assert.doesNotMatch(webStep, /--region "\$RELEASE_RECORD_OSS_REGION" \|\| true/u);
-  assert.match(workflow, /Persist ACS operation receipt/u);
-  assert.match(workflow, /Persist ACS operation start receipt/u);
-  assert.match(workflow, /Persist API and Worker operation start receipts/u);
-  assert.match(workflow, /Persist Web operation start receipt/u);
-  assert.match(workflow, /Persist API and Worker operation receipts/u);
-  assert.match(workflow, /Persist Web operation receipt/u);
+  assert.match(workflow, /持久化 ACS 操作回执/u);
+  assert.match(workflow, /持久化 ACS 操作开始回执/u);
+  assert.match(workflow, /持久化 API 与 Worker 操作开始回执/u);
+  assert.match(workflow, /持久化 Web 操作开始回执/u);
+  assert.match(workflow, /持久化 API 与 Worker 操作回执/u);
+  assert.match(workflow, /持久化 Web 操作回执/u);
   assert.match(workflow, /PROMOTION_STARTED=true/u);
-  assert.match(workflow, /Record fail-closed outcome before production mutation/u);
+  assert.match(workflow, /在生产变更前记录失败关闭结果/u);
   assert.match(workflow, /env\.PROMOTION_STARTED == 'true'/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /systemctl reset-failed "agent-saas-server@\$api_active"/u);

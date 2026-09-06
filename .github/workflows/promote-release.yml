@@ -1,4 +1,4 @@
-name: 发布到生产环境
+name: 5 · 发布到生产环境
 
 # 与 CI/ACS 兼容直发共享互斥组，覆盖基线读取、分阶段切换和最终 readback。
 
@@ -35,7 +35,7 @@ env:
 
 jobs:
   promote:
-    name: Promote approved immutable artifacts
+    name: 晋级已批准的不可变产物
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -53,7 +53,7 @@ jobs:
       PROMOTION_REASON: ${{ inputs.reason }}
 
     steps:
-      - name: Validate promotion dispatch
+      - name: 校验生产发布触发参数
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
@@ -61,24 +61,28 @@ jobs:
           test -n "$(printf '%s' "$PROMOTION_REASON" | tr -d '[:space:]')"
           printf 'RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v5
+      - name: 检出代码
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: ./.github/actions/setup-pnpm
-      - uses: actions/setup-node@v5
+      - name: 配置 pnpm
+        uses: ./.github/actions/setup-pnpm
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
 
-      - name: Install Alibaba Cloud CLI
+      - name: 安装阿里云 CLI
         run: |
           set -euo pipefail
           curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Download immutable RC evidence
+      - name: 下载不可变 RC 证据
         id: release_evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,7 +126,7 @@ jobs:
             echo "MIGRATION_PHASE=$migration_phase"
           } >> "$GITHUB_ENV"
 
-      - name: Fail-closed revalidate deterministic Staging evidence and record human approval
+      - name: 以失败关闭方式复核确定性测试环境证据并记录人工批准
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -219,7 +223,7 @@ jobs:
           echo 'APPROVAL_RECORDED=true' >> "$GITHUB_ENV"
           echo "PROMOTION_RETRY_MODE=$retry_mode" >> "$GITHUB_ENV"
 
-      - name: Configure production SSH
+      - name: 配置生产环境 SSH
         run: |
           set -euo pipefail
           : "${ECS_HOST:?Missing ECS_HOST}"; : "${ECS_USER:?Missing ECS_USER}"; : "${ECS_SSH_KEY:?Missing ECS_SSH_KEY}"
@@ -232,7 +236,7 @@ jobs:
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/production-known-host" >> ~/.ssh/known_hosts
 
-      - name: Read authoritative live production prefix before any write
+      - name: 写入前读取权威在线生产前缀
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
@@ -273,7 +277,7 @@ jobs:
           fi
           echo "PRODUCTION_ALREADY_TARGET=$production_already_target" >> "$GITHUB_ENV"
 
-      - name: Verify immutable Manifest, artifact index and Release record from OSS
+      - name: 校验 OSS 中的不可变清单、产物索引与 Release 记录
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
@@ -302,7 +306,7 @@ jobs:
           test "$(jq -r .artifactDigest "$RUNNER_TEMP/oss-record/record.json")" = \
             "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
 
-      - name: Prefetch, verify, and safely extract selected Manifest artifacts and ACS identity
+      - name: 预取、校验并安全解压清单选定产物与 ACS 身份
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
@@ -374,7 +378,7 @@ jobs:
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/built/artifact-index.json" \
             "$expected_repository"
 
-      - name: Mark and persist promotion started before any production write
+      - name: 生产写入前标记并持久化发布已开始状态
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -404,7 +408,7 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
             || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
-      - name: Create GitHub Production Deployment
+      - name: 创建 GitHub 生产部署记录
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -418,7 +422,7 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
             -f state=in_progress -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
 
-      - name: Upload immutable deploy payload and RC-bound managed units
+      - name: 上传不可变部署载荷与 RC 绑定的托管单元
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         run: |
           set -euo pipefail
@@ -483,7 +487,7 @@ jobs:
                exit 1; \
              }"
 
-      - name: Persist ACS operation start receipt
+      - name: 持久化 ACS 操作开始回执
         if: env.PROMOTION_FINALIZATION_MODE == 'promote'
         id: start_acs
         env:
@@ -503,7 +507,7 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
             || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
-      - name: Deploy exact ACS Orchestrator and Sandbox digest first
+      - name: 优先部署精确的 ACS 编排器与沙箱摘要
         id: deploy_acs
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_acs.outcome == 'success')
         continue-on-error: true
@@ -535,7 +539,7 @@ jobs:
           if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
           exit "${pipeline_status[1]}"
 
-      - name: Persist ACS operation receipt
+      - name: 持久化 ACS 操作回执
         id: receipt_acs
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
@@ -558,7 +562,7 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
             || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
-      - name: Persist API and Worker operation start receipts
+      - name: 持久化 API 与 Worker 操作开始回执
         id: start_app
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.deploy_acs.outcome == 'success' && steps.receipt_acs.outcome == 'success')
         env:
@@ -580,7 +584,7 @@ jobs:
             || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           done
 
-      - name: Deploy API blue-green and hand off Runtime Worker
+      - name: 蓝绿部署 API 并交接运行时 Worker
         id: deploy_app
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_app.outcome == 'success')
         continue-on-error: true
@@ -614,7 +618,7 @@ jobs:
           if [ "${pipeline_status[0]}" -ne 0 ]; then exit "${pipeline_status[0]}"; fi
           exit "${pipeline_status[1]}"
 
-      - name: Persist API and Worker operation receipts
+      - name: 持久化 API 与 Worker 操作回执
         id: receipt_app
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
@@ -639,7 +643,7 @@ jobs:
             || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           done
 
-      - name: Persist Web operation start receipt
+      - name: 持久化 Web 操作开始回执
         id: start_web
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.deploy_app.outcome == 'success' && steps.receipt_app.outcome == 'success')
         env:
@@ -659,7 +663,7 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
             || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
-      - name: Publish Web entry last and retain prior hashed assets
+      - name: 最后发布 Web 入口并保留旧版哈希资源
         id: deploy_web
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (steps.start_web.outcome == 'success')
         continue-on-error: true
@@ -900,7 +904,7 @@ jobs:
           release_web_lock
           trap - EXIT
 
-      - name: Persist Web operation receipt
+      - name: 持久化 Web 操作回执
         id: receipt_web
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
@@ -923,7 +927,7 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
             || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
-      - name: Read every live component and commit trusted identity only on complete convergence
+      - name: 读取全部在线组件并仅在完全收敛后提交可信身份
         id: readback
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         continue-on-error: true
@@ -1062,7 +1066,7 @@ jobs:
           release_identity_lock
           trap - EXIT
 
-      - name: Reconcile component outcome
+      - name: 核对组件结果
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         run: |
           set -euo pipefail
@@ -1122,7 +1126,7 @@ jobs:
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 
-      - name: Record truthful final outcome
+      - name: 记录真实最终结果
         id: final_outcome
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (always() && env.PROMOTION_STARTED == 'true')
         env:
@@ -1211,7 +1215,7 @@ jobs:
           fi
           test "$state" = success
 
-      - name: Record fail-closed outcome before production mutation
+      - name: 在生产变更前记录失败关闭结果
         if: env.PROMOTION_FINALIZATION_MODE == 'promote' && (failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1236,7 +1240,7 @@ jobs:
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
             || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
-      - name: Upload production promotion evidence
+      - name: 上传生产发布证据
         if: always()
         uses: actions/upload-artifact@v4
         with:

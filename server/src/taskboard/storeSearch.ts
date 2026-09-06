@@ -11,12 +11,10 @@ import {
   rowToTask,
   visibleCommentPredicate,
 } from './storeHelpers.js';
-import { TaskboardNotFoundError } from './types.js';
 import type {
   TaskboardBoardSearchFilter,
   TaskboardIdentity,
   TaskboardPage,
-  TaskboardPageFilter,
   TaskboardTaskListFilter,
   TaskboardTaskSearchFilter,
 } from './types.js';
@@ -292,56 +290,6 @@ export async function listComments(
     [taskId, identity.tenantId, identity.ownerUserId],
   );
   return result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity));
-}
-
-export async function searchComments(
-  store: TaskboardSearchStore,
-  identity: TaskboardIdentity,
-  taskId: string,
-  filter: TaskboardPageFilter = {},
-): Promise<TaskboardPage<TaskBoardComment>> {
-  const access = await store.pool.query(
-    `SELECT 1
-       FROM ${store.tasksTable} t
-       JOIN ${store.boardsTable} b ON b.id=t.board_id
-      WHERE t.id=$1 AND b.tenant_id=$2
-        AND (b.owner_user_id=$3 OR b.visibility='organization')`,
-    [taskId, identity.tenantId, identity.ownerUserId],
-  );
-  if (!access.rows[0]) throw new TaskboardNotFoundError('Task not found');
-  const { page, pageSize, offset } = normalizePage(filter.page, filter.pageSize);
-  const accessParams = [taskId, identity.tenantId, identity.ownerUserId];
-  const count = await store.pool.query(
-    `SELECT count(*)::int AS total
-       FROM ${store.commentsTable} c
-       JOIN ${store.tasksTable} t ON t.id=c.task_id
-       JOIN ${store.boardsTable} b ON b.id=t.board_id
-      WHERE c.task_id=$1 AND b.tenant_id=$2
-        AND (b.owner_user_id=$3 OR b.visibility='organization')
-        AND ${visibleCommentPredicate('c', store.changesTable)}`,
-    accessParams,
-  );
-  const result = await store.pool.query(
-    `SELECT c.*, comment_execution.comment_session_id, comment_execution.comment_execution_id,
-            comment_execution.comment_execution_purpose
-       FROM ${store.commentsTable} c
-       JOIN ${store.tasksTable} t ON t.id=c.task_id
-       JOIN ${store.boardsTable} b ON b.id=t.board_id
-       ${commentExecutionJoin(store.changesTable, store.executionsTable)}
-      WHERE c.task_id=$1 AND b.tenant_id=$2
-        AND (b.owner_user_id=$3 OR b.visibility='organization')
-        AND ${visibleCommentPredicate('c', store.changesTable)}
-      ORDER BY c.created_at, c.id
-      LIMIT $4 OFFSET $5`,
-    [...accessParams, pageSize, offset],
-  );
-  const total = Number(count.rows[0]?.total ?? 0);
-  return pageResult(
-    result.rows.map((row) => applyCommentAuthorDisplayName(rowToComment(row), identity)),
-    page,
-    pageSize,
-    total,
-  );
 }
 
 export function normalizePage(pageInput?: number, pageSizeInput?: number): {

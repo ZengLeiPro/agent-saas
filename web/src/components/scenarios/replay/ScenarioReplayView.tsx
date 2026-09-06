@@ -22,8 +22,8 @@ import { useSystemPanel } from "@/hooks/useSystemPanel";
 import { ActionIcons, EntityIcons, StatusIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { CAPABILITY_SUBTLE_SURFACE, CAPABILITY_SURFACE } from "@/components/CapabilityCenter/CatalogUi";
-import type { ReplayScript } from "./types";
-import { buildLegacyReplayBlocks } from "./legacyTaskDemo";
+import type { ReplayScript } from "@agent/shared/scenarios/replay/types";
+import { buildLegacyReplayBlocks } from "@agent/shared/scenarios/replay/legacyTaskDemo";
 
 const ApprovalIcon = EntityIcons.admin;
 const ApprovalSuccessIcon = StatusIcons.success;

@@ -1,4 +1,5 @@
-import type { CatalogScenarioPublic, WorkflowTraceEventV1 } from '@agent/shared';
+import type { WorkflowTraceEventV1 } from '../../schemas/workflowTrace';
+import type { CatalogScenarioPublic } from '../../types';
 import type { ReplayScript, ReplayStep } from './types';
 
 export { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from './technicalInquiryTraceMeta';

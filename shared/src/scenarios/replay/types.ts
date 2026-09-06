@@ -1,4 +1,5 @@
-import type { ApiTranscriptBlock, WorkflowTraceEventV1 } from "@agent/shared";
+import type { WorkflowTraceEventV1 } from "../../schemas/workflowTrace";
+import type { ApiTranscriptBlock } from "../../types";
 
 /**
  * 场景演示剧本。

@@ -1,4 +1,4 @@
-import type { SystemPanelSnapshot } from "@agent/shared";
+import type { SystemPanelSnapshot } from "../../lib/systemPanel";
 import type { ReplayScript } from "./types";
 
 /**

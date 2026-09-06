@@ -1,6 +1,6 @@
 import type { CatalogScenarioPublic, WorkflowLibraryPublicV3 } from "@agent/shared";
 import type { IndustryFilterValue } from "./useIndustryFilter";
-import { hasReplayScript } from "./replay/availability";
+import { hasReplayScript } from "@agent/shared/scenarios/replay/availability";
 
 export const OUTCOME_ALL = "all" as const;
 export const ROLE_ALL = "all" as const;

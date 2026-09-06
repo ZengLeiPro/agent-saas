@@ -1,3 +1,4 @@
+// release-migration: expand
 // WP5：定制项目交付编排与交付状态。
 // 全部为 expand-only 新表，不修改 v41～v43 的系统、安装、目录与会话快照结构。
 export function governanceV44KyAppDeliveryStatements(prefix: string): string[] {

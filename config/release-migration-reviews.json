@@ -474,6 +474,34 @@
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -531,6 +559,10 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantContract.pg.test.ts",
           "digest": "sha256:6d477f346ac0d5a388d3c9148b230558568a0e537529eb172b85bdbc941b2933"
         },
@@ -561,6 +593,10 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -769,6 +805,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -810,12 +874,20 @@
           "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
         },
         {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
@@ -832,6 +904,10 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -1015,6 +1091,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1044,12 +1148,20 @@
           "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
         },
         {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
@@ -1062,6 +1174,10 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -1245,6 +1361,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1274,12 +1418,20 @@
           "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
         },
         {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
@@ -1292,6 +1444,10 @@
         {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -1461,6 +1617,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1486,6 +1670,10 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -1494,12 +1682,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -1669,6 +1865,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1694,6 +1918,10 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -1702,12 +1930,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -1877,6 +2113,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1902,6 +2166,10 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
           "digest": "sha256:ed43e2148cc422e60d3367dc8644c385c1dea54d55969b22f6b0a7dc243d4c0c"
         },
@@ -1910,12 +2178,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -2442,6 +2718,34 @@
           "reason": "新增自动化专属表、索引、外键与触发器；约束替换限新建表，不改旧业务表，重复完整初始化及 PG 自动化用例通过。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -2475,12 +2779,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -2669,6 +2981,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -2714,12 +3054,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -2936,6 +3284,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -2969,12 +3345,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -3191,6 +3575,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3224,12 +3636,20 @@
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -3376,6 +3796,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3397,12 +3845,20 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -3549,6 +4005,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3570,12 +4054,20 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -3722,6 +4214,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3743,12 +4263,20 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -3895,6 +4423,34 @@
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3916,12 +4472,20 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -4059,6 +4623,34 @@
           "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
           "classification": "expand",
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
         }
       ],
       "evidence": [
@@ -4071,12 +4663,20 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -4214,6 +4814,34 @@
           "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
           "classification": "expand",
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
         }
       ],
       "evidence": [
@@ -4226,12 +4854,20 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
@@ -4306,6 +4942,34 @@
           "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
           "classification": "expand",
           "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
         }
       ],
       "evidence": [
@@ -4314,8 +4978,113 @@
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
         },
         {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
+          "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
+        },
+        {
+          "path": "server/src/kyapp/directory/store.pg.test.ts",
+          "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        }
+      ]
+    },
+    {
+      "baselineSha": "9aaaaee1d2c1aeee2e2b8bf9cc0aecbdc2583d39",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
+          "classification": "expand",
+          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
+          "classification": "expand",
+          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
+          "classification": "expand",
+          "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/kyapp/directory/changeLog.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
+          "classification": "expand",
+          "reason": "WP2b 目录变更日志 store：init 只调用治理迁移 runner（建表语句在 v42 单独审核）。运行期语句仅三类：向本批新建的 ky_app_directory_change_log INSERT ... ON CONFLICT (event_id) DO NOTHING；读取前 LOCK TABLE ... IN SHARE MODE 的 SELECT（照 runtime/pgEventStore.ts 的既有做法，防止游标跳号丢事件）；30 天保留清理的 DELETE FROM ... WHERE occurred_at < $1。DELETE 只作用于本批新表内超过保留期的行，不触碰任何既有表，无 DDL、无回填。"
+        },
+        {
+          "path": "server/src/kyapp/directory/projection.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:dda5cd08845b2833f904f9c2fcbed1d23f3e63d106152ae86e5c0b16789fe711",
+          "classification": "expand",
+          "reason": "WP2b 目录差分投影器与 governance 源：init 只调用治理迁移 runner。运行期对本批新建的 ky_app_directory_state 做 INSERT ... ON CONFLICT DO UPDATE 与按行 DELETE；对既有表 users/tenant_memberships/directory_groups 只读 SELECT；唯一写既有表的语句是 setEmployeeNo 对 tenant_memberships.employee_no（本批新增列）的按行 UPDATE，由管理动作显式触发，非启动回填。无 DDL、不删表列。"
+        },
+        {
+          "path": "server/src/kyapp/directory/types.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
+          "classification": "no-schema-change",
+          "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
@@ -4371,12 +5140,48 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/taskboard/commentQuery.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:b2531a1f60c78940c2620066527b079d60f1e2f1db6758d9fb24f700eccbb0cb",
+          "classification": "no-schema-change",
+          "reason": "本批新增的评论定位与投影模块：只有 SELECT（可见评论 CTE + row_number/count 窗口函数 + left 预览投影），没有任何 DDL、没有启动期回填，也不参与 store.init 的建表流程；被判为迁移文件仅因为它落在 taskboard/store.ts 这个 startup schema root 的静态 import 闭包里。"
+        },
+        {
+          "path": "server/src/taskboard/store.ts",
+          "baselineDigest": "sha256:e4fc5b3caaa0379274275ec74347c443710ec17d6aaaaaf7ceae41698e742118",
+          "targetDigest": "sha256:552799e48d512a6422c019631bcf0017b8dbec935a28d800016606b95e0d1621",
+          "classification": "no-schema-change",
+          "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
+        },
+        {
+          "path": "server/src/taskboard/storeSearch.ts",
+          "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
+          "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
+          "classification": "no-schema-change",
+          "reason": "本批把旧的 searchComments（一段纯 SELECT 分页查询）整体移到 commentQuery.ts，并删除随之不再使用的两个 import。listComments 与看板/任务检索的 SQL 未改，无 DDL、无启动期写入。"
+        },
+        {
+          "path": "server/src/taskboard/v2Store.ts",
+          "baselineDigest": "sha256:3686a3fc86332759d0178c1ea40edd7f79b323be972ceca92163aba1f5e668af",
+          "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
+          "classification": "no-schema-change",
+          "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
         }
       ],
       "evidence": [
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
+          "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
+          "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",

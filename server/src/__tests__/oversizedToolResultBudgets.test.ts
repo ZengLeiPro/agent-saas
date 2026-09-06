@@ -10,8 +10,10 @@ import {
   projectToolResultContentForTranscript,
 } from '../runtime/transcriptToolResultBudget.js';
 import type { PlatformEvent } from '../runtime/types.js';
+import { COMMENT_PREVIEW_CHARS } from '../taskboard/commentQuery.js';
 import {
   EXECUTION_CONTEXT_COMMENTS_LIMIT,
+  EXECUTION_CONTEXT_COMMENTS_MAX_CHARS,
   EXECUTION_CONTEXT_EXECUTIONS_LIMIT,
   EXECUTION_CONTEXT_MAX_CHARS,
   EXECUTION_CONTEXT_PAYLOAD_MAX_CHARS,
@@ -205,6 +207,92 @@ describe('execution context budget', () => {
       returned: EXECUTION_CONTEXT_EXECUTIONS_LIMIT,
       total: executions.length,
     });
+  });
+
+  it('digests the oldest comment bodies once comments exceed their own budget', () => {
+    const comments = Array.from({ length: 40 }, (_, index) => ({
+      id: `c${index}`,
+      taskId: 'task-1',
+      body: `阶段报告 ${index}：${'详'.repeat(4_000)}`,
+      authorType: 'agent',
+      authorId: 'agent-1',
+      authorName: 'agent',
+      version: 1,
+      createdAt: '2026-09-06T00:00:00.000Z',
+      updatedAt: '2026-09-06T00:00:00.000Z',
+    }) as unknown as TaskBoardComment);
+
+    const bounded = applyExecutionContextBudget({
+      changes: [],
+      comments,
+      commentTotal: comments.length,
+      hasMore: false,
+    });
+
+    expect(JSON.stringify(bounded.comments).length).toBeLessThanOrEqual(EXECUTION_CONTEXT_COMMENTS_MAX_CHARS);
+    // 最新一条必须留全文，被降级的只能是更旧的。
+    expect(bounded.comments![bounded.comments!.length - 1]!.body).toBe(comments[comments.length - 1]!.body);
+    expect(bounded.comments![0]!.body).toHaveLength(COMMENT_PREVIEW_CHARS);
+    expect(bounded.comments![0]!.bodyTruncated).toBe(true);
+    expect(bounded.truncation?.comments?.total).toBe(comments.length);
+    expect(bounded.truncation?.comments?.digested).toBeGreaterThan(0);
+  });
+
+  it('keeps the newest comment bodies when the input is already mostly digest rows', () => {
+    // execution.context 默认形状：SQL 已把除最近 keep 条外的评论截成 200 字目录行。
+    // 若降级循环不保护尾部窗口，唯一 body>200 的「最新一条」反而会被砍掉。
+    const digestRow = (index: number) => ({
+      id: `c${index}`,
+      taskId: 'task-1',
+      sessionId: `session-${index}`,
+      executionId: `execution-${index}`,
+      executionPurpose: 'work',
+      body: '详'.repeat(200),
+      bodyChars: 4_000,
+      bodyTruncated: true,
+      ordinal: index + 1,
+      authorType: 'agent',
+      authorId: 'agent-1',
+      authorName: 'agent',
+      version: 1,
+      createdAt: '2026-09-06T00:00:00.000Z',
+      updatedAt: '2026-09-06T00:00:00.000Z',
+    }) as unknown as TaskBoardComment;
+    const fullRow = (index: number) => ({
+      ...digestRow(index),
+      body: '详'.repeat(4_000),
+      bodyChars: 4_000,
+      bodyTruncated: undefined,
+    }) as unknown as TaskBoardComment;
+
+    for (const total of [100, 150, 200]) {
+      const comments = [
+        ...Array.from({ length: total - 1 }, (_, index) => digestRow(index)),
+        fullRow(total - 1),
+      ];
+      const bounded = applyExecutionContextBudget({
+        changes: [], comments, commentTotal: total, keepFullComments: 1, hasMore: false,
+      });
+      const newest = bounded.comments![bounded.comments!.length - 1]!;
+      expect(newest.id).toBe(`c${total - 1}`);
+      expect(newest.body).toHaveLength(4_000);
+      expect(newest.bodyTruncated).toBeUndefined();
+      expect(JSON.stringify(bounded.comments).length)
+        .toBeLessThanOrEqual(EXECUTION_CONTEXT_COMMENTS_MAX_CHARS + newest.body.length);
+      expect(bounded.truncation?.comments?.total).toBe(total);
+      // 目录行总量超预算时，只能丢最旧的，不能动最新一条。
+      if (total >= 150) expect(bounded.truncation?.comments?.droppedByBudget).toBeGreaterThan(0);
+    }
+
+    // commentLimit=3 时，末尾三条都必须留全文。
+    const comments = [
+      ...Array.from({ length: 197 }, (_, index) => digestRow(index)),
+      fullRow(197), fullRow(198), fullRow(199),
+    ];
+    const bounded = applyExecutionContextBudget({
+      changes: [], comments, commentTotal: 200, keepFullComments: 3, hasMore: false,
+    });
+    expect(bounded.comments!.slice(-3).every((comment) => comment.body.length === 4_000)).toBe(true);
   });
 
   it('omits comments and executions entirely when they were not requested', () => {

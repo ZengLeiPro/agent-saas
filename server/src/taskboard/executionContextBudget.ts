@@ -1,3 +1,4 @@
+import { COMMENT_PREVIEW_CHARS, digestComment } from './commentQuery.js';
 import type {
   TaskBoardChange,
   TaskBoardComment,
@@ -20,6 +21,17 @@ export const EXECUTION_CONTEXT_PAYLOAD_MAX_CHARS = 4_000;
 export const EXECUTION_CONTEXT_NESTED_KEEP_CHARS = 1_000;
 export const EXECUTION_CONTEXT_STRING_KEEP_CHARS = 200;
 export const EXECUTION_CONTEXT_COMMENTS_LIMIT = 200;
+/**
+ * 评论正文过去只有条数上限、不受总字符预算约束（预算先减去评论字节再分给 changes，
+ * 评论自身永不裁剪）。单条 execution.finish body 上限 20,000 字符，200 条封顶时
+ * 仍可达数 MB，因此这里给评论单独设预算。
+ *
+ * 注意两个常量的关系：目录行单条 JSON 约 500~700 字符，200 条就已经 10 万字符以上，
+ * 所以**字符预算才是真正的约束**，EXECUTION_CONTEXT_COMMENTS_LIMIT 只是上界。
+ * 收缩顺序固定为：先降级旧的全文 → 再丢弃最旧的目录行 → 最后才动受保护的最新窗口，
+ * 保证「最近一条全文」在任何规模下都还在。
+ */
+export const EXECUTION_CONTEXT_COMMENTS_MAX_CHARS = 60_000;
 export const EXECUTION_CONTEXT_EXECUTIONS_LIMIT = 100;
 
 function jsonChars(value: unknown): number {
@@ -76,8 +88,54 @@ export interface ExecutionContextBudgetInput {
   changes: TaskBoardChange[];
   comments?: TaskBoardComment[];
   executions?: TaskBoardExecution[];
+  /** 任务当前可见评论总数；SQL 层已截断时用于报告真实规模。 */
+  commentTotal?: number;
+  /** 末尾必须保留全文的评论条数（execution.context 的 commentLimit）；至少 1。 */
+  keepFullComments?: number;
   /** SQL 层 limit+1 探测到的「还有下一页」。 */
   hasMore: boolean;
+}
+
+/**
+ * 评论收敛到自身预算内，返回结果与预算动作计数。
+ *
+ * 关键：默认路径下 SQL 已把除最新一条外的评论截成目录行，数组里唯一的全文正是
+ * 「最近一条」。若不保护尾部窗口，降级循环会跳过所有目录行、直接把它降级掉——
+ * 恰好牺牲本特性承诺保留的那条。故顺序为：先降级受保护窗口之前的全文，再从最旧
+ * 开始丢弃，最后才在窗口自身仍超预算时降级窗口内较旧的条目。
+ */
+function fitCommentsBudget(
+  comments: TaskBoardComment[],
+  keepFullComments: number,
+): { comments: TaskBoardComment[]; dropped: number } {
+  const fitted = [...comments];
+  const sizes = fitted.map(jsonChars);
+  let used = sizes.reduce((sum, size) => sum + size, 0);
+  let dropped = 0;
+  const overBudget = () => used > EXECUTION_CONTEXT_COMMENTS_MAX_CHARS;
+  const degrade = (index: number): void => {
+    const comment = fitted[index]!;
+    if (comment.bodyTruncated) return;
+    const next = digestComment(comment);
+    if (next.body.length === comment.body.length) return;
+    const size = jsonChars(next);
+    used += size - sizes[index]!;
+    fitted[index] = next;
+    sizes[index] = size;
+  };
+
+  const keep = Math.max(1, keepFullComments);
+  for (let index = 0; index < fitted.length - keep && overBudget(); index += 1) degrade(index);
+  while (fitted.length > keep && overBudget()) {
+    used -= sizes[0]!;
+    fitted.shift();
+    sizes.shift();
+    dropped += 1;
+  }
+  for (let index = 0; index < fitted.length - 1 && overBudget(); index += 1) degrade(index);
+  // 只剩最新一条却仍超预算（单条正文本身超大）：降级它，模型可用 comment.get 取原文。
+  if (fitted.length === 1 && overBudget()) degrade(0);
+  return { comments: fitted, dropped };
 }
 
 export interface ExecutionContextBudgetResult {
@@ -92,9 +150,13 @@ export interface ExecutionContextBudgetResult {
 export function applyExecutionContextBudget(
   input: ExecutionContextBudgetInput,
 ): ExecutionContextBudgetResult {
-  const comments = input.comments
-    ? keepRecent(input.comments, EXECUTION_CONTEXT_COMMENTS_LIMIT)
+  const fittedComments = input.comments
+    ? fitCommentsBudget(
+      keepRecent(input.comments, EXECUTION_CONTEXT_COMMENTS_LIMIT),
+      input.keepFullComments ?? 1,
+    )
     : undefined;
+  const comments = fittedComments?.comments;
   const executions = input.executions
     ? keepRecent(input.executions, EXECUTION_CONTEXT_EXECUTIONS_LIMIT)
     : undefined;
@@ -118,7 +180,10 @@ export function applyExecutionContextBudget(
     budget -= size;
   }
 
-  const truncatedComments = input.comments && comments && input.comments.length > comments.length;
+  const commentTotal = input.commentTotal ?? input.comments?.length ?? 0;
+  const digestedComments = comments?.filter((comment) => comment.bodyTruncated).length ?? 0;
+  const droppedByBudget = fittedComments?.dropped ?? 0;
+  const truncatedComments = Boolean(comments) && (commentTotal > comments!.length || digestedComments > 0);
   const truncatedExecutions =
     input.executions && executions && input.executions.length > executions.length;
   const truncation: TaskBoardExecutionContextTruncation | undefined =
@@ -127,7 +192,14 @@ export function applyExecutionContextBudget(
           ...(summarizedPayloads > 0 ? { summarizedChangePayloads: summarizedPayloads } : {}),
           ...(droppedChanges > 0 ? { droppedChanges } : {}),
           ...(truncatedComments
-            ? { comments: { returned: comments!.length, total: input.comments!.length } }
+            ? {
+                comments: {
+                  returned: comments!.length,
+                  total: commentTotal,
+                  ...(digestedComments > 0 ? { digested: digestedComments } : {}),
+                  ...(droppedByBudget > 0 ? { droppedByBudget } : {}),
+                },
+              }
             : {}),
           ...(truncatedExecutions
             ? { executions: { returned: executions!.length, total: input.executions!.length } }

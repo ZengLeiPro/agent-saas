@@ -268,6 +268,7 @@ test('formal taskboard integration spec is Agent-first and contains no retired p
 
 test('Integration runtime exposes one work Agent and no dedicated Review/Merge gateway actions', () => {
   const files = [
+    'shared/src/types/taskboard.ts',
     'server/src/taskboard/workflowContract.ts',
     'server/src/taskboard/executionPrompt.ts',
     'server/src/agent/taskboardToolActions.ts',
@@ -281,7 +282,7 @@ test('Integration runtime exposes one work Agent and no dedicated Review/Merge g
     assert.equal(source.includes(retired), false, `retired Integration runtime action remains: ${retired}`);
   }
   assert.equal(source.includes("allowedStatuses: ['done', 'blocked']"), true);
-  assert.equal(source.includes('标准 Git 与 GitHub merge 能力'), true);
+  assert.equal(source.includes('使用标准 Git 与 GitHub；不调用 Delivery 专用 execution.pull_request.*'), true);
   assert.equal(source.includes("taskboardIntegrationRole: 'integration'"), false, 'metadata is assembled outside the scanned policy files');
   const metadata = fs.readFileSync(path.join(process.cwd(), 'server/src/taskboard/executionSessionMetadata.ts'), 'utf8');
   assert.equal(metadata.includes("taskboardIntegrationRole: 'integration'"), true);

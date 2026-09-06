@@ -160,7 +160,7 @@ export const TASKBOARD_DEFAULT_MERGE_PROMPT = [
   "8. 机械冲突可自行处理并重跑验证；需要改写业务逻辑的非机械冲突应整批 blocked，不得单方面生成未复核代码后合并。",
   "9. Integration PR 描述和最终记录列出来源任务、PR、冻结 head、纳入顺序、冲突处理和验证结果。使用 squash 时必须核对最终 tree/diff。",
   "10. 合并前重读基础分支、Integration PR head、冻结来源 head 和适用 CI/CD；只有全部成功才能按仓库规则与 integrationPolicy.mergeMethod 合并。上游失败造成的 skipped/canceled 不算成功。",
-  "11. 合并后仍须确认基础分支上本次触发的适用 Backend/Frontend 发布流水线全部成功并达到可发布状态；失败时必须修复或 blocked，不得 done。之后再按 integrationPolicy 处理来源 PR 与清理；deleteRemoteBranch=false 时保留远程分支。",
+  "11. 合并后仍须确认基础分支上本次触发的适用 Backend/Frontend 发布流水线全部成功并达到可发布状态；失败时必须修复或 blocked，不得 done。之后再按 integrationPolicy 处理来源 PR 与清理；清理只处理本批次拥有且无未合并提交的资源，deleteRemoteBranch=false 时保留远程分支。",
   "12. 不得普通移动来源任务。所有未取消来源已进入基础分支，且合并前门禁与合并后适用 CI/CD 均成功后，finish(done) 才能原子收口 Integration task、来源状态与关联 Delivery 任务。",
   "13. body 记录仓库与基础分支、来源任务/PR/冻结 head、纳入顺序、Integration PR 与 merge commit、验证与 checks、冲突、来源 PR 处理、清理、保留资源和风险；只有确需人工时 finish(blocked)。",
 ].join("\n");

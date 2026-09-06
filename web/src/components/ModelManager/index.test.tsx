@@ -134,6 +134,52 @@ describe("ModelManager 排序", () => {
     expect((screen.getByLabelText('门禁主模型') as HTMLSelectElement).value).toBe('main/gpt');
   });
 
+  it('区分协议不兼容的门禁引用，并允许在没有 Chat Completions 候选时停用', async () => {
+    const responsesModels = {
+      ...initialModels,
+      default: 'main/gpt',
+      groups: initialModels.groups.map((group) => ({ ...group, protocol: 'responses' })),
+    };
+    const originalFetch = vi.mocked(authFetch).getMockImplementation()!;
+    vi.mocked(authFetch).mockImplementation(async (path, init) => {
+      if (path === '/api/admin/models' && init?.method !== 'PUT') {
+        return jsonResponse({
+          revision: 'rev-1',
+          models: responsesModels,
+          memoryIndex: null,
+          titleGenerator: { model: 'main/gpt', fallbackModels: [] },
+          guardrail: { model: 'main/gpt', timeoutMs: 6000 },
+          titleSystemPrompt: {
+            content: TITLE_PROMPT,
+            defaultContent: TITLE_PROMPT,
+            overridden: false,
+          },
+          publicModelList: responsesModels,
+        });
+      }
+      return originalFetch(path, init);
+    });
+
+    const user = userEvent.setup();
+    render(<ModelManager />);
+
+    expect(await screen.findByRole('option', {
+      name: '协议不兼容（门禁仅支持 Chat Completions）：主分组/GPT',
+    })).toBeTruthy();
+    expect(screen.getByText(/当前没有可用的 Chat Completions 模型/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '停用门禁模型' }));
+    await user.click(screen.getByRole('button', { name: '保存并生效' }));
+
+    await waitFor(() => {
+      const call = vi.mocked(authFetch).mock.calls.find(
+        ([path, init]) => path === '/api/admin/models' && init?.method === 'PUT',
+      );
+      expect(JSON.parse(String(call?.[1]?.body)).guardrail).toBeNull();
+    });
+    expect(screen.getByText('门禁模型当前未启用。启用前至少需要一个 Chat Completions 模型。')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '启用门禁模型' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it.each([undefined, "", "   ", " new-embedding-key "])("保存记忆索引 Key %j 时省略空值、保留新凭据", async (apiKey) => {
     const originalFetch = vi.mocked(authFetch).getMockImplementation()!;
     vi.mocked(authFetch).mockImplementation(async (path, init) => {

@@ -55,7 +55,6 @@ import { absorbLegacyIntegrationRuntimeCompletion } from './integrationMigration
 import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
 import { consumeTaskboardWorkflowCancellation } from './workflowCancellation.js';
-export { executionWritebackInstructions } from './executionPrompt.js';
 import {
   writeTaskboardSessionTitle,
   type TaskboardSessionTitleUpdate,

@@ -169,12 +169,12 @@ test('push main 与 dispatch 始终全量分片并收集覆盖率', () => {
 
 test('CI 并行任务、分片矩阵与 Build & Check 汇总门禁完整连接', () => {
   for (const marker of [
-    'name: Preflight / Plan',
+    'name: 预检 / 规划',
     'node scripts/ci-plan.mjs',
     '--output "$GITHUB_OUTPUT"',
-    'name: Preflight / Static checks',
+    'name: 预检 / 静态检查',
     'bash scripts/pr-preflight-task.sh checks',
-    'name: Preflight / Tests (${{ matrix.workspace }} ${{ matrix.shard }}/${{ matrix.total }})',
+    'name: 预检 / 测试（${{ matrix.workspace }} ${{ matrix.shard }}/${{ matrix.total }}）',
     'include: ${{ fromJSON(needs.ci_plan.outputs.test_matrix) }}',
     'bash scripts/pr-preflight-task.sh test',
     '"${{ matrix.workspace }}" "${{ matrix.shard }}" "${{ matrix.total }}"',

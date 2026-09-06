@@ -488,6 +488,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -507,6 +514,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -599,6 +613,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
@@ -609,6 +627,10 @@
         {
           "path": "server/src/runtime/sessionAutomation.pg.test.ts",
           "digest": "sha256:8de8e478a98d2ff92e094b228071516e47326a9cdc6651fdebef8112ca8703ff"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -819,6 +841,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -838,6 +867,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -910,12 +946,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -1105,6 +1149,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -1124,6 +1175,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -1180,12 +1238,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -1375,6 +1441,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -1394,6 +1467,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -1450,12 +1530,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -1631,6 +1719,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -1650,6 +1745,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -1698,12 +1800,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -1879,6 +1989,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -1898,6 +2015,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -1946,12 +2070,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -2127,6 +2259,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -2146,6 +2285,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -2194,12 +2340,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -2732,6 +2886,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -2751,6 +2912,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -2795,6 +2963,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -2813,6 +2985,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -2995,6 +3171,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -3014,6 +3197,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -3070,6 +3260,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -3088,6 +3282,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -3298,6 +3496,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -3317,6 +3522,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -3361,6 +3573,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -3379,6 +3595,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -3589,6 +3809,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -3608,6 +3835,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -3652,6 +3886,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -3670,6 +3908,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -3810,6 +4052,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -3829,6 +4078,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -3861,6 +4117,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -3879,6 +4139,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -4019,6 +4283,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -4038,6 +4309,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4070,6 +4348,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -4088,6 +4370,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -4228,6 +4514,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -4247,6 +4540,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4279,6 +4579,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -4297,6 +4601,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -4437,6 +4745,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -4456,6 +4771,13 @@
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "classification": "no-schema-change",
           "reason": "init 建表语句逐字未变；只改运行期 claimDelivery 的 updated_at 比较为毫秒截断，无 DDL 无回填。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4488,6 +4810,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -4506,6 +4832,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -4639,6 +4969,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -4651,6 +4988,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4679,6 +5023,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -4697,6 +5045,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -4830,6 +5182,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -4842,6 +5201,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4870,6 +5236,10 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
           "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
         },
@@ -4888,6 +5258,10 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -4958,6 +5332,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -4970,6 +5351,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -4990,12 +5378,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -5059,6 +5455,13 @@
           "reason": "本批只改三行：searchComments 的 import 来源从 storeSearch 换到新的 commentQuery、类型 import 增加 TaskboardCommentSearchFilter、searchComments 方法签名的 filter 类型放宽为其超集。建表、索引、启动迁移与所有写语句一字未动。"
         },
         {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
           "path": "server/src/taskboard/storeSearch.ts",
           "baselineDigest": "sha256:d0ab88c5dcbba4851fcb6743ab007bff6d9076a8250d32125dafc036d76e4a90",
           "targetDigest": "sha256:57b5a34693a50d77180c3a91cb186532b7064257cab9a267f73dd54b2bc1d48a",
@@ -5071,6 +5474,13 @@
           "targetDigest": "sha256:d24ed99e3784f5eadff5c5b37c481ddeaaf371899bd96d7eaa6a73ddfa602573",
           "classification": "no-schema-change",
           "reason": "本批只改 execution.context 的评论读取：原地内联的评论 SELECT 换成调用 commentQuery.loadContextComments（同样是纯 SELECT，增加 recency 窗口与预览投影），并给预算传入 keepFullComments。任务/看板/集成相关的写语句与迁移逻辑未动。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:80b50d5c8815d9a2d351247e2905213f758d4ea1cd8669fbad416daefc0069d3",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
         }
       ],
       "evidence": [
@@ -5087,12 +5497,20 @@
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
         {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.test.ts",
           "digest": "sha256:908fb596b089562ab92f048cc745d207e32015ffff0ee1f3271e49c7f006c688"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     },
@@ -5384,6 +5802,35 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:e57945ff4b487360f63219ede9c7b5e458090f653adc91d948405f573d0620ad"
+        }
+      ]
+    },
+    {
+      "baselineSha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
+      "files": [
+        {
+          "path": "server/src/taskboard/storeExecutions.ts",
+          "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
+          "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
+          "classification": "no-schema-change",
+          "reason": "本批只收窄执行上下文的只读加载：删除无人引用的本模块 RunId helper，并让 SessionId fencing context 不再重复校验任务后全量 SELECT 评论；保留 execution、task、board prompt 与 stage prompts 查询。没有 DDL、启动期写入、回填或数据删除，真正的 RunId continuation loader 未改。"
+        },
+        {
+          "path": "shared/src/types/taskboard.ts",
+          "baselineDigest": "sha256:81262730ffdcd867b22a381d8e629e634f396f7ac637ec14129eab5995d79391",
+          "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
+          "classification": "no-schema-change",
+          "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/taskboardSessionContext.test.ts",
+          "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
+          "path": "shared/src/types/taskboard.test.ts",
+          "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
         }
       ]
     }

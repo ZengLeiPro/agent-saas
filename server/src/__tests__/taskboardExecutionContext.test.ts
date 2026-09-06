@@ -91,7 +91,7 @@ describe('任务看板 Execution 上下文注入', () => {
       continuation: false,
       execution: { purpose: 'review', sessionId: 'review-session-new' },
     });
-    expect(context?.comments.map((comment) => comment.id)).toEqual(['comment-work', 'comment-user']);
+    expect(context?.comments?.map((comment) => comment.id)).toEqual(['comment-work', 'comment-user']);
     const executionQuery = queries.find(({ statement }) => statement.includes('LEFT JOIN LATERAL'));
     expect(executionQuery?.statement).toContain('prior.session_id=e.session_id');
     const commentsQuery = queries.find(({ statement }) => statement.includes('FROM comments'));
@@ -113,7 +113,7 @@ describe('任务看板 Execution 上下文注入', () => {
       continuation: true,
       execution: { purpose: 'work', sessionId: 'work-session' },
     });
-    expect(context?.comments.map((comment) => comment.id)).toEqual(['comment-review']);
+    expect(context?.comments?.map((comment) => comment.id)).toEqual(['comment-review']);
     const commentsQuery = queries.find(({ statement }) => statement.includes('FROM comments'));
     expect(commentsQuery?.statement).toContain('c.created_at >= $2::timestamptz');
     expect(commentsQuery?.params).toEqual([taskRow.id, contextSince]);

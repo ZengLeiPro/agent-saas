@@ -12,17 +12,23 @@ output=$1
 page_size=100
 tmp="$(mktemp -d "${RUNNER_TEMP:-/tmp}/acr-build-records.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
-page=1
-total=''
-pages=1
-while [ "$page" -le "$pages" ]; do
-  page_file="$tmp/page-$page.json"
-  aliyun cr ListRepoBuildRecord \
-    --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
-    --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
-    --RepoId "$ACR_REPO_ID" --PageNo "$page" --PageSize "$page_size" \
-    > "$page_file"
-  observed_total="$(node - "$page_file" "$page" <<'NODE'
+snapshot_attempt=1
+max_snapshot_attempts=3
+while [ "$snapshot_attempt" -le "$max_snapshot_attempts" ]; do
+  attempt_dir="$tmp/attempt-$snapshot_attempt"
+  mkdir "$attempt_dir"
+  page=1
+  total=''
+  pages=1
+  total_changed=false
+  while [ "$page" -le "$pages" ]; do
+    page_file="$attempt_dir/page-$page.json"
+    aliyun cr ListRepoBuildRecord \
+      --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
+      --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
+      --RepoId "$ACR_REPO_ID" --PageNo "$page" --PageSize "$page_size" \
+      > "$page_file"
+    observed_total="$(node - "$page_file" "$page" <<'NODE'
 const [path, expectedPageText] = process.argv.slice(2);
 const value = JSON.parse(require('node:fs').readFileSync(path, 'utf8'));
 const expectedPage = Number(expectedPageText);
@@ -33,19 +39,29 @@ if (!Number.isSafeInteger(total) || total < 0) throw new Error('ACR record total
 if (!Array.isArray(value.BuildRecords)) throw new Error('ACR build record page is invalid');
 process.stdout.write(String(total));
 NODE
-  )"
-  if [ -z "$total" ]; then
-    total=$observed_total
-    pages=$(( (total + page_size - 1) / page_size ))
-    [ "$pages" -gt 0 ] || pages=1
-  elif [ "$observed_total" != "$total" ]; then
-    echo 'ACR build record total changed during pagination' >&2
-    exit 1
-  fi
-  page=$((page + 1))
-done
+    )"
+    if [ -z "$total" ]; then
+      total=$observed_total
+      pages=$(( (total + page_size - 1) / page_size ))
+      [ "$pages" -gt 0 ] || pages=1
+    elif [ "$observed_total" != "$total" ]; then
+      total_changed=true
+      break
+    fi
+    page=$((page + 1))
+  done
 
-node - "$tmp" "$total" "$output.tmp" <<'NODE'
+  if [ "$total_changed" = true ]; then
+    if [ "$snapshot_attempt" -eq "$max_snapshot_attempts" ]; then
+      echo "ACR build record total changed during pagination and did not stabilize after $max_snapshot_attempts attempts" >&2
+      exit 1
+    fi
+    echo "ACR build record total changed during pagination; retrying stable snapshot ($snapshot_attempt/$max_snapshot_attempts)" >&2
+    snapshot_attempt=$((snapshot_attempt + 1))
+    continue
+  fi
+
+  if node - "$attempt_dir" "$total" "$output.tmp" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
 const [directory, expectedTotalText, output] = process.argv.slice(2);
@@ -60,4 +76,15 @@ if (ids.some((id) => !id) || new Set(ids).size !== ids.length)
   throw new Error('ACR pagination returned missing or duplicate BuildRecordId values');
 fs.writeFileSync(output, `${JSON.stringify({ Code: 'success', IsSuccess: true, TotalCount: String(expectedTotal), BuildRecords: records })}\n`);
 NODE
-mv "$output.tmp" "$output"
+  then
+    mv "$output.tmp" "$output"
+    exit 0
+  fi
+
+  if [ "$snapshot_attempt" -eq "$max_snapshot_attempts" ]; then
+    echo "ACR build record pagination did not stabilize after $max_snapshot_attempts attempts" >&2
+    exit 1
+  fi
+  echo "ACR build record pagination was inconsistent; retrying stable snapshot ($snapshot_attempt/$max_snapshot_attempts)" >&2
+  snapshot_attempt=$((snapshot_attempt + 1))
+done

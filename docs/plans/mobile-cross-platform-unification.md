@@ -1,8 +1,23 @@
 # Mobile 跨平台统一化实施方案
 
-> **状态**: 待实施
+> **状态**: Phase 1～4 代码已完成；正式发布验证另立项目
 > **创建时间**: 2026-04-11
-> **最后更新**: 2026-04-11
+> **最后更新**: 2026-09-06
+
+---
+
+## 〇、2026-09-06 收口结论
+
+本文第二章记录的是 2026-04-11 的原始基线，不再代表当前代码状态。移动端与 Web 对齐项目已经完成本方案 Phase 1～4 的静态收口：业务层 `.ios/.android.tsx` 分叉为 0，内容层 Glass 引用为 0，共享业务页直接 `ActionSheetIOS` 为 0，`Alert.prompt` 仅留在平台适配层；三个核心表单、prompt/action menu、header 与跨平台日期控件均已统一，`@expo/ui`、`expo-glass-effect`、`expo-blur` 已移除。
+
+剩余事项不再归为本方案代码待办：
+
+- iOS Build 6、APNs 激活、推送深链与主要路径真机验收属于发布闭环。
+- Maestro 正式证据要求 11 个逻辑流程 / 13 份 YAML 在两台 iOS、两台 Android 四槽真机上完成，并依赖 fixture server 与 provider 接口；另列正式发布工程，不阻断内部 TestFlight。
+- Android 首发渠道、release signer、升级/回滚和双档真机证据依赖 M00-03 决策，另立 Android 发布项目。
+- 有效的 `@react-native-menu/menu` patch 保留；不为清依赖而删除仍在生效的补丁。
+
+09-06 16:35 曾磊确认以上收口：本方案结束，不继续扩大为 Web `CronManager` 重构或 mobile 运行态模型改造。
 
 ---
 
@@ -21,7 +36,7 @@
 
 ---
 
-## 二、当前问题清单
+## 二、原始问题清单（2026-04-11 基线，已处理）
 
 ### 2.1 最高优先级问题：Android parity 已被破坏
 

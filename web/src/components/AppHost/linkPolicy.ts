@@ -69,10 +69,18 @@ export function externalLinkConfirmText(displayHost: string): string {
 /**
  * 打开外链：必须 `noopener,noreferrer`。
  * `noopener` 之外还要 `noreferrer`，否则目标站能从 Referer 读到壳的深链路径。
+ *
+ * **不能用返回值判断有没有打开成功。** HTML 规范规定：窗口特性里带 `noopener` 时
+ * `window.open()` 一律返回 `null`（新窗口与打开方彻底断开，本来就拿不到句柄）。
+ * 早先这里写 `return handle !== null`，结果是**放行的外链也一律回 `link.result{ok:false}`**
+ * —— 子端每次都以为被拦了。弹窗拦截同样返回 `null`，两者无法区分，所以这个
+ * 信号根本不存在：只要 `open()` 没抛异常就按已发起处理。
  */
 export function openExternalLink(url: string, open: typeof window.open = window.open): boolean {
-  const handle = open.call(window, url, '_blank', 'noopener,noreferrer');
-  // 弹窗被拦截时 `window.open` 返回 null；这时要告诉子端 ok:false，
-  // 否则子端以为已经打开、不会给用户任何提示。
-  return handle !== null;
+  try {
+    open.call(window, url, '_blank', 'noopener,noreferrer');
+    return true;
+  } catch {
+    return false;
+  }
 }

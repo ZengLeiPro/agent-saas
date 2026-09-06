@@ -83,8 +83,17 @@ describe('openExternalLink', () => {
     expect(open).toHaveBeenCalledWith('https://docs.example.com/', '_blank', 'noopener,noreferrer');
   });
 
-  it('被弹窗拦截时回 false，好让壳给子端 ok:false', () => {
+  it('返回 null 不算失败：带 noopener 时规范就规定返回 null，据此判失败会让放行的外链全被报成 ok:false', () => {
     const open = vi.fn(() => null);
+    expect(
+      openExternalLink('https://docs.example.com/', open as unknown as typeof window.open),
+    ).toBe(true);
+  });
+
+  it('open 抛异常才回 false（沙箱禁止打开新窗口等）', () => {
+    const open = vi.fn(() => {
+      throw new Error('blocked');
+    });
     expect(
       openExternalLink('https://docs.example.com/', open as unknown as typeof window.open),
     ).toBe(false);

@@ -100,11 +100,16 @@ function installations(): unknown[] {
 const CALLS: string[] = [];
 (window as unknown as { __demoCalls: string[] }).__demoCalls = CALLS;
 
-/** 每次调用一行，带方法与时刻；E2E 靠它数「续期只打了一次」。 */
+/**
+ * 每次调用一行，带方法、时刻与请求体。
+ * E2E 靠它数「续期只打了一次」，也靠 `body` 断言壳落了哪条安全事件
+ * （`/shell-events` 的 `{event, reason}`）—— 只看路径分不清 `origin` 与 `source`。
+ */
 export interface DemoApiCall {
   method: string;
   path: string;
   at: number;
+  body: string | null;
 }
 const CALL_LOG: DemoApiCall[] = [];
 (window as unknown as { __demoApiLog: DemoApiCall[] }).__demoApiLog = CALL_LOG;
@@ -127,7 +132,12 @@ function grant(path: string): Response {
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const method = init.method ?? 'GET';
   CALLS.push(`${method} ${path}`);
-  CALL_LOG.push({ method, path, at: Date.now() });
+  CALL_LOG.push({
+    method,
+    path,
+    at: Date.now(),
+    body: typeof init.body === 'string' ? init.body : null,
+  });
 
   if (path === '/api/systems/mine') return json({ installations: installations() });
 

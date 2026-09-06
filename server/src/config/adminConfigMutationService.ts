@@ -117,6 +117,16 @@ export class ConfigConflictError extends Error {
   }
 }
 
+/** Production 的 expected ConfigIdentity 绑定 release；在线改盘必须改走受控配置发布。 */
+export class ProductionConfigPublishRequiredError extends Error {
+  readonly code = 'PRODUCTION_CONFIG_PUBLISH_REQUIRED';
+
+  constructor() {
+    super('生产配置不能直接在线保存，请通过受控配置发布流程变更');
+    this.name = 'ProductionConfigPublishRequiredError';
+  }
+}
+
 /** durable/runtime 已提交，但后续 observation/publication 或维护步骤失败。 */
 export class ConfigMutationCommittedError extends Error {
   readonly code = 'CONFIG_MUTATION_COMMITTED';
@@ -258,6 +268,8 @@ export class AdminConfigMutationService {
       onRuntimeDirty?: () => void;
       /** audit 故障注入/替代持久化；生产默认使用原生 appendFile。 */
       auditAppender?: (path: string, line: string) => Promise<void>;
+      /** 仅供受控运维发布器注入；普通 Runtime 管理接口不得开启。 */
+      allowProductionMutation?: boolean;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
@@ -273,6 +285,9 @@ export class AdminConfigMutationService {
   }
 
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
+    if (this.options.environment === 'production' && this.options.allowProductionMutation !== true) {
+      throw new ProductionConfigPublishRequiredError();
+    }
     const releaseLock = await this.acquireLock();
     try {
       await this.recoverRuntimeIfDirty(input.actor);

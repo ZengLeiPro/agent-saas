@@ -113,6 +113,7 @@ import { createModelResolvers } from './modelResolvers.js';
 import { resolveImageUnderstandingModelConfigs } from './imageUnderstandingModelConfigs.js';
 import { createTitleModelAdapterFactory, resolveTitleGeneratorConfigs } from './titleGeneratorConfigs.js';
 import { resolveGuardrailModelConfigs } from './guardrailModelConfigs.js';
+import { assertAuxiliaryModelRefsResolvable } from './modelsHotUpdate.js';
 import { applyTenantLifecycleChange, TenantLifecycleWatcher } from './tenantLifecycleEffects.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
@@ -383,6 +384,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSharedEnv,
     sharedDir,
   };
+  if (config.models) assertAuxiliaryModelRefsResolvable(config, config.models);
   const titleGeneratorDefaultModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini'; const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
     models: config.models,
     titleGenerator: config.titleGenerator,
@@ -1524,6 +1526,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>;
   let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
   let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
+  let applyMemoryPollingRuntimeUpdate: ((polling: NonNullable<AppConfig['memory']>['polling']) => void) | undefined;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd, recoveryGate: configIdentityAssembly.recoveryGate,
@@ -1531,10 +1534,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantsFilePath,
     logger: serverLogger, titleGeneratorConfigs, defaultTitleModel: titleGeneratorDefaultModel,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
+    getGuardrailModelConfigs: () => guardrailModelConfigs,
     prepareSystemPromptOverridesUpdate: (next) => systemPromptRegistry.prepareReplaceOverrides(next),
     prepareToolControlsUpdate: (next) => prepareToolControlsRuntimeUpdate(next),
     prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
     prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
+    prepareMemoryPollingUpdate: (next) => () => applyMemoryPollingRuntimeUpdate?.(next),
     onCodexSubscriptionUpdated: (refs) => {
       if (refs) codexWebSocketPool.closeCredentialRefs(refs);
       else codexWebSocketPool.close();
@@ -2167,8 +2172,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } = {
     isExecutionEnabled: (tenantId, userId) => {
       try {
-        const persistedPolling = loadAppConfig(processCwd).memory?.polling;
-        if (persistedPolling?.enabled !== true || !userActivityService.available || !userStore || !tenantStore) {
+        if (memoryPollRuntimeConfig.enabled !== true || !userActivityService.available || !userStore || !tenantStore) {
           return false;
         }
         userStore.reload();
@@ -2181,8 +2185,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     },
   };
-  const syncMemoryPollRuntimeConfig = (): void => {
-    const polling = config.memory?.polling;
+  const syncMemoryPollRuntimeConfig = (
+    polling: NonNullable<AppConfig['memory']>['polling'],
+  ): void => {
     memoryPollRuntimeConfig.enabled = polling?.enabled === true && userActivityService.available;
     memoryPollRuntimeConfig.lookbackHours = polling?.lookbackHours;
     memoryPollRuntimeConfig.maxTurns = polling?.maxTurns;
@@ -2190,7 +2195,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     if (polling?.model) memoryPollRuntimeConfig.model = polling.model;
     else delete memoryPollRuntimeConfig.model;
   };
-  syncMemoryPollRuntimeConfig();
+  syncMemoryPollRuntimeConfig(config.memory?.polling);
   const cronRuntime = createCronRuntime({
     config: {
       cron: config.cron,
@@ -2328,12 +2333,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   }
   let cronLeadership: CronLeadership | undefined;
   let memoryPollReconcileTimer: ReturnType<typeof setInterval> | undefined;
-  let memoryPollConfigRefreshTimer: ReturnType<typeof setInterval> | undefined;
+  let sharedConfigRefreshTimer: ReturnType<typeof setInterval> | undefined;
   let runMemoryPollReconcile: (() => Promise<void>) | undefined;
-  let refreshMemoryPollConfigFromDisk: (() => Promise<void>) | undefined;
   let memoryPollReconcileQueue: Promise<void> = Promise.resolve();
   let memoryPollLeadershipGeneration = 0;
-  let memoryPollConfigFingerprint = JSON.stringify(config.memory?.polling ?? null);
   if (enableSingletonWorkers && cronRuntime.service) {
     const cronService = cronRuntime.service;
     if (userStore) {
@@ -2381,27 +2384,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         memoryPollReconcileQueue = queued.catch(() => {});
         return queued;
       };
-      refreshMemoryPollConfigFromDisk = async (): Promise<void> => {
-        if (!cronLeadership?.isLeader()) return;
-        try {
-          const persistedPolling = loadAppConfig(processCwd).memory?.polling;
-          const fingerprint = JSON.stringify(persistedPolling ?? null);
-          if (fingerprint !== memoryPollConfigFingerprint) {
-            memoryPollConfigFingerprint = fingerprint;
-            config.memory = {
-              ...(config.memory ?? {}),
-              polling: persistedPolling,
-            };
-            syncMemoryPollRuntimeConfig();
-          }
-          // Reconcile even when the config fingerprint is unchanged: this is
-          // the bounded repair path for a former leader whose commit raced a
-          // leadership handoff after its last in-memory fence check.
-          await runMemoryPollReconcile?.();
-        } catch (err) {
-          serverLogger.warn(`Memory poll config refresh failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      };
     }
     cronLeadership = new CronLeadership({
       connectionString: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.connectionString : undefined,
@@ -2415,7 +2397,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             serverLogger.warn(`MemoryConsolidationEngine start failed: ${err instanceof Error ? err.message : String(err)}`);
           });
         }
-        await refreshMemoryPollConfigFromDisk?.();
+        await sharedConfigRefresher.refreshIfChanged(true);
         if (runMemoryPollReconcile) {
           void runMemoryPollReconcile();
           if (!memoryPollReconcileTimer) {
@@ -2423,11 +2405,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
             memoryPollReconcileTimer.unref?.();
           }
         }
-        if (refreshMemoryPollConfigFromDisk && !memoryPollConfigRefreshTimer) {
-          memoryPollConfigRefreshTimer = setInterval(() => {
-            void refreshMemoryPollConfigFromDisk!();
+        if (!sharedConfigRefreshTimer) {
+          sharedConfigRefreshTimer = setInterval(() => {
+            void sharedConfigRefresher.refreshIfChanged(true);
           }, 5_000);
-          memoryPollConfigRefreshTimer.unref?.();
+          sharedConfigRefreshTimer.unref?.();
         }
       },
       onLost: (reason) => {
@@ -2439,9 +2421,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           clearInterval(memoryPollReconcileTimer);
           memoryPollReconcileTimer = undefined;
         }
-        if (memoryPollConfigRefreshTimer) {
-          clearInterval(memoryPollConfigRefreshTimer);
-          memoryPollConfigRefreshTimer = undefined;
+        if (sharedConfigRefreshTimer) {
+          clearInterval(sharedConfigRefreshTimer);
+          sharedConfigRefreshTimer = undefined;
         }
       },
     });
@@ -2453,11 +2435,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ...(config.memory ?? {}),
       polling,
     };
-    memoryPollConfigFingerprint = JSON.stringify(polling);
-    syncMemoryPollRuntimeConfig();
+    syncMemoryPollRuntimeConfig(polling);
     if (cronLeadership?.isLeader()) {
       await runMemoryPollReconcile?.();
     }
+  };
+  applyMemoryPollingRuntimeUpdate = (polling) => {
+    syncMemoryPollRuntimeConfig(polling);
+    if (cronLeadership?.isLeader()) void runMemoryPollReconcile?.();
   };
   // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释；index.ts 调用）
   let runtimeDrainStarted = false;
@@ -2474,9 +2459,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       clearInterval(memoryPollReconcileTimer);
       memoryPollReconcileTimer = undefined;
     }
-    if (memoryPollConfigRefreshTimer) {
-      clearInterval(memoryPollConfigRefreshTimer);
-      memoryPollConfigRefreshTimer = undefined;
+    if (sharedConfigRefreshTimer) {
+      clearInterval(sharedConfigRefreshTimer);
+      sharedConfigRefreshTimer = undefined;
     }
     // 技能物化先停止 claim，并等待当前目录原子提交完成，再释放 leader。
     await skillMaterializationService?.stop();

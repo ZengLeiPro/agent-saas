@@ -101,6 +101,17 @@ export function validateLiveProductionComponents({
   return components;
 }
 
+export function describeWorkerNotReady(color, readFileSync = defaultReadFileSync) {
+  const snapshotPath = `/run/agent-saas-runtime-worker-${color}.config-identity.json`;
+  try {
+    const summary = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+    if (summary?.status && summary.status !== 'consistent') {
+      return `Production Runtime Worker ConfigIdentity is ${summary.status}; readyfile was intentionally withdrawn`;
+    }
+  } catch {}
+  return 'Worker readyfile does not match systemd MainPID';
+}
+
 function activeUnit(role, markerPath, readFileSync, execFileSync) {
   const color = readFileSync(markerPath, 'utf8').trim();
   if (!/^(blue|green)$/u.test(color)) throw new Error(`${role} active color is invalid`);
@@ -119,8 +130,9 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
     throw new Error(`${role} pidfile does not match systemd MainPID`);
   if (role === 'runtimeWorker') {
     const readyfile = `/run/${prefix}-${color}.ready`;
-    if (readFileSync(readyfile, 'utf8').trim() !== mainPid)
-      throw new Error('Worker readyfile does not match systemd MainPID');
+    let readyPid;
+    try { readyPid = readFileSync(readyfile, 'utf8').trim(); } catch {}
+    if (readyPid !== mainPid) throw new Error(describeWorkerNotReady(color, readFileSync));
   }
   return { color, unit, systemdEnvironment };
 }

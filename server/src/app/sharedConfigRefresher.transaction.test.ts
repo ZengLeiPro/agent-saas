@@ -228,6 +228,27 @@ describe('SharedConfigRefresher commit/post-check/rollback 与脏切面恢复事
     await expectLoserRolledBackAndWinnerPublished(false);
   });
 
+  it('memory polling 只随共享配置事务提交，不再形成局部内存状态', async () => {
+    const initial = { ...OLD, memory: { polling: { enabled: true, maxTurns: 100 } } };
+    writeConfig(dir, initial);
+    const config = structuredClone(initial) as unknown as AppConfig;
+    let runtimeMaxTurns = 100;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { titleGeneratorConfigs: [], updateGuardrailModelConfigs: () => {} },
+      prepareMemoryPollingUpdate: (polling) => () => {
+        runtimeMaxTurns = polling?.maxTurns ?? 0;
+      },
+    });
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    writeConfig(dir, { ...initial, memory: { polling: { enabled: true, maxTurns: 1000 } } });
+
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    expect(config.memory?.polling?.maxTurns).toBe(1000);
+    expect(runtimeMaxTurns).toBe(1000);
+  });
+
   it('异步 prepare：候选 commit 内写入 winner 时完整回滚，下一次只发布 winner', async () => {
     await expectLoserRolledBackAndWinnerPublished(true);
   });

@@ -3017,9 +3017,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复及套餐额度出口装配：既有 egressFetch 注入采集服务，替代 Node 原生 fetch；没有 DDL、启动建表或数据回填。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -4104,9 +4104,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复及套餐额度出口装配：既有 egressFetch 注入采集服务，替代 Node 原生 fetch；没有 DDL、启动建表或数据回填。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -4505,9 +4505,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复及套餐额度出口装配：既有 egressFetch 注入采集服务，替代 Node 原生 fetch；没有 DDL、启动建表或数据回填。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -8331,9 +8331,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
-          "targetDigest": "sha256:e17e2b3104d9d56ac42318bd1c2bd95f7cc0eedf79b8d3ac1a3fccba4fd5ebd1",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "套餐额度运行时将既有 egressFetch 注入采集服务，替代 Node 原生 fetch；仅改变外部 HTTP 出口装配，不新增或修改 SQL、DDL、启动建表与数据回填。"
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",

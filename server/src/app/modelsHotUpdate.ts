@@ -22,6 +22,8 @@ import { resolveModelRefStrict } from './models.js';
 /** applyModelsHotUpdate 需要写回的运行时切面；抽成最小接口便于测试。 */
 export interface ModelsHotUpdateTarget {
   updateGuardrailModelConfigs: (next: GuardrailModelConfig[]) => void;
+  /** 已生效的门禁链；跨进程热更新用它生成回滚快照，不能重解旧持久化配置。 */
+  getGuardrailModelConfigs?: () => readonly GuardrailModelConfig[];
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   /** titleGenerator 未配置/被删除时恢复与启动阶段一致的默认标题模型。 */
   defaultTitleModel?: string;
@@ -35,6 +37,28 @@ export interface ModelsHotUpdateTarget {
  */
 export type ModelsHotUpdateCommit = () => void;
 
+export interface ModelsHotUpdateTransaction {
+  commit: ModelsHotUpdateCommit;
+  rollback: ModelsHotUpdateCommit;
+}
+
+/** 启动与热更新共用同一套辅助模型引用门禁，禁止同一配置一边容忍、一边拒绝。 */
+export function assertAuxiliaryModelRefsResolvable(config: AppConfig, models: ModelsConfig): void {
+  const merged = { ...models, default: models.default };
+  const chains = [
+    ['guardrail', config.guardrail?.model, config.guardrail?.fallbackModels],
+    ['title generator', config.titleGenerator?.model, config.titleGenerator?.fallbackModels],
+  ] as const;
+  for (const [label, primary, fallbacks] of chains) {
+    const unresolved = primary
+      ? [primary, ...(fallbacks ?? [])].filter((ref) => !resolveModelRefStrict(merged, ref))
+      : [];
+    if (unresolved.length > 0) {
+      throw new Error(`${label} model chain cannot be resolved: ${unresolved.join(', ')}`);
+    }
+  }
+}
+
 /**
  * 先解析所有派生模型链，再返回只做同步赋值的 commit。这样解析异常发生在任何
  * 运行态改变之前，共享配置刷新器可以与其他切面一起提交。
@@ -46,21 +70,8 @@ export function prepareModelsHotUpdate(params: {
 }): ModelsHotUpdateCommit {
   const { config, target, models } = params;
   const merged = { ...models, default: models.default };
-  const guardrailRefs = config.guardrail?.model
-    ? [config.guardrail.model, ...(config.guardrail.fallbackModels ?? [])]
-    : [];
-  const unresolvedGuardrailRefs = guardrailRefs.filter((ref) => !resolveModelRefStrict(merged, ref));
-  if (unresolvedGuardrailRefs.length > 0) {
-    throw new Error(`guardrail model chain cannot be resolved after models update: ${unresolvedGuardrailRefs.join(', ')}`);
-  }
+  assertAuxiliaryModelRefsResolvable(config, merged);
   const nextGuardrail = resolveGuardrailModelConfigs({ models: merged, guardrail: config.guardrail });
-  const titleRefs = config.titleGenerator?.model
-    ? [config.titleGenerator.model, ...(config.titleGenerator.fallbackModels ?? [])]
-    : [];
-  const unresolvedTitleRefs = titleRefs.filter((ref) => !resolveModelRefStrict(merged, ref));
-  if (unresolvedTitleRefs.length > 0) {
-    throw new Error(`title generator model chain cannot be resolved after models update: ${unresolvedTitleRefs.join(', ')}`);
-  }
   const nextTitleGenerators = resolveTitleGeneratorConfigs({
     models: merged,
     titleGenerator: config.titleGenerator,
@@ -79,6 +90,37 @@ export function prepareModelsHotUpdate(params: {
     } else {
       target.titleGeneratorConfigs = nextTitleGenerators;
     }
+  };
+}
+
+/**
+ * 候选从新配置解析；回滚只恢复提交前已经生效的运行态快照。旧 config.json 可能
+ * 含启动期曾容忍的悬空引用，不能为了修复它再次严格解析它，否则会形成恢复死锁。
+ */
+export function prepareModelsHotUpdateTransaction(params: {
+  config: AppConfig;
+  target: ModelsHotUpdateTarget;
+  models: ModelsConfig;
+  previousModels: ModelsConfig;
+}): ModelsHotUpdateTransaction {
+  const previousGuardrail = [...(params.target.getGuardrailModelConfigs?.() ?? [])];
+  const previousTitleGenerators = [...(params.target.titleGeneratorConfigs ?? [])];
+  const commit = prepareModelsHotUpdate(params);
+  return {
+    commit,
+    rollback: () => {
+      configureModelPricing(params.previousModels);
+      params.target.updateGuardrailModelConfigs(previousGuardrail);
+      if (params.target.titleGeneratorConfigs) {
+        params.target.titleGeneratorConfigs.splice(
+          0,
+          params.target.titleGeneratorConfigs.length,
+          ...previousTitleGenerators,
+        );
+      } else {
+        params.target.titleGeneratorConfigs = previousTitleGenerators;
+      }
+    },
   };
 }
 

@@ -10,6 +10,7 @@
  * `kyApp` 未配置 → 绑定为 `null` → `collectRuntimeTooling` 不投影任何 `app__` 工具，
  * 现有生产行为零变化。
  */
+import type { AppApprovalRegistry } from './approval.js';
 import type { AppToolSnapshotService } from './snapshot.js';
 import type { AppCapabilityToolProvider } from './toolProvider.js';
 
@@ -18,6 +19,8 @@ export interface AppCapabilityGatewayBinding {
   snapshots: AppToolSnapshotService;
   /** §6.2-3 的审批 TTL（`kyApp.gateway.approvalTtlMs`）。channel 侧建确认卡片时要用。 */
   approvalTtlMs: number;
+  /** §6.2-3 的审批绑定表：channel 弹卡片时登记，Gateway 执行时消费。 */
+  approvals: AppApprovalRegistry;
 }
 
 let current: AppCapabilityGatewayBinding | null = null;

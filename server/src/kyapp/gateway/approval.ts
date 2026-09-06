@@ -66,6 +66,9 @@ export function summarizeApprovalParams(
 }
 
 export interface BuildConfirmationCardInput {
+  /** 平台审批 id（= `interactionId` = `ApprovalRecord.id`）；给出即登记审批绑定。 */
+  interactionId?: string;
+  sessionId?: string;
   toolName?: string;
   toolId?: string;
   toolInput?: Record<string, unknown>;
@@ -94,6 +97,19 @@ export function buildAppConfirmationCard(
   const segments = name.slice('app__'.length).split('__');
   const now = (input.now ?? Date.now)();
   const ttlMs = input.approvalTtlMs ?? resolveAppApprovalTtlMs();
+  // 顺手登记审批绑定：`aph` 与过期时刻在这里就定死，执行时只能消费不能重算。
+  // 租户/用户此刻拿不到（`InteractionEvent` 不带），留空，消费时跳过这两项比对。
+  const registry = getAppCapabilityGateway()?.approvals;
+  if (registry && input.interactionId && meta && input.sessionId) {
+    registry.remember({
+      approvalId: input.interactionId,
+      installationId: meta.installationId,
+      sessionId: input.sessionId,
+      capabilityId: meta.capabilityId,
+      aph: approvalParamsHash(meta.capabilityId, input.toolInput ?? {}),
+      expiresAt: now + ttlMs,
+    });
+  }
   return {
     systemName: meta?.systemName ?? segments[0] ?? name,
     capabilityName: meta?.capabilityName ?? segments.slice(1).join('__') ?? name,
@@ -108,9 +124,10 @@ export function buildAppConfirmationCard(
 /** §6.2-3 的审批绑定。消费单位 = 逻辑调用。 */
 export interface AppApprovalBinding {
   approvalId: string;
-  tenantId: string;
+  /** 建卡片时 channel 侧拿不到租户/用户（`InteractionEvent` 不带），因此可选；缺省即不比对该项。 */
+  tenantId?: string;
   installationId: string;
-  userId: string;
+  userId?: string;
   sessionId: string;
   capabilityId: string;
   /** `sha256(JCS({cap, input}))`。参数一变它就变 → 必然是另一次审批。 */
@@ -177,9 +194,9 @@ export class AppApprovalRegistry {
       return { ok: false, reason: 'expired' };
     }
     const same =
-      binding.tenantId === input.tenantId &&
+      (binding.tenantId === undefined || binding.tenantId === input.tenantId) &&
       binding.installationId === input.installationId &&
-      binding.userId === input.userId &&
+      (binding.userId === undefined || binding.userId === input.userId) &&
       binding.sessionId === input.sessionId &&
       binding.capabilityId === input.capabilityId &&
       binding.aph === input.aph;

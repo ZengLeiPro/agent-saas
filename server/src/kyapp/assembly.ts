@@ -29,6 +29,10 @@ import { createKyAppOutbound, type KyAppOutbound } from './outbound.js';
 import { AppToolSnapshotService } from './gateway/snapshot.js';
 import { createKyAppSnapshotSource } from './gateway/snapshotSource.js';
 import { PgAppToolSnapshotStore } from './gateway/snapshotStore.js';
+import { AppApprovalRegistry } from './gateway/approval.js';
+import { GatewayPolicy } from './gateway/policy.js';
+import { AppLogicalCallRunner } from './gateway/lcid.js';
+import { createAppCapabilityInvoker } from './gateway/invoker.js';
 import { AppCapabilityToolProvider } from './gateway/toolProvider.js';
 import { setAppCapabilityGateway, type AppCapabilityGatewayBinding } from './gateway/runtimeBinding.js';
 import { KyAppSatIssuer } from './sat/issuer.js';
@@ -203,11 +207,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     outbound,
     config,
     logger: { warn: (message) => serverLogger.warn(message) },
-    async isTenantAdmin({ tenantId, userId }) {
-      if (!runtime.membershipStore) return false;
-      const membership = await runtime.membershipStore.getMembership(tenantId, userId);
-      return membership?.status === 'active' && membership.persona === 'org_admin';
-    },
+    isTenantAdmin: (input) => isTenantAdminForGateway(input),
     resolveAuthBinding: (userId) => {
       const authority = runtime.authEpochAuthority;
       if (!authority) return null;
@@ -225,11 +225,40 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     now,
     logger: { warn: (message) => serverLogger.warn(message) },
   });
+  // 逻辑调用状态机 + 四道闸门 + 审批绑定，串成 provider 的 invoke（§6.2）。
+  const gatewayPolicy = new GatewayPolicy({ limits: config.gateway.limits, now });
+  const gatewayApprovals = new AppApprovalRegistry({ now });
+  const isTenantAdminForGateway = async ({ tenantId, userId }: { tenantId: string; userId: string }) => {
+    if (!runtime.membershipStore) return false;
+    const membership = await runtime.membershipStore.getMembership(tenantId, userId);
+    return membership?.status === 'active' && membership.persona === 'org_admin';
+  };
+  const gatewayInvoker = createAppCapabilityInvoker({
+    runner: new AppLogicalCallRunner({
+      issuer,
+      outbound,
+      config: config.gateway,
+      now,
+      logger: { warn: (message) => serverLogger.warn(message) },
+    }),
+    policy: gatewayPolicy,
+    approvals: gatewayApprovals,
+    config: config.gateway,
+    isTenantAdmin: isTenantAdminForGateway,
+    logger: { warn: (message) => serverLogger.warn(message) },
+    now,
+  });
   const gatewayProvider = new AppCapabilityToolProvider({
     snapshots,
+    invoker: gatewayInvoker,
     logger: { warn: (message) => serverLogger.warn(message) },
   });
-  const gateway = { snapshots, provider: gatewayProvider, approvalTtlMs: config.gateway.approvalTtlMs };
+  const gateway: AppCapabilityGatewayBinding = {
+    snapshots,
+    provider: gatewayProvider,
+    approvalTtlMs: config.gateway.approvalTtlMs,
+    approvals: gatewayApprovals,
+  };
   setAppCapabilityGateway(config.gateway.enabled ? gateway : null);
 
   // 让 `runtimeAssignmentResourceResolver` 的 system_installation 分支拿到真实 store。

@@ -14,7 +14,7 @@ import {
 } from './types.js';
 import { canonicalToolInputDigest } from './canonicalToolInput.js'; import { createExecutionAttempt, createInvocationCorrelation, runWithInvocationCorrelation } from './invocationCorrelation.js';
 import { requireEventTenantId, TenantProjectingEventSink } from './rawAgentLoopEventSink.js';
-import { buildFailurePresentation, ToolExecutionError, type ToolPresentation } from '../agent/toolPresentationBuilder.js';
+import { buildFailurePresentation, ToolExecutionError, type ToolPresentation } from '../agent/toolPresentationBuilder.js'; import { buildToolAuditExtension } from './toolAuditEvent.js';
 export { canonicalToolInputDigest } from './canonicalToolInput.js';
 import type { InboundMessage, OutboundEvent } from '../types/index.js';
 import {
@@ -2936,7 +2936,7 @@ export class RawAgentLoop implements AgentLoop {
         toolName: args.descriptor.name,
         ...(skillName ? { skillName } : {}),
         risk: args.descriptor.risk,
-        ...(args.authorization.approvalId ? { approvalId: args.authorization.approvalId } : {}),
+        ...buildToolAuditExtension(args.authorization, args.context, result.metadata),
         authorization: args.authorization,
         executionTarget: args.baseToolContext.workspace.executionTarget,
         status: 'success',
@@ -2987,7 +2987,7 @@ export class RawAgentLoop implements AgentLoop {
         toolName: args.descriptor.name,
         ...(skillName ? { skillName } : {}),
         risk: args.descriptor.risk,
-        ...(args.authorization.approvalId ? { approvalId: args.authorization.approvalId } : {}),
+        ...buildToolAuditExtension(args.authorization, args.context, err instanceof ToolExecutionError ? err.resultMetadata : undefined),
         authorization: args.authorization,
         executionTarget: args.baseToolContext.workspace.executionTarget,
         status: 'error',

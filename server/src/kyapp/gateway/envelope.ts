@@ -41,6 +41,8 @@ export interface AppInvocationSuccess {
   data: unknown;
   /** 定制项目响应体的 UTF-8 字节数（截断前）。 */
   outputBytes: number;
+  /** 响应体 sha256（§6.2-8 审计字段）。**审计只存哈希，不存明文结果**。 */
+  outputHash?: string;
   resultLink?: AppResultLink;
 }
 
@@ -50,6 +52,7 @@ export interface AppInvocationFailure {
   /** 定制项目的 `message`，**只用于日志与审计**，绝不进模型上下文。 */
   logMessage?: string;
   outputBytes?: number;
+  outputHash?: string;
 }
 
 export type AppInvocationOutcome = AppInvocationSuccess | AppInvocationFailure;
@@ -187,6 +190,10 @@ export function buildAppResultMetadata(input: {
   outcome: AppInvocationOutcome;
   attempts: number;
   approvalId?: string;
+  /** `sha256(JCS({cap, input}))`，与审批绑定的 `aph` 同值。**审计只存哈希，不存明文入参**。 */
+  inputHash?: string;
+  /** 默认 `agent_tool`；壳内 iframe 发起的调用由调用方改写（§5.4）。 */
+  origin?: string;
 }): Record<string, unknown> {
   const { outcome } = input;
   return {
@@ -197,6 +204,9 @@ export function buildAppResultMetadata(input: {
     requestId: input.requestId,
     dig: input.entry.registeredDigest,
     attempts: input.attempts,
+    origin: input.origin ?? 'agent_tool',
+    ...(input.inputHash ? { inputHash: input.inputHash } : {}),
+    ...(outcome.outputHash ? { outputHash: outcome.outputHash } : {}),
     ...(input.approvalId ? { approvalId: input.approvalId } : {}),
     ...(outcome.kind === 'success'
       ? {
@@ -218,6 +228,8 @@ export function buildAppToolResult(input: {
   outcome: AppInvocationOutcome;
   attempts: number;
   approvalId?: string;
+  inputHash?: string;
+  origin?: string;
 }): ToolResult {
   const { entry, outcome } = input;
   const body =

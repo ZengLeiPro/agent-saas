@@ -22,6 +22,8 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { sha256Hex } from '@kaiyan/ky-app-contract';
+
 import type { KyAppGatewayConfig } from '../config.js';
 import { KyAppOutboundError, type KyAppOutbound, type KyAppOutboundResult } from '../outbound.js';
 import { KyAppSatDeniedError, type KyAppSatIssuer } from '../sat/issuer.js';
@@ -369,6 +371,7 @@ export class AppLogicalCallRunner {
         kind: 'failure',
         code: resolved,
         outputBytes: utf8ByteLength(response.text),
+        outputHash: sha256Hex(response.text),
         ...(logMessage ? { logMessage } : {}),
       },
     };
@@ -380,9 +383,11 @@ export class AppLogicalCallRunner {
     response: KyAppOutboundResult,
   ): AppInvocationOutcome {
     const outputBytes = utf8ByteLength(response.text);
+    // 审计只存响应体哈希，不存明文结果（§6.2-8）。
+    const outputHash = sha256Hex(response.text);
     if (exceedsResponseBudget(response.text, this.deps.config.maxResponseBytes)) {
       // §6.2-6：对方本该自己 422，没守约时 Gateway 兜住。绝不把超长正文塞给模型。
-      return { kind: 'failure', code: 'response_too_large', outputBytes };
+      return { kind: 'failure', code: 'response_too_large', outputBytes, outputHash };
     }
     const payload = response.json;
     if (
@@ -403,6 +408,7 @@ export class AppLogicalCallRunner {
       kind: 'success',
       data: data ?? null,
       outputBytes,
+      outputHash,
       ...(resultLink ? { resultLink } : {}),
     };
   }
@@ -488,6 +494,7 @@ export class AppLogicalCallRunner {
       if (exceedsResponseBudget(text, this.deps.config.maxResponseBytes)) {
         return { kind: 'failure', code: 'response_too_large', outputBytes: utf8ByteLength(text) };
       }
+      const outputHash = sha256Hex(text);
       const resultLink = buildResultLink({
         entry: input.entry,
         resultLink: input.entry.resultLink,
@@ -497,6 +504,7 @@ export class AppLogicalCallRunner {
         kind: 'success',
         data: result ?? null,
         outputBytes: utf8ByteLength(text),
+        outputHash,
         ...(resultLink ? { resultLink } : {}),
       };
     }

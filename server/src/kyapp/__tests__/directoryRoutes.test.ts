@@ -129,6 +129,43 @@ describe('目录端点鉴权（服务凭据 Bearer + scope）', () => {
     }
   });
 
+  it('实例仍是 pending → 403 installation_disabled（只有 enabled 放行）', async () => {
+    const harness = await rig();
+    // 新建的实例初始就是 pending（状态机：pending → enabled → …），
+    // 用它自己的一枚 active 凭据打目录端点，证明拒绝的判据是实例状态而不是凭据。
+    await harness.systems.createInstallation({
+      installationId: 'tsi_demo_pending',
+      tenantId: TEST_TENANT,
+      systemId: 'demo-erp',
+      baseUrl: 'https://erp-pending.example.com',
+      origin: 'https://erp-pending.example.com',
+      techContactUserId: 'u_tech',
+      actor: 'u_seed',
+    });
+    const credential = await activeCredential(harness, undefined, 'tsi_demo_pending');
+    harness.directorySnapshots.set(TEST_TENANT, {
+      snapshotSeq: 1,
+      users: [user('u-1')],
+      groups: [],
+    });
+
+    for (const path of ['/directory/snapshot', '/directory/changes?after=0']) {
+      const response = await harness.request(`${BASE}${path}`, auth(credential));
+      expect(response.status).toBe(403);
+      expect((await response.json()) as unknown).toMatchObject({
+        error: { code: 'installation_disabled' },
+      });
+    }
+
+    // 切到 enabled 后同一枚凭据立刻放行——证明上面拒的确实是 pending 这一档。
+    await harness.systems.updateInstallationStatus({
+      installationId: 'tsi_demo_pending',
+      status: 'enabled',
+      actor: 'u_seed',
+    });
+    expect((await harness.request(`${BASE}/directory/snapshot`, auth(credential))).status).toBe(200);
+  });
+
   it('组织 id 只从凭据推导：请求参数里塞 tenantId 完全无效', async () => {
     const harness = await rig();
     const credential = await activeCredential(harness);

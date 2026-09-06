@@ -122,9 +122,16 @@ export function createKyAppDirectoryRouter(options: KyAppDirectoryRouterOptions)
       return null;
     }
     // §3.7：停用 / 删除的实例除 events / health 外一律拒绝。
-    // `pending` 放行：定制项目常常要先把组织目录同步好再由平台切到 enabled。
-    if (installation.status === 'disabled' || installation.status === 'deleted') {
-      sendKyAppError(req, res, 'installation_disabled', '安装实例已停用');
+    // **只有 `enabled` 放行**（总控裁决，偏差 `2B-C-01`）：`pending` 比 `disabled` 更早期
+    // ——安装流程是 建实例 → 验域名 → 签凭据 → ack → enable，ack 之后才切 enabled，
+    // pending 期间定制项目还不需要目录数据；而目录数据含 PII，按最小暴露面处理。
+    if (installation.status !== 'enabled') {
+      sendKyAppError(
+        req,
+        res,
+        'installation_disabled',
+        installation.status === 'pending' ? '安装实例尚未启用' : '安装实例已停用',
+      );
       return null;
     }
     const decision = limiter.take(installation.tenantId, now());

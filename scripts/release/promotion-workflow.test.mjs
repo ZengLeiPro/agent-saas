@@ -102,7 +102,7 @@ test('durable promoting marker interruptions always converge through needs_human
 
 test('promotion accepts only an approved release id and shares the production runtime lock', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  assert.match(workflow, /^name: Release · 发布到生产环境$/mu);
+  assert.match(workflow, /^name: 5 · 发布到生产环境$/mu);
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
   assert.doesNotMatch(workflow, /^\s+(?:release_sha|artifact_url|image_tag):/mu);

@@ -43,6 +43,15 @@ export const DEFAULT_PROBE = {
 /** 规范 §3.7：平台事件重试 24 小时。 */
 export const DEFAULT_EVENT_RETRY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 规范 §3.6/§3.4：目录变更流保留 30 天；投影节拍 5 分钟
+ * （§3.4「调部门：数据范围随目录更新，延迟 ≤ 轮询间隔，默认 5 分钟」）。
+ */
+export const DEFAULT_DIRECTORY = {
+  retentionDays: 30,
+  reconcileIntervalMs: 5 * 60 * 1000,
+} as const;
+
 const absoluteUrl = z
   .string()
   .min(1)
@@ -94,6 +103,20 @@ const eventsSchema = z
   })
   .strict();
 
+const directorySchema = z
+  .object({
+    /** 变更流保留天数（§3.6 默认 30 天）；早于下界的游标一律要求重拉快照。 */
+    retentionDays: z.number().int().min(1).max(365).optional(),
+    /** 目录投影节拍（§3.4 默认 5 分钟）。 */
+    reconcileIntervalMs: z
+      .number()
+      .int()
+      .min(30_000)
+      .max(6 * 60 * 60 * 1000)
+      .optional(),
+  })
+  .strict();
+
 /** `config.json` 中 `kyApp` 域的原始形态。 */
 export const kyAppConfigSchema = z
   .object({
@@ -106,6 +129,8 @@ export const kyAppConfigSchema = z
     satTtlSeconds: satTtlSchema.optional(),
     probe: probeSchema.optional(),
     events: eventsSchema.optional(),
+    /** WP2b 组织目录变更流（§3.6）。整域缺省即全部取默认值，不需要新增任何环境变量。 */
+    directory: directorySchema.optional(),
     /**
      * 仅 staging/local 可开：允许向 http 的本机地址出站（规范 §6.3 自建出站安全）。
      * prod 打开一律视为配置错误。
@@ -127,6 +152,7 @@ export interface KyAppPlatformConfig {
   satTtlSeconds: { user: number; agent: number; platform: number };
   probe: { liveIntervalMs: number; readyIntervalMs: number; failureThreshold: number };
   events: { retryWindowMs: number };
+  directory: { retentionDays: number; reconcileIntervalMs: number };
   allowInsecureOutbound: boolean;
 }
 
@@ -193,6 +219,11 @@ export function resolveKyAppConfig(rawConfig: unknown): KyAppPlatformConfig | nu
       failureThreshold: raw.probe?.failureThreshold ?? DEFAULT_PROBE.failureThreshold,
     },
     events: { retryWindowMs: raw.events?.retryWindowMs ?? DEFAULT_EVENT_RETRY_WINDOW_MS },
+    directory: {
+      retentionDays: raw.directory?.retentionDays ?? DEFAULT_DIRECTORY.retentionDays,
+      reconcileIntervalMs:
+        raw.directory?.reconcileIntervalMs ?? DEFAULT_DIRECTORY.reconcileIntervalMs,
+    },
     allowInsecureOutbound: raw.allowInsecureOutbound === true,
   };
 }

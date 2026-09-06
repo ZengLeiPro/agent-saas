@@ -19,6 +19,8 @@ test('分片脚本保留原 PR preflight 的全部门禁', () => {
     'src/__tests__/entitlementScopeBaseline.pg.test.ts',
     'src/kyapp/systems/store.pg.test.ts',
     'src/kyapp/__tests__/kyAppStores.pg.test.ts',
+    // WP2b：v42 迁移与目录变更日志/投影的 PG 合约同样必须在 postgres 任务显式清单里。
+    'src/kyapp/directory/store.pg.test.ts',
     'pnpm test:release-contracts',
     'pnpm check:runtime-dependencies',
     'pnpm -F server typecheck',

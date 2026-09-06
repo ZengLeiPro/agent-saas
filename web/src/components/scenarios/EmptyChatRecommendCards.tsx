@@ -19,7 +19,7 @@ import {
   useScenarioLibrary,
 } from "./useScenarioLibrary";
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
-import { hasReplayScript } from "./replay/availability";
+import { hasReplayScript } from "@agent/shared/scenarios/replay/availability";
 import { isHookScenario } from "./workflowUi";
 import { useWorkflowDisplayConfig } from "./useWorkflowDisplayConfig";
 

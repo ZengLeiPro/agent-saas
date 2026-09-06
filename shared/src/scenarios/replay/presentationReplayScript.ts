@@ -1,12 +1,6 @@
-import type {
-  ApiTranscriptBlock,
-  CatalogScenarioPublic,
-  DetailLine,
-  PanelPatch,
-  PanelTone,
-  PanelView,
-  SystemPanelSnapshot,
-} from "@agent/shared";
+import type { PanelPatch, PanelTone, PanelView, SystemPanelSnapshot } from "../../lib/systemPanel";
+import type { DetailLine } from "../../lib/toolPresentation";
+import type { ApiTranscriptBlock, CatalogScenarioPublic } from "../../types";
 import type { ReplayScript, ReplayStep } from "./types";
 
 /**

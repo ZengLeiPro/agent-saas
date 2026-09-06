@@ -23,7 +23,7 @@
                 │
  main push 跑 App CI；ACS 仅在相关路径命中时运行其拓扑
                 │
-       Deploy Staging RC（手动）
+          部署测试环境（手动）
                 │
  prepare-evidence：生成/复用不可变发布证据
                 │
@@ -32,11 +32,11 @@
                 │
         ┌───────┴────────┐
         │                │
-Staging Acceptance   可直接继续
+测试环境验收         可直接继续
 （手动、可选 E2E）       │
         └───────┬────────┘
                 │
-Promote Staging RC to Production（手动）
+       发布到生产环境（手动）
                 │
  ACS → API/Worker → Web → 全组件现场回读
                 │
@@ -50,20 +50,20 @@ Promote Staging RC to Production（手动）
 这套流程把五件事分开了：
 
 1. **代码能不能合并**：PR CI 决定。
-2. **这个 main SHA 有没有可信发布依据**：`Deploy Staging RC` 的 `prepare-evidence` 前置 job 决定。
-3. **不可变制品能不能在预览环境正常部署**：Deploy Staging RC 决定。
-4. **完整浏览器、Agent 和业务行为是否符合预期**：可选 Staging Acceptance 决定。
+2. **这个 main SHA 有没有可信发布依据**：`部署测试环境` 的 `prepare-evidence` 前置 job 决定。
+3. **不可变制品能不能在预览环境正常部署**：`部署测试环境` 决定。
+4. **完整浏览器、Agent 和业务行为是否符合预期**：可选的 `测试环境验收` 决定。
 5. **是否把这组已经冻结的制品晋级生产**：Promotion 决定。
 
 ## 二、GitHub 上五个 Workflow 分别做什么
 
-| Workflow                           | 触发方式                     | 核心职责                                                | 是否改生产                 |
-| ---------------------------------- | ---------------------------- | ------------------------------------------------------- | -------------------------- |
-| `App CI / Deploy`                  | PR、push main、手动          | App 主门禁；手动时兼容旧生产部署                        | 只有手动 dispatch 会改生产 |
-| `ACS CI / Deploy`                  | PR、相关路径 push main、手动 | 判断 ACS 影响，测试 Orchestrator；手动时兼容旧 ACS 部署 | 只有手动 dispatch 会改生产 |
-| `Deploy Staging RC`                | 手动                         | 创建不可变 RC、部署预览环境并跑确定性门禁               | 只改 Staging               |
-| `Staging Acceptance`               | 手动、可选                   | 浏览器、Agent、ACS、恢复行为的完整 E2E                  | 只操作 Staging             |
-| `Promote Staging RC to Production` | 手动                         | 将 RC 的原制品按 digest 晋级生产并自动收尾              | 会改生产                   |
+| Workflow          | 触发方式                     | 核心职责                                                | 是否改生产                 |
+| ----------------- | ---------------------------- | ------------------------------------------------------- | -------------------------- |
+| `App CI / Deploy` | PR、push main、手动          | App 主门禁；手动时兼容旧生产部署                        | 只有手动 dispatch 会改生产 |
+| `ACS CI / Deploy` | PR、相关路径 push main、手动 | 判断 ACS 影响，测试 Orchestrator；手动时兼容旧 ACS 部署 | 只有手动 dispatch 会改生产 |
+| `部署测试环境`    | 手动                         | 创建不可变 RC、部署测试环境并跑确定性门禁               | 只改测试环境               |
+| `测试环境验收`    | 手动、可选                   | 浏览器、Agent、ACS、恢复行为的完整 E2E                  | 只操作测试环境             |
+| `发布到生产环境`  | 手动                         | 将 RC 的原制品按 digest 晋级生产并自动收尾              | 会改生产                   |
 
 `App CI / Deploy` 和 `ACS CI / Deploy` 的生产 Deploy 入口目前仍保留，作为兼容与应急通道；新版本正常发版应优先走 RC 主链。
 
@@ -107,7 +107,7 @@ PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再�
 
 ## 四、第二阶段：手动 RC 流程先生成或复用 Release Evidence
 
-PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。随后人工运行 `Deploy Staging RC`；Workflow 会先在隔离的 `prepare-evidence` job 中锁定 dispatch 的完整 main SHA，等待并验证同 SHA 的必需 CI，再生成或复用 Release Evidence。证据准备成功后，独立的 `build-deploy-verify` job 才能进入 Staging 构建与部署。
+PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。随后人工运行 `部署测试环境`；Workflow 会先在隔离的 `prepare-evidence` job 中锁定 dispatch 的完整 main SHA，等待并验证同 SHA 的必需 CI，再生成或复用 Release Evidence。证据准备成功后，独立的 `build-deploy-verify` job 才能进入 Staging 构建与部署。
 
 `prepare-evidence` 会验证：
 
@@ -123,11 +123,11 @@ PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。随后�
 
 如果它失败，最常见的含义不是“单测失败”，而是当前 main SHA 没有完整发布依据，例如生产 identity 与物理态不一致、ACS 同 SHA 证据缺失、基线制品找不到或该提交不是合法 PR merge。
 
-## 五、第三阶段：部署 Staging RC
+## 五、第三阶段：部署测试环境
 
 ### 5.1 如何启动
 
-在 GitHub Actions 手动运行 `Deploy Staging RC`，只能选择 main，输入可选的发版说明。Workflow 会锁定 dispatch 当时的完整 SHA，后续 main 再前进也不会改变本次 RC。
+在 GitHub Actions 手动运行 `部署测试环境`，只能选择 main，输入可选的发版说明。Workflow 会锁定 dispatch 当时的完整 SHA，后续 main 再前进也不会改变本次 RC。
 
 RC ID 自动生成，例如：
 
@@ -165,7 +165,7 @@ Manifest 顶层 `releaseSha` 只标识本次 RC commit；物理组件身份以�
 
 API/Worker/ACS 先部署，Web 最后发布。Staging 只使用 Manifest 与 `artifact-index.json` 共同冻结的制品，不在目标 ECS 上重新 install/build。
 
-### 5.4 Deploy Staging RC 的硬门禁
+### 5.4 部署测试环境的硬门禁
 
 这个 Workflow 现在不跑 Playwright，而是验证七项确定性事实：
 
@@ -200,9 +200,9 @@ Staging 证据作为 GitHub Actions artifact 保留 90 天，同时把 verified 
 
 必须保留一个明确边界：具有宿主机特权的身份理论上仍能重新挂载共享 NAS 根目录，所以这里不能宣传“完全隔离”或“物理隔离”。
 
-## 七、第四阶段：可选 Staging Acceptance
+## 七、第四阶段：可选测试环境验收
 
-`Staging Acceptance` 已从部署链彻底拆出：它默认不运行、不影响 Promotion，也不写入正式发布 attestation。
+`测试环境验收` 已从部署链彻底拆出：它默认不运行、不影响 Promotion，也不写入正式发布 attestation。
 
 需要时手动输入当前 RC ID。Workflow 会先确认：
 
@@ -229,7 +229,7 @@ Staging 证据作为 GitHub Actions artifact 保留 90 天，同时把 verified 
 
 ### 8.1 如何启动
 
-手动运行 `Promote Staging RC to Production`，必填：
+手动运行 `发布到生产环境`，必填：
 
 - `release_id`：已经通过确定性 Staging 门禁的 RC。
 - `reason`：这次生产晋级原因和人工判断。
@@ -294,7 +294,7 @@ Migration plan 会从仓库权威入口构建 baseline 与 target 两侧的相�
 - **不可变 RC 记录可以同时存在多个**：每个都有自己的 tag、GitHub Pre-release、Manifest、OSS 制品和 attestation。
 - **在线 Staging 只有一个槽位**：固定 ECS、固定三套 staging unit、固定 Web OSS bucket、固定两个域名；新 RC 部署后会成为唯一在线版本。
 
-`Deploy Staging RC` 与 `Staging Acceptance` 共享同一个 `staging-runtime` concurrency group，因此部署和验收全局互斥。Acceptance 在开始、fixture reset 与浏览器依赖准备完成后且真正执行 E2E 前、以及结束前共三次校验同一 Manifest 与 Web/API/ACS identity，并把顶层 RC SHA 与组件 `sourceSha` 分开处理：Web/API/ACS runtime SHA 分别绑定 `components.web.sourceSha`、`components.api.sourceSha`、`components.acs.sourceSha`，再将 Manifest digest 与 Web `configFingerprint/webDigest`、API `serverDigest/webDigest/ACS digests` 及 ACS 现场 health digests 逐项绑定；即使同一 RC ID/SHA 下出现错误制品、Manifest 资产漂移，或外部配置绕过 concurrency 导致换版，也会 fail closed。旧 RC 的文件可以继续存在，但无法与新 RC 同时提供独立预览 URL。
+`部署测试环境` 与 `测试环境验收` 共享同一个 `staging-runtime` concurrency group，因此部署和验收全局互斥。Acceptance 在开始、fixture reset 与浏览器依赖准备完成后且真正执行 E2E 前、以及结束前共三次校验同一 Manifest 与 Web/API/ACS identity，并把顶层 RC SHA 与组件 `sourceSha` 分开处理：Web/API/ACS runtime SHA 分别绑定 `components.web.sourceSha`、`components.api.sourceSha`、`components.acs.sourceSha`，再将 Manifest digest 与 Web `configFingerprint/webDigest`、API `serverDigest/webDigest/ACS digests` 及 ACS 现场 health digests 逐项绑定；即使同一 RC ID/SHA 下出现错误制品、Manifest 资产漂移，或外部配置绕过 concurrency 导致换版，也会 fail closed。旧 RC 的文件可以继续存在，但无法与新 RC 同时提供独立预览 URL。
 
 ## 十一、GitHub 与阿里云分别存了什么
 
@@ -303,7 +303,7 @@ Migration plan 会从仓库权威入口构建 baseline 与 target 两侧的相�
 - Actions 日志和 runner 临时目录：由 GitHub 托管，run 完成后 runner 临时盘销毁。
 - Coverage artifact：7 天。
 - Staging deterministic evidence artifact：90 天。
-- Staging Acceptance screenshot/video/summary：14 天。
+- 测试环境验收 screenshot/video/summary：14 天。
 - Production Promotion evidence artifact：90 天。
 - GitHub Pre-release：Manifest、artifact index、追加式 attestation、operation receipts；没有 workflow 内置过期时间。
 - `rc-*` tag：Ruleset 禁止更新和删除。
@@ -338,16 +338,16 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 1. 所有代码通过 PR，不直推 main。
 2. 等 `Build & Check`、`ACS Impact Gate` 都绿再合并。
 3. 合并后等 main push CI 通过。
-4. 手动运行 `Deploy Staging RC`，写清发版说明；先等待其 `prepare-evidence` job 成功，再进入构建部署。
+4. 手动运行 `部署测试环境`，写清发版说明；先等待其 `prepare-evidence` job 成功，再进入构建部署。
 5. 打开 `https://staging-agent.kaiyan.net` 做必要的人工目检。
-6. 高风险版本、重要交互改动或专门测试窗口，再手动跑 `Staging Acceptance`；普通确定性版本不必每次死磕完整 E2E。
+6. 高风险版本、重要交互改动或专门测试窗口，再手动跑 `测试环境验收`；普通确定性版本不必每次死磕完整 E2E。
 7. 在 RC 创建后 24 小时内运行 Promotion，填写明确原因。
 8. 最终核对 Production Deployment、completed attestation、API ready、ACS health、runtime identity 与 active physical topology。
 
 ## 十四、我认为最需要注意的事项
 
 1. **不要把“CI 绿”写成“已上线”**：PR/push 只测试；Staging 和 Production 都要显式 dispatch。
-2. **Release Evidence 是正式链必需环节**：它由 `Deploy Staging RC` 的前置 job 生成或复用，不是重复测试，而是把 main、CI、生产基线和不可变制品绑定起来。
+2. **Release Evidence 是正式链必需环节**：它由 `部署测试环境` 的前置 job 生成或复用，不是重复测试，而是把 main、CI、生产基线和不可变制品绑定起来。
 3. **完整 E2E 不再阻塞发版是正确选择**：它仍有价值，但当前单 worker 串行、包含重启和恢复测试，天然比确定性部署门禁更慢、更易波动。
 4. **只有一个在线 Staging**：跑 Acceptance 或部署新 RC 前，应先确认没有人正在演示或测试旧版本。
 5. **Staging 不是完全物理隔离**：共用 RDS 实例、NAS 和 ACS 集群；任何新增连接器、通知或数据访问能力，都必须继续扩展反向拒绝证据。
@@ -367,6 +367,6 @@ RC31 已实际跑通当时的主链：
 - Promotion：run `33317838540`，success。
 - 后置 Release Evidence：run `33318219901`，success。
 - 当前生产：`rc-20260830-31`，API/Worker/ACS/Web identity 与物理运行态一致。
-- Staging Acceptance：本轮未运行，符合“可选、不阻塞”的新规则。
+- 测试环境验收：本轮未运行，符合“可选、不阻塞”的新规则。
 
 该样本证明 2026-08-30 版本曾用真实 RC、Staging 和 Production 跑通。P0–P2 修订后的共享 Staging 互斥、当时的独立 expand confirmation 和 Web-only compatibility 收窄，本次仅执行仓库静态测试、状态机测试、typecheck/build；仍需后续按审批窗口做一次 Staging/Production 现场复测，不能把旧样本升格为新实现的现场证明。

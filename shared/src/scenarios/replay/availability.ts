@@ -1,4 +1,4 @@
-import type { CatalogScenarioPublic } from "@agent/shared";
+import type { CatalogScenarioPublic } from "../../types";
 
 export const HANDWRITTEN_REPLAY_SCENARIO_IDS = [
   "catalog-evidence-backed-communication-create",

@@ -4,7 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenariosPanel } from "./ScenariosPanel";
 import { makeWorkflowLibrary, makeWorkflowScenario, makeWorkflowSkin } from "./workflowTestFixtures";
 import { OUTCOME_OPTIONS } from "./workflowUi";
-import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from "./replay/technicalInquiryTraceMeta";
+import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from "@agent/shared/scenarios/replay/technicalInquiryTraceMeta";
 
 const mocked = vi.hoisted(() => ({
   workflowLibrary: null as ReturnType<typeof makeWorkflowLibrary> | null,

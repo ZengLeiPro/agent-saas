@@ -413,9 +413,9 @@
         {
           "path": "server/src/runtime/runStoreSchema.ts",
           "baselineDigest": "sha256:18235aca2e4b3f232772e6ea94390672ac6eca00da33e2e9ae0024601be39bed",
-          "targetDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
           "classification": "expand",
-          "reason": "普通启动仅 expand：增加可空辅助身份列、索引、能力登记、RLS 和兼容触发器；旧原始键保留。需显式非特权 writer 注册。真实旧代码入队、带数据升级和回滚通过；contract 单独执行，未在本次调用。"
+          "reason": "普通启动仅 expand：增加可空辅助身份列、索引、能力登记、RLS 和兼容触发器；旧原始键保留。需显式非特权 writer 注册。真实旧代码入队、带数据升级和回滚通过；contract 单独执行，未在本次调用。 本批复审：expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
           "path": "server/src/runtime/runStoreTenantRolling.ts",
@@ -536,7 +536,7 @@
         },
         {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
-          "digest": "sha256:2664748c5292182e323a71664f3ac089ff8f24f29fe2f232cb4f80f6b4002c97"
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pgSessionLock.pg.test.ts",
@@ -762,6 +762,13 @@
           "reason": "仅增加 TypeScript 接口可选恢复标志与连接失效回调；无数据库执行。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -809,6 +816,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -997,6 +1008,13 @@
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1032,6 +1050,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -1216,6 +1238,13 @@
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1251,6 +1280,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -1421,6 +1454,13 @@
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1452,6 +1492,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -1618,6 +1662,13 @@
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1649,6 +1700,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -1815,6 +1870,13 @@
           "reason": "新增 apns.privateKey 整值脱敏字段；配置投影与摘要逻辑不变，无数据库迁移。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -1846,6 +1908,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -2315,9 +2381,9 @@
         {
           "path": "server/src/runtime/runStoreSchema.ts",
           "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
-          "targetDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
           "classification": "expand",
-          "reason": "普通启动仅 expand：增加可空辅助身份列、索引、能力登记、RLS 和兼容触发器；旧原始键保留。需显式非特权 writer 注册。真实旧代码入队、带数据升级和回滚通过；contract 单独执行，未在本次调用。"
+          "reason": "普通启动仅 expand：增加可空辅助身份列、索引、能力登记、RLS 和兼容触发器；旧原始键保留。需显式非特权 writer 注册。真实旧代码入队、带数据升级和回滚通过；contract 单独执行，未在本次调用。 本批复审：expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         },
         {
           "path": "server/src/runtime/runStoreTenantRolling.ts",
@@ -2407,6 +2473,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -2592,6 +2662,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -2635,6 +2712,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -2848,6 +2929,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -2879,6 +2967,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3092,6 +3184,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3123,6 +3222,10 @@
         {
           "path": "server/src/__tests__/memoryHealthTools.test.ts",
           "digest": "sha256:984a860ad84e910edbdf307a82bfd58f2070513ada4f68c62ac767ece4fd6ce0"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3266,6 +3369,13 @@
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3285,6 +3395,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3428,6 +3542,13 @@
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3447,6 +3568,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3590,6 +3715,13 @@
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:93c32de2bd1911474cf09edf743b270f6f1145469e0d867d6c205c1f39b40290",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3609,6 +3741,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3752,6 +3888,13 @@
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
         },
         {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        },
+        {
           "path": "server/src/webPush/store.ts",
           "baselineDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
           "targetDigest": "sha256:1a7f8ccfad4eb7734271ff2adfe78f72406dc58331960746d3a61f8d2cc47740",
@@ -3771,6 +3914,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3905,6 +4052,13 @@
           "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         }
       ],
       "evidence": [
@@ -3915,6 +4069,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -4049,6 +4207,13 @@
           "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
           "classification": "expand",
           "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
         }
       ],
       "evidence": [
@@ -4059,6 +4224,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -4083,6 +4252,24 @@
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        }
+      ]
+    },
+    {
+      "baselineSha": "e15876744f281f50012148cc0d80a19dd2f22f71",
+      "files": [
+        {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
         }
       ]
     }

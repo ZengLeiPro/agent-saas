@@ -451,7 +451,7 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 - 使用生产专用、最小权限的 RAM 与 SSH 身份；`ACR_READ_ACCESS_KEY_ID/SECRET` 只允许读取 build record、build-record 日志与 image metadata，不得写入或删除镜像。
 - ACR repository 的 tag 写权限只能授予受控自动构建身份，必须移除人工账号及其他自动化的 tag 覆盖权限。build-record API 不返回该 record 的产物 digest；因此全分页、完整 SHA 与稳定 digest 读回不能替代这项现场权限前提，未完成权限审计时禁止触发 ACS Production compatibility。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
-  `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读。
+  `部署测试环境` 的 `prepare-evidence` 前置 job 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
   `prepare-evidence` 前置 job 使用；禁止与只读 Token 相同，也禁止进入实际 Staging 部署 job。
 - GitHub 不允许读取已保存 Secret 的明文；必须从可信凭据源重新写入 Environment Secret。
@@ -486,9 +486,9 @@ gh secret set '<SECRET_NAME>' \
 | `RELEASE_RECORD_OSS_URI`         | `oss://agent-saas-release-records`                            |
 | `RELEASE_RECORD_OSS_REGION`      | `cn-shenzhen`                                                 |
 
-该 URL 目前是隔离 Evidence Service 的兼容基址，`部署预发 RC` 的证据前置 job 会改写末尾路径并访问
+该 URL 目前是隔离 Evidence Service 的兼容基址，`部署测试环境` 的证据前置 job 会改写末尾路径并访问
 `/release-evidence`。Production Promotion 不再访问 `/production-observation`；完整浏览器、Agent
-与业务验收已移到独立的 `预发验收`，默认不运行、不阻断发布。
+与业务验收已移到独立的 `测试环境验收`，默认不运行、不阻断发布。
 
 写入形式：
 
@@ -658,4 +658,4 @@ Environment 配置值：
 Ruleset 和 Environment 配置完成，只代表 GitHub 发布控制面准备完成。只有 Staging 隔离资源、DNS、
 证据服务、不可变 RC、生产基线、确定性 Staging 门禁，以及生产物理组件与 runtime identity 收敛
 全部形成权威证据后，才能声明新版发布链路就绪。真实浏览器、Agent 与业务验收由独立
-`预发验收` 承担，是可选的发布后验收，不阻断部署链。
+`测试环境验收` 承担，是可选的发布后验收，不阻断部署链。

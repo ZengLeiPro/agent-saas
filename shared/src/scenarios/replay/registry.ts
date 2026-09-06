@@ -1,7 +1,7 @@
 import { knowledgeQaScript } from "./knowledgeQaScript";
 import { meetingActionScript } from "./meetingActionScript";
 import { presentationToReplayScript } from "./presentationReplayScript";
-import type { CatalogScenarioPublic } from "@agent/shared";
+import type { CatalogScenarioPublic } from "../../types";
 import type { ReplayScript } from "./types";
 
 /**

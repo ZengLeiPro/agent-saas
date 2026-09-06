@@ -107,11 +107,10 @@ export interface ExecutionContextBudgetInput {
 function fitCommentsBudget(
   comments: TaskBoardComment[],
   keepFullComments: number,
-): { comments: TaskBoardComment[]; digested: number; dropped: number } {
+): { comments: TaskBoardComment[]; dropped: number } {
   const fitted = [...comments];
   const sizes = fitted.map(jsonChars);
   let used = sizes.reduce((sum, size) => sum + size, 0);
-  let digested = 0;
   let dropped = 0;
   const overBudget = () => used > EXECUTION_CONTEXT_COMMENTS_MAX_CHARS;
   const degrade = (index: number): void => {
@@ -123,7 +122,6 @@ function fitCommentsBudget(
     used += size - sizes[index]!;
     fitted[index] = next;
     sizes[index] = size;
-    digested += 1;
   };
 
   const keep = Math.max(1, keepFullComments);
@@ -137,7 +135,7 @@ function fitCommentsBudget(
   for (let index = 0; index < fitted.length - 1 && overBudget(); index += 1) degrade(index);
   // 只剩最新一条却仍超预算（单条正文本身超大）：降级它，模型可用 comment.get 取原文。
   if (fitted.length === 1 && overBudget()) degrade(0);
-  return { comments: fitted, digested, dropped };
+  return { comments: fitted, dropped };
 }
 
 export interface ExecutionContextBudgetResult {

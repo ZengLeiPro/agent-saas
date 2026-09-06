@@ -29,6 +29,7 @@ verify_ios_store_profile() {
   label="$5"
   expected_team="$6"
   expected_app_group="$7"
+  expected_aps_environment="$8"
 
   test -f "$bundle/embedded.mobileprovision" || { echo "[M60-04] $label embedded provisioning profile missing" >&2; exit 1; }
   security cms -D -i "$bundle/embedded.mobileprovision" > "$profile_plist"
@@ -53,8 +54,17 @@ verify_ios_store_profile() {
     echo "[M60-04] $label signed development entitlement rejected" >&2
     exit 1
   fi
-  if printf '%s' "$signed_entitlements" | jq -e 'has("aps-environment")' >/dev/null; then
-    echo "[M60-04] $label unexpected push entitlement is outside iOS V1 scope" >&2
+  if [ "$expected_aps_environment" = production ]; then
+    printf '%s' "$signed_entitlements" | jq -e '.["aps-environment"] == "production"' >/dev/null || { echo "[M60-04] $label signed APNs environment must be production" >&2; exit 1; }
+    printf '%s' "$profile_entitlements" | jq -e '.["aps-environment"] == "production"' >/dev/null || { echo "[M60-04] $label provisioning profile APNs environment must be production" >&2; exit 1; }
+  elif [ "$expected_aps_environment" = absent ]; then
+    if printf '%s' "$signed_entitlements" | jq -e 'has("aps-environment")' >/dev/null \
+      || printf '%s' "$profile_entitlements" | jq -e 'has("aps-environment")' >/dev/null; then
+      echo "[M60-04] $label unexpected push entitlement" >&2
+      exit 1
+    fi
+  else
+    echo "[M60-04] $label invalid expected APNs environment" >&2
     exit 1
   fi
 
@@ -96,13 +106,12 @@ if [ "$profile" = ios-store ]; then
   codesign --verify --deep --strict "$app" >/dev/null
   codesign -d --entitlements :- "$app" > "$work/entitlements.plist" 2>/dev/null
   if plutil -extract get-task-allow raw -o - "$work/entitlements.plist" 2>/dev/null | grep -Fxq true; then echo '[M60-04] development entitlement rejected' >&2; exit 1; fi
-  verify_ios_store_profile "$app" "$expected_app" "$work/entitlements.plist" "$work/profile.plist" main-app "$expected_team" "$expected_app_group"
+  verify_ios_store_profile "$app" "$expected_app" "$work/entitlements.plist" "$work/profile.plist" main-app "$expected_team" "$expected_app_group" production
   signer_subject="$(openssl x509 -inform DER -in "$work/main-app-signing-cert-0" -noout -subject)"; reject_debug_subject "$signer_subject"
   signer="$(openssl x509 -inform DER -in "$work/main-app-signing-cert-0" -noout -fingerprint -sha256 | normalize_fp)"
   permissions="$(plutil -convert json -o - "$work/entitlements.plist" | jq -S -c .)"
   printf '%s' "$permissions" | jq -e --arg group "$expected_app_group" '.["com.apple.security.application-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] signed App Group entitlement mismatch' >&2; exit 1; }
   printf '%s' "$permissions" | jq -e --arg group "$profile_prefix.$expected_app_group" '.["keychain-access-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] signed Keychain Group entitlement mismatch' >&2; exit 1; }
-  if printf '%s' "$permissions" | jq -e 'has("aps-environment")' >/dev/null; then echo '[M60-04] unexpected push entitlement is outside iOS V1 scope' >&2; exit 1; fi
   appex=("$app"/PlugIns/*.appex)
   test "${#appex[@]}" -eq 1 && test -d "${appex[0]}" || { echo '[M60-04] IPA must contain exactly one Share Extension' >&2; exit 1; }
   extension="${appex[0]}"
@@ -110,7 +119,7 @@ if [ "$profile" = ios-store ]; then
   test "$extension_id" = "$expected_app.share-extension" || { echo '[M60-04] Share Extension bundle identifier mismatch' >&2; exit 1; }
   codesign --verify --strict "$extension" >/dev/null
   codesign -d --entitlements :- "$extension" > "$work/extension-entitlements.plist" 2>/dev/null
-  verify_ios_store_profile "$extension" "$expected_app.share-extension" "$work/extension-entitlements.plist" "$work/extension-profile.plist" share-extension "$expected_team" "$expected_app_group"
+  verify_ios_store_profile "$extension" "$expected_app.share-extension" "$work/extension-entitlements.plist" "$work/extension-profile.plist" share-extension "$expected_team" "$expected_app_group" absent
   extension_permissions="$(plutil -convert json -o - "$work/extension-entitlements.plist" | jq -S -c .)"
   printf '%s' "$extension_permissions" | jq -e --arg group "$expected_app_group" '.["com.apple.security.application-groups"] | index($group) != null' >/dev/null || { echo '[M60-04] Share Extension App Group entitlement mismatch' >&2; exit 1; }
   version_code=null

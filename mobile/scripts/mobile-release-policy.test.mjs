@@ -79,11 +79,14 @@ test('M60-04 downloaded artifact verifier invokes platform signing and identity 
   assert.match(verifier, /signer is absent from its provisioning profile/u);
   assert.match(verifier, /embedded provisioning profile missing/u);
   assert.match(verifier, /verify_ios_store_profile .* share-extension /u);
-  assert.match(verifier, /unexpected push entitlement is outside iOS V1 scope/u);
+  assert.match(verifier, /main-app.*production/u);
+  assert.match(verifier, /signed APNs environment must be production/u);
+  assert.match(verifier, /provisioning profile APNs environment must be production/u);
   assert.match(verifier, /Share Extension bundle identifier mismatch/u);
   assert.match(verifier, /IPA signed source Git SHA mismatch/u);
   assert.match(verifier, /\$label signed development entitlement rejected/u);
-  assert.match(verifier, /\$label unexpected push entitlement is outside iOS V1 scope/u);
+  assert.match(verifier, /share-extension.*absent/u);
+  assert.match(verifier, /\$label unexpected push entitlement/u);
 });
 
 test('M60-04 iOS build and submit are separate fail-closed operations', () => {

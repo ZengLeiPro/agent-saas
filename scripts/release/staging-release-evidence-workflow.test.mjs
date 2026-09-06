@@ -8,6 +8,7 @@ const removedWorkflowPath = new URL(
   import.meta.url,
 );
 const stagingWorkflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
+const acsWorkflowPath = new URL('../../.github/workflows/acs-sandbox.yml', import.meta.url);
 const stagingNginxPaths = [
   new URL('../../daemon-packaging/nginx/agent-saas-staging.conf.template', import.meta.url),
   new URL('../../daemon-packaging/nginx/agent-saas-staging.conf.example', import.meta.url),
@@ -82,12 +83,31 @@ test('Staging Nginx exposes the authenticated Evidence Writer capability endpoin
 });
 
 test('Staging evidence stage safely reuses or creates one immutable same-SHA record', async () => {
-  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  const [workflow, acsWorkflow] = await Promise.all([
+    readFile(stagingWorkflowPath, 'utf8'),
+    readFile(acsWorkflowPath, 'utf8'),
+  ]);
   assert.match(workflow, /存在时复用不可变发布证据/u);
   assert.match(workflow, /validateReleaseEvidenceDocument/u);
   assert.match(workflow, /REUSE_RELEASE_EVIDENCE=true/u);
   assert.match(workflow, /acs-classify\.sh/u);
   assert.match(workflow, /actions\/workflows\/acs-sandbox\.yml\/runs/u);
+  const acsEvidenceStart = workflow.indexOf('- name: 解析同一发布 SHA 的 ACS 证据');
+  const acsEvidenceEnd = workflow.indexOf('- name: 存在时复用不可变发布证据');
+  assert.ok(acsEvidenceStart > 0 && acsEvidenceEnd > acsEvidenceStart);
+  const acsEvidence = workflow.slice(acsEvidenceStart, acsEvidenceEnd);
+  const gateJobName = acsWorkflow.match(/^  gate:\n    name: ([^\n]+)$/mu)?.[1];
+  const contractJobName = acsWorkflow.match(/^  contract-check:\n    name: ([^\n]+)$/mu)?.[1];
+  assert.ok(gateJobName && contractJobName);
+  assert.ok(acsEvidence.includes(`acs_gate_job_name='${gateJobName}'`));
+  assert.ok(acsEvidence.includes(`acs_contract_job_name='${contractJobName}'`));
+  assert.match(acsEvidence, /jobs\?filter=latest&per_page=100/u);
+  assert.doesNotMatch(acsEvidence, /jobs\?filter=all/u);
+  assert.equal(acsEvidence.match(/--arg name "\$acs_gate_job_name"/gu)?.length, 1);
+  assert.equal(acsEvidence.match(/--arg name "\$acs_contract_job_name"/gu)?.length, 1);
+  assert.equal(acsEvidence.match(/\.name == \$name/gu)?.length, 2);
+  assert.doesNotMatch(acsEvidence, /Gate \(typecheck \+ test\)|ACS Contract Check/u);
+  assert.match(acsEvidence, /\.jobs\[\] \| \{id, name, status, conclusion, html_url\}/u);
   assert.match(workflow, /workflow: "Build & Check"/u);
   assert.match(workflow, /workflow: "ACS Impact Gate"/u);
   assert.match(workflow, /只读获取在线生产状态/u);

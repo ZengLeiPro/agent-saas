@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 358190,
-    "startupCssGzipBytes": 34970,
-    "startupJsBrotliBytes": 285331,
-    "startupCssBrotliBytes": 27708,
-    "largestJsGzipBytes": 358190,
-    "largestCssGzipBytes": 34970,
-    "largestJsBrotliBytes": 285331,
-    "largestCssBrotliBytes": 27708,
-    "largestJs": "assets/index-cciZ5b7T.js",
-    "largestCss": "assets/index-B2HrG_c1.css"
+    "startupJsGzipBytes": 359218,
+    "startupCssGzipBytes": 34992,
+    "startupJsBrotliBytes": 285690,
+    "startupCssBrotliBytes": 27682,
+    "largestJsGzipBytes": 359218,
+    "largestCssGzipBytes": 34992,
+    "largestJsBrotliBytes": 285690,
+    "largestCssBrotliBytes": 27682,
+    "largestJs": "assets/index-DRIpwVkI.js",
+    "largestCss": "assets/index-jx8BRBz5.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "WP4 Phase B：壳侧模块进首屏 chunk —— 安装实例单一来源(mySystemsSource/useMySystems，左栏与 AppHost 共用)、agent.open 预填总线、积分耗尽判定与 §6.6 文案表。AppHost 本体(握手状态机+消息路由器+iframe)已确认在独立 lazy chunk(16.5KB)，未进首屏。+1610B gzip，距上限 450000 仍剩约 92KB。",
+  "reason": "WP4 壳与 WP3 确认卡片合并后，首屏需同时保留路由解析与审批消息投影",
   "updatedAt": "2026-09-06"
 }

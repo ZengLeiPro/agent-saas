@@ -33,6 +33,37 @@ test('wait_for_idle_app_slots 只等待带 drain marker 的旧色，超时或未
   assert.doesNotMatch(fn, /systemctl (?:stop|kill|disable --now)|kill -(?:TERM|KILL|9|15)/u);
 });
 
+test('候选 API readiness 使用有界墙钟等待、静默重试与可操作的超时诊断，并在切流前 fail closed', () => {
+  const start = deployApp.indexOf('api_candidate_unit="agent-saas-server@$api_idle"');
+  const admitted = deployApp.indexOf('DEPLOY_APP_ROLLBACK_API_CANDIDATE_ADMITTED=true', start);
+  const nginxMutation = deployApp.indexOf('cat > "$NGINX_UPSTREAM_PATH"', admitted);
+  const readiness = deployApp.slice(start, admitted);
+  const timeoutGuard = readiness.indexOf('if [ "$api_candidate_ready" != true ]; then');
+  const identityValidation = readiness.indexOf('node --input-type=module');
+
+  assert.ok(start > -1 && admitted > start && nginxMutation > admitted);
+  assert.ok(timeoutGuard > -1 && identityValidation > timeoutGuard);
+  assert.match(deploy, /^API_CANDIDATE_READY_WAIT_SECONDS=180$/mu);
+  assert.match(
+    readiness,
+    /api_candidate_deadline=\$\(\(api_candidate_wait_started \+ API_CANDIDATE_READY_WAIT_SECONDS\)\)/u,
+  );
+  assert.match(readiness, /while \[ "\$SECONDS" -lt "\$api_candidate_deadline" \]/u);
+  assert.match(readiness, /--connect-timeout 1 --max-time "\$api_candidate_request_timeout"/u);
+  assert.match(readiness, />"\$api_candidate_ready_path" 2>"\$api_candidate_probe_error_path"/u);
+  assert.match(readiness, /api_candidate_next_heartbeat=15/u);
+  assert.match(readiness, /--property=ActiveState --property=SubState --property=Result/u);
+  assert.match(readiness, /if \[ "\$api_candidate_ready" != true \]; then/u);
+  assert.match(
+    readiness,
+    /did not become ready .* within \$\{API_CANDIDATE_READY_WAIT_SECONDS\}s/u,
+  );
+  assert.match(readiness, /Last readiness probe error:/u);
+  assert.match(readiness, /exit 1/u);
+  assert.doesNotMatch(readiness, /for _ in \$\(seq 1 180\)/u);
+  assert.doesNotMatch(readiness, /journalctl/u);
+});
+
 test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR2，不等待、不 --now、committed 点前移', () => {
   const marker = deployApp.indexOf('commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"');
   const committed = deployApp.indexOf('DEPLOY_APP_ROLLBACK_COMMITTED=true', marker);

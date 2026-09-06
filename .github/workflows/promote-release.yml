@@ -887,13 +887,20 @@ jobs:
             --region "$RELEASE_RECORD_OSS_REGION"
           rm -rf "$RUNNER_TEMP/web-oss-readback"
           mkdir -p "$RUNNER_TEMP/web-oss-readback"
-          while IFS= read -r -d '' source; do
-            relative="${source#"$RUNNER_TEMP/web-assets/"}"
-            mkdir -p "$RUNNER_TEMP/web-oss-readback/$(dirname "$relative")"
-            run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
-              "$RUNNER_TEMP/web-oss-readback/$relative" --region "$RELEASE_RECORD_OSS_REGION"
-            cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
-          done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
+          export WEB_ASSETS_ROOT="$RUNNER_TEMP/web-assets"
+          export WEB_OSS_READBACK_ROOT="$RUNNER_TEMP/web-oss-readback"
+          export PRODUCTION_WEB_OSS_URI RELEASE_RECORD_OSS_REGION
+          # 单对象 CLI 启动约有固定网络开销；保持逐文件字节校验，但与 Staging 一致限为 8 路。
+          # 整批仍由一个 run_with_web_lock 监管，锁丢失或总截止时间到达会终止整个进程组。
+          run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '
+            source="$1"
+            relative="${source#"$WEB_ASSETS_ROOT/"}"
+            target="$WEB_OSS_READBACK_ROOT/$relative"
+            mkdir -p "$(dirname "$target")"
+            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
+              "$target" --region "$RELEASE_RECORD_OSS_REGION"
+            cmp "$source" "$target"
+          ' _ < <(find "$WEB_ASSETS_ROOT" -type f -print0)
           run_with_web_lock curl -fsS --retry 10 -H 'cache-control: no-cache' \
             "https://agent.kaiyan.net/release-identity.json?release=$RELEASE_ID" \
             -o "$RUNNER_TEMP/web-release-identity-readback.json"

@@ -561,6 +561,15 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /PHASE=app VERIFY_ONLY='\$verify_only'/u);
   assert.match(workflow, /release-identity\.json/u);
   assert.match(workflow, /web-oss-readback/u);
+  assert.match(
+    workflow,
+    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '[\s\S]*< <\(find "\$WEB_ASSETS_ROOT" -type f -print0\)/u,
+  );
+  assert.match(workflow, /cmp "\$source" "\$target"/u);
+  assert.doesNotMatch(
+    workflow,
+    /done < <\(find "\$RUNNER_TEMP\/web-assets" -type f -print0\)/u,
+  );
   assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /WEB_LOCK_READY='\$web_lock_ready'/u);
   assert.match(workflow, /timeout-minutes: 180/u);
@@ -687,6 +696,10 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     workflow.indexOf('- name: 最后发布 Web 入口并保留旧版哈希资源'),
     workflow.indexOf('- name: 持久化 Web 操作回执'),
   );
+  const parallelReadback = webStep.match(
+    /run_with_web_lock xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '\n[\s\S]*?\n\s+' _ < <\(find "\$WEB_ASSETS_ROOT" -type f -print0\)/u,
+  )?.[0];
+  assert.ok(parallelReadback, 'parallel Web readback must remain inside run_with_web_lock');
   assert.equal(webStep.match(/cleanup_web_on_exit\(\)/gu)?.length, 1);
   assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
   assert.match(
@@ -768,7 +781,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(workflow, /rollback-attempted-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-web/u);
   assert.match(workflow, /ROLLBACK_ATTEMPTED_MARKER='\$PROMOTION_REMOTE\/rollback-attempted-acs'/u);
   assert.match(workflow, /ROLLBACK_ATTEMPTED_MARKER='\$PROMOTION_REMOTE\/rollback-attempted-app'/u);
-  assert.doesNotMatch(webStep, /^\s+aliyun --secure oss/mu);
+  assert.doesNotMatch(webStep.replace(parallelReadback, ''), /^\s+aliyun --secure oss/mu);
   assert.match(webStep, /while kill -0 "\$command_pid"/u);
   assert.match(webStep, /kill -KILL -- "-\$command_pid"/u);
   assert.match(webStep, /run_control_ssh/u);

@@ -39,7 +39,12 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** 演示用的可见安装实例；`disabled` 场景下 CRM 从列表里消失（等于停用 / 不再可见）。 */
+/**
+ * 演示用的可见安装实例。
+ * `disabled` 场景下 CRM **仍然在列表里**，只是 `state: 'disabled'` ——
+ * 规范 §5.5/§6.6 要求停用的系统标签保留在侧边栏并显示《系统名》+「暂不可用」，
+ * 而不是整项消失（旧演示态把它从列表里删掉，截出来的图是规范违反）。
+ */
 function installations(): unknown[] {
   const crm = {
     installationId: 'tsi_crm_01',
@@ -47,7 +52,7 @@ function installations(): unknown[] {
     name: '客户管理',
     icon: '📦',
     origin: appOrigin(),
-    state: 'enabled',
+    state: scenario() === 'disabled' ? 'disabled' : 'enabled',
     externalLinkHosts: ['docs.kaiyan.net'],
   };
   const wms = {
@@ -59,7 +64,7 @@ function installations(): unknown[] {
     state: 'enabled',
     externalLinkHosts: [],
   };
-  return scenario() === 'disabled' ? [wms] : [crm, wms];
+  return [crm, wms];
 }
 
 const CALLS: string[] = [];

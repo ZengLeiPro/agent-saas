@@ -112,10 +112,22 @@ async function main() {
       },
     });
 
+    // §5.5/§6.6：停用**不是**标签消失。这里同时等三样东西，缺一张图就截不出来：
+    // 左栏「客户管理」这一项还在、它带着「暂不可用」标注、正文给出《客户管理》暂不可用。
     await shot('03-失败态-系统停用暂不可用.png', {
       path: '/apps/tsi_crm_01',
       scenario: 'disabled',
-      waitFor: '[data-testid="app-host-failure"]',
+      waitFor: '[data-testid="apps-nav-mark-tsi_crm_01"]',
+      extra: async (page) => {
+        await page.waitForSelector('[data-testid="apps-nav-tsi_crm_01"]');
+        await page.waitForSelector('[data-testid="apps-nav-tsi_wms_01"]');
+        const failure = await page
+          .waitForSelector('[data-testid="app-host-failure"]')
+          .then((node) => node.textContent());
+        if (!failure?.includes('《客户管理》暂不可用')) {
+          throw new Error(`停用态正文不是《客户管理》暂不可用，实际：${failure}`);
+        }
+      },
     });
 
     await shot('04-积分耗尽降级.png', {

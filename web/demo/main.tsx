@@ -14,7 +14,7 @@ import { AppsSidebarPanel } from '@/components/AppsSidebarPanel';
 import { SidebarNav } from '@/components/DesktopSessionSidebarControls';
 import { useAppsShellState } from '@/hooks/useAppsShellState';
 import { useMySystems } from '@/hooks/useMySystems';
-import { APPS_TAB_UNAVAILABLE_TITLE, getDesktopHeaderTitle } from '@/layouts/desktopHeaderTitle';
+import { buildAppsHeaderTitle, getDesktopHeaderTitle } from '@/layouts/desktopHeaderTitle';
 import '@/index.css';
 
 function Demo() {
@@ -22,8 +22,14 @@ function Demo() {
   const { status, installations } = useMySystems();
   const installation =
     installations.find((item) => item.installationId === appsRoute?.installationId) ?? null;
-  const appsTitle =
-    installation?.name ?? (appsRoute && status === 'ready' ? APPS_TAB_UNAVAILABLE_TITLE : null);
+  // 与 DesktopLayout.tsx 同一条接线：《系统名》，停用时追加「暂不可用」
+  const appsTitle = appsRoute
+    ? buildAppsHeaderTitle({
+        name: installation?.name ?? null,
+        state: installation?.state ?? null,
+        resolved: status === 'ready',
+      })
+    : null;
   const headerTitle = getDesktopHeaderTitle({
     activeTab: appsRoute ? 'apps' : 'chat',
     isTrashPreview: false,

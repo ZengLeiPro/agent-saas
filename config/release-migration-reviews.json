@@ -154,7 +154,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -259,7 +259,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -658,7 +658,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -693,7 +693,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -913,7 +913,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -948,7 +948,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -1131,7 +1131,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -1166,7 +1166,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -1342,7 +1342,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -1370,7 +1370,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -1538,7 +1538,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -1566,7 +1566,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -1734,7 +1734,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -1762,7 +1762,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -2028,7 +2028,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -2133,7 +2133,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -2516,7 +2516,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -2544,7 +2544,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -2750,7 +2750,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -2778,7 +2778,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -2993,7 +2993,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -3021,7 +3021,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -3201,7 +3201,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -3229,7 +3229,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -3362,7 +3362,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -3390,7 +3390,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -3523,7 +3523,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -3551,7 +3551,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -3684,7 +3684,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -3712,7 +3712,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -3838,7 +3838,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -3866,7 +3866,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
@@ -3981,7 +3981,7 @@
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
@@ -4009,7 +4009,7 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
           "classification": "expand",
           "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },

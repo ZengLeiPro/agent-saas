@@ -21,6 +21,8 @@ export type AppHostFailureKind =
   | 'session_expired'
   /** 系统正在更新（`maintenance` / 需重新注册 / digest 不一致）。 */
   | 'system_updating'
+  /** 账号 / 组织成员被停用（`token.refresh.error{user_disabled}`）。 */
+  | 'user_disabled'
   /** 子端请求登出（`logout.request`）。 */
   | 'logged_out';
 
@@ -54,6 +56,10 @@ export function describeAppHostFailure(
       return { message: `《${label}》暂不可用`, retryable: false };
     case 'session_expired':
       return { message: '登录状态已过期，请重新登录', retryable: false };
+    case 'user_disabled':
+      // §6.6 没有这一行；`token.refresh.error{user_disabled}` 必须有个说法，
+      // 按同表的口吻写：只说结果与下一步，不说是账号停用还是成员停用
+      return { message: '你的账号暂时无法使用该系统，请联系管理员', retryable: false };
     case 'system_updating':
       return { message: `《${label}》正在更新，暂不可操作`, retryable: true };
     case 'logged_out':

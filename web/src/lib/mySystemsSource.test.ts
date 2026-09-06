@@ -20,6 +20,7 @@ function installation(overrides: Partial<MySystemInstallation> = {}): MySystemIn
     icon: '📦',
     origin: 'https://t1-crm.apps.example.com',
     state: 'enabled',
+    externalLinkHosts: [],
     ...overrides,
   };
 }

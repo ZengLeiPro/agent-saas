@@ -17,6 +17,7 @@ const KINDS: AppHostFailureKind[] = [
   'contract_version_mismatch',
   'unavailable',
   'session_expired',
+  'user_disabled',
   'system_updating',
   'logged_out',
 ];

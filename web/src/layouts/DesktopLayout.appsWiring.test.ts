@@ -11,6 +11,7 @@ import source from './DesktopLayout.tsx?raw';
 import mobileSource from './MobileLayout.tsx?raw';
 import mobileSessionListSource from '@/components/MobileSessionList.tsx?raw';
 import appHostSource from '@/components/AppHost/index.tsx?raw';
+import controllerSource from '@/components/AppHost/controller.ts?raw';
 import sidebarSource from '@/components/DesktopSessionSidebar.tsx?raw';
 
 describe('桌面双标签壳骨架', () => {
@@ -46,10 +47,28 @@ describe('桌面双标签壳骨架', () => {
     expect(sidebarSource.match(/<AppsSidebarPanel\b/g)).toHaveLength(2);
   });
 
-  it('Phase A 只放占位，不预先猜 Phase B 的实现', () => {
-    for (const forbidden of ['postMessage', 'init.ack', '<iframe', 'sandbox=']) {
-      expect(appHostSource).not.toContain(forbidden);
+  it('§5.1 iframe 属性只在 AppHost 里出现一次，且不含被禁的 sandbox 令牌', () => {
+    // Phase A 这条断言的是「还没写」，Phase B 反过来断言「写了且只写这一处」：
+    // sandbox 令牌散落成第二份就一定会漂移。
+    expect(appHostSource.match(/sandbox="/g)).toHaveLength(1);
+    expect(appHostSource).toContain(
+      'sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals"',
+    );
+    expect(appHostSource).toContain('allow="clipboard-write"');
+    expect(appHostSource).toContain('referrerPolicy="strict-origin"');
+    // 只看 sandbox 属性值本身：文件头注释里会提到这两个令牌（说明为什么不给）
+    const sandbox = /sandbox="([^"]*)"/u.exec(appHostSource)?.[1] ?? '';
+    for (const forbidden of ['allow-popups', 'allow-top-navigation']) {
+      expect(sandbox).not.toContain(forbidden);
     }
+  });
+
+  it('壳只有一个 iframe，且 postMessage 只在控制器里发（targetOrigin 收口）', () => {
+    expect(appHostSource.match(/<iframe/g)).toHaveLength(1);
+    expect(appHostSource).not.toContain('postMessage');
+    expect(controllerSource.match(/postMessage\(/g)).toHaveLength(1);
+    // 精确 targetOrigin（§5.3）：写 '*' 等于把 SAT 广播出去
+    expect(controllerSource).not.toMatch(/postMessage\([^)]*,\s*(['"])\*\1\s*\)/u);
   });
 });
 

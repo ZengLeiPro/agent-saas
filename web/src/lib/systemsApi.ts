@@ -16,6 +16,13 @@ export interface MySystemInstallation {
   icon: string | null;
   origin: string;
   state: 'enabled';
+  /**
+   * manifest 的 `externalLinkHosts`（§5.4 `link.open` 白名单）。
+   * **服务端当前不返回这个字段**（`/api/systems/mine` 只给壳渲染标签的最小字段），
+   * 所以它现在恒为空数组 → 壳侧外链一律 fail-closed。见偏差 4-B-01：
+   * 需要 WP2a 在 mine.ts 里补一行才能真正放行外链。
+   */
+  externalLinkHosts: string[];
 }
 
 export interface MySystemsResponse {
@@ -38,6 +45,9 @@ function asInstallation(value: unknown): MySystemInstallation | null {
     icon: typeof record.icon === 'string' && record.icon !== '' ? record.icon : null,
     origin,
     state: 'enabled',
+    externalLinkHosts: Array.isArray(record.externalLinkHosts)
+      ? record.externalLinkHosts.filter((item): item is string => typeof item === 'string')
+      : [],
   };
 }
 

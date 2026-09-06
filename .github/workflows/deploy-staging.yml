@@ -275,15 +275,29 @@ jobs:
                 fi
                 test "$(printf '%s' "$acs_run" | jq -r .conclusion)" = success
                 acs_run_id="$(printf '%s' "$acs_run" | jq -r .id)"
-                gh api "repos/$GITHUB_REPOSITORY/actions/runs/$acs_run_id/jobs?filter=all" \
+                gh api "repos/$GITHUB_REPOSITORY/actions/runs/$acs_run_id/jobs?filter=latest&per_page=100" \
                   > "$RUNNER_TEMP/acs-jobs.json"
+                acs_gate_job_name='门禁（类型检查 + 测试）'
+                acs_contract_job_name='ACS 契约检查'
                 if [ "$publish" = true ]; then
-                  jq -e '[.jobs[] | select(.name == "Gate (typecheck + test)" and .conclusion == "success")] | length == 1' \
-                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null
+                  if ! jq -e --arg name "$acs_gate_job_name" \
+                    '[.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' \
+                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null; then
+                    jq '[.jobs[] | {id, name, status, conclusion, html_url}]' \
+                      "$RUNNER_TEMP/acs-jobs.json" >&2
+                    echo "::error::ACS run $acs_run_id 缺少成功的 $acs_gate_job_name job" >&2
+                    exit 1
+                  fi
                 fi
                 if [ "$contract_check" = true ]; then
-                  jq -e '[.jobs[] | select(.name == "ACS Contract Check" and .conclusion == "success")] | length == 1' \
-                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null
+                  if ! jq -e --arg name "$acs_contract_job_name" \
+                    '[.jobs[] | select(.name == $name and .conclusion == "success")] | length == 1' \
+                    "$RUNNER_TEMP/acs-jobs.json" >/dev/null; then
+                    jq '[.jobs[] | {id, name, status, conclusion, html_url}]' \
+                      "$RUNNER_TEMP/acs-jobs.json" >&2
+                    echo "::error::ACS run $acs_run_id 缺少成功的 $acs_contract_job_name job" >&2
+                    exit 1
+                  fi
                 fi
                 jq -n --arg sha "$RELEASE_SHA" --argjson appRunId "$APP_CI_RUN_ID" \
                   --argjson acsRunId "$acs_run_id" '{

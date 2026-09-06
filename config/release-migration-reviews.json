@@ -3525,7 +3525,126 @@
       ]
     },
     {
-      "baselineSha": "9ac5a288675da688cae58531a7fc65e0e0c2ec91",
+      "baselineSha": "99b7496f75467595ac53da16cdf338770846f35b",
+      "files": [
+        {
+          "path": "server/src/data/entitlements/store.ts",
+          "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
+          "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
+          "classification": "no-schema-change",
+          "reason": "RC64（99b7496f）基线复审：completeResourceScopes 仅增加 integrated_system 默认 selected 空集，无 DDL、无启动回填；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+        },
+        {
+          "path": "server/src/data/entitlements/types.ts",
+          "baselineDigest": "sha256:147e65ebcd35b499283ba19d7cb5ef2117d971bf89885813e5f43e5ac5b156b1",
+          "targetDigest": "sha256:dc4bcd5462853feb7e452ad9cd394bddd7d8a3fbc94f9031f36aa91fcc291a3e",
+          "classification": "no-schema-change",
+          "reason": "权限类型和常量定义，无数据库执行。WP2a 复审：ENTITLEMENT_RESOURCE_TYPES 增加 integrated_system。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
+          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "classification": "expand",
+          "reason": "RC64（99b7496f）基线复审：仅追加 v41 调度，v36～v40 序号和语句不变；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
+          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "classification": "expand",
+          "reason": "RC64（99b7496f）基线复审：版本号 40→41，执行器与旧迁移未改；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
+          "classification": "expand",
+          "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/kyapp/attest/nonceStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
+          "classification": "expand",
+          "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/events/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
+          "classification": "expand",
+          "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/credentialStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:6653d796cc1d626c8d66118b9ab74782bb504c35216e3cc481507850a94a8a92",
+          "classification": "expand",
+          "reason": "WP2a 服务凭据与安装密钥元数据表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是凭据签发、领取、确认、撤销与安装密钥轮换的运行期方法，库里只写 token 的 sha256 与 vault 引用，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/installations/runtimeStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f7aafa58ee7f4c47ad2bd410eae0dfb64b2f5c0173ebf00fe4588cf4637e2012",
+          "classification": "expand",
+          "reason": "WP2a 安装实例运行状态表：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO UPDATE 是 live / ready 探测结果的运行期写入，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/keys/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:2f10909b111b9a62c319e57796e27af91cad034bc66a381ce6deeb931f2f43fd",
+          "classification": "expand",
+          "reason": "WP2a SAT 签名密钥登记表：init() 只执行治理迁移 runner，其余 INSERT / UPDATE 是密钥状态机（active/next/retiring/revoked）的运行期方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "classification": "expand",
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/runStoreSchema.ts",
+          "baselineDigest": "sha256:28ff3753e032aa2cbded7bc60f43ece5fa2db3c485074aebbe8037f4a610bbac",
+          "targetDigest": "sha256:b76e1988e94b055b2fac92761e2caa1792adc67152d6f9c366339b996de36831",
+          "classification": "expand",
+          "reason": "expand 阶段的 message_submissions BEFORE INSERT 触发器在推导 tenant 列前，先取租户原生写入者同款 raw-key advisory lock（pg_advisory_xact_lock(hashtext(表名:raw-key), hashtext(user_scope||chr(31)||client_message_id))），让旧写入者与新写入者对同一裸键串行，消除并发时非 arbiter 的 tenant 唯一索引直接抛 23505。仅改 CREATE OR REPLACE FUNCTION 的函数体，未新增或修改任何建表、索引、列与回填语句，重复启动幂等。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
+          "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+        },
+        {
+          "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
+          "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
+        },
+        {
+          "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
+          "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/data/governance-schema/v41KyAppSystemMigration.test.ts",
+          "digest": "sha256:e334dfc024cea76073af477236766b5577e310f612075e02e4180e3cdeb9d8d4"
+        },
+        {
+          "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
+          "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.pg.test.ts",
+          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        }
+      ]
+    },
+    {
+      "baselineSha": "e15876744f281f50012148cc0d80a19dd2f22f71",
       "files": [
         {
           "path": "server/src/runtime/runStoreSchema.ts",

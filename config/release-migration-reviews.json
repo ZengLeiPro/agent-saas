@@ -107,21 +107,21 @@
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -733,21 +733,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1104,21 +1104,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1438,21 +1438,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1765,21 +1765,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2077,21 +2077,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2389,21 +2389,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2778,21 +2778,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -3392,21 +3392,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3738,21 +3738,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4093,21 +4093,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4413,21 +4413,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4686,21 +4686,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4959,21 +4959,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5232,21 +5232,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5498,21 +5498,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5753,21 +5753,21 @@
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
           "classification": "expand",
-          "reason": "WP3：治理迁移执行器从 migrations.ts 外提（该文件因 v43 涨到 1012 行、超 1000 行生产阈值）。语句与判定逻辑逐字未变：advisory lock 串行、建 schema_versions 表、按「已应用版本集合」逐版本执行并登记，缺号在合并后自动补齐。无新增 DDL、无回填。"
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5987,14 +5987,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP2b：迁移调度数组追加一行 v42，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP2b：GOVERNANCE_SCHEMA_VERSION 41→42，迁移执行器与全部旧迁移语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6117,14 +6117,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6236,14 +6236,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP2b：迁移调度数组追加一行 v42，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP2b：GOVERNANCE_SCHEMA_VERSION 41→42，迁移执行器与全部旧迁移语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6347,14 +6347,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP2b：迁移调度数组追加一行 v42，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP2b：GOVERNANCE_SCHEMA_VERSION 41→42，迁移执行器与全部旧迁移语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6458,14 +6458,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "WP2b：迁移调度数组追加一行 v42，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "WP2b：GOVERNANCE_SCHEMA_VERSION 41→42，迁移执行器与全部旧迁移语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6569,14 +6569,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6640,14 +6640,14 @@
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。 WP2b 复审：追加 v42 调度，v36～v41 的序号与语句一字未改；真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
           "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。 WP2b 复审：GOVERNANCE_SCHEMA_VERSION 41→42，执行器与全部旧迁移语句未改；v42 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6698,6 +6698,93 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        }
+      ]
+    },
+    {
+      "baselineSha": "c0e90279d5db012f6dc13a3d95790321dde7ddc7",
+      "files": [
+        {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
+          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "classification": "expand",
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
+          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "classification": "expand",
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         }
       ]
     }

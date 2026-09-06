@@ -24,6 +24,7 @@ import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useDesktopLayoutProtection } from "./useDesktopLayoutProtection";
 import { getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAppsShellState } from "@/hooks/useAppsShellState";
 const ManagementWorkspaceContent = lazy(() => import('@/components/ManagementShell/ManagementWorkspaceContent').then(m => ({ default: m.ManagementWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
@@ -34,6 +35,7 @@ const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m 
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
 const SettingsContent = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsContent })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
+const AppHostPanel = lazy(() => import("@/components/AppHost").then(m => ({ default: m.AppHost })));
 import {
   CronManager, McpManagerPanel, ModelManagerPanel, SettingsDirtyBoundary,
   SkillManagerPanel, TenantManager, UsageDashboard,
@@ -205,6 +207,9 @@ export function DesktopLayout(props: LayoutProps) {
     agentProfile,
   }), [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
 
+  // 定制软件壳路由：独立订阅同一条 popstate 通道，不经 useChatAppState（§5.2）
+  const { appsRoute } = useAppsShellState();
+
   // mount-once-visited：首次切换到 tab 后永久挂载
   const [cronMounted, setCronMounted] = useState(false);
   const [tenantsMounted, setTenantsMounted] = useState(false);
@@ -215,6 +220,7 @@ export function DesktopLayout(props: LayoutProps) {
   const [modelsMounted, setModelsMounted] = useState(false);
   const [trashMounted, setTrashMounted] = useState(false);
   const [capabilitiesMounted, setCapabilitiesMounted] = useState(false);
+  const [appsMounted, setAppsMounted] = useState(false);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
@@ -230,7 +236,8 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "mcp" && !mcpMounted) setMcpMounted(true);
     if (activeTab === "models" && !modelsMounted && isPlatformAdmin) setModelsMounted(true);
     if (activeTab === "trash" && !trashMounted) setTrashMounted(true);
-  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, trashMounted, isAdmin, isPlatformAdmin]);
+    if (activeTab === "apps" && !appsMounted) setAppsMounted(true);
+  }, [activeTab, capabilitiesMounted, cronMounted, tenantsMounted, profileMounted, skillsMounted, usageMounted, mcpMounted, modelsMounted, trashMounted, appsMounted, isAdmin, isPlatformAdmin]);
 
   // ---- 场景库「试一试」链路 ----
   // 整页场景库里点「试一试」：新建会话 → 预填起手 prompt（不自动发送）→ 切回聊天视图。
@@ -598,6 +605,15 @@ export function DesktopLayout(props: LayoutProps) {
                 onCloseRoleDetail={() => setRoleDetailId(null)}
                 actionsDisabled={loading}
               />
+            </Suspense>
+          </div>
+        )}
+        {appsMounted && (
+          // §5.5：定制软件切走再切回要保留页面与滚动位置 —— 与其它标签同款
+          // 「惰性挂载 + hidden 隐藏」，**禁止条件卸载 iframe**。
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "apps" && "hidden")}>
+            <Suspense fallback={SuspenseFallback}>
+              <AppHostPanel appsRoute={appsRoute} />
             </Suspense>
           </div>
         )}

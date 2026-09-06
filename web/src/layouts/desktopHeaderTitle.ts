@@ -13,6 +13,7 @@ const TAB_TITLES: Partial<Record<LayoutProps['activeTab'], string>> = {
   mcp: 'MCP 配置',
   models: '模型管理',
   trash: '回收站',
+  apps: '定制软件',
 };
 
 interface DesktopHeaderTitleOptions {

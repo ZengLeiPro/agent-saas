@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>客户管理（mock 定制项目）</title>
+    <style>
+      body { margin: 0; font: 14px/1.7 system-ui, sans-serif; color: #1f2328; background: #fff; }
+      header { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; font-weight: 600; }
+      main { padding: 16px; }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      th, td { border-bottom: 1px solid #eef0f3; padding: 8px 6px; text-align: left; }
+      th { color: #6b7280; font-weight: 500; }
+      .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+      .warn { background: #fef3c7; color: #92400e; }
+      .ok { background: #dcfce7; color: #166534; }
+      .state { margin-top: 16px; font-size: 12px; color: #6b7280; }
+    </style>
+  </head>
+  <body>
+    <header>客户管理 · 订单列表</header>
+    <main>
+      <table>
+        <thead>
+          <tr><th>单号</th><th>客户</th><th>金额</th><th>状态</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SO-2026-0912</td><td>华东建材</td><td>¥182,400</td><td><span class="badge warn">待发货</span></td></tr>
+          <tr><td>SO-2026-0911</td><td>南方电气</td><td>¥64,900</td><td><span class="badge ok">已完成</span></td></tr>
+          <tr><td>SO-2026-0908</td><td>唯恩电气</td><td>¥318,000</td><td><span class="badge ok">已完成</span></td></tr>
+        </tbody>
+      </table>
+      <p class="state" id="state">握手中…</p>
+    </main>
+    <script>
+      (function () {
+        'use strict';
+        // 照 §5.4 的子端行为：读 ky_iid / ky_nonce → 每 1 s 重发 ready（≤10 s）→ 收到 init 回 init.ack。
+        // 演示态不签真的 attest JWT（壳侧的 verify 也是桩）。
+        var params = new URLSearchParams(location.search);
+        var iid = params.get('ky_iid') || '';
+        var nonce = params.get('ky_nonce') || '';
+        var state = document.getElementById('state');
+        var acked = false;
+        var readyTimer = null;
+
+        function post(message) {
+          // 真实子端 SDK 用登记好的壳 origin；mock 用 '*' —— 壳侧的
+          // origin + event.source 校验不受影响，那才是安全边界所在。
+          parent.postMessage(message, '*');
+        }
+
+        function sendReady() {
+          post({
+            ns: 'ky',
+            v: 1,
+            type: 'ready',
+            id: 'ready-' + nonce,
+            payload: {
+              contractVersion: 1,
+              path: location.pathname === '/mock-app.html' ? '/' : location.pathname,
+              installationId: iid,
+              attestation: 'demo.attest.' + nonce,
+            },
+          });
+        }
+
+        window.addEventListener('message', function (event) {
+          var data = event.data;
+          if (!data || data.ns !== 'ky' || data.v !== 1) return;
+          if (data.type === 'init') {
+            if (readyTimer) { clearInterval(readyTimer); readyTimer = null; }
+            post({ ns: 'ky', v: 1, type: 'init.ack', id: data.id });
+            if (!acked) {
+              acked = true;
+              var user = (data.payload && data.payload.user) || {};
+              state.textContent =
+                '已连接 KY Agent · 当前用户 ' + (user.displayName || '?') +
+                ' · 安装实例 ' + (data.payload && data.payload.installationId);
+            }
+          }
+        });
+
+        sendReady();
+        readyTimer = setInterval(sendReady, 1000);
+        setTimeout(function () { if (readyTimer) clearInterval(readyTimer); }, 10000);
+      })();
+    </script>
+  </body>
+</html>

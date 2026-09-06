@@ -591,6 +591,10 @@
           "digest": "sha256:ff0964e648797fb8c3596a006a93b5d3916a07dd71b116bf3a937136b8a9ea93"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/codexResponsesWebSocketPool.test.ts",
           "digest": "sha256:fbd8e308ec059f2079153310434d60b306a570376674cac395beb942bfc0c826"
         },
@@ -605,6 +609,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -665,6 +673,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "server/src/runtime/sessionAutomation.pg.test.ts",
@@ -982,6 +998,10 @@
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/codexResponsesWebSocketPool.test.ts",
           "digest": "sha256:fbd8e308ec059f2079153310434d60b306a570376674cac395beb942bfc0c826"
         },
@@ -996,6 +1016,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -1016,6 +1040,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/responsesStreamBudget.test.ts",
@@ -1040,6 +1068,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -1328,12 +1364,20 @@
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
           "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -1356,6 +1400,10 @@
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         },
         {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
         },
@@ -1374,6 +1422,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -1662,12 +1718,20 @@
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/feedbackRoutes.test.ts",
           "digest": "sha256:871bc4da09572bf58524616cb303d0e1b5881df7dc15084e4311a91eb5ba7af5"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -1690,6 +1754,10 @@
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         },
         {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
           "path": "server/src/__tests__/runtimeFailure.test.ts",
           "digest": "sha256:01ac27e170574eac84060114ff3fcfc9533a2f639bb9e2e92f4404adb8b27a45"
         },
@@ -1708,6 +1776,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -1982,8 +2058,16 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2006,6 +2090,10 @@
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         },
         {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
@@ -2020,6 +2108,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -2294,8 +2390,16 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2318,6 +2422,10 @@
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         },
         {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
@@ -2332,6 +2440,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -2606,8 +2722,16 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2630,6 +2754,10 @@
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
         },
         {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
           "digest": "sha256:e4127d2ab6aac8b87d81f1289f39d4018ba7dbd5bd42560a6e3e7fdb5d015030"
         },
@@ -2644,6 +2772,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -3267,12 +3403,20 @@
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -3293,6 +3437,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -3319,8 +3467,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -3602,6 +3758,10 @@
           "digest": "sha256:4d735cf45fb379a5060d1fc2764dff80e1dc55eba202186a8ecf63e3978837fd"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
@@ -3612,6 +3772,10 @@
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -3632,6 +3796,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -3658,8 +3826,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -3961,12 +4137,20 @@
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -3987,6 +4171,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -4013,8 +4201,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -4316,12 +4512,20 @@
           "digest": "sha256:20b4db0ad76c652c6ef17ac06470844ba0ba7126ca34fefa85e57accf8d2b29e"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -4342,6 +4546,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -4368,8 +4576,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -4597,12 +4813,20 @@
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -4615,6 +4839,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -4641,8 +4869,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -4870,12 +5106,20 @@
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -4888,6 +5132,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -4914,8 +5162,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -5143,12 +5399,20 @@
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -5161,6 +5425,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -5187,8 +5455,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -5416,12 +5692,20 @@
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
         },
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -5434,6 +5718,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -5460,8 +5748,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -5671,12 +5967,20 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -5689,6 +5993,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -5715,8 +6023,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -5926,12 +6242,20 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/entitlementScopeBaseline.pg.test.ts",
           "digest": "sha256:2f56a3bd26b1635524682b4fa583c3e0ab215a5e9536fcba2b4d43bcfcb6bc23"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -5944,6 +6268,10 @@
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
           "digest": "sha256:cbe7dc3cd399ca79bfb23df17df95b5543ad037ed282c9130a87e33578ca79d4"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -5970,8 +6298,16 @@
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
           "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -5983,11 +6319,25 @@
       "baselineSha": "e15876744f281f50012148cc0d80a19dd2f22f71",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6002,6 +6352,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6023,6 +6387,20 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
         },
         {
           "path": "server/src/runtime/runStoreSchema.ts",
@@ -6076,8 +6454,16 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
@@ -6086,6 +6472,10 @@
         {
           "path": "server/src/__tests__/pgRunStoreTenantRollingMigration.pg.test.ts",
           "digest": "sha256:7fb519bc198e9345d202eff6dec6674683986bbcaec33553825811bb64f0fa7d"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -6102,6 +6492,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -6113,11 +6511,25 @@
       "baselineSha": "9aaaaee1d2c1aeee2e2b8bf9cc0aecbdc2583d39",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6132,6 +6544,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6153,6 +6579,20 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
         },
         {
           "path": "server/src/taskboard/commentQuery.ts",
@@ -6199,12 +6639,24 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -6221,6 +6673,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -6232,11 +6692,25 @@
       "baselineSha": "cf510cca08f1280333b05686b7a0c5f2182353f8",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6251,6 +6725,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6272,6 +6760,20 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
         },
         {
           "path": "server/src/taskboard/commentQuery.ts",
@@ -6318,12 +6820,24 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -6336,6 +6850,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         }
       ]
     },
@@ -6343,11 +6865,25 @@
       "baselineSha": "71885eb2e0fc08a773565660fe3b9016089d27dd",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6362,6 +6898,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6383,6 +6933,20 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
         },
         {
           "path": "server/src/taskboard/commentQuery.ts",
@@ -6429,12 +6993,24 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -6447,6 +7023,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         }
       ]
     },
@@ -6454,11 +7038,25 @@
       "baselineSha": "28ae4428a2e4aa9b4e9865aea570f8b89264aef1",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6473,6 +7071,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6494,6 +7106,20 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
         },
         {
           "path": "server/src/taskboard/commentQuery.ts",
@@ -6540,12 +7166,24 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -6558,6 +7196,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         }
       ]
     },
@@ -6565,11 +7211,25 @@
       "baselineSha": "a0974846d62d4b7893cc93feae8d8ce73d227b05",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6584,6 +7244,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6607,6 +7281,20 @@
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
         },
         {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
           "path": "server/src/taskboard/storeExecutions.ts",
           "baselineDigest": "sha256:f929f47bec2a185037355b78bfa2142841359fe763c84c9376e0b2ebf3785e90",
           "targetDigest": "sha256:b4809424e1075088c9b8dba3a56ca8c85b809cbdc16143c29ff171978dc831ab",
@@ -6623,8 +7311,32 @@
       ],
       "evidence": [
         {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
+        },
+        {
           "path": "server/src/__tests__/taskboardSessionContext.test.ts",
           "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         },
         {
           "path": "shared/src/types/taskboard.test.ts",
@@ -6636,11 +7348,25 @@
       "baselineSha": "bf1fee74b5fa5aac998598d6c522ddaa16a2a3ff",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
           "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
           "classification": "expand",
           "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrationRunner.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:8580759bb08e23c7f0aaea90504c86da00db2d26a65ead8f9d4c6d50f6e3b2d6",
+          "classification": "expand",
+          "reason": "WP3：治理迁移执行器从 migrations.ts 外提以满足 1000 行棘轮；advisory lock、schema_versions 建表、按已应用版本集合逐版执行并登记的语义不变，无新增迁移对象或回填。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
@@ -6655,6 +7381,20 @@
           "targetDigest": "sha256:07f870c8f50b79da40586fa7fe2e2a8110567c5c988fefee2c3f2302bdd7c5bf",
           "classification": "expand",
           "reason": "WP2b 组织目录变更流治理结构：新增 ky_app_directory_change_log 与 ky_app_directory_state 两张表及配套索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS；对既有对象的唯一改动是 tenant_memberships 追加可空列 employee_no（ADD COLUMN IF NOT EXISTS，带 char_length ≤32 的 CHECK）与一条部分索引，不删表、不删列、不改列类型、无数据回填。真实 postgres:16 上 v41→v42 升级与重复运行幂等已验证。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6676,16 +7416,42 @@
           "targetDigest": "sha256:18915d41cf91892785c4f8c79587d96621f89ef8eaf87fef3310862fdb97d6a3",
           "classification": "no-schema-change",
           "reason": "WP2b 附录 L 服务端类型与用户/分组字段白名单投影函数，纯内存计算，无任何数据库执行。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:f584314e6965d2c4fdd99de349998dfc9e1465205d6415d3ee40215bd5f76567",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/runtime/auditProjection.ts",
+          "baselineDigest": "sha256:d3137bf8bc2bc55dbd2553c9aefe167b9ac0bfd830b9314c0998fac9c625cbfe",
+          "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
+          "classification": "expand",
+          "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
         }
       ],
       "evidence": [
+        {
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
+        },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+        },
+        {
           "path": "server/src/__tests__/oversizedToolResultBudgets.test.ts",
           "digest": "sha256:6f4bd1084fc26abfbb32f0e0a8e86bb0e3648c57321a7deb90dfadeb8e9bd983"
+        },
+        {
+          "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/taskboardCommentQuery.pg.test.ts",
@@ -6698,6 +7464,14 @@
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
+          "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
+        },
+        {
+          "path": "server/src/runtime/appProfilePolicy.test.ts",
+          "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
         }
       ]
     },
@@ -6763,12 +7537,16 @@
       ],
       "evidence": [
         {
-          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
-          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
+          "path": "server/src/__tests__/auditProjection.test.ts",
+          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
           "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
+        },
+        {
+          "path": "server/src/__tests__/governanceSchemaMigration.test.ts",
+          "digest": "sha256:1f73c32e63076666a09e13869075846c5e2a99b5141d64df3516b320be7f6e68"
         },
         {
           "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
@@ -6777,10 +7555,6 @@
         {
           "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
           "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
-        },
-        {
-          "path": "server/src/__tests__/auditProjection.test.ts",
-          "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",

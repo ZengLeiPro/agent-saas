@@ -463,7 +463,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
             if (memoryEdits.length > 0) updatedText = applyEdits(updatedText, memoryEdits);
           }
           if (nextUpdate.titleGeneratorProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['titleGenerator'], nextUpdate.titleGenerator, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
-          if (nextUpdate.guardrailProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['guardrail'], nextUpdate.guardrail, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+          if (nextUpdate.guardrailProvided || nextUpdate.guardrail) updatedText = applyEdits(updatedText, modify(updatedText, ['guardrail'], nextUpdate.guardrail, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           if (nextUpdate.titleSystemPromptProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['systemPrompts'], Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           return updatedText;
         },

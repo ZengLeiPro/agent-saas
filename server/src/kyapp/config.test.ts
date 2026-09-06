@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_DIRECTORY,
   DEFAULT_KY_APP_JWKS_PATH,
   DEFAULT_SAT_TTL_SECONDS,
   KyAppConfigError,
@@ -61,5 +62,36 @@ describe('kyApp 平台配置域', () => {
     expect(() =>
       resolveKyAppConfig({ kyApp: { environment: 'prod', publicIssuer: 'https://a.example/x' } }),
     ).toThrow(KyAppConfigError);
+  });
+
+  it('WP2b 目录子域：缺省取 §3.6/§3.4 默认值，可覆盖，越界与未知键被拒', () => {
+    // 整域缺省 → 30 天保留 + 5 分钟投影节拍，无需任何新增环境变量。
+    expect(resolveKyAppConfig({ kyApp: { environment: 'prod' } })?.directory).toEqual({
+      retentionDays: DEFAULT_DIRECTORY.retentionDays,
+      reconcileIntervalMs: DEFAULT_DIRECTORY.reconcileIntervalMs,
+    });
+    expect(DEFAULT_DIRECTORY.retentionDays).toBe(30);
+    // 总控拍板：默认 60 秒，为 §11.2-3「停用后 5 分钟内无法进入」的验收留余量。
+    expect(DEFAULT_DIRECTORY.reconcileIntervalMs).toBe(60_000);
+
+    expect(
+      resolveKyAppConfig({
+        kyApp: {
+          environment: 'prod',
+          directory: { retentionDays: 7, reconcileIntervalMs: 60_000 },
+        },
+      })?.directory,
+    ).toEqual({ retentionDays: 7, reconcileIntervalMs: 60_000 });
+
+    for (const directory of [
+      { retentionDays: 0 },
+      { retentionDays: 366 },
+      { reconcileIntervalMs: 1_000 },
+      { unknownKey: 1 },
+    ]) {
+      expect(() => resolveKyAppConfig({ kyApp: { environment: 'prod', directory } })).toThrow(
+        KyAppConfigError,
+      );
+    }
   });
 });

@@ -251,6 +251,7 @@ describe('3-A-06：无活跃登录会话（cron / 后台任务）不投影 app__
             status: 200,
             text: '{}',
             json: { capabilities: [{ id: 'order.search', enabled: true }] },
+            retryAfterMs: null,
           };
         },
       },

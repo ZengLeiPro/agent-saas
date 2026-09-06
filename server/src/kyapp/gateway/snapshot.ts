@@ -12,7 +12,7 @@
  */
 import { toolName as buildAppToolName } from '@kaiyan/ky-app-contract';
 
-import type { Manifest, ManifestCapability, RiskLevel } from '@kaiyan/ky-app-contract';
+import type { Manifest, ManifestCapability, ResultLink, RiskLevel } from '@kaiyan/ky-app-contract';
 
 import type { KyAppGatewayConfig } from '../config.js';
 import type { AppToolSnapshotStore } from './snapshotStore.js';
@@ -31,7 +31,10 @@ export interface AppCapabilityEntry {
   riskLevel: RiskLevel;
   safeToRetry: boolean;
   inputSchema: Record<string, unknown>;
+  /** §4.3：单次调用超时上限（≤ 15,000，出站层再与实例级 15 s 取小）。 */
   timeoutMs?: number;
+  /** §5.2：结果链接模板。Gateway 在 `envelope.ts` 里替换占位后放进 `meta.resultLink`。 */
+  resultLink?: ResultLink;
   /** 调用时随 SAT 带出的 `dig`。 */
   registeredDigest: string;
   baseUrl: string;
@@ -350,6 +353,7 @@ export class AppToolSnapshotService {
       safeToRetry: capability.safeToRetry,
       inputSchema: capability.inputSchema as Record<string, unknown>,
       ...(capability.timeoutMs === undefined ? {} : { timeoutMs: capability.timeoutMs }),
+      ...(capability.resultLink ? { resultLink: capability.resultLink } : {}),
       registeredDigest: installation.registeredDigest,
       baseUrl: installation.baseUrl,
     };

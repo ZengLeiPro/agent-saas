@@ -26,6 +26,7 @@ import { APPS_TAB_UNAVAILABLE_TITLE, getDesktopHeaderTitle } from "./desktopHead
 import { useAuth } from "@/contexts/AuthContext";
 import { useAppsShellState } from "@/hooks/useAppsShellState";
 import { useMySystems } from "@/hooks/useMySystems";
+import { useAgentOpenPrefill } from "@/hooks/useAgentOpenPrefill";
 const ManagementWorkspaceContent = lazy(() => import('@/components/ManagementShell/ManagementWorkspaceContent').then(m => ({ default: m.ManagementWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
@@ -208,6 +209,9 @@ export function DesktopLayout(props: LayoutProps) {
   // §6.6：header 显示《系统名》；列表已就绪却查无此实例 = 已停用 / 不再可见 → 「暂不可用」
   const appsTitle = appsInstallation?.name
     ?? (appsRoute && appsStatus === "ready" ? APPS_TAB_UNAVAILABLE_TITLE : null);
+
+  // §5.4 agent.open：切到 Agent 标签 + 只预填（发送与否由用户决定）
+  useAgentOpenPrefill({ setInput, setActiveTab });
 
   const headerTitle = useMemo(() => getDesktopHeaderTitle({
     activeTab,

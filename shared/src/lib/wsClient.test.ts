@@ -451,6 +451,24 @@ describe('wsClient - 重连', () => {
 });
 
 describe('wsClient - 心跳', () => {
+  it('短后台复用原连接时恢复一个且仅一个 heartbeat interval', async () => {
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen();
+    await p;
+
+    wsClient.suspendNonEssentialTransport();
+    await vi.advanceTimersByTimeAsync(2_900);
+    wsClient.resumeNonEssentialTransport();
+    wsClient.resumeNonEssentialTransport();
+    await vi.advanceTimersByTimeAsync(25_000);
+
+    const pings = ws.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.action === 'ping');
+    expect(pings).toHaveLength(1);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
   it('连接后按心跳间隔发送 ping，且 lastSeq 随之带出', async () => {
     const p = wsClient.connect();
     await vi.advanceTimersByTimeAsync(0);

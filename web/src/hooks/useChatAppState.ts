@@ -2679,7 +2679,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     automationError: automation.error,
     controlAutomation: automation.control,
     refreshAutomation: automation.refresh,
-    refreshCurrentSession: session.refreshCurrentSession,
+    refreshCurrentSession: session.refreshCurrentSession, refreshSessions: session.refreshSessions,
     resumeCurrentStream,
     hasMoreSessions: session.hasMore,
     isLoadingMoreSessions: session.isLoadingMore,

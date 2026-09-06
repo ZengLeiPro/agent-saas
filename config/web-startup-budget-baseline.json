@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 354259,
-    "startupCssGzipBytes": 34963,
-    "startupJsBrotliBytes": 282113,
-    "startupCssBrotliBytes": 27673,
-    "largestJsGzipBytes": 354259,
-    "largestCssGzipBytes": 34963,
-    "largestJsBrotliBytes": 282113,
-    "largestCssBrotliBytes": 27673,
-    "largestJs": "assets/index-DktBHugd.js",
-    "largestCss": "assets/index-CDFZj6l4.css"
+    "startupJsGzipBytes": 355608,
+    "startupCssGzipBytes": 34950,
+    "startupJsBrotliBytes": 283247,
+    "startupCssBrotliBytes": 27661,
+    "largestJsGzipBytes": 355608,
+    "largestCssGzipBytes": 34950,
+    "largestJsBrotliBytes": 283247,
+    "largestCssBrotliBytes": 27661,
+    "largestJs": "assets/index-BW06YfT7.js",
+    "largestCss": "assets/index-CbcB631P.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "P5-2/P5-3 会话、消息与 useChatAppState 共同内核下沉 shared：Web 改为消费共享 hook（useMessageBuffer/useSessionHistoryPaging/useStreamWatchdog/useModelSelection 等），启动包累计 +1.7KB gzip（同一逻辑不再两端各一份）",
-  "updatedAt": "2026-09-05"
+  "reason": "前后台恢复改为带退避与并发合并的统一状态机，首屏 gzip 增长约 1.3KB，保持单请求且远低于 600KB 绝对上限",
+  "updatedAt": "2026-09-06"
 }

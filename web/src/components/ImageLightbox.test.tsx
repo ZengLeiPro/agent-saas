@@ -15,7 +15,7 @@ function allowedAccess(status: ManagementSettingsAccess["status"]): ManagementSe
 }
 
 describe("ImageLightbox portal boundary", () => {
-  it("Gate 内使用本地容器，inactive/refreshing 时隐藏并停用 Escape", () => {
+  it("Gate 内使用本地容器，inactive 时隐藏，refreshing 时保持交互", () => {
     const onClose = vi.fn();
     const gate = (target: "personal" | "tenant", status: ManagementSettingsAccess["status"] = "ready") => (
       <ManagementSettingsAccessGate
@@ -44,9 +44,9 @@ describe("ImageLightbox portal boundary", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
 
     rerender(gate("tenant", "refreshing"));
-    expect(lightbox.closest("[inert]")).toBeTruthy();
+    expect(lightbox.closest("[inert]")).toBeNull();
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   it("普通页面仍 portal 到 body 并响应 Escape", () => {

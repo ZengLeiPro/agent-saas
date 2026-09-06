@@ -59,6 +59,10 @@ test('shared changes conservatively require every dependent component deployment
 });
 
 test('classifies root dependency files while explicitly ignoring release-only governance files', () => {
+  assert.deepEqual(classifyPath('.nvmrc'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('Dockerfile'), {
     components: ['web', 'api', 'runtimeWorker', 'acs'],
     blockingReason: null,

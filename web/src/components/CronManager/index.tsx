@@ -19,6 +19,8 @@ import { TaskBoardView } from "@/components/TaskBoard";
 import { CronScheduleView } from "./CronScheduleView";
 
 interface CronManagerProps {
+  /** mount-once 容器当前是否为用户可见的顶层页面。 */
+  active?: boolean;
   onJobCountChange?: (enabled: number, total: number) => void;
   /** 桌面端全局 Header 的二级导航区；undefined 时在页内渲染。 */
   headerNavigationTarget?: HTMLElement | null;
@@ -55,6 +57,7 @@ function cronViewHref(
 }
 
 export function CronManager({
+  active = true,
   onJobCountChange,
   headerNavigationTarget,
   headerActionsTarget,
@@ -131,7 +134,7 @@ export function CronManager({
         {mountedViews.schedule ? (
           <div className="h-full min-h-0" hidden={view !== "schedule"}>
             <CronScheduleView
-              active={view === "schedule"}
+              active={active && view === "schedule"}
               onJobCountChange={onJobCountChange}
               headerActionsTarget={view === "schedule" ? headerActionsTarget : null}
             />
@@ -140,7 +143,7 @@ export function CronManager({
         {mountedViews.board ? (
           <div className="h-full min-h-0" hidden={view !== "board"}>
             <TaskBoardView
-              active={view === "board"}
+              active={active && view === "board"}
               headerActionsTarget={view === "board" ? headerActionsTarget : null}
               detailPanelTarget={detailPanelTarget}
               onDetailOpenChange={onTaskDetailOpenChange}

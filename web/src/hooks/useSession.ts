@@ -93,6 +93,7 @@ export interface SessionState {
   sessionAccessMode: SessionDetailAccessMode | "unknown";
   setSessionId: (id: string | null) => void;
   loadSessions: (opts?: { fresh?: boolean; silent?: boolean; skipMerge?: boolean }) => Promise<void>;
+  refreshSessions: () => Promise<void>;
   loadMoreSessions: () => Promise<void>;
   loadSessionDetail: (
     id: string,
@@ -298,6 +299,11 @@ export function useSession(
       }
     },
     [],
+  );
+
+  const refreshSessions = useCallback(
+    () => loadSessions({ fresh: true, silent: true }),
+    [loadSessions],
   );
 
   const loadMoreSessions = useCallback(async () => {
@@ -699,18 +705,6 @@ export function useSession(
     return () => unregisterRefresh("sessions");
   }, [loadSessions]);
 
-  // 页面从后台恢复时刷新会话列表
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        void loadSessions({ fresh: true });
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () =>
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [loadSessions]);
-
   // Debounced session list cache write — 统一写入通道（shared 内核）
   useSessionListCacheWriter(sessions, hasMore, identity, {
     enabled: !(sessions.length === 0 && sessionListRevisionRef.current === 0),
@@ -765,6 +759,7 @@ export function useSession(
     accessRef: sessionAccessModeRef,
     setSessionId,
     loadSessions,
+    refreshSessions,
     loadMoreSessions,
     loadSessionDetail,
     loadEarlierMessages,

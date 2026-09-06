@@ -68,6 +68,7 @@ type ModelsAdminUpdate = {
   titleGenerator: TitleGeneratorAppConfig | undefined;
   titleGeneratorProvided: boolean;
   guardrail: AppConfig['guardrail'];
+  guardrailProvided: boolean;
   systemPrompts: SystemPromptsConfig;
   titleSystemPromptProvided: boolean;
 };
@@ -295,6 +296,7 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
   const bodyRecord = isRecord(body) ? body : {};
   const memoryIndexProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'memoryIndex');
   const titleGeneratorProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'titleGenerator');
+  const guardrailProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'guardrail');
   const titleSystemPromptProvided = Object.prototype.hasOwnProperty.call(bodyRecord, 'titleSystemPrompt');
   const merged: Record<string, unknown> = {
     ...rawRecord,
@@ -320,7 +322,10 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
   }
 
   if (titleGeneratorProvided) merged.titleGenerator = bodyRecord.titleGenerator;
-  if (Object.prototype.hasOwnProperty.call(bodyRecord, 'guardrail')) merged.guardrail = bodyRecord.guardrail;
+  if (guardrailProvided) {
+    if (bodyRecord.guardrail == null) delete merged.guardrail;
+    else merged.guardrail = bodyRecord.guardrail;
+  }
 
   if (titleSystemPromptProvided) {
     if (typeof bodyRecord.titleSystemPrompt !== 'string' || !bodyRecord.titleSystemPrompt.trim()) {
@@ -336,7 +341,9 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
 
   const current = parseAppConfig(rawRecord);
   const candidate = parseAppConfig(merged);
-  if (candidate.models) merged.guardrail = guardrailForModelsUpdate(current, candidate.models, candidate.guardrail);
+  if (candidate.models && !(guardrailProvided && bodyRecord.guardrail == null)) {
+    merged.guardrail = guardrailForModelsUpdate(current, candidate.models, candidate.guardrail);
+  }
   const parsed = parseAppConfig(merged);
   if (!parsed.models) throw new Error('models 未配置');
   validateTitleGeneratorModels(parsed.models, parsed.titleGenerator);
@@ -350,6 +357,7 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
     titleGenerator: parsed.titleGenerator,
     titleGeneratorProvided,
     guardrail: parsed.guardrail,
+    guardrailProvided,
     systemPrompts: parsed.systemPrompts ?? {},
     titleSystemPromptProvided,
   };
@@ -455,7 +463,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
             if (memoryEdits.length > 0) updatedText = applyEdits(updatedText, memoryEdits);
           }
           if (nextUpdate.titleGeneratorProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['titleGenerator'], nextUpdate.titleGenerator, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
-          if (nextUpdate.guardrail) updatedText = applyEdits(updatedText, modify(updatedText, ['guardrail'], nextUpdate.guardrail, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+          if (nextUpdate.guardrailProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['guardrail'], nextUpdate.guardrail, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           if (nextUpdate.titleSystemPromptProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['systemPrompts'], Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           return updatedText;
         },

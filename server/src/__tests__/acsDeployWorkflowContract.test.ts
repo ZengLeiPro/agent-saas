@@ -400,7 +400,7 @@ describe('ACS deployment and classifier contract', () => {
   it('在等待镜像前拒绝落后 main 的 dispatch，并在确认后打包 managed unit', () => {
     const checkoutIndex = workflow.indexOf('- name: 检出手动触发的精确提交');
     const verifyIndex = workflow.indexOf('- name: 确认手动触发仍指向最新 main');
-    const waitIndex = workflow.indexOf('- name: Wait for ACR auto-build of HEAD');
+    const waitIndex = workflow.indexOf('- name: 等待 ACR 自动构建 HEAD（每 30 秒轮询）');
     const packIndex = workflow.indexOf(
       '- name: 打包并标识编排器及托管单元版本',
     );
@@ -440,7 +440,7 @@ describe('ACS deployment and classifier contract', () => {
 
   it('先按 6 位 tag 选候选，再用 GIT_CLONE 日志绑定完整 SHA', () => {
     const waitStep = workflow.slice(
-      workflow.indexOf('- name: Wait for ACR auto-build of HEAD'),
+      workflow.indexOf('- name: 等待 ACR 自动构建 HEAD（每 30 秒轮询）'),
       workflow.indexOf('- name: 解析不可变 ACS 镜像'),
     );
     expect(workflow).toContain('SHA6="${GITHUB_SHA:0:6}"');

@@ -13,6 +13,9 @@
  * 推论：**startup 预算不受演示态影响** —— `check-web-startup-budget` 量的是
  * `web/dist` 的产物，而 demo 从不进这份产物。
  */
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import viteConfig from '../../vite.config.ts?raw';
@@ -43,11 +46,17 @@ describe('web/demo 不进生产构建', () => {
     expect(ossDistScript).toContain('web/demo 不得进生产构建');
   });
 
-  it('生产源码里没有人写过这个标记串（否则 dist 断言会假红）', async () => {
-    const sources = import.meta.glob('/src/**/*.{ts,tsx}', { query: '?raw', import: 'default' });
-    for (const [path, load] of Object.entries(sources)) {
-      if (path.endsWith('demoNotShipped.test.ts')) continue;
-      expect(await load(), path).not.toContain(DEMO_STUB_MARKER);
+  // 直接读盘而不是 `import.meta.glob('?raw')`：后者会把上千个源文件逐个过一遍 vite 的
+  // transform 管线，全量套件并发时轻松超过 5 s 的默认超时。
+  it('生产源码里没有人写过这个标记串（否则 dist 断言会假红）', () => {
+    // vitest 里 `import.meta.url` 是 http:// 形式，取不到磁盘路径；
+    // web 套件的 cwd 恒为 `web/`，从它出发。
+    const srcDir = resolve(process.cwd(), 'src');
+    const files = readdirSync(srcDir, { recursive: true, encoding: 'utf8' })
+      .filter((name) => /\.tsx?$/u.test(name) && !name.endsWith('demoNotShipped.test.ts'));
+    expect(files.length).toBeGreaterThan(100);
+    for (const name of files) {
+      expect(readFileSync(`${srcDir}/${name}`, 'utf8'), name).not.toContain(DEMO_STUB_MARKER);
     }
   });
 });

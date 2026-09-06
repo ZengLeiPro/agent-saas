@@ -28,6 +28,8 @@ import { loadResolvedInteractionIds, notifyCrossProcessInteractionResume, scanBu
 import type { AgentRunDispatch, AgentRunHooks } from '../../agent/types.js';
 import type { ExecutionTargetKind } from '../../agent/toolRuntime.js';
 import { toRunModelOptions } from '../../app/models.js';
+import { decideAuthorizationModeTool } from './authorizationModeDecision.js';
+import { requiresAppWriteConfirmation } from '../../kyapp/gateway/toolRiskRegistry.js';
 import { interactionStore } from './interactionStore.js';
 import { appendActiveInteractionResolved } from './activeInteractionPersistence.js';
 import { persistedInteractionAccessError } from './persistedInteractionAccess.js';
@@ -3429,6 +3431,8 @@ export class WebChannel implements BaseChannel {
           && event.toolName
           && !INTERACTIVE_PERMISSION_TOOLS.has(event.toolName)
           && (!event.toolId || !INTERACTIVE_PERMISSION_TOOLS.has(event.toolId))
+          // 定制项目写能力：平台管理员同样必须人工确认（规范 §6.2-2，fail-closed）
+          && !requiresAppWriteConfirmation(event.toolName, event.toolId)
         ) {
           return { allow: true, message: 'auto-approved by policy' };
         }
@@ -3440,139 +3444,17 @@ export class WebChannel implements BaseChannel {
           && !(user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID)
           && approvalPolicy?.autoApproveTools === true && approvalPolicy?.lowRiskOnly !== true
         ) {
-          // 安全工具：无路径风险，直接放行
-          const safeTools = new Set([
-            'Agent', 'Workflow',
-            'WebFetch', 'WebSearch', 'Task',
-            'Skill', 'AskUserQuestion',
-            'EnterPlanMode', 'ExitPlanMode',
-            'EnterWorktree', 'ExitWorktree',
-            'TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskStop', 'TaskOutput',
-            'TodoWrite', 'ToolSearch',
-            'CronCreate', 'CronDelete', 'CronList',
-            'RemoteTrigger',
-          ]);
-          if (event.toolName && (
-            safeTools.has(event.toolName)
-            || event.toolName.startsWith('mcp__')
-          )) {
-            return { allow: true };
-          }
-
-          // Shell/Bash 工具：命令审计
-          if (event.toolName === 'Bash' || event.toolName === 'Shell') {
-            const command = (event.toolInput?.command as string) ?? '';
-
-            // 环境变量探测命令拦截（纵深防御，主防线是不注入敏感变量 + OS 沙箱）
-            if (/(?:^|[;&|]\s*)(?:env|printenv)(?:\s|$|;|\|)/.test(command)) {
-              return { allow: false, message: '安全限制：不允许执行环境变量探测命令' };
-            }
-
-            const userCwd = resolveUserCwd(this.config.agentCwd!, {
-              id: user.sub, username: user.username, role: user.role, tenantId: user.tenantId,
-            });
-            const userExtraDirs = getUserExtraDirs(this.config.userOverrides, user.username);
-            const fileOps = /\b(?:cat|head|tail|less|more|cp|mv|rm|mkdir|rmdir|touch|chmod|chown|ln|tee|dd)\b/;
-            const hasFileOp = fileOps.test(command);
-            if (hasFileOp) {
-              const absPaths = command.match(/(?:^|\s)(\/[^\s|>&;]+)/g)
-                ?.map(p => p.trim())
-                ?.filter(p => !p.startsWith('/dev/null')) ?? [];
-              for (const absPath of absPaths) {
-                if (!isPathWithinDirectory(absPath, userCwd) && !isPathWithinAnyDirectory(absPath, userExtraDirs)) {
-                  return {
-                    allow: false,
-                    message: `安全限制：不允许对工作目录外的路径执行文件操作。检测到路径: ${absPath}，工作目录: ${userCwd}`,
-                  };
-                }
-              }
-            }
-            const redirects = command.match(/>{1,2}\s*(\/[^\s|>&;]+)/g)
-              ?.map(m => m.replace(/^>{1,2}\s*/, '')) ?? [];
-            for (const rPath of redirects) {
-              if (
-                rPath !== '/dev/null'
-                && !isPathWithinDirectory(rPath, userCwd)
-                && !isPathWithinAnyDirectory(rPath, userExtraDirs)
-              ) {
-                return {
-                  allow: false,
-                  message: `安全限制：不允许将输出重定向到工作目录外。检测到路径: ${rPath}，工作目录: ${userCwd}`,
-                };
-              }
-            }
-            // 相对路径穿越检测（纵深防御，OS 沙箱是主防线）
-            const traversalPaths = command.match(/(?:^|\s)(\.\.[\w/.~-]*|~[\w/.-]+)/g)
-              ?.map(p => p.trim())
-              ?.filter(p => p.startsWith('..') || p.startsWith('~')) ?? [];
-            for (const relPath of traversalPaths) {
-              const expanded = relPath.startsWith('~')
-                ? relPath.replace(/^~/, homedir())
-                : relPath;
-              const resolved = resolvePath(userCwd, expanded);
-              if (!isPathWithinDirectory(resolved, userCwd) && !isPathWithinAnyDirectory(resolved, userExtraDirs)) {
-                return {
-                  allow: false,
-                  message: `安全限制：不允许对工作目录外的路径执行文件操作。检测到路径: ${relPath}，工作目录: ${userCwd}`,
-                };
-              }
-            }
-            return { allow: true };
-          }
-
-          // 文件类工具：路径字段映射
-          const pathFields: Record<string, { field: string; optional?: boolean }> = {
-            Read: { field: 'path' },
-            Write: { field: 'path' },
-            Edit: { field: 'file_path' },
-            NotebookEdit: { field: 'notebook_path' },
-          };
-
-          const pathInfo = event.toolName ? pathFields[event.toolName] : undefined;
-          if (pathInfo !== undefined) {
-            const filePath = event.toolInput?.[pathInfo.field] as string | undefined;
-            if (!filePath) {
-              if (pathInfo.optional) return { allow: true };
-              return { allow: false, message: 'Access denied: missing file path' };
-            }
-            const userCwd = resolveUserCwd(this.config.agentCwd!, {
-              id: user.sub, username: user.username, role: user.role, tenantId: user.tenantId,
-            });
-            const userExtraDirs = getUserExtraDirs(this.config.userOverrides, user.username);
-            const resolved = resolvePath(userCwd, filePath);
-            if (isPathWithinDirectory(resolved, userCwd)) {
-              const isWrite = event.toolName === 'Write' || event.toolName === 'Edit';
-              if (isWrite) {
-                const rel = resolved.slice(userCwd.length + 1);
-                if (
-                  rel === '.ky-agent/settings.json'
-                  || rel === '.ky-agent/settings.local.json'
-                  || rel === '.claude/settings.json'
-                  || rel === '.claude/settings.local.json'
-                ) {
-                  return { allow: false, message: 'Access denied: cannot modify agent settings files' };
-                }
-              }
-              return { allow: true };
-            }
-            if (isPathWithinAnyDirectory(resolved, userExtraDirs)) {
-              return { allow: true };
-            }
-            if (this.config.agentCwd) {
-              const sharedAgentDir = resolveAgentPath(this.config.sharedDir || this.config.agentCwd);
-              const allowedSubdirs = ['skills', 'extension', 'scripts'];
-              for (const sub of allowedSubdirs) {
-                const allowed = resolvePath(sharedAgentDir, sub);
-                if (isPathWithinDirectory(resolved, allowed)) {
-                  return { allow: true };
-                }
-              }
-            }
-            return { allow: false, message: 'Access denied: path outside your workspace' };
-          }
-
-          // 未知工具：拒绝
-          return { allow: false, message: 'Operation not permitted' };
+          const decision = decideAuthorizationModeTool({
+            toolName: event.toolName,
+            toolId: event.toolId,
+            toolInput: event.toolInput,
+            agentCwd: this.config.agentCwd!,
+            sharedDir: this.config.sharedDir,
+            userOverrides: this.config.userOverrides,
+            user: { id: user.sub, username: user.username, role: user.role, tenantId: user.tenantId },
+          });
+          // undefined = 定制项目写能力，授权模式不表态，继续走下方人工审批流（规范 §6.2-2）
+          if (decision) return decision;
         }
         // WS 断开：普通 permission_request 立即拒绝，ask_user 和 plan mode 存活等待重连
         const isPlanMode = event.type === 'permission_request'
@@ -3581,7 +3463,11 @@ export class WebChannel implements BaseChannel {
           // 平台 admin 断连时自动放行（等同于 bypassPermissions 行为）；
           // 其他用户（含组织 admin）若未走上方授权模式自动裁决，说明其要求人工审批，
           // 断连时无法确认 → 拒绝。
-          if (user?.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID) {
+          if (
+            user?.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID
+            // 定制项目写能力断连时无法二次确认 → 一律拒绝，不走 bypass
+            && !requiresAppWriteConfirmation(event.toolName, event.toolId)
+          ) {
             return { allow: true };
           }
           return { allow: false, message: 'WebSocket connection closed' };

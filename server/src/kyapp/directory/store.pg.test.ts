@@ -15,6 +15,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgDirectoryGroupStore } from '../../data/directoryGroups/store.js';
+import { GOVERNANCE_SCHEMA_VERSION } from '../../data/governance-schema/migrations.js';
 import { PgKyAppDirectoryChangeLog } from './changeLog.js';
 import {
   DirectoryProjector,
@@ -138,9 +139,9 @@ describePg('定制项目组织目录变更日志与投影 PostgreSQL 合约', ()
 
   it('v42 迁移真跑：两张新表、employee_no 列与三条索引齐备，且重复运行幂等', async () => {
     const version = await pool.query<{ version: number }>(
-      `SELECT MAX(version) AS version FROM ${prefix}_governance_schema_versions`,
+      `SELECT version FROM ${prefix}_governance_schema_versions WHERE version=42`,
     );
-    expect(Number(version.rows[0]?.version)).toBe(42);
+    expect(version.rows).toEqual([{ version: 42 }]);
 
     const column = await pool.query<{ data_type: string; is_nullable: string }>(
       `SELECT data_type,is_nullable FROM information_schema.columns
@@ -162,12 +163,12 @@ describePg('定制项目组织目录变更日志与投影 PostgreSQL 合约', ()
     );
     expect(indexes.rows.map((row) => row.indexname).sort()).toHaveLength(4);
 
-    // 幂等：再跑一次迁移不报错、版本不变。
+    // 幂等：再跑一次迁移不报错、版本仍为当前最高版本。
     await changeLog.init();
     const again = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${prefix}_governance_schema_versions`,
     );
-    expect(Number(again.rows[0]?.version)).toBe(42);
+    expect(Number(again.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
 
     // employee_no 的长度上限与附录 L 对齐。
     await seedMembership('u-len');
@@ -560,10 +561,12 @@ describePg('定制项目组织目录变更日志与投影 PostgreSQL 合约', ()
       's-3',
     ]);
     // s-1 在 sg-a 里；层级关系也如实带出。
-    expect(pages.flatMap((item) => item.users).find((entry) => entry.userId === 's-1')?.groupIds)
-      .toEqual(['sg-a']);
-    expect(pages.flatMap((item) => item.groups).find((entry) => entry.groupId === 'sg-b'))
-      .toMatchObject({ parentGroupId: 'sg-a' });
+    expect(
+      pages.flatMap((item) => item.users).find((entry) => entry.userId === 's-1')?.groupIds,
+    ).toEqual(['sg-a']);
+    expect(
+      pages.flatMap((item) => item.groups).find((entry) => entry.groupId === 'sg-b'),
+    ).toMatchObject({ parentGroupId: 'sg-a' });
 
     // 从库里读出来的整份快照不含任何被污染字段。
     const serialized = JSON.stringify(pages);
@@ -571,8 +574,9 @@ describePg('定制项目组织目录变更日志与投影 PostgreSQL 合约', ()
     expect(serialized).not.toContain('13800000000');
 
     // 越界页码返回空页，不报错。
-    await expect(snapshots.readPage({ tenantId: tenant, page: 9, pageSize: 2 })).resolves
-      .toMatchObject({ snapshotSeq: watermark, users: [], groups: [], hasMore: false });
+    await expect(
+      snapshots.readPage({ tenantId: tenant, page: 9, pageSize: 2 }),
+    ).resolves.toMatchObject({ snapshotSeq: watermark, users: [], groups: [], hasMore: false });
   }, 60_000);
 
   it('该组织变更日志被清空后，snapshotSeq 由投影态兜住而不退化成 0', async () => {

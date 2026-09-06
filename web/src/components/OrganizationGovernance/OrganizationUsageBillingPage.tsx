@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { TenantBillingPanel } from "@/components/BillingManager";
+import { KyAppTenantUsagePanel } from "@/components/KyAppDeliveryPanels";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAdminUrlQuery } from "@/hooks/useAdminUrlQuery";
 
@@ -35,6 +36,7 @@ export function OrganizationUsageBillingPage({
         {usage}
       </TabsContent>
       <TabsContent value="billing" className="mt-0">
+        <KyAppTenantUsagePanel tenantId={tenantId} />
         <TenantBillingPanel tenantId={tenantId} tenantName={tenantName} />
       </TabsContent>
     </Tabs>

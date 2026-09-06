@@ -4,7 +4,7 @@
 带 `ky-app.manifest.json` / `ky-app.conformance.json` 骨架、声明式权限表、`skills/`、
 CI、`.gitignore` + 密钥扫描、`CLAUDE.md` 契约片段。
 
-**状态：Phase A 只落骨架与 bin 入口（打印用法，退出码 2），模板生成见 WP1 Phase C。**
+生成器已可用；`--link` 可直接指向五个本地 tarball 所在目录，适合发布前空目录开箱验收。
 
 ```bash
 npx create-ky-app my-app --system-id demo-erp --name "演示 ERP" --link ./tarballs

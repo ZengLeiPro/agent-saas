@@ -347,7 +347,9 @@ describe('registeredDigest CAS 与实例状态机', () => {
       domainVerification: { recordName: string; recordValue: string };
     };
     expect(createdBody.installation.status).toBe('pending');
-    expect(createdBody.domainVerification.recordName).toBe('_ky-app-verify.erp.example.com');
+    expect(createdBody.domainVerification.recordName).toBe(
+      '_ky-app-verify.erp.apps.kaiyancn.com',
+    );
     expect(createdBody.domainVerification.recordValue.length).toBeGreaterThanOrEqual(22);
   });
 

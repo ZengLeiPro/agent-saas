@@ -101,6 +101,21 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     }
   });
 
+  router.get('/installations/:iid/credentials', async (req, res) => {
+    const iid = idSchema.safeParse(req.params.iid);
+    if (!iid.success) return sendKyAppError(req, res, 'invalid_input', 'iid 非法');
+    if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
+    try {
+      const installation = await options.installations.require(iid.data);
+      if (!canManageTenant(req.user, installation.tenantId)) {
+        return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
+      }
+      res.json({ credentials: await options.credentials.listMetadata(iid.data) });
+    } catch (error) {
+      sendKyAppFailure(req, res, error);
+    }
+  });
+
   router.get('/installations/:iid/credentials/claim/:ticket', async (req, res) => {
     const iid = idSchema.safeParse(req.params.iid);
     const ticket = ticketSchema.safeParse(req.params.ticket);
@@ -227,6 +242,45 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
         runtime,
         digestConsistent: runtime?.manifestDigest === installation.registeredDigest,
         credentialsExpiringSoon: credentials,
+      });
+    } catch (error) {
+      sendKyAppFailure(req, res, error);
+    }
+  });
+
+  router.get('/installations/:iid/management', async (req, res) => {
+    const iid = idSchema.safeParse(req.params.iid);
+    if (!iid.success) return sendKyAppError(req, res, 'invalid_input', 'iid 非法');
+    if (!req.user) return sendKyAppError(req, res, 'unauthorized', '需要登录');
+    try {
+      const installation = await options.installations.require(iid.data);
+      if (!canManageTenant(req.user, installation.tenantId)) {
+        return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
+      }
+      const definition = await options.systems.getDefinition(installation.systemId);
+      const version = installation.registeredDigest
+        ? await options.systems.getVersion(installation.systemId, installation.registeredDigest)
+        : null;
+      res.json({
+        installation: {
+          installationId: installation.installationId,
+          tenantId: installation.tenantId,
+          systemId: installation.systemId,
+          baseUrl: installation.baseUrl,
+          origin: installation.origin,
+          techContactUserId: installation.techContactUserId,
+          status: installation.status,
+          registeredDigest: installation.registeredDigest,
+          domainVerifiedAt: installation.domainVerifiedAt,
+        },
+        definition: definition
+          ? {
+              name: definition.name,
+              status: definition.status,
+              publishedDigest: definition.publishedDigest,
+            }
+          : null,
+        manifest: version?.manifest ?? null,
       });
     } catch (error) {
       sendKyAppFailure(req, res, error);

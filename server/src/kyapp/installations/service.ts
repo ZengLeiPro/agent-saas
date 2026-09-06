@@ -32,6 +32,8 @@ import type { PgKyAppSystemStore } from '../systems/store.js';
 
 /** §2.5 域名归属验证的 TXT 记录前缀。 */
 export const KY_APP_DOMAIN_VERIFICATION_PREFIX = '_ky-app-verify';
+/** 第一期生产应用域：公司控制 DNS，避免把任意客户域当成平台出站目标。 */
+export const KY_APP_PRODUCTION_HOST_SUFFIX = '.apps.kaiyancn.com';
 
 /** 状态 → outbox 事件类型（`pending` 不产生事件）。 */
 const EVENT_TYPE_BY_STATUS = {
@@ -464,5 +466,15 @@ export function assertBaseUrl(baseUrl: string, config: KyAppPlatformConfig): voi
     !(config.allowInsecureOutbound && config.environment !== 'prod')
   ) {
     throw new KyAppInstallationError('baseUrl 必须是 https', 'invalid_base_url');
+  }
+  if (
+    config.environment === 'prod' &&
+    (!parsed.hostname.endsWith(KY_APP_PRODUCTION_HOST_SUFFIX) ||
+      parsed.hostname === KY_APP_PRODUCTION_HOST_SUFFIX.slice(1))
+  ) {
+    throw new KyAppInstallationError(
+      `第一期生产 baseUrl 必须使用 *${KY_APP_PRODUCTION_HOST_SUFFIX}`,
+      'invalid_base_url',
+    );
   }
 }

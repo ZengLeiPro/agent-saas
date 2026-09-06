@@ -465,6 +465,12 @@ export function createGovernanceResourcesRouter(deps: {
     const resource = await deps.skills.getResource(req.params.skillId);
     if (!resource || resource.tenantId !== tenantId) return res.status(404).json({ error: 'Skill not found' });
     if (!canAccessSkill(req, resource)) return res.status(404).json({ error: 'Skill not found' });
+    if (req.query.includeVersion === 'true') {
+      const version = resource.currentVersionId
+        ? await deps.skills.getVersion(resource.currentVersionId)
+        : null;
+      return res.json({ resource, version });
+    }
     res.json(resource);
   });
 

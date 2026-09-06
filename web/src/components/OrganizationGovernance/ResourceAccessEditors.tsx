@@ -7,7 +7,7 @@ import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegist
 import { governanceAccessApi, governanceApiErrorMessage, governanceResourcesApi } from '@agent/shared/lib/governanceApi';
 
 type EntitlementResourceType =
-  'model' | 'tool' | 'agent_template' | 'skill' | 'connector' | 'environment_template';
+  'model' | 'tool' | 'agent_template' | 'skill' | 'connector' | 'environment_template' | 'integrated_system';
 type AssignmentResourceType =
   'skill' | 'credential' | 'environment_template' | 'connector' | 'dws_delegation' | 'system_installation';
 type AssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';

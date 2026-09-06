@@ -68,6 +68,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/billing/pgBillingStore.ts",
           "baselineDigest": "sha256:e6412bd759d8a0de71bb2f35864443521cc3b7465158ca10240b3474e426ca3d",
           "targetDigest": "sha256:ff657a5d9076a72faf63622c1fba77ab50b7b3cc2aed07a866eb27d81039bab9",
@@ -98,16 +105,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -136,6 +143,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
@@ -227,6 +248,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -492,7 +520,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -524,7 +552,7 @@
         },
         {
           "path": "server/src/__tests__/releaseMigrationUpgrade.pg.test.ts",
-          "digest": "sha256:65340e61b85412c2030f70232afabbce4e9a4a55e03300400b79cf46a767e633"
+          "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
           "path": "server/src/__tests__/responsesStreamBudget.test.ts",
@@ -572,6 +600,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -588,16 +623,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -605,6 +640,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -626,6 +675,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -792,6 +848,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -808,16 +871,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -825,6 +888,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -846,6 +923,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -975,6 +1059,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -991,16 +1082,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1008,6 +1099,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/data/transcripts/parse.ts",
@@ -1029,6 +1134,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -1158,6 +1270,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -1167,16 +1286,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1184,6 +1303,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -1198,6 +1331,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -1319,6 +1459,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -1328,16 +1475,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1345,6 +1492,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -1359,6 +1520,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -1480,6 +1648,13 @@
           "reason": "记忆运行修复：Profile 静态版本或领取事务中的运行期 UPDATE；store init 原样保留，无 DDL 与启动回填。详记忆运行修复审核。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -1489,16 +1664,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1506,6 +1681,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -1520,6 +1709,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -1697,6 +1893,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/billing/pgBillingStore.ts",
           "baselineDigest": "sha256:ff657a5d9076a72faf63622c1fba77ab50b7b3cc2aed07a866eb27d81039bab9",
           "targetDigest": "sha256:ff657a5d9076a72faf63622c1fba77ab50b7b3cc2aed07a866eb27d81039bab9",
@@ -1727,16 +1930,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -1765,6 +1968,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/data/orgGroupAgents/bindingIdentityStore.ts",
@@ -1856,6 +2073,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -2118,7 +2342,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2178,6 +2402,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -2201,16 +2432,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2218,6 +2449,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -2232,6 +2477,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -2310,7 +2562,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2384,6 +2636,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -2400,16 +2659,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2417,6 +2676,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -2431,6 +2704,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -2518,7 +2798,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2592,6 +2872,13 @@
           "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -2608,16 +2895,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2625,6 +2912,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -2639,6 +2940,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -2726,7 +3034,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/memoryHealthReconcile.pg.test.ts",
@@ -2765,6 +3073,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -2781,16 +3096,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2798,6 +3113,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -2812,6 +3141,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -2860,7 +3196,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -2891,6 +3227,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -2907,16 +3250,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2924,6 +3267,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -2938,6 +3295,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -2986,7 +3350,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3017,6 +3381,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -3033,16 +3404,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3050,6 +3421,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -3064,6 +3449,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -3112,7 +3504,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3143,6 +3535,13 @@
           "reason": "新建 iOS 推送设备令牌表与投递幂等表：仅 CREATE TABLE/INDEX IF NOT EXISTS，无外键无级联；本次仅改运行期 claimDelivery 的 updated_at 毫秒截断比较，建表语句未变。"
         },
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -3159,16 +3558,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3176,6 +3575,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -3190,6 +3603,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -3238,7 +3658,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3262,6 +3682,13 @@
       "baselineSha": "8cd1254e53f27154148a8d9a30916ce4295a3e8a",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -3278,16 +3705,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "新增 v38、v39、v40 调度，旧迁移序号和语句不变；真实 v37→v40 及重复启动验证通过。WP2a 复审：追加 v41 调度，旧序号与语句仍不变，真实 v40→v41 及重复启动在 postgres:16 验证通过。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "最新版本号 37→40；执行器及旧迁移保持，旧 runner 在 v40 数据库重新运行通过。WP2a 复审：版本号 40→41，执行器与旧迁移未改，v41 在真实 PG 上幂等重跑通过。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3295,6 +3722,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -3309,6 +3750,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -3346,7 +3794,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",
@@ -3370,6 +3818,13 @@
       "baselineSha": "99b7496f75467595ac53da16cdf338770846f35b",
       "files": [
         {
+          "path": "server/src/data/agentProfiles/types.ts",
+          "baselineDigest": "sha256:10fded96db33bdf1e79219abf75a3a4daa61037d779e5417c3905c8675fb2410",
+          "targetDigest": "sha256:23c3504a190339fe05839c20a3b50a394847481441f6b7e286946526979b6350",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：AgentProfile 运行时策略 schema 增加可选 runtime.apps（systemAllowlist / capabilityAllowlist / denySystems / denyCapabilities），与既有 runtime.mcp 平行。纯 Zod 类型与序列化，无 SQL、无 DDL、无启动回填；刻意用 optional 且不写进内建 Profile，使 digestAgentRuntimeProfileConfig 的既有 config digest 逐字节不变（存量 pin 会话不失配）。"
+        },
+        {
           "path": "server/src/data/entitlements/store.ts",
           "baselineDigest": "sha256:d8ea73a8786c37b5983167923863e5953c984f5c605f25f8928d4a7d8d1e34dc",
           "targetDigest": "sha256:f160feb35b7adf2906bef78f737e1d75e2416e5abc73ce05669e9417ccb12870",
@@ -3386,16 +3841,16 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
+          "targetDigest": "sha256:d6ba84b6a1d3622cc02b8e7b25852f572c9c5f3c11787b99a44511cf781ddb60",
           "classification": "expand",
-          "reason": "RC64（99b7496f）基线复审：仅追加 v41 调度，v36～v40 序号和语句不变；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "WP3 复审：仅追加 v43 调度一行，v36～v41 序号与语句不变；42 留给并行的 WP2b，缺号由 runner 按已应用集合自然补齐。"
         },
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
+          "targetDigest": "sha256:c192d19ec7c46f30138ce7e86f35f4902cdebfe465ed417633112ef55c59bc2c",
           "classification": "expand",
-          "reason": "RC64（99b7496f）基线复审：版本号 40→41，执行器与旧迁移未改；文件两端内容与已审核的 8cd1254e 基线完全相同。"
+          "reason": "WP3 复审：GOVERNANCE_SCHEMA_VERSION 41→43 并新增只读辅助 governanceMigrationVersions()（返回全部版本号，允许空洞；42 归并行的 WP2b）。执行器 run() 与既有迁移语句一字未改，仍按「已应用版本集合」补齐缺号。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3403,6 +3858,20 @@
           "targetDigest": "sha256:e634f1d28cf6ef1f2704f7c8a9d761899ed25b531bd072298b8505f9ed76ed34",
           "classification": "expand",
           "reason": "WP2a 定制项目对接治理结构：新增九张 ky_app_* 表与索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，外键只指向本批新表；唯一的既有对象改动是 resource_assignments 的 resource_type CHECK 重建（DROP CONSTRAINT IF EXISTS + ADD CONSTRAINT，照 v33 先例），只放宽取值集合、不删表不删列不改列类型。真实 postgres:16 上 v40→v41 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:282a806e634ffef8f56c1fcc0ed71a85243e0d99821762ebb87a0de7ad05c32c",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/orgAgents/runtimePolicy.ts",
+          "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
+          "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
+          "classification": "no-schema-change",
+          "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
         },
         {
           "path": "server/src/kyapp/attest/nonceStore.ts",
@@ -3417,6 +3886,13 @@
           "targetDigest": "sha256:0c34b0724ed1d655137e8f60dbc0e84c56b443aa1df07dd88b07b919dccf461e",
           "classification": "expand",
           "reason": "WP2a 平台出站事件 outbox：init() 只执行治理迁移 runner，其余 INSERT ON CONFLICT DO NOTHING / SELECT / UPDATE 都是运行期的入队、取待发与投递结果标记，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/gateway/snapshotStore.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:98cc2dae91f66ddeaf8f5cc1cc76d8e2fe77abeeee53223276c1a3386f96ac65",
+          "classification": "expand",
+          "reason": "WP3 会话工具快照存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT ON CONFLICT DO UPDATE（带 snapshot_key 变更条件，首个写入者获胜）/ DELETE 都是运行期的快照读写与失效，不含 DDL 与回填。"
         },
         {
           "path": "server/src/kyapp/installations/credentialStore.ts",
@@ -3454,7 +3930,7 @@
         },
         {
           "path": "server/src/__tests__/governanceSchemaMigration.pg.test.ts",
-          "digest": "sha256:d0f68c565a373bdc34ab39e6a911dcaecd1d8e4fa2ead61bf1a591db5ca0622c"
+          "digest": "sha256:3449cf792db11efceb66d50c7ff344fb5c818c273b00e89e8d173b79f588b298"
         },
         {
           "path": "server/src/__tests__/pushDeliveryClaim.pg.test.ts",

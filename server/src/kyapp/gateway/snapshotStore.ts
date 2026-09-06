@@ -44,6 +44,23 @@ export interface PgAppToolSnapshotStoreOptions {
 
 type Row = Record<string, unknown>;
 
+/**
+ * `entries` 列是 TEXT 而不是 JSONB —— JSONB 会重排对象键，而 `inputSchema`
+ * 会原样作为 `parametersJsonSchema` 送给模型，键序一变工具定义就变、
+ * `prompt_cache_key` 就失配。这张表存在的唯一理由就是让跨进程的工具面
+ * 逐字节相同，所以必须自己序列化、自己解析。
+ */
+function parseEntries(value: unknown): AppCapabilityEntry[] {
+  if (Array.isArray(value)) return value as AppCapabilityEntry[];
+  if (typeof value !== 'string' || value === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as AppCapabilityEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function rowToSnapshot(row: Row): PersistedAppToolSnapshot {
   const createdAt = row.created_at;
   return {
@@ -51,7 +68,7 @@ function rowToSnapshot(row: Row): PersistedAppToolSnapshot {
     tenantId: String(row.tenant_id),
     userId: String(row.user_id),
     key: String(row.snapshot_key),
-    entries: Array.isArray(row.entries) ? (row.entries as AppCapabilityEntry[]) : [],
+    entries: parseEntries(row.entries),
     degraded: row.degraded === true,
     createdAt: createdAt instanceof Date ? createdAt.getTime() : Number(createdAt) || 0,
   };
@@ -90,7 +107,7 @@ export class PgAppToolSnapshotStore implements AppToolSnapshotStore {
     const result = await this.options.pool.query(
       `INSERT INTO ${this.table}
          (session_id,tenant_id,user_id,snapshot_key,installation_ids,entries,degraded)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)
        ON CONFLICT (session_id) DO UPDATE SET
          snapshot_key = EXCLUDED.snapshot_key,
          installation_ids = EXCLUDED.installation_ids,

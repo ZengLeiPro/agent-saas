@@ -18,7 +18,12 @@ export function governanceV43KyAppSessionToolSnapshotStatements(prefix: string):
       user_id TEXT NOT NULL,
       snapshot_key TEXT NOT NULL,
       installation_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-      entries JSONB NOT NULL DEFAULT '[]'::jsonb,
+      -- entries 存 **TEXT 不是 JSONB**：JSONB 会重排对象键，而 entries 里的
+      -- inputSchema 会原样作为 parametersJsonSchema 送给模型 —— 键序一变，
+      -- 模型看到的工具定义就变了，prompt_cache_key 随之失配。
+      -- 这张表存在的唯一理由就是让跨进程的工具面逐字节相同，因此必须保序。
+      -- installation_ids 是字符串数组、只用于 @> 包含查询，用 JSONB 没有这个问题。
+      entries TEXT NOT NULL DEFAULT '[]',
       degraded BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

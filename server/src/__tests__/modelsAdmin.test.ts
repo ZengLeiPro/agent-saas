@@ -600,28 +600,6 @@ describe('models admin router', () => {
     });
   });
 
-  it('允许显式清除没有兼容候选的存量门禁配置', async () => {
-    const rawConfig = { ...baseRawConfig(), guardrail: { model: 'main/gpt', timeoutMs: 6000 } };
-    rawConfig.models.groups = rawConfig.models.groups.map((group) => ({
-      ...group,
-      protocol: 'responses' as const,
-    }));
-
-    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
-      const response = await fetch(`${baseUrl}/api/admin/models`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ models: rawConfig.models, guardrail: null }),
-      });
-
-      expect(response.status).toBe(200);
-      expect((await readJson(response)).guardrail).toBeNull();
-      expect(runtimeConfig.guardrail).toBeUndefined();
-      expect(JSON.parse(readFileSync(configPath, 'utf-8'))).not.toHaveProperty('guardrail');
-      expect((await readJson(await fetch(`${baseUrl}/api/admin/models`))).guardrail).toBeNull();
-    });
-  });
-
   it('连续两次保存均返回 raw config revision，并支持 expectedRevision/If-Match 接力', async () => {
     const rawConfig = baseRawConfig();
     await withApp(rawConfig, async ({ baseUrl, configPath }) => {

@@ -3,6 +3,7 @@ import type { WsEvent } from '../types/ws';
 import { createActivityMessageProjectionState, reduceActivityMessageProjection, selectProjectedMessages } from './activityMessageProjection';
 import { mapCanonicalError } from './canonicalError';
 import { adaptWsEventToActivityMessageProjection } from './wsActivityMessageProjection';
+import { reconcileProjectedToolMessage } from './wsToolMessageReconciliation';
 import {
   findUserMsgIndexByClientId,
   type MessagesController,
@@ -25,6 +26,7 @@ export function applyCanonicalProjection(
   block.projectionState = next;
   if (next === previous) return true;
   for (const item of selectProjectedMessages(next)) {
+    if (reconcileProjectedToolMessage(item, msg, block)) continue;
     const indexById = msg.messagesRef.current.findIndex((candidate) => candidate.id === item.id);
     const index = indexById >= 0
       ? indexById

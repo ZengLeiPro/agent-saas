@@ -488,7 +488,15 @@ export async function getExecutionContextV2(
     );
     const bounded = applyExecutionContextBudget({
       changes: page.map(rowToChange),
-      ...(comments ? { comments: comments.comments, commentTotal: comments.total } : {}),
+      ...(comments
+        ? {
+          comments: comments.comments,
+          commentTotal: comments.total,
+          keepFullComments: commentOptions.mode === 'full'
+            ? 1
+            : Math.max(1, commentOptions.limit ?? DEFAULT_CONTEXT_COMMENT_LIMIT),
+        }
+        : {}),
       ...(executions ? { executions: executions.rows.map(rowToExecution) } : {}),
       hasMore: changeRows.rows.length > limit,
     });

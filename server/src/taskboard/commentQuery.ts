@@ -1,7 +1,4 @@
-import type {
-  TaskBoardComment,
-  TaskBoardContextCommentMode,
-} from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardComment, TaskBoardContextCommentMode } from '../../../shared/src/types/taskboard.js';
 import {
   applyCommentAuthorDisplayName,
   commentExecutionJoin,
@@ -10,7 +7,11 @@ import {
 } from './storeHelpers.js';
 import { normalizePage, pageResult, type TaskboardSearchStore } from './storeSearch.js';
 import { TaskboardNotFoundError, TaskboardValidationError } from './types.js';
-import type { TaskboardCommentSearchFilter, TaskboardIdentity, TaskboardPage } from './types.js';
+import type {
+  TaskboardCommentSearchFilter,
+  TaskboardIdentity,
+  TaskboardPage,
+} from './types.js';
 
 /**
  * 评论定位与投影。
@@ -52,37 +53,47 @@ function visibleCommentsCte(tables: CommentQueryTables, extraWhere = ''): string
   )`;
 }
 
-function commentColumns(bodyExpr: string): string {
+function commentColumns(bodyExpr: string, truncatedExpr: string): string {
   return `v.id, v.task_id, v.attachments, v.author_type, v.author_id, v.author_name,
           v.version, v.created_at, v.updated_at, v.ordinal, v.total_count, v.body_chars,
-          ${bodyExpr} AS body,
+          ${bodyExpr} AS body, ${truncatedExpr} AS body_is_truncated,
           comment_execution.comment_session_id, comment_execution.comment_execution_id,
           comment_execution.comment_execution_purpose`;
 }
 
-/** 把行投影成评论；body 短于 body_chars 说明只是预览。 */
+/**
+ * 字符数一律按 Unicode code point 计，与 PostgreSQL `char_length` / `left` 同口径。
+ * JS 的 `String.length` 数的是 UTF-16 code unit，emoji 等星平面字符会翻倍：
+ * 两种口径混用会把「是否被截断」判反，切片还会把代理对切成孤立代理。
+ */
+export function codePointLength(text: string): number {
+  return [...text].length;
+}
+
+/** 把行投影成评论；是否只是预览由 SQL 直接给出事实位，不靠长度比大小推断。 */
 export function projectComment(
   row: Record<string, unknown>,
   identity?: TaskboardIdentity,
 ): TaskBoardComment {
   const base = rowToComment(row);
   const comment = identity ? applyCommentAuthorDisplayName(base, identity) : base;
-  const bodyChars = Number(row.body_chars ?? comment.body.length);
+  const bodyChars = Number(row.body_chars ?? codePointLength(comment.body));
   return {
     ...comment,
     ordinal: Number(row.ordinal),
     bodyChars,
-    ...(comment.body.length < bodyChars ? { bodyTruncated: true as const } : {}),
+    ...(row.body_is_truncated === true ? { bodyTruncated: true as const } : {}),
   };
 }
 
 /** 把一条完整评论降级为目录行；用于服务端预算兜底。 */
 export function digestComment(comment: TaskBoardComment): TaskBoardComment {
-  const bodyChars = comment.bodyChars ?? comment.body.length;
-  if (comment.body.length <= COMMENT_PREVIEW_CHARS) return { ...comment, bodyChars };
+  const codePoints = [...comment.body];
+  const bodyChars = comment.bodyChars ?? codePoints.length;
+  if (codePoints.length <= COMMENT_PREVIEW_CHARS) return { ...comment, bodyChars };
   return {
     ...comment,
-    body: comment.body.slice(0, COMMENT_PREVIEW_CHARS),
+    body: codePoints.slice(0, COMMENT_PREVIEW_CHARS).join(''),
     bodyChars,
     bodyTruncated: true,
   };
@@ -114,9 +125,24 @@ async function countVisibleComments(store: TaskboardSearchStore, taskId: string)
   return Number(result.rows[0]?.total ?? 0);
 }
 
+function assertLocatorInput(filter: TaskboardCommentSearchFilter): void {
+  if (filter.ordinal !== undefined) {
+    if (!Number.isInteger(filter.ordinal)) {
+      throw new TaskboardValidationError('Comment ordinal must be an integer');
+    }
+    if (filter.ordinal === 0) {
+      throw new TaskboardValidationError('Comment ordinal is 1-based; use negative values to count from the end');
+    }
+  }
+  if (filter.latest !== undefined
+    && (!Number.isInteger(filter.latest) || filter.latest < 1 || filter.latest > MAX_LATEST_COMMENTS)) {
+    throw new TaskboardValidationError(`latest must be an integer between 1 and ${MAX_LATEST_COMMENTS}`);
+  }
+}
+
 /**
  * 评论查询。定位参数优先级：commentId > ordinal > latest > page/pageSize。
- * 定位模式返回的 page/pageSize 只描述本次窗口，不参与翻页。
+ * 定位模式返回的 page/pageSize 只描述本次窗口；`hasMore` 表示任务里还有未返回的评论。
  */
 export async function searchComments(
   store: TaskboardSearchStore,
@@ -125,20 +151,14 @@ export async function searchComments(
   filter: TaskboardCommentSearchFilter = {},
 ): Promise<TaskboardPage<TaskBoardComment>> {
   await assertTaskVisible(store, identity, taskId);
-  if (filter.ordinal !== undefined && filter.ordinal === 0) {
-    throw new TaskboardValidationError(
-      'Comment ordinal is 1-based; use negative values to count from the end',
-    );
-  }
-  if (filter.latest !== undefined && (filter.latest < 1 || filter.latest > MAX_LATEST_COMMENTS)) {
-    throw new TaskboardValidationError(`latest must be between 1 and ${MAX_LATEST_COMMENTS}`);
-  }
+  assertLocatorInput(filter);
   const params: unknown[] = [taskId, identity.tenantId, identity.ownerUserId];
-  const bodyExpr =
-    filter.view === 'digest' ? `left(v.body, $${params.push(COMMENT_PREVIEW_CHARS)})` : 'v.body';
+  const digest = filter.view === 'digest';
+  const previewParam = digest ? `$${params.push(COMMENT_PREVIEW_CHARS)}` : '';
+  const bodyExpr = digest ? `left(v.body, ${previewParam})` : 'v.body';
+  const truncatedExpr = digest ? `v.body_chars > ${previewParam}` : 'false';
   const { page, pageSize, offset } = normalizePage(filter.page, filter.pageSize);
-  const locating =
-    Boolean(filter.commentId) || filter.ordinal !== undefined || filter.latest !== undefined;
+  const locating = Boolean(filter.commentId) || filter.ordinal !== undefined || filter.latest !== undefined;
   let where = '';
   let orderDir = filter.order === 'desc' ? 'DESC' : 'ASC';
   let limitClause = '';
@@ -146,10 +166,9 @@ export async function searchComments(
     where = `WHERE v.id=$${params.push(filter.commentId)}`;
     orderDir = 'ASC';
   } else if (filter.ordinal !== undefined) {
-    where =
-      filter.ordinal > 0
-        ? `WHERE v.ordinal=$${params.push(filter.ordinal)}`
-        : `WHERE v.ordinal=v.total_count+1+$${params.push(filter.ordinal)}`;
+    where = filter.ordinal > 0
+      ? `WHERE v.ordinal=$${params.push(filter.ordinal)}`
+      : `WHERE v.ordinal=v.total_count+1+$${params.push(filter.ordinal)}`;
     orderDir = 'ASC';
   } else if (filter.latest !== undefined) {
     where = `WHERE v.recency<=$${params.push(filter.latest)}`;
@@ -166,7 +185,7 @@ export async function searchComments(
             WHERE t.id=c.task_id AND b.tenant_id=$2
               AND (b.owner_user_id=$3 OR b.visibility='organization'))`,
     )}
-     SELECT ${commentColumns(bodyExpr)}
+     SELECT ${commentColumns(bodyExpr, truncatedExpr)}
        FROM visible v
        ${commentExecutionJoin(store.changesTable, store.executionsTable, 'v')}
      ${where}
@@ -178,8 +197,15 @@ export async function searchComments(
   const total = result.rows[0]
     ? Number(result.rows[0].total_count)
     : await countVisibleComments(store, taskId);
-  if (locating)
-    return { items, page: 1, pageSize: Math.max(1, items.length), total, hasMore: false };
+  if (locating) {
+    return {
+      items,
+      page: 1,
+      pageSize: Math.max(1, items.length),
+      total,
+      hasMore: total > items.length,
+    };
+  }
   return pageResult(items, page, pageSize, total);
 }
 
@@ -200,11 +226,13 @@ export async function loadContextComments(
   limit: number,
   maxComments: number,
 ): Promise<ContextCommentsResult> {
-  const fullCount =
-    mode === 'full' ? ALL_COMMENTS_FULL : mode === 'digest' ? 0 : Math.max(0, limit);
+  const fullCount = mode === 'full' ? ALL_COMMENTS_FULL : mode === 'digest' ? 0 : Math.max(0, limit);
   const result = await db.query(
     `${visibleCommentsCte(tables)}
-     SELECT ${commentColumns('CASE WHEN v.recency<=$2 THEN v.body ELSE left(v.body, $3) END')}
+     SELECT ${commentColumns(
+      'CASE WHEN v.recency<=$2 THEN v.body ELSE left(v.body, $3) END',
+      'CASE WHEN v.recency<=$2 THEN false ELSE v.body_chars > $3 END',
+    )}
        FROM visible v
        ${commentExecutionJoin(tables.changesTable, tables.executionsTable, 'v')}
       WHERE v.recency<=$4

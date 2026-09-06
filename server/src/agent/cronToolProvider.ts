@@ -112,15 +112,15 @@ const cronManageSchema = z.object({
   page: z.number().int().min(1).optional(),
   pageSize: z.number().int().min(1).max(100).optional(),
   order: z.enum(['asc', 'desc']).optional()
-    .describe('comment.list 分页方向，默认 asc（时间升序）。'),
+    .describe('comment.list 分页方向，默认 asc（时间升序）；latest/ordinal/commentId 存在时忽略本参数，返回恒为时间升序。'),
   latest: z.number().int().min(1).max(20).optional()
     .describe('comment.list 直接取最近 N 条评论，返回顺序仍为时间升序；与 page/pageSize 互斥。'),
   view: z.enum(['full', 'digest']).optional()
     .describe('comment.list 视图。digest 只返回目录行（作者/时间/序号/前 200 字/正文字符数），用于先扫描再定位取全文。'),
-  ordinal: z.number().int().min(-500).max(500).optional()
-    .describe('comment.get 定位：1-based 位置，负数表示倒数第几条（-1=最后一条，默认值）。评论被删除后序号会漂移，跨轮引用请改用 commentId。'),
+  ordinal: z.number().int().optional()
+    .describe('comment.get / comment.list 定位：1-based 位置，负数表示倒数第几条（comment.get 缺省 -1）。评论被删除后序号会漂移，跨轮引用请改用 commentId。'),
   commentId: z.string().min(1).max(128).optional()
-    .describe('comment.get 定位：评论 id，跨轮稳定。'),
+    .describe('comment.get / comment.list 定位：评论 id，跨轮稳定；与 ordinal 同传时 commentId 优先。'),
   commentMode: z.enum(['recent', 'full', 'digest']).optional()
     .describe('execution.context 的评论模式。默认 recent：最近 commentLimit 条全文 + 更早的目录行；full 全部全文；digest 全部目录行。'),
   commentLimit: z.number().int().min(0).max(50).optional()

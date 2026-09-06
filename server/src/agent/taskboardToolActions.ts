@@ -16,7 +16,7 @@ import type {
   TaskBoardUploadAttachment,
   TaskBoardVisibility,
 } from '../../../shared/src/types/taskboard.js';
-import { TaskboardPermissionError, TaskboardValidationError } from '../taskboard/types.js';
+import { TaskboardNotFoundError, TaskboardPermissionError, TaskboardValidationError } from '../taskboard/types.js';
 import type {
   TaskboardExecutionContext,
   TaskboardExecutionService,
@@ -26,6 +26,8 @@ import type {
   TaskboardTaskSearchFilter,
 } from '../taskboard/types.js';
 export const TASKBOARD_LEGACY_ACTIONS = ['list', 'create', 'update', 'move', 'execute'] as const;
+/** 旧 list action 返回的评论条数上限；更早的评论用 comment.list / comment.get 取。 */
+const LEGACY_LIST_COMMENT_LIMIT = 5;
 export const TASKBOARD_RESOURCE_ACTIONS = [
   'board.list',
   'board.search',
@@ -295,11 +297,18 @@ export async function invokeTaskboardAction(
       return dispatchTask(service, options.executionService?.(), identity, input, false);
     case 'comment.get': {
       const taskId = input.taskId ?? scope.execution?.task.id ?? requireId(input, 'taskId');
+      if (input.latest !== undefined) {
+        throw new TaskboardValidationError('comment.get 只返回单条；要读最近多条请用 comment.list({latest})');
+      }
       const located = await service.searchComments(identity, taskId, input.commentId
         ? { commentId: input.commentId }
         : { ordinal: input.ordinal ?? -1 });
       const comment = located.items[0];
-      if (!comment) throw new TaskboardValidationError('指定的评论不存在');
+      if (!comment) {
+        throw new TaskboardNotFoundError(
+          `指定的评论不存在；该任务当前可见评论 ${located.total} 条`,
+        );
+      }
       return { comment, total: located.total };
     }
     case 'comment.list': {
@@ -309,6 +318,8 @@ export async function invokeTaskboardAction(
         ...(input.order ? { order: input.order } : {}),
         ...(input.latest !== undefined ? { latest: input.latest } : {}),
         ...(input.view ? { view: input.view } : {}),
+        ...(input.ordinal !== undefined ? { ordinal: input.ordinal } : {}),
+        ...(input.commentId ? { commentId: input.commentId } : {}),
       });
       return {
         count: result.items.length,
@@ -668,11 +679,18 @@ async function listLegacy(
 ): Promise<Record<string, unknown>> {
   if (input.id) {
     const task = await service.getTask(identity, input.id);
+    // 旧 list 曾整表回读评论全文，评论多的任务会一次吐出几百 KB；
+    // 这里收敛为最近若干条，更早的用 comment.list / comment.get 按需取。
     const [comments, executions] = await Promise.all([
-      service.listComments(identity, input.id),
+      service.searchComments(identity, input.id, { latest: LEGACY_LIST_COMMENT_LIMIT }),
       executionService?.listExecutions(identity, input.id) ?? Promise.resolve([]),
     ]);
-    return { task, comments, executions };
+    return {
+      task,
+      comments: comments.items,
+      commentTotal: comments.total,
+      executions,
+    };
   }
   if (input.boardId) return taskSearch(service, identity, input, true);
   return boardSearch(service, identity, input);

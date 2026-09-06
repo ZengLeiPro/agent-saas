@@ -21,8 +21,10 @@ describe('CronManage taskboard actions', () => {
     })).resolves.toMatchObject({ total: 1, page: 1, pageSize: 20, executions: [execution] });
     await expect(invokeTaskboardAction(options, identity, { action: 'list', id: task.id }))
       .rejects.toThrow('普通会话请使用');
+    // 旧 list 不再整表回读评论全文，只给最近若干条 + 真实总数。
     await expect(invokeTaskboardAction(options, identity, { action: 'list', id: task.id }, executionScope('work')))
-      .resolves.toEqual({ task, comments: [], executions: [execution] });
+      .resolves.toEqual({ task, comments: [], commentTotal: 0, executions: [execution] });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, { latest: 5 });
 
     expect(service.searchBoards).toHaveBeenCalledWith(identity, {
       includeArchived: undefined,
@@ -67,10 +69,21 @@ describe('CronManage taskboard actions', () => {
     })).resolves.toEqual({ comment, total: 9 });
     expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, { commentId: 'comment-9' });
 
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.list', taskId: task.id, ordinal: 7,
+    })).resolves.toMatchObject({ comments: [comment] });
+    expect(service.searchComments).toHaveBeenLastCalledWith(identity, task.id, {
+      page: undefined, pageSize: undefined, ordinal: 7,
+    });
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'comment.get', taskId: task.id, latest: 3,
+    })).rejects.toThrow('comment.list({latest})');
+
     vi.mocked(service.searchComments).mockResolvedValue({ items: [], page: 1, pageSize: 1, total: 9, hasMore: false });
     await expect(invokeTaskboardAction(options, identity, {
       action: 'comment.get', taskId: task.id, ordinal: 99,
-    })).rejects.toThrow('指定的评论不存在');
+    })).rejects.toThrow('该任务当前可见评论 9 条');
   });
 
   it('看板 Execution 的 comment.get 缺省落到当前任务', async () => {

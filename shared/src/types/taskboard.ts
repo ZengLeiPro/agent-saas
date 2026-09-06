@@ -442,7 +442,12 @@ export interface TaskBoardExecutionContextTruncation {
   summarizedChangePayloads?: number;
   /** 因总字符预算未返回的 change 数；已体现在 hasMore/nextCursor。 */
   droppedChanges?: number;
-  comments?: { returned: number; total: number; digested?: number };
+  /**
+   * returned=本次返回条数，total=任务可见评论总数，
+   * digested=返回项中只有目录行的条数（含按 commentMode 的正常投影），
+   * droppedByBudget=因字符预算被丢弃、完全没返回的最旧评论条数。
+   */
+  comments?: { returned: number; total: number; digested?: number; droppedByBudget?: number };
   executions?: { returned: number; total: number };
 }
 

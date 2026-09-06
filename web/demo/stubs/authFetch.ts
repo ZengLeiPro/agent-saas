@@ -13,6 +13,13 @@ declare global {
     __demoAppOrigin?: string;
   }
 }
+/**
+ * 唯一标记串。`web/scripts/check-oss-dist.mjs` 断言生产产物里搜不到它 ——
+ * 演示态一旦被误接进 `web/vite.config.ts` 的入口图，构建就会红。
+ * 不要改这个字面量，也不要在生产源码里写它。
+ */
+export const DEMO_STUB_MARKER = 'ky-app-demo-stub-do-not-ship';
+
 export type DemoScenario = 'ok' | 'disabled' | 'credits' | 'handshake-failed';
 
 function scenario(): DemoScenario {

@@ -11,23 +11,35 @@ export function resolveApiBase(compiledBase: string | undefined, hostname: strin
 }
 
 const API_BASE = resolveApiBase(import.meta.env.VITE_API_BASE, window.location.hostname);
-let authEnabledPromise: Promise<boolean> | undefined;
+// AuthContext owns the authoritative startup probe. WS consumers mount only after
+// that probe settles, so they can reuse its result instead of deliberately
+// generating an anonymous 401 against /api/auth/me on every page load.
+let authEnabled = true;
+let authRevalidation: Promise<boolean> | null = null;
 
-function isAuthEnabled(): Promise<boolean> {
-  if (!authEnabledPromise) {
-    const request: Promise<boolean> = fetch(`${API_BASE}/api/auth/me`)
-      .then((response) => {
-        const enabled = response.status !== 404;
-        if (!enabled && authEnabledPromise === request) authEnabledPromise = undefined;
-        return enabled;
+export function setWebAuthEnabled(enabled: boolean): void {
+  authEnabled = enabled;
+}
+
+async function isAuthEnabled(): Promise<boolean> {
+  if (authEnabled) return true;
+  if (!authRevalidation) {
+    const request = fetch(`${API_BASE}/api/health`, { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return authEnabled;
+        const status = (await response.json()) as { authEnabled?: unknown };
+        // Old servers omit this field. Only a literal true may upgrade a live
+        // no-auth page into authenticated mode during a rolling restart.
+        if (status.authEnabled === true) authEnabled = true;
+        return authEnabled;
       })
-      .catch(() => {
-        if (authEnabledPromise === request) authEnabledPromise = undefined;
-        return true;
+      .catch(() => authEnabled)
+      .finally(() => {
+        if (authRevalidation === request) authRevalidation = null;
       });
-    authEnabledPromise = request;
+    authRevalidation = request;
   }
-  return authEnabledPromise;
+  return authRevalidation;
 }
 
 export const webConfig: IPlatformConfig = {

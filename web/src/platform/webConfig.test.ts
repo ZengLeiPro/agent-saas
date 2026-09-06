@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-async function loadConfig() {
+async function loadConfigModule() {
   vi.resetModules();
-  return (await import('./webConfig')).webConfig;
+  return import('./webConfig');
 }
 
 async function loadResolver() {
@@ -14,54 +14,60 @@ beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('web auth-enabled probe caching', () => {
-  it('singleflights concurrent probes and caches true', async () => {
-    let resolveFetch!: (response: Response) => void;
-    const fetchMock = vi.fn(
-      () =>
-        new Promise<Response>((resolve) => {
-          resolveFetch = resolve;
-        }),
+describe('web auth-enabled startup state', () => {
+  it('fails safe before AuthContext publishes the authoritative result', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { webConfig } = await loadConfigModule();
+
+    expect(await webConfig.isAuthEnabled!()).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('revalidates no-auth through public health without probing /api/auth/me', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authEnabled: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authEnabled: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { setWebAuthEnabled, webConfig } = await loadConfigModule();
+
+    setWebAuthEnabled(false);
+    expect(await webConfig.isAuthEnabled!()).toBe(false);
+    expect(await webConfig.isAuthEnabled!()).toBe(true);
+    expect(await webConfig.isAuthEnabled!()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/api/health'))).toBe(true);
+  });
+
+  it('keeps a no-auth result when an older health response has no capability field', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: 'ok' }), { status: 200 }),
     );
     vi.stubGlobal('fetch', fetchMock);
-    const config = await loadConfig();
+    const { setWebAuthEnabled, webConfig } = await loadConfigModule();
 
-    const first = config.isAuthEnabled!();
-    const second = config.isAuthEnabled!();
-    expect(first).toBe(second);
+    setWebAuthEnabled(false);
+    expect(await webConfig.isAuthEnabled!()).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    resolveFetch(new Response(null, { status: 200 }));
-    await expect(first).resolves.toBe(true);
-    await expect(config.isAuthEnabled!()).resolves.toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/health$/);
   });
 
-  it('does not cache a 404 false result', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(null, { status: 404 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+  it('singleflights concurrent no-auth revalidation', async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.fn(
+      () => new Promise<Response>((resolve) => { resolveFetch = resolve; }),
+    );
     vi.stubGlobal('fetch', fetchMock);
-    const config = await loadConfig();
+    const { setWebAuthEnabled, webConfig } = await loadConfigModule();
+    setWebAuthEnabled(false);
 
-    await expect(config.isAuthEnabled!()).resolves.toBe(false);
-    await expect(config.isAuthEnabled!()).resolves.toBe(true);
-    await expect(config.isAuthEnabled!()).resolves.toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('fails safe on network errors without caching the fallback', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('temporary network failure'))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-    const config = await loadConfig();
-
-    await expect(config.isAuthEnabled!()).resolves.toBe(true);
-    await expect(config.isAuthEnabled!()).resolves.toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = webConfig.isAuthEnabled!();
+    const second = webConfig.isAuthEnabled!();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolveFetch(new Response(JSON.stringify({ authEnabled: false }), { status: 200 }));
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(false);
   });
 });
 

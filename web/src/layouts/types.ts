@@ -75,7 +75,8 @@ export interface LayoutProps {
   isAdmin: boolean;
   /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
   isPlatformAdmin: boolean;
-  isOnline: boolean;
+  /** null = 首屏尚未完成权威探活；不得冒充离线。 */
+  isOnline: boolean | null;
   connectionState: ConnectionState;
 
   // 聊天内容

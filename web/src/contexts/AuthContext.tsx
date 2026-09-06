@@ -31,6 +31,7 @@ import { clearAllComposerAttachmentDrafts } from "@/lib/composerDraftStorage";
 import { clearWebCacheV2Namespace } from "@/platform/webCacheAdapter";
 import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
 import { runLogoutToSavedAccountLifecycle, runSavedAccountLifecycle } from "./savedAccountLifecycle";
+import { setWebAuthEnabled } from "@/platform/webConfig";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -312,6 +313,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       });
       const result = await authPreload;
+      // App/WS 只会在本 effect 结束后挂载；把同一份启动探测结果交给平台配置，
+      // 避免 WS 再用匿名 /api/auth/me 产生一个预期但刺眼的 401。
+      setWebAuthEnabled(result.status !== 'no-auth');
       if (result.status === 'authenticated') {
         const nextUser = normalizeAuthUser(result.user);
         const bindingRaw = readTabScopedAuth(AUTH_SESSION_KEY);

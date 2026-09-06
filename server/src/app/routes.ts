@@ -49,7 +49,7 @@ import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js
 import { requireAdmin } from '../auth/middleware.js';
 import { createAgentsRouter } from '../routes/agents.js';
 import { createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
-import { registerOrgAgentRoutes } from './orgAgentRoutes.js'; import { registerKyAppRoutes } from './kyAppRoutes.js';
+import { registerOrgAgentRoutes } from './orgAgentRoutes.js'; import { registerKyAppRoutes, registerUnavailableMineRoute } from './kyAppRoutes.js';
 import { createKbFilesRouter } from '../routes/kbFiles.js';
 import { createOrgQaRouter } from '../routes/orgQa.js';
 import { registerAgentDwsRoutes } from './routesAgentDws.js';
@@ -70,10 +70,7 @@ import { createNotionRouter } from '../routes/notion.js';
 import { createGoogleWorkspaceRouter } from '../routes/googleWorkspace.js';
 import { buildGoogleWorkspaceOAuthGrantProjection } from './runtimeOAuthGrantReconciler.js';
 import { revokeAllUserConnectorCredentials } from '../connectors/lifecycle.js';
-import {
-  createNativeOAuthHandoffRouter,
-  NativeOAuthHandoffStore,
-} from '../connectors/nativeOAuthHandoff.js';
+import { createNativeOAuthHandoffRouter, NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { createSessionArtifactLifecycle } from '../runtime/sessionArtifactLifecycle.js';
 import { createTenantsRouter } from '../routes/tenants.js';
@@ -145,6 +142,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   if (nativeOAuthHandoff)
     app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));
   const { channelManager } = runtime;
+  let kyAppRoutesRegistered = false;
   const getRuntimeAdmissionSnapshot = resolveRuntimeAdmissionSnapshotReader(
     runtime.processRole, runtime.getRuntimeAdmissionSnapshot,
   );
@@ -1106,7 +1104,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     registerOrgAgentRoutes(app, runtime, {
       orgAgentAvatarsDir: resolve(processCwd, './data/org-agent-avatars'), legacyWriteGate,
     });
-    // WP2a 定制项目对接：kyApp 未配置时整体不注册（registerKyAppRoutes 内部判定）。
-    registerKyAppRoutes(app, runtime);
+    // WP2a 定制项目对接：只有完整鉴权与依赖装配后才暴露真实能力路由。
+    kyAppRoutesRegistered = registerKyAppRoutes(app, runtime) !== null;
   }
+  // 壳总会读取 mine；可选子系统关闭时保持 200 空 read model，避免用 404 探测能力。
+  if (!kyAppRoutesRegistered) registerUnavailableMineRoute(app);
 }

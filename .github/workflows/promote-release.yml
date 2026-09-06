@@ -1,4 +1,4 @@
-name: 预发 RC 部署到生产
+name: 发布到生产环境
 
 # 与 CI/ACS 兼容直发共享互斥组，覆盖基线读取、分阶段切换和最终 readback。
 
@@ -1161,7 +1161,7 @@ jobs:
           reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
             --arg migrationConfirmation "$migration_confirmation" \
             --arg productionDeploymentId "${PRODUCTION_DEPLOYMENT_ID:-}" \
-            '{summary:$summary,productionDeploymentId:$productionDeploymentId,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"预发验收"}}')"
+            '{summary:$summary,productionDeploymentId:$productionDeploymentId,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"测试环境验收"}}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state "$outcome" --operation "outcome:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \

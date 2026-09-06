@@ -1,4 +1,4 @@
-name: 部署预发 RC
+name: 部署测试环境
 
 on:
   workflow_dispatch:

@@ -36,6 +36,21 @@ export const agentRuntimeProfileConfigSchema = z.object({
     denyServers: stringIdListSchema.default([]),
     denyTools: stringIdListSchema.default([]),
   }).strict(),
+  /**
+   * WP3：定制项目能力名单，与 `mcp` 平行（规范 §6.1）。
+   *
+   * **刻意用 `.optional()` 而不是 `.default()`**：本对象参与
+   * `digestAgentRuntimeProfileConfig`，一旦给内建 Profile 补上默认值，
+   * 全部内建版本的 config digest 都会变，已 pin 在旧 digest 上的存量会话会失配
+   * （`BUILTIN_VERSION_COMPATIBLE_CONFIG_DIGESTS` 就是为这类事故准备的补救表）。
+   * 缺省 = 不限制，语义与「四项全空」完全一致，因此没有必要付这个代价。
+   */
+  apps: z.object({
+    systemAllowlist: stringIdListSchema.nullable().default(null),
+    capabilityAllowlist: stringIdListSchema.nullable().default(null),
+    denySystems: stringIdListSchema.default([]),
+    denyCapabilities: stringIdListSchema.default([]),
+  }).strict().optional(),
   memory: z.object({
     scope: z.enum(['full', 'search_only', 'none', 'maintenance']).default('full'),
   }).strict(),
@@ -254,6 +269,21 @@ export function normalizeAgentRuntimeProfileConfig(config: AgentRuntimeProfileCo
       denyServers: uniqueSorted(config.mcp.denyServers),
       denyTools: uniqueSorted(config.mcp.denyTools),
     },
+    // 缺省不写回，保持内建 Profile 的 config digest 与本次改动前逐字节一致。
+    ...(config.apps
+      ? {
+          apps: {
+            systemAllowlist: config.apps.systemAllowlist
+              ? uniqueSorted(config.apps.systemAllowlist)
+              : null,
+            capabilityAllowlist: config.apps.capabilityAllowlist
+              ? uniqueSorted(config.apps.capabilityAllowlist)
+              : null,
+            denySystems: uniqueSorted(config.apps.denySystems),
+            denyCapabilities: uniqueSorted(config.apps.denyCapabilities),
+          },
+        }
+      : {}),
     tools: {
       allowlist: config.tools.allowlist ? uniqueSorted(config.tools.allowlist) : null,
       denylist: uniqueSorted(config.tools.denylist),

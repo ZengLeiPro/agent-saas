@@ -655,6 +655,7 @@ export {
   isSkillTool,
   normalizeInternalToolNameStrategy,
   resolveMcpToolNameStrategy,
+  resolveAppToolNameStrategy,
   resolveSkillToolNameStrategy,
   composeToolNameResolver,
 } from './lib/toolDisplay';

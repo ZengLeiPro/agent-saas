@@ -633,4 +633,27 @@ describe('联网与生图', () => {
     expect(result?.detail).toContainEqual({ tree: '└', k: '计费', v: '该组织未启用积分计费' });
     expect(result?.detail?.some((line) => typeof line === 'object' && 'k' in line && line.k === '积分')).toBe(false);
   });
+
+  it('app__ 前缀走 buildAppPresentation：系统 · 能力 + 最多四个标量入参', () => {
+    const result = buildToolPresentation('app__demo_erp__order_search', {
+      keyword: '张三',
+      status: 'open',
+      page: 1,
+      pageSize: 20,
+      ignored: 5,
+      filter: { nested: true },
+    });
+    expect(result?.title).toBe('demo_erp · order_search');
+    expect(result?.detail?.[0]).toEqual({ k: '能力', v: 'order_search' });
+    expect(result?.detail).toContainEqual({ tree: '├', k: 'keyword', v: '张三' });
+    // 只取前四个键，且对象型入参不进摘要（不编造结构化内容）
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'k' in line && line.k === 'ignored')).toBe(false);
+    expect(result?.detail?.some((line) => typeof line === 'object' && 'k' in line && line.k === 'filter')).toBe(false);
+  });
+
+  it('app__ 段数不足时不产出摘要，且 provider 自产的 presentation 优先', () => {
+    expect(buildToolPresentation('app__solo', {})).toBeUndefined();
+    const existing = { title: '来自 Gateway 的真实回执' };
+    expect(buildToolPresentation('app__demo_erp__order_search', { keyword: 'x' }, existing)).toBe(existing);
+  });
 });

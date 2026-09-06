@@ -8382,6 +8382,53 @@
           "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         }
       ]
+    },
+    {
+      "baselineSha": "1e5c9bc0500d2d43f2299c7422ecb631553b3f5b",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "classification": "expand",
+          "reason": "WP5：在最新 main 的 v43 后严格追加 v44 交付迁移；v1～v43 的版本号、顺序和语句保持不变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "classification": "expand",
+          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5：新增 onboarding 执行与交付记录两张表及四个普通索引；全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有表、列、索引，不回填数据。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5：交付运行时存储的 init() 只委托统一治理迁移 runner；本文件其余 SQL 为运行期 SELECT、INSERT、UPDATE 和 advisory lock，用于状态推进、幂等恢复、预警去重及离场计划，不创建或修改 schema，也不执行启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        }
+      ]
     }
   ]
 }

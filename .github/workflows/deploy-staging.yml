@@ -1,4 +1,4 @@
-name: 3 · 部署测试环境
+name: Deploy · 部署测试环境
 
 on:
   workflow_dispatch:

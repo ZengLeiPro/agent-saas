@@ -92,6 +92,7 @@ test('Staging conditionally upgrades a trusted outdated Writer before preparing 
   assert.match(workflow, /RevokeSecurityGroup/u);
   assert.match(workflow, /if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u);
   assert.match(workflow, /deploy-evidence-writer\.sh/u);
+  assert.match(workflow, /--define:process\.env\.AGENT_SAAS_EMBEDDED='"true"'/u);
   assert.match(workflow, /evidence-writer-current/u);
   assert.match(workflow, /release evidence service listening on 127\.0\.0\.1:4420/u);
   assert.ok(workflow.indexOf('ensure-evidence-writer:') < workflow.indexOf('prepare-evidence:'));

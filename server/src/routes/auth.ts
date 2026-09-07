@@ -55,7 +55,7 @@ import { ALLOWED_AVATAR_TYPES, buildAvatarUrl } from './authAvatar.js';
 import { createAuthResponseHelpers } from './authResponse.js';
 import { createLegacyAuthWriteGate, type LegacyAuthWriteGateDeps } from './authLegacyWriteGate.js';
 import { startLoginRateCleanup, type RateBucket } from './authLoginRate.js';
-import { finalizeLegacyPasswordReset, registerPasswordResetRoutes } from './authPasswordReset.js';
+import { adminPasswordResetTargetError, finalizeLegacyPasswordReset, registerPasswordResetRoutes } from './authPasswordReset.js';
 // ---- Zod schemas ----
 const loginSchema = z.object({
   username: z.string().min(1, "账号不能为空"),
@@ -1071,7 +1071,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: "跨组织访问被拒绝" });
         return;
       }
-      const peerAdminError = tenantAdminPeerAdminError(req.user, target);
+      const peerAdminError = parsed.data.password ? await adminPasswordResetTargetError(req.user, target, deps.membershipStore) : tenantAdminPeerAdminError(req.user, target);
       if (peerAdminError) {
         res.status(403).json({ error: peerAdminError });
         return;

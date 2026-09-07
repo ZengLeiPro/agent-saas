@@ -510,6 +510,43 @@ describe("auth users router admin boundaries", () => {
     await expect(h.userStore.verifyPassword("wain_user", "password123")).resolves.toBeTruthy();
   });
 
+  it("组织管理员不能通过兼容通用 PATCH 绕过 canonical 管理员保护", async () => {
+    h.membershipPersonas.set(h.users.wainUser.id, "org_admin");
+    h.setCaller(h.users.wainAdminA);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "newpass123" }),
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: "组织管理员不能管理其他管理员" });
+    await expect(h.userStore.verifyPassword("wain_user", "password123")).resolves.toBeTruthy();
+    await expect(h.userStore.verifyPassword("wain_user", "newpass123")).resolves.toBeNull();
+  });
+
+  it("组织管理员仍可通过兼容通用 PATCH 重置普通成员密码", async () => {
+    h.setCaller(h.users.wainAdminA);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "memberpass123" }),
+    });
+    expect(res.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "memberpass123")).resolves.toBeTruthy();
+  });
+
+  it("平台管理员仍可通过兼容通用 PATCH 重置 canonical 管理员密码", async () => {
+    h.membershipPersonas.set(h.users.wainUser.id, "org_admin");
+    h.setCaller(h.users.platformAdmin);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "adminpass123" }),
+    });
+    expect(res.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "adminpass123")).resolves.toBeTruthy();
+  });
+
   it("兼容通用用户更新接口重置密码时同样撤销旧登录态", async () => {
     h.setCaller(h.users.platformAdmin);
     const oldBinding = h.authEpochAuthority.issueLogin(h.users.wainUser.id);

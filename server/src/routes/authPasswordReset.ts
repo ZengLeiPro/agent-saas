@@ -55,6 +55,21 @@ interface PasswordResetRouteDeps extends PasswordSessionDeps {
   resolveSmsUser: (phone: string) => ResolvedSmsUser;
 }
 
+type MembershipReader = PasswordResetRouteDeps["membershipStore"];
+
+export async function adminPasswordResetTargetError(
+  caller: JwtPayload | undefined,
+  target: Pick<UserRecord, "id" | "role" | "tenantId">,
+  membershipStore: MembershipReader,
+): Promise<string | null> {
+  if (!caller || isPlatformAdmin(caller) || target.id === caller.sub) return null;
+  const targetMembership = await membershipStore?.getMembership(target.tenantId, target.id);
+  const targetIsOrganizationAdmin = targetMembership
+    ? targetMembership.persona === "org_admin"
+    : target.role === "admin";
+  return targetIsOrganizationAdmin ? "组织管理员不能管理其他管理员" : null;
+}
+
 async function revokeAllUserSessions(deps: PasswordSessionDeps, userId: string): Promise<void> {
   if (!deps.authEpochAuthority) return;
   deps.authEpochAuthority.fence(userId, "revoke");
@@ -213,12 +228,9 @@ export function registerPasswordResetRoutes(
         res.status(403).json({ error: "跨组织访问被拒绝" });
         return;
       }
-      const targetMembership = await deps.membershipStore?.getMembership(target.tenantId, target.id);
-      const targetIsOrganizationAdmin = targetMembership
-        ? targetMembership.persona === "org_admin"
-        : target.role === "admin";
-      if (!isPlatformAdmin(caller) && target.id !== caller.sub && targetIsOrganizationAdmin) {
-        res.status(403).json({ error: "组织管理员不能管理其他管理员" });
+      const targetError = await adminPasswordResetTargetError(caller, target, deps.membershipStore);
+      if (targetError) {
+        res.status(403).json({ error: targetError });
         return;
       }
       const minLength = deps.tenantStore?.getSettings(target.tenantId)?.security.passwordMinLength;

@@ -106,6 +106,9 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 Release Evidence Schema 升级必须先独立发布兼容旧版和新版的 Writer，并读回 `/capabilities`
 确认新版已进入 `supportedReleaseEvidenceSchemaVersions`；随后才能启用对应版本的 Producer 和 RC
 Workflow。候选 RC 不得在证据门禁内自动升级自己的 Evidence Writer，避免未验证代码修改证据权威。
+合并 Writer 兼容变更后，通过 GitHub Actions 手动运行 `升级发布证据 Writer`。该 Workflow 只构建
+Evidence Service 单文件制品，使用固定 Staging SSH 主机指纹发布到不可变版本目录，原子切换并同时
+校验 Schema version 与 revision；启动或 capability 校验失败时恢复上一版本。
 
 `部署测试环境` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
 同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS

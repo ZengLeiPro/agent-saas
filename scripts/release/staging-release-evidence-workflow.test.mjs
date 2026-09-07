@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { RELEASE_EVIDENCE_SCHEMA_VERSION } from './release-evidence-schema.mjs';
+import {
+  RELEASE_EVIDENCE_SCHEMA_REVISION,
+  RELEASE_EVIDENCE_SCHEMA_VERSION,
+} from './release-evidence-schema.mjs';
 
 const removedWorkflowPath = new URL(
   '../../.github/workflows/prepare-release-evidence.yml',
@@ -64,6 +67,11 @@ test('Staging fails fast when the deployed Evidence Writer cannot accept the pro
   assert.match(workflow, /校验证据写入器架构兼容性/u);
   assert.match(workflow, /\/capabilities/u);
   assert.match(workflow, /supportedReleaseEvidenceSchemaVersions/u);
+  assert.match(
+    workflow,
+    new RegExp(`RELEASE_EVIDENCE_SCHEMA_REVISION: '${RELEASE_EVIDENCE_SCHEMA_REVISION}'`, 'u'),
+  );
+  assert.match(workflow, /releaseEvidenceSchemaRevision == \$requiredRevision/u);
   assert.match(workflow, /index\(\$required\) != null/u);
   assert.ok(
     workflow.indexOf('校验证据写入器架构兼容性') <

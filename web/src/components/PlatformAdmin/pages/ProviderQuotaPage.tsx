@@ -23,7 +23,11 @@ import { formatTime } from '../format';
 const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
   codex_subscription: 'Codex 订阅',
   volcengine_ark_plan: '火山 Agent Plan',
+  claude_subscription: 'Claude 订阅',
 };
+
+/** 推送型来源：平台没有可取数的管控面，由采集端主动上报，不提供单账号刷新。 */
+const PUSH_ONLY_SOURCES = new Set<ProviderQuotaSnapshot['sourceKind']>(['claude_subscription']);
 
 const WARNING_PERCENT = 85;
 const HISTORY_HOURS = 24;
@@ -214,6 +218,7 @@ function AccountCard({
   const status = accountStatus(snapshot);
   const credential = snapshot.credential;
   const isCodex = snapshot.sourceKind === 'codex_subscription';
+  const isPushOnly = PUSH_ONLY_SOURCES.has(snapshot.sourceKind);
   const mainWindows = snapshot.windows
     .filter((window) => !isCodex || isMainCodexWindow(window))
     .sort((a, b) => Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
@@ -261,16 +266,18 @@ function AccountCard({
           <span className={cn('col-start-1 row-start-3 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-1 sm:text-right', !snapshot.ok && 'text-danger-ink')}>
             {snapshot.ok ? '采集于' : '采集失败于'} {minuteTime(snapshot.collectedAt)}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="col-start-2 row-start-1 h-7 px-2 text-xs sm:col-start-3"
-            aria-label={`刷新 ${snapshot.accountLabel}`}
-            disabled={refreshing}
-            onClick={() => onRefresh(snapshot.accountKey)}
-          >
-            <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
-          </Button>
+          {!isPushOnly && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="col-start-2 row-start-1 h-7 px-2 text-xs sm:col-start-3"
+              aria-label={`刷新 ${snapshot.accountLabel}`}
+              disabled={refreshing}
+              onClick={() => onRefresh(snapshot.accountKey)}
+            >
+              <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
+            </Button>
+          )}
           <span className="col-start-1 row-start-2 text-xs text-muted-foreground" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>{subtitle}</span>
           <div className="col-start-1 row-start-4 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
             <ProviderPlanExpiryEditor snapshot={snapshot} onSaved={onExpirySaved} />

@@ -91,4 +91,18 @@ describe("TaskDetail Session 活跃态", () => {
     expect(screen.queryByRole("button", { name: "恢复实施" })).toBeNull();
     expect(mocks.refreshComments).not.toHaveBeenCalled();
   });
+
+  it("review 已退回 todo 时允许开始新一轮实施", async () => {
+    const todoTask = { ...runningTask, status: "todo" as const };
+    mocks.fetchTask.mockResolvedValue(todoTask);
+    mocks.executions = [{ ...mocks.executions[0], purpose: "review" }];
+
+    render(<TaskDetail {...props()} task={todoTask} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(todoTask.id));
+
+    expect(screen.getByRole("link", { name: "打开当前执行会话" }).getAttribute("href"))
+      .toBe("/chat/session-terminal");
+    const start = screen.getByRole("button", { name: "开始实施" });
+    expect(start.hasAttribute("disabled")).toBe(false);
+  });
 });

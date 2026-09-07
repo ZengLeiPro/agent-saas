@@ -3,8 +3,15 @@
  *
  * 服务端按周期向各家「管控面」取数（Codex = wham/usage，火山 = Ark OpenAPI GetAFPUsage），
  * 落 PG 后由平台管理端展示。推理 API Key 本身查不到套餐额度，这里的数据源是账号级凭据。
+ *
+ * `claude_subscription` 是**推送型**来源：Anthropic 不提供订阅额度查询 API，额度只能由官方
+ * 客户端（Claude Code / Agent SDK）在真实会话中带出，因此由 KY Agent 侧采集后直接写快照表，
+ * 平台不主动取数（详见 providerQuotaService 的 pushOnly 分支）。
  */
-export type ProviderQuotaSourceKind = 'codex_subscription' | 'volcengine_ark_plan';
+export type ProviderQuotaSourceKind =
+  | 'codex_subscription'
+  | 'volcengine_ark_plan'
+  | 'claude_subscription';
 
 export interface ProviderQuotaWindow {
   /** 同一账号内唯一，例如 five_hour / weekly / codex_bengalfox:primary。 */
@@ -41,7 +48,7 @@ export interface ProviderQuotaCredentialState {
 
 export interface ProviderQuotaSnapshot {
   sourceKind: ProviderQuotaSourceKind;
-  /** 稳定账号键：codex:<credentialRef> / volcengine:<groupId>。 */
+  /** 稳定账号键：codex:<credentialRef> / volcengine:<groupId> / claude:<email>。 */
   accountKey: string;
   /** 账号邮箱、分组名等人读标识。 */
   accountLabel: string;

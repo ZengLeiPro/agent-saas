@@ -29,7 +29,7 @@ import type {
   TaskBoardTaskMoveInput,
   TaskBoardTaskPatchInput,
 } from '../../../shared/src/types/taskboard.js';
-import type { UpsertRunInput } from '../runtime/runStore.js';
+import type { RunStatus, UpsertRunInput } from '../runtime/runStore.js';
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 import type { ExecutionPullRequestInspection } from './deliveryPullRequests.js';
 import type { RepositoryPullRequestInspection } from './repositoryProvider.js';
@@ -373,6 +373,30 @@ export interface TaskboardExecutionStore {
   ): Promise<TaskBoardExecutionStartResult | null>;
 }
 
+export interface TaskboardSessionActivity {
+  runId: string;
+  sessionId: string;
+  status: RunStatus;
+  kind: 'session_run' | 'background_task' | 'pending_wake';
+  parentSessionId?: string;
+  topLevelSessionId?: string;
+  wakeState?: string;
+  wakeDeferredReason?: string;
+  updatedAt: string;
+}
+
+export interface TaskboardExecutionActivityResult {
+  taskId: string;
+  executionId: string;
+  sessionId: string;
+  activities: TaskboardSessionActivity[];
+}
+
+export interface TaskboardExecutionActivityReconcileResult extends TaskboardExecutionActivityResult {
+  dryRun: boolean;
+  discarded: TaskboardSessionActivity[];
+}
+
 export interface TaskboardExecutionService {
   listExecutions(identity: TaskboardIdentity, taskId: string): Promise<TaskBoardExecution[]>;
   searchExecutions(
@@ -386,6 +410,17 @@ export interface TaskboardExecutionService {
     executionId: string,
     input: TaskBoardExecutionCancelInput,
   ): Promise<TaskBoardExecutionStartResult>;
+  inspectExecutionActivity?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+  ): Promise<TaskboardExecutionActivityResult>;
+  reconcileExecutionActivity?(
+    identity: TaskboardIdentity,
+    taskId: string,
+    executionId: string,
+    input: { expectedVersion: number; reason: string; dryRun: boolean },
+  ): Promise<TaskboardExecutionActivityReconcileResult>;
   startExecution(
     identity: TaskboardIdentity,
     taskId: string,

@@ -71,6 +71,7 @@ const cronManageSchema = z.object({
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
+  executionId: z.string().optional().describe('taskboard Execution id；execution.cancel/activity.* 必填。'),
   providerPullRequestId: z.string().optional().describe('仓库 Provider 的 pull request id 或编号。'),
   providerJobId: z.string().regex(/^\d+$/).optional().describe('当前 PR 最新 observed workflow 中的 GitHub Actions job id。'),
   kind: z.enum(['delivery', 'advisory', 'integration', 'remediation']).optional(),
@@ -80,7 +81,8 @@ const cronManageSchema = z.object({
   prompt: z.string().max(20_000).optional(),
   visibility: z.enum(TASKBOARD_VISIBILITIES).optional(),
   body: z.string().trim().max(20_000).optional().describe('评论正文；execution.finish 必填，comment.create 可仅提交附件。'),
-  reason: z.string().trim().min(1).max(2_000).optional().describe('取消集成任务的原因。'),
+  reason: z.string().trim().min(1).max(2_000).optional().describe('取消执行、取消集成或结算残留活动的原因。'),
+  dryRun: z.boolean().optional().describe('execution.activity.reconcile 默认仅预览；传 false 才实际结算安全的 pending wake。'),
   enabled: z.boolean().optional().describe('cron 是否启用。create 时默认 true。'),
   schedule: cronScheduleSchema.optional().describe('cron create 必填。kind=cron：{expr: "0 9 * * *", tz: "Asia/Shanghai"}；kind=every：{everyMs}；kind=at：{atMs: epoch 毫秒}。'),
   payload: z.union([cronPayloadSchema, cronPayloadPatchSchema]).optional().describe('cron create 必填。kind=agentTurn：{message}；kind=systemEvent：{text}。'),
@@ -164,6 +166,8 @@ export const cronManageToolDescriptor: ToolDescriptor<CronManageInput> = {
       && action !== 'execute'
       && action !== 'task.dispatch'
       && action !== 'comment.delete'
+      && action !== 'execution.cancel'
+      && action !== 'execution.activity.reconcile'
       && action !== 'integration.create'
       && dispatch !== true
     ) return { risk: 'workspace_write' };
@@ -230,7 +234,9 @@ function recordTaskboardAudit(
         ? input.boardId
         : objectType === 'comment'
           ? input.id ?? input.taskId
-          : input.taskId ?? input.id ?? input.boardId;
+          : objectType === 'execution'
+            ? input.executionId ?? input.taskId
+            : input.taskId ?? input.id ?? input.boardId;
   const partialFailure = result?.created === true && result.dispatched === false;
   const dispatchError = partialFailure
     ? (result?.dispatchError as { message?: unknown } | undefined)?.message

@@ -130,6 +130,24 @@ export function rig() {
     searchExecutions: vi.fn(async () => ({
       items: [execution], page: 1, pageSize: 20, total: 1, hasMore: false,
     })),
+    cancelExecution: vi.fn(async () => ({ task, execution: { ...execution, status: 'cancelled' as const } })),
+    inspectExecutionActivity: vi.fn(async () => ({
+      taskId: task.id, executionId: execution.id, sessionId: execution.sessionId,
+      activities: [{
+        runId: 'background-1', sessionId: 'child-1', status: 'completed' as const,
+        kind: 'pending_wake' as const, parentSessionId: execution.sessionId,
+        wakeState: 'pending', updatedAt: task.updatedAt,
+      }],
+    })),
+    reconcileExecutionActivity: vi.fn(async (_identity, taskId, executionId, input) => ({
+      taskId, executionId, sessionId: execution.sessionId, dryRun: input.dryRun,
+      activities: [],
+      discarded: input.dryRun ? [] : [{
+        runId: 'background-1', sessionId: 'child-1', status: 'completed' as const,
+        kind: 'pending_wake' as const, parentSessionId: execution.sessionId,
+        wakeState: 'discarded', updatedAt: task.updatedAt,
+      }],
+    })),
     startExecution: vi.fn(async () => ({
       task: { ...task, status: 'in_progress' as const, version: task.version + 1 },
       execution,

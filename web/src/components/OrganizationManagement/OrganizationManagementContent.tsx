@@ -1,3 +1,5 @@
+import { ManagementIndexPage } from '@/components/BusinessSystems/ManagementIndexPage';
+import { KyAppTenantUsagePanel } from '@/components/KyAppDeliveryPanels';
 import { lazy, Suspense, type ReactNode } from 'react';
 
 import { GovernanceCapabilityNotice } from '@/components/GovernanceConsole';
@@ -58,6 +60,8 @@ type OrganizationManagementRenderer = (context: OrganizationManagementRendererCo
 export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   Record<string, OrganizationManagementRenderer>
 > = {
+  'organization.agents.business-systems': ({ tenantId }) => <ManagementIndexPage key={tenantId} tenantId={tenantId} />,
+  'organization.governance.business-system-usage': ({ tenantId }) => <KyAppTenantUsagePanel key={tenantId} tenantId={tenantId} />,
   'organization.overview.overview': ({ tenantId }) => <TenantOverviewSection tenantId={tenantId} />,
   'organization.members.list': ({ tenantId, route }) => (
     <OrganizationMembersPage tenantId={tenantId} route={route} />

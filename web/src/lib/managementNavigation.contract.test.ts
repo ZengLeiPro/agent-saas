@@ -24,13 +24,13 @@ describe('管理后台导航契约', () => {
   });
 
   it('配置面固定为组织 17 项、平台 12 项', () => {
-    expect(managementPagesFor('config', 'organization')).toHaveLength(17);
-    expect(managementPagesFor('config', 'platform')).toHaveLength(12);
+    expect(managementPagesFor('config', 'organization')).toHaveLength(18);
+    expect(managementPagesFor('config', 'platform')).toHaveLength(14);
   });
 
   it('分析面只注册有真实页面的组织 4 项、平台 9 项', () => {
-    expect(managementPagesFor('analytics', 'organization')).toHaveLength(4);
-    expect(managementPagesFor('analytics', 'platform')).toHaveLength(9);
+    expect(managementPagesFor('analytics', 'organization')).toHaveLength(5);
+    expect(managementPagesFor('analytics', 'platform')).toHaveLength(10);
   });
 
   it('同一用量路由按 URL 语义拆为分析与预算配置', () => {

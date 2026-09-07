@@ -1,3 +1,5 @@
+import { ManagementIndexPage } from '@/components/BusinessSystems/ManagementIndexPage';
+import { KyAppDeliveryHealthPanel } from '@/components/KyAppDeliveryPanels';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, X } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
@@ -623,6 +625,11 @@ export function PlatformAdminShell({
   const governanceContent = (() => {
     if (!governanceRoute) return null;
     switch (governanceRoute.routeId) {
+      case "platform.resource-center.business-systems":
+      case "platform.runtime.system-deliveries":
+        return <ManagementIndexPage />;
+      case "platform.runtime.business-system-operations":
+        return <KyAppDeliveryHealthPanel />;
       case "platform.overview.overview":
         return <OverviewPage />;
       case "platform.org-business.tenants":

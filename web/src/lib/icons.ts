@@ -54,6 +54,7 @@ import {
 
 /** 实体 / 导航概念 —— 一个概念永远一个图标 */
 export const EntityIcons = {
+  businessSystem: Blocks,
   /** 组织 / 租户（全站唯一绑定，不得挪作他用） */
   org: Building2,
   /** 专家 / Agent */

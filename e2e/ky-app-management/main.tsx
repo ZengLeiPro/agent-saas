@@ -4,7 +4,7 @@ import '@/index.css';
 import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
 import { OrganizationSystemsPage } from '@/components/BusinessSystems/OrganizationSystemsPage';
 import { BusinessSystemOperationsPage } from '@/components/BusinessSystems/BusinessSystemOperationsPage';
-import { KyAppCredentialClaimPage } from '@/components/KyAppCredentialClaim/KyAppCredentialClaimPage';
+import { KyAppCredentialClaimEntry } from '@/components/KyAppCredentialClaim/KyAppCredentialClaimEntry';
 import { credentialClaimInstallation } from '@/components/KyAppCredentialClaim/claimRoute';
 import {
   parseGovernanceUrl,
@@ -58,7 +58,7 @@ function App() {
       </header>
       <div className="mx-auto max-w-6xl">
         {claimId ? (
-          <KyAppCredentialClaimPage installationId={claimId} />
+          <KyAppCredentialClaimEntry installationId={claimId} />
         ) : route?.routeId === 'organization.agents.business-systems' ? (
           <OrganizationSystemsPage
             tenantId={route.orgId ?? 't_demo'}

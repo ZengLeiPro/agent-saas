@@ -1,4 +1,4 @@
-import { KyAppCredentialClaimPage } from '@/components/KyAppCredentialClaim/KyAppCredentialClaimPage';
+import { KyAppCredentialClaimEntry } from '@/components/KyAppCredentialClaim/KyAppCredentialClaimEntry';
 import { credentialClaimInstallation } from '@/components/KyAppCredentialClaim/claimRoute';
 import {
   lazy,
@@ -130,7 +130,7 @@ export function AuthGate() {
     };
   }, [artifactShareToken, authEnabled, isAuthenticated, isLoading, shareToken]);
 
-  if (claimInstallationId) return <KyAppCredentialClaimPage installationId={claimInstallationId} />;
+  if (claimInstallationId) return <KyAppCredentialClaimEntry installationId={claimInstallationId} />;
 
   if (artifactShareToken) {
     return (

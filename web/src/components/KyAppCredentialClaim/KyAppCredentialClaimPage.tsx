@@ -10,9 +10,9 @@ interface ClaimedCredential {
   keyVersion: string;
   ackDeadlineAt: string;
 }
-export function KyAppCredentialClaimPage({ installationId }: { installationId: string }) {
+export function KyAppCredentialClaimPage({ installationId, initialTicket = '' }: { installationId: string; initialTicket?: string }) {
   const { isAuthenticated, isLoading } = useAuth();
-  const ticket = useRef('');
+  const ticket = useRef(initialTicket);
   const generation = useRef(0);
   const alive = useRef(true);
   const [credential, setCredential] = useState<ClaimedCredential>();

@@ -183,6 +183,61 @@ describe('CronManage taskboard actions', () => {
     });
   });
 
+  it('检查、取消并受控结算 Execution Session 活动', async () => {
+    const { executionService, options } = rig();
+
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.activity.inspect', taskId: task.id, executionId: execution.id,
+    })).resolves.toMatchObject({
+      executionId: execution.id,
+      activities: [{ runId: 'background-1', kind: 'pending_wake', wakeState: 'pending' }],
+    });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.cancel', taskId: task.id, executionId: execution.id,
+      expectedVersion: task.version, reason: '停止当前执行',
+    })).resolves.toMatchObject({ canceled: true, execution: { status: 'cancelled' } });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.activity.reconcile', taskId: task.id, executionId: execution.id,
+      expectedVersion: task.version,
+    })).resolves.toMatchObject({ dryRun: true, discarded: [] });
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.activity.reconcile', taskId: task.id, executionId: execution.id,
+      expectedVersion: task.version, dryRun: false,
+    })).rejects.toThrow('reason');
+    await expect(invokeTaskboardAction(options, identity, {
+      action: 'execution.activity.reconcile', taskId: task.id, executionId: execution.id,
+      expectedVersion: task.version, dryRun: false, reason: '结算已终态但未投递的唤醒',
+    })).resolves.toMatchObject({
+      dryRun: false,
+      discarded: [{ runId: 'background-1', wakeState: 'discarded' }],
+    });
+
+    expect(executionService.cancelExecution).toHaveBeenCalledWith(identity, task.id, execution.id, {
+      expectedVersion: task.version, reason: '停止当前执行',
+    });
+    expect(executionService.reconcileExecutionActivity).toHaveBeenLastCalledWith(
+      identity, task.id, execution.id,
+      { expectedVersion: task.version, dryRun: false, reason: '结算已终态但未投递的唤醒' },
+    );
+  });
+
+  it('残留活动结算拒绝过期版本与 maintainer 以下角色', async () => {
+    const stale = rig();
+    await expect(invokeTaskboardAction(stale.options, identity, {
+      action: 'execution.activity.reconcile', taskId: task.id, executionId: execution.id,
+      expectedVersion: task.version - 1,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_VERSION_CONFLICT' });
+    expect(stale.executionService.reconcileExecutionActivity).not.toHaveBeenCalled();
+
+    const editor = rig();
+    vi.mocked(editor.service.getBoard).mockResolvedValueOnce({ ...board, role: 'editor' });
+    await expect(invokeTaskboardAction(editor.options, identity, {
+      action: 'execution.activity.reconcile', taskId: task.id, executionId: execution.id,
+      expectedVersion: task.version,
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
+    expect(editor.executionService.reconcileExecutionActivity).not.toHaveBeenCalled();
+  });
+
   it('Execution fencing 只允许复核 Agent 决策自己的任务', async () => {
     const { service, executionStore, options } = rig();
 

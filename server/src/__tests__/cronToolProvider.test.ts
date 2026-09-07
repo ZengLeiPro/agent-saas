@@ -66,12 +66,23 @@ describe('CronToolProvider', () => {
     expect(description).toContain('execution.pull_request.set');
     expect(description).toContain('唯一的非 Draft PR（没有有效 PR 时才创建，禁止重复）');
     expect(description).toContain('integration.sources');
+    expect(description).toContain('execution.activity.inspect');
+    expect(description).toContain('execution.activity.reconcile');
     expect(description).toContain('execution.finish({targetStatus, body})');
     expect(description).toContain('不接受旧 status 字段');
     expect(description).toContain('comment.get({taskId})');
     expect(description).not.toContain('Delivery Work 登记');
     expect(description).not.toContain('Delivery Review 独立');
     expect(description).not.toContain('Integration task 使用一个 durable work Agent');
+    expect(cronManageToolDescriptor.resolveCallPolicy?.({
+      target: 'taskboard', action: 'execution.activity.inspect', taskId: 'task-1', executionId: 'execution-1',
+    })).toEqual({ risk: 'safe' });
+    expect(cronManageToolDescriptor.resolveCallPolicy?.({
+      target: 'taskboard', action: 'execution.activity.reconcile', taskId: 'task-1', executionId: 'execution-1',
+    })).toBeUndefined();
+    expect(cronManageToolDescriptor.resolveCallPolicy?.({
+      target: 'taskboard', action: 'execution.cancel', taskId: 'task-1', executionId: 'execution-1',
+    })).toBeUndefined();
   });
 
   it('create 自动注入 owner 并返回详情', async () => {

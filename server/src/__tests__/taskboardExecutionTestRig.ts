@@ -269,7 +269,11 @@ export function makeRig(
   };
   const runStore = {
     get: vi.fn(async (): Promise<RunRecord | null> => null),
-    hasTaskboardSessionActivity: vi.fn(async (): Promise<boolean> => false),
+    hasTaskboardSessionActivity: vi.fn(async (_sessionIds: string[], _tenantId?: string): Promise<boolean> => false),
+    listBySession: vi.fn(async (): Promise<RunRecord[]> => []),
+    listBackgroundTasks: vi.fn(async (): Promise<RunRecord[]> => []),
+    claimBackgroundTaskWake: vi.fn(async (): Promise<RunRecord | null> => null),
+    finishBackgroundTaskWake: vi.fn(async (): Promise<RunRecord | null> => null),
   };
   const sessionCatalog = {
     upsert: vi.fn(async () => undefined),

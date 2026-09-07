@@ -178,7 +178,7 @@ export const todoWriteToolDescriptor: ToolDescriptor<TodoWriteInput> = {
           content: todoTextSchema,
           status: z.enum(['pending', 'in_progress', 'waiting', 'blocked', 'completed', 'failed']),
           activeForm: todoTextSchema.optional(),
-          // 折叠视图里步骤只剩标题一行，outcome 是唯一的信息位；
+          // outcome 供步骤详情使用，不能替代面向用户的独立完整答复；
           // 完成但有例外必须 tone:'warn'，不允许干净「已完成」掩盖例外。
           outcome: z
             .object({

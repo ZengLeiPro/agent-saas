@@ -813,6 +813,7 @@ export {
   outcomeToneMeta,
   todoAccessibleStatus,
   todoStatusMeta,
+  businessStepResultPlaceholder,
 } from './lib/businessStepStatus';
 export type {
   BusinessStepIcon,

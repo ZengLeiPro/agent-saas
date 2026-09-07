@@ -152,6 +152,7 @@ const migrationSchema = z
       })
       .strict(),
     blockingReasons: z.array(z.never()).max(0),
+    postconditionBlockingReasons: z.array(z.never()).max(0).optional(),
   })
   .strict();
 

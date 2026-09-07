@@ -57,7 +57,6 @@ import { createLegacyAuthWriteGate, type LegacyAuthWriteGateDeps } from './authL
 import { startLoginRateCleanup, type RateBucket } from './authLoginRate.js';
 import { finalizeLegacyPasswordReset, registerPasswordResetRoutes } from './authPasswordReset.js';
 // ---- Zod schemas ----
-
 const loginSchema = z.object({
   username: z.string().min(1, "账号不能为空"),
   password: z.string().min(1, "密码不能为空"),
@@ -275,6 +274,7 @@ export interface AuthRouterDeps extends LegacyAuthWriteGateDeps {
   secretVault?: SecretVault;
   /** 测试注入：覆盖按配置构建的验证码服务。 */
   loginCodeService?: VerificationCodeService;
+  membershipStore?: { getMembership(tenantId: string, userId: string): Promise<{ persona: "member" | "org_admin" } | null> };
   /**
    * 动态读取平台模型配置；用于校验用户默认模型不能越过组织可选模型硬约束。
    * 模型配置支持管理端热更新，不能在 Router 创建时捕获旧对象。
@@ -462,7 +462,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   function phoneBelongsToAnotherUser(phone: string, userId: string): boolean {
     return userStore.findAllByPhone(phone).some((u) => u.id !== userId);
   }
-  registerPasswordResetRoutes(router, { userStore, tenantStore, loginLogFilePath, authEpochAuthority: deps.authEpochAuthority, onAuthFenced: deps.onAuthFenced, getSmsRuntime: getSmsLoginRuntime, resolveSmsUser: resolveSmsLoginUser });
+  registerPasswordResetRoutes(router, { userStore, tenantStore, loginLogFilePath, membershipStore: deps.membershipStore, authEpochAuthority: deps.authEpochAuthority, onAuthFenced: deps.onAuthFenced, getSmsRuntime: getSmsLoginRuntime, resolveSmsUser: resolveSmsLoginUser });
   // 确保头像目录存在
   if (!existsSync(avatarsDir)) {
     mkdirSync(avatarsDir, { recursive: true });

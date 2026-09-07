@@ -165,15 +165,24 @@ export class VerificationCodeService {
     return { ok: true };
   }
 
+  /** 仅校验验证码，不在成功时消费；用于验证码通过后仍需执行策略校验的两阶段流程。 */
+  verify(phone: string, code: string, purpose = "default"): boolean {
+    return this.verifyCode(phone, code, purpose, false);
+  }
+
   /**
    * 校验并消费验证码（成功即删除，一次性）。
    * 错误尝试达到上限后该码作废，需重新获取。
    */
   verifyAndConsume(phone: string, code: string, purpose = "default"): boolean {
+    return this.verifyCode(phone, code, purpose, true);
+  }
+
+  private verifyCode(phone: string, code: string, purpose: string, consume: boolean): boolean {
     const key = this.codeKey(phone, purpose);
     if (this.universalCode && code === this.universalCode) {
       apiLogger.warn(`[sms] 万能码验证通过 phone=${phone}（仅限内测，生产须移除）`);
-      this.codes.delete(key);
+      if (consume) this.codes.delete(key);
       return true;
     }
     const entry = this.codes.get(key);
@@ -184,12 +193,10 @@ export class VerificationCodeService {
     }
     if (entry.code !== code) {
       entry.attempts += 1;
-      if (entry.attempts >= this.maxVerifyAttempts) {
-        this.codes.delete(key);
-      }
+      if (entry.attempts >= this.maxVerifyAttempts) this.codes.delete(key);
       return false;
     }
-    this.codes.delete(key);
+    if (consume) this.codes.delete(key);
     return true;
   }
 }

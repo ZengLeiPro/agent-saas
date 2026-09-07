@@ -49,6 +49,7 @@ interface PasswordSessionDeps {
 interface PasswordResetRouteDeps extends PasswordSessionDeps {
   userStore: UserStore;
   tenantStore?: TenantStore;
+  membershipStore?: { getMembership(tenantId: string, userId: string): Promise<{ persona: "member" | "org_admin" } | null> };
   loginLogFilePath: string;
   getSmsRuntime: () => Promise<SmsRuntime>;
   resolveSmsUser: (phone: string) => ResolvedSmsUser;
@@ -160,6 +161,10 @@ export function registerPasswordResetRoutes(
         res.status(400).json({ error: "手机号、验证码或账号状态有误" });
         return;
       }
+      if (!runtime.codeService.verify(phone, code, "password-reset")) {
+        res.status(400).json({ error: "手机号、验证码或账号状态有误" });
+        return;
+      }
       const minLength = deps.tenantStore?.getSettings(user.tenantId)?.security.passwordMinLength;
       if (minLength && newPassword.length < minLength) {
         res.status(400).json({ error: `新密码至少 ${minLength} 个字符` });
@@ -208,7 +213,11 @@ export function registerPasswordResetRoutes(
         res.status(403).json({ error: "跨组织访问被拒绝" });
         return;
       }
-      if (!isPlatformAdmin(caller) && target.id !== caller.sub && target.role === "admin") {
+      const targetMembership = await deps.membershipStore?.getMembership(target.tenantId, target.id);
+      const targetIsOrganizationAdmin = targetMembership
+        ? targetMembership.persona === "org_admin"
+        : target.role === "admin";
+      if (!isPlatformAdmin(caller) && target.id !== caller.sub && targetIsOrganizationAdmin) {
         res.status(403).json({ error: "组织管理员不能管理其他管理员" });
         return;
       }

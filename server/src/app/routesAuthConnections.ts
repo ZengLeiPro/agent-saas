@@ -33,6 +33,7 @@ export function registerAuthConnectionRoutes(input: {
     tokenExpiresIn: input.tokenExpiresIn,
     avatarsDir: input.avatarsDir,
     loginLogFilePath: input.loginLogFilePath,
+    membershipStore: runtime.membershipStore,
     agentCwd: input.agentCwd,
     sharedDir: input.sharedDir,
     tenantSkillsRootDir: input.tenantSkillsRootDir,

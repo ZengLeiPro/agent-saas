@@ -30,6 +30,12 @@ const manifest = {
     },
   },
 };
+const postconditions = [{ id: 'schema', configPath: 'runtimeEventStore', sql: 'SELECT true AS ok', params: [], description: 'fixture' }];
+manifest.migrationPlan.postconditions = postconditions;
+manifest.migrationPlan.postconditionsDigest = digestBuffer(canonicalJson(postconditions));
+const databaseEvidence = { releaseId: RELEASE_ID, manifestDigest: MANIFEST_DIGEST, planDigest: PLAN_DIGEST,
+  postconditionsDigest: manifest.migrationPlan.postconditionsDigest, environment: 'production', status: 'passed',
+  observedAt: NOW.toISOString(), checks: [{ id: 'schema', status: 'passed', database: 'test', targetDigest: DIGEST }] };
 const components = {
   web: { gitSha: SHA, artifactDigest: DIGEST },
   api: { gitSha: SHA, artifactDigest: DIGEST },
@@ -87,6 +93,7 @@ function confirm(overrides = {}) {
     attestations,
     live,
     apiReady,
+    databaseEvidence,
     now: NOW,
     ...overrides,
   });
@@ -95,6 +102,7 @@ function confirm(overrides = {}) {
 test('confirms only the original RC, migration plan, promotion baseline and live target', () => {
   const evidence = confirm();
   assert.deepEqual(evidence, {
+    databaseEvidence,
     schemaVersion: 1,
     releaseId: RELEASE_ID,
     manifestDigest: MANIFEST_DIGEST,

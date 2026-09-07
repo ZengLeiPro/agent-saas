@@ -1495,22 +1495,40 @@ wait_for_idle_app_slots() {
 # 时长绑在最长 durable run 上（旧入口实测 905～935s 贴着超时回滚），强停会把在途 run
 # 变成 orphaned。下一次发布在 wait_for_idle_app_slots 里等它腾出槽位。
 hand_off_retired_authority() {
-  local unit="$1" marker="$2" pidfile="$3" pid
+  local unit="$1" marker="$2" pidfile="$3" pid main_pid deadline state
   if ! systemctl is-active --quiet "$unit"; then
-    systemctl disable "$unit" >/dev/null 2>&1 || true
-    echo "$unit already inactive; boot ownership revoked"
+    state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+    [ "$state" = inactive ] || { echo "ERROR: unknown retired unit state: $unit $state" >&2; return 1; }
+    systemctl disable "$unit" >/dev/null 2>&1 || return 1
     return 0
   fi
-  install -m 0644 /dev/null "$marker"
-  if ! systemctl disable "$unit" >/dev/null 2>&1; then
-    echo "WARN: failed to disable $unit; drain marker still blocks restarts" >&2
-  fi
   pid="$(cat "$pidfile" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -USR2 "$pid" 2>/dev/null; then
-    echo "$unit draining in background (pid $pid); durable work exits at its own safe boundary"
-  else
-    echo "WARN: $unit pidfile missing or signal failed; leaving the unit to its drain guard" >&2
+  main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1
+  if ! [[ "$pid" =~ ^[1-9][0-9]*$ ]] || [ "$pid" != "$main_pid" ]; then
+    echo "ERROR: retired unit PID missing or mismatched: $unit; handoff needs human review" >&2
+    return 1
   fi
+  # Preserve an existing acknowledgment on retries. An empty guard is never an acknowledgment.
+  if [ ! -e "$marker" ]; then install -m 0644 /dev/null "$marker"; fi
+  systemctl disable "$unit" >/dev/null 2>&1 || return 1
+  kill -USR2 "$pid" 2>/dev/null || { echo "ERROR: drain signal failed: $unit" >&2; return 1; }
+  deadline=$((SECONDS + 15))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    state="$(systemctl show "$unit" --property=ActiveState --value)" || return 1
+    # A clean exit also proves it cannot accept work. Failed/unknown states require investigation.
+    [ "$state" != inactive ] || return 0
+    main_pid="$(systemctl show "$unit" --property=MainPID --value)" || return 1
+    [ "$main_pid" = "$pid" ] || { echo "ERROR: retired PID changed: $unit" >&2; return 1; }
+    if [ "$state" = active ] && jq -e --argjson pid "$pid" \
+      'type=="object" and .pid==$pid and (.runtimeQuiesced|type)=="boolean" and (.activeStreams|type)=="number" and (.activeUploads|type)=="number"' \
+      "$marker" >/dev/null 2>&1; then
+      echo "$unit acknowledged drain (pid $pid); durable work continues to its safe boundary"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ERROR: no drain acknowledgment from $unit pid $pid; handoff needs human review" >&2
+  return 1
 }
 
 deploy_app() {

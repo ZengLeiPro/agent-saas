@@ -209,7 +209,7 @@ describe('平台签发 ↔ 定制项目 SDK 验签交叉测试', () => {
       ['systemId', 'other-erp'],
       ['tenantId', 't_other'],
       ['installationId', 'tsi_99'],
-      ['issuer', 'https://staging.agent.kaiyan.net'],
+      ['issuer', 'https://staging-agent.kaiyan.net'],
     ] as const) {
       await expect(
         verifySat(

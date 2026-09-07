@@ -164,6 +164,7 @@ jobs:
               --operation "retry-normalize:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
           fi
+          node scripts/release/migration-postconditions.mjs "$RUNNER_TEMP/manifest.json"
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
           test -n "$staging"
           staging_reason="$(printf '%s' "$staging" | jq -r .reason)"
@@ -906,6 +907,8 @@ jobs:
             -o "$RUNNER_TEMP/web-release-identity-readback.json"
           jq -e --arg digest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
             '.webDigest==$digest' "$RUNNER_TEMP/web-release-identity-readback.json"
+          run_with_web_lock node scripts/release/verify-public-web.mjs \
+            "$RUNNER_TEMP/web-assets" "https://agent.kaiyan.net" "$RUNNER_TEMP/production-public-web.json"
           web_lock_is_alive
           web_committed=true
           release_web_lock

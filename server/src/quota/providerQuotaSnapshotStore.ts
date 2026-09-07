@@ -14,12 +14,14 @@ function sanitizeIdentifier(value: string): string {
  */
 export class PgProviderQuotaSnapshotStore {
   readonly table: string;
+  readonly planExpiryTable: string;
 
   constructor(
     private readonly pool: PgPool,
     options: { tablePrefix?: string } = {},
   ) {
     this.table = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_provider_quota_snapshots`;
+    this.planExpiryTable = `${sanitizeIdentifier(options.tablePrefix ?? 'runtime')}_provider_plan_expiry_edits`;
   }
 
   async init(): Promise<void> {
@@ -40,6 +42,18 @@ export class PgProviderQuotaSnapshotStore {
       await client.query(
         `CREATE INDEX IF NOT EXISTS ${this.table}_account_time_idx ON ${this.table} (account_key, collected_at DESC)`,
       );
+      // 手动设置独立于采集快照；追加记录兼作审计，清除时写 NULL，不随快照清理。
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.planExpiryTable} (
+          id BIGSERIAL PRIMARY KEY,
+          identity_key TEXT NOT NULL,
+          end_time TIMESTAMPTZ,
+          updated_by TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.planExpiryTable}_identity_idx
+        ON ${this.planExpiryTable} (identity_key, id DESC)`);
     } finally {
       await client
         .query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey])
@@ -111,6 +125,26 @@ export class PgProviderQuotaSnapshotStore {
         .filter((window) => typeof window.id === 'string' && typeof window.usedPercent === 'number')
         .map((window) => ({ id: window.id as string, usedPercent: window.usedPercent as number })),
     }));
+  }
+
+  async planExpiryOverrides(identityKeys: string[]): Promise<Map<string, string | null>> {
+    if (identityKeys.length === 0) return new Map();
+    const result = await this.pool.query<{ identity_key: string; end_time: Date | string | null }>(
+      `SELECT DISTINCT ON (identity_key) identity_key, end_time
+       FROM ${this.planExpiryTable} WHERE identity_key = ANY($1::text[])
+       ORDER BY identity_key, id DESC`,
+      [identityKeys],
+    );
+    return new Map(result.rows.map((row) => [
+      row.identity_key, row.end_time ? new Date(row.end_time).toISOString() : null,
+    ]));
+  }
+
+  async setPlanExpiry(identityKey: string, endTime: string | null, userId: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO ${this.planExpiryTable} (identity_key, end_time, updated_by) VALUES ($1, $2, $3)`,
+      [identityKey, endTime, userId],
+    );
   }
 
   async prune(retentionDays: number): Promise<number> {

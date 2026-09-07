@@ -15,6 +15,7 @@ import {
   accountStatus,
   baselineUsedPercent,
   formatResetIn,
+  formatResetTime,
   formatWan,
   windowTone,
 } from './ProviderQuotaPage';
@@ -116,24 +117,25 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getAllByText('接近上限').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('采集失败')).toBeTruthy();
     // 大数字是剩余百分比；用量用「万」表达
-    expect(screen.getByText('5.9%')).toBeTruthy();
+    expect(screen.getByText('94.1%')).toBeTruthy();
     expect(screen.getByText(/已用 37\.8万 \/ 40\.2万 AFP/u)).toBeTruthy();
-    expect(screen.getByText(/已用 100\.0% · 仅提供百分比/u)).toBeTruthy();
+    expect(screen.getByText('100.0%')).toBeTruthy();
     // Codex 事实栅格：重置券、凭据到期、调度状态
-    expect(screen.getByText('2 张')).toBeTruthy();
-    expect(screen.getByText('凭据到期')).toBeTruthy();
-    expect(screen.getByText(/^冷却中，至 /u)).toBeTruthy();
+    expect(screen.getByText('Codex 订阅 · Pro · 重置券 2')).toBeTruthy();
+    expect(screen.getByTitle(/^凭据到期 /u)).toBeTruthy();
+    expect(screen.getByText('冷却中')).toBeTruthy();
     // 失败原因 + 上次成功数据提示
     expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
     // 顶部汇总
+    expect(screen.queryByText(/每 5 分钟自动采集/u)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
-    expect(screen.getByText(/1 个账号采集失败/u)).toBeTruthy();
-    expect(screen.queryByText(/已耗尽或不可用/u)).toBeNull();
-    expect(screen.getByText(/1 个账号接近上限或冷却中/u)).toBeTruthy();
+    expect(screen.getByText(/1 个异常/u)).toBeTruthy();
+    expect(screen.getByText(/1 个需关注/u)).toBeTruthy();
     // 24h 变化来自 history 的最早成功点
     expect(screen.getByText(/24h \+4\.1%/u)).toBeTruthy();
     // 火山口径脚注
-    expect(screen.getByText(/不计入 5 小时 \/ 周额度限制/u)).toBeTruthy();
+    expect(screen.queryByText(/不计入 5 小时 \/ 周额度限制/u)).toBeNull();
     expect(api.providerQuotaHistory).toHaveBeenCalledWith(24);
   });
 
@@ -145,6 +147,73 @@ describe('ProviderQuotaPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' }));
     await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith('codex:c1'));
     expect(api.providerQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it('Codex 周额度优先，附加模型默认折叠且不把账号标记为耗尽', async () => {
+    const codex = {
+      ...overview.items[1]!, ok: true, error: undefined, limitReached: false,
+      credential: { availability: 'available' as const },
+      windows: [
+        { id: 'primary', label: '5 小时', usedPercent: 10, windowSeconds: 18000 },
+        { id: 'secondary', label: '每周', usedPercent: 20, windowSeconds: 604800 },
+        { id: 'mini:primary', label: 'Mini · 每周', usedPercent: 100, limitReached: true },
+      ],
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [codex], collector: { ...overview.collector, lastRunAt: null } });
+    render(<ProviderQuotaPage />);
+    await waitFor(() => expect(screen.getByText('正常')).toBeTruthy());
+    const windows = screen.getAllByRole('progressbar');
+    expect(windows[0]?.getAttribute('aria-label')).toBe('周用量 已用');
+    const summary = screen.getByText(/其他模型额度/u);
+    expect(summary.closest('details')?.open).toBe(false);
+    expect(screen.getByText('1 个窗口已耗尽')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '查看说明' }));
+    expect(screen.getByText(/页面不自动刷新/u)).toBeTruthy();
+    expect(screen.queryByText('可用')).toBeNull();
+    expect(screen.queryByText('已耗尽')).toBeNull();
+  });
+
+  it('单个主额度占满一行、显示已用量，采集时间放在标题区', async () => {
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-codex:c1');
+    const tile = screen.getByTestId('quota-window-primary');
+    expect(tile.parentElement?.className).not.toContain('sm:grid-cols-2');
+    expect(tile.textContent).toContain('100.0%');
+    expect(tile.textContent).toContain('周用量');
+    expect(screen.queryByText('供应商仅提供百分比')).toBeNull();
+    expect(tile.textContent).not.toContain('剩余');
+    const timestamp = [...card.querySelectorAll('span')].find(el => el.textContent?.startsWith('采集失败于'));
+    expect(timestamp?.parentElement?.querySelector('button')?.getAttribute('aria-label')).toContain('刷新');
+  });
+
+  it('零重置券隐藏，火山套餐信息与到期时间使用相同布局', async () => {
+    api.providerQuota.mockResolvedValue({ ...overview, items: overview.items.map(item => ({ ...item, resetCredits: 0 })) });
+    render(<ProviderQuotaPage />);
+    await screen.findByText('Codex 订阅 · Pro');
+    expect(screen.queryByText(/重置券 0/)).toBeNull();
+    expect(screen.getByText('火山 Agent Plan · Max')).toBeTruthy();
+    const expiry = screen.getByText(/^套餐到期 /);
+    expect(expiry.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
+    expect(expiry.parentElement?.className).toContain('sm:col-start-2');
+    expect(expiry.parentElement?.className).toContain('text-xs');
+    expect(screen.queryByText('套餐状态')).toBeNull();
+  });
+
+  it.each([90, 100])('附加模型已用 %s%% 不影响账号与顶部告警', async (usedPercent) => {
+    const item = {
+      ...overview.items[1]!, ok: true, error: undefined, limitReached: false,
+      credential: { availability: 'available' as const },
+      windows: [
+        { id: 'primary', label: '每周', usedPercent: 20 },
+        { id: 'mini:primary', label: 'Mini · 每周', usedPercent, limitReached: usedPercent >= 100 },
+      ],
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [item] });
+    render(<ProviderQuotaPage />);
+    await screen.findByText('正常');
+    expect(screen.queryByText(/个异常|个需关注/)).toBeNull();
+    expect(screen.getByTestId('quota-window-primary').textContent).not.toMatch(/接近上限|已撞限/);
+    expect(screen.queryByText('已耗尽')).toBeNull();
   });
 
   it('没有任何数据源时给出配置指引', async () => {
@@ -178,6 +247,10 @@ describe('helpers', () => {
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow], credential: { availability: 'quota_cooldown' } })).toEqual({ tone: 'warning', label: '冷却中' });
     expect(accountStatus({ ok: true, limitReached: false, windows: [{ ...okWindow, usedPercent: 90 }] }).label).toBe('接近上限');
     expect(accountStatus({ ok: true, limitReached: false, windows: [okWindow] })).toEqual({ tone: 'ok', label: '正常' });
+  });
+
+  it('重置时间在月日与时间之间显示星期', () => {
+    expect(formatResetTime('2026-09-10T12:00:00')).toMatch(/09\/10 周四 12:00/);
   });
 
   it('formatWan：万/亿量级与小数位', () => {

@@ -55,6 +55,7 @@ server/src/runtime/controlPlaneFetch.ts
 server/src/runtime/egressPolicy.ts
 server/src/runtime/handEnvAllowlist.ts
 server/src/runtime/handStore.ts
+server/src/runtime/handSupersession.ts
 server/src/runtime/httpTransport.ts
 server/src/runtime/imageAttachments.ts
 server/src/runtime/imageBlobStore.ts

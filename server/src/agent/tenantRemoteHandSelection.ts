@@ -1,3 +1,4 @@
+import { isSupersededHand } from '../runtime/handSupersession.js';
 import { hasUnresolvedHandProvisionFailure, type HandRecord, type HandStatus } from '../runtime/handStore.js';
 import { DEFAULT_INVOKE_TIMEOUT_MS } from '../runtime/httpTransport.js';
 
@@ -18,7 +19,7 @@ export function tenantHandRuntimeStatus(hand: HandRecord, now = Date.now()): Han
 
 export function isTenantRemoteHand(hand: HandRecord): boolean {
   return (
-    hand.type === 'server-remote' &&
+    !isSupersededHand(hand) && hand.type === 'server-remote' &&
     hand.status !== 'destroyed' &&
     typeof hand.metadata?.tenantRemoteHandId === 'string' &&
     hand.metadata.tenantRemoteHandId.length > 0

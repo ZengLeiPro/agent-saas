@@ -157,8 +157,8 @@ export function BusinessStepEvidence({ todo }: { todo: TodoItem }) {
   );
 }
 
-export function BusinessStepStatusIcon({ todo, className }: { todo: TodoItem; className?: string }) {
-  const meta = todoStatusMeta(todo);
+export function BusinessStepStatusIcon({ todo, className, planClosed }: { todo: TodoItem; className?: string; planClosed?: boolean }) {
+  const meta = todoStatusMeta(todo, planClosed);
   const Icon = STEP_ICONS[meta.icon];
   return (
     <span className="inline-flex shrink-0" aria-label={meta.label}>

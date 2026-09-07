@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, X } from "lucide-react";
 import type { RenderItem } from "@agent/shared";
+import { businessStepResultPlaceholder } from "@agent/shared";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -102,7 +103,7 @@ function StepTabs({
             )}
             onClick={() => onSelectStep?.(step.todoKey)}
           >
-            <BusinessStepStatusIcon todo={step.todo} className="size-3.5" />
+            <BusinessStepStatusIcon todo={step.todo} planClosed={plan.event.isClosed} className="size-3.5" />
             <span>{number}</span>
           </button>
         );
@@ -184,7 +185,9 @@ function BusinessStepDetailBody({
                 deliverables={deliverables}
               />
             ) : (
-              <p className="text-sm text-muted-foreground">暂无结果</p>
+              <p className="text-sm text-muted-foreground">
+                {businessStepResultPlaceholder(detail.todo, plan.event.isClosed, hasProcess)}
+              </p>
             )}
           </section>
           {hasProcess ? (

@@ -7,6 +7,7 @@
  * 以及 HSTS；**不设** `X-Frame-Options`（helmet 默认要覆盖掉，否则壳的 iframe 加载不了）。
  */
 import type { MiddlewareHandler } from 'hono';
+import { ISSUER_BY_ENV, type KyEnv } from '@kaiyan/ky-app-contract';
 
 /** 壳站 origin，`frame-ancestors` 只允许它。 */
 export const SHELL_ORIGIN = 'https://agent.kaiyan.net';
@@ -24,7 +25,17 @@ export const CONTENT_SECURITY_POLICY = [
 /** HSTS：两年 + 子域 + preload。 */
 export const STRICT_TRANSPORT_SECURITY = 'max-age=63072000; includeSubDomains; preload';
 
+/** 根据受信环境选择唯一的公网 Shell，保留本地 doctor 的生产基准。 */
+export function shellOriginForEnv(env: KyEnv): string {
+  return env === 'staging' ? ISSUER_BY_ENV.staging : ISSUER_BY_ENV.prod;
+}
+
+export function contentSecurityPolicyForEnv(env: KyEnv): string {
+  return CONTENT_SECURITY_POLICY.replace(SHELL_ORIGIN, shellOriginForEnv(env));
+}
+
 export interface SecurityHeadersOptions {
+  env?: KyEnv;
   /** 覆盖 CSP（例如本地开发需要放开 `connect-src`）；生产不要动。 */
   contentSecurityPolicy?: string;
   /** 关闭 HSTS（纯 http 的本地环境）。 */
@@ -39,7 +50,19 @@ export interface SecurityHeadersOptions {
  * 唯一嵌入控制手段。
  */
 export function securityHeaders(options: SecurityHeadersOptions = {}): MiddlewareHandler {
-  const csp = options.contentSecurityPolicy ?? CONTENT_SECURITY_POLICY;
+  const csp = options.contentSecurityPolicy ?? contentSecurityPolicyForEnv(options.env ?? 'prod');
+  const env = options.env ?? 'prod';
+  if (env === 'prod' || env === 'staging') {
+    const directives = csp.split(';').map((part) => part.trim().split(/\s+/u));
+    const frames = directives.filter(([name]) => name?.toLowerCase() === 'frame-ancestors');
+    if (
+      frames.length !== 1 ||
+      frames[0]?.length !== 2 ||
+      frames[0]?.[1] !== shellOriginForEnv(env)
+    ) {
+      throw new Error('部署环境 frame-ancestors 必须仅允许当前环境的 Shell origin');
+    }
+  }
   const hsts = options.hsts !== false;
   return async (c, next) => {
     await next();

@@ -47,7 +47,7 @@ export function loadConfig(argv?: string[]): AppConfig {
     ky,
     port: resolvePort(argv),
     databaseUrl: requireEnv('DATABASE_URL'),
-    directoryUrl: directoryUrl ?? 'https://api.agent.kaiyan.net',
+    directoryUrl: directoryUrl ?? new URL(ky.jwksUrl).origin,
     // 生产环境一律忽略这个变量，避免有人把壳白名单放开到别处。
     ...(shellOrigin !== undefined && shellOrigin !== '' && (ky.env === 'local' || ky.env === 'test')
       ? { shellOrigin }

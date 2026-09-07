@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { withPostconditionFixtures } from './test-migration-postcondition-fixtures.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,7 @@ import {
   PRODUCTION_STARTUP_SCHEMA_ROOTS,
 } from './migration-plan.mjs';
 import { migrationSourceDigest, MIGRATION_REVIEWS_PATH } from './migration-reviews.mjs';
-
+import { releaseMigrationPlanSchema } from './release-evidence-schema.mjs';
 const BASELINE = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
 const PATH = 'server/src/data/db/migrations.ts';
@@ -40,6 +41,7 @@ const STARTUP_SCHEMA_FIXTURES = [
 ];
 
 function gitFixture({ baselines, targets = {}, diffs = {}, nameStatus = `M\t${PATH}` }) {
+  targets = withPostconditionFixtures(baselines ?? targets, targets);
   return (_command, args) => {
     if (args[0] === 'show') {
       const separator = args[1].indexOf(':');
@@ -93,7 +95,7 @@ function sqlSource(statement) {
 
 function planInSubprocess(source) {
   const script = `
-    import { createMigrationPlan } from ${JSON.stringify(new URL('./migration-plan.mjs', import.meta.url).href)};
+    import { createMigrationPlan } from ${JSON.stringify(new URL('./migration-plan.mjs', import.meta.url).href)}; import { withPostconditionFixtures } from ${JSON.stringify(new URL('./test-migration-postcondition-fixtures.mjs', import.meta.url).href)};
     const BASELINE = ${JSON.stringify(BASELINE)};
     const TARGET = ${JSON.stringify(TARGET)};
     const gitFixture = ${gitFixture.toString()};
@@ -2942,6 +2944,7 @@ test('完全合规的白名单 ADD COLUMN 变更可以随 PR 进入，相位是 
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.equal(result.migrationPlan.phase, 'expand');
   assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
+  assert.deepEqual(releaseMigrationPlanSchema.parse(result.migrationPlan), result.migrationPlan);
 });
 
 test('已审核登记为 expand 的迁移随 PR 进入时 ok，登记为 contract 的仍然阻断', () => {

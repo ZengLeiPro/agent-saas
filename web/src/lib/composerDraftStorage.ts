@@ -9,6 +9,8 @@ const DB_VERSION = 1;
 const STORE_NAME = "attachments"; // local draft references only; uploaded authority is never retained
 const LEGACY_TEXT_DRAFT_KEY_PREFIX = "agentChat.inputDraft.v2.";
 const legacyScopeByV2 = new Map<string, string>();
+// Uploaded attachment authority survives composer switches in memory, but is never written to IndexedDB.
+const sessionAttachmentDrafts = new Map<string, UploadedFile[]>();
 
 interface AttachmentDraftEntry {
   scope: string;
@@ -104,9 +106,11 @@ export function saveComposerText(scope: string, value: string): void {
 
 export async function loadComposerAttachments(scope: string): Promise<UploadedFile[]> {
   try {
-    const db = await getDB();
     const key = attachmentDraftKey(scope);
     if (!key) return [];
+    const sessionDraft = sessionAttachmentDrafts.get(key);
+    if (sessionDraft) return sessionDraft.map((file) => ({ ...file }));
+    const db = await getDB();
     let entry = await db.get(STORE_NAME, key) as AttachmentDraftEntry | undefined;
     if (!entry) {
       const legacyScope = legacyScopeByV2.get(scope);
@@ -135,6 +139,11 @@ export async function saveComposerAttachments(
   try {
     const key = attachmentDraftKey(scope);
     if (!key) return;
+    if (files.length > 0) {
+      sessionAttachmentDrafts.set(key, files.map(({ previewUrl: _previewUrl, ...file }) => ({ ...file })));
+    } else {
+      sessionAttachmentDrafts.delete(key);
+    }
     const db = await getDB();
     const drafts = prepareComposerAttachmentDrafts(files);
     if (drafts.length === 0) {
@@ -153,6 +162,7 @@ export async function saveComposerAttachments(
 
 /** Logout/owner switch clears v2 attachment draft references, including journal recovery. */
 export async function clearAllComposerAttachmentDrafts(): Promise<void> {
+  sessionAttachmentDrafts.clear();
   try {
     const db = await getDB();
     await db.clear(STORE_NAME);

@@ -202,6 +202,23 @@ const manifestCommonShape = {
       planDigest: sha256DigestSchema,
       confirmation: z.enum(['not_required', 'required_after_observation']),
       contract: z.literal('separate_release'),
+      postconditionsDigest: sha256DigestSchema.optional(),
+      postconditions: z
+        .array(
+          z
+            .object({
+              id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
+              description: z.string().min(1),
+              configPath: z.string().regex(/^[a-zA-Z][a-zA-Z0-9.]*$/),
+              sql: z.string().min(1),
+              params: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+              sourcePath: z.string().min(1),
+              sourceDigest: sha256DigestSchema,
+            })
+            .strict(),
+        )
+        .min(1)
+        .optional(),
     })
     .strict(),
   rollbackTargets: releaseComponentMatrixSchema,

@@ -1,7 +1,9 @@
 import pg from 'pg';
+import { isSupersededHand, supersedeLegacyHand, type HandSupersessionResult } from './handSupersession.js';
 import type { ExecutionTargetKind, SandboxWorkloadWireDescriptor, ToolDescriptor, ToolRisk } from '../agent/toolRuntime.js';
 import { parseWorkspacePrincipal } from './workspaceIdentity.js';
 
+export { isSupersededHand };
 const { Pool } = pg;
 type PgPool = InstanceType<typeof Pool>;
 
@@ -153,6 +155,7 @@ export function selectRuntimeHandRoute(
   if (context.runtimeIsolationRequirement && context.runId !== context.runtimeIsolationRequirement.runId) {
     return { kind: 'blocked', message: 'RUNTIME_ISOLATION_RUN_CONTEXT_MISMATCH' };
   }
+  hands = hands.filter((hand) => !isSupersededHand(hand));
   const attested = hands.filter((hand) => isReadyAttestedDefaultHand(hand, context));
   if (attested.length === 1) return { kind: 'ready', handId: attested[0]!.handId, attested: true };
   if (attested.length > 1) {
@@ -160,6 +163,13 @@ export function selectRuntimeHandRoute(
   }
   if (context.runtimeIsolationRequirement) {
     return { kind: 'blocked', message: 'RUNTIME_ISOLATION_ATTESTED_HAND_MISSING' };
+  }
+
+  const remote = hands.filter((hand) => hand.type === 'server-remote' && hand.status !== 'destroyed'
+    && typeof hand.metadata.tenantRemoteHandId === 'string' && hand.metadata.tenantRemoteHandId);
+  if (remote.some((hand, index) => remote.slice(index + 1).some((other) => other.metadata.tenantRemoteHandId === hand.metadata.tenantRemoteHandId))) {
+    return remote.some((hand) => hand.status === 'provisioning')
+      ? { kind: 'none' } : { kind: 'blocked', message: 'RUNTIME_HAND_AMBIGUOUS' };
   }
 
   const tenantCandidates = hands.filter((hand) =>
@@ -172,7 +182,7 @@ export function selectRuntimeHandRoute(
   if (tenantCandidates.length === 1) {
     return { kind: 'ready', handId: tenantCandidates[0]!.handId, attested: false };
   }
-  if (tenantCandidates.length > 1) return { kind: 'none' };
+  if (tenantCandidates.length > 1) return { kind: 'blocked', message: 'RUNTIME_HAND_AMBIGUOUS' };
 
   // 非 attested legacy 流程仍由默认 transport 执行，但已有 default hand 明确失败时
   // 必须阻止 fallback 绕过其状态；ready default 保持旧的 kind:none 兼容语义。
@@ -218,6 +228,7 @@ export const PROVISION_ATTEMPT_RENEW_INTERVAL_MS = Math.floor(PROVISION_ATTEMPT_
 
 export interface HandStore {
   init?(): Promise<void>;
+  supersedeLegacyHand?(handId: string, tenantId: string): Promise<HandSupersessionResult>;
   register(input: RegisterHandInput): Promise<HandRecord>;
   /** Registers a tenant-qualified Client daemon without adopting unverifiable tenant-less legacy metadata. */
   registerClientDaemon?(input: RegisterHandInput, legacyHandIds: readonly string[]): Promise<HandRecord>;
@@ -357,6 +368,10 @@ export class PgHandStore implements HandStore {
     await this.pool.query(`CREATE INDEX IF NOT EXISTS ${this.handsTable}_run_idx ON ${this.handsTable} (run_id)`);
   }
 
+  async supersedeLegacyHand(handId: string, tenantId: string): Promise<HandSupersessionResult> {
+    return supersedeLegacyHand(this.pool, this.handsTable.slice(0, -6), handId, tenantId);
+  }
+
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
   async registerClientDaemon(input: RegisterHandInput, _legacyHandIds: readonly string[]): Promise<HandRecord> {
@@ -395,7 +410,7 @@ export class PgHandStore implements HandStore {
         terminated_at = EXCLUDED.terminated_at,
         metadata = ${this.handsTable}.metadata || EXCLUDED.metadata,
         updated_at = now()
-      WHERE ${this.handsTable}.tenant_id = EXCLUDED.tenant_id
+      WHERE ${this.handsTable}.tenant_id = EXCLUDED.tenant_id AND NOT (${this.handsTable}.metadata ? 'supersededBy')
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
     `, [
       input.handId,
@@ -426,7 +441,7 @@ export class PgHandStore implements HandStore {
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = $2, metadata = metadata || $3::jsonb, updated_at = now()
-      WHERE hand_id = $1 AND tenant_id = $4
+      WHERE hand_id = $1 AND tenant_id = $4 AND NOT (metadata ? 'supersededBy')
       RETURNING row_to_json(${this.handsTable}.*) AS row_json
     `, [handId, status, JSON.stringify(metadataPatch ?? {}), tenantId]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
@@ -454,7 +469,7 @@ export class PgHandStore implements HandStore {
             'provisionRecoveryClaimedAtMs', floor(extract(epoch FROM now()) * 1000)::bigint
           ),
           updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND NOT (metadata ? 'supersededBy')
         AND tenant_id = $6
         AND status IN ('provisioning', 'ready', 'unhealthy')
         AND metadata->'reconcileRequired' IS DISTINCT FROM 'true'::jsonb
@@ -510,7 +525,7 @@ export class PgHandStore implements HandStore {
             'dispatchAuthorized', true
           ),
           updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND NOT (metadata ? 'supersededBy')
         AND tenant_id = $5
         AND status = 'provisioning'
         AND metadata->>'provisionGeneration' = $2
@@ -542,7 +557,7 @@ export class PgHandStore implements HandStore {
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = $4, metadata = metadata || $5::jsonb, updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND NOT (metadata ? 'supersededBy')
         AND tenant_id = $6
         AND status IN ('provisioning', 'unhealthy')
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
@@ -567,7 +582,7 @@ export class PgHandStore implements HandStore {
             floor(extract(epoch FROM now()) * 1000)::bigint + $4::bigint
           ),
           updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND NOT (metadata ? 'supersededBy')
         AND tenant_id = $5
         AND status = 'provisioning'
         AND metadata->>'provisionGeneration' = $2
@@ -598,7 +613,7 @@ export class PgHandStore implements HandStore {
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND NOT (metadata ? 'supersededBy')
         AND tenant_id = $5
         AND status = 'provisioning'
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
@@ -628,7 +643,7 @@ export class PgHandStore implements HandStore {
     const result = await this.pool.query<{ row_json: unknown }>(`
       UPDATE ${this.handsTable}
       SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
-      WHERE hand_id = $1
+      WHERE hand_id = $1 AND NOT (metadata ? 'supersededBy')
         AND tenant_id = $5
         AND status = 'unhealthy'
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
@@ -668,7 +683,7 @@ export class PgHandStore implements HandStore {
         const result = await this.pool.query<{ row_json: unknown }>(`
           SELECT row_to_json(hand.*) AS row_json
           FROM ${this.handsTable} hand
-          WHERE hand.type = $1
+          WHERE NOT (hand.metadata ? 'supersededBy') AND hand.type = $1
             AND hand.tenant_id IS NOT NULL
             AND hand.status = $2
             AND EXISTS (
@@ -682,13 +697,13 @@ export class PgHandStore implements HandStore {
         return result.rows.map((r) => normalizeHandRecord(r.row_json));
       }
       const result = await this.pool.query<{ row_json: unknown }>(
-        `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 AND tenant_id IS NOT NULL AND status = $2 ORDER BY updated_at ASC`,
+        `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE NOT (metadata ? 'supersededBy') AND type = $1 AND tenant_id IS NOT NULL AND status = $2 ORDER BY updated_at ASC`,
         [type, opts.status],
       );
       return result.rows.map((r) => normalizeHandRecord(r.row_json));
     }
     const result = await this.pool.query<{ row_json: unknown }>(
-      `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE type = $1 AND tenant_id IS NOT NULL ORDER BY updated_at ASC`,
+      `SELECT row_to_json(${this.handsTable}.*) AS row_json FROM ${this.handsTable} WHERE NOT (metadata ? 'supersededBy') AND type = $1 AND tenant_id IS NOT NULL ORDER BY updated_at ASC`,
       [type],
     );
     return result.rows.map((r) => normalizeHandRecord(r.row_json));
@@ -702,7 +717,7 @@ export class PgHandStore implements HandStore {
     const backfill = await this.pool.query(
       `UPDATE ${this.handsTable}
        SET lease_expires_at = GREATEST(created_at, updated_at) + ($1 * interval '1 millisecond')
-       WHERE type = 'server-remote' AND lease_expires_at IS NULL AND status <> 'destroyed'`,
+       WHERE NOT (metadata ? 'supersededBy') AND type = 'server-remote' AND lease_expires_at IS NULL AND status <> 'destroyed'`,
       [leaseMs],
     );
     // ② 过期 → destroyed（软删，保留审计与 upsert 复活能力）
@@ -711,13 +726,13 @@ export class PgHandStore implements HandStore {
        SET status = 'destroyed',
            metadata = metadata || jsonb_build_object('destroyReason', 'lease_expired'),
            updated_at = now()
-       WHERE type = 'server-remote' AND status IN ('provisioning', 'ready', 'unhealthy')
+       WHERE NOT (metadata ? 'supersededBy') AND type = 'server-remote' AND status IN ('provisioning', 'ready', 'unhealthy')
          AND lease_expires_at IS NOT NULL AND lease_expires_at < now()`,
     );
     // ③ destroyed 超保留期 → 物理清除
     const purge = await this.pool.query(
       `DELETE FROM ${this.handsTable}
-       WHERE type = 'server-remote' AND status = 'destroyed'
+       WHERE NOT (metadata ? 'supersededBy') AND type = 'server-remote' AND status = 'destroyed'
          AND updated_at < now() - ($1 * interval '1 millisecond')`,
       [retentionMs],
     );

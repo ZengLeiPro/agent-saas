@@ -649,6 +649,9 @@ export async function ensureRuntimeHandRegistered(params: {
       },
     }) : existingTenantHand;
 
+    if (reuseReadyTenantHand) {
+      await params.handStore.supersedeLegacyHand?.(handId, eventTenantId);
+    }
     if (resolvedToken && !reuseReadyTenantHand) {
       const dispatchToken = randomUUID();
       const dispatchClaim = persistedTenantHand && params.handStore.claimProvisionDispatch
@@ -890,6 +893,9 @@ async function provisionTenantRemoteHand(args: {
       ...(result.metadata ? { lastProvisionMetadata: result.metadata } : {}),
     });
     if (!completed) return;
+    await args.handStore.supersedeLegacyHand?.(args.handId, args.tenantId).catch((error: unknown) => {
+      args.logger?.warn(`tenant_hand_legacy_reconcile_failed handId=${args.handId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
     await args.eventStore.append({
       type: 'hand_health_changed',
       sessionId: args.sessionId,

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+      "baselineDigest": null,
+      "targetDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
+      "checks": [
+        {
+          "id": "provider-plan-expiry-schema",
+          "configPath": "runtimeEventStore",
+          "description": "额度快照与套餐到期编辑表、列及索引已创建",
+          "sql": "SELECT to_regclass($1 || '_provider_quota_snapshots') IS NOT NULL AND to_regclass($1 || '_provider_plan_expiry_edits') IS NOT NULL AND to_regclass($1 || '_provider_plan_expiry_edits_identity_idx') IS NOT NULL AND (SELECT count(*) = 5 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_provider_plan_expiry_edits' AND ((column_name = 'id' AND data_type = 'bigint') OR (column_name IN ('identity_key', 'updated_by') AND data_type = 'text') OR (column_name IN ('end_time', 'updated_at') AND data_type = 'timestamp with time zone'))) AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    },
+    {
+      "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+      "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
+      "targetDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
+      "checks": [
+        {
+          "id": "provider-plan-expiry-schema",
+          "configPath": "runtimeEventStore",
+          "description": "额度快照与套餐到期编辑表、列及索引已创建",
+          "sql": "SELECT to_regclass($1 || '_provider_quota_snapshots') IS NOT NULL AND to_regclass($1 || '_provider_plan_expiry_edits') IS NOT NULL AND to_regclass($1 || '_provider_plan_expiry_edits_identity_idx') IS NOT NULL AND (SELECT count(*) = 5 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 || '_provider_plan_expiry_edits' AND ((column_name = 'id' AND data_type = 'bigint') OR (column_name IN ('identity_key', 'updated_by') AND data_type = 'text') OR (column_name IN ('end_time', 'updated_at') AND data_type = 'timestamp with time zone'))) AS ok",
+          "params": ["$tablePrefix"]
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@
  *
  * 负责：建实例（系统必须已发布、技术联系人必须是本组织成员）、域名归属验证（DNS TXT）、
  * 启用/停用/删除状态机（`stateVersion` 单调 +1、事件入 outbox、`resource_assignments`
- * 只写 `everyone`）、`registeredDigest` 的 CAS 切换。
+ * 保留已配置授权范围）、`registeredDigest` 的 CAS 切换。
  *
  * 每个写操作都走治理审计三段式（intent → 业务动作 → outcome）；
  * metadata 的键名一律避开 `secret|token|password|message|content|persona|memory|prompt|parameter|argument`
@@ -318,8 +318,8 @@ export class KyAppInstallationService {
   }
 
   /**
-   * `resource_assignments` 只写 `everyone`（规范 §8.1）：
-   * `enabled` → 一条 `everyone allow` 且资源集合 `enabled`；
+   * `resource_assignments` 保留已配置授权范围（规范 §8.1）：
+   * `enabled` → 保留原规则；首次启用空集合，需管理员显式授权；
    * `disabled` → 保留集合但标 `disabled`；`deleted` → 清空分配。
    */
   private async syncAssignments(installation: KyAppInstallation, updatedBy: string): Promise<void> {
@@ -348,7 +348,7 @@ export class KyAppInstallationService {
       installation.tenantId,
       'system_installation',
       installation.installationId,
-      installation.status === 'enabled' ? [{ assigneeType: 'everyone', effect: 'allow' }] : [],
+      existing?.assignments.map(({ assigneeType, assigneeId, effect }) => ({ assigneeType, ...(assigneeId ? { assigneeId } : {}), effect })) ?? [],
       expectedVersion,
       updatedBy,
       {

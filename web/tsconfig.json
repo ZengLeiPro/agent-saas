@@ -17,6 +17,7 @@
     "paths": {
       "@/*": ["./src/*"],
       "@agent/shared": ["../shared/src/index"],
+      "@kaiyan/ky-app-contract/validation": ["../packages/ky-app-contract/src/manifest.ts"],
       "@kaiyan/ky-app-contract/browser": ["../packages/ky-app-contract/src/browser.ts"],
       "@agent/shared/*": ["../shared/src/*"]
     },

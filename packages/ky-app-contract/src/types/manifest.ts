@@ -103,7 +103,7 @@ export interface ConformanceUser {
 export interface ConformanceCapabilityFixture {
   validInputs: Array<{ input: Record<string, unknown>; expect?: Record<string, unknown> }>;
   invalidInputs?: Array<{ input: Record<string, unknown>; expectCode: string }>;
-  cleanup?: { capabilityId: string; input: Record<string, unknown> };
+  cleanup?: { capabilityId: string; input: Record<string, unknown> } | { testHook: 'provision' };
   pageApiEquivalence?: {
     method: 'GET' | 'POST';
     path: string;

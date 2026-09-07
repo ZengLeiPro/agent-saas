@@ -1,3 +1,4 @@
+import { KyAppManagementQueries } from '../kyapp/installations/managementQueries.js';
 /**
  * WP2a 定制项目对接的统一注册点（施工总则 §3.2 端点表）。
  *
@@ -94,10 +95,14 @@ export function registerKyAppRoutes(
     return null;
   }
 
+  const management = new KyAppManagementQueries(runtime.runtimePgEventStore!.pool, assembly.systems,
+    runtime.config.runtimeEventStore?.backend === 'pg' ? runtime.config.runtimeEventStore.tablePrefix : undefined, runtime.runtimePgEventStore!.eventsTable);
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppSystemsRouter({
       systems: assembly.systems,
+      management,
+      ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
       // WP3 填充 WP2a 预留的钩子：未显式注入时用 Gateway 自带的真实注册 dry-run
       // （`skipped` 不等于通过，所以这里必须给默认值，不能留空）。
@@ -107,7 +112,10 @@ export function registerKyAppRoutes(
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppInstallationsRouter({
+      ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
       systems: assembly.systems,
+      management,
+      ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,
@@ -137,6 +145,10 @@ export function registerKyAppRoutes(
           }),
           billing: runtime.billingService,
           sharedDir: runtime.sharedDir,
+          getAssignmentConfigured: async (tenantId, installationId) => {
+            const set = await runtime.assignmentStore?.getAssignmentSet(tenantId, 'system_installation', installationId);
+            return Boolean(set?.assignments.some(rule => rule.effect === 'allow'));
+          },
           ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
           toolRegistrationDryRun:
@@ -166,6 +178,7 @@ export function registerKyAppRoutes(
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppDeliveryRouter({
+      management,
       store: assembly.deliveryStore,
       systems: assembly.systems,
       installations: assembly.installations,
@@ -215,7 +228,7 @@ export function registerKyAppRoutes(
     '/api',
     createKyAppMineRouter({
       systems: assembly.systems,
-      ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
+      ...(assembly.assignmentAccess ? { assignments: assembly.assignmentAccess } : {}),
       // §4.6 的探测结果是壳侧「维护中 / digest 不一致」的唯一检测源（偏差 4-B-06）。
       runtimeStore: assembly.runtimeStore,
       failureThreshold: config.probe.failureThreshold,

@@ -4,6 +4,9 @@ import { TOKEN_KEY } from '@/lib/constants';
 import { readTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 
 const LOCAL_BINDING_KEY = 'agent_saas_web_push_binding';
+const SERVICE_WORKER_TIMEOUT_MS = 10_000;
+const PUSH_SUBSCRIPTION_TIMEOUT_MS = 15_000;
+const SAVE_SUBSCRIPTION_TIMEOUT_MS = 10_000;
 
 export interface WebPushSubscriptionView {
   id: string;
@@ -41,8 +44,18 @@ export async function fetchWebPushStatus(): Promise<WebPushStatus> {
 
 export async function getCurrentPushSubscription(): Promise<PushSubscription | null> {
   if (getWebPushSupportReason() !== 'supported') return null;
-  const registration = await navigator.serviceWorker.getRegistration();
-  return registration ? registration.pushManager.getSubscription() : null;
+  const registration = await withTimeout(
+    navigator.serviceWorker.getRegistration(),
+    SERVICE_WORKER_TIMEOUT_MS,
+    '读取 Service Worker 注册超时，请刷新页面后重试',
+  );
+  return registration
+    ? withTimeout(
+        registration.pushManager.getSubscription(),
+        PUSH_SUBSCRIPTION_TIMEOUT_MS,
+        '读取当前浏览器通知订阅超时，请刷新页面后重试',
+      )
+    : null;
 }
 
 export async function enableWebPush(publicKey: string): Promise<PushSubscription> {
@@ -50,29 +63,47 @@ export async function enableWebPush(publicKey: string): Promise<PushSubscription
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error(permission === 'denied' ? '通知权限已被拒绝' : '尚未授予通知权限');
 
-  const registration = await navigator.serviceWorker.ready;
-  await registration.update?.().catch(() => undefined);
+  const registration = await withTimeout(
+    navigator.serviceWorker.ready,
+    SERVICE_WORKER_TIMEOUT_MS,
+    '等待 Service Worker 激活超时，请刷新页面后重试',
+  );
+  if (registration.update) {
+    await withTimeout(
+      registration.update(),
+      SERVICE_WORKER_TIMEOUT_MS,
+      '更新 Service Worker 超时，请刷新页面后重试',
+    ).catch(() => undefined);
+  }
   if (registration.waiting) {
     throw new Error('平台新版本已就绪，请先点击页面上的“立即更新”，刷新后再开启桌面通知');
   }
 
   const applicationServerKey = urlBase64ToUint8Array(publicKey);
-  let existing = await registration.pushManager.getSubscription();
+  let existing = await withTimeout(
+    registration.pushManager.getSubscription(),
+    PUSH_SUBSCRIPTION_TIMEOUT_MS,
+    '读取当前浏览器通知订阅超时，请刷新页面后重试',
+  );
   if (existing?.options.applicationServerKey && !sameBytes(existing.options.applicationServerKey, applicationServerKey)) {
-    await existing.unsubscribe().catch(() => undefined);
+    await withTimeout(existing.unsubscribe(), PUSH_SUBSCRIPTION_TIMEOUT_MS, '清理旧浏览器通知订阅超时').catch(() => undefined);
     existing = null;
   }
-  const subscription = existing ?? await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey,
-  });
+  const subscription = existing ?? await withTimeout(
+    registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    }),
+    PUSH_SUBSCRIPTION_TIMEOUT_MS,
+    '创建浏览器通知订阅超时，请检查网络或浏览器通知设置后重试',
+  );
   const json = subscription.toJSON();
   if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) {
     await subscription.unsubscribe().catch(() => undefined);
     throw new Error('浏览器返回的 PushSubscription 不完整');
   }
 
-  const response = await authFetch('/api/web-push/subscriptions', {
+  const response = await authFetchWithTimeout('/api/web-push/subscriptions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -80,7 +111,7 @@ export async function enableWebPush(publicKey: string): Promise<PushSubscription
       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
       deviceName: describeBrowserDevice(),
     }),
-  });
+  }, SAVE_SUBSCRIPTION_TIMEOUT_MS, '保存浏览器通知订阅超时，请检查网络后重试');
   if (!response.ok) throw new Error(await readError(response, '保存浏览器通知订阅失败'));
   const saved = await response.json() as { id?: unknown };
   if (typeof saved.id !== 'string' || !saved.id) throw new Error('服务端返回的订阅标识无效');
@@ -166,17 +197,35 @@ function urlBase64ToUint8Array(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message = 'Web Push 操作超时'): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Web Push 操作超时')), timeoutMs);
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
       }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+async function authFetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+  message: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await authFetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(message);
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

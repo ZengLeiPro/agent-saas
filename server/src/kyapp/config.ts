@@ -21,13 +21,13 @@ export const DEFAULT_KY_APP_JWKS_PATH = '/.well-known/ky-app-jwks.json';
 /** 规范 §3.8：各环境 `iss`。`local` 依赖端口，必须显式配置 `publicIssuer`。 */
 const ISSUER_BY_ENVIRONMENT = {
   prod: 'https://agent.kaiyan.net',
-  staging: 'https://staging.agent.kaiyan.net',
+  staging: 'https://staging-agent.kaiyan.net',
 } as const;
 
 /** 规范 §3.1：各环境 JWKS 所在的 API 域。`local` 与 `publicIssuer` 同源。 */
 const API_BASE_BY_ENVIRONMENT = {
   prod: 'https://api.agent.kaiyan.net',
-  staging: 'https://api.staging.agent.kaiyan.net',
+  staging: 'https://staging-agent-api.kaiyan.net',
 } as const;
 
 /** 规范 §3.1 TTL 表的默认值（秒）。 */

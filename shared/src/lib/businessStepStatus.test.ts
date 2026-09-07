@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { TodoItem } from './extractTodos';
 import {
   businessStepOverallStatus,
+  businessStepResultPlaceholder,
   isEndedWithoutTerminal,
   outcomeToneMeta,
   todoAccessibleStatus,
@@ -31,7 +32,7 @@ describe('todoStatusMeta', () => {
     expect(todoStatusMeta(todo({ status: 'blocked' })).tone).toBe('danger');
     expect(todoStatusMeta(todo({ status: 'completed' })).tone).toBe('success');
     expect(todoStatusMeta(todo({ status: 'failed' })).icon).toBe('x');
-    expect(todoStatusMeta(todo({ status: 'pending' })).label).toBe('待处理');
+    expect(todoStatusMeta(todo({ status: 'pending' })).label).toBe('待执行');
   });
 });
 
@@ -76,5 +77,25 @@ describe('outcomeToneMeta / isEndedWithoutTerminal / todoAccessibleStatus', () =
     expect(isEndedWithoutTerminal(running, true)).toBe(true);
     expect(todoAccessibleStatus(running, true)).toBe('已结束');
     expect(todoAccessibleStatus(running, false)).toBe('进行中');
+    expect(todoStatusMeta(running, true)).toEqual({ label: '已结束', tone: 'neutral', icon: 'circle', spin: false });
+    expect(running.status).toBe('in_progress');
+  });
+});
+
+describe('缺少结构化结果时的状态说明', () => {
+  it('区分待执行、执行中和已有过程，不推断业务结果', () => {
+    expect(businessStepResultPlaceholder(todo({}))).toBe('待执行');
+    expect(businessStepResultPlaceholder(todo({}), false, true)).toBe('已有过程记录，步骤状态待更新');
+    expect(businessStepResultPlaceholder(todo({ status: 'in_progress', activeForm: '核验订单' }))).toBe('核验订单');
+    expect(businessStepResultPlaceholder(todo({ status: 'in_progress' }), false, true)).toBe('已有过程记录，尚未形成结论');
+  });
+
+  it('运行结束不会把未知状态变成完成，等待也不会被推断为人工确认', () => {
+    expect(businessStepResultPlaceholder(todo({ status: 'in_progress' }), true)).toBe('本轮执行已结束，步骤状态未更新');
+    expect(businessStepResultPlaceholder(todo({ status: 'waiting' }), true)).toBe('等待中，尚未提供等待原因');
+    expect(todoStatusMeta(todo({ status: 'waiting' }), true).label).toBe('等待中');
+    expect(businessStepResultPlaceholder(todo({ status: 'completed' }))).toBe('已完成，未提供步骤摘要');
+    expect(businessStepResultPlaceholder(todo({ status: 'blocked' }))).toBe('执行受阻，尚未提供原因');
+    expect(businessStepResultPlaceholder(todo({ status: 'failed' }))).toBe('执行失败，尚未提供结果说明');
   });
 });

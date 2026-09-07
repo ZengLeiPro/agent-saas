@@ -32,6 +32,7 @@ function fakeService() {
     generatedAt: 'now',
   };
   return {
+    setPlanExpiry: vi.fn(async () => undefined),
     overview: vi.fn(async () => overview),
     history: vi.fn(async (hours: number) => ({ hours, points: [], generatedAt: 'now' })),
     refresh: vi.fn(async () => []),
@@ -59,7 +60,9 @@ describe('provider quota admin router', () => {
   it('overview / history / refresh 透传服务结果，hours 非法时回落 24', async () => {
     const service = fakeService();
     const base = listen({ service });
-    expect(await (await fetch(base)).json()).toMatchObject({ collector: { intervalMs: 300_000 } });
+    const overviewResponse = await fetch(base);
+    expect(overviewResponse.headers.get('cache-control')).toBe('no-store');
+    expect(await overviewResponse.json()).toMatchObject({ collector: { intervalMs: 300_000 } });
     expect(await (await fetch(`${base}/history?hours=72`)).json()).toMatchObject({ hours: 72 });
     expect(await (await fetch(`${base}/history?hours=abc`)).json()).toMatchObject({ hours: 24 });
     const refreshed = await fetch(`${base}/refresh`, { method: 'POST' });
@@ -70,6 +73,21 @@ describe('provider quota admin router', () => {
     const single = await fetch(`${base}/refresh?accountKey=codex%3Ac1`, { method: 'POST' });
     expect(single.status).toBe(200);
     expect(service.refresh).toHaveBeenLastCalledWith('codex:c1');
+  });
+
+  it('手动到期只能由管理员更新，验证时间并从认证会话记录修改人', async () => {
+    const service = fakeService();
+    const base = listen({ service });
+    const patch = (url: string, body: unknown) => fetch(`${url}/plan-expiry`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await patch(base, { accountKey: 'codex:c1', endTime: 'bad' })).status).toBe(400);
+    expect((await patch(base, { accountKey: 'codex:c1', endTime: '2026-10-01T23:59:00+08:00', userId: 'spoofed' })).status).toBe(400);
+    expect((await patch(base, { accountKey: 'codex:c1', endTime: '2026-10-01T23:59:00+08:00' })).status).toBe(200);
+    expect(service.setPlanExpiry).toHaveBeenLastCalledWith('codex:c1', '2026-10-01T23:59:00+08:00', 'u');
+    expect((await patch(base, { accountKey: 'codex:c1', endTime: null })).status).toBe(200);
+    expect(service.setPlanExpiry).toHaveBeenLastCalledWith('codex:c1', null, 'u');
+    const other = fakeService();
+    expect((await patch(listen({ service: other }, 'user'), { accountKey: 'codex:c1', endTime: null })).status).toBeGreaterThanOrEqual(401);
+    expect(other.setPlanExpiry).not.toHaveBeenCalled();
   });
 
   it('test：校验请求体，服务端错误转成 400 文案', async () => {

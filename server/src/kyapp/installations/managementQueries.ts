@@ -57,14 +57,13 @@ export class KyAppManagementQueries {
           ? []
           : [
               'register_version',
-              'review_version',
               'publish_version',
               ...(row.status === 'draft' ? [] : ['retire_system']),
               ...(row.status === 'published' ? ['start_delivery', 'disable_system'] : []),
             ],
     }));
   }
-  async systemDetail(systemId: string, actor: string) {
+  async systemDetail(systemId: string, _actor: string) {
     const [list, definition, versions] = await Promise.all([
       this.systemsList(),
       this.systems.getDefinition(systemId),
@@ -80,12 +79,7 @@ export class KyAppManagementQueries {
             allowedActions:
               definition.status === 'retired'
                 ? []
-                : [
-                    ...(version.reviewStatus === 'pending' && version.createdBy !== actor
-                      ? ['review_version']
-                      : []),
-                    ...(version.reviewStatus !== 'pending' ? ['publish_version'] : []),
-                  ],
+                : version.status === 'retired' ? [] : ['publish_version'],
           })),
         }
       : null;

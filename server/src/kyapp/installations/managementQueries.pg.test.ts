@@ -16,8 +16,12 @@ const url = process.env.TEST_DATABASE_URL;
     await pool.query(
       `CREATE TABLE ${prefix}_resource_assignments (assignment_id TEXT PRIMARY KEY,resource_type TEXT NOT NULL,resource_id TEXT,assignee_type TEXT,effect TEXT)`,
     );
-    await pool.query(`CREATE TABLE ${prefix}_usage (event_type TEXT,event_json JSONB,timestamp TIMESTAMPTZ)`);
-    await pool.query(`INSERT INTO ${prefix}_usage VALUES ('tool_audit','{"installationId":"one"}','2026-09-07T01:00:00Z')`);
+    await pool.query(
+      `CREATE TABLE ${prefix}_usage (event_type TEXT,event_json JSONB,timestamp TIMESTAMPTZ)`,
+    );
+    await pool.query(
+      `INSERT INTO ${prefix}_usage VALUES ('tool_audit','{"installationId":"one"}','2026-09-07T01:00:00Z')`,
+    );
     for (const sql of [
       ...governanceV41KyAppSystemStatements(prefix),
       ...governanceV44KyAppDeliveryStatements(prefix),
@@ -69,6 +73,33 @@ const url = process.env.TEST_DATABASE_URL;
     for (const row of tables.rows) await pool.query(`DROP TABLE "${row.tablename}" CASCADE`);
     await pool.end();
   });
+  it('登记人可直接发布历史待复核版本，退役系统不提供发布操作', async () => {
+    const pending = await store.registerVersion({
+      systemId: 'legacy-review',
+      name: '历史版本',
+      manifest: { capabilities: [] },
+      actor: 'admin',
+      reviewStatus: 'pending',
+    });
+    const detail = await queries.systemDetail('legacy-review', 'admin');
+    expect(detail?.versions[0]?.allowedActions).toEqual(['publish_version']);
+    expect(detail?.allowedActions).not.toContain('review_version');
+    const published = await store.publishVersion({
+      systemId: 'legacy-review',
+      digest: pending.version.digest,
+      expectedVersion: pending.definition.version,
+      actor: 'admin',
+    });
+    await store.updateDefinitionStatus({
+      systemId: 'legacy-review',
+      status: 'retired',
+      expectedVersion: published.definition.version,
+      actor: 'admin',
+    });
+    expect(
+      (await queries.systemDetail('legacy-review', 'admin'))?.versions[0]?.allowedActions,
+    ).toEqual([]);
+  });
   it('游标保留微秒，同一时间不会漏行，过滤组织', async () => {
     const first = await queries.installations({ tenantId: 'target', limit: 1 }, PLATFORM_ADMIN);
     expect(first.installations.map((item) => item.installationId)).toEqual(['one']);
@@ -82,7 +113,10 @@ const url = process.env.TEST_DATABASE_URL;
   });
   it('无事件表时异常筛选安全返回空集合', async () => {
     const withoutEvents = new KyAppManagementQueries(pool, store, prefix);
-    expect((await withoutEvents.installations({ signal: 'digest_mismatch', limit: 10 }, PLATFORM_ADMIN)).installations).toEqual([]);
+    expect(
+      (await withoutEvents.installations({ signal: 'digest_mismatch', limit: 10 }, PLATFORM_ADMIN))
+        .installations,
+    ).toEqual([]);
   });
   it('聚合安装数和风险，列表不返回 Manifest', async () => {
     const list = await queries.systemsList();
@@ -91,7 +125,11 @@ const url = process.env.TEST_DATABASE_URL;
       externalWriteCapabilityCount: 1,
     });
     expect(list[0]).not.toHaveProperty('manifest');
-    expect(await queries.installationSummary('one')).toMatchObject({ assignmentSummary: { configured: false, ruleCount: 0 }, credentialSummary: [], ready: false });
+    expect(await queries.installationSummary('one')).toMatchObject({
+      assignmentSummary: { configured: false, ruleCount: 0 },
+      credentialSummary: [],
+      ready: false,
+    });
     expect((await queries.systemDetail('demo', 'admin'))?.versions).toHaveLength(1);
   });
 });

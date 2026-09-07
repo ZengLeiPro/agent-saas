@@ -60,7 +60,7 @@ describePg('定制项目系统目录三表 PostgreSQL 合约', () => {
     await pool.end();
   });
 
-  it('同 digest 登记幂等、待复核不可发布、发布走乐观锁 CAS', async () => {
+  it('同 digest 登记幂等、历史待复核版本由登记人直接发布、发布走乐观锁 CAS', async () => {
     const first = await store.registerVersion({
       systemId: 'demo-erp',
       name: '演示 ERP',
@@ -88,27 +88,16 @@ describePg('定制项目系统目录三表 PostgreSQL 合约', () => {
       reviewReasons: ['riskLevel 降低'],
       actor: 'admin-1',
     });
-    await expect(
-      store.publishVersion({
-        systemId: 'demo-erp',
-        digest: pending.version.digest,
-        expectedVersion: pending.definition.version,
-        actor: 'admin-1',
-      }),
-    ).rejects.toBeInstanceOf(KyAppSystemConflictError);
-    await expect(
-      store.reviewVersion({
-        systemId: 'demo-erp',
-        digest: pending.version.digest,
-        reviewer: 'admin-1',
-      }),
-    ).rejects.toThrow(/复核人/u);
-    const reviewed = await store.reviewVersion({
+    const legacyPublished = await store.publishVersion({
       systemId: 'demo-erp',
       digest: pending.version.digest,
-      reviewer: 'admin-2',
+      expectedVersion: pending.definition.version,
+      actor: 'admin-1',
     });
-    expect(reviewed.reviewStatus).toBe('approved');
+    expect(legacyPublished.version.status).toBe('published');
+    expect(legacyPublished.version.reviewStatus).toBe('not_required');
+    expect(legacyPublished.version.reviewedBy).toBeNull();
+    expect(legacyPublished.version.reviewReasons).toEqual(['riskLevel 降低']);
 
     const definition = await store.getDefinition('demo-erp');
     const published = await store.publishVersion({

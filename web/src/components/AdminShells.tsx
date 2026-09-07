@@ -1,5 +1,5 @@
 import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
-import { SystemDeliveryPage } from '@/components/SystemDelivery/SystemDeliveryPage';
+import { LegacySystemDeliveryPage } from '@/components/SystemDelivery/SystemDeliveryPage';
 import { BusinessSystemOperationsPage } from '@/components/BusinessSystems/BusinessSystemOperationsPage';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, X } from "lucide-react";
@@ -629,7 +629,7 @@ export function PlatformAdminShell({
       case "platform.resource-center.business-systems":
         return <PlatformSystemsPage systemId={governanceRoute.entityId} />;
       case "platform.runtime.system-deliveries":
-        return <SystemDeliveryPage executionId={governanceRoute.entityId} systemId={new URLSearchParams(governanceRoute.search?.replace(/^\?/, "")).get("systemId") ?? undefined} />;
+        return <LegacySystemDeliveryPage executionId={governanceRoute.entityId} systemId={new URLSearchParams(governanceRoute.search?.replace(/^\?/, "")).get("systemId") ?? undefined} />;
       case "platform.runtime.business-system-operations":
         return <BusinessSystemOperationsPage installationId={governanceRoute.entityId} />;
       case "platform.overview.overview":

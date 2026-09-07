@@ -7,6 +7,7 @@ import { kyAppPost, KyAppManagementError, type SystemDefinition } from '@/lib/ky
 import type { SystemDetail } from '@/lib/kyAppManagementTypes';
 import { useManagementResource, ResourceState } from './ManagementResource';
 import { ManifestUpload } from './ManifestUpload';
+import { SystemDeliveryPage } from '../SystemDelivery/SystemDeliveryPage';
 import { SystemVersions } from './SystemVersions';
 const routeId = 'platform.resource-center.business-systems';
 export function PlatformSystemsPage({ systemId }: { systemId?: string | null }) {
@@ -62,7 +63,7 @@ function SystemCatalog() {
                         navigateGovernance(governanceRoute(routeId, { entityId: system.systemId }))
                       }
                     >
-                      详情与版本
+                      管理系统
                     </Button>
                   </td>
                 </tr>
@@ -76,6 +77,11 @@ function SystemCatalog() {
 }
 function SystemDetailPage({ systemId }: { systemId: string }) {
   const resource = useManagementResource<SystemDetail>(`/systems/${encodeURIComponent(systemId)}`);
+  const [tab, setTab] = useState(() =>
+    new URLSearchParams(window.location.search).get('tab') === 'installations'
+      ? 'installations'
+      : 'versions',
+  );
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   async function status(next: 'disabled' | 'retired') {
@@ -116,19 +122,6 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
         <>
           <h2 className="text-lg font-semibold">{resource.data.definition.name}</h2>
           <div className="flex gap-2">
-            {resource.data.allowedActions?.includes('start_delivery') && (
-              <Button
-                onClick={() =>
-                  navigateGovernance(
-                    governanceRoute('platform.runtime.system-deliveries', {
-                      search: `?systemId=${encodeURIComponent(systemId)}`,
-                    }),
-                  )
-                }
-              >
-                创建组织交付
-              </Button>
-            )}
             {resource.data.allowedActions?.includes('disable_system') && (
               <Button variant="outline" disabled={busy} onClick={() => void status('disabled')}>
                 停用系统
@@ -140,10 +133,41 @@ function SystemDetailPage({ systemId }: { systemId: string }) {
               </Button>
             )}
           </div>
-          {resource.data.allowedActions?.includes('register_version') && (
-            <ManifestUpload systemId={systemId} onRegistered={resource.reload} />
-          )}
-          <SystemVersions detail={resource.data} reload={resource.reload} />
+          <div className="flex gap-2" role="tablist" aria-label="业务系统管理">
+            {[
+              ['versions', '版本管理'],
+              ['installations', '组织接入'],
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                role="tab"
+                aria-selected={tab === value}
+                variant={tab === value ? 'default' : 'outline'}
+                onClick={() => {
+                  setTab(value!);
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('tab', value!);
+                  window.history.replaceState(window.history.state, '', url);
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+          <div
+            hidden={tab !== 'versions'}
+            role="tabpanel"
+            aria-label="版本管理"
+            className="space-y-4"
+          >
+            {resource.data.allowedActions?.includes('register_version') && (
+              <ManifestUpload systemId={systemId} onRegistered={resource.reload} />
+            )}
+            <SystemVersions detail={resource.data} reload={resource.reload} />
+          </div>
+          <div hidden={tab !== 'installations'} role="tabpanel" aria-label="组织接入">
+            <SystemDeliveryPage systemId={systemId} embedded />
+          </div>
         </>
       )}
     </section>

@@ -121,7 +121,7 @@ describe('kyApp 平台端点鉴权矩阵', () => {
 });
 
 describe('发布门禁端到端', () => {
-  it('同 digest 幂等；触发复核 → publish 409 → 复核人≠发布者 → publish 200', async () => {
+  it('同 digest 幂等；登记人直接发布并保留变化提示', async () => {
     const harness = await rig();
     harness.setUser(PLATFORM_ADMIN);
     const upload = json('POST', { name: '演示 ERP', manifest: buildManifest() });
@@ -135,8 +135,9 @@ describe('发布门禁端到端', () => {
       gate: { reviewRequired: boolean; reasons: string[] };
     };
     expect(firstBody.created).toBe(true);
-    expect(firstBody.gate.reviewRequired).toBe(true);
-    expect(firstBody.version.reviewStatus).toBe('pending');
+    expect(firstBody.gate.reviewRequired).toBe(false);
+    expect(firstBody.version.reviewStatus).toBe('not_required');
+    expect(firstBody.gate.reasons.length).toBeGreaterThan(0);
 
     // 同 digest 重复上传：幂等，不新建版本。
     const again = await harness.request(`${BASE}/systems/${TEST_SYSTEM}/versions`, upload);
@@ -145,31 +146,6 @@ describe('发布门禁端到端', () => {
 
     const digest = firstBody.version.digest;
     const expectedVersion = firstBody.definition.version;
-
-    // 未复核就发布 → 409 review_required。
-    const blocked = await harness.request(
-      `${BASE}/systems/${TEST_SYSTEM}/versions/${digest}/publish`,
-      json('POST', { expectedVersion }),
-    );
-    expect(blocked.status).toBe(409);
-    const blockedBody = (await blocked.json()) as { error: { code: string }; reasons: string[] };
-    expect(blockedBody.error.code).toBe('review_required');
-    expect(blockedBody.reasons.length).toBeGreaterThan(0);
-
-    // 复核人 = 发布者（上传者）→ 拒绝。
-    const selfReview = await harness.request(
-      `${BASE}/systems/${TEST_SYSTEM}/versions/${digest}/review`,
-      json('POST'),
-    );
-    expect(selfReview.status).toBe(409);
-
-    // 换一位平台管理员复核 → 通过。
-    harness.setUser({ ...PLATFORM_ADMIN, sub: 'u_platform_2', username: 'platform2' });
-    const review = await harness.request(
-      `${BASE}/systems/${TEST_SYSTEM}/versions/${digest}/review`,
-      json('POST'),
-    );
-    expect(review.status).toBe(200);
 
     const published = await harness.request(
       `${BASE}/systems/${TEST_SYSTEM}/versions/${digest}/publish`,

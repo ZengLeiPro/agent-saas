@@ -100,7 +100,9 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
 
     expect(screen.getByRole("button", { name: "访问控制" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "模板" })).toBeTruthy();
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(22);
+    expect(screen.getByRole("button", { name: "业务系统" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "系统交付" })).toBeNull();
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(21);
   });
 
   it("组织分组展示 18 个真实页面及四个配置分组", () => {

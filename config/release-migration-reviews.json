@@ -329,9 +329,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -726,6 +726,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -917,9 +921,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1161,6 +1165,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -1352,9 +1360,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1559,6 +1567,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -1750,9 +1762,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1957,6 +1969,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -2134,9 +2150,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2333,6 +2349,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -2510,9 +2530,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2709,6 +2729,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -2886,9 +2910,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -3085,6 +3109,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -3437,9 +3465,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -3819,6 +3847,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -4010,9 +4042,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -4222,6 +4254,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -4420,9 +4456,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -4641,6 +4677,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -4839,9 +4879,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -5060,6 +5100,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -5223,9 +5267,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5397,6 +5441,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -5560,9 +5608,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5734,6 +5782,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -5897,9 +5949,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6071,6 +6123,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -6234,9 +6290,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6408,6 +6464,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -6564,9 +6624,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6727,6 +6787,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -6883,9 +6947,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -7046,6 +7110,10 @@
         {
           "path": "server/src/__tests__/handSupersession.pg.test.ts",
           "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     },
@@ -8959,7 +9027,7 @@
       "evidence": [
         {
           "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
-          "digest": "sha256:d43b445d45375e52c4d9735af74b0e821e1bde18ca882d14b67cfa98e0b42686"
+          "digest": "sha256:9daeafee20167cc2e13407b8b4f98706334415a5140d31eae680de564a7998bd"
         }
       ]
     }

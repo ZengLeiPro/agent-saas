@@ -8429,6 +8429,31 @@
           "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         }
       ]
+    },
+    {
+      "baselineSha": "9f6131c6a173b20b7395f95453e44545ae5ee200",
+      "files": [
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        }
+      ]
     }
   ]
 }

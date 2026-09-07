@@ -128,38 +128,52 @@ restore_optional_file() {
   fi
 }
 rollback() {
-  restore_optional_file "$had_server_config" "$rollback_root/config.json" "$server_config"
-  restore_optional_file "$had_server_env" "$rollback_root/server.env" "$server_env"
-  restore_optional_file "$had_acs_env" "$rollback_root/acs-orchestrator.env" "$acs_env"
+  local rollback_failed=false
+  restore_optional_file "$had_server_config" "$rollback_root/config.json" "$server_config" || rollback_failed=true
+  restore_optional_file "$had_server_env" "$rollback_root/server.env" "$server_env" || rollback_failed=true
+  restore_optional_file "$had_acs_env" "$rollback_root/acs-orchestrator.env" "$acs_env" || rollback_failed=true
   restore_optional_file "$had_previous_identity" \
-    "$rollback_root/acs-release-identity.json" "$acs_identity"
+    "$rollback_root/acs-release-identity.json" "$acs_identity" || rollback_failed=true
   restore_optional_file "$had_server_unit" \
-    "$rollback_root/agent-saas-server-staging.service" "$server_unit"
+    "$rollback_root/agent-saas-server-staging.service" "$server_unit" || rollback_failed=true
   restore_optional_file "$had_worker_unit" \
-    "$rollback_root/agent-saas-runtime-worker-staging.service" "$worker_unit"
+    "$rollback_root/agent-saas-runtime-worker-staging.service" "$worker_unit" || rollback_failed=true
   restore_optional_file "$had_acs_unit" \
-    "$rollback_root/agent-saas-acs-orchestrator-staging.service" "$acs_unit"
-  systemctl daemon-reload || true
+    "$rollback_root/agent-saas-acs-orchestrator-staging.service" "$acs_unit" || rollback_failed=true
+  systemctl daemon-reload || rollback_failed=true
   if [ "$runtime_mutated" = true ]; then
     rm -f "$run_root/runtime-worker.ready" \
       "$api_config_identity_snapshot" "$worker_config_identity_snapshot"
     if [ "$had_previous_release" = true ]; then
       ln -sfn "$previous" "$current"
-      systemctl restart agent-saas-acs-orchestrator-staging.service || true
-      systemctl restart agent-saas-server-staging.service || true
-      systemctl restart agent-saas-runtime-worker-staging.service || true
+      systemctl restart agent-saas-acs-orchestrator-staging.service || rollback_failed=true
+      systemctl restart agent-saas-server-staging.service || rollback_failed=true
+      systemctl restart agent-saas-runtime-worker-staging.service || rollback_failed=true
     else
       rm -f "$current"
-      systemctl stop agent-saas-runtime-worker-staging.service || true
-      systemctl stop agent-saas-server-staging.service || true
-      systemctl stop agent-saas-acs-orchestrator-staging.service || true
+      systemctl stop agent-saas-runtime-worker-staging.service || rollback_failed=true
+      systemctl stop agent-saas-server-staging.service || rollback_failed=true
+      systemctl stop agent-saas-acs-orchestrator-staging.service || rollback_failed=true
       rm -f "$run_root/server.pid" "$run_root/runtime-worker.pid" \
         "$run_root/runtime-worker.ready" "$run_root/acs-orchestrator.pid"
       systemctl reset-failed agent-saas-runtime-worker-staging.service \
-        agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
+        agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || rollback_failed=true
     fi
   fi
+  if [ "$runtime_mutated" = true ] && [ "$had_previous_release" = true ]; then
+    if ! curl -fsS --connect-timeout 2 --max-time 10 --retry 5 --retry-connrefused \
+      http://127.0.0.1:3210/api/healthz/ready > "$rollback_root/api-ready-after-rollback.json"; then
+      rollback_failed=true
+    fi
+  fi
+  if [ "$rollback_failed" = true ]; then
+    echo 'ERROR: Staging rollback was incomplete; backups retained, acceptance must remain blocked' >&2
+    printf '%s\n' '{"status":"needs_human"}' > "$rollback_root/recovery-status.json"
+    return 1
+  fi
+  printf '%s\n' '{"status":"restore_commands_completed","requiresFinalReadback":true}' > "$rollback_root/recovery-status.json"
 }
+
 finish() {
   local status=$?
   trap - EXIT
@@ -179,7 +193,7 @@ finish() {
   rm -f "$artifact_persistence_probe"
   rm -f "$acs_health_probe" "$api_ready_probe"
   if [ "$deployment_committed" = false ]; then
-    rollback
+    rollback || status=1
   fi
   return "$status"
 }

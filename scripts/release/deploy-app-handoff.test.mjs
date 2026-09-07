@@ -64,7 +64,7 @@ test('候选 API readiness 使用有界墙钟等待、静默重试与可操作�
   assert.doesNotMatch(readiness, /journalctl/u);
 });
 
-test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR2，不等待、不 --now、committed 点前移', () => {
+test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR2，短时确认、不 --now、committed 点前移', () => {
   const marker = deployApp.indexOf('commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"');
   const committed = deployApp.indexOf('DEPLOY_APP_ROLLBACK_COMMITTED=true', marker);
   const worker = deployApp.indexOf('hand_off_retired_authority "agent-saas-runtime-worker@$worker_active"', committed);
@@ -80,7 +80,7 @@ test('authority 提交后旧 generation 后台交接：marker + disable + SIGUSR
   assert.match(fn, /install -m 0644 \/dev\/null "\$marker"/u);
   assert.match(fn, /systemctl disable "\$unit"/u);
   assert.match(fn, /kill -USR2 "\$pid"/u);
-  assert.doesNotMatch(fn, /--now|sleep|systemctl (?:stop|kill)|seq 1/u);
+  assert.doesNotMatch(fn, /--now|systemctl (?:stop|kill)|seq 1/u);
 });
 
 test('systemd 模板用 drain marker 的 ExecCondition 阻止后台 drain 的旧色被重新拉起', () => {

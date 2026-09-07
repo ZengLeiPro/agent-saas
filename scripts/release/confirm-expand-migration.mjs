@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { assertDatabaseEvidence } from './migration-postconditions.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { canonicalJson, digestBuffer, DIGEST_PATTERN } from './artifact-lib.mjs';
 
@@ -46,6 +47,7 @@ export function confirmExpandMigration({
   attestations,
   live,
   apiReady,
+  databaseEvidence,
   now = new Date(),
 }) {
   if (manifest?.migrationPlan?.phase !== 'expand')
@@ -109,7 +111,9 @@ export function confirmExpandMigration({
   if (!DIGEST_PATTERN.test(binding.productionBeforeDigest ?? ''))
     throw new Error('Promotion attestation lacks a valid production baseline digest');
 
+  assertDatabaseEvidence(manifest, databaseEvidence, 'production', now.valueOf());
   return {
+    databaseEvidence,
     schemaVersion: 1,
     releaseId: manifest.releaseId,
     manifestDigest: manifest.digest,
@@ -137,21 +141,22 @@ function parse(argv) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parse(process.argv);
-  if (!args.manifest || !args.attestations || !args.live || !args['api-ready'] || !args.output)
+  if (!args.manifest || !args.attestations || !args.live || !args['api-ready'] || !args.database || !args.output)
     throw new Error(
       'usage: confirm-expand-migration.mjs --manifest <json> --attestations <jsonl> --live <json> --api-ready <json> --output <json>',
     );
-  const [manifest, attestationText, live, apiReady] = await Promise.all([
+  const [manifest, attestationText, live, apiReady, databaseEvidence] = await Promise.all([
     readFile(args.manifest, 'utf8').then(JSON.parse),
     readFile(args.attestations, 'utf8'),
     readFile(args.live, 'utf8').then(JSON.parse),
     readFile(args['api-ready'], 'utf8').then(JSON.parse),
+    readFile(args.database, 'utf8').then(JSON.parse),
   ]);
   const attestations = attestationText
     .split(/\r?\n/u)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  const evidence = confirmExpandMigration({ manifest, attestations, live, apiReady });
+  const evidence = confirmExpandMigration({ manifest, attestations, live, apiReady, databaseEvidence });
   await writeFile(args.output, `${canonicalJson(evidence)}\n`, { flag: 'wx' });
   process.stdout.write(`${canonicalJson(evidence)}\n`);
 }

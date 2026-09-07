@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   actions: read
+  deployments: read
 
 # 与部署共享唯一在线 Staging 槽位；验收期间禁止新 RC 换版。
 concurrency:
@@ -142,6 +143,13 @@ jobs:
           test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
+
+      - name: 拒绝未完成部署后的业务验收
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/assert-staging-acceptance-deployment.mjs "$GITHUB_REPOSITORY" "$STAGING_RELEASE_ID"
 
       - name: 确认精确 RC 仍在测试环境生效
         run: |

@@ -1,3 +1,4 @@
+import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
 import { ManagementIndexPage } from '@/components/BusinessSystems/ManagementIndexPage';
 import { KyAppDeliveryHealthPanel } from '@/components/KyAppDeliveryPanels';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -626,7 +627,7 @@ export function PlatformAdminShell({
     if (!governanceRoute) return null;
     switch (governanceRoute.routeId) {
       case "platform.resource-center.business-systems":
-        return <ManagementIndexPage />;
+        return <PlatformSystemsPage systemId={governanceRoute.entityId} />;
       case "platform.runtime.system-deliveries":
         return <ManagementIndexPage deliveries />;
       case "platform.runtime.business-system-operations":

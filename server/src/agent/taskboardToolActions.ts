@@ -17,6 +17,7 @@ import type {
   TaskBoardVisibility,
 } from '../../../shared/src/types/taskboard.js';
 import { TaskboardNotFoundError, TaskboardPermissionError, TaskboardValidationError } from '../taskboard/types.js';
+import { invokeExecutionManagementAction } from './taskboardExecutionManagementActions.js';
 import type {
   TaskboardExecutionContext,
   TaskboardExecutionService,
@@ -52,6 +53,9 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'comment.delete',
   'execution.list',
   'execution.context',
+  'execution.cancel',
+  'execution.activity.inspect',
+  'execution.activity.reconcile',
 
   'execution.pull_request.set',
   'execution.pull_request.inspect',
@@ -77,6 +81,7 @@ export const TASKBOARD_READ_ACTIONS = [
   'comment.get',
   'execution.list',
   'execution.context',
+  'execution.activity.inspect',
   'integration.sources',
 ] as const;
 export interface TaskboardAttachmentInput {
@@ -87,6 +92,7 @@ export interface TaskboardManageInput {
   id?: string;
   boardId?: string;
   taskId?: string;
+  executionId?: string;
   providerPullRequestId?: string;
   providerJobId?: string;
   kind?: TaskBoardTaskKind;
@@ -143,6 +149,7 @@ export interface TaskboardManageInput {
   cursor?: string;
   limit?: number;
   reason?: string;
+  dryRun?: boolean;
   deliveryTaskIds?: string[];
   expectedBoardVersion?: number;
   /** 受控 Git 操作使用的提交 OID。 */
@@ -453,6 +460,10 @@ export async function invokeTaskboardAction(
       const sources = await service.listIntegrationSources(identity, taskId);
       return { count: sources.length, sources };
     }
+    case 'execution.cancel':
+    case 'execution.activity.inspect':
+    case 'execution.activity.reconcile':
+      return invokeExecutionManagementAction(options, service, identity, input);
     case 'execution.list': {
       const result = await requireExecutionService(options.executionService?.()).searchExecutions(
         identity,

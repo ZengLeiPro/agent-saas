@@ -51,6 +51,10 @@ import {
   InvalidTaskboardDispatchPayloadError,
 } from './executionDispatchValidation.js';
 import { resolveExecutionModelRef } from './executionFields.js';
+import {
+  inspectTaskboardExecutionActivity,
+  reconcileTaskboardExecutionActivity,
+} from './executionActivity.js';
 import { absorbLegacyIntegrationRuntimeCompletion } from './integrationMigrationCompletion.js';
 import { dispatchRetryDelayMs, limitComment, limitError } from './executionHelpers.js';
 import { buildExecutionPrompt } from './executionPrompt.js';
@@ -92,6 +96,7 @@ export interface TaskboardExecutionCoordinatorOptions extends TaskboardSessionGr
   >;
   runStore: Pick<RunStore, 'get'> & Partial<Pick<RunStore,
     'cancelSteeringBeforeDispatchBySessionWithEvent' | 'hasTaskboardSessionActivity'
+    | 'listBySession' | 'listBackgroundTasks' | 'claimBackgroundTaskWake' | 'finishBackgroundTaskWake'
   >>;
   sessionCatalog: SessionCatalog;
   eventStore: EventStore;
@@ -175,6 +180,15 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     if (!this.options.store.cancelExecution) throw new TaskboardExecutionUnavailableError();
     const result = await this.options.store.cancelExecution(identity, taskId, executionId, input);
     this.wakeReconciliation(); return result;
+  }
+
+  inspectExecutionActivity(identity: TaskboardIdentity, taskId: string, executionId: string) {
+    return inspectTaskboardExecutionActivity(this.options, identity, taskId, executionId);
+  }
+
+  reconcileExecutionActivity(identity: TaskboardIdentity, taskId: string, executionId: string,
+    input: { expectedVersion: number; reason: string; dryRun: boolean }) {
+    return reconcileTaskboardExecutionActivity(this.options, identity, taskId, executionId, input);
   }
   startExecution(
     identity: TaskboardIdentity,
@@ -335,9 +349,14 @@ export class TaskboardExecutionCoordinator implements TaskboardExecutionService 
     const claim = await this.prepareExecutionClaim(identity, taskId, input, options);
     const existing = await this.options.store.listExecutions(identity, taskId);
     const existingClaim = existing.some((execution) => execution.runId === claim.runId);
+    const returningToDeliveryWork = claim.purpose === 'work'
+      && claim.dispatch.run.metadata?.taskboardIntegration !== true;
+    const blockingExecutions = returningToDeliveryWork
+      ? existing.filter((execution) => execution.purpose === 'work')
+      : existing;
     const sessionIds = [...new Set([
       claim.sessionId,
-      ...existing.map((execution) => execution.sessionId),
+      ...blockingExecutions.map((execution) => execution.sessionId),
     ])];
     if (!existingClaim && await this.hasTaskboardSessionActivity(sessionIds, identity.tenantId)) {
       throw new TaskboardValidationError(

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RotateCcw } from 'lucide-react';
 import type { LoginLogEntry, LoginLogResponse } from '@agent/shared';
 
-import { MemberPasswordResetAction } from '@/components/OrganizationGovernance/MemberPasswordResetAction';
+import { LazyMemberPasswordResetAction } from '@/components/OrganizationGovernance/LazyMemberPasswordResetAction';
 import { Button } from '@/components/ui/button';
 import { authFetch } from '@/lib/authFetch';
 
@@ -63,7 +63,7 @@ export function MemberAccountSecurity({
             账号 {username} · 密码不会在页面或日志中回显
           </div>
         </div>
-        {canResetPassword ? <MemberPasswordResetAction userId={userId} displayName={displayName || username} /> : null}
+        {canResetPassword ? <LazyMemberPasswordResetAction userId={userId} displayName={displayName || username} /> : null}
       </div>
 
       <div className="rounded-xl border bg-card">

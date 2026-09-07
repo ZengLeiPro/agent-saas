@@ -137,7 +137,7 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.getAllByText("启用").length).toBeGreaterThan(0);
     expect(screen.queryByText("active")).toBeNull();
     expect(screen.queryByRole("switch")).not.toBeTruthy();
-    expect(screen.getByRole("button", { name: "重置 member-1 的密码" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "重置 member-1 的密码" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "重置 owner-1 的密码" })).toBeNull();
   });
 

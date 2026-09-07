@@ -54,7 +54,7 @@ describe('MemberAccountSecurity', () => {
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
       .mockResolvedValueOnce(jsonResponse({ entries: [], total: 0 }));
 
-    fireEvent.click(screen.getByRole('button', { name: '重置密码' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重置密码' }));
     fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'new-pass-1' } });
     fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'new-pass-1' } });
     fireEvent.click(screen.getByRole('button', { name: '确认重置' }));

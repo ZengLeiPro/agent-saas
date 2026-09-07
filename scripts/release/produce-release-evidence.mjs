@@ -6,6 +6,7 @@ import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-
 import {
   configIdentitySummarySchema,
   RELEASE_EVIDENCE_SCHEMA_VERSION,
+  releaseMigrationPlanSchema,
   validateReleaseEvidenceDocument,
 } from './release-evidence-schema.mjs';
 
@@ -143,14 +144,7 @@ const classificationSchema = z
 const migrationSchema = z
   .object({
     ok: z.literal(true),
-    migrationPlan: z
-      .object({
-        phase: z.enum(['none', 'expand']),
-        planDigest: digest,
-        confirmation: z.enum(['not_required', 'required_after_observation']),
-        contract: z.literal('separate_release'),
-      })
-      .strict(),
+    migrationPlan: releaseMigrationPlanSchema,
     blockingReasons: z.array(z.never()).max(0),
     postconditionBlockingReasons: z.array(z.never()).max(0).optional(),
   })

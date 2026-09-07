@@ -331,6 +331,59 @@ test('accepts the actual migration planner output including empty postcondition 
   assert.deepEqual(evidence.migrationPlan, migration.migrationPlan);
 });
 
+test('preserves digest-bound database postconditions from an expand migration plan', async () => {
+  const base = await fixture();
+  const postconditions = [
+    {
+      id: 'provider-schema',
+      description: 'Provider schema exists',
+      configPath: 'runtimeEventStore',
+      sql: 'SELECT true AS ok',
+      params: [],
+      sourcePath: 'server/src/provider.ts',
+      sourceDigest: DIGESTS.server,
+    },
+  ];
+  Object.assign(base.documents.migration.migrationPlan, {
+    phase: 'expand',
+    confirmation: 'required_after_observation',
+    postconditions,
+    postconditionsDigest: digestBuffer(canonicalJson(postconditions)),
+  });
+  await writeFile(base.options.migration, JSON.stringify(base.documents.migration));
+
+  const evidence = await produceReleaseEvidence(base.options);
+  assert.deepEqual(evidence.migrationPlan.postconditions, postconditions);
+  assert.equal(
+    evidence.migrationPlan.postconditionsDigest,
+    base.documents.migration.migrationPlan.postconditionsDigest,
+  );
+});
+
+test('rejects an expand migration plan with a mismatched postconditions digest', async () => {
+  const base = await fixture();
+  base.documents.migration.migrationPlan = {
+    ...base.documents.migration.migrationPlan,
+    phase: 'expand',
+    confirmation: 'required_after_observation',
+    postconditions: [
+      {
+        id: 'provider-schema',
+        description: 'Provider schema exists',
+        configPath: 'runtimeEventStore',
+        sql: 'SELECT true AS ok',
+        params: [],
+        sourcePath: 'server/src/provider.ts',
+        sourceDigest: DIGESTS.server,
+      },
+    ],
+    postconditionsDigest: DIGESTS.migration,
+  };
+  await writeFile(base.options.migration, JSON.stringify(base.documents.migration));
+
+  await assert.rejects(produceReleaseEvidence(base.options), /postconditions digest/u);
+});
+
 for (const diagnostic of [['Missing database postconditions'], null, 'invalid']) {
   test(`rejects nonempty or malformed postcondition diagnostics: ${JSON.stringify(diagnostic)}`, async () => {
     const base = await fixture();

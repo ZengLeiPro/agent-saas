@@ -249,6 +249,31 @@ describe('Web Push 触发链路', () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ status: '等待你的确认' }));
   });
 
+  it('审批完成后发送可区分结果的完成态通知并跳回对应会话', async () => {
+    const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
+    const sessionStore = {
+      get: vi.fn().mockResolvedValue({
+        sessionId: 'session-1', tenantId: 'tenant-a', userId: 'user-a', title: '合同审核', metaJson: {},
+      }),
+    } as unknown as PgSessionProjectionStore;
+
+    await notifyWebPushForRuntimeEvent({
+      id: 'event-approved', timestamp: '2026-09-07T04:00:00.000Z', type: 'approval_resolved',
+      sessionId: 'session-1', runId: 'run-1', approvalId: 'approval-1', decision: 'approved',
+    }, { service, sessionStore });
+    await notifyWebPushForRuntimeEvent({
+      id: 'event-rejected', timestamp: '2026-09-07T04:01:00.000Z', type: 'approval_resolved',
+      sessionId: 'session-1', runId: 'run-1', approvalId: 'approval-2', decision: 'rejected',
+    }, { service, sessionStore });
+
+    expect(send).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      eventKey: 'runtime:event-approved', status: '确认完成', url: '/chat/session-1',
+    }));
+    expect(send).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      eventKey: 'runtime:event-rejected', status: '确认已拒绝', url: '/chat/session-1',
+    }));
+  });
+
   it('等待补充信息按会话投影归属发送，事件用户不一致时拒绝串发', async () => {
     const send = vi.spyOn(service, 'send').mockResolvedValue({ sent: 1, failed: 0, skipped: 0, deferred: 0 });
     const sessionStore = {

@@ -7,6 +7,7 @@ export class KyAppManagementError extends Error {
     message: string,
     public requestId: string,
     public retryable: boolean,
+    public diagnosticReport?: unknown,
   ) {
     super(message);
   }
@@ -25,6 +26,7 @@ export async function kyAppRequest<T>(path: string, options: RequestInit = {}): 
       body?.error?.message ?? `请求失败 (${response.status})`,
       body?.error?.requestId ?? '',
       body?.error?.retryable === true,
+      body?.report,
     );
   return body as T;
 }

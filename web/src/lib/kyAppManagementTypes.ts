@@ -91,6 +91,7 @@ export interface InstallationManagement {
   definition: { name: string; status: string; publishedDigest: string | null } | null;
   manifest: Manifest | null;
   credentialSummary?: CredentialMetadata[];
+  domainVerification?: { recordName: string; recordValue: string } | null;
   assignmentSummary?: { configured: boolean; ruleCount: number };
   upgrade?: {
     currentDigest: string | null;

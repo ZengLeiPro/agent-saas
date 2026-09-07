@@ -1,3 +1,4 @@
+import { previewResourceAssignment, updateResourceAssignment, AssignmentImpact } from '@/components/BusinessSystems/installationAssignmentApi';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
@@ -359,7 +360,8 @@ export function OrganizationEntitlementScopeEditor({
               {preview.impact?.currentVersion !== undefined
                 ? `v${preview.impact.currentVersion} → v${preview.impact.nextVersion} · `
                 : ''}
-              签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}
+              <AssignmentImpact preview={preview} />
+          签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}
             </div>
           ) : null}
         </>
@@ -481,7 +483,7 @@ export function OrganizationResourceAssignmentEditor({
     setReceipt(null);
     try {
       setPreview(
-        await governanceAccessApi.previewAssignment<PreviewToken>(
+        await previewResourceAssignment<PreviewToken>(
           resourceType,
           resourceId,
           command,
@@ -499,7 +501,7 @@ export function OrganizationResourceAssignmentEditor({
     setBusy(true);
     setError(null);
     try {
-      const result = await governanceAccessApi.updateAssignment<Receipt>(
+      const result = await updateResourceAssignment<Receipt>(
         resourceType,
         resourceId,
         {
@@ -624,7 +626,7 @@ export function OrganizationResourceAssignmentEditor({
       })}
       {!rules.length ? (
         <div className="text-sm text-muted-foreground">
-          尚未设置直接指派；运行时将按上级范围和默认策略解析。
+          {resourceType === 'system_installation' ? '尚未授权任何成员或 Agent。' : '尚未设置直接指派；运行时将按上级范围和默认策略解析。'}
         </div>
       ) : null}
       <Button size="sm" variant="outline" onClick={addRule}>
@@ -650,6 +652,7 @@ export function OrganizationResourceAssignmentEditor({
       </div>
       {preview ? (
         <div className="text-xs text-muted-foreground">
+          <AssignmentImpact preview={preview} />
           签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}
         </div>
       ) : null}

@@ -21,7 +21,7 @@ import type {
   ExecutionTransport,
   ExecutionTransportRegistry,
 } from '../runtime/executionTransport.js';
-import { selectRuntimeHandRoute, type HandStore } from '../runtime/handStore.js';
+import { isSupersededHand, selectRuntimeHandRoute, type HandStore } from '../runtime/handStore.js';
 import type { RuntimeIsolationRequirement } from '../runtime/runtimeIsolationEvidence.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
@@ -1191,8 +1191,8 @@ class WorkspaceToolProvider implements ToolProvider {
       }
       const tenantId = toolCallTenantId(context); if (!tenantId) throw new Error('hand routing requires tenant boundary');
       const hand = await this.handStore.get(handId, tenantId);
-      if (!hand) {
-        throw new Error(`hand not found: ${handId}`);
+      if (!hand || isSupersededHand(hand)) {
+        throw new Error(`hand not found or superseded: ${handId}`);
       }
       if (hand.status !== 'ready') {
         throw new Error(`hand is not ready: ${handId} (${hand.status})`);

@@ -827,9 +827,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          deployment_id="$(jq -n --arg ref "$GITHUB_SHA" --arg releaseId "$STAGING_RELEASE_ID" \
-            '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId}}' \
-            | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
+          node scripts/release/migration-postconditions.mjs "$RUNNER_TEMP/manifest.json"
+          # After staging_deployed/verified, keep the immutable attestation's deployment binding.
+          deployment_id="$(node scripts/release/staging-deployment-retry.mjs \
+            "$RUNNER_TEMP/attestations/$STAGING_RELEASE_ID.jsonl" "$STAGING_RELEASE_ID" "$MANIFEST_DIGEST" "$GITHUB_RUN_ID")"
+          if [ -n "$deployment_id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id" > "$RUNNER_TEMP/staging-deployment.json"
+            jq -e --arg sha "$GITHUB_SHA" --arg rc "$STAGING_RELEASE_ID" \
+              '.environment=="staging" and .sha==$sha and .payload.releaseId==$rc' \
+              "$RUNNER_TEMP/staging-deployment.json" >/dev/null
+          else
+            deployment_id="$(jq -n --arg ref "$GITHUB_SHA" --arg releaseId "$STAGING_RELEASE_ID" \
+              '{ref:$ref,environment:"staging",auto_merge:false,required_contexts:[],payload:{releaseId:$releaseId}}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
+          fi
           test "$deployment_id" -gt 0
           echo "STAGING_DEPLOYMENT_ID=$deployment_id" >> "$GITHUB_ENV"
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" \
@@ -877,6 +888,9 @@ jobs:
           test "$(ssh-keygen -lf "$RUNNER_TEMP/staging-known-host" -E sha256 | awk '{print $2}')" = \
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/staging-known-host" >> ~/.ssh/known_hosts
+
+      - name: 记录部署前测试环境组件状态
+        run: bash scripts/release/observe-staging-state.sh before
 
       - name: 部署精确的测试环境 API、Worker 与 ACS 产物
         run: |
@@ -930,7 +944,19 @@ jobs:
                 "$target" --region "$RELEASE_RECORD_OSS_REGION"
               cmp "$source" "$target"
             ' _
-          curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
+          node scripts/release/verify-public-web.mjs "$RUNNER_TEMP/web-assets" "$STAGING_WEB_URL" \
+            "$RUNNER_TEMP/staging-public-web.json"
+
+      - name: 逐项核验本次迁移的数据库后置条件
+        run: |
+          set -euo pipefail
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          scp -i ~/.ssh/staging_key scripts/release/read-migration-postconditions.mjs \
+            scripts/release/migration-postconditions.mjs "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            "node '$remote/read-migration-postconditions.mjs' '$remote/manifest.json' /var/lib/agent-saas-staging/config/config.json /opt/agent-saas-staging/current/server staging '$remote/database-readback.json'"
+          scp -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/database-readback.json" \
+            "$RUNNER_TEMP/staging-database-readback.json"
 
       - name: 校验迁移与隔离的集成测试夹具
         run: |
@@ -1025,6 +1051,10 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$STAGING_RELEASE_OSS_URI/records/$STAGING_RELEASE_ID/attestations/$(basename "$snapshot_path")"
 
+      - name: 最终对账并阻止混合版本验收
+        if: always() && env.STAGING_DEPLOYMENT_ID != ''
+        run: bash scripts/release/observe-staging-state.sh final
+
       - name: 撤销临时测试环境 SSH 入站授权
         if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
         run: |
@@ -1039,17 +1069,6 @@ jobs:
             test "$attempt" -lt 5
             sleep 2
           done
-
-      - name: 完成 GitHub 测试环境部署记录
-        if: always() && env.STAGING_DEPLOYMENT_ID != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKFLOW_STATUS: ${{ job.status }}
-        run: |
-          state=failure
-          [ "$WORKFLOW_STATUS" = success ] && state=success
-          gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
-            -f state="$state" -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null
 
       - name: 校验完整的测试环境证据包
         if: success()
@@ -1072,3 +1091,18 @@ jobs:
             ${{ runner.temp }}/isolation-summary.json
             ${{ runner.temp }}/staging-runtime-summary.json
             ${{ runner.temp }}/staging-integration-fixture.json
+            ${{ runner.temp }}/staging-database-readback.json
+            ${{ runner.temp }}/staging-public-web.json
+            ${{ runner.temp }}/staging-before.json
+            ${{ runner.temp }}/staging-final.json
+
+      - name: 完成 GitHub 测试环境部署记录
+        if: always() && env.STAGING_DEPLOYMENT_ID != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_STATUS: ${{ job.status }}
+        run: |
+          state=failure
+          [ "$WORKFLOW_STATUS" = success ] && state=success
+          gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
+            -f state="$state" -F auto_inactive=false -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null

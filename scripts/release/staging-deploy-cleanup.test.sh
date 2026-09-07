@@ -98,6 +98,7 @@ run_case() {
   set -e
 
   test "$status" -eq "$expected_status"
+  grep -F 'ERROR: Staging rollback was incomplete' "$case_dir/stderr" >/dev/null
   local log="$case_dir/restore.log"
   test -f "$log"
   # A failing first cleanup command cannot suppress later cleanup or rollback.

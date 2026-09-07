@@ -42,11 +42,32 @@ const components = Object.fromEntries(
     { gitSha: sourceSha, ...rest },
   ]),
 );
+const postconditions = [
+  {
+    id: 'fixture',
+    configPath: 'runtimeEventStore',
+    description: 'fixture',
+    sql: 'SELECT true AS ok',
+    params: [],
+  },
+];
+manifest.migrationPlan.postconditions = postconditions;
+manifest.migrationPlan.postconditionsDigest = digestBuffer(canonicalJson(postconditions));
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'finalize-expand-'));
   for (const dir of ['bin', 'attestations']) mkdirSync(join(root, dir));
   const fixture = {
+    database: {
+      releaseId,
+      manifestDigest: digest,
+      planDigest: digest,
+      postconditionsDigest: manifest.migrationPlan.postconditionsDigest,
+      environment: 'production',
+      status: 'passed',
+      observedAt: new Date().toISOString(),
+      checks: [{ id: 'fixture', status: 'passed', database: 'test', targetDigest: digest }],
+    },
     live: {
       schemaVersion: 1,
       environment: 'production',
@@ -154,7 +175,9 @@ test(
     assert.equal(state(root), 'completed');
     assert.deepEqual(events(root), [
       'read-initial',
+      'database-initial',
       'read-final',
+      'database-final',
       'evidence-upload',
       'append-completed',
       'github-upload',
@@ -167,7 +190,14 @@ test(
   },
 );
 
-for (const scenario of ['drift', 'ready-fail', 'evidence-upload', 'lock-loss']) {
+for (const scenario of [
+  'drift',
+  'ready-fail',
+  'database-fail',
+  'database-drift',
+  'evidence-upload',
+  'lock-loss',
+]) {
   test('Linux 自动收尾失败不提交 completed：' + scenario, { skip: !linux }, () => {
     const { root, env } = setup();
     const result = run({ ...env, FINALIZATION_TEST_SCENARIO: scenario });

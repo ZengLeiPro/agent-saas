@@ -40,6 +40,12 @@ class FakeStore {
     this.pruned.push(days);
     return 0;
   }
+  async pushedAccounts(sourceKind: string) {
+    return this.pick((row) => row.sourceKind === sourceKind).map((row) => ({
+      accountKey: row.accountKey,
+      accountLabel: row.accountLabel,
+    }));
+  }
   async tryAcquireCollectorLock() {
     return this.lockAvailable
       ? async () => {
@@ -188,6 +194,42 @@ describe('ProviderQuotaService', () => {
     email = '';
     expect((await service.overview()).items[0]?.planExpiry?.editable).toBe(false);
     await expect(service.setPlanExpiry('codex:new', null, 'admin')).rejects.toThrow('邮箱');
+  });
+
+  it('Claude 订阅：首次上报即出现在看板，采集轮跳过，点名刷新明确拒绝', async () => {
+    const store = new FakeStore();
+    const pushed: ProviderQuotaSnapshot = {
+      sourceKind: 'claude_subscription',
+      accountKey: 'claude:kaiyankeji.5@gmail.com',
+      accountLabel: 'kaiyankeji.5@gmail.com',
+      windows: [
+        { id: 'five_hour', label: '5 小时', windowSeconds: 18_000, usedPercent: 22, resetAt: '2026-09-07T15:20:00.000Z' },
+        { id: 'seven_day', label: '7 天', windowSeconds: 604_800, usedPercent: 37, resetAt: '2026-09-13T00:00:00.000Z' },
+      ],
+      limitReached: false,
+      ok: true,
+      collectedAt: '2026-09-05T06:00:00.000Z',
+    };
+    // 采集端直接写快照表，平台侧没有任何配置。
+    await store.append([pushed]);
+    const service = new ProviderQuotaService({ store: store as unknown as PgProviderQuotaSnapshotStore, getModelsConfig: () => undefined, enableCollector: false, fetchImpl: routedFetch(), now, logger });
+
+    const discovered = (await service.overview()).items;
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]).toMatchObject({ accountKey: 'claude:kaiyankeji.5@gmail.com', sourceKind: 'claude_subscription', ok: true });
+    expect(discovered[0]?.windows.map((window) => window.usedPercent)).toEqual([22, 37]);
+    // 邮箱可解析 ⇒ 支持手动登记套餐到期。
+    expect(discovered[0]?.planExpiry?.editable).toBe(true);
+
+    // 全量刷新：不去取数、不写入新快照。
+    await service.refresh();
+    expect(store.rows).toHaveLength(1);
+    // 点名刷新：明确拒绝，而不是报「账号不存在」或假装采过。
+    await expect(service.refresh('claude:kaiyankeji.5@gmail.com')).rejects.toThrow('由采集端主动上报');
+    expect(store.rows).toHaveLength(1);
+
+    // 历史曲线照常包含推送型账号。
+    expect((await service.history(24)).points.map((point) => point.accountKey)).toEqual(['claude:kaiyankeji.5@gmail.com']);
   });
 
   it('火山按分组存储，清除手动设置后显示供应商到期，不改变快照', async () => {

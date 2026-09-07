@@ -88,6 +88,29 @@ export class PgProviderQuotaSnapshotStore {
     return result.rows.map((row) => row.snapshot);
   }
 
+  /**
+   * 推送型来源（如 KY Agent 直写的 Claude 订阅）的账号发现：账号不在平台配置里声明，
+   * 以「库里出现过快照」为存在依据，首次上报即出现在看板。
+   * `staleDays` 之外不再出现的账号自动从看板消失，无需手工摘除。
+   */
+  async pushedAccounts(
+    sourceKind: string,
+    staleDays = 7,
+  ): Promise<Array<{ accountKey: string; accountLabel: string }>> {
+    const days = Math.max(1, Math.floor(staleDays));
+    const result = await this.pool.query<{ account_key: string; account_label: string | null }>(
+      `SELECT DISTINCT ON (account_key) account_key, snapshot->>'accountLabel' AS account_label
+       FROM ${this.table}
+       WHERE source_kind = $1 AND collected_at >= NOW() - ($2::int * INTERVAL '1 day')
+       ORDER BY account_key, collected_at DESC`,
+      [sourceKind, days],
+    );
+    return result.rows.map((row) => ({
+      accountKey: row.account_key,
+      accountLabel: row.account_label?.trim() || row.account_key,
+    }));
+  }
+
   /** 每个账号最近一次成功快照；账号刚失败时看板仍能显示上一次真实用量。 */
   async latestSuccessful(): Promise<ProviderQuotaSnapshot[]> {
     const result = await this.pool.query<{ snapshot: ProviderQuotaSnapshot }>(

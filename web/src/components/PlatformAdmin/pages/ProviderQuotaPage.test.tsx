@@ -149,6 +149,32 @@ describe('ProviderQuotaPage', () => {
     expect(api.providerQuota).toHaveBeenCalledTimes(1);
   });
 
+  it('Claude 订阅是推送型来源：正常渲染额度，但不给单账号刷新按钮', async () => {
+    const claude = {
+      sourceKind: 'claude_subscription' as const,
+      accountKey: 'claude:kaiyankeji.5@gmail.com',
+      accountLabel: 'kaiyankeji.5@gmail.com',
+      windows: [
+        { id: 'five_hour', label: '5 小时', windowSeconds: 18_000, usedPercent: 22, resetAt: '2026-09-05T11:20:00.000Z' },
+        { id: 'seven_day', label: '7 天', windowSeconds: 604_800, usedPercent: 37, resetAt: '2026-09-11T00:00:00.000Z' },
+      ],
+      limitReached: false,
+      ok: true,
+      collectedAt: '2026-09-05T06:28:00.000Z',
+    };
+    api.providerQuota.mockResolvedValue({ ...overview, items: [...overview.items, claude] });
+    render(<ProviderQuotaPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId('quota-account-claude:kaiyankeji.5@gmail.com')).toBeTruthy(),
+    );
+    expect(screen.getByText('Claude 订阅')).toBeTruthy();
+    expect(screen.getByText('37.0%')).toBeTruthy();
+    expect(screen.getByText('22.0%')).toBeTruthy();
+    // 平台无法主动向 Anthropic 取数，单卡刷新按钮必须不存在（其他账号的仍在）。
+    expect(screen.queryByRole('button', { name: '刷新 kaiyankeji.5@gmail.com' })).toBeNull();
+    expect(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' })).toBeTruthy();
+  });
+
   it('Codex 周额度优先，附加模型默认折叠且不把账号标记为耗尽', async () => {
     const codex = {
       ...overview.items[1]!, ok: true, error: undefined, limitReached: false,

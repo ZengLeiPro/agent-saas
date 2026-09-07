@@ -46,7 +46,9 @@ export interface ProviderQuotaServiceOptions {
 interface QuotaSource {
   accountKey: string;
   expiryIdentity?: string;
-  collect: () => Promise<ProviderQuotaSnapshot>;
+  /** 推送型来源：账号由外部采集端直接写快照表，平台不主动取数，`collect` 缺省。 */
+  pushOnly?: true;
+  collect?: () => Promise<ProviderQuotaSnapshot>;
 }
 
 const vaultReader = (): VaultCaller => ({
@@ -236,10 +238,18 @@ export class ProviderQuotaService {
 
   private async collectAndPersist(accountKey?: string): Promise<ProviderQuotaSnapshot[]> {
     const allSources = await this.sources();
-    const sources = accountKey
+    const matched = accountKey
       ? allSources.filter((source) => source.accountKey === accountKey)
       : allSources;
-    if (accountKey && sources.length === 0) throw new Error(`账号不存在或已移除：${accountKey}`);
+    if (accountKey && matched.length === 0) throw new Error(`账号不存在或已移除：${accountKey}`);
+    // 推送型账号没有可取数的管控面：全量刷新时静默跳过，显式点名时明确拒绝而不是假装采过。
+    if (accountKey && matched.every((source) => source.pushOnly)) {
+      throw new Error(`该账号由采集端主动上报，平台无法触发刷新：${accountKey}`);
+    }
+    const sources = matched.filter(
+      (source): source is QuotaSource & { collect: () => Promise<ProviderQuotaSnapshot> } =>
+        !source.pushOnly && typeof source.collect === 'function',
+    );
     const snapshots = await Promise.all(sources.map((source) => source.collect()));
     await this.options.store.append(snapshots);
     this.lastRunAt = this.now().toISOString();
@@ -267,7 +277,31 @@ export class ProviderQuotaService {
   }
 
   private async sources(): Promise<QuotaSource[]> {
-    return [...this.volcengineSources(), ...(await this.codexSources())];
+    const [codex, claude] = await Promise.all([this.codexSources(), this.claudeSources()]);
+    return [...this.volcengineSources(), ...codex, ...claude];
+  }
+
+  /**
+   * Claude 订阅：账号不在平台配置里声明，以库中已有快照为准自动发现。
+   * 数据由 KY Agent（官方 Agent SDK 会话中带出的 rate limit）直接写入快照表。
+   */
+  private async claudeSources(): Promise<QuotaSource[]> {
+    const accounts = await this.options.store
+      .pushedAccounts('claude_subscription')
+      .catch((error) => {
+        this.options.logger.warn(`Claude 订阅账号发现失败：${errorMessage(error)}`);
+        return [] as Array<{ accountKey: string; accountLabel: string }>;
+      });
+    return accounts.map(({ accountKey }) => {
+      const email = accountKey.startsWith('claude:') ? accountKey.slice('claude:'.length) : '';
+      return {
+        accountKey,
+        pushOnly: true as const,
+        ...(email && /^[^\s@]+@[^\s@]+$/.test(email)
+          ? { expiryIdentity: `claude-email:${email.toLowerCase()}` }
+          : {}),
+      };
+    });
   }
 
   private async codexCredentialStates(): Promise<Map<string, ProviderQuotaCredentialState>> {

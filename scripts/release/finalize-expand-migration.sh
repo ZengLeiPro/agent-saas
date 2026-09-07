@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 Promotion 的生产互斥组内自动收尾；本脚本只读生产运行态并写入发布凭证，不执行 SQL。
+# 在 Promotion 的生产互斥组内自动收尾；本脚本只读生产运行态并写入发布凭证，仅执行只读数据库后置条件。
 set -euo pipefail
 mode="$(node scripts/release/promotion-finalization-mode.mjs \
   "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$GITHUB_RUN_ID")"
@@ -110,6 +110,9 @@ trap 'exit 143' TERM INT
 
 ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
 scp -i ~/.ssh/production_key \
+  "$RUNNER_TEMP/manifest.json" \
+  scripts/release/read-migration-postconditions.mjs \
+  scripts/release/migration-postconditions.mjs \
   scripts/release/artifact-lib.mjs \
   scripts/release/read-live-production-components.mjs \
   scripts/release/read-production-state.mjs \
@@ -153,11 +156,16 @@ run_guarded scp -i ~/.ssh/production_key \
 run_guarded curl -fsS --retry 10 \
   'https://api.agent.kaiyan.net/api/healthz/ready' \
   > "$RUNNER_TEMP/production-api-ready-initial.json"
+run_locked_ssh \
+  "sudo node '$remote/read-migration-postconditions.mjs' '$remote/manifest.json' /etc/agent-saas/config.json /opt/agent-saas-app/color/\$(cat /etc/agent-saas/active-color)/server production '$remote/database-initial.json'"
+run_guarded scp -i ~/.ssh/production_key \
+  "$ECS_USER@$ECS_HOST:$remote/database-initial.json" "$RUNNER_TEMP/database-initial.json"
 run_guarded node scripts/release/confirm-expand-migration.mjs \
   --manifest "$RUNNER_TEMP/manifest.json" \
   --attestations "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" \
   --live "$RUNNER_TEMP/production-live-initial.json" \
   --api-ready "$RUNNER_TEMP/production-api-ready-initial.json" \
+  --database "$RUNNER_TEMP/database-initial.json" \
   --output "$RUNNER_TEMP/migration-confirmation-initial.json"
 
 # completed 提交前在同一锁租约内重新读取；任一组件/API 漂移均 fail closed。
@@ -169,15 +177,20 @@ run_guarded scp -i ~/.ssh/production_key \
 run_guarded curl -fsS --retry 10 \
   'https://api.agent.kaiyan.net/api/healthz/ready' \
   > "$RUNNER_TEMP/production-api-ready.json"
+run_locked_ssh \
+  "sudo node '$remote/read-migration-postconditions.mjs' '$remote/manifest.json' /etc/agent-saas/config.json /opt/agent-saas-app/color/\$(cat /etc/agent-saas/active-color)/server production '$remote/database-final.json'"
+run_guarded scp -i ~/.ssh/production_key \
+  "$ECS_USER@$ECS_HOST:$remote/database-final.json" "$RUNNER_TEMP/database-final.json"
 run_guarded node scripts/release/confirm-expand-migration.mjs \
   --manifest "$RUNNER_TEMP/manifest.json" \
   --attestations "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" \
   --live "$RUNNER_TEMP/production-live.json" \
   --api-ready "$RUNNER_TEMP/production-api-ready.json" \
+  --database "$RUNNER_TEMP/database-final.json" \
   --output "$RUNNER_TEMP/migration-confirmation.json"
 diff -u \
-  <(jq -S 'del(.liveObservedAt,.confirmedAt)' "$RUNNER_TEMP/migration-confirmation-initial.json") \
-  <(jq -S 'del(.liveObservedAt,.confirmedAt)' "$RUNNER_TEMP/migration-confirmation.json")
+  <(jq -S 'del(.liveObservedAt,.confirmedAt,.databaseEvidence.observedAt)' "$RUNNER_TEMP/migration-confirmation-initial.json") \
+  <(jq -S 'del(.liveObservedAt,.confirmedAt,.databaseEvidence.observedAt)' "$RUNNER_TEMP/migration-confirmation.json")
 assert_lock
 
 confirmation_digest="sha256:$(sha256sum "$RUNNER_TEMP/migration-confirmation.json" | cut -d' ' -f1)"

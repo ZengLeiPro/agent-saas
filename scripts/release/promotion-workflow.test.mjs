@@ -1076,7 +1076,7 @@ test('expand confirmation runs automatically with the existing release-bound evi
     /run_guarded bash scripts\/release\/upload-github-release-asset-immutable\.sh/u,
   );
   assert.match(workflow, /run_guarded bash scripts\/release\/upload-oss-object-immutable\.sh/u);
-  assert.match(workflow, /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt\)/u);
+  assert.match(workflow, /diff -u[\s\S]*del\(\.liveObservedAt,\.confirmedAt,\.databaseEvidence\.observedAt\)/u);
   assert.match(workflow, /upload-oss-object-immutable\.sh[\s\S]*--state completed/u);
   assert.match(workflow, /promotion-finalization-mode\.mjs/u);
   assert.doesNotMatch(workflow, /--state completed[\s\S]*migration-confirmations\/confirmation-/u);

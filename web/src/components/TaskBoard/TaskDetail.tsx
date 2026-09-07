@@ -239,10 +239,15 @@ export function TaskDetail({
 
   const latestExecution = executions[0];
   const latestExecutionActive = Boolean(latestExecution && ACTIVE_EXECUTION_STATUSES.has(latestExecution.status));
+  const priorReviewActivity = Boolean(
+    currentTask?.status === "todo"
+    && latestExecution?.purpose === "review"
+    && latestExecution.sessionActivityActive,
+  );
   const executionActive = latestExecution
     ? latestExecutionActive
       || latestExecution.continuationActive === true
-      || latestExecution.sessionActivityActive === true
+      || (latestExecution.sessionActivityActive === true && !priorReviewActivity)
     : false;
   const executionStatusLabel = latestExecution?.sessionActivityActive && !latestExecutionActive
     ? "主 Run 已结束 · 后台仍在执行"
@@ -669,7 +674,7 @@ export function TaskDetail({
                   {watchLoading ? <LoaderCircle className="animate-spin" /> : watching ? <BellRing /> : <Bell />}
                   <span className="sr-only">{watching ? "已关注" : "关注"}</span>
                 </Button>
-                {executionActive && latestExecution?.sessionId ? (
+                {(executionActive || priorReviewActivity) && latestExecution?.sessionId ? (
                   <a href={`/chat/${encodeURIComponent(latestExecution.sessionId)}`} aria-label="打开当前执行会话" title="打开当前执行会话"
                     className="inline-flex items-center gap-1 rounded-md border border-primary/30 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/5">
                     打开会话<ExternalLink className="size-3" />

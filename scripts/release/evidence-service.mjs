@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { canonicalJson, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 import {
   RELEASE_EVIDENCE_SCHEMA_REVISION,
@@ -180,7 +182,15 @@ export function createEvidenceService({ root, readToken, writeToken, now = () =>
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const mainModuleUrl = (() => {
+  try {
+    return pathToFileURL(realpathSync(process.argv[1])).href;
+  } catch {
+    return '';
+  }
+})();
+
+if (import.meta.url === mainModuleUrl) {
   const root = process.env.RELEASE_EVIDENCE_ROOT;
   const readTokenFile = process.env.RELEASE_EVIDENCE_READ_TOKEN_FILE;
   const writeTokenFile = process.env.RELEASE_EVIDENCE_WRITE_TOKEN_FILE;

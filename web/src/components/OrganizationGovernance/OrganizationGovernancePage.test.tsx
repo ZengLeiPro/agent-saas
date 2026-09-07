@@ -137,6 +137,29 @@ describe("OrganizationGovernancePage", () => {
     expect(screen.getAllByText("启用").length).toBeGreaterThan(0);
     expect(screen.queryByText("active")).toBeNull();
     expect(screen.queryByRole("switch")).not.toBeTruthy();
+    expect(await screen.findByRole("button", { name: "重置 member-1 的密码" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重置 owner-1 的密码" })).toBeNull();
+  });
+
+  it("真实治理成员列表可通过专用接口重置普通成员密码", async () => {
+    mocks.listMemberships.mockResolvedValue({ memberships: [
+      { userId: "member-1", persona: "member", isOwner: false, status: "active", version: 1, allowedActions: [], directoryProfile: { username: "member", displayName: "成员一", accountStatus: "active" } },
+    ] });
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200,
+      headers: { "Content-Type": "application/json" } }));
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.list", { orgId: "tenant-a" })} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "重置 成员一 的密码" }));
+    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "new-pass-1" } });
+    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "new-pass-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认重置" }));
+
+    await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith("/api/auth/users/member-1/password", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword: "new-pass-1" }),
+    }));
+    expect((await screen.findByRole("status")).textContent).toBe("密码已重置");
   });
 
   it("管理员在成员页通过治理 API 新增成员，组织范围锁定并刷新列表", async () => {
@@ -263,6 +286,24 @@ describe("OrganizationGovernancePage", () => {
     await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith("/api/auth/users/member-1", expect.objectContaining({
       method: "PATCH", body: JSON.stringify({ debugMode: true }),
     })));
+  });
+
+  it("组织管理员查看其他管理员详情时不展示重置密码操作", async () => {
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify({ entries: [], total: 0 }), { status: 200,
+      headers: { "Content-Type": "application/json" } }));
+    mocks.getMembershipDetails.mockResolvedValue({
+      profile: { userId: "admin-2", username: "peer-admin", displayName: "其他管理员", accountStatus: "active", dingtalkBound: false, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" },
+      identity: { userId: "admin-2", persona: "org_admin", isOwner: false, status: "active", version: 1, allowedActions: [] },
+      accessSummary: { effectivePersona: "org_admin", owner: false, accountStatus: "active", decision: "eligible", why: [] },
+      assignments: [], usagePolicy: { status: "unavailable" }, recentAudit: { events: [], coverage: "recent_membership_endpoint_events", limit: 100 },
+      snapshot: { membershipVersion: 1, generatedAt: "2099-08-10T10:00:00.000Z" },
+    });
+    render(<OrganizationMembersPage tenantId="tenant-a" route={governanceRoute("organization.members.member", {
+      orgId: "tenant-a", entityId: "admin-2", tab: "security-audit",
+    })} />);
+
+    expect(await screen.findByText("账号 peer-admin · 密码不会在页面或日志中回显")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重置密码" })).toBeNull();
   });
 
   it("成员资源指派只渲染后端聚合，不在前端枚举推导", async () => {

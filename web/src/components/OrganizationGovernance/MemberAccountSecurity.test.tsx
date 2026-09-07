@@ -24,6 +24,7 @@ function renderSecurity() {
           userId="user-1"
           username="member"
           displayName="成员一"
+          canResetPassword
         />
       )}
     </SettingsDirtyBoundary>,
@@ -46,23 +47,23 @@ describe('MemberAccountSecurity', () => {
     );
   });
 
-  it('校验两次密码并只向目标成员提交 password 字段', async () => {
+  it('校验两次密码并调用目标成员的专用重置接口', async () => {
     renderSecurity();
     await screen.findByText('暂无登录记录');
     vi.mocked(authFetch)
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
       .mockResolvedValueOnce(jsonResponse({ entries: [], total: 0 }));
 
-    fireEvent.click(screen.getByRole('button', { name: '重置密码' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重置密码' }));
     fireEvent.change(screen.getByLabelText('新密码'), { target: { value: 'new-pass-1' } });
     fireEvent.change(screen.getByLabelText('确认新密码'), { target: { value: 'new-pass-1' } });
     fireEvent.click(screen.getByRole('button', { name: '确认重置' }));
 
     await waitFor(() =>
-      expect(authFetch).toHaveBeenCalledWith('/api/auth/users/user-1', {
+      expect(authFetch).toHaveBeenCalledWith('/api/auth/users/user-1/password', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: 'new-pass-1' }),
+        body: JSON.stringify({ newPassword: 'new-pass-1' }),
       }),
     );
     expect((await screen.findByRole('status')).textContent).toBe('密码已重置');

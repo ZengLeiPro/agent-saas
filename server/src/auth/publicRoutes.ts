@@ -12,6 +12,8 @@ const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { method: 'POST', path: '/auth/login' },
   { method: 'POST', path: '/auth/sms/send-code' },
   { method: 'POST', path: '/auth/sms/login' },
+  { method: 'POST', path: '/auth/password/reset/send-code' },
+  { method: 'POST', path: '/auth/password/reset' },
   // M30-01 logout verifies bearer inside the router so replay remains idempotent after fencing.
   { method: 'POST', path: '/auth/logout' },
   // 自助注册试用（官网联动）：status/send-code/register 均免登录；

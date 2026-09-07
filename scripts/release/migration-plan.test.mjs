@@ -12,8 +12,10 @@ import {
   PRODUCTION_STARTUP_SCHEMA_ROOTS,
 } from './migration-plan.mjs';
 import { migrationSourceDigest, MIGRATION_REVIEWS_PATH } from './migration-reviews.mjs';
+import { releaseMigrationPlanSchema } from './release-evidence-schema.mjs';
 const BASELINE = 'a'.repeat(40);
-const TARGET = 'b'.repeat(40); const PATH = 'server/src/data/db/migrations.ts';
+const TARGET = 'b'.repeat(40);
+const PATH = 'server/src/data/db/migrations.ts';
 function standaloneStartupSource(statement) {
   return `export async function init(client) { await client.query(${JSON.stringify(statement)}); }`;
 }
@@ -2942,6 +2944,7 @@ test('完全合规的白名单 ADD COLUMN 变更可以随 PR 进入，相位是 
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.equal(result.migrationPlan.phase, 'expand');
   assert.equal(result.migrationPlan.confirmation, 'required_after_observation');
+  assert.deepEqual(releaseMigrationPlanSchema.parse(result.migrationPlan), result.migrationPlan);
 });
 
 test('已审核登记为 expand 的迁移随 PR 进入时 ok，登记为 contract 的仍然阻断', () => {

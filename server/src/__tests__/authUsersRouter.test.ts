@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { JwtPayload } from "../auth/types.js";
+import { AuthEpochAuthority } from "../auth/authEpochAuthority.js";
 import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { TenantStore } from "../data/tenants/store.js";
@@ -42,6 +43,9 @@ interface TestRig {
   sender: CaptureSender;
   tenantChanges: UserInfo[];
   userDeletes: UserInfo[];
+  fencedUserIds: string[];
+  authEpochAuthority: AuthEpochAuthority;
+  membershipPersonas: Map<string, "member" | "org_admin">;
   setCaller(user: UserInfo): void;
   request(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
@@ -115,9 +119,25 @@ async function makeTestRig(): Promise<TestRig> {
     phone: "13800001111",
     phoneVerifiedAt: new Date().toISOString(),
   });
+  const membershipPersonas = new Map<string, "member" | "org_admin">([
+    [wainAdminA.id, "org_admin"],
+    [wainAdminB.id, "org_admin"],
+    [wainUser.id, "member"],
+  ]);
+  const membershipStore = {
+    async getMembership(tenantId: string, userId: string) {
+      const persona = membershipPersonas.get(userId);
+      if (!persona) return null;
+      const now = new Date().toISOString();
+      return { tenantId, userId, persona, isOwner: false, status: "active" as const,
+        source: "governance" as const, version: 1, createdAt: now, createdBy: "system", updatedAt: now, updatedBy: "system" };
+    },
+  };
   const sender = new CaptureSender();
   const tenantChanges: UserInfo[] = [];
   const userDeletes: UserInfo[] = [];
+  const fencedUserIds: string[] = [];
+  const authEpochAuthority = new AuthEpochAuthority(join(tmpRoot, "auth-epochs.json"));
 
   const app = express();
   app.use(express.json());
@@ -138,6 +158,9 @@ async function makeTestRig(): Promise<TestRig> {
       agentCwd: join(tmpRoot, "workspaces"),
       sharedDir: join(tmpRoot, "shared"),
       loginCodeService: new VerificationCodeService({ sender, cooldownMs: 0 }),
+      membershipStore,
+      authEpochAuthority,
+      onAuthFenced: async userId => { fencedUserIds.push(userId); },
       onUserTenantChanging: async user => { tenantChanges.push({ ...user }); },
       onUserDeleting: async user => { userDeletes.push({ ...user }); },
     }),
@@ -157,6 +180,9 @@ async function makeTestRig(): Promise<TestRig> {
     sender,
     tenantChanges,
     userDeletes,
+    fencedUserIds,
+    authEpochAuthority,
+    membershipPersonas,
     setCaller(user) {
       currentCaller = asCaller(user);
     },
@@ -456,14 +482,82 @@ describe("auth users router admin boundaries", () => {
     expect(target?.phone).toBe("13912345678");
   });
 
-  it("平台管理员无需独立 capability 即可重置密码", async () => {
+  it("平台管理员通过专用接口重置密码并撤销旧登录态", async () => {
     h.setCaller({ ...h.users.platformAdmin, platformCapabilities: [] });
+    const oldBinding = h.authEpochAuthority.issueLogin(h.users.wainUser.id);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword: "newpass123" }),
+    });
+    expect(res.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "password123")).resolves.toBeNull();
+    await expect(h.userStore.verifyPassword("wain_user", "newpass123")).resolves.toBeTruthy();
+    expect(h.authEpochAuthority.validates(h.users.wainUser.id, oldBinding)).toBe(false);
+    expect(h.fencedUserIds).toContain(h.users.wainUser.id);
+  });
+
+  it("组织管理员不能借 legacy role 投影延迟重置其他 canonical 管理员", async () => {
+    h.membershipPersonas.set(h.users.wainUser.id, "org_admin");
+    h.setCaller(h.users.wainAdminA);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword: "newpass123" }),
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: "组织管理员不能管理其他管理员" });
+    await expect(h.userStore.verifyPassword("wain_user", "password123")).resolves.toBeTruthy();
+  });
+
+  it("组织管理员不能通过兼容通用 PATCH 绕过 canonical 管理员保护", async () => {
+    h.membershipPersonas.set(h.users.wainUser.id, "org_admin");
+    h.setCaller(h.users.wainAdminA);
     const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: "newpass123" }),
     });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: "组织管理员不能管理其他管理员" });
+    await expect(h.userStore.verifyPassword("wain_user", "password123")).resolves.toBeTruthy();
+    await expect(h.userStore.verifyPassword("wain_user", "newpass123")).resolves.toBeNull();
+  });
+
+  it("组织管理员仍可通过兼容通用 PATCH 重置普通成员密码", async () => {
+    h.setCaller(h.users.wainAdminA);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "memberpass123" }),
+    });
     expect(res.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "memberpass123")).resolves.toBeTruthy();
+  });
+
+  it("平台管理员仍可通过兼容通用 PATCH 重置 canonical 管理员密码", async () => {
+    h.membershipPersonas.set(h.users.wainUser.id, "org_admin");
+    h.setCaller(h.users.platformAdmin);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "adminpass123" }),
+    });
+    expect(res.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "adminpass123")).resolves.toBeTruthy();
+  });
+
+  it("兼容通用用户更新接口重置密码时同样撤销旧登录态", async () => {
+    h.setCaller(h.users.platformAdmin);
+    const oldBinding = h.authEpochAuthority.issueLogin(h.users.wainUser.id);
+    const res = await h.request(`/api/auth/users/${h.users.wainUser.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "compatpass123" }),
+    });
+    expect(res.status).toBe(200);
+    expect(h.authEpochAuthority.validates(h.users.wainUser.id, oldBinding)).toBe(false);
+    expect(h.fencedUserIds).toContain(h.users.wainUser.id);
   });
 
   it("兼容 capability 字段仍校验 billing.adjust 双限额，但不影响实际权限", async () => {
@@ -494,6 +588,92 @@ describe("auth users router admin boundaries", () => {
         billingMaxCreditsPerDay: 2_000,
       },
     });
+  });
+
+  it("验证码通过前不暴露租户密码策略，策略失败也不消费有效验证码", async () => {
+    await h.tenantStore.updateSettings("wain", { security: { passwordMinLength: 12 } });
+    const reset = (phone: string, code: string, newPassword: string) => h.request("/api/auth/password/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone, code, newPassword }),
+    });
+
+    const unknown = await reset("13700000000", "000000", "123456");
+    const protectedAccount = await reset("13800001111", "000000", "123456");
+    expect(protectedAccount.status).toBe(unknown.status);
+    await expect(protectedAccount.json()).resolves.toEqual(await unknown.json());
+
+    expect((await h.request("/api/auth/password/reset/send-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13800001111" }),
+    })).status).toBe(200);
+    const code = h.sender.lastCode;
+    const tooShort = await reset("13800001111", code, "123456");
+    expect(tooShort.status).toBe(400);
+    await expect(tooShort.json()).resolves.toMatchObject({ error: "新密码至少 12 个字符" });
+
+    const accepted = await reset("13800001111", code, "long-password-123");
+    expect(accepted.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "long-password-123")).resolves.toBeTruthy();
+  });
+
+  it("用户通过已验证手机号找回密码，验证码只能使用一次且旧登录态失效", async () => {
+    const oldBinding = h.authEpochAuthority.issueLogin(h.users.wainUser.id);
+    const send = await h.request("/api/auth/password/reset/send-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13800001111" }),
+    });
+    expect(send.status).toBe(200);
+
+    const wrongPurpose = await h.request("/api/auth/sms/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: "13800001111", code: h.sender.lastCode }),
+    });
+    expect(wrongPurpose.status).toBe(400);
+
+    const reset = await h.request("/api/auth/password/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: "13800001111",
+        code: h.sender.lastCode,
+        newPassword: "recovered123",
+      }),
+    });
+    expect(reset.status).toBe(200);
+    await expect(h.userStore.verifyPassword("wain_user", "password123")).resolves.toBeNull();
+    await expect(h.userStore.verifyPassword("wain_user", "recovered123")).resolves.toBeTruthy();
+    expect(h.authEpochAuthority.validates(h.users.wainUser.id, oldBinding)).toBe(false);
+
+    const replay = await h.request("/api/auth/password/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: "13800001111",
+        code: h.sender.lastCode,
+        newPassword: "another123",
+      }),
+    });
+    expect(replay.status).toBe(400);
+  });
+
+  it("找回密码发送接口不泄露手机号注册状态，已知和未知号码同样限频", async () => {
+    const requestCode = (phone: string) => h.request("/api/auth/password/reset/send-code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone }),
+    });
+
+    const unknown = await requestCode("13700000000");
+    expect(unknown.status).toBe(200);
+    await expect(unknown.json()).resolves.toEqual({ ok: true });
+    expect((await requestCode("13700000000")).status).toBe(429);
+
+    expect((await requestCode("13800001111")).status).toBe(200);
+    expect((await requestCode("13800001111")).status).toBe(429);
   });
 
   it("短信验证码登录签发 token，验证码只能消费一次", async () => {

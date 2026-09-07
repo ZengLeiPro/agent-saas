@@ -490,6 +490,14 @@ export class UserStore {
     await this.persist();
   }
 
+  async resetPassword(userId: string, newPassword: string): Promise<void> {
+    const user = this.findById(userId);
+    if (!user) throw new Error("User not found");
+    user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    user.updatedAt = new Date().toISOString();
+    await this.persist();
+  }
+
   async changePassword(
     userId: string,
     oldPassword: string,

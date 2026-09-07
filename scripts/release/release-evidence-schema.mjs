@@ -23,6 +23,67 @@ const ociRepositorySchema = z
   .max(512)
   .regex(OCI_REPOSITORY_PATTERN, 'Expected a valid OCI repository');
 
+export const migrationPostconditionSchema = z
+  .object({
+    id: z.string().regex(/^[a-zA-Z0-9_-]+$/u),
+    description: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim().length > 0),
+    configPath: z.string().regex(/^[a-zA-Z][a-zA-Z0-9.]*$/u),
+    sql: z.string().regex(/^\s*(?:SELECT|WITH)\b/iu),
+    params: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+    sourcePath: z.string().min(1),
+    sourceDigest: sha256DigestSchema,
+  })
+  .strict();
+
+export const releaseMigrationPlanSchema = z
+  .object({
+    phase: z.enum(['none', 'expand']),
+    planDigest: sha256DigestSchema,
+    confirmation: z.enum(['not_required', 'required_after_observation']),
+    contract: z.literal('separate_release'),
+    postconditions: z.array(migrationPostconditionSchema).min(1).optional(),
+    postconditionsDigest: sha256DigestSchema.optional(),
+  })
+  .strict()
+  .superRefine((plan, ctx) => {
+    const hasPostconditions = plan.postconditions !== undefined;
+    const hasDigest = plan.postconditionsDigest !== undefined;
+    if (hasPostconditions !== hasDigest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['postconditions'],
+        message: 'Migration postconditions and their digest must appear together',
+      });
+    }
+    if (plan.phase === 'expand' && !hasPostconditions) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['postconditions'],
+        message: 'Expand migration requires bound database postconditions',
+      });
+    }
+    if (plan.phase === 'none' && hasPostconditions) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['postconditions'],
+        message: 'No-op migration must not contain database postconditions',
+      });
+    }
+    if (
+      hasPostconditions &&
+      digestBuffer(canonicalJson(plan.postconditions)) !== plan.postconditionsDigest
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['postconditionsDigest'],
+        message: 'Migration postconditions digest does not match its canonical body',
+      });
+    }
+  });
+
 /**
  * TASK-318：只读脱敏配置身份摘要（来自活动色私有运行态快照；strict 校验
  * 防止旧 schema、缺字段或额外字段混入 evidence）。
@@ -170,8 +231,7 @@ export const configIdentitySummarySchema = z
       value.observed
     ) {
       const credentialBindingMissing =
-        value.observed.secretRefCount > 0 &&
-        value.expected.credentialVersionDigest === undefined;
+        value.observed.secretRefCount > 0 && value.expected.credentialVersionDigest === undefined;
       const credentialDiffers =
         value.expected.credentialVersionDigest !== undefined &&
         value.expected.credentialVersionDigest !== value.observed.credentialVersionDigest;
@@ -340,14 +400,7 @@ export const releaseEvidenceSchema = z
     configIdentity: configIdentitySummarySchema.optional(),
     baselineArtifacts: baselineArtifactsSchema,
     affectedComponents: z.array(releaseComponentSchema).max(4),
-    migrationPlan: z
-      .object({
-        phase: z.enum(['none', 'expand']),
-        planDigest: sha256DigestSchema,
-        confirmation: z.enum(['not_required', 'required_after_observation']),
-        contract: z.literal('separate_release'),
-      })
-      .strict(),
+    migrationPlan: releaseMigrationPlanSchema,
   })
   .strict()
   .superRefine((evidence, ctx) => {

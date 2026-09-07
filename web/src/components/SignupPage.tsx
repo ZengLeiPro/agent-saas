@@ -16,7 +16,7 @@ import {
   AUTH_CODE_BTN_CLASS,
   AUTH_INPUT_CLASS,
   AUTH_SUBMIT_CLASS,
-} from "@/components/LoginPage";
+} from "@/components/authStyles";
 import { TOKEN_KEY } from "@/lib/constants";
 import { writeTabScopedAuth } from "@/platform/tabScopedAuthStorage";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";

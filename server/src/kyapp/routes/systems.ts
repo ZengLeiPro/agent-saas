@@ -2,8 +2,7 @@
  * WP2a 系统目录与发布门禁路由（规范 §8.1，全部 `requirePlatformAdmin`）。
  *
  * `versions` 上传 → `validateManifest` → JCS digest → draft（同 digest 幂等）；
- * 语义 diff 命中即 `reviewRequired=true` 并落 `reviewReasons`；
- * `review` 由**非发布者**做；`publish` 门禁未过一律 409 `review_required`；
+ * 语义 diff 作为发布提示保留；平台管理员可直接发布，无需独立复核。
  * 模型端工具注册 dry-run 未配置时记 `skipped`（不算通过），原样写进响应的 `gate`。
  */
 import type { PgEntitlementStore } from '../../data/entitlements/store.js';
@@ -214,18 +213,6 @@ export function createKyAppSystemsRouter(options: KyAppSystemRoutesOptions): Rou
       try {
         const version = await options.systems.getVersion(systemId.data, digest.data);
         if (!version) return sendKyAppError(req, res, 'not_found', '未知系统版本');
-        if (version.reviewStatus === 'pending') {
-          return res.status(409).json({
-            ok: false,
-            error: {
-              code: 'review_required',
-              retryable: false,
-              message: '该版本触发了语义 diff 门禁，必须由非发布者复核后才能发布',
-              requestId: req.header('x-ky-request-id') ?? '',
-            },
-            reasons: version.reviewReasons,
-          });
-        }
         const dryRun = await runKyAppToolRegistrationDryRun(
           version.manifest as unknown as Manifest,
           options.toolRegistrationDryRun,

@@ -133,9 +133,6 @@ export class MemoryKyAppSystemStore {
     if (version.reviewStatus === 'not_required') {
       throw new KyAppSystemConflictError('该版本未触发人工复核');
     }
-    if (version.createdBy === input.reviewer) {
-      throw new KyAppSystemConflictError('复核人必须不同于版本登记人');
-    }
     const updated: KyAppSystemVersion = {
       ...version,
       reviewStatus: 'approved',
@@ -157,13 +154,11 @@ export class MemoryKyAppSystemStore {
     }
     if (definition.status === 'retired') throw new KyAppSystemConflictError('系统已退役，不可发布');
     const version = this.requireVersion(input.systemId, input.digest);
-    if (version.reviewStatus === 'pending') {
-      throw new KyAppSystemConflictError('该版本仍待非发布者复核，不能发布');
-    }
     if (version.status === 'retired') throw new KyAppSystemConflictError('已退役版本不能发布');
     const publishedVersion: KyAppSystemVersion = {
       ...version,
       status: 'published',
+      reviewStatus: version.reviewStatus === 'pending' ? 'not_required' : version.reviewStatus,
       publishedAt: ISO(),
       publishedBy: input.actor,
     };

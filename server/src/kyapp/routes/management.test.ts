@@ -4,6 +4,8 @@ import {
   createKyAppTestRig,
   seedPublishedInstallation,
   ORG_ADMIN,
+  PLATFORM_ADMIN,
+  buildManifest,
   MEMBER,
   OTHER_TENANT_ADMIN,
   TEST_TENANT,
@@ -73,5 +75,60 @@ describe('业务系统组织安装 HTTP 权限', () => {
           .status,
       ).toBe(403);
     }
+  });
+});
+
+describe('管理员直接发布系统版本', () => {
+  it('首版无需复核；成员和组织管理员仍无权发布', async () => {
+    const app = await createKyAppTestRig({ toolRegistrationDryRun: async () => {} });
+    rigs.push(app);
+    app.setUser(PLATFORM_ADMIN);
+    const registered = await app.request(
+      `/api/app-contract/v1/systems/${TEST_SYSTEM}/versions`,
+      json('POST', { name: '演示', manifest: buildManifest() }),
+    );
+    expect(registered.status).toBe(201);
+    const data = await registered.json();
+    expect(data.version.reviewStatus).toBe('not_required');
+    const path = `/api/app-contract/v1/systems/${TEST_SYSTEM}/versions/${data.version.digest}/publish`;
+    for (const actor of [MEMBER, ORG_ADMIN]) {
+      app.setUser(actor);
+      expect(
+        (await app.request(path, json('POST', { expectedVersion: data.definition.version })))
+          .status,
+      ).toBe(403);
+    }
+    app.setUser(PLATFORM_ADMIN);
+    const result = await app.request(
+      path,
+      json('POST', { expectedVersion: data.definition.version }),
+    );
+    expect(result.status).toBe(200);
+    expect((await result.json()).gate.toolRegistrationDryRun.status).toBe('passed');
+    expect(
+      (await app.request(path, json('POST', { expectedVersion: data.definition.version }))).status,
+    ).toBe(409);
+  });
+  it('工具注册失败仍阻止发布', async () => {
+    const app = await createKyAppTestRig({
+      toolRegistrationDryRun: async () => {
+        throw new Error('注册失败');
+      },
+    });
+    rigs.push(app);
+    app.setUser(PLATFORM_ADMIN);
+    const result = await app.request(
+      `/api/app-contract/v1/systems/${TEST_SYSTEM}/versions`,
+      json('POST', { name: '演示', manifest: buildManifest() }),
+    );
+    const data = await result.json();
+    expect(
+      (
+        await app.request(
+          `/api/app-contract/v1/systems/${TEST_SYSTEM}/versions/${data.version.digest}/publish`,
+          json('POST', { expectedVersion: data.definition.version }),
+        )
+      ).status,
+    ).toBe(409);
   });
 });

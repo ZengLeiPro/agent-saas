@@ -227,9 +227,6 @@ export class PgKyAppSystemStore implements KyAppSystemStore {
       if (version.reviewStatus === 'not_required') {
         throw new KyAppSystemConflictError('该版本未触发人工复核');
       }
-      if (version.createdBy === input.reviewer) {
-        throw new KyAppSystemConflictError('复核人必须不同于版本登记人');
-      }
       const updated = await client.query(
         `UPDATE ${this.versionsTable}
          SET review_status='approved', reviewed_by=$3, reviewed_at=NOW()
@@ -242,7 +239,7 @@ export class PgKyAppSystemStore implements KyAppSystemStore {
 
   /**
    * 发布版本：乐观锁 CAS（`expectedVersion` 必须等于定义当前 `version`），
-   * 待复核的版本一律拒绝，通过后定义状态机切到 `published` 并记录 publishedDigest。
+   * 兼容历史待复核版本，发布后定义状态机切到 `published` 并记录 publishedDigest。
    */
   async publishVersion(input: PublishKyAppVersionInput): Promise<{
     definition: KyAppSystemDefinition;
@@ -267,14 +264,12 @@ export class PgKyAppSystemStore implements KyAppSystemStore {
         throw new KyAppSystemConflictError(`系统 ${input.systemId} 当前状态不可发布`);
       }
       const version = await this.lockVersion(client, input.systemId, input.digest);
-      if (version.reviewStatus === 'pending') {
-        throw new KyAppSystemConflictError('该版本仍待非发布者复核，不能发布');
-      }
       if (version.status === 'retired') throw new KyAppSystemConflictError('已退役版本不能发布');
 
       const publishedVersion = await client.query(
         `UPDATE ${this.versionsTable}
-         SET status='published', published_at=NOW(), published_by=$3
+         SET status='published', published_at=NOW(), published_by=$3,
+             review_status=CASE WHEN review_status='pending' THEN 'not_required' ELSE review_status END
          WHERE system_id=$1 AND digest=$2 RETURNING *`,
         [input.systemId, input.digest, input.actor],
       );

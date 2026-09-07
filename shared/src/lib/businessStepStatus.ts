@@ -26,7 +26,10 @@ export interface BusinessStepStatusMeta {
  * 「已完成 + outcome.tone=fail」优先判为「完成结果异常」：干净的绿勾不允许
  * 掩盖一次业务上失败的执行。
  */
-export function todoStatusMeta(todo: TodoItem): BusinessStepStatusMeta {
+export function todoStatusMeta(todo: TodoItem, planClosed = false): BusinessStepStatusMeta {
+  if (isEndedWithoutTerminal(todo, planClosed)) {
+    return { label: '已结束', tone: 'neutral', icon: 'circle', spin: false };
+  }
   if (todo.status === 'completed' && todo.outcome?.tone === 'fail') {
     return { label: '完成结果异常', tone: 'danger', icon: 'x', spin: false };
   }
@@ -42,7 +45,7 @@ export function todoStatusMeta(todo: TodoItem): BusinessStepStatusMeta {
     case 'failed':
       return { label: '失败', tone: 'danger', icon: 'x', spin: false };
     default:
-      return { label: '待处理', tone: 'neutral', icon: 'circle', spin: false };
+      return { label: '待执行', tone: 'neutral', icon: 'circle', spin: false };
   }
 }
 
@@ -102,7 +105,30 @@ export function isEndedWithoutTerminal(todo: TodoItem, planClosed?: boolean): bo
 
 /** 无障碍朗读用的步骤状态短语。 */
 export function todoAccessibleStatus(todo: TodoItem, planClosed?: boolean): string {
-  return isEndedWithoutTerminal(todo, planClosed) ? '已结束' : todoStatusMeta(todo).label;
+  return todoStatusMeta(todo, planClosed).label;
+}
+
+/** 结构化结果缺失不等于没有执行；只陈述已知状态，不推断成功或生成业务结论。 */
+export function businessStepResultPlaceholder(
+  todo: TodoItem,
+  planClosed = false,
+  hasProcess = false,
+): string {
+  if (isEndedWithoutTerminal(todo, planClosed)) return '本轮执行已结束，步骤状态未更新';
+  switch (todo.status) {
+    case 'pending':
+      return hasProcess ? '已有过程记录，步骤状态待更新' : '待执行';
+    case 'in_progress':
+      return hasProcess ? '已有过程记录，尚未形成结论' : todo.activeForm || '执行中，尚未形成结论';
+    case 'waiting':
+      return '等待中，尚未提供等待原因';
+    case 'blocked':
+      return '执行受阻，尚未提供原因';
+    case 'failed':
+      return '执行失败，尚未提供结果说明';
+    case 'completed':
+      return '已完成，未提供步骤摘要';
+  }
 }
 
 export type { TodoStatus };

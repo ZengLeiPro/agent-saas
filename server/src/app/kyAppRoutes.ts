@@ -112,6 +112,7 @@ export function registerKyAppRoutes(
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppInstallationsRouter({
+      ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
       systems: assembly.systems,
       management,
       ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),

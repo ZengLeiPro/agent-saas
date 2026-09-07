@@ -1,3 +1,5 @@
+import type { GovernanceAuditStore } from '../../data/governance-audit/types.js';
+import { recordGovernanceIntent, recordGovernanceOutcome } from '../../data/governance-audit/recorder.js';
 /**
  * WP2a 安装实例路由（规范 §3.2、§3.6、§8.1、§8.4）。
  *
@@ -48,6 +50,7 @@ export interface KyAppInstallationRoutesOptions {
   systems: PgKyAppSystemStore;
   management?: KyAppManagementQueries;
   entitlements?: PgEntitlementStore;
+  audit?: GovernanceAuditStore;
   installations: KyAppInstallationService;
   credentials: KyAppCredentialManager;
   runtimeStore: PgKyAppInstallationRuntimeStore;
@@ -59,7 +62,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
   router.get('/installations', async (req, res) => {
     try {
       const tenantId = managementTenant(req.user, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
-      const query = z.object({ systemId: z.string().optional(), status: z.enum(['pending','enabled','disabled','deleted']).optional(), cursor: z.string().max(1024).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(req.query);
+      const query = z.object({ systemId: z.string().optional(), status: z.enum(['pending','enabled','disabled','deleted']).optional(), signal: z.enum(['outcome_unknown','rate_limited','upstream_unavailable']).optional(), cursor: z.string().max(1024).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(req.query);
       if (!query.success) return sendKyAppError(req, res, 'invalid_input', '分页或筛选参数非法');
       if (query.data.cursor) {
         try {
@@ -119,8 +122,19 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
     const iid = idSchema.safeParse(req.params.iid);
     if (!iid.success) return sendKyAppError(req, res, 'invalid_input', 'iid 非法');
     try {
-      await options.installations.require(iid.data);
-      const ticket = await options.credentials.issue({ installationId: iid.data });
+      const installation = await options.installations.require(iid.data);
+      const intent = await recordGovernanceIntent(options.audit, governanceActorOf(req.user!), {
+        action: 'ky_app.installation.credential.issue', targetType: 'system_installation', targetId: iid.data,
+        targetTenantId: installation.tenantId, purpose: 'service_access_rotation', metadata: {},
+      });
+      let ticket;
+      try {
+        ticket = await options.credentials.issue({ installationId: iid.data });
+        await recordGovernanceOutcome(options.audit!, intent, 'succeeded', { metadata: { credentialId: ticket.credentialId } });
+      } catch (error) {
+        await recordGovernanceOutcome(options.audit!, intent, 'failed', { metadata: {} }).catch(() => undefined);
+        throw error;
+      }
       // 明文一律不在这里返回；只给一次性领取票据与生命周期时间点。
       res.status(201).json({ credential: ticket });
     } catch (error) {
@@ -309,6 +323,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
               publishedDigest: definition.publishedDigest,
             }
           : null,
+        domainVerification: installation.domainVerificationToken ? { recordName: `_ky-app-verify.${new URL(installation.baseUrl).hostname}`, recordValue: installation.domainVerificationToken } : null,
         ...summary,
         upgrade: { currentDigest: installation.registeredDigest, publishedDigest: definition?.publishedDigest ?? null, observedDigest: summary?.observedDigest ?? null, canSwitch: isPlatformAdmin(req.user) && installation.status !== 'deleted' && Boolean(summary?.ready && summary.observedDigest === definition?.publishedDigest && summary.observedDigest !== installation.registeredDigest) },
         manifest: version?.manifest ?? null,

@@ -12,6 +12,7 @@ export interface InstallationFilter {
   tenantId?: string;
   systemId?: string;
   status?: string;
+  signal?: string;
   cursor?: string;
   limit: number;
 }
@@ -141,6 +142,10 @@ export class KyAppManagementQueries {
         params.push(value);
         where.push(`i.${column}=$${params.length}`);
       }
+    }
+    if (filter.signal) {
+      params.push(filter.signal);
+      where.push(this.eventsTable ? `EXISTS (SELECT 1 FROM ${this.eventsTable} signal WHERE signal.tenant_id=i.tenant_id AND signal.event_type='tool_audit' AND signal.event_json->>'installationId'=i.installation_id AND signal.event_json->>'errorCode'=$${params.length} AND signal.timestamp >= NOW()-INTERVAL '24 hours')` : 'FALSE');
     }
     if (filter.cursor) {
       const cursor = JSON.parse(Buffer.from(filter.cursor, 'base64url').toString()) as {

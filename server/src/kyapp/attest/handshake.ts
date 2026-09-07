@@ -68,6 +68,7 @@ export interface KyAppHandshakeServiceOptions {
   nonces: KyAppNonceStore;
   credentials: KyAppCredentialManager;
   issuer: KyAppSatIssuer;
+  canAccessInstallation(installation: KyAppInstallation, user: KyAppShellUser): Promise<boolean>;
   onSecurityEvent?: KyAppSecurityEventSink;
   now?: () => number;
   /** 缓存上限，防止异常放大导致内存无界增长。 */
@@ -75,6 +76,7 @@ export interface KyAppHandshakeServiceOptions {
 }
 
 interface CachedHandshake {
+  binding: string;
   attestationSha256: string;
   result: KyAppHandshakeResult;
   expiresAt: number;
@@ -113,7 +115,7 @@ export class KyAppHandshakeService {
   }): Promise<{ nonce: string; expiresAt: string }> {
     const installation = await this.requireUsableInstallation(
       input.installationId,
-      input.user.tenantId,
+      input.user,
     );
     const nonce = randomBytes(32).toString('base64url');
     const expiresAt = new Date(this.now() + KY_APP_NONCE_TTL_MS);
@@ -136,9 +138,12 @@ export class KyAppHandshakeService {
     user: KyAppShellUser;
   }): Promise<KyAppHandshakeResult> {
     this.pruneCache();
+    const installation = await this.requireUsableInstallation(input.installationId, input.user);
+    const cacheBinding = JSON.stringify([input.installationId, input.user.tenantId, input.user.userId, input.user.sessionId, input.user.authBinding]);
     const attestationSha256 = sha256(input.attestation);
     const cached = this.cache.get(input.nonce);
     if (cached) {
+      if (cached.binding !== cacheBinding) throw new KyAppHandshakeError('握手缓存不属于当前用户与会话', 'installation_forbidden');
       if (cached.attestationSha256 === attestationSha256) return cached.result;
       this.recordSecurityEvent(
         'attestation_mismatch',
@@ -174,10 +179,6 @@ export class KyAppHandshakeService {
       throw new KyAppHandshakeError('握手 nonce 与当前会话不匹配', 'nonce_binding_mismatch');
     }
 
-    const installation = await this.requireUsableInstallation(
-      input.installationId,
-      input.user.tenantId,
-    );
     const keys = await this.options.credentials.listAcceptableInstallationKeys(
       input.installationId,
     );
@@ -202,6 +203,7 @@ export class KyAppHandshakeService {
 
     const result = await this.issueUserToken(installation, input.user);
     this.cache.set(input.nonce, {
+      binding: cacheBinding,
       attestationSha256,
       result,
       expiresAt: this.now() + KY_APP_NONCE_TTL_MS,
@@ -216,7 +218,7 @@ export class KyAppHandshakeService {
   }): Promise<KyAppHandshakeResult> {
     const installation = await this.requireUsableInstallation(
       input.installationId,
-      input.user.tenantId,
+      input.user,
     );
     return this.issueUserToken(installation, input.user);
   }
@@ -266,17 +268,22 @@ export class KyAppHandshakeService {
 
   private async requireUsableInstallation(
     installationId: string,
-    tenantId: string,
+    user: KyAppShellUser,
   ): Promise<KyAppInstallation> {
     const installation = await this.options.systems.getInstallation(installationId);
     if (!installation || installation.status === 'deleted') {
       throw new KyAppHandshakeError('安装实例不存在', 'installation_not_found');
     }
-    if (installation.tenantId !== tenantId) {
+    if (installation.tenantId !== user.tenantId) {
       throw new KyAppHandshakeError('安装实例不属于当前组织', 'installation_forbidden');
     }
     if (installation.status !== 'enabled') {
       throw new KyAppHandshakeError('安装实例已停用', 'installation_disabled');
+    }
+    const definition = await this.options.systems.getDefinition(installation.systemId);
+    if (definition?.status !== 'published') throw new KyAppHandshakeError('业务系统已停用', 'installation_disabled');
+    if (!await this.options.canAccessInstallation(installation, user)) {
+      throw new KyAppHandshakeError('当前成员未获业务系统访问授权', 'installation_forbidden');
     }
     return installation;
   }

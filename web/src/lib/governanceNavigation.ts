@@ -77,6 +77,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "resource-center", label: "资源中心", routes: [
+      route("platform", "resource-center", "business-systems", "业务系统", ["platform-console", "resource-center", "business-systems"], { entity: "optional" }),
       route("platform", "resource-center", "agent-templates", "智能体模板", ["platform-console", "resource-center", "agent-templates"], { entity: "optional" }),
       route("platform", "resource-center", "models", "模型", ["platform-console", "resource-center", "models"], { entity: "optional" }),
       route("platform", "resource-center", "skills", "技能", ["platform-console", "resource-center", "skills"], { entity: "optional" }),
@@ -87,6 +88,8 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "runtime", label: "运行与可观测", routes: [
+      route("platform", "runtime", "business-system-operations", "业务系统运营", ["platform-console", "runtime", "business-system-operations"], { entity: "optional" }),
+      route("platform", "runtime", "system-deliveries", "系统交付", ["platform-console", "runtime", "system-deliveries"], { entity: "optional" }),
       route("platform", "runtime", "sessions", "会话", ["platform-console", "runtime", "sessions"], { entity: "optional" }),
       route("platform", "runtime", "runs", "运行", ["platform-console", "runtime", "runs"], { entity: "optional" }),
       route("platform", "runtime", "execution-providers", "执行提供方", ["platform-console", "runtime", "execution-providers"], { entity: "optional" }),
@@ -133,6 +136,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "agents", label: "智能体与资源", routes: [
+      route("organization", "agents", "business-systems", "业务系统", ["tenant-admin", "agents", "business-systems"], { entity: "optional" }),
       route("organization", "agents", "org-agents", "组织智能体", ["tenant-admin", "agents", "org-agents"], { entity: "optional" }),
       route("organization", "agents", "workflows", "工作流", ["tenant-admin", "agents", "workflows"]),
       route("organization", "agents", "dingtalk-accounts", "钉钉账号", ["tenant-admin", "agents", "dingtalk-accounts"]),
@@ -148,6 +152,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   },
   {
     id: "governance", label: "用量与治理", routes: [
+      route("organization", "governance", "business-system-usage", "业务系统用量", ["tenant-admin", "governance", "business-system-usage"], { entity: "optional" }),
       route("organization", "governance", "automation", "自动化任务", ["tenant-admin", "governance", "automation"], { entity: "optional" }),
       route("organization", "governance", "usage", "用量、预算与计费", ["tenant-admin", "governance", "usage"]),
       route("organization", "governance", "qa", "会话质检", ["tenant-admin", "governance", "qa"], { entity: "optional" }),

@@ -32,6 +32,11 @@ const tab = (
 ): ManagementTabDefinition => ({ id, label, routeId, search });
 
 export const MANAGEMENT_PAGES: readonly ManagementPageDefinition[] = [
+  { id: 'platform-business-systems', surface: 'config', area: 'platform', group: '资源目录', label: '业务系统', description: '管理业务系统。', iconKey: 'blocks', routeId: 'platform.resource-center.business-systems' },
+  { id: 'platform-system-deliveries', surface: 'config', area: 'platform', group: '系统交付', label: '系统交付', description: '管理系统交付。', iconKey: 'blocks', routeId: 'platform.runtime.system-deliveries' },
+  { id: 'platform-business-system-operations', surface: 'analytics', area: 'platform', group: '平台分析', label: '业务系统运营', description: '管理业务系统运营。', iconKey: 'blocks', routeId: 'platform.runtime.business-system-operations' },
+  { id: 'organization-business-systems', surface: 'config', area: 'organization', group: '构建 · 调用资产', label: '业务系统', description: '管理业务系统。', iconKey: 'blocks', routeId: 'organization.agents.business-systems' },
+  { id: 'organization-business-system-usage', surface: 'analytics', area: 'organization', group: '组织分析', label: '业务系统用量', description: '管理业务系统用量。', iconKey: 'blocks', routeId: 'organization.governance.business-system-usage' },
   {
     id: 'org-agents',
     surface: 'config',

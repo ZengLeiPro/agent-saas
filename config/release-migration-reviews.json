@@ -8429,6 +8429,24 @@
           "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         }
       ]
+    },
+    {
+      "baselineSha": "c0006ca15815b3a4760303601d3cdf9f2afb9ba1",
+      "files": [
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "构造函数与 init 逐字未变；仅修改运行期版本发布规则及现有 review_status 列的单条 UPDATE，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:d43b445d45375e52c4d9735af74b0e821e1bde18ca882d14b67cfa98e0b42686"
+        }
+      ]
     }
   ]
 }

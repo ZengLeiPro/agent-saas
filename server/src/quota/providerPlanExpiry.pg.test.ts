@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgProviderQuotaSnapshotStore } from './providerQuotaSnapshotStore.js';
@@ -24,6 +25,13 @@ describePg('套餐到期持久化与审计', () => {
       await pool.end();
     }
   });
+  it('发布回读 SQL 能验证新增表结构', async () => {
+    const catalog = JSON.parse(readFileSync(new URL('../../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
+    const entry = catalog.entries.find((item: { path: string }) => item.path === 'server/src/quota/providerQuotaSnapshotStore.ts');
+    const check = entry.checks[0];
+    expect((await pool.query(check.sql, [prefix])).rows).toEqual([{ ok: true }]);
+  });
+
   it('跨实例读取，清除回退且快照清理不删除编辑历史', async () => {
     const key = 'codex-email:shared@example.com';
     await store.setPlanExpiry(key, '2026-10-01T23:59:00+08:00', 'admin-1');

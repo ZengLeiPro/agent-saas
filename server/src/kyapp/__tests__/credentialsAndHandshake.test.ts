@@ -188,12 +188,12 @@ describe('服务凭据一次性领取与确认', () => {
 });
 
 describe('壳握手', () => {
-  async function handshakeSetup(): Promise<{
+  async function handshakeSetup(options: Parameters<typeof createKyAppTestRig>[0] = {}): Promise<{
     harness: KyAppTestRig;
     keyVersion: string;
     installationKey: string;
   }> {
-    const harness = await rig();
+    const harness = await rig(options);
     await seedPublishedInstallation(harness);
     const claimed = await claimCredential(harness);
     return {
@@ -283,6 +283,24 @@ describe('壳握手', () => {
     expect(rejected.status).toBe(409);
     expect(((await rejected.json()) as { error: { code: string } }).error.code).toBe('conflict');
     expect(harness.handshake.failureCount(TEST_IID)).toBeGreaterThan(0);
+  });
+
+  it('缓存重放仍校验成员授权、用户和会话；撤权后不能续期', async () => {
+    const visible = [TEST_IID];
+    const { harness, keyVersion, installationKey } = await handshakeSetup({ visibleInstallationIds: visible });
+    harness.setUser(MEMBER);
+    const { nonce } = await (await harness.request(`${BASE}/installations/${TEST_IID}/handshake/nonce`, json('POST'))).json();
+    const attestation = await attest({ keyVersion, installationKey, nonce });
+    const verify = () => harness.request(`${BASE}/installations/${TEST_IID}/handshake/verify`, json('POST', { nonce, attestation }));
+    expect((await verify()).status).toBe(200);
+    for (const identity of [{ ...MEMBER, sub: 'another-member' }, { ...MEMBER, jti: 'another-session' }]) {
+      harness.setUser(identity);
+      expect((await verify()).status).toBe(403);
+    }
+    harness.setUser(MEMBER);
+    visible.length = 0;
+    expect((await verify()).status).toBe(403);
+    expect((await harness.request(`${BASE}/installations/${TEST_IID}/token`, json('POST'))).status).toBe(403);
   });
 
   it('别的用户拿到 nonce 也换不到令牌（绑定校验）', async () => {

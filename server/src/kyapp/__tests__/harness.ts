@@ -1,3 +1,4 @@
+import type { PgEntitlementStore } from '../../data/entitlements/store.js';
 /**
  * WP2a 单测装配台：用内存 store 拼出与生产同构的一整套 kyapp 服务，
  * 再挂上真实的 express router，让端点 × 鉴权矩阵、发布门禁、投递与探测都能在无 PG 环境跑通。
@@ -160,6 +161,8 @@ export interface KyAppTestRig {
 }
 
 export interface KyAppTestRigOptions {
+  entitlements?: PgEntitlementStore;
+  assignmentStore?: PgAssignmentStore;
   fetchImpl?: typeof fetch;
   resolveTxt?: (hostname: string) => Promise<string[][]>;
   toolRegistrationDryRun?: KyAppToolRegistrationDryRun;
@@ -241,7 +244,7 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     // 那样 `validateRemoteUrl` 会先于业务逻辑拒绝，掩盖真正要验的行为。
     lookup: (async () => [{ address: '93.184.216.34', family: 4 }]) as never,
   });
-  const assignments = {
+  const assignments = options.assignmentStore ?? {
     async getAssignmentSet() {
       return null;
     },
@@ -278,6 +281,9 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     nonces,
     credentials,
     issuer,
+    canAccessInstallation: async (installation, user) =>
+      (await assignments.listEffectiveResourceIds(user.tenantId, user.userId, 'system_installation'))
+        .some(item => item.resourceId === installation.installationId),
     now,
   });
   const dispatcher = new KyAppEventDispatcher({
@@ -323,6 +329,7 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   app.use(
     '/api/app-contract/v1',
     createKyAppSystemsRouter({
+      ...(options.entitlements ? { entitlements: options.entitlements } : {}),
       systems: systems as unknown as PgKyAppSystemStore,
       audit,
       ...(options.toolRegistrationDryRun
@@ -333,6 +340,8 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
   app.use(
     '/api/app-contract/v1',
     createKyAppInstallationsRouter({
+      audit,
+      ...(options.entitlements ? { entitlements: options.entitlements } : {}),
       systems: systems as unknown as PgKyAppSystemStore,
       installations,
       credentials,

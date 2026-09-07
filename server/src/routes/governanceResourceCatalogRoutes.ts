@@ -15,7 +15,7 @@ export function registerGovernanceResourceCatalogRoutes(options: {
   environments: PgEnvironmentStore;
   listResources?: (resourceType: EntitlementResourceType) => Promise<{
     status: 'valid';
-    items: Array<{ resourceId: string; version: number }>;
+    items: Array<{ resourceId: string; label?: string; version: number }>;
   } | { status: 'unavailable' }>;
 }): void {
   options.router.get('/entitlement-resource-catalog', async (req, res) => {
@@ -43,14 +43,14 @@ export function registerGovernanceResourceCatalogRoutes(options: {
         .map(item => ({ resourceId: item.templateId, label: item.name, version: item.revision }));
       return res.json({ resourceType, items });
     }
-    if (resourceType === 'model' || resourceType === 'tool') {
+    if (resourceType === 'model' || resourceType === 'tool' || resourceType === 'integrated_system') {
       const catalog = await options.listResources?.(resourceType);
       if (!catalog || catalog.status !== 'valid') {
         return res.status(503).json({ error: 'Resource catalog unavailable', code: 'RESOURCE_CATALOG_UNAVAILABLE' });
       }
       return res.json({
         resourceType,
-        items: catalog.items.map(item => ({ ...item, label: item.resourceId })),
+        items: catalog.items.map(item => ({ ...item, label: item.label ?? item.resourceId })),
       });
     }
     return res.status(400).json({ error: 'Unsupported resourceType' });

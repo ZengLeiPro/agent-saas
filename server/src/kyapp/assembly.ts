@@ -1,3 +1,4 @@
+import { KyAppAssignmentAccess } from './installations/assignmentAccess.js';
 /**
  * WP2a 运行时装配（施工总则 §3.1 / §4 B 行）。
  *
@@ -54,6 +55,7 @@ import { serverLogger } from '../utils/logger.js';
 export interface KyAppAssembly {
   config: KyAppPlatformConfig;
   systems: PgKyAppSystemStore;
+  assignmentAccess: KyAppAssignmentAccess | null;
   credentialStore: PgKyAppCredentialStore;
   runtimeStore: PgKyAppInstallationRuntimeStore;
   eventStore: PgKyAppOutboundEventStore;
@@ -105,6 +107,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
       : undefined;
   const base = { pool, ...(tablePrefix ? { tablePrefix } : {}) };
   const now = options.now ?? Date.now;
+  const assignmentAccess = runtime.assignmentStore ? new KyAppAssignmentAccess(pool, runtime.assignmentStore, runtime.directoryGroupStore) : null;
 
   const systems = new PgKyAppSystemStore(base);
   const credentialStore = new PgKyAppCredentialStore(base);
@@ -170,6 +173,9 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     nonces,
     credentials,
     issuer,
+    canAccessInstallation: async (installation, user) =>
+      (await assignmentAccess?.listEffectiveResourceIds(user.tenantId, user.userId, 'system_installation') ?? [])
+        .some(item => item.resourceId === installation.installationId),
     now,
     ...(runtime.governanceAuditStore
       ? {
@@ -300,7 +306,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   // runtime dispatch 手上没有会话 JWT，authBinding 按 AuthEpochAuthority 当前登录派生。
   const snapshotSource = createKyAppSnapshotSource({
     systems,
-    ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
+    ...(assignmentAccess ? { assignments: assignmentAccess } : {}),
     issuer,
     outbound,
     config,
@@ -384,6 +390,7 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
   return {
     config,
     systems,
+    assignmentAccess,
     credentialStore,
     runtimeStore,
     eventStore,

@@ -34,7 +34,7 @@ describe('KY App 交付看板', () => {
     expect(await screen.findByText('AI 使用概览')).toBeTruthy();
     expect(screen.getByText(/预计还能使用 2 天/)).toBeTruthy();
     expect(screen.getByText('order.search')).toBeTruthy();
-    expect(authFetch).toHaveBeenCalledWith('/api/app-contract/v1/usage?tenantId=tenant-a');
+    expect(authFetch).toHaveBeenCalledWith('/api/app-contract/v1/usage?tenantId=tenant-a', expect.objectContaining({ cache: 'no-store' }));
   });
 
   it('平台健康度展示组织与来源说明', async () => {
@@ -61,7 +61,7 @@ describe('KY App 交付看板', () => {
     expect(await screen.findByText('客户甲')).toBeTruthy();
     expect(screen.getByText('3 人')).toBeTruthy();
     await waitFor(() =>
-      expect(authFetch).toHaveBeenCalledWith('/api/app-contract/v1/deliveries/health'),
+      expect(authFetch).toHaveBeenCalledWith('/api/app-contract/v1/deliveries/health', expect.objectContaining({ cache: 'no-store' })),
     );
   });
 });

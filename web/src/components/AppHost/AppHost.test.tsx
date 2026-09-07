@@ -57,7 +57,7 @@ describe('壳路由与占位', () => {
     useInstallations();
     render(<Region hidden={false} path={null} />);
     await waitFor(() =>
-      expect(screen.getByTestId('app-host').textContent).toContain('请选择一个定制软件'),
+      expect(screen.getByTestId('app-host').textContent).toContain('请选择一个业务系统'),
     );
   });
 });
@@ -252,12 +252,12 @@ describe('§5.5 切走再切回保持挂载', () => {
     expect(screen.getByTestId('app-host-frame').getAttribute('src')).toBe(src);
   });
 
-  it('切走时不渲染「请选择一个定制软件」占位（占位会顶掉 iframe）', async () => {
+  it('切走时不渲染「请选择一个业务系统」占位（占位会顶掉 iframe）', async () => {
     useInstallations();
     const { rerender } = render(<Region hidden={false} path="/apps/inst-1/orders" />);
     await screen.findByTestId('app-host-frame');
     rerender(<Region hidden path={null} />);
-    expect(screen.getByTestId('app-host').textContent).not.toContain('请选择一个定制软件');
+    expect(screen.getByTestId('app-host').textContent).not.toContain('请选择一个业务系统');
   });
 
   it('条件卸载会换来新的挂载序号（反证上一条不是恒真断言）', async () => {

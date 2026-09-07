@@ -1,3 +1,5 @@
+import { KyAppCredentialClaimEntry } from '@/components/KyAppCredentialClaim/KyAppCredentialClaimEntry';
+import { credentialClaimInstallation } from '@/components/KyAppCredentialClaim/claimRoute';
 import {
   lazy,
   Suspense,
@@ -103,6 +105,7 @@ export function AuthGate() {
   const [signupEnabled, setSignupEnabled] = useState<boolean | null>(null);
   const shareToken = currentShareToken();
   const artifactShareToken = currentArtifactShareToken();
+  const claimInstallationId = credentialClaimInstallation(window.location.pathname);
 
   const switchToLogin = () => {
     // 清掉 /signup 路径与 utm 参数，回到干净登录页
@@ -126,6 +129,8 @@ export function AuthGate() {
       cancelled = true;
     };
   }, [artifactShareToken, authEnabled, isAuthenticated, isLoading, shareToken]);
+
+  if (claimInstallationId) return <KyAppCredentialClaimEntry installationId={claimInstallationId} />;
 
   if (artifactShareToken) {
     return (

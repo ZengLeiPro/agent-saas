@@ -455,7 +455,7 @@ describe('/api/systems/mine', () => {
   // 规范 §5.5「`live` 失败/停用 → 标签保留『暂不可用』」、§6.6「系统被停用 → 标签『暂不可用』」。
   // 服务端一旦把停用实例滤掉，壳就只能整项从侧边栏拿掉，也拿不到《系统名》（偏差 4-B-04）。
   it('停用后实例仍然返回，只是 state=disabled，且系统名照旧', async () => {
-    const harness = await rig();
+    const harness = await rig({ visibleInstallationIds: [TEST_IID] });
     await seedPublishedInstallation(harness);
 
     harness.setUser(PLATFORM_ADMIN);
@@ -473,6 +473,14 @@ describe('/api/systems/mine', () => {
         externalLinkHosts: [],
       },
     ]);
+  });
+
+  it('停用与下架均不向未授权成员暴露实例', async () => {
+    const harness = await rig({ visibleInstallationIds: [] });
+    await seedPublishedInstallation(harness);
+    await harness.installations.setStatus({ installationId: TEST_IID, status: 'disabled', actor: { sub: PLATFORM_ADMIN.sub, role: PLATFORM_ADMIN.role, tenantId: PLATFORM_ADMIN.tenantId } });
+    harness.setUser(MEMBER);
+    expect(await mine(harness)).toEqual([]);
   });
 
   it('系统定义下架也是 disabled（不是消失）', async () => {

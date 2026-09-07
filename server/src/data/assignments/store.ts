@@ -233,19 +233,22 @@ export class PgAssignmentStore {
     userId: string,
     resourceType: AssignmentResourceType,
     agentId?: string,
+    visibility?: { includeDisabledInstallations: true },
   ): Promise<Array<{
     resourceId: string; bindingId: string; assignmentVersion: number; finalEffect: 'allow';
     bindings: Array<{ assignmentId: string; assigneeType: string; assigneeId?: string; effect: string; origin: string }>;
   }>> {
+    // 仅业务系统壳保留停用标签；工具快照和其他授权调用保持 enabled 限制。
+    const includeDisabled = resourceType === 'system_installation' && visibility?.includeDisabledInstallations === true;
     const unresolvedGroups = await this.options.pool.query(`
       SELECT 1
       FROM ${this.assignmentsTable} a
       JOIN ${this.assignmentSetsTable} s
         ON s.tenant_id=a.tenant_id AND s.resource_type=a.resource_type AND s.resource_id=a.resource_id
       WHERE a.tenant_id=$1 AND a.resource_type=$2 AND a.assignee_type='directory_group'
-        AND s.resource_status='enabled'
+        AND (s.resource_status='enabled' OR $3::boolean)
       LIMIT 1
-    `, [tenantId, resourceType]);
+    `, [tenantId, resourceType, includeDisabled]);
     let directoryGroupIds: string[] = [];
     if (unresolvedGroups.rows[0]) {
       if (!this.options.resolveDirectoryGroupIds) {
@@ -265,7 +268,7 @@ export class PgAssignmentStore {
       FROM ${this.assignmentSetsTable} s
       JOIN ${this.assignmentsTable} a
         ON a.tenant_id=s.tenant_id AND a.resource_type=s.resource_type AND a.resource_id=s.resource_id
-      WHERE s.tenant_id=$1 AND s.resource_type=$3 AND s.resource_status='enabled'
+      WHERE s.tenant_id=$1 AND s.resource_type=$3 AND (s.resource_status='enabled' OR $6::boolean)
         AND (
           a.assignee_type='everyone'
           OR (a.assignee_type='user' AND a.assignee_id=$2)
@@ -275,7 +278,7 @@ export class PgAssignmentStore {
       GROUP BY s.resource_id,s.version
       HAVING BOOL_OR(a.effect='allow') AND NOT BOOL_OR(a.effect='deny')
       ORDER BY s.resource_id
-    `, [tenantId, userId, resourceType, agentId ?? null, directoryGroupIds]);
+    `, [tenantId, userId, resourceType, agentId ?? null, directoryGroupIds, includeDisabled]);
     return result.rows.map(row => ({
       resourceId: String(row.resource_id),
       bindingId: String(row.binding_id),

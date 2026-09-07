@@ -33,7 +33,7 @@ export async function installableScope(
     (!set.effectiveTo || Date.parse(set.effectiveTo) > now);
   const scope = scopes.find((item) => item.resourceType === 'integrated_system');
   return (id) =>
-    Boolean(valid && scope && (scope.mode === 'all' || scope.resourceIds.includes(id)));
+    Boolean(valid && scope && (scope.mode === 'all' || (scope.mode === 'selected' && scope.resourceIds.includes(id))));
 }
 
 export function installationActions(

@@ -319,7 +319,7 @@ export class KyAppInstallationService {
 
   /**
    * `resource_assignments` 保留已配置授权范围（规范 §8.1）：
-   * `enabled` → 一条 `everyone allow` 且资源集合 `enabled`；
+   * `enabled` → 保留原规则；首次启用空集合，需管理员显式授权；
    * `disabled` → 保留集合但标 `disabled`；`deleted` → 清空分配。
    */
   private async syncAssignments(installation: KyAppInstallation, updatedBy: string): Promise<void> {

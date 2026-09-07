@@ -1,3 +1,4 @@
+import { ManifestDiff } from './ManifestDiff';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { kyAppPost, KyAppManagementError } from '@/lib/kyAppManagementApi';
@@ -64,6 +65,7 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
               </ul>
             </div>
           )}
+          <ManifestDiff before={detail.versions.find(item => item.digest === detail.definition.publishedDigest)?.manifest} after={version.manifest} />
           <details>
             <summary className="cursor-pointer text-sm">查看只读 Manifest</summary>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs">

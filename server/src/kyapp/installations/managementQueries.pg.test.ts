@@ -80,6 +80,10 @@ const url = process.env.TEST_DATABASE_URL;
     expect(second.installations.map((item) => item.installationId)).toEqual(['two']);
     expect(second.nextCursor).toBeNull();
   });
+  it('无事件表时异常筛选安全返回空集合', async () => {
+    const withoutEvents = new KyAppManagementQueries(pool, store, prefix);
+    expect((await withoutEvents.installations({ signal: 'digest_mismatch', limit: 10 }, PLATFORM_ADMIN)).installations).toEqual([]);
+  });
   it('聚合安装数和风险，列表不返回 Manifest', async () => {
     const list = await queries.systemsList();
     expect(list[0]?.metrics).toMatchObject({

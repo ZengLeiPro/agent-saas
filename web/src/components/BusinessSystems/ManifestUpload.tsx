@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { validateManifest, type Manifest } from '@kaiyan/ky-app-contract';
+import { validateManifest } from '@kaiyan/ky-app-contract/validation';
+import type { Manifest } from '@kaiyan/ky-app-contract/browser';
 import { Button } from '@/components/ui/button';
 import { kyAppPost } from '@/lib/kyAppManagementApi';
 export function ManifestUpload({

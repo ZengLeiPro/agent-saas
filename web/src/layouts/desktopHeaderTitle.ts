@@ -16,13 +16,13 @@ const TAB_TITLES: Partial<Record<LayoutProps['activeTab'], string>> = {
   trash: '回收站',
 };
 
-/** 定制软件标签在拿到《系统名》之前的占位；拿不到名字总比显示上一段会话标题好。 */
-export const APPS_TAB_FALLBACK_TITLE = '定制软件';
+/** 业务系统标签在拿到《系统名》之前的占位；拿不到名字总比显示上一段会话标题好。 */
+export const APPS_TAB_FALLBACK_TITLE = '业务系统';
 /** §6.6：系统被停用 / `live` 失败 → 标签「暂不可用」（不写技术归因）。 */
 export const APPS_TAB_UNAVAILABLE_TITLE = '暂不可用';
 
 /**
- * 定制软件标签的 header 标题。
+ * 业务系统标签的 header 标题。
  *
  * §5.5/§6.6 的关键点：停用**不是**把标签拿掉，而是「标签保留 +《系统名》+ 暂不可用」。
  * 服务端现在会把停用实例连同 `state` 一起返回，所以这里能同时给出名字与标注。
@@ -51,8 +51,8 @@ interface DesktopHeaderTitleOptions {
   orgAgentIdentityLoading: boolean;
   agentProfile: LayoutProps['agentProfile'];
   /**
-   * 定制软件标签的标题（§6.6 的《系统名》或「暂不可用」）。
-   * 不放进 `TAB_TITLES`：那是 `Record<AppTab, string>` 的静态映射，而定制软件
+   * 业务系统标签的标题（§6.6 的《系统名》或「暂不可用」）。
+   * 不放进 `TAB_TITLES`：那是 `Record<AppTab, string>` 的静态映射，而业务系统
    * 每个安装实例一个名字，只有调用方拿到 `/api/systems/mine` 才知道。
    */
   appsTitle?: string | null;

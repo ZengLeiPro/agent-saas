@@ -2,7 +2,7 @@
  * WP2a `GET /api/systems/mine`（规范 §8.1 最后一条），WP4 Phase B 补丁扩全。
  *
  * 可见性完全由服务端计算：本组织 + `resource_assignments` 命中
- * （只写 `everyone`，所以等价于「本组织全员可见」）+ 系统定义曾经发布过。
+ * （支持成员、部门和排除规则）+ 系统定义曾经发布过。
  *
  * **停用的实例也要返回（带状态），不能在服务端就过滤掉。** 规范 §5.5「`live` 失败/停用
  * → 标签保留『暂不可用』」与 §6.6「系统被停用 → 员工看到 标签『暂不可用』」都要求
@@ -129,6 +129,8 @@ export function createKyAppMineRouter(options: KyAppMineRoutesOptions): Router {
         req.user.tenantId,
         req.user.sub,
         'system_installation',
+        undefined,
+        { includeDisabledInstallations: true },
       );
       const allowed = new Set(effective.map((item) => item.resourceId));
 
@@ -142,12 +144,9 @@ export function createKyAppMineRouter(options: KyAppMineRoutesOptions): Router {
         // 从未发布过的系统同理：没有可展示的名字，客户也没见过。
         if (!definition?.publishedDigest) continue;
 
-        // `enabled` 实例照旧按分配命中过滤。停用/下架的实例在
-        // `installations/service.ts` 的 `syncAssignments` 里分配集合已被清空，
-        // 再按命中过滤就永远命不中；§8.1 规定分配只写 `everyone`，
-        // 所以「本该看得见的人」= 本组织全员，回到同一条组织级规则。
+        // 启停保留原 Assignment；所有状态都按同一授权事实源过滤。
         const active = installation.status === 'enabled' && definition.status === 'published';
-        if (active && !allowed.has(installation.installationId)) continue;
+        if (!allowed.has(installation.installationId)) continue;
 
         // 未做过 CAS 切换的实例以「已发布 digest」为准，与取 manifest 版本同一口径。
         const effectiveDigest = installation.registeredDigest ?? definition.publishedDigest;

@@ -144,7 +144,7 @@ export class KyAppManagementQueries {
       }
     }
     if (filter.signal) {
-      params.push(filter.signal);
+      if (this.eventsTable) params.push(filter.signal);
       where.push(this.eventsTable ? `EXISTS (SELECT 1 FROM ${this.eventsTable} signal WHERE signal.tenant_id=i.tenant_id AND signal.event_type='tool_audit' AND signal.event_json->>'installationId'=i.installation_id AND signal.event_json->>'errorCode'=$${params.length} AND signal.timestamp >= NOW()-INTERVAL '24 hours')` : 'FALSE');
     }
     if (filter.cursor) {

@@ -124,7 +124,11 @@ export async function runBrowserChapters(ctx: DoctorContext): Promise<void> {
  * iframe 换 `src` 之后旧的 Frame 对象会在很短时间里仍然可见，直接 evaluate 会命中
  * 上一份文档（或者撞上 "Execution context was destroyed"）。这里统一轮询到位再返回。
  */
-async function appFrame(ctx: DoctorContext, page: PageLike, timeoutMs = 15_000): Promise<FrameLike> {
+async function appFrame(
+  ctx: DoctorContext,
+  page: PageLike,
+  timeoutMs = 15_000,
+): Promise<FrameLike> {
   const deadline = Date.now() + timeoutMs;
   let lastError = '页面里找不到被测项目的 iframe';
   for (;;) {
@@ -163,6 +167,14 @@ async function mountAndWait(
 async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
   const reporter = ctx.reporter;
   reporter.section(10);
+  const routePath = ctx.conformance.endpoints.find(
+    (path) =>
+      path !== '/' &&
+      path !== '/index.html' &&
+      !path.startsWith('/api/') &&
+      !path.startsWith('/ky/'),
+  );
+  assert(routePath !== undefined, 'conformance.endpoints 必须声明一个实际页面路由');
 
   await reporter.check('iframe 属性符合 §5.1（sandbox / allow / referrerpolicy）', async () => {
     const attributes = await page.evaluate<{
@@ -260,11 +272,17 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
       'window.__kyApp.getState().counters.replayedReplies',
     );
     await page.evaluate<void>(
-      'window.__kyShell.post("route.navigate", { path: "/orders" }, { id: "dup-1", navId: "dup-1" }); undefined;',
+      inline(
+        'window.__kyShell.post("route.navigate", { path: $0 }, { id: "dup-1", navId: "dup-1" }); undefined;',
+        routePath,
+      ),
     );
     await SLEEP(200);
     await page.evaluate<void>(
-      'window.__kyShell.post("route.navigate", { path: "/orders" }, { id: "dup-1", navId: "dup-1" }); undefined;',
+      inline(
+        'window.__kyShell.post("route.navigate", { path: $0 }, { id: "dup-1", navId: "dup-1" }); undefined;',
+        routePath,
+      ),
     );
     await SLEEP(500);
     const after = await frame.evaluate<number>(
@@ -275,7 +293,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
 
   await reporter.check('navId 回声：route.result 带回同一个 navId', async () => {
     const outcome = await page.evaluate<{ payload: { ok: boolean }; navId?: string }>(
-      'window.__kyShell.navigate("/orders")',
+      inline('window.__kyShell.navigate($0)', routePath),
     );
     assert(outcome.payload.ok, `route.navigate 失败：${JSON.stringify(outcome.payload)}`);
     assert(outcome.navId !== undefined, 'route.result 没有带回 navId');
@@ -284,11 +302,14 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
   await reporter.check(
     'ready.path 已按 §5.2 规范化（去尾斜杠、query 排序、剔除保留参数）',
     async () => {
-      await mountAndWait(page, { path: '/orders/?b=2&a=1' });
+      await mountAndWait(page, { path: `${routePath}/?b=2&a=1` });
       const readyPath = await page.evaluate<string>(
         'window.__kyShell.received.filter((m) => m.type === "ready")[0].payload.path',
       );
-      assert(readyPath === '/orders?a=1&b=2', `ready.path 期望 /orders?a=1&b=2，实际 ${readyPath}`);
+      assert(
+        readyPath === `${routePath}?a=1&b=2`,
+        `ready.path 期望 ${routePath}?a=1&b=2，实际 ${readyPath}`,
+      );
     },
   );
 
@@ -299,7 +320,7 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
       // 子端自己 location.reload() 不是产品路径，且会把 document.referrer 变成自身 URL，
       // 子端因此推不出壳 origin（见基线偏差记录 C-05）。
       const previousNonce = await page.evaluate<string>('window.__kyShell.state.nonce');
-      await page.goto(ctx.shell.shellUrl({ path: '/orders/?b=2&a=1' }), { waitUntil: 'load' });
+      await page.goto(ctx.shell.shellUrl({ path: `${routePath}/?b=2&a=1` }), { waitUntil: 'load' });
       await page.waitForFunction('window.__kyShell && window.__kyShell.config', undefined, {
         timeout: 15_000,
       });
@@ -312,8 +333,8 @@ async function chapter10(ctx: DoctorContext, page: PageLike): Promise<void> {
         'window.__kyShell.received.filter((m) => m.type === "ready")[0].payload.path',
       );
       assert(
-        readyPath === '/orders?a=1&b=2',
-        `F5 后的 ready.path 应为 /orders?a=1&b=2，实际 ${readyPath}`,
+        readyPath === `${routePath}?a=1&b=2`,
+        `F5 后的 ready.path 应为 ${routePath}?a=1&b=2，实际 ${readyPath}`,
       );
     },
   );

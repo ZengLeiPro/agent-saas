@@ -101,6 +101,7 @@ case "$task" in
   postgres)
     # 显式清单是快速动态合约门禁，新增关键 PG 合约必须在此登记。
     require_test_database
+    node --test scripts/release/migration-postconditions.pg.test.mjs
     pnpm -F server exec vitest run \
       src/__tests__/codexCredentialRuntimeState.pg.test.ts \
       src/__tests__/memoryConsolidationStore.pg.test.ts \

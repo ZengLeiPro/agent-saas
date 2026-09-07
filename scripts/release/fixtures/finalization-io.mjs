@@ -33,6 +33,19 @@ if (command === 'ssh') {
       JSON.stringify(live),
     );
     quit();
+  } else if (remote.includes('read-migration-postconditions.mjs')) {
+    const final = remote.includes('database-final.json');
+    log(final ? 'database-final' : 'database-initial');
+    const database = fixture().database;
+    database.observedAt = new Date().toISOString();
+    if (scenario === 'database-fail') database.status = 'failed';
+    if (final && scenario === 'database-drift')
+      database.checks[0].targetDigest = 'sha256:' + 'f'.repeat(64);
+    writeFileSync(
+      join(root, final ? 'database-final.json' : 'database-initial.json'),
+      JSON.stringify(database),
+    );
+    quit();
   } else if (remote.startsWith('mkdir -p ') || remote.startsWith('rm -rf -- ')) quit();
   else throw new Error('Unexpected SSH: ' + remote);
 } else if (command === 'scp') {

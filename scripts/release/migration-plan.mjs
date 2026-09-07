@@ -5,6 +5,7 @@ import { posix } from 'node:path';
 import ts from 'typescript';
 import { canonicalJson, SHA_PATTERN } from './artifact-lib.mjs';
 import { loadMigrationReviews } from './migration-reviews.mjs';
+import { attachPostconditions } from './migration-postconditions.mjs';
 
 const MIGRATION_PATHS = [
   /^server\/src\/data\/(?:.+\/)?migrations?\.ts$/u,
@@ -4523,6 +4524,7 @@ export function createMigrationPlan({
     }
     inventory.push({
       path,
+      baselineBlobDigest: readBaselineContent(path) === null ? null : digest(readBaselineContent(path) ?? ''),
       targetBlobDigest: digest(content),
       addedLinesDigest: digest(additions),
       deletedLinesDigest: digest(deletions),
@@ -4537,22 +4539,21 @@ export function createMigrationPlan({
   )
     ? 'expand'
     : 'none';
-  const planBody = {
-    schemaVersion: 2,
-    baselineSha: baseline,
-    releaseSha: target,
-    phase,
-    files: inventory,
-  };
+  const planBody = { schemaVersion: 2, baselineSha: baseline, releaseSha: target, phase, files: inventory };
+  const sourceFailureCount = blockingReasons.length;
+  const postconditions = attachPostconditions(planBody, snapshotFor(target), inventory, blockingReasons);
+  Object.assign(planBody, postconditions);
   return {
     ok: blockingReasons.length === 0,
     migrationPlan: {
+      ...postconditions,
       phase,
       planDigest: digest(canonicalJson(planBody)),
       confirmation: phase === 'none' ? 'not_required' : 'required_after_observation',
       contract: 'separate_release',
     },
     blockingReasons,
+    postconditionBlockingReasons: blockingReasons.slice(sourceFailureCount),
   };
 }
 

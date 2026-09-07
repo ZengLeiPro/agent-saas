@@ -26,7 +26,7 @@ describe('kyApp 平台配置域', () => {
 
   it('staging 取 staging 域，local 必须显式给 publicIssuer 且 JWKS 与之同源', () => {
     expect(resolveKyAppConfig({ kyApp: { environment: 'staging' } })?.jwksUrl).toBe(
-      'https://api.staging.agent.kaiyan.net/.well-known/ky-app-jwks.json',
+      'https://staging-agent-api.kaiyan.net/.well-known/ky-app-jwks.json',
     );
     expect(() => resolveKyAppConfig({ kyApp: { environment: 'local' } })).toThrow(KyAppConfigError);
     const local = resolveKyAppConfig({
@@ -47,7 +47,7 @@ describe('kyApp 平台配置域', () => {
         allowInsecureOutbound: true,
       },
     });
-    expect(config?.jwksUrl).toBe('https://api.staging.agent.kaiyan.net/keys/ky.json');
+    expect(config?.jwksUrl).toBe('https://staging-agent-api.kaiyan.net/keys/ky.json');
     expect(config?.satTtlSeconds).toEqual({ user: 600, agent: 60, platform: 60 });
     expect(config?.probe.failureThreshold).toBe(3);
     expect(config?.events.retryWindowMs).toBe(60_000);

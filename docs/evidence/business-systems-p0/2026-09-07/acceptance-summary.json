@@ -1,0 +1,26 @@
+{
+  "status": "blocked",
+  "agentSaasMergeSha": "9f6131c6a173b20b7395f95453e44545ae5ee200",
+  "stagingReleaseId": "rc-20260906-75",
+  "stagingReleaseSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+  "testSystemCommitSha": null,
+  "manifestV1Digest": null,
+  "manifestV2Digest": null,
+  "tenantAId": null,
+  "tenantBId": null,
+  "installationId": "kaiyan-test-system-tenant-a",
+  "passedChecks": 0,
+  "failedChecks": 0,
+  "startedAt": "2026-09-07T06:52:06.312626+00:00",
+  "completedAt": null,
+  "gate": "preflight",
+  "blockers": [
+    "Staging 尚未包含 PR #548",
+    "JWKS HTTP 404",
+    "外部测试系统仓库及 DNS 尚不存在",
+    "ECS SSH 超时，进程和端口隔离未核验",
+    "远程资源变更及 Workflow 尚未明确授权",
+    "Staging 并行使用状态待确认",
+    "本机磁盘不足，Docker API 返回 500，真实 PG 验证未运行"
+  ]
+}

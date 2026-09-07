@@ -108,14 +108,14 @@ export type KyEnv = (typeof KY_ENVS)[number];
 /** 各环境 `iss`（§3.8）；`local` 依赖端口，用 localIssuer() 生成。 */
 export const ISSUER_BY_ENV = {
   prod: 'https://agent.kaiyan.net',
-  staging: 'https://staging.agent.kaiyan.net',
+  staging: 'https://staging-agent.kaiyan.net',
   test: 'https://test.ky.invalid',
 } as const;
 
 /** 各环境 JWKS 地址（§3.1）；`local` 依赖端口，`test` 由 `ky-app doctor` 提供。 */
 export const JWKS_URL_BY_ENV = {
   prod: 'https://api.agent.kaiyan.net/.well-known/ky-app-jwks.json',
-  staging: 'https://api.staging.agent.kaiyan.net/.well-known/ky-app-jwks.json',
+  staging: 'https://staging-agent-api.kaiyan.net/.well-known/ky-app-jwks.json',
 } as const;
 
 /** `KY_ENV=local` 的 `iss`：`http://localhost:<port>`（§3.8）。 */

@@ -1,0 +1,8 @@
+{
+  "checkedAt": "2026-09-07T06:52:06.312626+00:00",
+  "method": "GET",
+  "url": "https://staging-agent-api.kaiyan.net/.well-known/ky-app-jwks.json",
+  "status": 404,
+  "contentType": "text/html; charset=utf-8",
+  "keysPresent": false
+}

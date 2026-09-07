@@ -103,15 +103,14 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
 `RELEASE_EVIDENCE_PORT`。
 
-Release Evidence Schema 升级必须先独立发布兼容旧版和新版的 Writer，并读回 `/capabilities`
-确认新版已进入 `supportedReleaseEvidenceSchemaVersions`；随后才能启用对应版本的 Producer 和 RC
-Workflow。候选 RC 不得在证据门禁内自动升级自己的 Evidence Writer，避免未验证代码修改证据权威。
-合并 Writer 兼容变更后，通过 GitHub Actions 手动运行 `升级发布证据 Writer`。该 Workflow 只构建
-Evidence Service 单文件制品，使用固定 Staging SSH 主机指纹发布到不可变版本目录，原子切换并同时
-校验 Schema version 与 revision；启动或 capability 校验失败时恢复上一版本。
+`部署测试环境` 首先读取 Writer `/capabilities`。Schema version 与 revision 已满足时直接跳过；落后
+时必须先确认触发 SHA 属于 `main`、对应 APP CI 已成功且只有一个已合并 PR，再构建 Evidence Service
+单文件制品。升级使用固定 Staging SSH 主机指纹和当前 Runner 的临时 `/32` 入站授权，发布到不可变
+版本目录并原子切换；启动或 capability 校验失败时恢复上一版本。Writer 就绪后才能生成发布证据。
 
-`部署测试环境` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
-同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
+`部署测试环境` 被人工触发后，Writer 保障阶段先完成上述 capability 检查或按需升级，随后
+`prepare-evidence` 锁定 dispatch 的完整 SHA，限时等待同 SHA 的 `main` push `App CI / Deploy`
+成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
 Workflow 相同的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。
 `acs-sandbox.yml` 的 `main` push 顶层不使用 `paths`；`.github/scripts/acs-classify.sh` 是唯一影响
 分类真源，并以 `.github/acs-bundle-inputs.txt` 作为制品输入契约。契约测试会现场生成三个

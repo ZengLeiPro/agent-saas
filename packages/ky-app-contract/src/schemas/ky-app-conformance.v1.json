@@ -131,18 +131,32 @@
           }
         },
         "cleanup": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["capabilityId", "input"],
-          "properties": {
-            "capabilityId": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9_.]{1,31}$"
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capabilityId", "input"],
+              "properties": {
+                "capabilityId": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_.]{1,31}$"
+                },
+                "input": {
+                  "type": "object"
+                }
+              }
             },
-            "input": {
-              "type": "object"
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["testHook"],
+              "properties": {
+                "testHook": {
+                  "const": "provision"
+                }
+              }
             }
-          }
+          ]
         },
         "pageApiEquivalence": {
           "type": "object",

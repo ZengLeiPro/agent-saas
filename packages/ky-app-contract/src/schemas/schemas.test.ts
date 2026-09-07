@@ -118,6 +118,20 @@ describe('附录 J 一致性夹具 schema', () => {
     endpoints: ['/', '/index.html', '/ky/v1/health/live', '/api/app/orders'],
   };
 
+  it('清理钩子只允许 provision，不能与业务清理能力混用', () => {
+    const sample = (cleanup: unknown) => ({
+      ...fixture,
+      capabilities: { 'order.search': { ...fixture.capabilities['order.search'], cleanup } },
+    });
+    expect(validateConformance(sample({ testHook: 'provision' })).ok).toBe(true);
+    expect(validateConformance(sample({ testHook: 'arbitrary' })).ok).toBe(false);
+    expect(
+      validateConformance(
+        sample({ testHook: 'provision', capabilityId: 'order.cancel', input: {} }),
+      ).ok,
+    ).toBe(false);
+  });
+
   it('附录 J 示例通过', () => {
     expect(validateConformance(fixture).errors).toEqual([]);
   });

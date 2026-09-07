@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { assert, expectErrorCode, expectStatus } from '../harness/http.js';
 import { looksLikeTestDatabase } from '../harness/pg.js';
 import { fixtureUsers, setCapabilityDelay } from './fixtures.js';
+import { cleanupTestExecutions } from './cleanup.js';
 import type { DoctorContext } from './context.js';
 
 function newLcid(): string {
@@ -142,6 +143,7 @@ export async function chapter06(ctx: DoctorContext): Promise<void> {
 
     // 主链路：同 lcid 同输入两次同结果 → 不同输入 409 → executions 状态机 → 重启后仍同结果。
     const mainLcid = newLcid();
+    cleanupTargets.push(mainLcid);
     let firstResult = '';
     await reporter.check(`${capability.id} 同 lcid 同输入两次 → 同结果`, async () => {
       const first = await invoke({ capabilityId: capability.id, input, lcid: mainLcid });
@@ -153,7 +155,6 @@ export async function chapter06(ctx: DoctorContext): Promise<void> {
         firstResult === JSON.stringify((second.json as { data?: unknown }).data),
         `两次结果不同：${firstResult} vs ${JSON.stringify((second.json as { data?: unknown }).data)}`,
       );
-      cleanupTargets.push(mainLcid);
     });
 
     await reporter.check(
@@ -225,6 +226,10 @@ export async function chapter06(ctx: DoctorContext): Promise<void> {
     const cleanup = fixture.cleanup;
     await reporter.check(`${capability.id} 夹具清理（cleanup 失败即测试失败）`, async () => {
       assert(cleanup !== undefined, '写能力夹具必须声明 cleanup');
+      if ('testHook' in cleanup) {
+        await cleanupTestExecutions(ctx, capability.id, users.member.sub, cleanupTargets);
+        return;
+      }
       const result = await ctx.invokeCapability({
         capabilityId: cleanup.capabilityId,
         input: cleanup.input,

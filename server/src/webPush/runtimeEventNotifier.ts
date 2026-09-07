@@ -44,6 +44,15 @@ function notificationFromEvent(event: PlatformEvent): { status: string; taskName
   if (event.type === 'approval_requested') {
     return { status: '等待你的确认' };
   }
+  if (event.type === 'approval_resolved') {
+    return {
+      status: event.decision === 'approved'
+        ? '确认完成'
+        : event.decision === 'rejected'
+          ? '确认已拒绝'
+          : '确认已超时',
+    };
+  }
   if (event.type === 'interaction_requested' && event.interactionType === 'ask_user') {
     return { status: '等待你补充信息' };
   }

@@ -80,6 +80,81 @@ describe('Web Push 浏览器客户端', () => {
     });
   });
 
+  it('Service Worker 激活挂起时停止等待并提示刷新重试', async () => {
+    vi.useFakeTimers();
+    try {
+      defineSecureContext(true);
+      defineServiceWorker({ ready: new Promise<ServiceWorkerRegistration>(() => undefined) });
+      defineWindowValue('PushManager', class PushManager {});
+      defineWindowValue('Notification', { permission: 'default', requestPermission: vi.fn().mockResolvedValue('granted') });
+
+      const result = enableWebPush('BEl6ZmFrZS1rZXk');
+      const assertion = expect(result).rejects.toThrow('等待 Service Worker 激活超时，请刷新页面后重试');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Chrome 创建 PushSubscription 挂起时停止等待并允许重试', async () => {
+    vi.useFakeTimers();
+    try {
+      const subscribe = vi.fn(() => new Promise<PushSubscription>(() => undefined));
+      defineSecureContext(true);
+      defineServiceWorker({
+        ready: Promise.resolve({ pushManager: { getSubscription: vi.fn().mockResolvedValue(null), subscribe } }),
+      });
+      defineWindowValue('PushManager', class PushManager {});
+      defineWindowValue('Notification', { permission: 'default', requestPermission: vi.fn().mockResolvedValue('granted') });
+
+      const result = enableWebPush('BEl6ZmFrZS1rZXk');
+      const assertion = expect(result).rejects.toThrow('创建浏览器通知订阅超时，请检查网络或浏览器通知设置后重试');
+      await vi.advanceTimersByTimeAsync(15_000);
+      await assertion;
+      expect(subscribe).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('服务端保存订阅挂起时中止请求并提示检查网络后重试', async () => {
+    vi.useFakeTimers();
+    try {
+      const subscription = {
+        endpoint: 'https://fcm.googleapis.com/fcm/send/device',
+        toJSON: () => ({
+          endpoint: 'https://fcm.googleapis.com/fcm/send/device',
+          keys: { p256dh: 'p256dh', auth: 'auth' },
+        }),
+      } as unknown as PushSubscription;
+      defineSecureContext(true);
+      defineServiceWorker({
+        ready: Promise.resolve({
+          pushManager: {
+            getSubscription: vi.fn().mockResolvedValue(null),
+            subscribe: vi.fn().mockResolvedValue(subscription),
+          },
+        }),
+      });
+      defineWindowValue('PushManager', class PushManager {});
+      defineWindowValue('Notification', { permission: 'default', requestPermission: vi.fn().mockResolvedValue('granted') });
+      let saveSignal: AbortSignal | null | undefined;
+      vi.mocked(authFetch).mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+        saveSignal = init?.signal;
+        saveSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      }));
+
+      const result = enableWebPush('BEl6ZmFrZS1rZXk');
+      const assertion = expect(result).rejects.toThrow('保存浏览器通知订阅超时，请检查网络后重试');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await assertion;
+      expect(saveSignal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('关闭当前设备时删除服务端记录并取消浏览器订阅', async () => {
     const unsubscribe = vi.fn().mockResolvedValue(true);
     const current = { endpoint: 'https://fcm.googleapis.com/device', unsubscribe } as unknown as PushSubscription;

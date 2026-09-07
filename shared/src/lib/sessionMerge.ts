@@ -34,6 +34,12 @@ function userClientMessageId(message: MessageItem): string | null {
     : null;
 }
 
+function toolCallIdentity(message: MessageItem): string | null {
+  return message.type === 'tool_use' && message.runId && message.toolId
+    ? `${message.runId}:${message.toolId}`
+    : null;
+}
+
 function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]): MessageItem[] {
   if (tail.length === 0) return server;
 
@@ -43,6 +49,11 @@ function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]):
   const serverIds = new Set(server.map((message) => message.id));
   const serverUserClientMessageIds = new Set(
     server.map(userClientMessageId).filter((clientMsgId): clientMsgId is string => clientMsgId !== null),
+  );
+  // live 投影与 transcript 使用不同的 block id，但同一次工具调用共享 runId + toolId。
+  // 若不认领，旧 TodoWrite 快照会随 preserveTail 被整段搬到会话末尾，再投影成过期计划卡。
+  const projectedToolCalls = new Set(
+    server.map(toolCallIdentity).filter((identity): identity is string => identity !== null),
   );
   // compaction_status 会先生成本地临时分界线，随后 done 刷新又从 transcript 取得
   // 同一条持久化分界线。二者 id 不同，不能沿用普通消息的 id 去重。
@@ -56,6 +67,8 @@ function appendUnprojectedLocalTail(server: MessageItem[], tail: MessageItem[]):
     if (serverIds.has(message.id)) return false;
     const clientMsgId = userClientMessageId(message);
     if (clientMsgId !== null && serverUserClientMessageIds.has(clientMsgId)) return false;
+    const toolCall = toolCallIdentity(message);
+    if (toolCall !== null && projectedToolCalls.has(toolCall)) return false;
     const compaction = compactionIdentity(message);
     if (compaction !== null && projectedCompactions.has(compaction)) return false;
     const runtimeFailure = runtimeFailureIdentity(message);
@@ -130,28 +143,55 @@ export function mergeServerMessagesWithLocalTail(
     return appendUnprojectedLocalTail(server, tail);
   }
 
-  // 只检查服务端最后一条 text，避免历史中的同文消息误吞当前回复。
-  let lastServerTextContent: string | undefined;
+  // 无 runId 的 legacy 消息仍只检查最后一条 text，避免历史同文误吞当前回复。
+  // 现代投影可按 runId 收窄：服务端已经推进到后续 Run 时，旧 Run 的已落盘 text
+  // 仍应认领本地实时副本，否则会把旧回复及其工具尾部追加到整个会话末尾。
+  let lastServerText: Extract<MessageItem, { type: 'text' }> | undefined;
+  let lastServerTextIndex = -1;
   for (let i = server.length - 1; i >= 0; i--) {
     const message = server[i];
     if (message.type === 'text') {
-      lastServerTextContent = message.content;
+      lastServerText = message;
+      lastServerTextIndex = i;
       break;
     }
   }
+  let matchingRunTextIndex = -1;
+  if (anchor.runId !== undefined) {
+    for (let i = server.length - 1; i >= 0; i--) {
+      const message = server[i];
+      if (message.type === 'text' && message.runId === anchor.runId && message.content.startsWith(anchorContent)) {
+        matchingRunTextIndex = i;
+        break;
+      }
+    }
+  }
+  const latestTextCoversAnchor = lastServerText?.content.startsWith(anchorContent) === true;
+  const historicalRunTextCoversAnchor = matchingRunTextIndex >= 0 && matchingRunTextIndex !== lastServerTextIndex;
 
   // startsWith 同时覆盖全文相等；不做 trim/模糊匹配，避免误吞不同消息。
   // ⚠️「锚点前的在途气泡必然先于该 text 被投影」对 steering 插话不成立（2026-08-04
   // P1-1 修复）：插话气泡 push 进本地数组后，目标 run 还会继续产出 text 成为新锚点，
   // 而插话要等下一个 loop 边界才被消费——锚点前的 pending/queued 用户气泡必须保留，
   // 否则 done 刷新会把它整条丢掉（接管 run 的 done 归属校验随之失效）。
-  if (lastServerTextContent?.startsWith(anchorContent)) {
+  if (latestTextCoversAnchor || matchingRunTextIndex >= 0) {
     const inflightBeforeAnchor = local.slice(0, anchorIdx).filter((m): m is Extract<MessageItem, { type: 'user' }> => (
       m.type === 'user'
       && (m.status === 'pending' || m.status === 'queued')
       && m.content !== lastServerUserContent
     ));
-    return appendUnprojectedLocalTail(server, [...inflightBeforeAnchor, ...localTailAfterAnchor]);
+    // 已在服务端历史中找到同 Run 锚点且服务端又向后推进：锚点后的无身份活动
+    // （尤其 thinking）同属过期实时快照。只保留真正仍在等待用户处理的交互，以及
+    // 明确属于后续 Run 的消息；同 Run 工具和旧无身份活动均以服务端为准。
+    const tail = historicalRunTextCoversAnchor && anchor.runId
+      ? localTailAfterAnchor.filter((message) => (
+        (message.type === 'user' && (message.status === 'pending' || message.status === 'queued'))
+        || (message.type === 'permission_request' && message.status === 'pending')
+        || (message.type === 'ask_user' && message.status === 'pending')
+        || ('runId' in message && typeof message.runId === 'string' && message.runId !== anchor.runId)
+      ))
+      : localTailAfterAnchor;
+    return appendUnprojectedLocalTail(server, [...inflightBeforeAnchor, ...tail]);
   }
 
   const startIdx = inflightTailStart >= 0 && inflightTailStart < anchorIdx

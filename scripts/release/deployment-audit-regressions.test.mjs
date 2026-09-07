@@ -54,6 +54,18 @@ test('D-04: the latest attempt, including a retry of an older deployment ID, gat
   assert.throws(() => assertLatestStagingAttempt(history, release), /incomplete/);
   history[1].statuses.push(status(6, 'failure'));
   assert.throws(() => assertLatestStagingAttempt(history, release), /incomplete/);
+  assert.throws(
+    () =>
+      assertLatestStagingAttempt(
+        [{ deployment: deployment(1), statuses: [status(1, 'success'), status(7, 'inactive')] }],
+        release,
+      ),
+    /incomplete/,
+  );
+  assert.throws(
+    () => assertLatestStagingAttempt([{ deployment: deployment(1), statuses: [] }], release),
+    /no status/,
+  );
 });
 
 const deploy = readFileSync(new URL('./deploy-production-release.sh', import.meta.url), 'utf8');

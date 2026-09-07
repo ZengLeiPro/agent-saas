@@ -2,11 +2,16 @@ import { execFileSync } from 'node:child_process';
 
 /** Sort attempts by status time, not deployment creation time: old IDs can be retried. */
 export function assertLatestStagingAttempt(entries, releaseId) {
-  const attempts = entries.flatMap(({ deployment, statuses }) =>
-    statuses
+  const attempts = entries.flatMap(({ deployment, statuses }) => {
+    const ordered = [...statuses].sort(
+      (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id,
+    );
+    // An inactive deployment must never regain eligibility from an older success.
+    if (ordered[0]?.state === 'inactive') return [];
+    return ordered
       .filter((status) => status.state !== 'inactive')
-      .map((status) => ({ deployment, status })),
-  );
+      .map((status) => ({ deployment, status }));
+  });
   if (
     attempts.some(
       ({ status }) =>

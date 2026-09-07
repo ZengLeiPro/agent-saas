@@ -193,7 +193,7 @@ finish() {
   rm -f "$artifact_persistence_probe"
   rm -f "$acs_health_probe" "$api_ready_probe"
   if [ "$deployment_committed" = false ]; then
-    rollback || status=1
+    rollback || { [ "$status" -ne 0 ] || status=1; }
   fi
   return "$status"
 }

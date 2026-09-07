@@ -51,7 +51,7 @@ describe("LoginPage 统一账号标识", () => {
 
     fireEvent.change(screen.getByLabelText("账号"), { target: { value: "13800138000" } });
     fireEvent.click(screen.getByRole("button", { name: "忘记密码？" }));
-    fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+    fireEvent.click(await screen.findByRole("button", { name: "获取验证码" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/auth/password/reset/send-code", {

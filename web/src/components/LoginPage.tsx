@@ -1,21 +1,20 @@
 import { apiUrl } from "../lib/apiBase";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
-import { ForgotPasswordDialog } from "@/components/ForgotPasswordDialog";
+import { AUTH_CODE_BTN_CLASS, AUTH_INPUT_CLASS, AUTH_SUBMIT_CLASS } from "@/components/authStyles";
+
+const ForgotPasswordDialog = lazy(async () => {
+  const module = await import("@/components/ForgotPasswordDialog");
+  return { default: module.ForgotPasswordDialog };
+});
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
-/** 门面统一样式（与 AuthShell/SignupPage 对齐，设计稿 B1「浅色光晕」） */
-export const AUTH_INPUT_CLASS = "h-11 rounded-[10px]";
-export const AUTH_SUBMIT_CLASS =
-  "h-[46px] w-full rounded-[11px] bg-gradient-to-b from-brand-500 to-brand-600 text-[15px] font-semibold tracking-[0.14em] text-primary-foreground shadow-[0_8px_18px_-4px_rgba(46,86,225,0.45)] hover:brightness-105 hover:shadow-[0_10px_22px_-4px_rgba(46,86,225,0.55)] active:translate-y-px";
-export const AUTH_CODE_BTN_CLASS =
-  "h-11 w-28 shrink-0 rounded-[10px] border-brand-200 bg-brand-50 text-[13px] font-medium text-brand-700 hover:bg-brand-100 hover:text-brand-700";
 interface LoginPageProps {
   /** 切到注册页（AuthGate 提供；注册入口仅在后端开放自助注册时显示） */
   onSwitchToSignup?: () => void;
@@ -225,15 +224,17 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
         </p>
       )}
     </form>
-    <ForgotPasswordDialog
-      open={forgotPasswordOpen}
-      onOpenChange={setForgotPasswordOpen}
-      initialPhone={account}
-      onSuccess={() => {
-        setPassword("");
-        setNotice("密码已重置，请使用新密码登录");
-      }}
-    />
+    <Suspense fallback={null}>
+      <ForgotPasswordDialog
+        open={forgotPasswordOpen}
+        onOpenChange={setForgotPasswordOpen}
+        initialPhone={account}
+        onSuccess={() => {
+          setPassword("");
+          setNotice("密码已重置，请使用新密码登录");
+        }}
+      />
+    </Suspense>
     </>
   );
 }

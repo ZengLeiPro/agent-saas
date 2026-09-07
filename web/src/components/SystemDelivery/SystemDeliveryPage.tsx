@@ -120,8 +120,6 @@ function DeliveryExecution({
   useEffect(() => {
     if (execution?.status !== 'running') return;
     const timer = window.setTimeout(resource.reload, 3000);
-    if (execution && expectedSystemId && execution.systemId !== expectedSystemId)
-      return <p role="alert">该接入记录不属于当前业务系统，请返回组织接入重新选择。</p>;
     return () => window.clearTimeout(timer);
   }, [execution, resource.reload]);
   async function resume() {
@@ -140,12 +138,11 @@ function DeliveryExecution({
   }
   const claim = latest?.claim;
   const ticket = claim?.path.split('/').at(-1);
+  if (execution && expectedSystemId && execution.systemId !== expectedSystemId)
+    return <p role="alert">该接入记录不属于当前业务系统，请返回组织接入重新选择。</p>;
   return (
     <section className="space-y-4 p-4">
-      <Button variant="outline" onClick={() => navigateGovernance(governanceRoute(routeId))}>
-        返回交付列表
-      </Button>
-      <h2 className="text-lg font-semibold">组织交付进度</h2>
+      <h2 className="text-lg font-semibold">组织接入进度</h2>
       {error && <p role="alert">{error}</p>}
       {!execution ? (
         <ResourceState error={resource.error} retry={resource.reload} />

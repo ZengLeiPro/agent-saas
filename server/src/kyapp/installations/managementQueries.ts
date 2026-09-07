@@ -23,6 +23,7 @@ export class KyAppManagementQueries {
     private readonly pool: GovernancePgPool,
     private readonly systems: PgKyAppSystemStore,
     tablePrefix?: string,
+    private readonly eventsTable?: string,
   ) {
     this.prefix = governanceTablePrefix(tablePrefix);
   }
@@ -154,11 +155,12 @@ export class KyAppManagementQueries {
       `SELECT i.installation_id,i.tenant_id,i.system_id,i.status,i.registered_digest,i.domain_verified_at,i.updated_at,
       to_char(i.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at,
       d.name,d.published_digest,v.manifest_json->>'icon' AS icon,r.live_status,r.ready_status,r.manifest_digest,
-      e.status AS delivery_status FROM ${this.systems.installationsTable} i
+      e.status AS delivery_status,${this.eventsTable ? 'u.last_usage_at' : 'NULL'} AS last_usage_at FROM ${this.systems.installationsTable} i
       JOIN ${this.systems.definitionsTable} d USING(system_id)
       LEFT JOIN ${this.systems.versionsTable} v ON v.system_id=d.system_id AND v.digest=d.published_digest
       LEFT JOIN ${this.prefix}_ky_app_installation_runtime r USING(installation_id)
       LEFT JOIN LATERAL (SELECT status FROM ${this.prefix}_ky_app_onboard_executions WHERE installation_id=i.installation_id ORDER BY updated_at DESC,execution_id LIMIT 1) e ON true
+      ${this.eventsTable ? `LEFT JOIN (SELECT event_json->>'installationId' AS installation_id,MAX(timestamp) AS last_usage_at FROM ${this.eventsTable} WHERE event_type='tool_audit' GROUP BY 1) u ON u.installation_id=i.installation_id` : ''}
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY i.updated_at DESC,i.installation_id ASC LIMIT $${params.length}`,
       params,
     );
@@ -185,7 +187,7 @@ export class KyAppManagementQueries {
               : row.live_status === 'maintenance'
                 ? 'warning'
                 : 'unknown',
-        lastUsageAt: null,
+        lastUsageAt: date(row.last_usage_at),
         updatedAt: date(row.updated_at),
         allowedActions: installationActions(user, {
           tenantId: String(row.tenant_id),

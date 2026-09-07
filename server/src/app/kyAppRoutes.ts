@@ -96,7 +96,7 @@ export function registerKyAppRoutes(
   }
 
   const management = new KyAppManagementQueries(runtime.runtimePgEventStore!.pool, assembly.systems,
-    runtime.config.runtimeEventStore?.backend === 'pg' ? runtime.config.runtimeEventStore.tablePrefix : undefined);
+    runtime.config.runtimeEventStore?.backend === 'pg' ? runtime.config.runtimeEventStore.tablePrefix : undefined, runtime.runtimePgEventStore!.eventsTable);
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppSystemsRouter({

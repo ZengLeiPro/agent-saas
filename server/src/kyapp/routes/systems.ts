@@ -59,7 +59,7 @@ export function createKyAppSystemsRouter(options: KyAppSystemRoutesOptions): Rou
 
   router.get('/systems', requirePlatformAdmin, async (req, res) => {
     try {
-      res.json({ systems: await options.management?.systemsList() ?? await options.systems.listDefinitions() });
+      res.json({ systems: await options.management?.systemsList() ?? await options.systems.listDefinitions(), allowedActions: ['register_version'] });
     } catch (error) {
       sendKyAppFailure(req, res, error);
     }

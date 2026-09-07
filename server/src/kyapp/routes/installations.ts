@@ -289,6 +289,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
       const version = installation.registeredDigest
         ? await options.systems.getVersion(installation.systemId, installation.registeredDigest)
         : null;
+      const summary = await options.management?.installationSummary(iid.data);
       res.json({
         installation: {
           installationId: installation.installationId,
@@ -308,7 +309,8 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
               publishedDigest: definition.publishedDigest,
             }
           : null,
-        ...(options.management ? await options.management.installationSummary(iid.data) : {}),
+        ...summary,
+        upgrade: { currentDigest: installation.registeredDigest, publishedDigest: definition?.publishedDigest ?? null, observedDigest: summary?.observedDigest ?? null, canSwitch: isPlatformAdmin(req.user) && installation.status !== 'deleted' && Boolean(summary?.ready && summary.observedDigest === definition?.publishedDigest && summary.observedDigest !== installation.registeredDigest) },
         manifest: version?.manifest ?? null,
         allowedActions: installationActions(req.user, installation),
       });

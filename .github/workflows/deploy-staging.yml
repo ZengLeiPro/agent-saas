@@ -49,6 +49,7 @@ jobs:
       ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       RELEASE_EVIDENCE_SCHEMA_VERSION: '2'
+      RELEASE_EVIDENCE_SCHEMA_REVISION: '2'
       RELEASE_SHA: ${{ github.sha }}
       PRODUCTION_CONFIG_IDENTITY_STAGE: steady-state
 
@@ -85,15 +86,17 @@ jobs:
             echo "Evidence Writer capability check failed with HTTP $status" >&2
             exit 1
           fi
-          if ! jq -e --argjson required "$RELEASE_EVIDENCE_SCHEMA_VERSION" '
+          if ! jq -e --argjson required "$RELEASE_EVIDENCE_SCHEMA_VERSION" \
+            --argjson requiredRevision "$RELEASE_EVIDENCE_SCHEMA_REVISION" '
             .schemaVersion == 1 and
             .service == "agent-saas-release-evidence" and
+            .releaseEvidenceSchemaRevision == $requiredRevision and
             (.currentReleaseEvidenceSchemaVersion | type == "number") and
             (.supportedReleaseEvidenceSchemaVersions | type == "array") and
             (.supportedReleaseEvidenceSchemaVersions | index($required) != null)
           ' "$RUNNER_TEMP/evidence-writer-capabilities.json" >/dev/null; then
             cat "$RUNNER_TEMP/evidence-writer-capabilities.json" >&2
-            echo "Evidence Writer does not support required Release Evidence schema v$RELEASE_EVIDENCE_SCHEMA_VERSION" >&2
+            echo "Evidence Writer does not support required Release Evidence schema v$RELEASE_EVIDENCE_SCHEMA_VERSION revision $RELEASE_EVIDENCE_SCHEMA_REVISION" >&2
             exit 1
           fi
 

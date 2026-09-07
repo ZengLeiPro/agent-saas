@@ -11,6 +11,7 @@ import {
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
 import {
+  RELEASE_EVIDENCE_SCHEMA_REVISION,
   RELEASE_EVIDENCE_SCHEMA_VERSION,
   SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS,
 } from './release-evidence-schema.mjs';
@@ -46,6 +47,7 @@ test('advertises authenticated Release Evidence schema capabilities', async (t) 
   assert.deepEqual(await response.json(), {
     schemaVersion: 1,
     service: 'agent-saas-release-evidence',
+    releaseEvidenceSchemaRevision: RELEASE_EVIDENCE_SCHEMA_REVISION,
     currentReleaseEvidenceSchemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
     supportedReleaseEvidenceSchemaVersions: [...SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS],
   });

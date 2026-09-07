@@ -5,6 +5,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { canonicalJson, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 import {
+  RELEASE_EVIDENCE_SCHEMA_REVISION,
   RELEASE_EVIDENCE_SCHEMA_VERSION,
   SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS,
   validateReleaseEvidenceDocument,
@@ -93,6 +94,7 @@ export function createEvidenceService({ root, readToken, writeToken, now = () =>
         json(res, 200, {
           schemaVersion: 1,
           service: 'agent-saas-release-evidence',
+          releaseEvidenceSchemaRevision: RELEASE_EVIDENCE_SCHEMA_REVISION,
           currentReleaseEvidenceSchemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION,
           supportedReleaseEvidenceSchemaVersions: [...SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS],
         });

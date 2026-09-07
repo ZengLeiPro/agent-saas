@@ -3,6 +3,7 @@ import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-
 
 export const SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS = Object.freeze([1, 2]);
 export const RELEASE_EVIDENCE_SCHEMA_VERSION = SUPPORTED_RELEASE_EVIDENCE_SCHEMA_VERSIONS.at(-1);
+export const RELEASE_EVIDENCE_SCHEMA_REVISION = 2;
 
 const releaseEvidenceSchemaVersion = z
   .number()

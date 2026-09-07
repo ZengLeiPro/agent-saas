@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
+import { ForgotPasswordDialog } from "@/components/ForgotPasswordDialog";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
@@ -28,6 +29,8 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -75,6 +78,7 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
+    setNotice("");
     if (loginMode === "sms" && !PHONE_PATTERN.test(account)) {
       setError("请输入有效的 11 位手机号");
       return;
@@ -94,6 +98,7 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
   };
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="login-account">账号</Label>
@@ -112,7 +117,21 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
       </div>
       {loginMode === "password" ? (
         <div className="space-y-2">
-          <Label htmlFor="password">密码</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">密码</Label>
+            <button
+              type="button"
+              className="text-xs font-medium text-brand-600 hover:underline"
+              onClick={() => {
+                setForgotPasswordOpen(true);
+                setError("");
+                setNotice("");
+              }}
+              disabled={loading}
+            >
+              忘记密码？
+            </button>
+          </div>
           <Input
             id="password"
             type="password"
@@ -161,8 +180,13 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
         </div>
       )}
       {error && (
-        <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div role="status" aria-live="polite" className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
+          {notice}
         </div>
       )}
       <Button type="submit" className={AUTH_SUBMIT_CLASS} disabled={loading}>
@@ -201,5 +225,15 @@ export function LoginPage({ onSwitchToSignup, signupEnabled = false }: LoginPage
         </p>
       )}
     </form>
+    <ForgotPasswordDialog
+      open={forgotPasswordOpen}
+      onOpenChange={setForgotPasswordOpen}
+      initialPhone={account}
+      onSuccess={() => {
+        setPassword("");
+        setNotice("密码已重置，请使用新密码登录");
+      }}
+    />
+    </>
   );
 }

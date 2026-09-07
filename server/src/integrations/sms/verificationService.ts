@@ -111,10 +111,14 @@ export class VerificationCodeService {
     timer.unref();
   }
 
+  private codeKey(phone: string, purpose: string): string {
+    return `${purpose}:${phone}`;
+  }
+
   private sweep(): void {
     const now = Date.now();
-    for (const [phone, entry] of this.codes) {
-      if (entry.expiresAt < now) this.codes.delete(phone);
+    for (const [key, entry] of this.codes) {
+      if (entry.expiresAt < now) this.codes.delete(key);
     }
     const today = localDayKey(now);
     for (const [phone, state] of this.sendState) {
@@ -125,7 +129,7 @@ export class VerificationCodeService {
   }
 
   /** 生成并发送验证码。冷却/限额不满足时返回用户可读错误，发送失败时 throw。 */
-  async requestCode(phone: string): Promise<RequestCodeResult> {
+  async requestCode(phone: string, purpose = "default"): Promise<RequestCodeResult> {
     const now = Date.now();
     const state = this.sendState.get(phone);
     const today = localDayKey(now);
@@ -148,7 +152,7 @@ export class VerificationCodeService {
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     await this.sender.sendCode(phone, code);
 
-    this.codes.set(phone, {
+    this.codes.set(this.codeKey(phone, purpose), {
       code,
       expiresAt: now + this.codeTtlMs,
       attempts: 0,
@@ -165,26 +169,27 @@ export class VerificationCodeService {
    * 校验并消费验证码（成功即删除，一次性）。
    * 错误尝试达到上限后该码作废，需重新获取。
    */
-  verifyAndConsume(phone: string, code: string): boolean {
+  verifyAndConsume(phone: string, code: string, purpose = "default"): boolean {
+    const key = this.codeKey(phone, purpose);
     if (this.universalCode && code === this.universalCode) {
       apiLogger.warn(`[sms] 万能码验证通过 phone=${phone}（仅限内测，生产须移除）`);
-      this.codes.delete(phone);
+      this.codes.delete(key);
       return true;
     }
-    const entry = this.codes.get(phone);
+    const entry = this.codes.get(key);
     if (!entry) return false;
     if (entry.expiresAt < Date.now()) {
-      this.codes.delete(phone);
+      this.codes.delete(key);
       return false;
     }
     if (entry.code !== code) {
       entry.attempts += 1;
       if (entry.attempts >= this.maxVerifyAttempts) {
-        this.codes.delete(phone);
+        this.codes.delete(key);
       }
       return false;
     }
-    this.codes.delete(phone);
+    this.codes.delete(key);
     return true;
   }
 }

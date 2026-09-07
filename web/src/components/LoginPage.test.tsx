@@ -41,6 +41,41 @@ describe("LoginPage 统一账号标识", () => {
     });
   });
 
+  it("通过已验证手机号找回并重置密码", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ ok: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<LoginPage />);
+
+    fireEvent.change(screen.getByLabelText("账号"), { target: { value: "13800138000" } });
+    fireEvent.click(screen.getByRole("button", { name: "忘记密码？" }));
+    fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/auth/password/reset/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: "13800138000" }),
+      });
+    });
+
+    fireEvent.change(screen.getByLabelText("验证码"), { target: { value: "123456" } });
+    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "newpass123" } });
+    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "newpass123" } });
+    fireEvent.click(screen.getByRole("button", { name: "重置密码" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/auth/password/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: "13800138000", code: "123456", newPassword: "newpass123" }),
+      });
+      expect(screen.getByText("密码已重置，请使用新密码登录")).toBeTruthy();
+    });
+  });
+
   it("切换短信验证码时保留同一个账号输入", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   FileText,
+  KeyRound,
   Pencil,
   Trash2,
   UserCheck,
@@ -27,6 +28,7 @@ interface UserTableProps {
   users: UserInfo[];
   currentUserId: string;
   onEdit: (user: UserInfo) => void;
+  onResetPassword: (user: UserInfo) => void;
   onDelete: (user: UserInfo) => void;
   onViewLogs: (user: UserInfo) => void;
   onToggleDisabled: (user: UserInfo) => void;
@@ -73,6 +75,7 @@ export function UserTable({
   users,
   currentUserId,
   onEdit,
+  onResetPassword,
   onDelete,
   onViewLogs,
   onToggleDisabled,
@@ -237,15 +240,26 @@ export function UserTable({
                   <FileText className="size-4" />
                 </Button>
                 {canManageUser(user) && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-8"
-                    onClick={() => onEdit(user)}
-                    title="编辑"
-                  >
-                    <Pencil className="size-4" />
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => onResetPassword(user)}
+                      title="重置密码"
+                    >
+                      <KeyRound className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => onEdit(user)}
+                      title="编辑"
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
+                  </>
                 )}
                 {canDeleteUser(user) && user.id !== currentUserId && (
                   <Button

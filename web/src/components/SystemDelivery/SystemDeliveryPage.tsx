@@ -22,39 +22,69 @@ const stepNames: Record<string, string> = {
 export function SystemDeliveryPage({
   executionId,
   systemId,
+  embedded = false,
 }: {
   executionId?: string | null;
   systemId?: string;
+  embedded?: boolean;
 }) {
+  const [selectedExecution, setSelectedExecution] = useState(() =>
+    embedded
+      ? (new URLSearchParams(window.location.search).get('execution') ?? undefined)
+      : executionId,
+  );
+  function open(id?: string) {
+    if (!embedded) {
+      navigateGovernance(governanceRoute(routeId, { entityId: id }));
+      return;
+    }
+    setSelectedExecution(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', 'installations');
+    if (id) url.searchParams.set('execution', id);
+    else url.searchParams.delete('execution');
+    window.history.replaceState(window.history.state, '', url);
+  }
+  const currentExecution = embedded ? selectedExecution : executionId;
   const [latest, setLatest] = useState<OnboardResponse>();
   function started(result: OnboardResponse) {
     setLatest(result);
-    navigateGovernance(governanceRoute(routeId, { entityId: result.execution.executionId }));
+    open(result.execution.executionId);
   }
-  return executionId ? (
-    <DeliveryExecution
-      key={executionId}
-      executionId={executionId}
-      latest={latest?.execution.executionId === executionId ? latest : undefined}
-      onResumed={setLatest}
-    />
+  return currentExecution ? (
+    <div className="space-y-4">
+      {embedded && (
+        <Button variant="outline" onClick={() => open()}>
+          返回组织接入
+        </Button>
+      )}
+      <DeliveryExecution
+        key={currentExecution}
+        executionId={currentExecution}
+        expectedSystemId={systemId}
+        latest={latest?.execution.executionId === currentExecution ? latest : undefined}
+        onResumed={setLatest}
+      />
+    </div>
   ) : (
     <div className="space-y-6 p-4">
       <CreateDeliveryForm defaultSystemId={systemId} onStarted={started} />
-      <DeliveryList />
+      <DeliveryList systemId={systemId} onOpen={open} />
     </div>
   );
 }
-function DeliveryList() {
+function DeliveryList({ systemId, onOpen }: { systemId?: string; onOpen: (id: string) => void }) {
   const resource = useManagementResource<{
     executions?: Array<Pick<OnboardExecution, 'executionId' | 'tenantId' | 'systemId' | 'status'>>;
   }>('/deliveries');
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;
+  const executions =
+    resource.data.executions?.filter((item) => !systemId || item.systemId === systemId) ?? [];
   return (
     <section className="space-y-3">
-      <h3 className="font-medium">交付执行记录</h3>
-      {!resource.data.executions?.length && <p>暂无交付执行记录</p>}
-      {resource.data.executions?.map((execution) => (
+      <h3 className="font-medium">组织接入记录</h3>
+      {!executions.length && <p>暂无组织接入记录</p>}
+      {executions.map((execution) => (
         <div
           key={execution.executionId}
           className="flex items-center justify-between rounded border p-3"
@@ -62,12 +92,7 @@ function DeliveryList() {
           <span>
             {execution.systemId} · {execution.tenantId} · {execution.status}
           </span>
-          <Button
-            variant="outline"
-            onClick={() =>
-              navigateGovernance(governanceRoute(routeId, { entityId: execution.executionId }))
-            }
-          >
+          <Button variant="outline" onClick={() => onOpen(execution.executionId)}>
             查看进度
           </Button>
         </div>
@@ -79,8 +104,10 @@ function DeliveryExecution({
   executionId,
   latest,
   onResumed,
+  expectedSystemId,
 }: {
   executionId: string;
+  expectedSystemId?: string;
   latest?: OnboardResponse;
   onResumed: (result: OnboardResponse) => void;
 }) {
@@ -111,12 +138,11 @@ function DeliveryExecution({
   }
   const claim = latest?.claim;
   const ticket = claim?.path.split('/').at(-1);
+  if (execution && expectedSystemId && execution.systemId !== expectedSystemId)
+    return <p role="alert">该接入记录不属于当前业务系统，请返回组织接入重新选择。</p>;
   return (
     <section className="space-y-4 p-4">
-      <Button variant="outline" onClick={() => navigateGovernance(governanceRoute(routeId))}>
-        返回交付列表
-      </Button>
-      <h2 className="text-lg font-semibold">组织交付进度</h2>
+      <h2 className="text-lg font-semibold">组织接入进度</h2>
       {error && <p role="alert">{error}</p>}
       {!execution ? (
         <ResourceState error={resource.error} retry={resource.reload} />
@@ -189,4 +215,28 @@ function DeliveryExecution({
       )}
     </section>
   );
+}
+
+/** 旧交付链接继续可用，统一进入所属业务系统的组织接入页。 */
+export function LegacySystemDeliveryPage({
+  executionId,
+  systemId,
+}: {
+  executionId?: string | null;
+  systemId?: string;
+}) {
+  const resource = useManagementResource<{ execution?: OnboardExecution }>(
+    executionId ? `/onboard/${encodeURIComponent(executionId)}` : '/systems',
+  );
+  useEffect(() => {
+    if (!resource.data) return;
+    const targetSystem = resource.data.execution?.systemId ?? systemId;
+    navigateGovernance(
+      governanceRoute('platform.resource-center.business-systems', {
+        ...(targetSystem ? { entityId: targetSystem } : {}),
+        search: `?${new URLSearchParams({ tab: 'installations', ...(executionId ? { execution: executionId } : {}) })}`,
+      }),
+    );
+  }, [resource.data, executionId, systemId]);
+  return <ResourceState error={resource.error} retry={resource.reload} />;
 }

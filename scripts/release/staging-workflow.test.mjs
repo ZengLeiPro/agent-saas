@@ -596,7 +596,7 @@ test('Staging deploy cleanup is best-effort and every temporary path is run-atte
   );
   assert.match(
     deploy,
-    /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+return "\$status"/u,
   );
 });
 
@@ -615,7 +615,7 @@ test('Staging health gate rejects shadow mode before commit so EXIT trap rolls b
   );
   assert.match(
     deploy,
-    /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback \|\| \{ \[ "\$status" -ne 0 \] \|\| status=1; \}\s+fi\s+return "\$status"/u,
   );
 
   const root = await mkdtemp(join(tmpdir(), 'staging-health-'));

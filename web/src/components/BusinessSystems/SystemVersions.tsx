@@ -6,22 +6,14 @@ import type { SystemDetail } from '@/lib/kyAppManagementTypes';
 export function SystemVersions({ detail, reload }: { detail: SystemDetail; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  async function act(digest: string, action: 'review' | 'publish') {
-    if (
-      busy ||
-      !window.confirm(
-        action === 'review'
-          ? '确认已复核此版本的能力和访问范围变化？'
-          : '确认发布此版本？现有实例需部署并验证后才能切换。',
-      )
-    )
-      return;
+  async function publish(digest: string) {
+    if (busy || !window.confirm('确认发布此版本？现有实例需部署并验证后才能切换。')) return;
     setBusy(true);
     setError('');
     try {
       await kyAppPost(
-        `/systems/${encodeURIComponent(detail.definition.systemId)}/versions/${digest}/${action}`,
-        action === 'publish' ? { expectedVersion: detail.definition.version } : {},
+        `/systems/${encodeURIComponent(detail.definition.systemId)}/versions/${digest}/publish`,
+        { expectedVersion: detail.definition.version },
       );
       reload();
     } catch (reason) {
@@ -46,18 +38,16 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
             <strong>
               {version.status === 'published'
                 ? '已发布'
-                : version.reviewStatus === 'pending'
-                  ? '待复核'
-                  : version.reviewStatus === 'approved'
-                    ? '已复核'
-                    : '已登记'}
+                : version.status === 'retired'
+                  ? '已退役'
+                  : '已登记'}
             </strong>
             <code className="break-all text-xs">{version.digest}</code>
           </div>
           <p className="text-sm">登记人：{version.createdBy}</p>
           {version.reviewReasons.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium">语义变化与复核原因</h4>
+              <h4 className="text-sm font-medium">版本变化提示</h4>
               <ul className="list-inside list-disc text-sm">
                 {version.reviewReasons.map((reason) => (
                   <li key={reason}>{reason}</li>
@@ -65,7 +55,13 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
               </ul>
             </div>
           )}
-          <ManifestDiff before={detail.versions.find(item => item.digest === detail.definition.publishedDigest)?.manifest} after={version.manifest} />
+          <ManifestDiff
+            before={
+              detail.versions.find((item) => item.digest === detail.definition.publishedDigest)
+                ?.manifest
+            }
+            after={version.manifest}
+          />
           <details>
             <summary className="cursor-pointer text-sm">查看只读 Manifest</summary>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs">
@@ -73,18 +69,9 @@ export function SystemVersions({ detail, reload }: { detail: SystemDetail; reloa
             </pre>
           </details>
           <div className="flex gap-2">
-            {version.allowedActions?.includes('review_version') && (
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => void act(version.digest, 'review')}
-              >
-                复核版本
-              </Button>
-            )}
             {version.allowedActions?.includes('publish_version') &&
               detail.definition.publishedDigest !== version.digest && (
-                <Button disabled={busy} onClick={() => void act(version.digest, 'publish')}>
+                <Button disabled={busy} onClick={() => void publish(version.digest)}>
                   发布版本
                 </Button>
               )}

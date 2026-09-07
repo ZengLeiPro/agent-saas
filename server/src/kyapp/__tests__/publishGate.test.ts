@@ -1,6 +1,6 @@
 /**
  * WP2a DoD：发布门禁用例（规范 §8.1）。
- * 规范点名的每一类语义 diff 各来一条，确认都能触发非发布者复核。
+ * 规范点名的每一类语义 diff 各来一条，确认保留变化提示且无需双人复核。
  */
 import { describe, expect, it } from 'vitest';
 
@@ -44,35 +44,35 @@ function withInput(patch: Record<string, unknown>): Manifest {
 }
 
 describe('发布门禁语义 diff', () => {
-  it('首个版本一律进人工风险审核', () => {
+  it('首个版本保留提示但不要求复核', () => {
     const gate = evaluateKyAppPublishGate({ previous: null, next: manifest() });
-    expect(gate.reviewRequired).toBe(true);
+    expect(gate.reviewRequired).toBe(false);
     expect(gate.reasons[0]).toContain('首个版本');
   });
 
-  it('完全相同的 manifest 不触发复核', () => {
+  it('完全相同的 manifest 不生成提示', () => {
     const gate = evaluateKyAppPublishGate({ previous: manifest(), next: manifest() });
     expect(gate).toEqual({ reviewRequired: false, reasons: [] });
   });
 
-  it('riskLevel 降低触发复核', () => {
+  it('riskLevel 降低生成提示', () => {
     const previous = withCapability({
       riskLevel: 'external_write',
       approval: 'required',
       safeToRetry: false,
     });
     const gate = evaluateKyAppPublishGate({ previous, next: manifest() });
-    expect(gate.reviewRequired).toBe(true);
+    expect(gate.reviewRequired).toBe(false);
     expect(gate.reasons.join('；')).toContain('riskLevel 由 external_write 降为 read_only');
   });
 
-  it('required 删除触发复核', () => {
+  it('required 删除生成提示', () => {
     const next = withInput({ required: [] });
     const gate = evaluateKyAppPublishGate({ previous: manifest(), next });
     expect(gate.reasons.join('；')).toContain('required 删除了字段 keyword');
   });
 
-  it('enum 扩张触发复核', () => {
+  it('enum 扩张生成提示', () => {
     const next = withInput({
       properties: { channel: { type: 'string', enum: ['web', 'app', 'openapi'] } },
     });
@@ -80,7 +80,7 @@ describe('发布门禁语义 diff', () => {
     expect(gate.reasons.join('；')).toContain('enum 扩张');
   });
 
-  it('minimum 降低触发复核', () => {
+  it('minimum 降低生成提示', () => {
     const next = withInput({
       properties: { limit: { type: 'integer', minimum: 0, maximum: 20 } },
     });
@@ -88,7 +88,7 @@ describe('发布门禁语义 diff', () => {
     expect(gate.reasons.join('；')).toContain('minimum 由 1 降到 0');
   });
 
-  it('maximum 升高触发复核', () => {
+  it('maximum 升高生成提示', () => {
     const next = withInput({
       properties: { limit: { type: 'integer', minimum: 1, maximum: 500 } },
     });
@@ -96,13 +96,13 @@ describe('发布门禁语义 diff', () => {
     expect(gate.reasons.join('；')).toContain('maximum 由 20 升到 500');
   });
 
-  it('additionalProperties 放宽触发复核', () => {
+  it('additionalProperties 放宽生成提示', () => {
     const next = withInput({ additionalProperties: true });
     const gate = evaluateKyAppPublishGate({ previous: manifest(), next });
     expect(gate.reasons.join('；')).toContain('additionalProperties 由 false 放宽');
   });
 
-  it('新增能力与移除能力都触发复核', () => {
+  it('新增能力与移除能力都生成提示', () => {
     const base = manifest();
     const added = {
       ...base,
@@ -119,7 +119,7 @@ describe('发布门禁语义 diff', () => {
     );
   });
 
-  it('description 变更触发复核（能力级与系统级）', () => {
+  it('description 变更生成提示（能力级与系统级）', () => {
     const capabilityChanged = withCapability({ description: '改写后的说明：返回订单列表。' });
     expect(
       evaluateKyAppPublishGate({ previous: manifest(), next: capabilityChanged }).reasons.join(
@@ -132,7 +132,7 @@ describe('发布门禁语义 diff', () => {
     ).toContain('系统 description 变更');
   });
 
-  it('pathPrefixes 新增触发复核', () => {
+  it('pathPrefixes 新增生成提示', () => {
     const next = manifest({
       pathPrefixes: { user: ['/api/app/', '/api/portal/'], admin: ['/api/admin/'] },
     });
@@ -141,7 +141,7 @@ describe('发布门禁语义 diff', () => {
     );
   });
 
-  it('收紧不触发复核（新增 required、enum 收缩、上界变小）', () => {
+  it('收紧不生成提示（新增 required、enum 收缩、上界变小）', () => {
     const next = withInput({
       required: ['keyword', 'limit'],
       properties: {

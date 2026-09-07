@@ -154,6 +154,35 @@ function props() {
 }
 
 describe("BusinessStepDetailPanel", () => {
+  it("运行结束后详情标签停止转圈，恢复运行时重新显示进行中", () => {
+    const runningDetail = plan.details[1];
+    const closedPlan = { ...plan, event: { ...plan.event, isClosed: true } };
+    const { container, rerender } = render(
+      <BusinessStepDetailPanel {...props()} detail={runningDetail} plan={closedPlan} />,
+    );
+    const tab = screen.getByRole("tab", { name: "第 02 步：写入结果" });
+    expect(within(tab).getByLabelText("已结束")).toBeTruthy();
+    expect(container.querySelector(".animate-spin")).toBeNull();
+    expect(screen.getByText("本轮执行已结束，步骤状态未更新")).toBeTruthy();
+    expect(runningDetail.todo.status).toBe("in_progress");
+    rerender(<BusinessStepDetailPanel {...props()} detail={runningDetail} plan={plan} />);
+    expect(within(tab).getByLabelText("进行中")).toBeTruthy();
+    expect(tab.querySelector(".animate-spin")).toBeTruthy();
+  });
+
+  it("未执行与已有过程但缺少摘要的步骤显示不同说明", () => {
+    const pendingDetail = { ...plan.details[1], todo: { ...secondTodo, status: "pending" as const } };
+    const { rerender } = render(<BusinessStepDetailPanel {...props()} detail={pendingDetail} />);
+    expect(screen.getByText("待执行")).toBeTruthy();
+    const processDetail = {
+      ...pendingDetail,
+      sections: [{ ...section, terminal: undefined, processAnomaly: false, items: [processTool] }],
+    };
+    rerender(<BusinessStepDetailPanel {...props()} detail={processDetail} />);
+    expect(screen.getByText("已有过程记录，步骤状态待更新")).toBeTruthy();
+    expect(screen.queryByText("暂无结果")).toBeNull();
+  });
+
   it("标题栏仅保留标题和右上关闭叉号，结果直接展示且复用只读内容", () => {
     render(<BusinessStepDetailPanel {...props()} />);
 

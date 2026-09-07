@@ -20,25 +20,9 @@ const url = process.env.TEST_DATABASE_URL;
     );
     expect(uploaded.status).toBe(201);
     const { definition, version } = await uploaded.json();
-    expect(
-      (
-        await rig.request(
-          `${base}/systems/${TEST_SYSTEM}/versions/${version.digest}/publish`,
-          'platform',
-          'POST',
-          { expectedVersion: definition.version },
-        )
-      ).status,
-    ).toBe(409);
-    expect(
-      (
-        await rig.request(
-          `${base}/systems/${TEST_SYSTEM}/versions/${version.digest}/review`,
-          'reviewer',
-          'POST',
-        )
-      ).status,
-    ).toBe(200);
+    expect(version.reviewStatus).toBe('not_required');
+    // 模拟升级前已登记的待复核版本，仍由原登记人通过 HTTP 发布。
+    await rig.pool.query(`UPDATE ${rig.assembly.systems.versionsTable} SET review_status='pending' WHERE system_id=$1 AND digest=$2`, [TEST_SYSTEM, version.digest]);
     const published = await rig.request(
       `${base}/systems/${TEST_SYSTEM}/versions/${version.digest}/publish`,
       'platform',

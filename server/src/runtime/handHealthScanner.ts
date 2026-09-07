@@ -1,3 +1,4 @@
+import { isSupersededHand } from './handSupersession.js';
 import { randomUUID } from 'node:crypto';
 import { fetch as undiciFetch } from 'undici';
 
@@ -150,7 +151,7 @@ export class HandHealthScanner {
       const ready = await store.listByType('server-remote', { status: 'ready' });
       const unhealthy = await store.listByType('server-remote', { status: 'unhealthy' });
       const provisioning = await store.listByType('server-remote', { status: 'provisioning' });
-      const candidates = [...ready, ...unhealthy, ...provisioning];
+      const candidates = [...ready, ...unhealthy, ...provisioning].filter((hand) => !isSupersededHand(hand));
 
       // 按 (endpoint, authToken) 分组。token 参与 key：同 endpoint 不同凭据的
       // 探测结果可能不同（401 → unhealthy）。resolveToken 对非 tenant hand 是

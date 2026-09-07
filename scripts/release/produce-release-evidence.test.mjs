@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createMigrationPlan } from './migration-plan.mjs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -318,3 +320,22 @@ test('accepts a runtime release without a separate compatibility report', async 
   assert.deepEqual(evidence.affectedComponents, ['web']);
   assert.equal('compatibilityEvidenceDigest' in evidence, false);
 });
+
+test('accepts the actual migration planner output including empty postcondition diagnostics', async () => {
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const migration = createMigrationPlan({ baseline: sha, target: sha, changedPaths: [] });
+  assert.equal(migration.ok, true);
+  assert.deepEqual(migration.postconditionBlockingReasons, []);
+  const base = await fixture({ migration });
+  const evidence = await produceReleaseEvidence(base.options);
+  assert.deepEqual(evidence.migrationPlan, migration.migrationPlan);
+});
+
+for (const diagnostic of [['Missing database postconditions'], null, 'invalid']) {
+  test(`rejects nonempty or malformed postcondition diagnostics: ${JSON.stringify(diagnostic)}`, async () => {
+    const base = await fixture();
+    base.documents.migration.postconditionBlockingReasons = diagnostic;
+    await writeFile(base.options.migration, JSON.stringify(base.documents.migration));
+    await assert.rejects(produceReleaseEvidence(base.options), /Migration plan is invalid/u);
+  });
+}

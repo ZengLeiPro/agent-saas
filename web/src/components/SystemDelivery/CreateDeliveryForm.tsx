@@ -27,24 +27,26 @@ export function CreateDeliveryForm({
   if (!systems.data) return <ResourceState error={systems.error} retry={systems.reload} />;
   return (
     <section className="space-y-4">
-      <h3 className="font-medium">新建组织交付</h3>
-      <label className="block text-sm">
-        已发布系统
-        <select
-          className="ml-3 rounded border p-2"
-          value={systemId}
-          onChange={(event) => setSystemId(event.target.value)}
-        >
-          <option value="">选择业务系统</option>
-          {systems.data.systems
-            .filter((system) => system.allowedActions?.includes('start_delivery'))
-            .map((system) => (
-              <option key={system.systemId} value={system.systemId}>
-                {system.name}
-              </option>
-            ))}
-        </select>
-      </label>
+      <h3 className="font-medium">接入组织</h3>
+      {!defaultSystemId && (
+        <label className="block text-sm">
+          已发布系统
+          <select
+            className="ml-3 rounded border p-2"
+            value={systemId}
+            onChange={(event) => setSystemId(event.target.value)}
+          >
+            <option value="">选择业务系统</option>
+            {systems.data.systems
+              .filter((system) => system.allowedActions?.includes('start_delivery'))
+              .map((system) => (
+                <option key={system.systemId} value={system.systemId}>
+                  {system.name}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
       {systemId && <DeliveryFields key={systemId} systemId={systemId} onStarted={onStarted} />}
     </section>
   );
@@ -104,7 +106,7 @@ function DeliveryFields({
   }
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;
   if (!manifest || !resource.data.allowedActions?.includes('start_delivery'))
-    return <p>当前系统没有可交付的已发布版本。</p>;
+    return <p>请先在“版本管理”中发布版本，再接入组织。</p>;
   return (
     <form onSubmit={(event) => void submit(event)} className="space-y-4 rounded-lg border p-4">
       <div className="grid gap-3 md:grid-cols-2">

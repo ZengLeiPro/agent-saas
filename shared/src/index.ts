@@ -813,12 +813,11 @@ export {
   outcomeToneMeta,
   todoAccessibleStatus,
   todoStatusMeta,
-} from './lib/businessStepStatus';
-export type {
-  BusinessStepIcon,
-  BusinessStepOverallLabel,
-  BusinessStepOverallStatus,
-  BusinessStepStatusMeta,
+  businessStepResultPlaceholder,
+  type BusinessStepIcon,
+  type BusinessStepOverallLabel,
+  type BusinessStepOverallStatus,
+  type BusinessStepStatusMeta,
 } from './lib/businessStepStatus';
 
 // Lib - 右侧企业系统面板（与 ToolPresentation 同源，无独立数据通道）

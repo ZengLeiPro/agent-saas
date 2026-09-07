@@ -329,9 +329,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -392,9 +392,9 @@
         {
           "path": "server/src/runtime/handStore.ts",
           "baselineDigest": "sha256:5cc42678d21c9a7e2276435a1b3a29c5864a6478fb23a913118afc672de3db73",
-          "targetDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
           "classification": "expand",
-          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。"
+          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
         },
         {
           "path": "server/src/runtime/pgSessionLock.ts",
@@ -577,6 +577,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -715,6 +722,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -906,9 +921,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1014,6 +1029,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -1132,6 +1161,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -1323,9 +1360,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1410,6 +1447,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -1512,6 +1563,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -1703,9 +1762,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1790,6 +1849,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -1892,6 +1965,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -2069,9 +2150,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2156,6 +2237,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -2250,6 +2345,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -2427,9 +2530,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2514,6 +2617,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -2608,6 +2725,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -2785,9 +2910,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2872,6 +2997,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -2966,6 +3105,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -3318,9 +3465,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -3402,9 +3549,9 @@
         {
           "path": "server/src/runtime/handStore.ts",
           "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
-          "targetDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
           "classification": "expand",
-          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。"
+          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
         },
         {
           "path": "server/src/runtime/pgSessionLock.ts",
@@ -3587,6 +3734,13 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -3680,7 +3834,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -3689,6 +3843,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -3880,9 +4042,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -3960,6 +4122,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -4065,7 +4241,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -4074,6 +4250,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -4272,9 +4456,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -4373,6 +4557,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -4466,7 +4664,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -4475,6 +4673,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -4673,9 +4879,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -4774,6 +4980,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -4867,7 +5087,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -4876,6 +5096,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5039,9 +5267,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5105,6 +5333,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -5186,7 +5428,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -5195,6 +5437,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5358,9 +5608,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5424,6 +5674,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -5505,7 +5769,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -5514,6 +5778,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5677,9 +5949,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5743,6 +6015,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -5824,7 +6110,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -5833,6 +6119,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5996,9 +6290,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6062,6 +6356,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -6143,7 +6451,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -6152,6 +6460,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6308,9 +6624,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6367,6 +6683,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -6444,7 +6774,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -6453,6 +6783,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6609,9 +6947,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6668,6 +7006,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
@@ -6745,7 +7097,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -6754,6 +7106,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6906,6 +7266,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -6972,6 +7353,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7117,6 +7506,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7179,6 +7589,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7324,6 +7742,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7378,6 +7817,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7523,6 +7970,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7577,6 +8045,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7722,6 +8198,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7776,6 +8273,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7893,6 +8398,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -7939,6 +8465,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -8042,6 +8576,27 @@
           "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
           "classification": "expand",
           "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8096,6 +8651,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -8171,6 +8734,27 @@
           "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
           "classification": "expand",
           "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8209,6 +8793,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -8284,6 +8876,27 @@
           "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
           "classification": "expand",
           "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8322,6 +8935,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -8362,6 +8983,27 @@
           "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
           "classification": "no-schema-change",
           "reason": "WP5：交付运行时存储的 init() 只委托统一治理迁移 runner；本文件其余 SQL 为运行期 SELECT、INSERT、UPDATE 和 advisory lock，用于状态推进、幂等恢复、预警去重及离场计划，不创建或修改 schema，也不执行启动回填。；WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8380,6 +9022,14 @@
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
           "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -8413,6 +9063,27 @@
           "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
           "classification": "no-schema-change",
           "reason": "WP5：交付运行时存储的 init() 只委托统一治理迁移 runner；本文件其余 SQL 为运行期 SELECT、INSERT、UPDATE 和 advisory lock，用于状态推进、幂等恢复、预警去重及离场计划，不创建或修改 schema，也不执行启动回填。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
@@ -8427,6 +9098,104 @@
         {
           "path": "server/src/kyapp/delivery/store.pg.test.ts",
           "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "9f6131c6a173b20b7395f95453e44545ae5ee200",
+      "files": [
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "3b8e92291e59fd1feccc4f3db39e7e74ce62898c",
+      "files": [
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "构造函数与 init 逐字未变；仅修改运行期版本发布规则及现有 review_status 列的单条 UPDATE，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+      "files": [
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     }

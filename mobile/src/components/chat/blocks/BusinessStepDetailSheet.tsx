@@ -11,6 +11,7 @@ import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { ChevronRight, CircleX, TriangleAlert } from 'lucide-react-native';
 import type { OutcomeStat, TodoItem, TodoOutcome } from '@agent/shared';
 import {
+  businessStepResultPlaceholder,
   migrateLegacySectionVerdicts,
   outcomeToneMeta,
   statVerdict,
@@ -210,12 +211,14 @@ export function BusinessStepDetailSheet({
             </Text>
           </View>
           <Text style={[typo.caption, { color: colors.mutedForeground }]}>
-            {todoStatusMeta(todo).label}
+            {todoStatusMeta(todo, planClosed).label}
           </Text>
           {hasResult ? (
             <BusinessStepResultContent todo={todo} />
           ) : (
-            <Text style={[typo.bodySmall, { color: colors.mutedForeground }]}>暂无结果</Text>
+            <Text style={[typo.bodySmall, { color: colors.mutedForeground }]}>
+              {businessStepResultPlaceholder(todo, planClosed)}
+            </Text>
           )}
           {todo.evidenceRefs?.length ? (
             <CollapsibleSection title="依据">

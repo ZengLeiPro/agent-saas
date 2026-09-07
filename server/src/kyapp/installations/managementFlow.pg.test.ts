@@ -108,6 +108,8 @@ const url = process.env.TEST_DATABASE_URL;
     expect((await (await rig.request('/api/systems/mine', 'member')).json()).installations).toEqual(
       [],
     );
+    expect((await rig.request(`${base}/installations/${iid}/handshake/nonce`, 'member', 'POST')).status).toBe(403);
+    expect((await rig.request(`${base}/installations/${iid}/token`, 'unassigned', 'POST')).status).toBe(403);
     const set = await rig.assignments.getAssignmentSet(TEST_TENANT, 'system_installation', iid);
     await rig.assignments.replaceAssignments(
       TEST_TENANT,
@@ -138,6 +140,8 @@ const url = process.env.TEST_DATABASE_URL;
         ).length,
       ).toBe(state === 'enabled' ? 1 : 0);
     }
+    expect((await rig.request(`${base}/installations/${iid}/handshake/nonce`, 'member', 'POST')).status).toBe(200);
+    expect((await rig.request(`${base}/installations/${iid}/handshake/nonce`, 'unassigned', 'POST')).status).toBe(403);
     await rig.groups.upsertProjection({ tenantId: TEST_TENANT, groupId: 'sales', source: 'governance', displayName: '销售部', status: 'active', memberUserIds: [MEMBER.sub, 'unassigned'] });
     const current = await rig.assignments.getAssignmentSet(TEST_TENANT, 'system_installation', iid);
     await rig.assignments.replaceAssignments(TEST_TENANT, 'system_installation', iid, [

@@ -173,6 +173,9 @@ export function buildKyAppAssembly(options: BuildKyAppAssemblyOptions): KyAppAss
     nonces,
     credentials,
     issuer,
+    canAccessInstallation: async (installation, user) =>
+      (await assignmentAccess?.listEffectiveResourceIds(user.tenantId, user.userId, 'system_installation') ?? [])
+        .some(item => item.resourceId === installation.installationId),
     now,
     ...(runtime.governanceAuditStore
       ? {

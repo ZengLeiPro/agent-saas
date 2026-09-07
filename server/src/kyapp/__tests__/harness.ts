@@ -281,6 +281,9 @@ export async function createKyAppTestRig(options: KyAppTestRigOptions = {}): Pro
     nonces,
     credentials,
     issuer,
+    canAccessInstallation: async (installation, user) =>
+      (await assignments.listEffectiveResourceIds(user.tenantId, user.userId, 'system_installation'))
+        .some(item => item.resourceId === installation.installationId),
     now,
   });
   const dispatcher = new KyAppEventDispatcher({

@@ -150,6 +150,24 @@ jobs:
           pnpm exec esbuild scripts/release/evidence-service.mjs \
             --bundle --platform=node --format=esm --target=node22 \
             --outfile="$RUNNER_TEMP/evidence-writer/scripts/release/evidence-service.mjs"
+          printf '%064d\n' 1 > "$RUNNER_TEMP/evidence-writer-read.token"
+          printf '%064d\n' 2 > "$RUNNER_TEMP/evidence-writer-write.token"
+          install -d "$RUNNER_TEMP/evidence-writer-smoke-data"
+          ln -s "$RUNNER_TEMP/evidence-writer" "$RUNNER_TEMP/evidence-writer-current"
+          set +e
+          timeout 2 env \
+            RELEASE_EVIDENCE_ROOT="$RUNNER_TEMP/evidence-writer-smoke-data" \
+            RELEASE_EVIDENCE_READ_TOKEN_FILE="$RUNNER_TEMP/evidence-writer-read.token" \
+            RELEASE_EVIDENCE_WRITE_TOKEN_FILE="$RUNNER_TEMP/evidence-writer-write.token" \
+            RELEASE_EVIDENCE_HOST=127.0.0.1 RELEASE_EVIDENCE_PORT=4420 \
+            node "$RUNNER_TEMP/evidence-writer-current/scripts/release/evidence-service.mjs" \
+            > "$RUNNER_TEMP/evidence-writer-smoke.log" 2>&1
+          smoke_status=$?
+          set -e
+          cat "$RUNNER_TEMP/evidence-writer-smoke.log"
+          test "$smoke_status" = 124
+          grep -Fx 'release evidence service listening on 127.0.0.1:4420' \
+            "$RUNNER_TEMP/evidence-writer-smoke.log"
           tar -czf "$RUNNER_TEMP/evidence-writer.tgz" -C "$RUNNER_TEMP/evidence-writer" .
           digest="sha256:$(sha256sum "$RUNNER_TEMP/evidence-writer.tgz" | awk '{print $1}')"
           echo "EVIDENCE_WRITER_DIGEST=$digest" >> "$GITHUB_ENV"

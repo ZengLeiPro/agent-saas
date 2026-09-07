@@ -56,23 +56,23 @@ for (const placeholder of ['敬请期待', '尚未接入', '能力未开放', '�
 
 assert.equal(
   (registry.match(/surface:\s*'config',\s*area:\s*'organization'/g) ?? []).length,
-  17,
-  '组织配置页必须是 17 项',
+  18,
+  '组织配置页必须是 18 项',
 );
 assert.equal(
   (registry.match(/surface:\s*'config',\s*area:\s*'platform'/g) ?? []).length,
-  12,
-  '平台配置页必须是 12 项',
+  14,
+  '平台配置页必须是 14 项',
 );
 assert.equal(
   (registry.match(/surface:\s*'analytics',\s*area:\s*'organization'/g) ?? []).length,
-  4,
-  '组织分析页必须是 4 项',
+  5,
+  '组织分析页必须是 5 项',
 );
 assert.equal(
   (registry.match(/surface:\s*'analytics',\s*area:\s*'platform'/g) ?? []).length,
-  9,
-  '平台分析页必须是 9 项',
+  10,
+  '平台分析页必须是 10 项',
 );
 
-console.log('管理后台契约检查通过：单壳、单滚动、无旧成员入口、42 个真实管理页面。');
+console.log('管理后台契约检查通过：单壳、单滚动、无旧成员入口、47 个真实管理页面。');

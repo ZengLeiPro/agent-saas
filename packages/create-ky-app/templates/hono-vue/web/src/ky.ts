@@ -69,16 +69,29 @@ interface MeResponse {
 }
 
 export const me = ref<MeResponse | null>(null);
+export const meState = ref<'loading' | 'ready' | 'error'>('loading');
 
 /** 拉一次 `/ky/v1/me`，菜单与 landing 都以它为准。 */
 export async function refreshMe(): Promise<void> {
-  const response = await app.fetch('/ky/v1/me');
-  if (!response.ok) return;
-  const body = (await response.json()) as MeResponse;
-  me.value = body;
-  menus.value = body.menus;
-  landing.value = body.landing;
-  permVersion.value = body.permVersion;
+  meState.value = 'loading';
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await app.fetch('/ky/v1/me', { signal: controller.signal });
+    if (!response.ok) throw new Error(`me ${response.status}`);
+    const body = (await response.json()) as MeResponse;
+    me.value = body;
+    menus.value = body.menus;
+    landing.value = body.landing;
+    permVersion.value = body.permVersion;
+    notice.value = null;
+    meState.value = 'ready';
+  } catch {
+    meState.value = 'error';
+    notice.value = '系统信息暂时没有加载出来，请重试。';
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 /** 用户点击导航：改路径 + `pushState` + 上报 `route.changed`（§5.2 回声抑制）。 */

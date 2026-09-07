@@ -105,9 +105,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:e939643fc9afd1708ef59ab1c4a3288c4257a07f56cb8b6846ed8612db7e90d0",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -119,9 +119,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:26b9820eb1e65b54b62a8e5e8f36cbebaee4bf0c5eb921daf8cb98bc7cc01295",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -164,6 +164,13 @@
           "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
         },
         {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
@@ -257,6 +264,13 @@
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
         },
         {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
+        },
+        {
           "path": "server/src/kyapp/directory/changeLog.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
@@ -315,9 +329,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -378,9 +392,9 @@
         {
           "path": "server/src/runtime/handStore.ts",
           "baselineDigest": "sha256:5cc42678d21c9a7e2276435a1b3a29c5864a6478fb23a913118afc672de3db73",
-          "targetDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
           "classification": "expand",
-          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。"
+          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
         },
         {
           "path": "server/src/runtime/pgSessionLock.ts",
@@ -563,9 +577,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -671,6 +696,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -689,6 +722,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -747,9 +788,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -761,9 +802,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -787,6 +828,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -806,6 +854,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -866,9 +921,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -974,9 +1029,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -1066,6 +1139,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -1080,6 +1161,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -1138,9 +1227,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1152,9 +1241,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1178,6 +1267,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -1197,6 +1293,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -1257,9 +1360,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1344,9 +1447,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -1420,6 +1541,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -1434,6 +1563,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -1492,9 +1629,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1506,9 +1643,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1532,6 +1669,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -1551,6 +1695,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -1611,9 +1762,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -1698,9 +1849,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -1774,6 +1943,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -1788,6 +1965,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -1839,9 +2024,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -1853,9 +2038,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -1879,6 +2064,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -1891,6 +2083,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -1951,9 +2150,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2038,9 +2237,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -2106,6 +2323,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -2120,6 +2345,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -2171,9 +2404,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2185,9 +2418,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2211,6 +2444,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -2223,6 +2463,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -2283,9 +2530,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2370,9 +2617,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -2438,6 +2703,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -2452,6 +2725,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -2503,9 +2784,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2517,9 +2798,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -2543,6 +2824,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -2555,6 +2843,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -2615,9 +2910,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -2702,9 +2997,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -2770,6 +3083,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -2784,6 +3105,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -2835,9 +3164,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/app/sessionAutomationConfig.ts",
@@ -2912,9 +3241,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -2926,9 +3255,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v38SkillPresentationMigration.ts",
@@ -2971,6 +3300,13 @@
           "targetDigest": "sha256:a2ad07a1f87280e14ca48b58ff36413f9f3464075a5586ac7015f1eb6ca08b96",
           "classification": "expand",
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
         },
         {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
@@ -3064,6 +3400,13 @@
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
         },
         {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
+        },
+        {
           "path": "server/src/kyapp/directory/changeLog.ts",
           "baselineDigest": null,
           "targetDigest": "sha256:cfdeabe0f93b6d08efce26a512f0616cbe2c9df31c2a9f19f8141fb2ddbfb47f",
@@ -3122,9 +3465,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -3206,9 +3549,9 @@
         {
           "path": "server/src/runtime/handStore.ts",
           "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
-          "targetDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
           "classification": "expand",
-          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。"
+          "reason": "初始化仅缩小历史 tenant 回填到非 client，并增加 tenant/session 索引；旧字段和表保留，其他差异是运行期 Hand 查询。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
         },
         {
           "path": "server/src/runtime/pgSessionLock.ts",
@@ -3391,9 +3734,20 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -3459,8 +3813,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -3472,7 +3834,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -3481,6 +3843,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -3546,9 +3916,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -3560,9 +3930,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3586,6 +3956,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -3598,6 +3975,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -3658,9 +4042,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/reconcile.ts",
@@ -3738,9 +4122,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/RC60后续迁移审核-20260906.md",
           "digest": "sha256:ee8112a457b1d42b011ee587215014872982c33ab2a150ad95f050d883a507c1"
@@ -3818,8 +4220,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -3831,7 +4241,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -3840,6 +4250,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -3870,9 +4288,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -3912,9 +4330,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -3926,9 +4344,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -3952,6 +4370,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -3964,6 +4389,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -4024,9 +4456,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -4125,9 +4557,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -4193,8 +4643,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -4206,7 +4664,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -4215,6 +4673,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -4245,9 +4711,9 @@
         {
           "path": "server/src/app/runtime.ts",
           "baselineDigest": "sha256:145e336c728ef32d27e40c90715b767c67e835fd0f16bc0d14216033130415d4",
-          "targetDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
           "classification": "no-schema-change",
-          "reason": "记忆运行修复：配置/Profile/文件操作与运行期调度对账；没有 DDL 或启动回填，详审核文档及真实 PG、Linux 回归。"
+          "reason": "在既有记忆运行修复及套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
         },
         {
           "path": "server/src/cron/memoryPoll.ts",
@@ -4287,9 +4753,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4301,9 +4767,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4327,6 +4793,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -4339,6 +4812,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -4399,9 +4879,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/memory/consolidation/draft.ts",
@@ -4500,9 +4980,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -4568,8 +5066,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -4581,7 +5087,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -4590,6 +5096,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -4627,9 +5141,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4641,9 +5155,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4667,6 +5181,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -4679,6 +5200,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -4739,9 +5267,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -4805,9 +5333,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -4861,8 +5407,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -4874,7 +5428,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -4883,6 +5437,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -4920,9 +5482,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -4934,9 +5496,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -4960,6 +5522,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -4972,6 +5541,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -5032,9 +5608,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5098,9 +5674,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -5154,8 +5748,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -5167,7 +5769,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -5176,6 +5778,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5213,9 +5823,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5227,9 +5837,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5253,6 +5863,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -5265,6 +5882,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -5325,9 +5949,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5391,9 +6015,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -5447,8 +6089,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -5460,7 +6110,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -5469,6 +6119,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5506,9 +6164,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5520,9 +6178,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5546,6 +6204,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -5558,6 +6223,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -5618,9 +6290,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5684,9 +6356,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "docs/release/推送投递claim时间精度修复审核-20260906.md",
           "digest": "sha256:033e4ae15d0c92730743c572058dffd41500dd7d3c171fbb4147d467f220445b"
@@ -5740,8 +6430,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -5753,7 +6451,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -5762,6 +6460,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -5792,9 +6498,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -5806,9 +6512,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -5832,6 +6538,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -5844,6 +6557,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -5904,9 +6624,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -5963,9 +6683,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -6015,8 +6753,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -6028,7 +6774,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -6037,6 +6783,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6067,9 +6821,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f28515dc93e4d90079871363de1e9b849e115b8dc498d2fa36e905d44a17a1d2",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6081,9 +6835,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:1055d529948956f51fb1d1cf34e423442c6022671c3db970deb72c66a05c25f4",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v41KyAppSystemMigration.ts",
@@ -6107,6 +6861,13 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
@@ -6119,6 +6880,13 @@
           "targetDigest": "sha256:0f4fa5c2eccfc9ad5da2835bd46670f25cc5c1dc4c345aa4828ef090447917f9",
           "classification": "expand",
           "reason": "WP2a 握手 nonce 存储：init() 只执行治理迁移 runner，其余 INSERT / 条件 UPDATE / 过期 DELETE 都是运行期的签发、原子消费与清理，不含 DDL 与回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6179,9 +6947,9 @@
         {
           "path": "server/src/kyapp/systems/store.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
           "classification": "expand",
-          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。"
+          "reason": "WP2a 系统目录三表存储：init() 只执行治理迁移 runner，其余 SELECT / INSERT / UPDATE 都是运行期的登记、发布与安装实例状态机方法，不含 DDL 与回填。 本次取消版本发布双人复核；构造函数和 init 逐字未变，新增 CASE 仅在显式发布时更新既有 review_status，无 DDL 或启动回填。"
         },
         {
           "path": "server/src/runtime/auditProjection.ts",
@@ -6238,9 +7006,27 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -6290,8 +7076,16 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
           "path": "server/src/kyapp/__tests__/kyAppStores.pg.test.ts",
           "digest": "sha256:6fd43d6342bc9ff42f62e0efc2107ba9dd99b6d60741dd2fcebc5b2e2df5f613"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
         },
         {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
@@ -6303,7 +7097,7 @@
         },
         {
           "path": "server/src/kyapp/systems/store.pg.test.ts",
-          "digest": "sha256:cc32e528bf7ea6e2ecd53fcfd995b0e54598ba0629584d0de99f98851da4022f"
+          "digest": "sha256:143470be06aab357818447fc74bacdf924a4178643773b6a76cbd72f3c6c286c"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
@@ -6312,6 +7106,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6328,9 +7130,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6342,9 +7144,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6361,11 +7163,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6450,9 +7266,34 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -6490,6 +7331,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -6504,6 +7353,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6520,9 +7377,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6534,9 +7391,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6553,11 +7410,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6635,9 +7506,34 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -6671,6 +7567,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -6685,6 +7589,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6701,9 +7613,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6715,9 +7627,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6734,11 +7646,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6816,9 +7742,34 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -6848,6 +7799,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -6858,6 +7817,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -6874,9 +7841,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -6888,9 +7855,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -6907,11 +7874,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -6989,9 +7970,34 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -7021,6 +8027,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -7031,6 +8045,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7047,9 +8069,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7061,9 +8083,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -7080,11 +8102,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -7162,9 +8198,34 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -7194,6 +8255,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -7204,6 +8273,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7220,9 +8297,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7234,9 +8311,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -7253,11 +8330,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -7307,9 +8398,34 @@
           "targetDigest": "sha256:2710768a291d4d649caaffaca0c41922f116c42b4c5df09d94df122df1be8104",
           "classification": "no-schema-change",
           "reason": "本批只补充任务看板 Integration 默认提示语的资源清理边界，确保仅清理本批次拥有且无未合并提交的资源；没有修改类型、SQL、DDL、启动期写入、回填或数据删除。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -7331,6 +8447,14 @@
           "digest": "sha256:fa3ae2bc607baa53d086cb971e56dcc1038c836af656887170d090571fdc8025"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
           "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
         },
@@ -7341,6 +8465,14 @@
         {
           "path": "shared/src/types/taskboard.test.ts",
           "digest": "sha256:6a6f1ab28ebc16d3d6c0f7f81a8ab6897bb1d18b77f3935e2d9f9b4232cfc884"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7357,9 +8489,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:f0eef6acbb643fa54162e52edecbbbfe5bc718dfa33a1c0ae0652fd8072bd7b7",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7371,9 +8503,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:728ee4d4e4720d3441f8d4f939c13300741a33152bd9d7ccbca148c9e57be83b",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v42KyAppDirectoryMigration.ts",
@@ -7390,11 +8522,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/directory/changeLog.ts",
@@ -7430,9 +8576,34 @@
           "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
           "classification": "expand",
           "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -7462,6 +8633,14 @@
           "digest": "sha256:03d511eed7d58f5a1b576516ab7d38421c8b3f7439807e08451365bbb8bc8890"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/directory/store.pg.test.ts",
           "digest": "sha256:2272291dc6bc7129b0e9959b20dfa12f4f3ce6bd12c28119ffcf515c029faa78"
         },
@@ -7472,6 +8651,14 @@
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7488,9 +8675,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7502,9 +8689,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
@@ -7514,11 +8701,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
@@ -7533,9 +8734,34 @@
           "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
           "classification": "expand",
           "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -7553,12 +8779,28 @@
           "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
           "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     },
@@ -7575,9 +8817,9 @@
         {
           "path": "server/src/data/governance-schema/latestMigrations.ts",
           "baselineDigest": "sha256:a0d6f1d95c52a71b5ab0d72b73a91111df15adea458569554ccf9d53a53588c3",
-          "targetDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
           "classification": "expand",
-          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。"
+          "reason": "WP3 Phase C：在已合入的 v42 组织目录迁移之后追加 v43 会话工具快照迁移；v36～v42 的版本号与语句不变，最终清单 1～43 严格连续。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
         },
         {
           "path": "server/src/data/governance-schema/migrationRunner.ts",
@@ -7589,9 +8831,9 @@
         {
           "path": "server/src/data/governance-schema/migrations.ts",
           "baselineDigest": "sha256:29ede77d0bfcc26375c04a5174e112278722bc59791b87b842a0e40b36a4037d",
-          "targetDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
           "classification": "expand",
-          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。"
+          "reason": "WP3 Phase C：GOVERNANCE_SCHEMA_VERSION 42→43，迁移执行器等价外提，并暴露严格升序的版本清单；契约测试新增 1～43 连续无跳号断言。v43 本体为 expand-only。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
         },
         {
           "path": "server/src/data/governance-schema/v43KyAppSessionToolSnapshotMigration.ts",
@@ -7601,11 +8843,25 @@
           "reason": "WP3 会话工具快照表（规范 §6.1）：新增一张 <prefix>_ky_app_session_tool_snapshots 与两个索引，全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，无外键、不动任何既有对象，expand-only。真实 postgres:16 上 v41→v43 升级与重复运行幂等验证通过。"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
           "path": "server/src/data/orgAgents/runtimePolicy.ts",
           "baselineDigest": "sha256:b383f668b01717ca3d84c8f4d77bfcab7182e82d5434ac8c737760f68c450cf6",
           "targetDigest": "sha256:434abb29379e9c3a3de5a98ecb346bd4bec340850ee47d9f2f6ea6d96b67fdee",
           "classification": "no-schema-change",
           "reason": "WP3 Phase A：OrgAgent 运行时策略增加 runtime.apps 及其默认值、规范化与求交/求并。OrgAgentStore 是 JSON 文件存储（读写走 readFileSync / writeFile+rename），不入 PG、无迁移；本文件无 SQL、无 DDL、无启动回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
         },
         {
           "path": "server/src/kyapp/gateway/snapshotStore.ts",
@@ -7620,9 +8876,34 @@
           "targetDigest": "sha256:805c7d275e28d8df640f011eef4c81e5e8156b618ea63ed81704b0b85e5a3633",
           "classification": "expand",
           "reason": "WP3 §6.2-8：DuckDB tool_audit 增 11 个可空列（app_user_id / app_installation_id / app_capability_id / app_lcid / app_request_id / app_dig / app_input_hash / app_output_hash / app_output_bytes / app_error_code / app_origin）与两个 IF NOT EXISTS 索引，expand-only。DuckDB 是运行期本地投影库、不是生产 PG：建表走 CREATE TABLE IF NOT EXISTS，旧库逐列 ALTER TABLE ADD COLUMN（先 tableHasColumn 判定，沿用 tenant_id / skill_name 同一套路），不删列不改列类型不改主键。新列全部可空，非 app__ 工具的行保持 NULL；旧行不回填。真实 DuckDB 上 20/20 用例通过。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
         }
       ],
       "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
         {
           "path": "server/src/__tests__/auditProjection.test.ts",
           "digest": "sha256:37172183a241f5aab89644a8026c04fc9cade2d6dc0198c0f33cbf0898253e1c"
@@ -7640,12 +8921,281 @@
           "digest": "sha256:7c50813c23648d654057d62fc3e00d131dc1f220d3902e45d91c8cb38abc34cc"
         },
         {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
           "path": "server/src/kyapp/gateway/snapshotStore.pg.test.ts",
           "digest": "sha256:3b4c3117f10d94beb0e2ea3ba37182f118e0c58ad191ed0298022c0cb2e051c1"
         },
         {
           "path": "server/src/runtime/appProfilePolicy.test.ts",
           "digest": "sha256:3335cb791655d886187cda212c26e4a3beb11cf02efc34983f9845d50cd47b9f"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "da26fd288eff82ffa1458de25174d33b9581d31a",
+      "files": [
+        {
+          "path": "server/src/app/runtime.ts",
+          "baselineDigest": "sha256:581339d69d3aa9f60940a09c3a291e3f79b461b0ba4d818a743d43c24911c66c",
+          "targetDigest": "sha256:acc215f8d8d7da842f655a6e7bcce3b3e62b90a8b42a47fdb53e7d6a55be7527",
+          "classification": "no-schema-change",
+          "reason": "在套餐额度出口装配上，新增辅助模型引用启动校验、共享配置事务装配，并将 memory polling 运行态刷新并入同一事务；没有 SQL、DDL、启动建表或数据回填，详见生产配置漂移修复审核文档。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "classification": "expand",
+          "reason": "WP5：在 v43 后严格追加 v44 交付迁移，v1～v43 的版本号、顺序和语句保持不变。；WP5 继续严格追加 v44 交付迁移；v1～v43 的版本号、次序与语句不变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "classification": "expand",
+          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。；WP5 将治理版本 43 追加为 44；旧迁移次序不变，v44 本体为 expand-only。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5：新增 onboarding 执行与交付记录两张表及四个普通索引；全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有表、列、索引，不回填数据。；WP5 新增 onboarding 执行与交付记录两张表及四个普通索引；全部使用 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有对象、不回填。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5：交付运行时存储的 init() 只委托统一治理迁移 runner；本文件其余 SQL 为运行期 SELECT、INSERT、UPDATE 和 advisory lock，用于状态推进、幂等恢复、预警去重及离场计划，不创建或修改 schema，也不执行启动回填。；WP5 运行时存储的 init() 只委托统一迁移 runner；其余 SQL 是运行期状态读写与 advisory lock，不含 DDL 或启动回填。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/quota/providerQuotaRuntime.test.ts",
+          "digest": "sha256:5993a02112ab563ff75e70ea10e4f0a3ae0a949fd738670ef956e4325fe38109"
+        },
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "1e5c9bc0500d2d43f2299c7422ecb631553b3f5b",
+      "files": [
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:1a90e5222d014ca61e8839187ae35811aafb68c699005aa165de563f018f853e",
+          "targetDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "classification": "expand",
+          "reason": "WP5：在最新 main 的 v43 后严格追加 v44 交付迁移；v1～v43 的版本号、顺序和语句保持不变。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:2f894574781db0f74041008686da5cf91b6bee95cb0a4893e2df7c836aa2acbb",
+          "targetDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "classification": "expand",
+          "reason": "WP5：GOVERNANCE_SCHEMA_VERSION 43→44，仅扩展版本清单并导出既有迁移 runner；没有删除、替换或重排旧迁移。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:4902ee6af58324ef989a69cc347a377ec7a1471dbec0f4769f1f2d7e597b6773",
+          "classification": "expand",
+          "reason": "WP5：新增 onboarding 执行与交付记录两张表及四个普通索引；全部 CREATE TABLE / CREATE INDEX IF NOT EXISTS，不改既有表、列、索引，不回填数据。"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:daad66e176622934009a334c428f647616796203456d57a9f395767a8cd35447",
+          "classification": "no-schema-change",
+          "reason": "WP5：交付运行时存储的 init() 只委托统一治理迁移 runner；本文件其余 SQL 为运行期 SELECT、INSERT、UPDATE 和 advisory lock，用于状态推进、幂等恢复、预警去重及离场计划，不创建或修改 schema，也不执行启动回填。"
+        },
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "已逐字比较 init 初始化方法与此基线完全一致；变化仅为运行期 Hand 退役兼容、身份路由及防复活条件，无 schema 变更。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "新增运行期 Hand 登记协调函数，不在 init 中调用；仅使用既有表的 SELECT/UPDATE metadata，无 DDL。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/KY-App-WP5交付迁移审核-20260907.md",
+          "digest": "sha256:8f3465e49909016649b51caff616bb341c0e1970e3179a1b82dce2115d1f0acf"
+        },
+        {
+          "path": "server/src/data/governance-schema/v44KyAppDeliveryMigration.test.ts",
+          "digest": "sha256:e75c67f93c7c9821a8a72a48b99e268cc112b7235f1a431b50427c5045dd4740"
+        },
+        {
+          "path": "server/src/kyapp/delivery/store.pg.test.ts",
+          "digest": "sha256:30c110243e5f68434a4a48c31256c6d4b1e3f19dd1f6f1c6f11845877441ead3"
+        },
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "9f6131c6a173b20b7395f95453e44545ae5ee200",
+      "files": [
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "3b8e92291e59fd1feccc4f3db39e7e74ce62898c",
+      "files": [
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "构造函数与 init 逐字未变；仅修改运行期版本发布规则及现有 review_status 列的单条 UPDATE，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+      "files": [
+        {
+          "path": "server/src/runtime/handStore.ts",
+          "baselineDigest": "sha256:a1c64118e9b752160e88443cd699ec309054cef7c7f0d4de5d4f1e3b02b26329",
+          "targetDigest": "sha256:342e83891004aec48587de0708fbc6ab5aa9ab91af1574f8e2e5bd5ccebd5a82",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。 本次 Hand 退役兼容仅改变运行期读写条件，init 初始化语句与上次审核目标完全一致，保留原迁移分类。"
+        },
+        {
+          "path": "server/src/runtime/handSupersession.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:699ee7142ac609a000da08116f611cac28ea3d95032a69ed35a16c50f265c5bb",
+          "classification": "no-schema-change",
+          "reason": "不增加或修改表、字段、索引与初始化 DDL；仅在运行期维护既有 Hand metadata 退役标记，并为注册更新、路由与租约回收添加防复活条件。supersedeLegacyHand 不在 init 中调用；事务与 SELECT/UPDATE 操作已由真实 PostgreSQL 回归覆盖。"
+        },
+        {
+          "path": "server/src/kyapp/systems/store.ts",
+          "baselineDigest": "sha256:a7e00d4fb23a1d47ae9f1b54ad422a80dac548525a685380a5fcba2888afcf3e",
+          "targetDigest": "sha256:134febb70f72f4ece075f78ded0c8486078eb16a0cc82250d69aaf2a26420889",
+          "classification": "no-schema-change",
+          "reason": "此基线的存储文件与本次逐字核对过的旧文件完全相同；仅取消运行期版本复核并更新现有 review_status，构造函数和 init 不变，无 DDL 或启动回填。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "server/src/__tests__/handSupersession.pg.test.ts",
+          "digest": "sha256:faac1945af4dbca61b1ff9520b2f769e43af5c4941dbcad8e11c5872aa797519"
+        },
+        {
+          "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
+          "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
         }
       ]
     }

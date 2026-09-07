@@ -152,7 +152,7 @@ export function checkCapabilitySchema(schema: unknown, label: string, errors: st
     errors.push(`${label}: 必须是 JSON 对象`);
     return;
   }
-  const bytes = Buffer.byteLength(JSON.stringify(schema), 'utf8');
+  const bytes = new TextEncoder().encode(JSON.stringify(schema)).byteLength;
   if (bytes > CAPABILITY_SCHEMA_MAX_BYTES) {
     errors.push(`${label}: ${bytes} 字节超过 ${CAPABILITY_SCHEMA_MAX_BYTES}`);
   }

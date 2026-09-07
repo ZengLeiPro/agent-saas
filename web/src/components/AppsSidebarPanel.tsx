@@ -1,10 +1,10 @@
 /**
- * 左栏「定制软件」入口（WP4，规范 §5.2 / §14.1）。
+ * 左栏「业务系统」入口（WP4，规范 §5.2 / §14.1）。
  *
  * 为什么不进 `baseNavItems`：`shared/src/types/sidebar.ts` 的 `baseNavItems` 是
- * 桌面与移动端共用的静态一级导航，而定制软件是**每个安装实例一项**、条目来自
+ * 桌面与移动端共用的静态一级导航，而业务系统是**每个安装实例一项**、条目来自
  * `GET /api/systems/mine`，且移动端按 §10 显式排除。所以条目在 web 侧本地拼接，
- * `AppTab` 只多一个 `"apps"` 值用于标识「当前停在定制软件标签」。
+ * `AppTab` 只多一个 `"apps"` 值用于标识「当前停在业务系统标签」。
  *
  * 点击后走土制路由（`navigateApps` → pushState + 合成 popstate），
  * 由 `useChatUrlSync` 的 popstate 订阅把 `activeTab` 切到 `apps`。
@@ -104,8 +104,8 @@ export function AppsSidebarPanel({ beforeNavigate }: AppsSidebarPanelProps) {
   if (items.length === 0 && !failed) return null;
 
   return (
-    <nav className="flex flex-col gap-1 px-2 pb-3" aria-label="定制软件">
-      <div className="px-2 pb-1 text-xs font-medium text-muted-foreground/70">定制软件</div>
+    <nav className="flex flex-col gap-1 px-2 pb-3" aria-label="业务系统">
+      <div className="px-2 pb-1 text-xs font-medium text-muted-foreground/70">业务系统</div>
       {failed && (
         <button
           type="button"

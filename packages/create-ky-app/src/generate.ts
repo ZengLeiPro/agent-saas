@@ -10,7 +10,7 @@ import { readdir, readFile, mkdir, writeFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { basename, join, resolve } from 'node:path';
 
-import { renderClaudeMdContractSection } from '@kaiyan/ky-app-contract';
+import { renderClaudeMdContractSection } from '@kaiyan/ky-app-contract/claude-md';
 
 /** 模板目录里 `_xxx` → 生成后的真实文件名。 */
 export const RENAMES: Readonly<Record<string, string>> = {

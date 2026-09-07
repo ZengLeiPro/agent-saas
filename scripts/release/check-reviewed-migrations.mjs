@@ -17,6 +17,14 @@ for (const review of document.reviews) {
     .split('\n')
     .filter(Boolean);
   const result = createMigrationPlan({ baseline: review.baselineSha, target, changedPaths });
-  process.stdout.write(`${JSON.stringify({ baseline: review.baselineSha, target, ...result })}\n`);
-  if (!result.ok) process.exitCode = 1;
+  // This inventory spans historical baselines, not the selected deployment baseline.
+  // Keep source/DDL review errors blocking; lack of checks still leaves result.ok=false
+  // and is mandatory at actual RC construction and again before any deployment.
+  const classificationFailures = result.blockingReasons.filter(
+    (reason) => !result.postconditionBlockingReasons?.includes(reason),
+  );
+  process.stdout.write(
+    `${JSON.stringify({ mode: 'historical-source-classification', baseline: review.baselineSha, target, ...result })}\n`,
+  );
+  if (classificationFailures.length) process.exitCode = 1;
 }

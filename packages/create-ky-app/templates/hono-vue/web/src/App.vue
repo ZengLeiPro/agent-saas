@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 
 import { currentPath, menus } from './router.js';
-import { app, askAgent, me, notice, phase, theme } from './ky.js';
+import { app, askAgent, me, meState, notice, phase, refreshMe, theme } from './ky.js';
 import OrdersPage from './pages/Orders.vue';
 import RolesPage from './pages/Roles.vue';
 import LocalLoginPage from './pages/LocalLogin.vue';
@@ -27,7 +27,10 @@ function openDocs(): void {
   <div class="layout" :data-theme="theme">
     <aside>
       <h1>__SYSTEM_NAME__</h1>
-      <nav>
+      <div v-if="meState === 'loading'" class="menu-skeleton" aria-label="正在加载菜单">
+        <span v-for="index in 3" :key="index" />
+      </div>
+      <nav v-else>
         <button
           v-for="item in flatMenus"
           :key="item.key"
@@ -38,14 +41,20 @@ function openDocs(): void {
           {{ item.label }}
         </button>
       </nav>
-      <p v-if="flatMenus.length === 0" class="empty">
-        还没有分配任何权限，请联系组织管理员。
+      <div v-if="meState === 'error'" class="empty">
+        <p>系统信息暂时没有加载出来。</p>
+        <button type="button" @click="refreshMe()">重试</button>
+      </div>
+      <p v-else-if="meState === 'ready' && flatMenus.length === 0" class="empty">
+        你在《__SYSTEM_NAME__》中还没有被分配角色，请联系组织管理员。
       </p>
       <div class="tools">
         <button type="button" @click="askAgent('帮我看看最近的订单情况')">问 Agent</button>
         <button type="button" @click="openDocs()">使用说明</button>
       </div>
-      <p class="who" v-if="me">{{ me.user.displayName }}<span v-if="me.user.isTenantAdmin">（管理员）</span></p>
+      <p class="who" v-if="me">
+        {{ me.user.displayName }}<span v-if="me.user.isTenantAdmin">（管理员）</span>
+      </p>
       <p class="phase">状态：{{ phase }}</p>
     </aside>
     <main>
@@ -111,5 +120,21 @@ main {
   border: 1px solid #d4a72c;
   background: #fff8c5;
   border-radius: 6px;
+}
+.menu-skeleton {
+  display: grid;
+  gap: 8px;
+}
+.menu-skeleton span {
+  display: block;
+  height: 30px;
+  border-radius: 6px;
+  background: #e5e7eb;
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+@keyframes pulse {
+  to {
+    opacity: 0.45;
+  }
 }
 </style>

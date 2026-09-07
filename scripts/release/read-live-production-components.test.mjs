@@ -6,6 +6,7 @@ import {
   hasSystemdEnvironment,
   parseReleaseEnvironment,
   readJson,
+  describeWorkerNotReady,
   selectConfigIdentitySummary,
   selectLiveConfigIdentity,
   validateLiveProductionComponents,
@@ -13,6 +14,14 @@ import {
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
+
+test('readyfile 缺失时直接报告 ConfigIdentity drifted', () => {
+  const readFileSync = (path) => {
+    assert.match(path, /config-identity\.json$/u);
+    return JSON.stringify({ status: 'drifted' });
+  };
+  assert.match(describeWorkerNotReady('green', readFileSync), /ConfigIdentity is drifted/u);
+});
 
 test('reads an independently attested production component matrix', () => {
   const components = validateLiveProductionComponents({

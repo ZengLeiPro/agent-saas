@@ -40,6 +40,7 @@ function buildWorker(directoryMaintenance?: KyAppDirectoryMaintenance): {
       onEventAbandoned: () => undefined,
       onHealthAlert: () => undefined,
       notifyCredentialExpiring: () => undefined,
+      notifyCredits: () => undefined,
     },
     ...(directoryMaintenance ? { directoryMaintenance } : {}),
   } as unknown as KyAppWorkerOptions;

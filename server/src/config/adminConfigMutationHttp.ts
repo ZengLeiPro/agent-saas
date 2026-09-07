@@ -1,6 +1,9 @@
 import type { Request, Response } from 'express';
 
-import { ConfigConflictError } from './adminConfigMutationService.js';
+import {
+  ConfigConflictError,
+  ProductionConfigPublishRequiredError,
+} from './adminConfigMutationService.js';
 import {
   CapabilityEnableError,
   capabilityEnableHttpStatus,
@@ -35,6 +38,10 @@ export function sendCapabilityEnableError(res: Response, error: unknown): void {
 }
 
 export function sendConfigMutationError(res: Response, error: unknown): void {
+  if (error instanceof ProductionConfigPublishRequiredError) {
+    res.status(409).json({ error: error.message, code: error.code });
+    return;
+  }
   if (error instanceof ConfigConflictError) {
     res.status(409).json({
       error: error.message,

@@ -101,6 +101,7 @@ case "$task" in
   postgres)
     # 显式清单是快速动态合约门禁，新增关键 PG 合约必须在此登记。
     require_test_database
+    node --test scripts/release/migration-postconditions.pg.test.mjs
     pnpm -F server exec vitest run \
       src/__tests__/codexCredentialRuntimeState.pg.test.ts \
       src/__tests__/memoryConsolidationStore.pg.test.ts \
@@ -119,7 +120,8 @@ case "$task" in
       src/kyapp/systems/store.pg.test.ts \
       src/kyapp/gateway/snapshotStore.pg.test.ts \
       src/kyapp/__tests__/kyAppStores.pg.test.ts \
-      src/kyapp/directory/store.pg.test.ts
+      src/kyapp/directory/store.pg.test.ts \
+      src/kyapp/delivery/store.pg.test.ts
     pnpm -F @kaiyan/ky-app-server exec vitest run src/sat/pgJtiStore.pg.test.ts src/pg/stores.pg.test.ts
     ;;
 

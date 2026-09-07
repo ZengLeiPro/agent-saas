@@ -72,6 +72,7 @@ export function kyAppErrorCode(error: unknown): string {
   const name = error instanceof Error ? error.name : '';
   if (name === 'KyAppSystemNotFoundError') return 'not_found';
   if (name === 'KyAppSystemConflictError') return 'conflict';
+  if (name === 'KyAppOnboardConflictError') return 'conflict';
   if (name === 'KyAppCredentialConflictError') return 'conflict';
   if (name === 'KyAppSigningKeyConflictError') return 'conflict';
   if (name === 'KyAppSigningKeyError') return 'conflict';

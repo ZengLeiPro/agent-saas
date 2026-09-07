@@ -46,7 +46,10 @@ export function selectExternalSystemIncidents(source: string, items: AttentionIt
   // WP2a：定制项目安装实例的 live 连续失败与恢复，同样只放行到「持续影响可用性」这一档。
   if (source === 'ky_app_installation') {
     return items.filter((item) => (
-      (item.kind === 'ky_app_installation_unhealthy' || item.kind === 'ky_app_installation_recovered')
+      (item.kind === 'ky_app_installation_unhealthy'
+        || item.kind === 'ky_app_installation_recovered'
+        || item.kind === 'ky_app_credits_low'
+        || item.kind === 'ky_app_credits_exhausted')
       && (item.severity === 'high' || item.severity === 'critical')
     ));
   }

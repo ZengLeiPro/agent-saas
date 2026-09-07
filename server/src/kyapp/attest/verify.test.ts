@@ -69,7 +69,7 @@ describe('平台侧安装证明校验（规范 §3.2、§5.4）', () => {
       [sign(baseClaims(nowSeconds, { origin: 'https://evil.example.com' })), 'origin_mismatch'],
       [sign(baseClaims(nowSeconds, { iid: 'tsi_99' })), 'iid_mismatch'],
       [sign(baseClaims(nowSeconds, { iss: 'local:tsi_99' })), 'iss_mismatch'],
-      [sign(baseClaims(nowSeconds, { aud: 'https://staging.agent.kaiyan.net' })), 'aud_mismatch'],
+      [sign(baseClaims(nowSeconds, { aud: 'https://staging-agent.kaiyan.net' })), 'aud_mismatch'],
       [sign(baseClaims(nowSeconds, { nonce: 'nonce-zzzzzzzzzzzzzzzzzzzz' })), 'nonce_mismatch'],
       [sign(baseClaims(nowSeconds), { kid: 'v9' }), 'unknown_kid'],
       [sign(baseClaims(nowSeconds), { key: other }), 'signature_invalid'],

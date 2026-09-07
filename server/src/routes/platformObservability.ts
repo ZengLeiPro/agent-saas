@@ -322,7 +322,7 @@ export function createPlatformObservabilityRouter(options: PlatformObservability
         session: serializeSessionRecord(session, options.userStore),
         runs,
         billing: safeBilling,
-        sandboxes: sandboxes.filter((sandbox) => sandbox.workspaceId && sandbox.workspaceId === session.workspaceId),
+        sandboxes: sandboxes.filter((sandbox) => sandbox.workspaceId === session.workspaceId && sandbox.sessionId === session.sessionId && sandbox.owner?.tenantId === session.tenantId),
       });
     } catch (err) {
       res.status(500).json({ error: `Session detail query failed: ${errorMessage(err)}` });

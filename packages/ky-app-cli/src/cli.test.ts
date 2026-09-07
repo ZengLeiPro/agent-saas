@@ -1,4 +1,4 @@
-/** CLI 分发、`.env` 解析、平台命令的参数校验与「未实现」退出码。 */
+/** CLI 分发、`.env` 解析、平台命令参数与真实平台请求。 */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,12 +40,45 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   await rm(dir, { recursive: true, force: true });
 });
 
 async function writeProject(): Promise<void> {
   await writeFile(join(dir, 'ky-app.manifest.json'), JSON.stringify(EXAMPLE_MANIFEST), 'utf8');
   await writeFile(join(dir, 'ky-app.conformance.json'), JSON.stringify(CONFORMANCE), 'utf8');
+  await writeFile(
+    join(dir, 'members.csv'),
+    '姓名,手机号,部门路径\n测试员工,13800138000,总部',
+    'utf8',
+  );
+}
+
+function onboardArgs(baseUrl = 'https://demo.apps.kaiyancn.com'): string[] {
+  return [
+    'onboard',
+    '--project',
+    dir,
+    '--tenant',
+    't1',
+    '--tenant-name',
+    '测试组织',
+    '--admin-name',
+    '管理员',
+    '--admin-phone',
+    '13900139000',
+    '--tech-contact-phone',
+    '13900139000',
+    '--system',
+    'demo-erp',
+    '--installation',
+    'demo-erp-t1',
+    '--base-url',
+    baseUrl,
+    '--members',
+    join(dir, 'members.csv'),
+  ];
 }
 
 describe('parseDotEnv', () => {
@@ -73,11 +106,21 @@ describe('main', () => {
     expect(errors.join('\n')).toContain('未知命令');
   });
 
-  it('register：manifest 校验通过但明确报「依赖 WP2a」并退 2', async () => {
+  it('register：manifest 校验后调用平台版本登记端点', async () => {
     await writeProject();
-    expect(await main(['register', '--project', dir])).toBe(2);
+    vi.stubEnv('KY_PLATFORM_URL', 'https://agent.example.com');
+    vi.stubEnv('KY_PLATFORM_TOKEN', 'test-token');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 201, headers: { 'content-type': 'application/json' } }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await main(['register', '--project', dir])).toBe(0);
     expect(logs.join('\n')).toContain('manifest 校验通过');
-    expect(errors.join('\n')).toContain('依赖 WP2a 平台端点，尚未实现');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/api/app-contract/v1/systems/demo-erp/versions',
+    );
   });
 
   it('onboard：缺必填参数直接报错', async () => {
@@ -89,37 +132,11 @@ describe('main', () => {
 
   it('onboard：参数齐全时校验 base-url 与 grant-credits', async () => {
     await writeProject();
-    expect(
-      await main([
-        'onboard',
-        '--project',
-        dir,
-        '--tenant',
-        't1',
-        '--system',
-        'demo-erp',
-        '--base-url',
-        'ftp://x',
-      ]),
-    ).toBe(2);
+    expect(await main(onboardArgs('ftp://x'))).toBe(2);
     expect(errors.join('\n')).toContain('--base-url 必须是 https');
 
     errors.length = 0;
-    expect(
-      await main([
-        'onboard',
-        '--project',
-        dir,
-        '--tenant',
-        't1',
-        '--system',
-        'demo-erp',
-        '--base-url',
-        'https://demo.apps.kaiyancn.com',
-        '--grant-credits',
-        'many',
-      ]),
-    ).toBe(2);
+    expect(await main([...onboardArgs(), '--grant-credits', 'many'])).toBe(2);
     expect(errors.join('\n')).toContain('--grant-credits 必须是非负整数');
   });
 

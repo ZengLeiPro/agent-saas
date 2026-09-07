@@ -23,6 +23,7 @@ import { pathToFileURL } from 'node:url';
 import { parse as parseJsonc } from 'jsonc-parser';
 
 import { parseAppConfig, type AppConfig } from '../app/config.js';
+import { assertAuxiliaryModelRefsResolvable } from '../app/modelsHotUpdate.js';
 import {
   EncryptedFileSecretVault,
   HttpSecretVault,
@@ -178,6 +179,7 @@ async function main(): Promise<void> {
   const configPath = options.config;
   if (!configPath) throw new Error('--config <path> is required');
   const config = loadConfig(configPath);
+  if (config.models) assertAuxiliaryModelRefsResolvable(config, config.models);
   if (options.environment === 'production') {
     // 部署期就拒绝「已有 ref 方案的 inline secret」，而不是等候选进程拒启。
     assertProductionManagedCredentialSafety(config);

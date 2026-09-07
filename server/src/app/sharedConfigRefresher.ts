@@ -27,6 +27,7 @@ import type { TenantStore } from '../data/tenants/store.js';
 import {
   prepareModelsHotUpdate,
   type ModelsHotUpdateCommit,
+  type ModelsHotUpdateTransaction,
   type ModelsHotUpdateTarget,
 } from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
@@ -64,14 +65,14 @@ type ConfigChanges = {
   stt: boolean;
   sessionAutomation: boolean;
   webTools: boolean;
+  memoryPolling: boolean;
 };
 type ConfigChangeKey = keyof ConfigChanges;
 type PreparationOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 type ControlledPreparation<T> = PreparationOutcome<T> | Promise<PreparationOutcome<T>>;
 type PreparationResults = [
   PreparationOutcome<void | undefined>,
-  PreparationOutcome<ModelsHotUpdateCommit | undefined>,
-  PreparationOutcome<ModelsHotUpdateCommit | undefined>,
+  PreparationOutcome<ModelsHotUpdateTransaction | undefined>,
   PreparationOutcome<WebToolsRuntimeUpdateCommit | undefined>,
   PreparationOutcome<WebToolsRuntimeUpdateCommit | undefined>,
   PreparationOutcome<SttRuntimeUpdateCommit | undefined>,
@@ -89,6 +90,7 @@ const CHANGE_LABELS: Record<ConfigChangeKey, string> = {
   stt: 'STT',
   sessionAutomation: 'Session Automation',
   webTools: 'WebTools',
+  memoryPolling: 'memory polling',
 };
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
@@ -191,7 +193,11 @@ export function createSharedConfigRefresher(params: {
   /** 模型候选变化后异步解析 SecretRef，再返回无失败的执行快照提交。 */
   onModelsUpdated?: (
     nextConfig: AppConfig,
-  ) => ModelsHotUpdateCommit | Promise<ModelsHotUpdateCommit>;
+  ) => ModelsHotUpdateTransaction | Promise<ModelsHotUpdateTransaction>;
+  /** memory polling 派生运行态纳入同一提交/回滚事务，禁止旁路直接覆写 AppConfig。 */
+  prepareMemoryPollingUpdate?: (
+    next: NonNullable<AppConfig['memory']>['polling'],
+  ) => () => void;
   /** 共享恢复门 dirty 时所有 config 推进与发布 fail closed。 */
   recoveryGate?: ConfigRuntimeRecoveryGate;
   /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
@@ -216,6 +222,7 @@ export function createSharedConfigRefresher(params: {
     prepareWebToolsUpdate,
     prepareSttUpdate,
     onModelsUpdated,
+    prepareMemoryPollingUpdate,
     recoveryGate,
     onConfigReloaded,
     validateConfigReload,
@@ -274,6 +281,9 @@ export function createSharedConfigRefresher(params: {
         JSON.stringify(nextConfig.sessionAutomation ?? null),
       webTools:
         JSON.stringify(config.webTools ?? null) !== JSON.stringify(nextConfig.webTools ?? null),
+      memoryPolling:
+        JSON.stringify(config.memory?.polling ?? null) !==
+        JSON.stringify(nextConfig.memory?.polling ?? null),
     };
     for (const key of dirtyConfigChanges) changes[key] = true;
     return changes;
@@ -290,6 +300,7 @@ export function createSharedConfigRefresher(params: {
     else if (label === 'tool controls') dirtyConfigChanges.add('toolControls');
     else if (label === 'stt') dirtyConfigChanges.add('stt');
     else if (label === 'web tools') dirtyConfigChanges.add('webTools');
+    else if (label === 'memory polling') dirtyConfigChanges.add('memoryPolling');
     else if (label === 'AppConfig') {
       for (const key of Object.keys(changes) as ConfigChangeKey[]) {
         if (changes[key]) dirtyConfigChanges.add(key);
@@ -333,6 +344,9 @@ export function createSharedConfigRefresher(params: {
     if (changes.webTools) {
       if (source.webTools) config.webTools = source.webTools;
       else delete config.webTools;
+    }
+    if (changes.memoryPolling) {
+      config.memory = { ...(config.memory ?? {}), polling: source.memory?.polling };
     }
   }
 
@@ -381,6 +395,7 @@ export function createSharedConfigRefresher(params: {
         `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
       );
     }
+    if (changes.memoryPolling) logger?.info('[SharedConfig] 已从磁盘热更新 memory polling 配置');
 
     const repairedDirtyChanges = dirtyChangeLabels();
     dirtyConfigChanges.clear();
@@ -415,6 +430,8 @@ export function createSharedConfigRefresher(params: {
     rollbackStt?: SttRuntimeUpdateCommit;
     candidateWebTools?: WebToolsRuntimeUpdateCommit;
     rollbackWebTools?: WebToolsRuntimeUpdateCommit;
+    candidateMemoryPolling?: () => void;
+    rollbackMemoryPolling?: () => void;
   }): boolean {
     const steps: SharedConfigCommitStep[] = [];
     const addStep = (label: string, commit?: () => void, rollback?: () => void): void => {
@@ -425,6 +442,7 @@ export function createSharedConfigRefresher(params: {
     addStep('tool controls', params.candidateToolControls, params.rollbackToolControls);
     addStep('stt', params.candidateStt, params.rollbackStt);
     addStep('web tools', params.candidateWebTools, params.rollbackWebTools);
+    addStep('memory polling', params.candidateMemoryPolling, params.rollbackMemoryPolling);
     steps.push({
       label: 'AppConfig',
       commit: () => applyConfigSlices(params.nextConfig, params.changes),
@@ -491,6 +509,8 @@ export function createSharedConfigRefresher(params: {
     let rollbackSystemPrompts: (() => void) | undefined;
     let candidateToolControls: ToolControlsRuntimeUpdateCommit | undefined;
     let rollbackToolControls: ToolControlsRuntimeUpdateCommit | undefined;
+    let candidateMemoryPolling: (() => void) | undefined;
+    let rollbackMemoryPolling: (() => void) | undefined;
     try {
       nextConfig = parseAppConfig(parseJsonc(snapshot.text));
       if (config.models && !nextConfig.models) {
@@ -522,6 +542,10 @@ export function createSharedConfigRefresher(params: {
             models: previousConfig.models,
           });
         }
+      }
+      if (changes.memoryPolling && prepareMemoryPollingUpdate) {
+        candidateMemoryPolling = prepareMemoryPollingUpdate(nextConfig.memory?.polling);
+        rollbackMemoryPolling = prepareMemoryPollingUpdate(previousConfig.memory?.polling);
       }
       if (changes.systemPrompts && prepareSystemPromptOverridesUpdate) {
         candidateSystemPrompts = prepareSystemPromptOverridesUpdate(nextConfig.systemPrompts ?? {});
@@ -570,6 +594,8 @@ export function createSharedConfigRefresher(params: {
         rollbackWebTools: resolvedRollbackWebTools,
         candidateStt: resolvedCandidateStt,
         rollbackStt: resolvedRollbackStt,
+        candidateMemoryPolling,
+        rollbackMemoryPolling,
       });
     };
 
@@ -582,9 +608,6 @@ export function createSharedConfigRefresher(params: {
         : { ok: true as const, value: undefined },
       (changes.models || changes.titleGenerator || changes.guardrail) && onModelsUpdated
         ? startControlledPreparation(() => onModelsUpdated(nextConfig))
-        : { ok: true as const, value: undefined },
-      (changes.models || changes.titleGenerator || changes.guardrail) && onModelsUpdated
-        ? startControlledPreparation(() => onModelsUpdated(previousConfig))
         : { ok: true as const, value: undefined },
       changes.webTools && prepareWebToolsUpdate
         ? startControlledPreparation(() => prepareWebToolsUpdate(nextConfig.webTools))
@@ -606,12 +629,12 @@ export function createSharedConfigRefresher(params: {
         return false;
       }
       return finalize(
-        results[1].ok ? results[1].value : undefined,
+        results[1].ok ? results[1].value?.commit : undefined,
+        results[1].ok ? results[1].value?.rollback : undefined,
         results[2].ok ? results[2].value : undefined,
         results[3].ok ? results[3].value : undefined,
         results[4].ok ? results[4].value : undefined,
         results[5].ok ? results[5].value : undefined,
-        results[6].ok ? results[6].value : undefined,
       );
     };
 

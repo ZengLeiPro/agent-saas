@@ -1,0 +1,21 @@
+{
+  "checkedAt": "2026-09-07T06:52:06.312626+00:00",
+  "method": "GET",
+  "url": "https://staging-agent-api.kaiyan.net/api/healthz/ready",
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "identity": {
+    "status": "ok",
+    "release": {
+      "environment": "staging",
+      "releaseId": "rc-20260906-75",
+      "releaseSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+      "serverDigest": "sha256:91d1bca99e280f0be2a689402e6927b48e43b12e98e9610f19e12cdf3967f937",
+      "webDigest": "sha256:82c9325f982ef3c55a26e67b85673f58bc18f0b1d3b5a7f2871aa2fdd218fec1",
+      "acsOrchestratorDigest": "sha256:377db4a42335f038ff781518f071300acd2dd39001b0a61c84ff33fa2e1c2ac3",
+      "acsSandboxImageDigest": "sha256:89a1aa9f3535e98cf49d15fbca1c4fd208246bccf6f261a57c8d00aeb5046e25",
+      "safetyAttested": true
+    },
+    "runtimeAdmission": "healthy"
+  }
+}

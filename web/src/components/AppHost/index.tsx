@@ -1,5 +1,5 @@
 /**
- * 定制软件宿主（WP4，规范 §5）。
+ * 业务系统宿主（WP4，规范 §5）。
  *
  * 职责被切成两半：**状态机与消息路由在 `controller.ts`（纯 TS）**，本文件只做三件事 ——
  * 渲染快照、把 `iframe.contentWindow` 交给控制器、把壳侧能力（登出、URL、预填总线）接上。
@@ -247,7 +247,7 @@ export function AppHost({ appsRoute }: AppHostProps) {
 
       {!renderRoute ? (
         <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-          请选择一个定制软件
+          请选择一个业务系统
         </div>
       ) : failure ? (
         <div
@@ -283,7 +283,7 @@ export function AppHost({ appsRoute }: AppHostProps) {
               ref={attachFrame}
               key={installation?.installationId ?? 'none'}
               data-testid="app-host-frame"
-              title={installation?.name ?? '定制软件'}
+              title={installation?.name ?? '业务系统'}
               src={snapshot.frameSrc}
               sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-modals"
               allow="clipboard-write"

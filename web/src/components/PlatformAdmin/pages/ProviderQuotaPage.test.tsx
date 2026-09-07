@@ -127,7 +127,8 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText(/Codex usage HTTP 401。下方为/u)).toBeTruthy();
     // 顶部汇总
     expect(screen.getByText(/每 5 分钟自动采集/u)).toBeTruthy();
-    expect(screen.getByText(/1 个账号已耗尽或不可用/u)).toBeTruthy();
+    expect(screen.getByText(/1 个账号采集失败/u)).toBeTruthy();
+    expect(screen.queryByText(/已耗尽或不可用/u)).toBeNull();
     expect(screen.getByText(/1 个账号接近上限或冷却中/u)).toBeTruthy();
     // 24h 变化来自 history 的最早成功点
     expect(screen.getByText(/24h \+4\.1%/u)).toBeTruthy();

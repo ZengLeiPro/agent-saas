@@ -19,6 +19,7 @@ export async function createProviderQuotaRuntime(options: {
   secretVault?: SecretVault;
   codexCredentialManager: CodexCredentialManager;
   enableCollector: boolean;
+  fetchImpl: typeof fetch;
   logger: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -35,6 +36,7 @@ export async function createProviderQuotaRuntime(options: {
     secretVault: options.secretVault,
     codexCredentialManager: options.codexCredentialManager,
     enableCollector: options.enableCollector,
+    fetchImpl: options.fetchImpl,
     logger: options.logger,
   });
   service.start();

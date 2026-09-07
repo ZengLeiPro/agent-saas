@@ -2,10 +2,12 @@
  * WP2a 系统目录与发布门禁路由（规范 §8.1，全部 `requirePlatformAdmin`）。
  *
  * `versions` 上传 → `validateManifest` → JCS digest → draft（同 digest 幂等）；
- * 语义 diff 命中即 `reviewRequired=true` 并落 `reviewReasons`；
- * `review` 由**非发布者**做；`publish` 门禁未过一律 409 `review_required`；
+ * 语义 diff 作为发布提示保留；平台管理员可直接发布，无需独立复核。
  * 模型端工具注册 dry-run 未配置时记 `skipped`（不算通过），原样写进响应的 `gate`。
  */
+import type { PgEntitlementStore } from '../../data/entitlements/store.js';
+import type { KyAppManagementQueries } from '../installations/managementQueries.js';
+import { managementTenant, installableScope } from '../installations/managementPolicy.js';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -45,6 +47,8 @@ const publishSchema = z.object({ expectedVersion: z.number().int().min(1) });
 
 export interface KyAppSystemRoutesOptions {
   systems: PgKyAppSystemStore;
+  management?: KyAppManagementQueries;
+  entitlements?: PgEntitlementStore;
   audit?: GovernanceAuditStore;
   toolRegistrationDryRun?: KyAppToolRegistrationDryRun;
 }
@@ -54,10 +58,29 @@ export function createKyAppSystemsRouter(options: KyAppSystemRoutesOptions): Rou
 
   router.get('/systems', requirePlatformAdmin, async (req, res) => {
     try {
-      res.json({ systems: await options.systems.listDefinitions() });
+      res.json({ systems: await options.management?.systemsList() ?? await options.systems.listDefinitions(), allowedActions: ['register_version'] });
     } catch (error) {
       sendKyAppFailure(req, res, error);
     }
+  });
+
+  router.get('/systems/installable', async (req, res) => {
+    try {
+      const tenantId = managementTenant(req.user, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+      if (!tenantId) return sendKyAppError(req, res, 'invalid_input', '请选择组织');
+      const allows = await installableScope(options.entitlements, tenantId);
+      const definitions = await options.systems.listDefinitions();
+      res.json({ systems: definitions.filter(item => item.status === 'published' && allows(item.systemId)).map(item => ({ ...item, allowedActions: ['install'] })) });
+    } catch (error) { sendKyAppFailure(req, res, error); }
+  });
+
+  router.get('/systems/:systemId', requirePlatformAdmin, async (req, res) => {
+    try {
+      if (!options.management) return sendKyAppError(req, res, 'unavailable', '管理查询不可用');
+      const detail = await options.management.systemDetail(String(req.params.systemId), req.user!.sub);
+      if (!detail) return sendKyAppError(req, res, 'not_found', '未知业务系统');
+      res.json(detail);
+    } catch (error) { sendKyAppFailure(req, res, error); }
   });
 
   router.get('/systems/:systemId/versions', requirePlatformAdmin, async (req, res) => {
@@ -190,18 +213,6 @@ export function createKyAppSystemsRouter(options: KyAppSystemRoutesOptions): Rou
       try {
         const version = await options.systems.getVersion(systemId.data, digest.data);
         if (!version) return sendKyAppError(req, res, 'not_found', '未知系统版本');
-        if (version.reviewStatus === 'pending') {
-          return res.status(409).json({
-            ok: false,
-            error: {
-              code: 'review_required',
-              retryable: false,
-              message: '该版本触发了语义 diff 门禁，必须由非发布者复核后才能发布',
-              requestId: req.header('x-ky-request-id') ?? '',
-            },
-            reasons: version.reviewReasons,
-          });
-        }
         const dryRun = await runKyAppToolRegistrationDryRun(
           version.manifest as unknown as Manifest,
           options.toolRegistrationDryRun,

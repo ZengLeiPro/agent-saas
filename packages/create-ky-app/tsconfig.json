@@ -16,7 +16,8 @@
     "noEmit": true,
     "incremental": true,
     "paths": {
-      "@kaiyan/ky-app-contract": ["../ky-app-contract/src/index.ts"]
+      "@kaiyan/ky-app-contract": ["../ky-app-contract/src/index.ts"],
+      "@kaiyan/ky-app-contract/claude-md": ["../ky-app-contract/src/claudeMd.ts"]
     },
     "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo"
   },

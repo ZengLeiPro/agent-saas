@@ -6,6 +6,7 @@ import { governanceV40DwsDeliveryAccountIdentityStatements } from './v40DwsDeliv
 import { governanceV41KyAppSystemStatements } from './v41KyAppSystemMigration.js';
 import { governanceV42KyAppDirectoryStatements } from './v42KyAppDirectoryMigration.js';
 import { governanceV43KyAppSessionToolSnapshotStatements } from './v43KyAppSessionToolSnapshotMigration.js';
+import { governanceV44KyAppDeliveryStatements } from './v44KyAppDeliveryMigration.js';
 
 export function governanceLatestMigrations(prefix: string) {
   return [
@@ -17,5 +18,6 @@ export function governanceLatestMigrations(prefix: string) {
     { version: 41, statements: governanceV41KyAppSystemStatements(prefix) },
     { version: 42, statements: governanceV42KyAppDirectoryStatements(prefix) },
     { version: 43, statements: governanceV43KyAppSessionToolSnapshotStatements(prefix) },
+    { version: 44, statements: governanceV44KyAppDeliveryStatements(prefix) },
   ];
 }

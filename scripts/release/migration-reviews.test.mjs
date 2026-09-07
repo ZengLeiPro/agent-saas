@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { withPostconditionFixtures } from './test-migration-postcondition-fixtures.mjs';
 import { createMigrationPlan } from './migration-plan.mjs';
 import {
   loadMigrationReviews,
@@ -53,7 +54,7 @@ function load(f, baseline = BASELINE) {
   });
 }
 function plan(f, extra = {}) {
-  const targets = withDocument(f);
+  const targets = withPostconditionFixtures(f.baselines, withDocument(f));
   const changedPaths = f.changedPaths ?? [PATH, ...Object.keys(extra)];
   return createMigrationPlan({
     baseline: BASELINE,

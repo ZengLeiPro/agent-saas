@@ -58,6 +58,7 @@ export interface KyAppWorkerOptions {
   alerts: KyAppAlertSink;
   /** WP2b 目录投影与保留清理；与上面的 `directory`（安装实例目录）不是一回事。 */
   directoryMaintenance?: KyAppDirectoryMaintenance;
+  balanceMaintenance?: { reconcile: () => Promise<void> };
   logger?: KyAppWorkerLogger;
   dispatchIntervalMs?: number;
   probeIntervalMs?: number;
@@ -73,6 +74,12 @@ export interface KyAppAlertSink {
   onEventAbandoned: (alert: KyAppDispatchAlert) => void;
   onHealthAlert: (alert: KyAppHealthAlert) => void;
   notifyCredentialExpiring: (installationId: string) => void;
+  notifyCredits: (
+    tenantId: string,
+    kind: 'low' | 'exhausted',
+    balance: number,
+    days: number | null,
+  ) => void;
 }
 
 export function createKyAppAlertSink(
@@ -119,6 +126,18 @@ export function createKyAppAlertSink(
         title: `定制项目实例 ${installationId} 的服务凭据将在 14 天内到期，请安排重叠轮换`,
         occurredAt: new Date().toISOString(),
         dedupeKey: `ky_app_credential_expiring:${installationId}`,
+      });
+    },
+    notifyCredits(tenantId, kind, balance, days) {
+      notify({
+        kind: kind === 'exhausted' ? 'ky_app_credits_exhausted' : 'ky_app_credits_low',
+        severity: 'high',
+        title:
+          kind === 'exhausted'
+            ? `组织 ${tenantId} 的 AI 积分已耗尽；定制软件仍可正常使用，请联系客户续费`
+            : `组织 ${tenantId} 的 AI 积分预计 ${days ?? 3} 天内耗尽（余额 ${balance.toFixed(2)}），请联系客户续费`,
+        occurredAt: new Date().toISOString(),
+        dedupeKey: `ky_app_credits_${kind}:${tenantId}`,
       });
     },
   };
@@ -228,6 +247,7 @@ export class KyAppWorker {
         const due = await this.options.credentials.listRotationDue(installation.installationId);
         if (due.length > 0) this.options.alerts.notifyCredentialExpiring(installation.installationId);
       }
+      await this.options.balanceMaintenance?.reconcile();
     } catch (error) {
       this.options.logger?.warn(`KyAppWorker maintenance failed: ${errorMessage(error)}`);
     }

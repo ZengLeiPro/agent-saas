@@ -3,7 +3,7 @@
  *
  * - `doctor`：§9.3 十六章一致性测试（内置 mock 壳、PG 容器与双进程 harness）
  * - `mock-shell`：只起 mock 壳，供本地开发时在浏览器里看 iframe 里的项目
- * - `register` / `onboard` / `rotate-credential`：依赖 WP2a 平台端点，本期只校验参数
+ * - `register` / `onboard --resume` / `rotate-credential`：调用平台 WP5 交付端点
  */
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -16,6 +16,9 @@ import { createMockShell } from './mockShell/server.js';
 import { freePort } from './harness/ports.js';
 import { defaultPgMode, loadProjectFiles, runDoctor } from './doctor/run.js';
 import type { BrowserMode, PgMode } from './types.js';
+import { parseOnboardMembersCsv } from './onboard/csv.js';
+import { platformRequest } from './onboard/platformClient.js';
+import { installManifestSkills } from './onboard/skills.js';
 
 export const USAGE = [
   'ky-app <命令> [选项]',
@@ -23,9 +26,9 @@ export const USAGE = [
   '命令：',
   '  doctor              跑 §9.3 一致性测试（16 章）与 mock 壳',
   '  mock-shell          只起 mock 壳，本地开发时在浏览器里预览 iframe 内的项目',
-  '  register            上传仓库 manifest 登记系统版本（依赖 WP2a 平台端点）',
-  '  onboard             开箱：建组织、赠积分、注册安装、导入成员（依赖 WP2a 平台端点）',
-  '  rotate-credential   轮换服务凭据（依赖 WP2a 平台端点）',
+  '  register            上传仓库 manifest 登记系统版本',
+  '  onboard             可恢复开箱：组织、积分、安装、成员与交付清单',
+  '  rotate-credential   签发新的服务凭据领取票据',
   '',
   'doctor 选项：',
   '  --project <dir>       定制项目目录（默认当前目录）',
@@ -39,6 +42,19 @@ export const USAGE = [
   '  --project <dir>       定制项目目录（读 manifest 与 .env，默认当前目录）',
   '  --app-url <url>       已在运行的项目地址（默认 http://127.0.0.1:8787）',
   '  --port <n>            mock 壳端口（默认随机高位端口）',
+  '',
+  '平台命令环境变量：',
+  '  KY_PLATFORM_URL       平台地址（也可用 --platform-url）',
+  '  KY_PLATFORM_TOKEN     平台管理员令牌；禁止放进命令行参数',
+  '',
+  'onboard 关键选项：',
+  '  --tenant/--tenant-name       组织 ID / 名称',
+  '  --admin-name/--admin-phone   首个组织管理员',
+  '  --tech-contact-phone         一次性领取凭据的技术联系人',
+  '  --installation/--base-url    安装实例 ID / 客户系统地址',
+  '  --members <csv>               姓名、手机号、部门路径、可选工号',
+  '  --grant-credits <n>           赠送积分（默认 2000）',
+  '  --resume                      按同一参数恢复既有交付执行',
 ].join('\n');
 
 const NOT_IMPLEMENTED_EXIT = 2;
@@ -185,7 +201,6 @@ async function runMockShellCommand(argv: string[]): Promise<number> {
   return 0;
 }
 
-/** WP2a 才有平台端点，这里只做参数与 manifest 校验。 */
 async function runPlatformCommand(command: string, argv: string[]): Promise<number> {
   const { values } = parseArgs({
     args: argv,
@@ -196,6 +211,13 @@ async function runPlatformCommand(command: string, argv: string[]): Promise<numb
       'base-url': { type: 'string' },
       'grant-credits': { type: 'string' },
       installation: { type: 'string' },
+      'platform-url': { type: 'string' },
+      'tenant-name': { type: 'string' },
+      'admin-name': { type: 'string' },
+      'admin-phone': { type: 'string' },
+      'tech-contact-phone': { type: 'string' },
+      members: { type: 'string' },
+      resume: { type: 'boolean' },
     },
     allowPositionals: false,
   });
@@ -203,7 +225,17 @@ async function runPlatformCommand(command: string, argv: string[]): Promise<numb
   const projectDir = resolve(optionString(values, 'project') ?? process.cwd());
   const required: Record<string, string[]> = {
     register: [],
-    onboard: ['tenant', 'system', 'base-url'],
+    onboard: [
+      'tenant',
+      'tenant-name',
+      'admin-name',
+      'admin-phone',
+      'tech-contact-phone',
+      'system',
+      'installation',
+      'base-url',
+      'members',
+    ],
     'rotate-credential': ['installation'],
   };
   const missing = (required[command] ?? []).filter(
@@ -238,10 +270,150 @@ async function runPlatformCommand(command: string, argv: string[]): Promise<numb
     }
   }
 
-  const { manifest, digest } = await loadProjectFiles(projectDir);
-  console.log(`manifest 校验通过：${manifest.name}（${manifest.systemId}），digest ${digest}`);
-  console.error(`ky-app ${command}：依赖 WP2a 平台端点，尚未实现。`);
-  return NOT_IMPLEMENTED_EXIT;
+  const platformUrl = optionString(values, 'platform-url') ?? process.env.KY_PLATFORM_URL;
+  const platformToken = process.env.KY_PLATFORM_TOKEN;
+  if (!platformUrl || !platformToken) {
+    console.error('平台命令需要 KY_PLATFORM_URL（或 --platform-url）与 KY_PLATFORM_TOKEN');
+    return NOT_IMPLEMENTED_EXIT;
+  }
+
+  try {
+    if (command === 'rotate-credential') {
+      const installationId = optionString(values, 'installation')!;
+      const response = await platformRequest<{
+        credential: {
+          credentialId: string;
+          ticket: string;
+          ticketExpiresAt: string;
+          ackDeadlineAt: string;
+          expiresAt: string;
+        };
+      }>({
+        baseUrl: platformUrl,
+        token: platformToken,
+        path: `/api/app-contract/v1/installations/${encodeURIComponent(installationId)}/credentials`,
+        method: 'POST',
+        body: {},
+      });
+      console.log(
+        `已签发凭据 ${response.credential.credentialId}；确认截止 ${response.credential.ackDeadlineAt}`,
+      );
+      console.log(
+        `一次性领取地址：/api/app-contract/v1/installations/${installationId}/credentials/claim/${response.credential.ticket}`,
+      );
+      return 0;
+    }
+
+    const { manifest, conformance, digest } = await loadProjectFiles(projectDir);
+    console.log(`manifest 校验通过：${manifest.name}（${manifest.systemId}），digest ${digest}`);
+    if (command === 'register') {
+      await platformRequest({
+        baseUrl: platformUrl,
+        token: platformToken,
+        path: `/api/app-contract/v1/systems/${encodeURIComponent(manifest.systemId)}/versions`,
+        method: 'POST',
+        body: { name: manifest.name, manifest },
+      });
+      console.log(`系统版本已登记：${manifest.systemId}@${digest}`);
+      return 0;
+    }
+
+    const memberPath = resolve(optionString(values, 'members')!);
+    const members = parseOnboardMembersCsv(await readFile(memberPath, 'utf8'));
+    const readOnly = manifest.capabilities.find((item) => item.riskLevel === 'read_only');
+    const readOnlyInput = readOnly
+      ? conformance.capabilities[readOnly.id]?.validInputs[0]?.input
+      : undefined;
+    if (!readOnly || !readOnlyInput) {
+      console.error('onboard 需要至少一个 read_only 能力及其第一组 validInputs，用于真实交付诊断');
+      return NOT_IMPLEMENTED_EXIT;
+    }
+    const baseUrlValue = optionString(values, 'base-url')!;
+    let response = await platformRequest<{
+      execution: {
+        executionId: string;
+        status: string;
+        currentStep: string;
+        lastErrorCode?: string | null;
+      };
+      claim?: {
+        path: string;
+        credentialId: string;
+        ticketExpiresAt: string;
+        ackDeadlineAt: string;
+      };
+    }>({
+      baseUrl: platformUrl,
+      token: platformToken,
+      path: '/api/app-contract/v1/onboard',
+      method: 'POST',
+      body: {
+        tenantId: optionString(values, 'tenant'),
+        tenantName: optionString(values, 'tenant-name'),
+        adminName: optionString(values, 'admin-name'),
+        adminPhone: optionString(values, 'admin-phone'),
+        techContactPhone: optionString(values, 'tech-contact-phone'),
+        systemId: optionString(values, 'system'),
+        installationId: optionString(values, 'installation'),
+        baseUrl: baseUrlValue,
+        origin: new URL(baseUrlValue).origin,
+        grantCredits: Number.parseInt(credits ?? '2000', 10),
+        manifest,
+        members,
+        diagnostic: { readOnlyCapabilityId: readOnly.id, readOnlyInput },
+      },
+    });
+    const skills = await installManifestSkills({
+      baseUrl: platformUrl,
+      token: platformToken,
+      tenantId: optionString(values, 'tenant')!,
+      projectDir,
+      manifest,
+    });
+    if (skills.installed.length > 0 || skills.existing.length > 0) {
+      console.log(
+        `租户技能：新装 ${skills.installed.length} 个，已有 ${skills.existing.length} 个`,
+      );
+      response = await platformRequest({
+        baseUrl: platformUrl,
+        token: platformToken,
+        path: '/api/app-contract/v1/onboard',
+        method: 'POST',
+        body: {
+          tenantId: optionString(values, 'tenant'),
+          tenantName: optionString(values, 'tenant-name'),
+          adminName: optionString(values, 'admin-name'),
+          adminPhone: optionString(values, 'admin-phone'),
+          techContactPhone: optionString(values, 'tech-contact-phone'),
+          systemId: optionString(values, 'system'),
+          installationId: optionString(values, 'installation'),
+          baseUrl: baseUrlValue,
+          origin: new URL(baseUrlValue).origin,
+          grantCredits: Number.parseInt(credits ?? '2000', 10),
+          manifest,
+          members,
+          diagnostic: { readOnlyCapabilityId: readOnly.id, readOnlyInput },
+        },
+      });
+    }
+    console.log(
+      `${values.resume === true ? '恢复' : '启动'}交付执行 ${response.execution.executionId}：${response.execution.status} / ${response.execution.currentStep}`,
+    );
+    if (response.claim) {
+      console.log(
+        `凭据 ${response.claim.credentialId} 等待技术联系人领取并确认（截止 ${response.claim.ackDeadlineAt}）`,
+      );
+      console.log(`一次性领取地址：${response.claim.path}`);
+    } else if (response.execution.status !== 'completed') {
+      console.log(
+        `当前等待：${response.execution.lastErrorCode ?? response.execution.currentStep}；外部条件完成后用同一参数加 --resume`,
+      );
+    }
+    return response.execution.status === 'failed' ? 1 : 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
 }
 
 /** 命令入口。返回进程退出码。 */

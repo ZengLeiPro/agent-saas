@@ -194,8 +194,8 @@ describe('ProviderQuotaPage', () => {
     expect(screen.getByText('火山 Agent Plan · Max')).toBeTruthy();
     const expiry = screen.getByText(/^套餐到期 /);
     expect(expiry.textContent).not.toMatch(/\d{2}:\d{2}:\d{2}/);
-    expect(expiry.className).toContain('sm:col-start-2');
-    expect(expiry.className).toContain('text-xs');
+    expect(expiry.parentElement?.className).toContain('sm:col-start-2');
+    expect(expiry.parentElement?.className).toContain('text-xs');
     expect(screen.queryByText('套餐状态')).toBeNull();
   });
 

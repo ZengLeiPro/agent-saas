@@ -48,6 +48,13 @@ export interface ProviderQuotaSnapshot {
   /** 所属模型分组 id（火山按分组配置；Codex 订阅无分组）。 */
   groupId?: string;
   plan?: ProviderQuotaPlanInfo;
+  /** 仅概览附加的手动设置；采集快照与供应商 plan 保持原样。 */
+  planExpiry?: {
+    editable: boolean;
+    endTime?: string;
+    manualEndTime?: string;
+    providerEndTime?: string;
+  };
   windows: ProviderQuotaWindow[];
   limitReached: boolean;
   /** Codex：可用的额度重置券张数（rate_limit_reset_credits.available_count）。 */

@@ -350,9 +350,9 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": null,
-          "targetDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
+          "targetDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
           "classification": "expand",
-          "reason": "新增独立额度快照表及查询索引，advisory lock 串行 init；重复初始化通过，prune 是运行期维护方法。"
+          "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。"
         },
         {
           "path": "server/src/release/configIdentity.ts",
@@ -730,6 +730,10 @@
         {
           "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
           "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        },
+        {
+          "path": "docs/reviews/provider-plan-expiry.md",
+          "digest": "sha256:5fec01a310e7ae398fa15e997bc1e6ee2338765381483e7e8532f8694e74de02"
         }
       ]
     },
@@ -3507,9 +3511,9 @@
         {
           "path": "server/src/quota/providerQuotaSnapshotStore.ts",
           "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
-          "targetDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
+          "targetDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
           "classification": "expand",
-          "reason": "新增独立额度快照表及查询索引，advisory lock 串行 init；重复初始化通过，prune 是运行期维护方法。"
+          "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。"
         },
         {
           "path": "server/src/release/configIdentity.ts",
@@ -3851,6 +3855,10 @@
         {
           "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
           "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        },
+        {
+          "path": "docs/reviews/provider-plan-expiry.md",
+          "digest": "sha256:5fec01a310e7ae398fa15e997bc1e6ee2338765381483e7e8532f8694e74de02"
         }
       ]
     },
@@ -9196,6 +9204,24 @@
         {
           "path": "docs/release/业务系统直接发布无结构变更审核-20260907.md",
           "digest": "sha256:cfc9b9a017ad24961c6120643fcd0686bd5ac4fcc99d7f6a5d262e8ec8dd5dde"
+        }
+      ]
+    },
+    {
+      "baselineSha": "6acfd79253c20db2b46f01ddd56570c51f25c8cc",
+      "files": [
+        {
+          "path": "server/src/quota/providerQuotaSnapshotStore.ts",
+          "baselineDigest": "sha256:4519d5afcdd61c526cf43339f56fd8eb2847b79e42149673e341c62698704bba",
+          "targetDigest": "sha256:87751e906e23fa3ed1ebf702155f8d992298c2c4970fdcfa45a22480de67e4f3",
+          "classification": "expand",
+          "reason": "新增独立套餐到期编辑审计表及索引，advisory lock 内幂等 CREATE TABLE/INDEX IF NOT EXISTS；无原表变更、回填或删除。编辑历史追加写入且不随快照清理。详套餐到期手动编辑审核。"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "docs/reviews/provider-plan-expiry.md",
+          "digest": "sha256:5fec01a310e7ae398fa15e997bc1e6ee2338765381483e7e8532f8694e74de02"
         }
       ]
     }

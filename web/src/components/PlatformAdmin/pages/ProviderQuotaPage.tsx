@@ -17,6 +17,7 @@ import { EntityIcons } from '@/lib/icons';
 import { cn } from '@/lib/utils';
 
 import { platformAdminApi } from '../api';
+import { ProviderPlanExpiryEditor } from './ProviderPlanExpiryEditor';
 import { formatTime } from '../format';
 
 const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
@@ -202,11 +203,13 @@ function AccountCard({
   history,
   refreshing,
   onRefresh,
+  onExpirySaved,
 }: {
   snapshot: ProviderQuotaSnapshot;
   history: ProviderQuotaHistoryPoint[];
   refreshing: boolean;
   onRefresh: (accountKey: string) => void;
+  onExpirySaved: (overview: ProviderQuotaOverviewResponse) => void;
 }) {
   const status = accountStatus(snapshot);
   const credential = snapshot.credential;
@@ -229,7 +232,6 @@ function AccountCard({
     !isCodex && snapshot.plan?.autoRenew ? '自动续费' : undefined,
   ].filter(Boolean).join(' · ');
   const minuteTime = (value: string) => formatTime(value).replace(/:\d{2}$/, '');
-  const expiry = snapshot.plan?.endTime;
   const facts: Array<{ label: string; value: string; tone?: Tone }> = [
     ...(credits ? [{ label: 'Credits', value: String(credits.balance ?? 0) }] : []),
   ];
@@ -270,9 +272,9 @@ function AccountCard({
             <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
           </Button>
           <span className="col-start-1 row-start-2 text-xs text-muted-foreground" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>{subtitle}</span>
-          {expiry && <span className="col-start-1 row-start-4 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
-            套餐到期 {minuteTime(expiry)}
-          </span>}
+          <div className="col-start-1 row-start-4 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
+            <ProviderPlanExpiryEditor snapshot={snapshot} onSaved={onExpirySaved} />
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -430,6 +432,7 @@ export function ProviderQuotaPage() {
               snapshot={snapshot}
               history={points}
               refreshing={refreshing && (refreshingKey === null || refreshingKey === snapshot.accountKey)}
+              onExpirySaved={setOverview}
               onRefresh={(accountKey) => void load('collect', accountKey)}
             />
           ))}

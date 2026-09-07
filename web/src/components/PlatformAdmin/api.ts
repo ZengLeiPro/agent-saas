@@ -357,6 +357,9 @@ export const platformAdminApi = {
   refreshProviderQuota(accountKey?: string): Promise<ProviderQuotaOverviewResponse> {
     return mutateJson(buildAdminApiPath("/provider-quota/refresh", { accountKey }), "POST");
   },
+  setProviderPlanExpiry(accountKey: string, endTime: string | null): Promise<ProviderQuotaOverviewResponse> {
+    return mutateJson(buildAdminApiPath('/provider-quota/plan-expiry'), 'PATCH', { accountKey, endTime });
+  },
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));
   },

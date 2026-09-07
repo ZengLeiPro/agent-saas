@@ -77,7 +77,7 @@ export function summarizeStagingState({
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [, , dir, mode] = process.argv;
+  const [, , dir, mode, jobStatus] = process.argv;
   async function json(name) {
     try {
       return JSON.parse(await readFile(`${dir}/${name}.json`, 'utf8'));
@@ -96,7 +96,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       acs: await json('staging-acs-probe'),
     },
     publicWebPassed: mode === 'final' && (await json('staging-public-web'))?.status === 'passed',
-    jobSucceeded: process.env.WORKFLOW_STATUS === 'success',
+    jobSucceeded: jobStatus === 'success',
   });
   await writeFile(`${dir}/staging-${mode}.json`, JSON.stringify(report, null, 2) + '\n');
   if (mode === 'final' && !report.acceptanceAllowed) process.exitCode = 1;

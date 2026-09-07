@@ -1055,7 +1055,7 @@ jobs:
         if: always() && env.STAGING_DEPLOYMENT_ID != ''
         env:
           WORKFLOW_STATUS: ${{ job.status }}
-        run: bash scripts/release/observe-staging-state.sh final
+        run: bash scripts/release/observe-staging-state.sh final "$WORKFLOW_STATUS"
 
       - name: 撤销临时测试环境 SSH 入站授权
         if: always() && env.STAGING_SSH_SOURCE_CIDR != ''

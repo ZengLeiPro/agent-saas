@@ -23,8 +23,8 @@ import {
   type DirectoryClient,
 } from '@kaiyan/ky-app-server';
 import {
-  CONTENT_SECURITY_POLICY,
-  SHELL_ORIGIN,
+  contentSecurityPolicyForEnv,
+  shellOriginForEnv,
   createKyAppRouter,
   type KyAppRouter,
   type KyAppRuntime,
@@ -56,12 +56,17 @@ export interface BuiltApp {
  * §5.1 的 CSP。本地 / 一致性测试需要把 mock 壳的 origin 也放进 `frame-ancestors`，
  * 否则跨源 iframe 直接被浏览器拦掉；生产环境 `shellOrigin` 恒为 undefined。
  */
-export function contentSecurityPolicy(shellOrigin?: string): string {
-  if (shellOrigin === undefined) return CONTENT_SECURITY_POLICY;
-  return CONTENT_SECURITY_POLICY.replace(
-    `frame-ancestors ${SHELL_ORIGIN}`,
-    `frame-ancestors ${SHELL_ORIGIN} ${shellOrigin}`,
-  );
+export function contentSecurityPolicy(
+  shellOrigin?: string,
+  env: AppConfig['ky']['env'] = 'prod',
+): string {
+  const csp = contentSecurityPolicyForEnv(env);
+  if (shellOrigin === undefined || (env !== 'local' && env !== 'test')) return csp;
+  if (!/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/u.test(shellOrigin)) {
+    throw new Error('mock Shell 必须是本地 origin');
+  }
+  const origin = shellOriginForEnv(env);
+  return csp.replace(`frame-ancestors ${origin}`, `frame-ancestors ${origin} ${shellOrigin}`);
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -198,7 +203,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       },
     },
     securityHeaders: {
-      contentSecurityPolicy: contentSecurityPolicy(config.shellOrigin),
+      contentSecurityPolicy: contentSecurityPolicy(config.shellOrigin, config.ky.env),
     },
     testHooks: createTestHooks({
       pool,

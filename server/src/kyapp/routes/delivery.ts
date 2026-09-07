@@ -1,3 +1,4 @@
+import type { KyAppManagementQueries } from '../installations/managementQueries.js';
 import { randomUUID } from 'node:crypto';
 
 import { Router } from 'express';
@@ -67,6 +68,7 @@ const executeOffboardingSchema = z.object({
 
 export function createKyAppDeliveryRouter(options: {
   store: PgKyAppDeliveryStore;
+  management?: KyAppManagementQueries;
   systems: PgKyAppSystemStore;
   installations?: KyAppInstallationService;
   credentials?: KyAppCredentialManager;
@@ -266,7 +268,7 @@ export function createKyAppDeliveryRouter(options: {
 
   router.get('/deliveries', requirePlatformAdmin, async (req, res) => {
     try {
-      res.json({ deliveries: await options.store.listDeliveries() });
+      res.json({ deliveries: await options.store.listDeliveries(), executions: await options.management?.executions() ?? [], allowedActions: ['start_delivery'] });
     } catch (error) {
       sendKyAppFailure(req, res, error);
     }

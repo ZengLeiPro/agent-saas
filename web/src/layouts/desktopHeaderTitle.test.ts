@@ -92,8 +92,8 @@ describe('getDesktopHeaderTitle', () => {
   });
 });
 
-describe('定制软件标签的标题（§6.6）', () => {
-  it('拿到《系统名》就显示系统名，而不是静态「定制软件」', () => {
+describe('业务系统标签的标题（§6.6）', () => {
+  it('拿到《系统名》就显示系统名，而不是静态「业务系统」', () => {
     expect(getDesktopHeaderTitle(makeOptions({ activeTab: 'apps', appsTitle: '客户管理' }))).toBe(
       '客户管理',
     );
@@ -107,7 +107,7 @@ describe('定制软件标签的标题（§6.6）', () => {
 
   it('名字还没到位时用占位，绝不回落成上一段会话标题', () => {
     for (const appsTitle of [undefined, null, '']) {
-      expect(getDesktopHeaderTitle(makeOptions({ activeTab: 'apps', appsTitle }))).toBe('定制软件');
+      expect(getDesktopHeaderTitle(makeOptions({ activeTab: 'apps', appsTitle }))).toBe('业务系统');
     }
   });
 });

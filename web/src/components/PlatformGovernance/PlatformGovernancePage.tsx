@@ -5,7 +5,6 @@ import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSetting
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { OrganizationEntitlementScopeEditor } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { PlatformBillingManager } from '@/components/BillingManager';
-import { KyAppDeliveryHealthPanel } from '@/components/KyAppDeliveryPanels';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -301,7 +300,7 @@ export function PlatformOrganizationGovernance({ tenantId, route }: { tenantId: 
     {!data?.scopes.length ? <Empty>该组织尚无治理资源范围记录。</Empty> : <div className="grid gap-3 md:grid-cols-2">{data.scopes.map(scope => <div key={scope.resourceType} className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between gap-3"><span className="font-medium">{localizedValue(scope.resourceType, resourceTypeLabels)}</span><Badge variant="outline">{scope.mode === "all" ? "全部允许" : `已选 ${scope.resourceIds.length}`}</Badge></div><div className="mt-2 text-xs text-muted-foreground">{localizedValue(scope.source, sourceLabels)} · v{scope.version}</div>{scope.mode === "selected" && <div className="mt-3 break-all text-xs">{scope.resourceIds.join("、") || "没有已选资源"}</div>}<ScopeEditor tenantId={tenantId} scope={scope} onChanged={retry} /></div>)}</div>}
   </div>;
 
-  if (tab === "billing") return <div className="space-y-4"><KyAppDeliveryHealthPanel /><PlatformBillingManager key={tenantId} tenantId={tenantId} /></div>;
+  if (tab === "billing") return <div className="space-y-4"><PlatformBillingManager key={tenantId} tenantId={tenantId} /></div>;
   if (tab === "security-lifecycle") return <div><Header title="安全与生命周期" description="组织暂停与恢复执行预览→基线校验→审计回执；删除继续走持久化变更任务。" /><TenantLifecyclePanel key={tenantId} tenantId={tenantId} /></div>;
   return <div><Header title="组织治理概览" description="组织权益、资源范围和策略均来自治理事实源。" />
     <div className="grid gap-3 sm:grid-cols-3"><Fact label="权益状态" value={entitlement ? localizedValue(entitlement.status, statusLabels) : "未配置"} /><Fact label="资源范围" value={`${data?.scopes.length ?? 0} 类`} /><Fact label="组织策略" value={`${data?.policies.length ?? 0} 项`} /></div>

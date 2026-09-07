@@ -100,16 +100,16 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
 
     expect(screen.getByRole("button", { name: "访问控制" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "模板" })).toBeTruthy();
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(20);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(22);
   });
 
-  it("组织分组展示 17 个真实页面及四个配置分组", () => {
+  it("组织分组展示 18 个真实页面及四个配置分组", () => {
     renderSidebar(access("ready", true, false));
 
     for (const label of ["构建 · 调用资产", "运行", "治理 · 边界", "组织设置"]) {
       expect(screen.getByText(label)).toBeTruthy();
     }
-    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(25);
+    expect(screen.getByLabelText("设置导航").querySelectorAll('button')).toHaveLength(26);
     expect(screen.queryByRole("button", { name: "进入组织治理" })).toBeNull();
   });
 });

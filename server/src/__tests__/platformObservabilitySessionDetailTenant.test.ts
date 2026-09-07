@@ -54,6 +54,26 @@ afterEach(async () => {
 });
 
 describe('platform observability GET /sessions/:id tenant isolation', () => {
+  it('binds the environment list to the exact session, not every sandbox in its user workspace', async () => {
+    const current = { ...sessionRecord({ tenantId: 'wain' }), workspaceId: 'ws_wain__u1' };
+    const sandboxes = [
+      { name: 'current', workspaceId: current.workspaceId, sessionId: SESSION_ID },
+      { name: 'another-session', workspaceId: current.workspaceId, sessionId: 'other' },
+      { name: 'unknown-session', workspaceId: current.workspaceId },
+      { name: 'other-tenant', workspaceId: 'ws_kaiyan__u1', sessionId: SESSION_ID },
+    ];
+    await withApp(WAIN_ADMIN, {
+      sessionProjectionStore: { get: vi.fn(async () => current) } as any,
+      config: { tenantRemoteHands: { hands: [{ id: 'agent-saas-acs', enabled: true, baseUrl: 'http://acs.example', authToken: 'test' }] } } as any,
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({ sandboxes }), { status: 200 })) as any,
+    }, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/admin/sessions/${SESSION_ID}`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as any;
+      expect(body.sandboxes.map((item: { name: string }) => item.name)).toEqual(['current']);
+    });
+  });
+
   it('org-admin 本租户命中：store.get 收到自租户 tenantId，返回 200 + session/runs/billing/sandboxes', async () => {
     // store 按传入 tenantId 过滤：只有 tenantId==='wain' 才命中 wain 的 session
     const get = vi.fn(async (_id: string, opts: { tenantId?: string }) =>

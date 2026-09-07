@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-09-07T06:52:06.312626+00:00",
+  "method": "GET",
+  "url": "https://staging-agent.kaiyan.net/release-identity.json",
+  "status": 200,
+  "contentType": "application/json",
+  "identity": {
+    "schemaVersion": 1,
+    "environment": "staging",
+    "releaseId": "rc-20260906-75",
+    "releaseSha": "03237fdcfbf9495c5fc091b583a0dab6a37b86e2",
+    "webDigest": "sha256:82c9325f982ef3c55a26e67b85673f58bc18f0b1d3b5a7f2871aa2fdd218fec1",
+    "configFingerprint": "sha256:f472e6026358c3addee74cd54d4e3e5eb7d1ff7c6418aa728d68d79663688744"
+  }
+}

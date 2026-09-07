@@ -18,6 +18,8 @@ export {
   SHELL_ORIGIN,
   STRICT_TRANSPORT_SECURITY,
   securityHeaders,
+  shellOriginForEnv,
+  contentSecurityPolicyForEnv,
   type SecurityHeadersOptions,
 } from './securityHeaders.js';
 export { createKyAppRuntime, type KyAppRuntime, type AuthenticateInput } from './runtime.js';

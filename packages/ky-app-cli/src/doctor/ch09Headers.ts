@@ -4,7 +4,8 @@
  * `frame-ancestors https://agent.kaiyan.net`、无 `X-Frame-Options`、
  * CSP 无 `unsafe-inline` 脚本、兜底关闭时无 `Set-Cookie`。
  */
-import { SHELL_ORIGIN } from '@kaiyan/ky-app-server/hono';
+import { KY_ENVS, type KyEnv } from '@kaiyan/ky-app-contract';
+import { shellOriginForEnv } from '@kaiyan/ky-app-server/hono';
 
 import { assert } from '../harness/http.js';
 import { fixtureUsers } from './fixtures.js';
@@ -25,13 +26,23 @@ export function cspDirective(csp: string, directive: string): string[] | null {
 }
 
 /** 测试环境允许额外放行本地 mock 壳；除本地地址外不得有别的来源。 */
-function extraSourcesAreLocalOnly(sources: string[]): boolean {
-  return sources
-    .filter((source) => source !== SHELL_ORIGIN)
-    .every((source) => /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/u.test(source));
+export function allowedFrameAncestors(sources: string[], env: KyEnv): boolean {
+  const expected = shellOriginForEnv(env);
+  return (
+    sources.includes(expected) &&
+    sources.every(
+      (source) =>
+        source === expected ||
+        ((env === 'test' || env === 'local') &&
+          /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/u.test(source)),
+    )
+  );
 }
 
 export async function chapter09(ctx: DoctorContext): Promise<void> {
+  const env = ctx.env.KY_ENV;
+  assert(KY_ENVS.includes(env as KyEnv), '未知 KY_ENV');
+  const shellOrigin = shellOriginForEnv(env as KyEnv);
   const reporter = ctx.reporter;
   reporter.section(9);
 
@@ -64,11 +75,11 @@ export async function chapter09(ctx: DoctorContext): Promise<void> {
       const frameAncestors = cspDirective(csp, 'frame-ancestors');
       assert(frameAncestors !== null, 'CSP 缺少 frame-ancestors');
       assert(
-        frameAncestors.includes(SHELL_ORIGIN),
-        `frame-ancestors 不含壳站 ${SHELL_ORIGIN}：${frameAncestors.join(' ')}`,
+        frameAncestors.includes(shellOrigin),
+        `frame-ancestors 不含壳站 ${shellOrigin}：${frameAncestors.join(' ')}`,
       );
       assert(
-        extraSourcesAreLocalOnly(frameAncestors),
+        allowedFrameAncestors(frameAncestors, env as KyEnv),
         `frame-ancestors 里出现了非本地的额外来源：${frameAncestors.join(' ')}`,
       );
 

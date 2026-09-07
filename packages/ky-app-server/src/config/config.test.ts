@@ -25,9 +25,9 @@ describe('loadKyAppConfig', () => {
 
   it('staging 环境同理', () => {
     const config = loadKyAppConfig({ ...base, KY_ENV: 'staging' });
-    expect(config.issuer).toBe('https://staging.agent.kaiyan.net');
+    expect(config.issuer).toBe('https://staging-agent.kaiyan.net');
     expect(config.jwksUrl).toBe(
-      'https://api.staging.agent.kaiyan.net/.well-known/ky-app-jwks.json',
+      'https://staging-agent-api.kaiyan.net/.well-known/ky-app-jwks.json',
     );
   });
 

@@ -69,7 +69,12 @@ export function createAssignmentResourceResolver(runtime: AppRuntime) {
 export function createEntitlementResourceCatalogResolver(runtime: AppRuntime) {
   return async (
     resourceType: EntitlementResourceType,
-  ): Promise<{ status: 'valid'; items: Array<{ resourceId: string; version: number }> } | { status: 'unavailable' }> => {
+  ): Promise<{ status: 'valid'; items: Array<{ resourceId: string; label?: string; version: number }> } | { status: 'unavailable' }> => {
+    if (resourceType === 'integrated_system') {
+      if (!runtime.kyAppSystemStore?.listDefinitions) return { status: 'unavailable' };
+      return { status: 'valid', items: (await runtime.kyAppSystemStore.listDefinitions())
+        .filter(item => item.status === 'published').map(item => ({ resourceId: item.systemId, label: item.name, version: item.version })) };
+    }
     if (resourceType === 'model') {
       if (!runtime.config.models) return { status: 'unavailable' };
       return {
@@ -118,6 +123,11 @@ export function createEntitlementResourceResolver(runtime: AppRuntime) {
     resourceType: EntitlementResourceType,
     resourceId: string,
   ): Promise<{ status: 'valid'; version: number } | { status: 'not_found' | 'unavailable' }> => {
+    if (resourceType === 'integrated_system') {
+      if (!runtime.kyAppSystemStore) return { status: 'unavailable' };
+      const item = await runtime.kyAppSystemStore.getDefinition(resourceId);
+      return item?.status === 'published' ? { status: 'valid', version: item.version } : { status: 'not_found' };
+    }
     if (resourceType === 'model') {
       if (!runtime.config.models) return { status: 'unavailable' };
       const exists = runtime.config.models.groups.some(group =>

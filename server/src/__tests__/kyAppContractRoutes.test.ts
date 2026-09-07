@@ -45,7 +45,6 @@ describe('kyApp 平台端点鉴权矩阵', () => {
         `${BASE}/systems/${TEST_SYSTEM}/versions`,
         json('POST', { name: 'x', manifest: buildManifest() }),
       ],
-      [`${BASE}/installations`, json('POST', {})],
       [`${BASE}/installations/${TEST_IID}/verify-domain`, json('POST', {})],
       [`${BASE}/installations/${TEST_IID}/credentials`, json('POST', {})],
       [

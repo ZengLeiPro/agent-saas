@@ -1,3 +1,4 @@
+import { KyAppManagementQueries } from '../kyapp/installations/managementQueries.js';
 /**
  * WP2a 定制项目对接的统一注册点（施工总则 §3.2 端点表）。
  *
@@ -94,10 +95,14 @@ export function registerKyAppRoutes(
     return null;
   }
 
+  const management = new KyAppManagementQueries(runtime.runtimePgEventStore!.pool, assembly.systems,
+    runtime.config.runtimeEventStore?.backend === 'pg' ? runtime.config.runtimeEventStore.tablePrefix : undefined);
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppSystemsRouter({
       systems: assembly.systems,
+      management,
+      ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),
       ...(runtime.governanceAuditStore ? { audit: runtime.governanceAuditStore } : {}),
       // WP3 填充 WP2a 预留的钩子：未显式注入时用 Gateway 自带的真实注册 dry-run
       // （`skipped` 不等于通过，所以这里必须给默认值，不能留空）。
@@ -108,6 +113,8 @@ export function registerKyAppRoutes(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppInstallationsRouter({
       systems: assembly.systems,
+      management,
+      ...(runtime.entitlementStore ? { entitlements: runtime.entitlementStore } : {}),
       installations: assembly.installations,
       credentials: assembly.credentials,
       runtimeStore: assembly.runtimeStore,

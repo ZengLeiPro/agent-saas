@@ -6,6 +6,9 @@
  * 技术联系人本人：一次性领取凭据明文。
  * 服务凭据 Bearer：`credential-ack`（该路径已进 `PUBLIC_ROUTES`，在本 router 内自鉴权）。
  */
+import type { PgEntitlementStore } from '../../data/entitlements/store.js';
+import type { KyAppManagementQueries } from '../installations/managementQueries.js';
+import { managementTenant, installableScope, installationActions } from '../installations/managementPolicy.js';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -43,6 +46,8 @@ const ticketSchema = z
 
 export interface KyAppInstallationRoutesOptions {
   systems: PgKyAppSystemStore;
+  management?: KyAppManagementQueries;
+  entitlements?: PgEntitlementStore;
   installations: KyAppInstallationService;
   credentials: KyAppCredentialManager;
   runtimeStore: PgKyAppInstallationRuntimeStore;
@@ -51,10 +56,32 @@ export interface KyAppInstallationRoutesOptions {
 export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesOptions): Router {
   const router = Router();
 
-  router.post('/installations', requirePlatformAdmin, async (req, res) => {
+  router.get('/installations', async (req, res) => {
+    try {
+      const tenantId = managementTenant(req.user, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
+      const query = z.object({ systemId: z.string().optional(), status: z.enum(['pending','enabled','disabled','deleted']).optional(), cursor: z.string().max(1024).optional(), limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(req.query);
+      if (!query.success) return sendKyAppError(req, res, 'invalid_input', '分页或筛选参数非法');
+      if (query.data.cursor) {
+        try {
+          const cursor = JSON.parse(Buffer.from(query.data.cursor, 'base64url').toString());
+          if (typeof cursor.id !== 'string' || typeof cursor.at !== 'string' || !Number.isFinite(Date.parse(cursor.at))) throw new Error();
+        } catch { return sendKyAppError(req, res, 'invalid_input', '分页游标非法'); }
+      }
+      if (!options.management) return sendKyAppError(req, res, 'unavailable', '管理查询不可用');
+      res.json(await options.management.installations({ ...query.data, ...(tenantId ? { tenantId } : {}) }, req.user!));
+    } catch (error) { sendKyAppFailure(req, res, error); }
+  });
+
+  router.post('/installations', async (req, res) => {
+    if (!req.user || (!isPlatformAdmin(req.user) && req.user.role !== 'admin')) return sendKyAppError(req, res, 'forbidden', '需要管理员权限');
     const body = createSchema.safeParse(req.body ?? {});
     if (!body.success) return sendKyAppError(req, res, 'invalid_input', '安装实例参数非法');
     try {
+      managementTenant(req.user, body.data.tenantId);
+      if (!isPlatformAdmin(req.user!)) {
+        const allows = await installableScope(options.entitlements, body.data.tenantId);
+        if (!allows(body.data.systemId)) return sendKyAppError(req, res, 'forbidden', '组织权益未授权此业务系统');
+      }
       const installation = await options.installations.create(
         body.data,
         governanceActorOf(req.user!),
@@ -117,6 +144,7 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
   });
 
   router.get('/installations/:iid/credentials/claim/:ticket', async (req, res) => {
+    res.setHeader('cache-control', 'no-store');
     const iid = idSchema.safeParse(req.params.iid);
     const ticket = ticketSchema.safeParse(req.params.ticket);
     if (!iid.success || !ticket.success) {
@@ -280,7 +308,9 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
               publishedDigest: definition.publishedDigest,
             }
           : null,
+        ...(options.management ? await options.management.installationSummary(iid.data) : {}),
         manifest: version?.manifest ?? null,
+        allowedActions: installationActions(req.user, installation),
       });
     } catch (error) {
       sendKyAppFailure(req, res, error);

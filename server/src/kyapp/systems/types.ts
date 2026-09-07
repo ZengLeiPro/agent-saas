@@ -114,6 +114,7 @@ export class KyAppSystemNotFoundError extends Error {
  * 避免把 PG 实现类型泄漏到运行时装配之外。
  */
 export interface KyAppSystemStore {
+  listDefinitions?(): Promise<KyAppSystemDefinition[]>;
   getDefinition(systemId: string): Promise<KyAppSystemDefinition | null>;
   getVersion(systemId: string, digest: string): Promise<KyAppSystemVersion | null>;
   getInstallation(installationId: string): Promise<KyAppInstallation | null>;

@@ -1,4 +1,4 @@
-import type { Manifest } from '@kaiyan/ky-app-contract';
+import type { Manifest } from '@kaiyan/ky-app-contract/browser';
 
 function flatten(value: unknown, path = '$'): Map<string, string> {
   if (value && typeof value === 'object' && Object.keys(value).length) {

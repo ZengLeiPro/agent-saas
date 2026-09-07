@@ -1,3 +1,4 @@
+import { PgDirectoryGroupStore } from '../../data/directoryGroups/store.js';
 /** 本地验收装配：真实 PG / Express 路由；身份仅供测试，不启动 worker 或读取生产配置。 */
 import { randomUUID } from 'node:crypto';
 import express from 'express';
@@ -19,6 +20,7 @@ export async function createManagementPgFixture(url: string) {
   const base = { pool, tablePrefix: prefix };
   const assignments = new PgAssignmentStore(base);
   await assignments.init();
+  const groups = new PgDirectoryGroupStore({ ...base, validateMember: async (tenantId, userId) => (await memberships.getMembership(tenantId, userId))?.status === 'active' });
   const memberships = new PgMembershipStore(base);
   const entitlements = new PgEntitlementStore(base);
   const audit = new PgGovernanceAuditStore(base);
@@ -63,6 +65,7 @@ export async function createManagementPgFixture(url: string) {
       config: { runtimeEventStore: { backend: 'pg', tablePrefix: prefix } },
       assignmentStore: assignments,
       membershipStore: memberships,
+      directoryGroupStore: groups,
       entitlementStore: entitlements,
       governanceAuditStore: audit,
     } as unknown as AppRuntime,
@@ -88,6 +91,7 @@ export async function createManagementPgFixture(url: string) {
     prefix,
     assignments,
     memberships,
+    groups,
     entitlements,
     identities,
     origin,

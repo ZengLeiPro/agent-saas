@@ -1,4 +1,4 @@
-import type { Manifest } from '@kaiyan/ky-app-contract';
+import type { Manifest } from '@kaiyan/ky-app-contract/browser';
 import type { SystemDefinition } from './kyAppManagementApi';
 
 export interface SystemVersion {

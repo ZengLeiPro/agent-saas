@@ -46,7 +46,9 @@ export const DEFAULT_MINE_FAILURE_THRESHOLD = 5;
 
 export interface KyAppMineRoutesOptions {
   systems: PgKyAppSystemStore;
-  assignments?: PgAssignmentStore;
+  assignments?: Pick<PgAssignmentStore, 'listEffectiveResourceIds'> & {
+    listVisibleInstallationIds?: (tenantId: string, userId: string) => ReturnType<PgAssignmentStore['listEffectiveResourceIds']>;
+  };
   /** 运行状态表（§4.6 探测结果）；不注入则只按状态机算 `enabled`/`disabled`。 */
   runtimeStore?: Pick<PgKyAppInstallationRuntimeStore, 'get'>;
   /** `live` 连续失败多少次算「暂不可用」（§4.6，默认 5）。 */
@@ -125,13 +127,9 @@ export function createKyAppMineRouter(options: KyAppMineRoutesOptions): Router {
       const installations = await options.systems.listInstallationsForTenant(req.user.tenantId);
       if (installations.length === 0) return res.json({ installations: [] });
 
-      const effective = await options.assignments.listEffectiveResourceIds(
-        req.user.tenantId,
-        req.user.sub,
-        'system_installation',
-        undefined,
-        { includeDisabledInstallations: true },
-      );
+      const effective = options.assignments.listVisibleInstallationIds
+        ? await options.assignments.listVisibleInstallationIds(req.user.tenantId, req.user.sub)
+        : await options.assignments.listEffectiveResourceIds(req.user.tenantId, req.user.sub, 'system_installation');
       const allowed = new Set(effective.map((item) => item.resourceId));
 
       const visible: KyAppVisibleInstallation[] = [];

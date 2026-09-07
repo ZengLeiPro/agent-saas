@@ -30,6 +30,8 @@ const vite = await createServer({
   plugins: [react()],
   resolve: {
     alias: [
+      { find: '@kaiyan/ky-app-contract/validation', replacement: path('../../packages/ky-app-contract/src/manifest.ts') },
+      { find: '@kaiyan/ky-app-contract/browser', replacement: path('../../packages/ky-app-contract/src/browser.ts') },
       { find: '@/lib/authFetch', replacement: path('./authFetch.ts') },
       { find: '@/contexts/AuthContext', replacement: path('./AuthContext.ts') },
       { find: 'virtual:pwa-register', replacement: path('../../web/src/test/pwaRegisterMock.ts') },

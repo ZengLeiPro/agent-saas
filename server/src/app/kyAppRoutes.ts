@@ -228,7 +228,7 @@ export function registerKyAppRoutes(
     '/api',
     createKyAppMineRouter({
       systems: assembly.systems,
-      ...(runtime.assignmentStore ? { assignments: runtime.assignmentStore } : {}),
+      ...(assembly.assignmentAccess ? { assignments: assembly.assignmentAccess } : {}),
       // §4.6 的探测结果是壳侧「维护中 / digest 不一致」的唯一检测源（偏差 4-B-06）。
       runtimeStore: assembly.runtimeStore,
       failureThreshold: config.probe.failureThreshold,

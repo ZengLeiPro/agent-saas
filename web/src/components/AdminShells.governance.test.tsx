@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UserManager } from "@/components/UserManager";
@@ -6,10 +6,11 @@ import { governanceRoute } from "@/lib/governanceNavigation";
 import { PlatformAdminShell, TenantAdminShell } from "./AdminShells";
 
 const adminShellMocks = vi.hoisted(() => ({
-  auth: { user: { tenantId: "acme" }, isPlatformAdmin: false },
+  auth: { user: { id: "admin-1", tenantId: "acme" }, isAdmin: true, isPlatformAdmin: false },
   tenants: [{ id: "acme", name: "Acme" }],
   tenantsLoading: false,
   contextSnapshot: vi.fn(),
+  authFetch: vi.fn(),
 }));
 
 vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
@@ -40,7 +41,7 @@ vi.mock("@agent/shared/lib/governanceApi", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn(() => new Promise(() => undefined)) }));
+vi.mock("@/lib/authFetch", () => ({ authFetch: adminShellMocks.authFetch }));
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({
     ...adminShellMocks.auth,
@@ -91,9 +92,10 @@ const commonTenantProps = {
 describe("AdminShells V2 内容适配", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
-    adminShellMocks.auth = { user: { tenantId: "acme" }, isPlatformAdmin: false };
+    adminShellMocks.auth = { user: { id: "admin-1", tenantId: "acme" }, isAdmin: true, isPlatformAdmin: false };
     adminShellMocks.tenants = [{ id: "acme", name: "Acme" }];
     adminShellMocks.tenantsLoading = false;
+    adminShellMocks.authFetch.mockReset().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     adminShellMocks.contextSnapshot.mockReset().mockResolvedValue({
       generatedAt: "2026-08-22T15:40:00.000Z", sources: [], consumers: [],
     });
@@ -117,7 +119,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("平台管理员未选择 org 时不默认使用首个业务组织", () => {
-    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
       { id: "kaiyan-demo", name: "开沿演示" },
@@ -137,7 +139,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("嵌入统一管理壳时不重复渲染组织作用域提示", () => {
-    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
       { id: "kaiyan-demo", name: "开沿演示" },
@@ -156,7 +158,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("平台管理员必须显式选择组织后才显示旧设置页的添加成员入口", async () => {
-    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
       { id: "acme", name: "Acme" },
@@ -198,7 +200,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("统一组织设置的工作流入口挂载目标组织的工作流配置页", async () => {
-    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
       { id: "kaiyan-demo", name: "开沿演示组织" },
@@ -219,7 +221,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("统一设置隐藏组织分组后继续回传持久 Shell 的实际组织", async () => {
-    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [
       { id: "pantheon", name: "万神殿" },
       { id: "acme", name: "Acme" },
@@ -285,7 +287,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it("平台组织目录加载完成前不把 URL 目标误报为明确未选择", () => {
-    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.auth = { user: { id: "platform-admin-1", tenantId: "pantheon" }, isAdmin: true, isPlatformAdmin: true };
     adminShellMocks.tenants = [];
     adminShellMocks.tenantsLoading = true;
     window.history.replaceState({}, "", "/tenant-admin/settings/users?org=acme");
@@ -325,6 +327,27 @@ describe("AdminShells V2 内容适配", () => {
     );
     expect(await screen.findByText("member-1")).toBeTruthy();
     expect(screen.queryByText("复用 UserManager")).toBeNull();
+  });
+
+  it("组织成员 canonical 路由可直接调用专用密码重置接口", async () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div>复用 UserManager</div>}
+        governanceRoute={governanceRoute("organization.members.list", { orgId: "acme" })}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "重置 member-1 的密码" }));
+    fireEvent.change(screen.getByLabelText("新密码"), { target: { value: "new-pass-1" } });
+    fireEvent.change(screen.getByLabelText("确认新密码"), { target: { value: "new-pass-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认重置" }));
+
+    await waitFor(() => expect(adminShellMocks.authFetch).toHaveBeenCalledWith("/api/auth/users/member-1/password", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword: "new-pass-1" }),
+    }));
   });
 
   it("账号与登录旧叶子 canonical 复用治理成员页，不再挂载 UserManager", async () => {

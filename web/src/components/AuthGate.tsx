@@ -12,11 +12,11 @@ import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { AuthShell } from "@/components/AuthShell";
-import { LoginPage } from "@/components/LoginPage";
-import { SignupPage } from "@/components/SignupPage";
 import { apiUrl } from "@/lib/apiBase";
 import App from "@/App";
 
+const LoginPage = lazy(() => import("@/components/LoginPage").then(m => ({ default: m.LoginPage })));
+const SignupPage = lazy(() => import("@/components/SignupPage").then(m => ({ default: m.SignupPage })));
 const SessionSharePage = lazy(() => import("@/components/SessionSharePage").then(m => ({ default: m.SessionSharePage })));
 const PublicArtifactPage = lazy(() => import("@/components/artifacts/PublicArtifactPage").then(m => ({ default: m.PublicArtifactPage })));
 
@@ -161,17 +161,19 @@ export function AuthGate() {
     return (
       <AuthShell>
         <AuthContentTransition viewKey={signupMode ? "signup" : "login"}>
-          {signupMode ? (
-            <SignupPage
-              enabled={signupEnabled}
-              onSwitchToLogin={switchToLogin}
-            />
-          ) : (
-            <LoginPage
-              signupEnabled={signupEnabled === true}
-              onSwitchToSignup={() => setSignupMode(true)}
-            />
-          )}
+          <Suspense fallback={<Loader2 className="size-5 animate-spin text-muted-foreground" />}>
+            {signupMode ? (
+              <SignupPage
+                enabled={signupEnabled}
+                onSwitchToLogin={switchToLogin}
+              />
+            ) : (
+              <LoginPage
+                signupEnabled={signupEnabled === true}
+                onSwitchToSignup={() => setSignupMode(true)}
+              />
+            )}
+          </Suspense>
         </AuthContentTransition>
       </AuthShell>
     );

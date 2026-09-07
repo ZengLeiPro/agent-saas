@@ -17,7 +17,19 @@ import {
 import type { MessageItem } from '../types/message';
 
 const text = (id: string, content: string): MessageItem => ({ id, type: 'text', content });
+const runText = (id: string, content: string, runId: string): MessageItem => ({
+  id, type: 'text', content, runId,
+});
 const user = (id: string, content: string): MessageItem => ({ id, type: 'user', content });
+const tool = (id: string, runId: string, toolId: string, toolName = 'TodoWrite'): MessageItem => ({
+  id,
+  type: 'tool_use',
+  toolName,
+  toolInput: '{}',
+  toolId,
+  runId,
+  streaming: false,
+});
 const file = (id: string): MessageItem => ({
   id, type: 'file_download', fileName: 'a.pdf', fileType: '', filePath: 'a.pdf', fileSize: 0,
 });
@@ -167,6 +179,63 @@ describe('mergeServerMessagesWithLocalTail', () => {
     expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
       ...server,
       local[0],
+    ]);
+  });
+
+  it('服务端已推进到新 Run 时按 runId 认领旧实时回复及工具，避免整段复制到末尾', () => {
+    const server = [
+      user('line-1', '开始处理'),
+      runText('line-2', '正在处理旧任务', 'run-old'),
+      tool('line-3', 'run-old', 'todo-old'),
+      runText('line-4', '旧任务已完成', 'run-old'),
+      user('line-5', '继续清理'),
+      runText('line-6', '新任务已完成', 'run-new'),
+    ];
+    const local = [
+      user('msg-1', '开始处理'),
+      runText('stream-old', '正在处理旧任务', 'run-old'),
+      tool('tool-old-live', 'run-old', 'todo-old'),
+      { id: 'thinking-old-live', type: 'thinking', content: '旧实时思考' } as MessageItem,
+    ];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toBe(server);
+  });
+
+  it('清理旧 Run 尾部时仍保留排队交互与明确属于后续 Run 的未落盘工具', () => {
+    const server = [
+      runText('line-1', '旧进度', 'run-old'),
+      runText('line-2', '服务端已进入下一轮', 'run-new'),
+    ];
+    const queued: MessageItem = {
+      id: 'queued', type: 'user', content: '追加要求', status: 'queued', clientMsgId: 'queued-1',
+    };
+    const nextRunTool = tool('next-run-tool', 'run-newer', 'tool-newer', 'Read');
+    const local = [
+      runText('stream-old', '旧进度', 'run-old'),
+      { id: 'thinking-old', type: 'thinking', content: '旧思考' } as MessageItem,
+      queued,
+      nextRunTool,
+    ];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
+      ...server,
+      queued,
+      nextRunTool,
+    ]);
+  });
+
+  it('相同工具 ID 属于不同 Run 时仍保留本地未落盘尾部', () => {
+    const server = [
+      runText('line-1', '上一轮', 'run-old'),
+      tool('line-2', 'run-old', 'todo-1'),
+    ];
+    const pendingTool = tool('tool-live', 'run-new', 'todo-1');
+    const local = [runText('stream-new', '当前轮未落盘', 'run-new'), pendingTool];
+
+    expect(mergeServerMessagesWithLocalTail(server, local)).toEqual([
+      ...server,
+      local[0],
+      pendingTool,
     ]);
   });
 

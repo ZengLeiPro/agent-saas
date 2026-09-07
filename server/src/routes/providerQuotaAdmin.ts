@@ -32,6 +32,7 @@ export function createProviderQuotaAdminRouter(
   const router = Router();
   router.use(requirePlatformAdmin);
   router.use((_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
     if (!options.service) {
       res.status(503).json({ error: '套餐额度采集未启用：需要 PG runtime event store' });
       return;

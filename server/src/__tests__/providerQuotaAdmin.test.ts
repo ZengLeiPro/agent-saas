@@ -59,7 +59,9 @@ describe('provider quota admin router', () => {
   it('overview / history / refresh 透传服务结果，hours 非法时回落 24', async () => {
     const service = fakeService();
     const base = listen({ service });
-    expect(await (await fetch(base)).json()).toMatchObject({ collector: { intervalMs: 300_000 } });
+    const overviewResponse = await fetch(base);
+    expect(overviewResponse.headers.get('cache-control')).toBe('no-store');
+    expect(await overviewResponse.json()).toMatchObject({ collector: { intervalMs: 300_000 } });
     expect(await (await fetch(`${base}/history?hours=72`)).json()).toMatchObject({ hours: 72 });
     expect(await (await fetch(`${base}/history?hours=abc`)).json()).toMatchObject({ hours: 24 });
     const refreshed = await fetch(`${base}/refresh`, { method: 'POST' });

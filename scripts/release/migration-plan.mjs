@@ -4540,6 +4540,7 @@ export function createMigrationPlan({
     ? 'expand'
     : 'none';
   const planBody = { schemaVersion: 2, baselineSha: baseline, releaseSha: target, phase, files: inventory };
+  const sourceFailureCount = blockingReasons.length;
   const postconditions = attachPostconditions(planBody, snapshotFor(target), inventory, blockingReasons);
   Object.assign(planBody, postconditions);
   return {
@@ -4552,6 +4553,7 @@ export function createMigrationPlan({
       contract: 'separate_release',
     },
     blockingReasons,
+    postconditionBlockingReasons: blockingReasons.slice(sourceFailureCount),
   };
 }
 

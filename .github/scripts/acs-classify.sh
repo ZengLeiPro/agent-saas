@@ -112,7 +112,7 @@ is_publish_path() {
     server/src/agent/descriptions/Read.md|server/src/agent/descriptions/Write.md|server/src/agent/descriptions/List.md|server/src/agent/descriptions/Shell.md|server/src/agent/descriptions/WaitForWorkspaceReady.md|server/src/agent/descriptions/Edit.md|server/src/agent/descriptions/Glob.md|server/src/agent/descriptions/Grep.md|server/src/agent/descriptions/CreateArtifact.md|server/src/agent/descriptions/MemorySearch.md|server/src/agent/descriptions/MemoryList.md)
       return 0
       ;;
-    server/src/runtime/handProtocol.ts|server/src/runtime/httpTransport.ts|server/src/runtime/inProcessTransport.ts|server/src/runtime/clientDaemonTransport.ts|server/src/runtime/handStore.ts|server/src/runtime/networkPolicy.ts|server/src/app/runtime.ts|server/src/app/serverRemoteConfig.ts|server/src/channels/web/channel.ts|server/src/channels/web/channelConfig.ts|server/src/channels/web/channelHelpers.ts)
+    server/src/runtime/handProtocol.ts|server/src/runtime/httpTransport.ts|server/src/runtime/inProcessTransport.ts|server/src/runtime/clientDaemonTransport.ts|server/src/runtime/handStore.ts|server/src/runtime/handSupersession.ts|server/src/runtime/networkPolicy.ts|server/src/app/runtime.ts|server/src/app/serverRemoteConfig.ts|server/src/channels/web/channel.ts|server/src/channels/web/channelConfig.ts|server/src/channels/web/channelHelpers.ts)
       return 0
       ;;
   esac

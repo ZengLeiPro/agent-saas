@@ -149,6 +149,7 @@ jobs:
           install -d "$RUNNER_TEMP/evidence-writer/scripts/release"
           pnpm exec esbuild scripts/release/evidence-service.mjs \
             --bundle --platform=node --format=esm --target=node22 \
+            --define:process.env.AGENT_SAAS_EMBEDDED='"true"' \
             --outfile="$RUNNER_TEMP/evidence-writer/scripts/release/evidence-service.mjs"
           printf '%064d\n' 1 > "$RUNNER_TEMP/evidence-writer-read.token"
           printf '%064d\n' 2 > "$RUNNER_TEMP/evidence-writer-write.token"

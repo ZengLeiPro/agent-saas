@@ -96,6 +96,8 @@ if ! curl -fsS --retry 5 --retry-all-errors --connect-timeout 5 --max-time 15 \
     ) process.exit(1);
   ' "$capabilities" "$expected_schema_version" "$expected_schema_revision"
 then
+  sudo systemctl status "$unit" --no-pager >&2 || true
+  sudo journalctl -u "$unit" -n 80 --no-pager >&2 || true
   if [ -n "$previous" ]; then
     sudo ln -s "$previous" "$next_link"
     sudo mv -Tf "$next_link" "$current"

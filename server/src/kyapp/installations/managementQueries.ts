@@ -100,7 +100,7 @@ export class KyAppManagementQueries {
         [installationId],
       ),
       this.pool.query(
-        `SELECT credential_id,status,expires_at,acked_at,revoked_at FROM ${this.prefix}_ky_app_service_credentials WHERE installation_id=$1 ORDER BY created_at DESC`,
+        `SELECT credential_id,status,expires_at,acked_at,revoked_at FROM ${this.prefix}_ky_app_service_credentials WHERE installation_id=$1 ORDER BY issued_at DESC`,
         [installationId],
       ),
       this.pool.query(

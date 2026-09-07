@@ -626,8 +626,9 @@ export function PlatformAdminShell({
     if (!governanceRoute) return null;
     switch (governanceRoute.routeId) {
       case "platform.resource-center.business-systems":
-      case "platform.runtime.system-deliveries":
         return <ManagementIndexPage />;
+      case "platform.runtime.system-deliveries":
+        return <ManagementIndexPage deliveries />;
       case "platform.runtime.business-system-operations":
         return <KyAppDeliveryHealthPanel />;
       case "platform.overview.overview":

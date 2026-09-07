@@ -11,11 +11,13 @@ const url = process.env.TEST_DATABASE_URL;
   const prefix = `p0_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const pool = new pg.Pool({ connectionString: url, max: 2 });
   const store = new PgKyAppSystemStore({ pool, tablePrefix: prefix });
-  const queries = new KyAppManagementQueries(pool, store, prefix);
+  const queries = new KyAppManagementQueries(pool, store, prefix, `${prefix}_usage`);
   beforeAll(async () => {
     await pool.query(
-      `CREATE TABLE ${prefix}_resource_assignments (assignment_id TEXT PRIMARY KEY,resource_type TEXT NOT NULL)`,
+      `CREATE TABLE ${prefix}_resource_assignments (assignment_id TEXT PRIMARY KEY,resource_type TEXT NOT NULL,resource_id TEXT,assignee_type TEXT,effect TEXT)`,
     );
+    await pool.query(`CREATE TABLE ${prefix}_usage (event_type TEXT,event_json JSONB,timestamp TIMESTAMPTZ)`);
+    await pool.query(`INSERT INTO ${prefix}_usage VALUES ('tool_audit','{"installationId":"one"}','2026-09-07T01:00:00Z')`);
     for (const sql of [
       ...governanceV41KyAppSystemStatements(prefix),
       ...governanceV44KyAppDeliveryStatements(prefix),
@@ -70,6 +72,7 @@ const url = process.env.TEST_DATABASE_URL;
   it('游标保留微秒，同一时间不会漏行，过滤组织', async () => {
     const first = await queries.installations({ tenantId: 'target', limit: 1 }, PLATFORM_ADMIN);
     expect(first.installations.map((item) => item.installationId)).toEqual(['one']);
+    expect(first.installations[0]?.lastUsageAt).toBe('2026-09-07T01:00:00.000Z');
     const second = await queries.installations(
       { tenantId: 'target', limit: 1, cursor: first.nextCursor! },
       PLATFORM_ADMIN,
@@ -84,6 +87,7 @@ const url = process.env.TEST_DATABASE_URL;
       externalWriteCapabilityCount: 1,
     });
     expect(list[0]).not.toHaveProperty('manifest');
+    expect(await queries.installationSummary('one')).toMatchObject({ assignmentSummary: { configured: false, ruleCount: 0 }, credentialSummary: [], ready: false });
     expect((await queries.systemDetail('demo', 'admin'))?.versions).toHaveLength(1);
   });
 });

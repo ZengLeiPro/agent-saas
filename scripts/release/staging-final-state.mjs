@@ -1,13 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { canonicalJson } from './artifact-lib.mjs';
 
-export function summarizeStagingState({
-  manifest,
-  before,
-  observed,
-  publicWebPassed,
-  jobSucceeded,
-}) {
+export function summarizeStagingState({ manifest, before, observed, publicWebPassed }) {
   const components = {
     api: observed.host?.api ?? null,
     runtimeWorker: observed.host?.runtimeWorker ?? null,
@@ -64,20 +58,16 @@ export function summarizeStagingState({
         : restored
           ? 'previous_runtime'
           : 'mixed_versions',
-    acceptanceAllowed: Boolean(
-      target &&
-      observed.api?.status === 'ok' &&
-      observed.acs?.status === 'ok' &&
-      publicWebPassed &&
-      jobSucceeded,
+    runtimeConverged: Boolean(
+      target && observed.api?.status === 'ok' && observed.acs?.status === 'ok' && publicWebPassed,
     ),
     recovery:
-      'Retain observed state; a failed attempt requires a complete successful redeployment before acceptance.',
+      'Runtime observation only; acceptance requires the final GitHub deployment success after cleanup. A failed attempt requires successful redeployment.',
   };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [, , dir, mode, jobStatus] = process.argv;
+  const [, , dir, mode] = process.argv;
   async function json(name) {
     try {
       return JSON.parse(await readFile(`${dir}/${name}.json`, 'utf8'));
@@ -96,8 +86,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       acs: await json('staging-acs-probe'),
     },
     publicWebPassed: mode === 'final' && (await json('staging-public-web'))?.status === 'passed',
-    jobSucceeded: jobStatus === 'success',
   });
   await writeFile(`${dir}/staging-${mode}.json`, JSON.stringify(report, null, 2) + '\n');
-  if (mode === 'final' && !report.acceptanceAllowed) process.exitCode = 1;
+  if (mode === 'final' && !report.runtimeConverged) process.exitCode = 1;
 }

@@ -137,7 +137,77 @@ test('D-05: real HTTP rejects stale HTML, missing JS and mismatched JS despite a
   }
 });
 
-test('D-04: partial backend/Web switch, unknown rollback and failed verification never allow acceptance', () => {
+function verifyCleanupFailureBlocksAcceptance(report) {
+  const workflow = readFileSync(
+    new URL('../../.github/workflows/deploy-staging.yml', import.meta.url),
+    'utf8',
+  );
+  const revokeName = '      - name: 撤销临时测试环境 SSH 入站授权';
+  const finalizeName = '      - name: 完成 GitHub 测试环境部署记录';
+  const revokeIndex = workflow.indexOf(revokeName);
+  const finalIndex = workflow.indexOf(finalizeName);
+  assert.ok(workflow.indexOf('observe-staging-state.sh final') < revokeIndex);
+  assert.ok(revokeIndex < finalIndex);
+  const shell = (step) =>
+    step
+      .split('        run: |\n')[1]
+      .split('\n      - name:')[0]
+      .split('\n')
+      .map((line) => line.replace(/^          /u, ''))
+      .join('\n');
+  const revoke = shell(workflow.slice(revokeIndex));
+  const finalize = shell(workflow.slice(finalIndex));
+  assert.match(workflow.slice(finalIndex), /WORKFLOW_STATUS: \$\{\{ job.status \}\}/u);
+  assert.match(workflow.slice(finalIndex), /if: always\(\)/u);
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `
+    aliyun() { echo revoke-attempt >&2; return 1; }
+    sleep() { :; }
+    export -f aliyun sleep
+    if bash -c "$REVOKE_SCRIPT"; then WORKFLOW_STATUS=success; else WORKFLOW_STATUS=failure; fi
+    gh() { printf '%s\\n' "$@" >&2; }
+    ${finalize}
+  `,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        REVOKE_SCRIPT: revoke,
+        STAGING_SSH_SECURITY_GROUP_ID: 'sg-test',
+        STAGING_SSH_SOURCE_CIDR: '192.0.2.1/32',
+        GITHUB_REPOSITORY: 'test/repo',
+        STAGING_DEPLOYMENT_ID: '456',
+        STAGING_WEB_URL: 'https://example.invalid',
+      },
+    },
+  );
+  // The actual finalization script redirects stdout, so capture gh arguments on stderr.
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr.match(/revoke-attempt/gu)?.length, 5);
+  assert.match(result.stderr, /state=failure/u);
+  assert.doesNotMatch(result.stderr, /state=success/u);
+  const state = result.stderr.match(/state=(\w+)/u)[1];
+  assert.equal(report.runtimeConverged, true);
+  assert.throws(
+    () =>
+      assertLatestStagingAttempt(
+        [
+          {
+            deployment: { id: 456, environment: 'staging', payload: { releaseId: release } },
+            statuses: [{ id: 1, state, created_at: '2026-09-07T00:00:00Z' }],
+          },
+        ],
+        release,
+      ),
+    /incomplete/,
+  );
+}
+
+test('D-04: runtime convergence does not grant acceptance when SSH revocation fails', () => {
   const component = { sourceSha: 'a'.repeat(40), artifactDigest: digest };
   const manifest = {
     releaseId: release,
@@ -165,16 +235,16 @@ test('D-04: partial backend/Web switch, unknown rollback and failed verification
       status: 'ok',
     },
   };
-  const input = { manifest, observed, publicWebPassed: true, jobSucceeded: true };
-  assert.equal(summarizeStagingState(input).acceptanceAllowed, true);
-  assert.equal(summarizeStagingState({ ...input, jobSucceeded: false }).acceptanceAllowed, false);
-  assert.equal(
-    summarizeStagingState({ ...input, publicWebPassed: false }).acceptanceAllowed,
-    false,
-  );
+  const input = { manifest, observed, publicWebPassed: true };
+  const report = summarizeStagingState(input);
+  assert.equal(report.runtimeConverged, true);
+  assert.equal(Object.hasOwn(report, 'acceptanceAllowed'), false);
+  verifyCleanupFailureBlocksAcceptance(report);
+
+  assert.equal(summarizeStagingState({ ...input, publicWebPassed: false }).runtimeConverged, false);
   observed.web.releaseId = 'old';
   assert.equal(summarizeStagingState(input).state, 'mixed_versions');
-  assert.equal(summarizeStagingState(input).acceptanceAllowed, false);
+  assert.equal(summarizeStagingState(input).runtimeConverged, false);
   observed.host.runtimeWorker = { error: 'failed restore' };
   assert.equal(summarizeStagingState(input).state, 'unknown');
 });

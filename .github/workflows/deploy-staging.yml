@@ -1053,9 +1053,7 @@ jobs:
 
       - name: 最终对账并阻止混合版本验收
         if: always() && env.STAGING_DEPLOYMENT_ID != ''
-        env:
-          WORKFLOW_STATUS: ${{ job.status }}
-        run: bash scripts/release/observe-staging-state.sh final "$WORKFLOW_STATUS"
+        run: bash scripts/release/observe-staging-state.sh final
 
       - name: 撤销临时测试环境 SSH 入站授权
         if: always() && env.STAGING_SSH_SOURCE_CIDR != ''

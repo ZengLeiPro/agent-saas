@@ -9,4 +9,4 @@ ssh -o ConnectTimeout=10 -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_H
   'curl -fsS --max-time 20 http://127.0.0.1:3410/health' > "$RUNNER_TEMP/staging-acs-probe.json" || true
 ssh -o ConnectTimeout=10 -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
   'node --input-type=module' < scripts/release/observe-staging-host.mjs > "$RUNNER_TEMP/staging-host-probe.json" || true
-node scripts/release/staging-final-state.mjs "$RUNNER_TEMP" "$mode" "${2:-unknown}"
+node scripts/release/staging-final-state.mjs "$RUNNER_TEMP" "$mode"

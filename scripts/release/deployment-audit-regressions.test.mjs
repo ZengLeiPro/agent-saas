@@ -144,7 +144,9 @@ function verifyCleanupFailureBlocksAcceptance(report) {
   );
   const revokeName = '      - name: 撤销临时测试环境 SSH 入站授权';
   const finalizeName = '      - name: 完成 GitHub 测试环境部署记录';
-  const revokeIndex = workflow.indexOf(revokeName);
+  // The Writer readiness job has its own bounded SSH rule. The deployment acceptance
+  // contract applies to the final runtime deployment cleanup step.
+  const revokeIndex = workflow.lastIndexOf(revokeName);
   const finalIndex = workflow.indexOf(finalizeName);
   assert.ok(workflow.indexOf('observe-staging-state.sh final') < revokeIndex);
   assert.ok(revokeIndex < finalIndex);

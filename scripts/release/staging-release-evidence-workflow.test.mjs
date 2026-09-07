@@ -71,12 +71,28 @@ test('Staging fails fast when the deployed Evidence Writer cannot accept the pro
     workflow,
     new RegExp(`RELEASE_EVIDENCE_SCHEMA_REVISION: '${RELEASE_EVIDENCE_SCHEMA_REVISION}'`, 'u'),
   );
-  assert.match(workflow, /releaseEvidenceSchemaRevision == \$requiredRevision/u);
+  assert.match(workflow, /releaseEvidenceSchemaRevision >= \$requiredRevision/u);
   assert.match(workflow, /index\(\$required\) != null/u);
   assert.ok(
     workflow.indexOf('校验证据写入器架构兼容性') <
       workflow.indexOf('检出用于生成证据的不可变触发版本'),
   );
+});
+
+test('Staging conditionally upgrades a trusted outdated Writer before preparing evidence', async () => {
+  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  assert.match(workflow, /ensure-evidence-writer:/u);
+  assert.match(workflow, /needs: ensure-evidence-writer/u);
+  assert.match(workflow, /needs_upgrade=false/u);
+  assert.match(workflow, /needs_upgrade=true/u);
+  assert.match(workflow, /steps\.capability\.outputs\.needs_upgrade == 'true'/u);
+  assert.match(workflow, /actions\/workflows\/ci\.yml/u);
+  assert.match(workflow, /Expected exactly one merged PR/u);
+  assert.match(workflow, /AuthorizeSecurityGroup/u);
+  assert.match(workflow, /RevokeSecurityGroup/u);
+  assert.match(workflow, /if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u);
+  assert.match(workflow, /deploy-evidence-writer\.sh/u);
+  assert.ok(workflow.indexOf('ensure-evidence-writer:') < workflow.indexOf('prepare-evidence:'));
 });
 
 test('Staging Nginx exposes the authenticated Evidence Writer capability endpoint', async () => {

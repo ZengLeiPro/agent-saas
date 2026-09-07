@@ -6,7 +6,7 @@ import type { ProviderQuotaService } from '../quota/providerQuotaService.js';
 
 export interface CreateProviderQuotaAdminRouterOptions {
   /** 仅 PG runtime 装配；缺省时接口返回 503 而不是假数据。 */
-  service?: Pick<ProviderQuotaService, 'overview' | 'history' | 'refresh' | 'test'>;
+  service?: Pick<ProviderQuotaService, 'overview' | 'history' | 'refresh' | 'test' | 'setPlanExpiry'>;
 }
 
 const testRequestSchema = z.object({
@@ -65,6 +65,28 @@ export function createProviderQuotaAdminRouter(
       res.json(await options.service!.overview());
     } catch (error) {
       res.status(502).json({ error: message(error) });
+    }
+  });
+
+  router.patch('/plan-expiry', async (req, res) => {
+    const parsed = z.object({
+      accountKey: z.string().trim().min(1),
+      endTime: z.string().datetime({ offset: true }).nullable(),
+    }).strict().safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: '请提供有效的账号和套餐到期时间' });
+      return;
+    }
+    try {
+      await options.service!.setPlanExpiry(parsed.data.accountKey, parsed.data.endTime, req.user!.sub);
+    } catch (error) {
+      res.status(400).json({ error: message(error) });
+      return;
+    }
+    try {
+      res.json(await options.service!.overview());
+    } catch (error) {
+      res.status(500).json({ error: message(error) });
     }
   });
 

@@ -7,6 +7,14 @@ import { ProviderQuotaService } from './providerQuotaService.js';
 import type { PgProviderQuotaSnapshotStore } from './providerQuotaSnapshotStore.js';
 
 class FakeStore {
+  edits: Array<{ key: string; endTime: string | null; userId: string }> = [];
+  async planExpiryOverrides(keys: string[]) {
+    return new Map(this.edits.filter((edit) => keys.includes(edit.key)).map((edit) => [edit.key, edit.endTime]));
+  }
+  async setPlanExpiry(key: string, endTime: string | null, userId: string) {
+    this.edits.push({ key, endTime, userId });
+  }
+
   rows: ProviderQuotaSnapshot[] = [];
   lockAvailable = true;
   pruned: number[] = [];
@@ -157,6 +165,48 @@ let clock = 0;
 const now = () => new Date(Date.UTC(2026, 8, 5, 6, clock++, 0));
 
 describe('ProviderQuotaService', () => {
+  it('按规范化邮箱继承手动到期，采集不覆盖，清除回退供应商时间且保留审计', async () => {
+    const store = new FakeStore();
+    const refs = ['old'];
+    let email = ' Shared@Example.com ';
+    const manager = codexManager(refs);
+    manager.getStatuses = async () => refs.map((id) => ({ id, email, configured: true, connected: true, priority: 1, expiresAt: '', availability: 'available' as const }));
+    const service = new ProviderQuotaService({ store: store as unknown as PgProviderQuotaSnapshotStore, getModelsConfig: () => undefined, codexCredentialManager: manager, enableCollector: false, fetchImpl: routedFetch(), now, logger });
+    await service.refresh();
+    await service.setPlanExpiry('codex:old', '2026-10-01T15:59:00Z', 'admin-1');
+    refs.splice(0, 1, 'new');
+    email = 'shared@example.com';
+    await service.refresh();
+    expect((await service.overview()).items[0]?.planExpiry).toMatchObject({ editable: true, manualEndTime: '2026-10-01T15:59:00Z' });
+    expect(store.edits[0]).toEqual({ key: 'codex-email:shared@example.com', endTime: '2026-10-01T15:59:00Z', userId: 'admin-1' });
+    await service.setPlanExpiry('codex:new', null, 'admin-2');
+    expect((await service.overview()).items[0]?.planExpiry?.endTime).toBeUndefined();
+    expect(store.edits).toHaveLength(2);
+    email = 'different@example.com';
+    expect((await service.overview()).items[0]?.planExpiry?.manualEndTime).toBeUndefined();
+    await expect(service.setPlanExpiry('codex:old', null, 'admin')).rejects.toThrow('账号不存在');
+    email = '';
+    expect((await service.overview()).items[0]?.planExpiry?.editable).toBe(false);
+    await expect(service.setPlanExpiry('codex:new', null, 'admin')).rejects.toThrow('邮箱');
+  });
+
+  it('火山按分组存储，清除手动设置后显示供应商到期，不改变快照', async () => {
+    const store = new FakeStore();
+    const vault = new InMemorySecretVault();
+    const models = await makeModels(vault);
+    const service = new ProviderQuotaService({ store: store as unknown as PgProviderQuotaSnapshotStore, getModelsConfig: () => models, secretVault: vault, enableCollector: false, fetchImpl: routedFetch(), now, logger });
+    await service.refresh();
+    await service.setPlanExpiry('volcengine:ark', '2026-12-01T00:00:00Z', 'admin');
+    await service.refresh();
+    let item = (await service.overview()).items[0]!;
+    expect(item.planExpiry).toMatchObject({ endTime: '2026-12-01T00:00:00Z', providerEndTime: '2026-09-09T15:59:59Z' });
+    expect(item.plan?.endTime).toBe('2026-09-09T15:59:59Z');
+    await service.setPlanExpiry('volcengine:ark', null, 'admin');
+    item = (await service.overview()).items[0]!;
+    expect(item.planExpiry?.endTime).toBe(item.plan?.endTime);
+    expect(store.edits[0]?.key).toBe('volcengine:ark');
+  });
+
   it('按模型分组 quotaSource 与 Codex 授权账号枚举数据源并落快照', async () => {
     const vault = new InMemorySecretVault();
     const models = await makeModels(vault);

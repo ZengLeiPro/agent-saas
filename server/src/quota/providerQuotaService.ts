@@ -45,6 +45,7 @@ export interface ProviderQuotaServiceOptions {
 
 interface QuotaSource {
   accountKey: string;
+  expiryIdentity?: string;
   collect: () => Promise<ProviderQuotaSnapshot>;
 }
 
@@ -140,7 +141,12 @@ export class ProviderQuotaService {
   }
 
   async overview(): Promise<ProviderQuotaOverviewResponse> {
-    const activeKeys = new Set((await this.sources()).map((source) => source.accountKey));
+    const sources = await this.sources();
+    const activeKeys = new Set(sources.map((source) => source.accountKey));
+    const identities = new Map(sources.map((source) => [source.accountKey, source.expiryIdentity]));
+    const overrides = await this.options.store.planExpiryOverrides(
+      sources.flatMap((source) => source.expiryIdentity ? [source.expiryIdentity] : []),
+    );
     const [latest, latestOk] = await Promise.all([
       this.options.store.latest(),
       this.options.store.latestSuccessful(),
@@ -163,7 +169,19 @@ export class ProviderQuotaService {
           : snapshot;
         // 凭据/调度状态始终取当前进程的实时值，不用快照里的旧值。
         const credential = liveCredentials.get(merged.accountKey);
-        return credential ? { ...merged, credential } : merged;
+        const identity = identities.get(merged.accountKey);
+        const manualEndTime = identity ? overrides.get(identity) ?? undefined : undefined;
+        const providerEndTime = merged.plan?.endTime;
+        return {
+          ...merged,
+          ...(credential ? { credential } : {}),
+          planExpiry: {
+            editable: !!identity,
+            endTime: manualEndTime ?? providerEndTime,
+            manualEndTime,
+            providerEndTime,
+          },
+        };
       })
       .sort(
         (a, b) =>
@@ -179,6 +197,14 @@ export class ProviderQuotaService {
       },
       generatedAt: this.now().toISOString(),
     };
+  }
+
+  async setPlanExpiry(accountKey: string, endTime: string | null, userId: string): Promise<void> {
+    const source = (await this.sources()).find((item) => item.accountKey === accountKey);
+    if (!source) throw new Error('账号不存在或已移除');
+    if (!source.expiryIdentity) throw new Error('尚未取得账号邮箱，无法保存套餐到期时间');
+    if (endTime !== null && !Number.isFinite(Date.parse(endTime))) throw new Error('到期时间无效');
+    await this.options.store.setPlanExpiry(source.expiryIdentity, endTime, userId);
   }
 
   async history(hours: number): Promise<ProviderQuotaHistoryResponse> {
@@ -270,6 +296,7 @@ export class ProviderQuotaService {
       return [
         {
           accountKey,
+          expiryIdentity: accountKey,
           collect: async (): Promise<ProviderQuotaSnapshot> => {
             const collectedAt = this.now().toISOString();
             try {
@@ -323,8 +350,11 @@ export class ProviderQuotaService {
           ? `账号 ${status.accountIdHint}`
           : `Codex ${credentialRef.slice(0, 8)}`);
       const accountKey = `codex:${credentialRef}`;
+      // 邮箱来自服务端授权状态，不接受客户端指定；同邮箱重新授权/添加可继承设置。
+      const email = status?.email?.trim().toLowerCase();
       return {
         accountKey,
+        expiryIdentity: email && /^[^\s@]+@[^\s@]+$/.test(email) ? `codex-email:${email}` : undefined,
         collect: async (): Promise<ProviderQuotaSnapshot> => {
           const collectedAt = this.now().toISOString();
           const base = {

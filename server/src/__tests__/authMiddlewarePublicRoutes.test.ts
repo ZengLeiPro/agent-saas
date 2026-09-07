@@ -30,6 +30,8 @@ describe("auth middleware public routes", () => {
     app.post("/api/signup/register", (_req, res) => res.json({ ok: true }));
     app.post("/api/auth/sms/send-code", (_req, res) => res.json({ ok: true }));
     app.post("/api/auth/sms/login", (_req, res) => res.json({ ok: true }));
+    app.post("/api/auth/password/reset/send-code", (_req, res) => res.json({ ok: true }));
+    app.post("/api/auth/password/reset", (_req, res) => res.json({ ok: true }));
     app.get("/api/healthz", (_req, res) => res.send("ok"));
     app.get("/api/healthz/drain", (_req, res) => res.json({ idle: true }));
     app.get("/api/share/artifacts/test-token", (_req, res) => res.json({ ok: true }));
@@ -76,6 +78,15 @@ describe("auth middleware public routes", () => {
     expect(
       (await fetch(`${baseUrl}/api/auth/sms/login`, { method: "POST" }))
         .status,
+    ).toBe(200);
+  });
+
+  it("找回密码端点免登录可达", async () => {
+    expect(
+      (await fetch(`${baseUrl}/api/auth/password/reset/send-code`, { method: "POST" })).status,
+    ).toBe(200);
+    expect(
+      (await fetch(`${baseUrl}/api/auth/password/reset`, { method: "POST" })).status,
     ).toBe(200);
   });
 

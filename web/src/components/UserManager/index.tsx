@@ -36,6 +36,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
     loading,
     error,
     updateUser,
+    resetPassword,
     deleteUser,
     toggleUserDisabled,
   } = useUsers();
@@ -89,7 +90,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
   };
 
   const handleResetPassword = async (id: string, password: string) => {
-    await updateUser(id, { password });
+    await resetPassword(id, password);
   };
 
   return (
@@ -155,6 +156,7 @@ export function UserManager({ tenantIdScope, tenantName }: UserManagerProps = {}
               users={visibleUsers}
               currentUserId={currentUser?.id || ""}
               onEdit={openEdit}
+              onResetPassword={openResetPassword}
               onDelete={setDeletingUser}
               onViewLogs={openUserLogs}
               onToggleDisabled={(user) => {

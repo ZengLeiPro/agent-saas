@@ -134,6 +134,20 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(6, "新密码至少 6 个字符"),
 });
 
+const resetPasswordSendCodeSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
+});
+
+const resetPasswordSchema = z.object({
+  phone: z.string().regex(PHONE_PATTERN, "请输入有效的 11 位手机号"),
+  code: z.string().regex(/^\d{6}$/, "验证码为 6 位数字"),
+  newPassword: z.string().min(6, "新密码至少 6 个字符"),
+});
+
+const adminResetPasswordSchema = z.object({
+  newPassword: z.string().min(6, "新密码至少 6 个字符"),
+});
+
 // PATCH /me/phone：仅保留清除手机号；绑定/更换手机号必须走验证码验证接口。
 const updatePreferencesSchema = z.object({
   sidebarLayout: z.enum(["double", "single"]).optional(),
@@ -308,6 +322,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     runStore,
   } = deps;
   const router = Router();
+  const passwordResetPhoneLimiter = createIpLimiter(1, 60_000);
   router.use(createLegacyAuthWriteGate(deps.legacyWriteGate)); registerAuthDebugModeRoute(router, { userStore, ...(tenantStore ? { tenantStore } : {}) });
   /** Resolve createdBy userId to username (fallback to raw value) */
   function resolveCreatedBy(createdBy: string | undefined): string {
@@ -463,6 +478,18 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     return userStore.findAllByPhone(phone).some((u) => u.id !== userId);
   }
 
+  async function revokeAllUserSessions(userId: string): Promise<void> {
+    if (!deps.authEpochAuthority) return;
+    deps.authEpochAuthority.fence(userId, "revoke");
+    try {
+      await deps.onAuthFenced?.(userId, "revoke");
+    } catch (err) {
+      apiLogger.warn(
+        `[auth:password-reset] 断开用户连接失败 userId=${userId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // 确保头像目录存在
   if (!existsSync(avatarsDir)) {
     mkdirSync(avatarsDir, { recursive: true });
@@ -549,7 +576,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         return;
       }
 
-      const result = await rt.codeService.requestCode(phone);
+      const result = await rt.codeService.requestCode(phone, "login");
       if (!result.ok) {
         if (result.retryAfterSeconds) {
           res.set("Retry-After", String(result.retryAfterSeconds));
@@ -563,6 +590,110 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         `[auth:sms] send-code 失败: ${err instanceof Error ? err.message : String(err)}`,
       );
       res.status(500).json({ error: "验证码发送失败，请稍后再试" });
+    }
+  });
+
+  // POST /api/auth/password/reset/send-code — 向已验证手机号发送找回密码验证码
+  router.post("/password/reset/send-code", async (req, res) => {
+    try {
+      const rt = await getSmsLoginRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
+        res.status(403).json({ error: "当前未开放短信密码找回" });
+        return;
+      }
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!rt.sendCodeIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+      const parsed = resetPasswordSendCodeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const phone = parsed.data.phone;
+      if (!passwordResetPhoneLimiter(phone)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+      const resolved = resolveSmsLoginUser(phone);
+      if (!resolved.ok || resolved.user.disabled) {
+        res.json({ ok: true });
+        return;
+      }
+      const tenantAccess = checkTenantAccess(tenantStore, resolved.user.tenantId || DEFAULT_TENANT_ID);
+      if (!tenantAccess.ok) {
+        res.json({ ok: true });
+        return;
+      }
+      await rt.codeService.requestCode(phone, "password-reset");
+      res.json({ ok: true });
+    } catch (err) {
+      apiLogger.warn(
+        `[auth:password-reset] send-code 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.json({ ok: true });
+    }
+  });
+
+  // POST /api/auth/password/reset — 验证手机号后设置新密码
+  router.post("/password/reset", async (req, res) => {
+    try {
+      const rt = await getSmsLoginRuntime();
+      if (!rt.publicEnabled || !rt.codeService) {
+        res.status(403).json({ error: "当前未开放短信密码找回" });
+        return;
+      }
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      if (!rt.loginIpLimiter(ip)) {
+        res.status(429).json({ error: "操作过于频繁，请稍后再试" });
+        return;
+      }
+      const parsed = resetPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const { phone, code, newPassword } = parsed.data;
+      const resolved = resolveSmsLoginUser(phone);
+      if (!resolved.ok || resolved.user.disabled) {
+        res.status(400).json({ error: "手机号、验证码或账号状态有误" });
+        return;
+      }
+      const user = resolved.user;
+      const tenantAccess = checkTenantAccess(tenantStore, user.tenantId || DEFAULT_TENANT_ID);
+      if (!tenantAccess.ok) {
+        res.status(400).json({ error: "手机号、验证码或账号状态有误" });
+        return;
+      }
+      const minLength = tenantStore?.getSettings(user.tenantId)?.security.passwordMinLength;
+      if (minLength && newPassword.length < minLength) {
+        res.status(400).json({ error: `新密码至少 ${minLength} 个字符` });
+        return;
+      }
+      if (!rt.codeService.verifyAndConsume(phone, code, "password-reset")) {
+        res.status(400).json({ error: "手机号、验证码或账号状态有误" });
+        return;
+      }
+      await userStore.resetPassword(user.id, newPassword);
+      await revokeAllUserSessions(user.id);
+      appendLoginLog({
+        timestamp: new Date().toISOString(),
+        event: "user_password_changed",
+        username: user.username,
+        userId: user.id,
+        tenantId: user.tenantId,
+        ip,
+        userAgent: req.headers["user-agent"] || "unknown",
+        channel: detectLoginChannel(req.headers["user-agent"] || ""),
+        detail: "self_service_reset",
+      }, loginLogFilePath).catch(() => {});
+      res.json({ ok: true });
+    } catch (err) {
+      apiLogger.warn(
+        `[auth:password-reset] reset 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      res.status(500).json({ error: "密码重置失败，请稍后再试" });
     }
   });
 
@@ -640,7 +771,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         return;
       }
 
-      if (!rt.codeService.verifyAndConsume(phone, code)) {
+      if (!rt.codeService.verifyAndConsume(phone, code, "login")) {
         if (user.role !== "admin") {
           appendLoginLog(
             {
@@ -1050,6 +1181,47 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       }
     }
   });
+  // PATCH /api/auth/users/:id/password (admin only) — 显式重置密码并撤销旧登录态
+  router.patch("/users/:id/password", requireAdmin, async (req, res) => {
+    try {
+      const parsed = adminResetPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues[0].message });
+        return;
+      }
+      const target = userStore.findById(req.params.id);
+      if (!target) {
+        res.status(404).json({ error: "用户不存在" });
+        return;
+      }
+      if (!isPlatformAdmin(req.user) && target.tenantId !== req.user!.tenantId) {
+        res.status(403).json({ error: "跨组织访问被拒绝" });
+        return;
+      }
+      const peerAdminError = tenantAdminPeerAdminError(req.user, target);
+      if (peerAdminError) {
+        res.status(403).json({ error: peerAdminError });
+        return;
+      }
+      const minLength = tenantStore?.getSettings(target.tenantId)?.security.passwordMinLength;
+      if (minLength && parsed.data.newPassword.length < minLength) {
+        res.status(400).json({ error: `密码至少 ${minLength} 个字符` });
+        return;
+      }
+      await userStore.resetPassword(target.id, parsed.data.newPassword);
+      await revokeAllUserSessions(target.id);
+      auditLog(req, "user_password_changed", `管理员重置 ${target.username} 的密码`);
+      res.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === "User not found") {
+        res.status(404).json({ error: "用户不存在" });
+        return;
+      }
+      res.status(500).json({ error: "密码重置失败，请稍后再试" });
+    }
+  });
+
   // PATCH /api/auth/users/:id (admin only)
   router.patch("/users/:id", requireAdmin, async (req, res) => {
     try {
@@ -1158,6 +1330,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         return;
       }
       const user = updated.user;
+      if (password) {
+        await revokeAllUserSessions(user.id);
+        auditLog(req, "user_password_changed", `管理员重置 ${user.username} 的密码`);
+      }
       auditLog(req, "user_updated", user.username);
       res.json({
         ...user,
@@ -1387,7 +1563,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(429).json({ error: "操作过于频繁，请稍后再试" });
         return;
       }
-      const result = await rt.codeService.requestCode(phone);
+      const result = await rt.codeService.requestCode(phone, "phone-verification");
       if (!result.ok) {
         if (result.retryAfterSeconds) {
           res.set("Retry-After", String(result.retryAfterSeconds));
@@ -1432,7 +1608,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(429).json({ error: "操作过于频繁，请稍后再试" });
         return;
       }
-      if (!rt.codeService.verifyAndConsume(phone, code)) {
+      if (!rt.codeService.verifyAndConsume(phone, code, "phone-verification")) {
         res.status(400).json({ error: "验证码错误或已过期" });
         return;
       }

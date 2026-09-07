@@ -89,6 +89,18 @@ export function useUsers() {
     await refresh();
   };
 
+  const resetPassword = async (id: string, newPassword: string) => {
+    const res = await authFetch(`${API_BASE}/users/${id}/password`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error || "重置密码失败");
+    }
+  };
+
   const deleteUser = async (id: string) => {
     const res = await authFetch(`${API_BASE}/users/${id}`, {
       method: "DELETE",
@@ -113,7 +125,7 @@ export function useUsers() {
     await refresh();
   };
 
-  return { users, loading, error, refresh, createUser, updateUser, deleteUser, toggleUserDisabled };
+  return { users, loading, error, refresh, createUser, updateUser, resetPassword, deleteUser, toggleUserDisabled };
 }
 
 // ---- Login Logs ----

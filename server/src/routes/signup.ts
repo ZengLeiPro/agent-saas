@@ -359,7 +359,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
         res.status(409).json({ error: "该手机号已注册，请直接登录" });
         return;
       }
-      const result = await rt.codeService.requestCode(phone);
+      const result = await rt.codeService.requestCode(phone, "signup");
       if (!result.ok) {
         if (result.retryAfterSeconds) {
           res.set("Retry-After", String(result.retryAfterSeconds));
@@ -453,7 +453,7 @@ export function createSignupRouters(deps: SignupRouterDeps): SignupRouters {
       res.status(409).json({ error: "该手机号已注册，请直接登录" });
       return;
     }
-    if (!rt.codeService.verifyAndConsume(phone, code)) {
+    if (!rt.codeService.verifyAndConsume(phone, code, "signup")) {
       res.status(400).json({ error: "验证码错误或已过期" });
       return;
     }

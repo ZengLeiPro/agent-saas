@@ -17,9 +17,13 @@ export async function cleanupTestExecutions(
     cleanupExecutions: { capabilityId, sub, lcids },
   });
   expectStatus(result, 200, '测试清理钩子');
-  const summary = result.json as { cleanupConfirmed?: boolean; remaining?: number };
+  const envelope = result.json as {
+    ok?: boolean;
+    result?: { cleanupConfirmed?: boolean; remaining?: number };
+  };
+  const summary = envelope.result;
   assert(
-    summary.cleanupConfirmed === true && summary.remaining === 0,
+    envelope.ok === true && summary?.cleanupConfirmed === true && summary.remaining === 0,
     '测试清理必须明确确认且回读无剩余记录',
   );
 }

@@ -8,7 +8,7 @@ describe('doctor 测试清理边界', () => {
     db = 'kyapp_doctor',
     result = { cleanupConfirmed: true, remaining: 0 },
   ) {
-    const testHook = vi.fn().mockResolvedValue({ status: 200, json: result });
+    const testHook = vi.fn().mockResolvedValue({ status: 200, json: { ok: true, result } });
     return {
       env: { KY_ENV: env, DATABASE_URL: `postgresql://localhost/${db}` },
       testHook,

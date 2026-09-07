@@ -89,6 +89,10 @@ export class KyAppManagementQueries {
         }
       : null;
   }
+  async executions() {
+    const result = await this.pool.query(`SELECT execution_id,tenant_id,system_id,installation_id,status,current_step,updated_at FROM ${this.prefix}_ky_app_onboard_executions ORDER BY updated_at DESC,execution_id`);
+    return result.rows.map(row => ({ executionId: row.execution_id, tenantId: row.tenant_id, systemId: row.system_id, installationId: row.installation_id, status: row.status, currentStep: row.current_step, updatedAt: date(row.updated_at) }));
+  }
   async installationSummary(installationId: string) {
     const [delivery, assignments, credentials, runtime] = await Promise.all([
       this.pool.query(

@@ -1,5 +1,5 @@
 import { PlatformSystemsPage } from '@/components/BusinessSystems/PlatformSystemsPage';
-import { ManagementIndexPage } from '@/components/BusinessSystems/ManagementIndexPage';
+import { SystemDeliveryPage } from '@/components/SystemDelivery/SystemDeliveryPage';
 import { KyAppDeliveryHealthPanel } from '@/components/KyAppDeliveryPanels';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Loader2, X } from "lucide-react";
@@ -629,7 +629,7 @@ export function PlatformAdminShell({
       case "platform.resource-center.business-systems":
         return <PlatformSystemsPage systemId={governanceRoute.entityId} />;
       case "platform.runtime.system-deliveries":
-        return <ManagementIndexPage deliveries />;
+        return <SystemDeliveryPage executionId={governanceRoute.entityId} systemId={new URLSearchParams(governanceRoute.search?.replace(/^\?/, "")).get("systemId") ?? undefined} />;
       case "platform.runtime.business-system-operations":
         return <KyAppDeliveryHealthPanel />;
       case "platform.overview.overview":

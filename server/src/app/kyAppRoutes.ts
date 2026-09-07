@@ -144,6 +144,10 @@ export function registerKyAppRoutes(
           }),
           billing: runtime.billingService,
           sharedDir: runtime.sharedDir,
+          getAssignmentConfigured: async (tenantId, installationId) => {
+            const set = await runtime.assignmentStore?.getAssignmentSet(tenantId, 'system_installation', installationId);
+            return Boolean(set?.assignments.some(rule => rule.effect === 'allow'));
+          },
           ...(runtime.entitlementStore ? { entitlementStore: runtime.entitlementStore } : {}),
           ...(runtime.orgAgentStore ? { orgAgentStore: runtime.orgAgentStore } : {}),
           toolRegistrationDryRun:
@@ -173,6 +177,7 @@ export function registerKyAppRoutes(
   app.use(
     KY_APP_CONTRACT_BASE_PATH,
     createKyAppDeliveryRouter({
+      management,
       store: assembly.deliveryStore,
       systems: assembly.systems,
       installations: assembly.installations,

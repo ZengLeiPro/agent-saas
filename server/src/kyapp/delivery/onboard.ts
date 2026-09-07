@@ -83,6 +83,7 @@ export interface KyAppOnboardServiceOptions {
   memberImporter: KyAppMemberImporter;
   billing: BillingService;
   sharedDir: string;
+  getAssignmentConfigured?: (tenantId: string, installationId: string) => Promise<boolean>;
   entitlementStore?: PgEntitlementStore;
   orgAgentStore?: OrgAgentStore;
   toolRegistrationDryRun?: KyAppToolRegistrationDryRun;
@@ -426,6 +427,7 @@ export class KyAppOnboardService {
         ],
       };
       const checklist = {
+        assignmentConfigured: await this.options.getAssignmentConfigured?.(input.tenantId, input.installationId) ?? false,
         tenantAdmin: true,
         credits: true,
         publishedVersion: true,

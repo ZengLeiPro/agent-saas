@@ -310,8 +310,8 @@ export function buildAdminApiPath(path: string, query: Record<string, QueryValue
   return `/api/admin${path}${s ? `?${s}` : ""}`;
 }
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await authFetch(path, { signal });
+async function getJson<T>(path: string, signal?: AbortSignal, cache?: RequestCache): Promise<T> {
+  const res = await authFetch(path, { signal, ...(cache ? { cache } : {}) });
   const text = await res.text();
   const body = text
     ? safeParseJson<T & { error?: string }>(text, {} as T & { error?: string })
@@ -349,10 +349,10 @@ export const platformAdminApi = {
     return getJson("/api/admin/config-status");
   },
   providerQuota(): Promise<ProviderQuotaOverviewResponse> {
-    return getJson(buildAdminApiPath("/provider-quota"));
+    return getJson(buildAdminApiPath("/provider-quota"), undefined, "no-store");
   },
   providerQuotaHistory(hours = 24): Promise<ProviderQuotaHistoryResponse> {
-    return getJson(buildAdminApiPath("/provider-quota/history", { hours }));
+    return getJson(buildAdminApiPath("/provider-quota/history", { hours }), undefined, "no-store");
   },
   refreshProviderQuota(accountKey?: string): Promise<ProviderQuotaOverviewResponse> {
     return mutateJson(buildAdminApiPath("/provider-quota/refresh", { accountKey }), "POST");

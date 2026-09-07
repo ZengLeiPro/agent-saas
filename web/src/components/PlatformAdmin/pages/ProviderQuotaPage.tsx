@@ -48,13 +48,15 @@ export interface AccountStatus {
  * 「冷却中」= 我们自己的调度器此刻在绕开这个账号，与供应商侧撞限分开显示。
  */
 export function accountStatus(
-  snapshot: Pick<ProviderQuotaSnapshot, 'ok' | 'limitReached' | 'windows' | 'credential'>,
+  snapshot: Pick<ProviderQuotaSnapshot, 'ok' | 'limitReached' | 'windows' | 'credential'> & { sourceKind?: ProviderQuotaSnapshot['sourceKind'] },
 ): AccountStatus {
   if (!snapshot.ok) return { tone: 'critical', label: '采集失败' };
   if (snapshot.credential?.availability === 'auth_unavailable') {
     return { tone: 'critical', label: '凭据不可用' };
   }
-  const tones = snapshot.windows.map(windowTone);
+  const tones = snapshot.windows
+    .filter((window) => snapshot.sourceKind !== 'codex_subscription' || isMainCodexWindow(window))
+    .map(windowTone);
   if (snapshot.limitReached || tones.includes('critical')) return { tone: 'critical', label: '已耗尽' };
   if (snapshot.credential?.availability === 'quota_cooldown') return { tone: 'warning', label: '冷却中' };
   if (tones.includes('warning')) return { tone: 'warning', label: '接近上限' };
@@ -97,6 +99,10 @@ export function baselineUsedPercent(
   return null;
 }
 
+function isMainCodexWindow(window: ProviderQuotaWindow): boolean {
+  return window.id === 'primary' || window.id === 'secondary';
+}
+
 const TONE_BADGE: Record<Tone, 'success' | 'warning' | 'danger'> = {
   ok: 'success',
   warning: 'warning',
@@ -113,9 +119,17 @@ const TONE_EDGE: Record<Tone, string> = {
   critical: 'border-l-danger',
 };
 
+export function formatResetTime(value?: string): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '—';
+  const weekday = `周${'日一二三四五六'[date.getDay()]}`;
+  return formatTime(value).replace(/(\d{2}\/\d{2})\s+/, `$1 ${weekday} `);
+}
+
 function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baseline: number | null }) {
   const tone = windowTone(window);
-  const remaining = Math.max(0, 100 - window.usedPercent);
+  const label = window.label.replace(/每周/g, '周用量');
   const fill = Math.min(100, Math.max(0, window.usedPercent));
   const hasAmount = window.used !== undefined && window.unit !== undefined && window.unit !== '%';
   const resetIn = formatResetIn(window.resetAt);
@@ -126,7 +140,7 @@ function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baselin
       data-testid={`quota-window-${window.id}`}
     >
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="truncate">{window.label}</span>
+        <span className="truncate">{label}</span>
         {tone !== 'ok' && (
           <Badge variant={TONE_BADGE[tone]} className="gap-1 px-1.5 py-0 text-[11px]">
             <TriangleAlert className="size-3" />
@@ -134,11 +148,11 @@ function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baselin
           </Badge>
         )}
       </div>
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="text-2xl font-semibold tabular-nums leading-none text-foreground">
-          {remaining.toFixed(1)}%
+          {window.usedPercent.toFixed(1)}%
         </span>
-        <span className="text-xs text-muted-foreground">剩余</span>
+        {resetIn && <span className="ml-auto text-right text-xs text-muted-foreground">{resetIn}（{formatResetTime(window.resetAt)}）</span>}
       </div>
       <div
         className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
@@ -146,17 +160,13 @@ function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baselin
         aria-valuenow={Math.round(window.usedPercent)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={`${window.label} 已用`}
+        aria-label={`${label} 已用`}
       >
         <div className={cn('h-full rounded-full', TONE_BAR[tone])} style={{ width: `${fill}%` }} />
       </div>
       <div className="space-y-0.5 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center justify-between gap-x-3">
-          <span>
-            {hasAmount
-              ? `已用 ${formatWan(window.used!)}${window.quota !== undefined ? ` / ${formatWan(window.quota)}` : ''} ${window.unit}`
-              : `已用 ${window.usedPercent.toFixed(1)}% · 仅提供百分比`}
-          </span>
+          {hasAmount && <span>已用 {formatWan(window.used!)}{window.quota !== undefined ? ` / ${formatWan(window.quota)}` : ''} {window.unit}</span>}
           {delta !== null && Math.abs(delta) >= 0.05 && (
             <span>
               24h {delta > 0 ? '+' : ''}
@@ -164,11 +174,6 @@ function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baselin
             </span>
           )}
         </div>
-        {resetIn && (
-          <div>
-            {resetIn}（{formatTime(window.resetAt)}）
-          </div>
-        )}
       </div>
     </div>
   );
@@ -192,35 +197,6 @@ function Fact({ label, value, tone }: { label: string; value: string; tone?: Ton
   );
 }
 
-function credentialFacts(snapshot: ProviderQuotaSnapshot): Array<{ label: string; value: string; tone?: Tone }> {
-  const credential = snapshot.credential;
-  if (!credential) return [];
-  const facts: Array<{ label: string; value: string; tone?: Tone }> = [];
-  if (credential.expiresAt) {
-    facts.push({
-      label: '凭据到期',
-      value: `${formatTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}`,
-      ...(credential.accessTokenExpired ? { tone: 'critical' as const } : {}),
-    });
-  }
-  if (credential.availability === 'quota_cooldown') {
-    facts.push({
-      label: '调度状态',
-      value: `冷却中${credential.cooldownUntil ? `，至 ${formatTime(credential.cooldownUntil)}` : ''}`,
-      tone: 'warning',
-    });
-  } else if (credential.availability === 'auth_unavailable') {
-    facts.push({
-      label: '调度状态',
-      value: `凭据不可用${credential.lastFailureCode ? `（${credential.lastFailureCode}）` : ''}`,
-      tone: 'critical',
-    });
-  } else if (credential.availability) {
-    facts.push({ label: '调度状态', value: '可用' });
-  }
-  return facts;
-}
-
 function AccountCard({
   snapshot,
   history,
@@ -233,67 +209,73 @@ function AccountCard({
   onRefresh: (accountKey: string) => void;
 }) {
   const status = accountStatus(snapshot);
+  const credential = snapshot.credential;
+  const isCodex = snapshot.sourceKind === 'codex_subscription';
+  const mainWindows = snapshot.windows
+    .filter((window) => !isCodex || isMainCodexWindow(window))
+    .sort((a, b) => Number(b.windowSeconds === 604_800) - Number(a.windowSeconds === 604_800));
+  const additionalWindows = isCodex
+    ? snapshot.windows.filter((window) => !isMainCodexWindow(window))
+    : [];
+  const additionalLimited = additionalWindows.filter((window) => windowTone(window) === 'critical').length;
   const lastSuccessAt =
     typeof snapshot.extra?.lastSuccessAt === 'string' ? snapshot.extra.lastSuccessAt : null;
   const credits = snapshot.extra?.credits as
     { balance?: string | number; hasCredits?: boolean } | undefined;
+  const subtitle = [
+    SOURCE_LABEL[snapshot.sourceKind],
+    snapshot.plan?.type === 'pro' ? 'Pro' : snapshot.plan?.type,
+    snapshot.resetCredits && snapshot.resetCredits > 0 ? `重置券 ${snapshot.resetCredits}` : undefined,
+    !isCodex && snapshot.plan?.autoRenew ? '自动续费' : undefined,
+  ].filter(Boolean).join(' · ');
+  const minuteTime = (value: string) => formatTime(value).replace(/:\d{2}$/, '');
+  const expiry = snapshot.plan?.endTime;
   const facts: Array<{ label: string; value: string; tone?: Tone }> = [
-    ...(snapshot.plan?.type ? [{ label: '档位', value: snapshot.plan.type }] : []),
-    ...(snapshot.plan?.status ? [{ label: '套餐状态', value: snapshot.plan.status }] : []),
-    ...(snapshot.plan?.endTime
-      ? [
-          {
-            label: '套餐到期',
-            value: `${formatTime(snapshot.plan.endTime)}${snapshot.plan.autoRenew ? '（自动续费）' : ''}`,
-          },
-        ]
-      : []),
-    ...(snapshot.resetCredits !== undefined
-      ? [{ label: '重置券', value: `${snapshot.resetCredits} 张` }]
-      : []),
     ...(credits ? [{ label: 'Credits', value: String(credits.balance ?? 0) }] : []),
-    ...credentialFacts(snapshot),
-    {
-      label: snapshot.ok ? '采集于' : '采集失败于',
-      value: formatTime(snapshot.collectedAt),
-      ...(snapshot.ok ? {} : { tone: 'critical' as const }),
-    },
   ];
   return (
     <Card
-      className={cn('h-fit border-l-[3px]', TONE_EDGE[status.tone])}
+      className={cn('h-full border-l-[3px]', TONE_EDGE[status.tone])}
       data-testid={`quota-account-${snapshot.accountKey}`}
     >
       <CardHeader className="pb-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="truncate text-base">{snapshot.accountLabel}</CardTitle>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <CardTitle className="break-all text-base">{snapshot.accountLabel}</CardTitle>
               <Badge variant={TONE_BADGE[status.tone]} className="gap-1 px-1.5 py-0 text-[11px]">
                 {status.tone !== 'ok' && <TriangleAlert className="size-3" />}
                 {status.label}
               </Badge>
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">{SOURCE_LABEL[snapshot.sourceKind]}</div>
+              {credential?.availability === 'quota_cooldown' && status.label !== '冷却中' && (
+                <Badge variant="warning" className="px-1.5 py-0 text-2xs" title={credential.cooldownUntil ? `冷却至 ${formatTime(credential.cooldownUntil)}` : undefined}>冷却中</Badge>
+              )}
+              {credential?.availability === 'auth_unavailable' && status.label !== '凭据不可用' && (
+                <Badge variant="danger" className="px-1.5 py-0 text-2xs" title={credential.lastFailureCode}>凭据不可用</Badge>
+              )}
+            {!isCodex && snapshot.plan?.status && snapshot.plan.status !== 'Running' && (
+              <Badge variant="warning" className="px-1.5 py-0 text-2xs">{snapshot.plan.status}</Badge>
+            )}
           </div>
+          <span className={cn('col-start-1 row-start-3 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-1 sm:text-right', !snapshot.ok && 'text-danger-ink')}>
+            {snapshot.ok ? '采集于' : '采集失败于'} {minuteTime(snapshot.collectedAt)}
+          </span>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-xs"
+            className="col-start-2 row-start-1 h-7 px-2 text-xs sm:col-start-3"
             aria-label={`刷新 ${snapshot.accountLabel}`}
             disabled={refreshing}
             onClick={() => onRefresh(snapshot.accountKey)}
           >
             <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
           </Button>
+          <span className="col-start-1 row-start-2 text-xs text-muted-foreground" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>{subtitle}</span>
+          {expiry && <span className="col-start-1 row-start-4 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
+            套餐到期 {minuteTime(expiry)}
+          </span>}
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-md border bg-muted/10 p-3 sm:grid-cols-4">
-          {facts.map((fact) => (
-            <Fact key={fact.label} {...fact} />
-          ))}
-        </div>
         {!snapshot.ok && (
           <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger-ink">
             {snapshot.error ?? '未知错误'}
@@ -305,9 +287,9 @@ function AccountCard({
         {snapshot.windows.length === 0 && snapshot.ok && (
           <p className="text-xs text-muted-foreground">供应商未返回额度窗口。</p>
         )}
-        {snapshot.windows.length > 0 && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {snapshot.windows.map((window) => (
+        {mainWindows.length > 0 && (
+          <div className={cn('grid gap-3', mainWindows.length > 1 && 'sm:grid-cols-2')}>
+            {mainWindows.map((window) => (
               <WindowTile
                 key={window.id}
                 window={window}
@@ -316,11 +298,25 @@ function AccountCard({
             ))}
           </div>
         )}
-        {snapshot.sourceKind === 'volcengine_ark_plan' && (
-          <p className="text-[11px] text-muted-foreground">
-            按火山官方口径，视觉、语音与 Harness 用量不计入 5 小时 / 周额度限制。
-          </p>
+        {facts.length > 0 && <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-3 sm:grid-cols-4">
+          {facts.map((fact) => (
+            <Fact key={fact.label} {...fact} />
+          ))}
+        </div>}
+        {additionalWindows.length > 0 && (
+          <details className="rounded-md border p-3">
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              其他模型额度（{additionalWindows.length} 个窗口）
+              {additionalLimited > 0 && <span className="ml-2 text-warning-ink">{additionalLimited} 个窗口已耗尽</span>}
+            </summary>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {additionalWindows.map((window) => (
+                <WindowTile key={window.id} window={window} baseline={baselineUsedPercent(history, snapshot.accountKey, window.id)} />
+              ))}
+            </div>
+          </details>
         )}
+
       </CardContent>
     </Card>
   );
@@ -383,6 +379,8 @@ export function ProviderQuotaPage() {
     return counts;
   }, [overview?.items]);
 
+  const criticalCount = statusCounts.collectionFailed + statusCounts.exhausted + statusCounts.credentialUnavailable;
+
   if (loading && !overview) {
     return (
       <div className="flex h-64 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
@@ -396,9 +394,13 @@ export function ProviderQuotaPage() {
     <div className="w-full space-y-5">
       <SettingsPanelHeader
         title="套餐额度"
-        description="各模型套餐账号的实时用量、重置时间与撞限状态。数据来源随模型配置：Codex 订阅按已授权账号采集，火山 Agent Plan 在模型分组里配置管控面凭据。"
+        description={
+          <span>{collector?.enabled ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集。` : '本进程按需采集。'}页面不自动刷新，点击「立即采集」更新。</span>
+        }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {criticalCount > 0 && <Badge variant="danger" title={`采集失败 ${statusCounts.collectionFailed} · 额度耗尽 ${statusCounts.exhausted} · 凭据不可用 ${statusCounts.credentialUnavailable}`}>{criticalCount} 个异常</Badge>}
+            {statusCounts.warning > 0 && <Badge variant="warning">{statusCounts.warning} 个需关注</Badge>}
             <Button
               variant="outline"
               size="sm"
@@ -413,40 +415,6 @@ export function ProviderQuotaPage() {
       />
 
       {error && <AdminErrorAlert error={error} />}
-
-      {collector && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>
-            采集器：
-            {collector.enabled
-              ? `每 ${Math.round(collector.intervalMs / 60_000)} 分钟自动采集`
-              : '本进程仅按需刷新'}
-          </span>
-          <span>
-            上次采集：{collector.lastRunAt ? formatTime(collector.lastRunAt) : '尚未运行'}
-          </span>
-          {statusCounts.collectionFailed > 0 && (
-            <span className="inline-flex items-center gap-1 text-danger-ink">
-              <TriangleAlert className="size-3.5" />
-              {statusCounts.collectionFailed} 个账号采集失败
-            </span>
-          )}
-          {statusCounts.exhausted > 0 && (
-            <span className="text-danger-ink">{statusCounts.exhausted} 个账号额度已耗尽</span>
-          )}
-          {statusCounts.credentialUnavailable > 0 && (
-            <span className="text-danger-ink">
-              {statusCounts.credentialUnavailable} 个账号凭据不可用
-            </span>
-          )}
-          {statusCounts.warning > 0 && (
-            <span className="text-warning-ink">{statusCounts.warning} 个账号接近上限或冷却中</span>
-          )}
-          {collector.lastError && (
-            <span className="text-warning-ink">最近错误：{collector.lastError}</span>
-          )}
-        </div>
-      )}
 
       {overview && overview.items.length === 0 ? (
         <EmptyState

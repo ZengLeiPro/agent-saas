@@ -37,7 +37,8 @@ cancel_acs_deployment_drain() {
 }
 
 drain_acs_before_cutover() {
-  local health state status code result deadline proof current_pid terminal_pid
+  local health state status code result deadline proof current_pid terminal_pid next_progress
+  local drain_started legacy_deadline_ms=0 legacy_minimum_seconds=0 proof_state proof_exit_status
   systemctl is-active --quiet "$ACS_SERVICE_NAME" || {
     echo 'ACS must be healthy before starting its generation handoff' >&2; return 1;
   }
@@ -47,14 +48,26 @@ drain_acs_before_cutover() {
   ACS_DRAIN_PROTOCOL="$(printf '%s' "$health" | jq -r '.deploymentDrain.protocolVersion // 0')"
   if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
     printf '%s' "$health" | jq -e --argjson pid "$ACS_DRAIN_PID" '.deploymentDrain.pid==$pid and .draining==false' >/dev/null || return 1
-  else
-    # The first upgrade cannot change the old binary's unsafe timeout behavior.
-    # Require a quiet old generation and still prove its clean exit below.
-    printf '%s' "$health" | jq -e '.inflight==0 and .draining==false' >/dev/null || {
+  elif [ "$ACS_DRAIN_PROTOCOL" = 0 ]; then
+    # Compatibility handoff: stop admission first, then wait for accepted work.
+    # The old binary still owns its timeout; an abnormal exit must never count
+    # as a successful drain or trigger a forced candidate restart.
+    printf '%s' "$health" | jq -e '.draining==false and (.inflight | type=="number" and .>=0 and floor==.)' >/dev/null || {
       ACS_DRAIN_PID=''
-      echo 'Legacy ACS upgrade requires zero inflight work; retry after it drains naturally' >&2
+      echo 'Legacy ACS must report valid inflight work and must not already be draining' >&2
       return 75
     }
+    printf 'Legacy ACS: stopping admission and waiting for accepted work: %s\n' \
+      "$(printf '%s' "$health" | jq -c '{inflight,draining,drainDeadlineMs:.lifecycle.drainDeadlineMs}')" >&2
+    legacy_deadline_ms="$(printf '%s' "$health" | jq -r '.lifecycle.drainDeadlineMs // 0')"
+    if [[ "$legacy_deadline_ms" =~ ^[1-9][0-9]*$ ]]; then
+      legacy_minimum_seconds=$(((legacy_deadline_ms + 999) / 1000))
+    fi
+    echo 'WARNING: legacy runtime may interrupt accepted work at its own drain deadline; only that exact, elapsed timeout exit may enter compatibility cutover' >&2
+  else
+    ACS_DRAIN_PID=''
+    echo 'Unsupported ACS deployment drain protocol; refusing to signal the process' >&2
+    return 1
   fi
   local unit="${ACS_SERVICE_NAME%.service}.service"
   local dropin_root="${ACS_SYSTEMD_RUNTIME_ROOT:-/run/systemd/system}/$unit.d"
@@ -63,26 +76,45 @@ drain_acs_before_cutover() {
   [ ! -e "$ACS_DRAIN_DROPIN" ] || { ACS_DRAIN_DROPIN=''; ACS_DRAIN_PID=''; echo 'Existing ACS drain guard requires recovery' >&2; return 1; }
   (set -o noclobber; printf '[Service]\nRestart=no\n' > "$ACS_DRAIN_DROPIN") || return 1
   systemctl daemon-reload || return 1
+  drain_started=$SECONDS
   kill -USR2 "$ACS_DRAIN_PID" || return 1
   deadline=$((SECONDS + 660))
+  next_progress=$SECONDS
   while [ "$SECONDS" -lt "$deadline" ]; do
     state="$(systemctl show "$ACS_SERVICE_NAME" --property=ActiveState --value)" || return 1
+    if [ "$SECONDS" -ge "$next_progress" ]; then
+      printf 'Waiting for ACS drain: pid=%s protocol=%s state=%s remainingSeconds=%s\n' \
+        "$ACS_DRAIN_PID" "$ACS_DRAIN_PROTOCOL" "$state" "$((deadline - SECONDS))" >&2
+      next_progress=$((SECONDS + 15))
+    fi
     if [ "$state" = inactive ] || [ "$state" = failed ]; then
       terminal_pid="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainPID --value)" || return 1
       status="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainStatus --value)" || return 1
       code="$(systemctl show "$ACS_SERVICE_NAME" --property=ExecMainCode --value)" || return 1
       result="$(systemctl show "$ACS_SERVICE_NAME" --property=Result --value)" || return 1
-      [ "$state:$status:$code:$result:$terminal_pid" = "inactive:0:1:success:$ACS_DRAIN_PID" ] || {
+      proof_state=completed
+      proof_exit_status=0
+      if [ "$state:$status:$code:$result:$terminal_pid" = "inactive:0:1:success:$ACS_DRAIN_PID" ]; then
+        :
+      elif [ "$ACS_DRAIN_PROTOCOL" = 0 ] \
+        && [ "$state:$status:$code:$result:$terminal_pid" = "failed:1:1:exit-code:$ACS_DRAIN_PID" ] \
+        && [ "$legacy_minimum_seconds" -gt 0 ] \
+        && [ "$((SECONDS - drain_started))" -ge "$legacy_minimum_seconds" ]; then
+        proof_state=forced_legacy_cutover
+        proof_exit_status=1
+        echo "Legacy ACS reached its ${legacy_deadline_ms}ms drain deadline; continuing the audited one-time compatibility cutover" >&2
+      else
         echo "ACS did not exit cleanly (expectedPid=$ACS_DRAIN_PID terminalPid=$terminal_pid state=$state status=$status code=$code result=$result)" >&2; return 1;
-      }
+      fi
       proof="$(dirname "$MANIFEST_PATH")/acs-drain-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
       if [ "$ACS_DRAIN_PROTOCOL" = 1 ]; then
         jq -e --argjson pid "$ACS_DRAIN_PID" '.protocolVersion==1 and .pid==$pid and .state=="completed" and .inflight==0' \
           "${ACS_DRAIN_STATE_PATH:-/run/agent-saas-acs-drain.json}" >/dev/null || return 1
       fi
       jq -n --argjson pid "$ACS_DRAIN_PID" --argjson protocol "$ACS_DRAIN_PROTOCOL" \
+        --arg proofState "$proof_state" --argjson exitStatus "$proof_exit_status" \
         --arg releaseId "$release_id" --arg manifestDigest "$manifest_digest" \
-        '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,pid:$pid,protocolVersion:$protocol,state:"completed",exitStatus:0}' > "$proof" || return 1
+        '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,pid:$pid,protocolVersion:$protocol,state:$proofState,exitStatus:$exitStatus}' > "$proof" || return 1
       chmod 0444 "$proof"
       return 0
     fi

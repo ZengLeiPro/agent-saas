@@ -117,6 +117,7 @@ export const PRODUCTION_STARTUP_SCHEMA_ROOTS = Object.freeze([
   'server/src/data/sessionShares/store.ts',
   'server/src/data/skillGovernance/store.ts',
   'server/src/data/skillPresentations/store.ts',
+  'server/src/data/toolDescriptionStore.ts',
   'server/src/dws/authStore.ts',
   'server/src/dws/store.ts',
   'server/src/feishu/authStore.ts',

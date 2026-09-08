@@ -29,72 +29,17 @@ import {
   prepareOrgAgentBackgroundWork,
 } from './orgAgentBackgroundWork.js';
 import { verifyOrgAgentContinuationArtifacts } from './orgAgentContinuation.js';
+import {
+  durableOrgAgentAttemptFixture as durableAttempt,
+  liveOrgAgentBindingFixture as liveBinding,
+  orgAgentChannelFixture as orgChannel,
+  orgAgentExecutionContextFixture,
+} from './orgAgentExecutionContext.testFixtures.js';
 
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
-
-const orgChannel = {
-  bindingId: 'binding-1',
-  accountId: 'account-1',
-  agentId: 'agent-1',
-  conversationSpaceId: 'space-1',
-  workConversationId: 'wc-1',
-  policyRevision: 3,
-  agentPrincipal: {
-    kind: 'org_agent' as const,
-    tenantId: 'tenant-1',
-    agentId: 'agent-1',
-    accountId: 'account-1',
-    workspaceId: 'ws_tenant-1__agent_agent-1',
-  },
-  externalActorAssurance: 'mapped' as const,
-  allowedToolNames: ['Agent'],
-  allowedSkillIds: [],
-  allowedSourceIds: [],
-  contextEnabled: false,
-  taskVisibility: 'conversation' as const,
-  actorRole: 'member' as const,
-  triggerRoles: [],
-  approvalRoles: [],
-  externalActor: {
-    kind: 'external_user' as const,
-    provider: 'dingtalk' as const,
-    corpId: 'corp-1',
-    openId: 'caller-1',
-    assurance: 'mapped' as const,
-    mappedUserId: 'user-1',
-    role: 'member' as const,
-  },
-  channelPrincipal: {
-    provider: 'dingtalk' as const,
-    accountId: 'account-1',
-    conversationId: 'group-1',
-    kind: 'group' as const,
-  },
-};
-
-function liveBinding() {
-  return {
-    bindingId: 'binding-1',
-    tenantId: 'tenant-1',
-    accountId: 'account-1',
-    agentId: 'agent-1',
-    workspaceId: 'ws_tenant-1__agent_agent-1',
-    revision: 3,
-    effectiveConfig: {
-      identity: {},
-      instructions: { system: '' },
-      knowledge: { contextEnabled: false, sourceIds: [] },
-      capabilities: { skillIds: [], toolNames: [], dwsResourceIds: [] },
-      memory: { readAgent: true, readConversation: true, adminWriteConversation: true },
-      access: { triggerRoles: [], approvalRoles: [] },
-      speech: { proactive: false, requireMention: true },
-    },
-  };
-}
-
 function previousRun(sharedReadOnlySubPath: string): RunRecord {
   return {
     runId: 'run-1',
@@ -127,26 +72,6 @@ function previousRun(sharedReadOnlySubPath: string): RunRecord {
     },
   } as RunRecord;
 }
-
-function durableAttempt(overrides: Record<string, unknown> = {}) {
-  return {
-    attemptId: 'attempt-1',
-    runtimeRunId: 'run-1',
-    attemptNo: 1,
-    status: 'failed',
-    publishState: 'rejected',
-    checkpoint: { runtimeRunId: 'run-1', status: 'failed', finishedAt: now() },
-    resultEnvelope: {
-      status: 'failed',
-      summary: '上一轮已定位异常行',
-      facts: [{ key: 'checkedRows', value: '120' }],
-      artifacts: [],
-      writeScope: ['/old-task'],
-    },
-    ...overrides,
-  };
-}
-
 describe('OrgAgentBackgroundWorkCoordinator', () => {
   it('validates persisted lineage before transition and live authority rejects a replaced attempt', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-lineage-')); roots.push(root);
@@ -169,14 +94,21 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
           policyDigest: RUNTIME_ISOLATION_POLICY_DIGEST } } } as unknown as RunRecord;
     const work = { workOrderId: 'work-1', tenantId: 'tenant-1', agentId: 'agent-1', bindingId: 'binding-1',
       workConversationId: 'wc-1', state: 'running', currentAttemptNo: 2,
-      policySnapshot: { revision: 3, allowedSourceIds: ['source-a'] } } as unknown as OrgAgentWorkOrder;
+      policySnapshot: { revision: 3, allowedSourceIds: ['source-a'], executionContext: orgAgentExecutionContextFixture() } } as unknown as OrgAgentWorkOrder;
     const attempt = { attemptId: layout.attemptId, tenantId: 'tenant-1', workOrderId: 'work-1', attemptNo: 2,
       runtimeRunId: 'run-2', status: 'running', taskWorkspaceId: layout.taskWorkspaceId,
       sandboxScopeId: layout.sandboxScopeId, mountSubPath: layout.mountSubPath, sharedReadOnlySubPath: shared,
       publishState: 'rejected', createdAt: now(), updatedAt: now() };
     const binding = { ...liveBinding(), tenantId: 'tenant-1', conversationId: 'group-1', conversationSpaceId: 'space-1' };
+    const currentAgent = { id: 'agent-1', tenantId: 'tenant-1', enabled: true };
+    const authorizeRequester = vi.fn().mockResolvedValue({ allowed: true });
+    const resolvedRequester = { id: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'tenant-1' };
     const transition = vi.fn().mockResolvedValue(attempt);
-    const coordinator = new OrgAgentBackgroundWorkCoordinator({ agentCwd: root, orgGroupAgentStore: {
+    const coordinator = new OrgAgentBackgroundWorkCoordinator({ agentCwd: root,
+      orgAgentStore: { get: vi.fn().mockImplementation(() => currentAgent) },
+      orgAgentChannelPolicyEvaluator: vi.fn().mockResolvedValue({ allowed: true }),
+      resolveOrgAgentRequesterById: vi.fn().mockReturnValue(resolvedRequester),
+      authorizeOrgAgentRequesterLive: authorizeRequester, orgGroupAgentStore: {
       transitionWorkAttempt: transition, getWorkOrder: vi.fn().mockResolvedValue(work),
       listWorkAttempts: vi.fn().mockResolvedValue([attempt]), getBindingById: vi.fn().mockResolvedValue(binding),
       getWorkConversation: vi.fn().mockResolvedValue({ workConversationId: 'wc-1', tenantId: 'tenant-1',
@@ -186,12 +118,29 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       runtimeIsolationRequirement: { ...(record.metadata.runtimeIsolationRequirement as object), tenantId: 'forged' } } } as RunRecord;
     await expect(coordinator.markRunning(forged)).rejects.toThrow('ORG_AGENT_CONTEXT_LINEAGE_RUNTIME_MISMATCH');
     expect(transition).not.toHaveBeenCalled();
+    const policySnapshot = work.policySnapshot; work.policySnapshot = { revision: 3, allowedSourceIds: ['source-a'] };
+    await expect(coordinator.markRunning(record)).rejects.toThrow('ORG_AGENT_EXECUTION_CONTEXT_MISSING_OR_INVALID');
+    expect(transition).not.toHaveBeenCalled(); work.policySnapshot = policySnapshot;
     const lineage = await coordinator.markRunning(record); expect(lineage?.attemptNo).toBe(2);
-    const authority = coordinator.createLiveTaskAuthority(lineage!); await authority.assertCurrent();
+    const authority = coordinator.createLiveTaskAuthority(lineage!, channel);
+    const runtimeConfig = (coordinator as unknown as { config: Record<string, unknown> }).config;
+    for (const key of ['orgAgentChannelPolicyEvaluator', 'authorizeOrgAgentRequesterLive', 'resolveOrgAgentRequesterById']) {
+      const dependency = runtimeConfig[key]; delete runtimeConfig[key];
+      await expect(authority.assertCurrent('ContextSearch')).rejects.toThrow('ORG_AGENT_WORKER_LIVE_AUTHORITY_DEPENDENCY_MISSING');
+      runtimeConfig[key] = dependency;
+    }
+    await authority.assertCurrent('ContextSearch');
+    expect(authorizeRequester).toHaveBeenCalledWith({ channel, requester: resolvedRequester });
+    expect(authorizeRequester).toHaveBeenCalledOnce(); currentAgent.enabled = false;
+    await expect(authority.assertCurrent('Shell')).rejects.toThrow('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+    currentAgent.enabled = true; binding.policy.liveDeny = true;
+    await expect(authority.assertCurrent('ContextSearch')).rejects.toThrow('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+    binding.policy.liveDeny = false; authorizeRequester.mockResolvedValue({ allowed: false });
+    await expect(authority.assertCurrent('Skill')).rejects.toThrow('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+    authorizeRequester.mockResolvedValue({ allowed: true });
     work.currentAttemptNo = 3;
     await expect(authority.assertCurrent()).rejects.toThrow('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
   });
-
   it('fails closed legacy org tasks before writes but ignores ordinary background tasks', async () => {
     const transition = vi.fn(); const coordinator = new OrgAgentBackgroundWorkCoordinator({
       orgGroupAgentStore: { transitionWorkAttempt: transition } } as never);
@@ -221,6 +170,8 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       request: { description: '整理异常', prompt: '执行', agentType: 'general',
         includeCompanyInfo: false },
       parentRunId: 'parent-run', toolCallId: 'tool-1', taskId: 'task-1',
+      agent: { id: 'agent-1', tenantId: 'tenant-1', name: '员工', instructions: '', allowedSkills: [], allowedKnowledge: [], runtime: { schemaVersion: 1 }, enabled: true, updatedAt: now() } as never,
+      modelRef: 'models/model',
     });
 
     expect(result.workOrder).toBe(createdWork);
@@ -231,7 +182,6 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
     expect(result.taskLayout!.mountSubPath).not.toContain('/shared/');
     expect(result.taskLayout!.taskRoot).toContain('/.agent-agent-1/work/task-1/attempt-1');
   });
-
   it('creates a distinct retry attempt, session, workspace and pending runtime run', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-retry-'));
     roots.push(root);
@@ -357,7 +307,6 @@ describe('OrgAgentBackgroundWorkCoordinator', () => {
       sharedReadOnlySubPath: 'tenant-1/.agent-agent-1/shared/binding-1/wc-1',
     });
   });
-
   it('rejects retry metadata that points at another tenant or workspace before queueing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'org-agent-retry-scope-'));
     roots.push(root);

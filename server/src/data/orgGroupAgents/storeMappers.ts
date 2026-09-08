@@ -25,7 +25,7 @@ export function mapBinding(row: Record<string, unknown>): OrgAgentChannelBinding
     tenantId: String(row.tenant_id),
     accountId: String(row.account_id),
     agentId: String(row.agent_id),
-    conversationId: String(row.conversation_id),
+    conversationId: String(row.logical_conversation_id ?? row.conversation_id),
     channelKind: row.channel_kind as 'group' | 'direct',
     activationState: row.activation_state as 'shadow' | 'active' | 'disabled',
     enabled: row.enabled === true,

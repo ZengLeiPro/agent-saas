@@ -23,6 +23,8 @@ export interface AgentDwsAuthFlowServiceLike {
 export class AgentDwsAuthFlowService implements AgentDwsAuthFlowServiceLike {
   private readonly active = new Map<string, AbortController>();
   private readonly tasks = new Map<string, Promise<void>>();
+  private cleanupRetryTimer?: ReturnType<typeof setTimeout>;
+  private cleanupRecoveryTask?: Promise<void>;
   private stopped = false;
 
   constructor(private readonly options: {
@@ -30,7 +32,8 @@ export class AgentDwsAuthFlowService implements AgentDwsAuthFlowServiceLike {
     authSessionStore: DwsAuthSessionStore;
     accountStore: AgentDwsAccountStore;
     runner: DwsDeviceLoginRunnerLike;
-    onBeforeAccountIdentityChange?: (account: AgentDwsAccountRecord) => Promise<void>;
+    stopPreviousIdentity?: (previous: AgentDwsAccountRecord) => Promise<void>;
+    invalidatePreviousIdentityContext?: (previous: AgentDwsAccountRecord) => Promise<void>;
     onConnected?: (account: AgentDwsAccountRecord) => Promise<void>;
     logger?: { info(message: string): void; warn(message: string): void };
   }) {}
@@ -76,11 +79,86 @@ export class AgentDwsAuthFlowService implements AgentDwsAuthFlowServiceLike {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.cleanupRetryTimer) clearTimeout(this.cleanupRetryTimer);
+    this.cleanupRetryTimer = undefined;
     const tasks = [...this.tasks.values()];
     for (const controller of this.active.values()) controller.abort();
     await Promise.all(tasks.map(task => task.catch(() => undefined)));
     this.active.clear();
     this.tasks.clear();
+    await this.cleanupRecoveryTask?.catch(() => undefined);
+  }
+
+  async recoverPendingIdentityCleanup(): Promise<void> {
+    const accounts = await this.options.accountStore.listRunnable();
+    const errors: unknown[] = [];
+    for (const account of accounts) {
+      if (!account.identityCleanupPending) continue;
+      try {
+        await this.recoverIdentityCleanup(account);
+      } catch (error) {
+        errors.push(error);
+        this.options.logger?.warn(
+          `Agent DWS identity cleanup failed account=${account.accountId}: ${compactError(error)}`,
+        );
+      }
+    }
+    if (errors.length > 0) throw new AggregateError(errors, 'Agent DWS identity cleanup incomplete');
+  }
+
+  startIdentityCleanupRecovery(retryMs = 30_000): void {
+    if (this.stopped || this.cleanupRetryTimer || this.cleanupRecoveryTask) return;
+    const schedule = () => {
+      if (this.stopped) return;
+      this.cleanupRetryTimer = setTimeout(() => {
+        this.cleanupRetryTimer = undefined;
+        this.cleanupRecoveryTask = this.recoverPendingIdentityCleanup()
+          .catch(() => undefined)
+          .finally(() => {
+            this.cleanupRecoveryTask = undefined;
+            schedule();
+          });
+      }, Math.max(100, retryMs));
+    };
+    schedule();
+  }
+
+  private async recoverIdentityCleanup(
+    account: AgentDwsAccountRecord,
+    restoreConnectedIdentity = true,
+  ): Promise<void> {
+    if (!account.identityCleanupPending) return;
+    if (!account.identityUpdatedAt) {
+      throw new Error('AGENT_DWS_IDENTITY_CLEANUP_EPOCH_MISSING');
+    }
+    if (!this.options.accountStore.markIdentityCleanupStep) {
+      throw new Error('AGENT_DWS_IDENTITY_CLEANUP_STORE_UNAVAILABLE');
+    }
+    let current = account;
+    const pending = account.identityCleanupPending;
+    const previous = { ...account, ...pending.previous };
+    if (!pending.streamStopped) {
+      if (!this.options.stopPreviousIdentity) {
+        throw new Error('AGENT_DWS_IDENTITY_CLEANUP_STOP_UNAVAILABLE');
+      }
+      await this.options.stopPreviousIdentity(previous);
+      current = await this.options.accountStore.markIdentityCleanupStep(
+        account.tenantId, account.accountId, account.identityUpdatedAt, 'stream_stopped',
+      );
+    }
+    if (current.identityCleanupPending && !current.identityCleanupPending.contextInvalidated) {
+      if (!this.options.invalidatePreviousIdentityContext) {
+        throw new Error('AGENT_DWS_IDENTITY_CLEANUP_CONTEXT_UNAVAILABLE');
+      }
+      if (restoreConnectedIdentity && !this.options.onConnected) {
+        throw new Error('AGENT_DWS_IDENTITY_CLEANUP_CONNECT_UNAVAILABLE');
+      }
+      await this.options.invalidatePreviousIdentityContext(previous);
+      if (restoreConnectedIdentity) await this.options.onConnected?.(current);
+      await this.options.accountStore.markIdentityCleanupStep(
+        account.tenantId, account.accountId, account.identityUpdatedAt, 'context_invalidated',
+      );
+    }
   }
 
   private async run(
@@ -111,7 +189,13 @@ export class AgentDwsAuthFlowService implements AgentDwsAuthFlowServiceLike {
         || account.corpId !== profile.corpId
         || account.dingtalkUserId !== profile.dingtalkUserId
       );
-      if (identityChanged) await this.options.onBeforeAccountIdentityChange?.(account);
+      if (identityChanged && (
+        account.authorizationIntent?.mode !== 'replace_identity'
+        || account.authorizationIntent.expectedProfileId !== account.profileId
+        || account.authorizationIntent.expectedIdentityUpdatedAt !== account.identityUpdatedAt
+      )) {
+        throw new Error('AGENT_DWS_ACCOUNT_IDENTITY_CHANGE_NOT_CONFIRMED');
+      }
       const updated = await this.options.accountStore.markAuthorized(
         account.tenantId,
         account.accountId,
@@ -120,7 +204,21 @@ export class AgentDwsAuthFlowService implements AgentDwsAuthFlowServiceLike {
         'system:agent-dws-auth',
       );
       await this.options.authSessionStore.markConnected(session.sessionId, identity);
+      let identityCleanupError: unknown;
+      if (identityChanged) {
+        try {
+          await this.recoverIdentityCleanup(updated, false);
+        } catch (error) {
+          identityCleanupError = error;
+        }
+      }
+      // CAS 已提交后必须始终恢复新身份；后处理失败不能再把新身份标成授权失败。
       await this.options.onConnected?.(updated);
+      if (identityCleanupError) {
+        this.options.logger?.warn(
+          `Agent DWS old identity cleanup incomplete account=${account.accountId}: ${compactError(identityCleanupError)}`,
+        );
+      }
       this.options.logger?.info(`Agent DWS authorization connected account=${account.accountId} profile=${profile.profileId}`);
     } catch (error) {
       const message = compactError(error);

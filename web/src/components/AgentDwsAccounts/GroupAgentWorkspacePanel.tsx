@@ -18,6 +18,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { authFetch } from '@/lib/authFetch';
 import { WorkspaceHierarchy } from './GroupAgentWorkspaceHierarchy';
+import { ReadinessSummary } from './ReadinessSummary';
 import {
   GroupAgentApprovalQueue,
   type GroupAgentApproval,
@@ -72,6 +73,7 @@ export interface Binding {
       accountStatus: string;
     };
   };
+  readiness?: import('@agent/shared/types/agentDwsAccount').AgentDwsReadiness;
 }
 
 export interface WorkOrder {
@@ -605,6 +607,7 @@ function BindingEditor({
           立即阻断
         </label>
       </div>
+      <ReadinessSummary readiness={binding.readiness} />
       <div>
         <Label htmlFor={`instructions-${binding.bindingId}`}>群 Agent 指令</Label>
         <Textarea

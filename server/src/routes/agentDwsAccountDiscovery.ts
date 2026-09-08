@@ -12,6 +12,7 @@ import type {
   OrgAgentChannelBinding,
   OrgGroupAgentStore,
 } from '../data/orgGroupAgents/index.js';
+import { deriveAccountDwsReadiness } from './agentDwsReadiness.js';
 import { deriveAgentWorkspaceId } from '../runtime/workspaceIdentity.js';
 
 export function observedGroupOptions(
@@ -109,8 +110,10 @@ export function toPublicAccount(account: AgentDwsAccountRecord): Record<string, 
     lastEventAt: account.lastEventAt ?? null,
     lastError: account.lastError ?? null,
     revision: account.revision,
+    identityUpdatedAt: account.identityUpdatedAt ?? null,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
+    readiness: deriveAccountDwsReadiness(account),
   };
 }
 

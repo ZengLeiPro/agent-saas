@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { promisify } from 'util';
 import { z } from 'zod';
-import type { AgentRunHooks } from './types.js'; export type SandboxWorkloadWireDescriptor = import('./types.js').SandboxWorkloadWireDescriptor;
+export type SandboxWorkloadWireDescriptor = import('./types.js').SandboxWorkloadWireDescriptor;
 import {
   buildToolPresentation,
   extractToolResultMetadata,
@@ -22,9 +22,9 @@ import type {
   ExecutionTransportRegistry,
 } from '../runtime/executionTransport.js';
 import { isSupersededHand, selectRuntimeHandRoute, type HandStore } from '../runtime/handStore.js';
-import type { RuntimeIsolationRequirement } from '../runtime/runtimeIsolationEvidence.js';
-import type { OrgAgentWorkerTaskAuthority } from '../runtime/orgAgentWorkerCapability.js';
-import type { OrgAgentWorkerTaskLineage } from '../runtime/orgAgentTaskWorkspace.js';
+import { assertLiveOrgAgentWorkerTaskAuthority } from '../runtime/orgAgentWorkerCapability.js';
+import type { ToolCallContext, WorkspaceRef } from './toolCallContext.js';
+export type { ToolCallContext, WorkspaceRef } from './toolCallContext.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   DefaultExecutionTransportRegistry,
@@ -87,87 +87,6 @@ export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous'; export type Too
  * - client：客户机器 daemon 反向连接（阶段 3 落地，目前仅类型预留）
  */
 export type ExecutionTargetKind = 'server-local' | 'server-container' | 'server-remote' | 'client'; // workload type is re-exported above
-
-/**
- * Workspace 引用。
- *
- * PR 1.5 引入 `id`（workspaceId）字段，实施"workspace 三方角色"心智的过渡：
- * - brain 侧仍持 `root` 作 in-process backend 的本地路径（server-local /
- *   server-container 透传给 docker mount）。
- * - server-remote backend 序列化 envelope 时**只传 `id` 不传 `root`**——远端
- *   hand-server 自己有 `workspaceResolver` 把 id 映射到 hand-server 本地路径。
- *
- * 未来阶段 3 客户 daemon 上线时，`root` 字段会彻底消失，只留 `id`。
- */
-export interface WorkspaceRef {
-  /**
-   * Workspace 逻辑标识。brain 端用 sessionId 或 `${userId}:${sessionId}` 之类生成；
-   * server-remote 调用时只传 id 不传 root。
-   * PR 1.4+1.5 引入；阶段 3 之前不强制（不传时 server-local / server-container
-   * 走 `root` 路径）。
-   */
-  id?: string;
-  /**
-   * In-process backend 用的本地路径。server-remote backend 不通过本字段定位
-   * workspace——远端 hand 自己的 resolver 用 `id` 解析。
-   */
-  root: string;
-  userId?: string;
-  username?: string;
-  /**
-   * 多组织身份槽（P4 防御纵深，2026-06-22 落地）。LocalWorkspaceProvider.resolve
-   * 从 ChannelContext.user.tenantId / sessionOwner.tenantId 自动填充。
-   * ServerLocal / Container 的 envBuilder 用它装配子进程 env 隔离。
-   * server-remote 不序列化此字段到 wire（远端 hand-server 自身只属一个组织）。
-   */
-  tenantId?: string;
-  sessionId?: string;
-  /**
-   * 顶层会话 ID（per-session Sandbox，2026-08-10 A 方案）。顶层会话＝自身 sessionId；
-   * 子 Agent / 孙 Agent / 后台任务**原样继承父值**，因此「父 + 全部后代」恒定落在
-   * 同一 sandboxScopeId → 同一 pod（决策 7），无需查库回溯父子链。
-   * 缺省时 sandbox 归属退回 workspace 级共享（旧行为，安全 fallback）。
-   */
-  topLevelSessionId?: string;
-  sandboxScopeId?: string; mountSubPath?: string; sharedReadOnlySubPath?: string; workload?: SandboxWorkloadWireDescriptor;
-  /**
-   * 当前执行端已经挂载的组织共享只读根。它是 hand-local 绝对路径，只能由受信
-   * provider/runner 装配，绝不通过 brain→hand wire 接受调用方传值。
-   */
-  sharedReadOnlyRoot?: string;
-  /** Standalone connector ACS resource target; normal Agent calls inherit their profile. */ sandboxResources?: { cpu: string; memoryMb: number };
-  executionTarget: ExecutionTargetKind;
-  /**
-   * Host-path guard for server-local execution. Raw runtime uses this as a
-   * portable sandbox fallback so accidental server-local routing cannot read
-   * known cross-tenant / secret paths even before an OS sandbox is attached.
-   */
-  sandboxPolicy?: {
-    denyRead: string[];
-  };
-}
-export interface ToolCallContext {
-  channelContext: ChannelContext;
-  workspace: WorkspaceRef;
-  /** 当前任务从能力中心连接器注入的运行态环境变量。 */
-  env?: Record<string, string>;
-  sessionId?: string;
-  runId?: string;
-  /** Host-derived immutable fence; present only on a matching session automation Run. */
-  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string; rootSessionId?:string; rootRunId?:string };
-  /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
-  runtimeIsolationRequirement?: RuntimeIsolationRequirement;
-  orgAgentTaskLineage?: OrgAgentWorkerTaskLineage;
-  orgAgentTaskAuthority?: OrgAgentWorkerTaskAuthority;
-  executionRole?: 'worker';
-  runtimeIsolationAttested?: boolean;
-  toolCallId?: string;
-  invocationId?: string; correlation?: import('@agent/shared').CorrelationContext;
-  onStreamChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => Promise<void> | void;
-  hooks?: AgentRunHooks;
-  signal?: AbortSignal;
-  executionAudit?: ExecutionAuditRecorder;
-}
 
 /**
  * 平台内建工具的分组。仅用于 admin UI 归类展示，不影响运行时行为。
@@ -1305,6 +1224,7 @@ export class PlatformToolRuntime implements ToolRuntime {
   }
 
   async invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult> {
+    if (context.executionRole === 'worker') await assertLiveOrgAgentWorkerTaskAuthority({ ...context, workspaceId: context.workspace.id, sandboxScopeId: context.workspace.sandboxScopeId }, call.toolId);
     if (!isToolEnabled(this.toolControls, call.toolId)) {
       throw new Error(`Tool ${call.toolId} is disabled by platform config.`);
     }

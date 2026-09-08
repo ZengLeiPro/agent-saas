@@ -38,7 +38,9 @@ function accountStore(): AgentDwsAccountStore {
     listRunnable: vi.fn(async () => []), getForTenant: vi.fn(async () => account),
     deleteForTenant: vi.fn(async () => 1),
     create: vi.fn(async () => account), markAuthorizing: vi.fn(async () => account),
-    markAuthorized: vi.fn(async () => ({ ...account, status: 'active' as const, revision: 8 })),
+    markAuthorized: vi.fn(async (_tenantId, _accountId, _revision, profile) => ({
+      ...account, ...profile, status: 'active' as const, revision: 8,
+    })),
     markAuthorizationFailed: vi.fn(async () => undefined), setEnabled: vi.fn(async () => account),
     setContextPolicy: vi.fn(async () => account),
     claimRuntimeLease: vi.fn(async () => true), renewRuntimeLease: vi.fn(async () => true),
@@ -62,7 +64,7 @@ describe('AgentDwsAuthFlowService', () => {
     root = undefined;
   });
 
-  it('重授权先失效旧身份资源，再接受有新鲜证据的 currentProfile', async () => {
+  it('换绑 CAS 后即使旧身份清理失败也恢复新身份连接', async () => {
     root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
     const agentCwd = join(root, 'workspaces');
     const profileDir = join(
@@ -84,13 +86,29 @@ describe('AgentDwsAuthFlowService', () => {
       ],
     }));
     const accounts = accountStore();
+    accounts.markAuthorized = vi.fn(async (_tenantId, _accountId, _revision, profile) => ({
+      ...account, ...profile, status: 'active' as const, revision: 8,
+      identityUpdatedAt: '2026-08-30T00:00:01.000Z',
+      identityCleanupPending: {
+        previous: {
+          profileId: 'corp-a:ding-user-old', corpId: 'corp-a',
+          dingtalkUserId: 'ding-user-old', identityUpdatedAt: '2026-08-12T00:00:00.000Z',
+        },
+        streamStopped: false, contextInvalidated: false,
+      },
+    }));
+    accounts.markIdentityCleanupStep = vi.fn(async () => account);
     const auth = authStore();
-    const onBeforeAccountIdentityChange = vi.fn(async () => undefined);
+    const stopPreviousIdentity = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const onConnected = vi.fn(async () => undefined);
     const service = new AgentDwsAuthFlowService({
       agentCwd,
       authSessionStore: auth,
       accountStore: accounts,
-      onBeforeAccountIdentityChange,
+      stopPreviousIdentity,
+      onConnected,
       runner: {
         login: vi.fn(async () => {
           await writeFile(profileFile, JSON.stringify({
@@ -114,14 +132,20 @@ describe('AgentDwsAuthFlowService', () => {
       profileId: 'corp-a:ding-user-old',
       corpId: 'corp-a',
       dingtalkUserId: 'ding-user-old',
+      identityUpdatedAt: '2026-08-12T00:00:00.000Z',
+      authorizationIntent: {
+        mode: 'replace_identity',
+        expectedProfileId: 'corp-a:ding-user-old',
+        expectedIdentityUpdatedAt: '2026-08-12T00:00:00.000Z',
+      },
     });
     await waitForCall(accounts.markAuthorized as ReturnType<typeof vi.fn>);
-    expect(onBeforeAccountIdentityChange).toHaveBeenCalledWith(expect.objectContaining({
+    expect(stopPreviousIdentity).toHaveBeenCalledWith(expect.objectContaining({
       profileId: 'corp-a:ding-user-old',
       dingtalkUserId: 'ding-user-old',
     }));
-    expect(onBeforeAccountIdentityChange.mock.invocationCallOrder[0])
-      .toBeLessThan((accounts.markAuthorized as ReturnType<typeof vi.fn>)
+    expect(stopPreviousIdentity.mock.invocationCallOrder[0])
+      .toBeGreaterThan((accounts.markAuthorized as ReturnType<typeof vi.fn>)
         .mock.invocationCallOrder[0]!);
     expect(accounts.markAuthorized).toHaveBeenCalledWith(
       'tenant-a', 'adws-1', 7,
@@ -131,6 +155,9 @@ describe('AgentDwsAuthFlowService', () => {
       'system:agent-dws-auth',
     );
     expect(auth.markConnected).toHaveBeenCalled();
+    expect(onConnected).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: 'corp-a:ding-user-a', status: 'active',
+    }));
     await service.stop();
   });
 

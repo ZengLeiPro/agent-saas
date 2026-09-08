@@ -33,6 +33,7 @@ import { authFetch } from "@/lib/authFetch";
 import { ContextPolicyDialog } from './ContextPolicyDialog';
 import { DelegationAccessPanel } from './DelegationAccessPanel';
 import { GroupAgentWorkspacePanel } from './GroupAgentWorkspacePanel';
+import { ReadinessSummary } from './ReadinessSummary';
 
 interface AgentDwsAccountsPageProps {
   tenantId: string;
@@ -379,7 +380,10 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
     draft: { agentId, displayName, loginId, corpId },
   });
 
-  const handleAuthorize = async (account: AgentDwsAccount) => {
+  const handleAuthorize = async (
+    account: AgentDwsAccount,
+    mode: "reauthorize" | "replace_identity" = "reauthorize",
+  ) => {
     const requestedTenantId = tenantId;
     const requestedScope = tenantScopeRef.current;
     const actionKey = `${account.accountId}:authorize`;
@@ -392,7 +396,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ expectedRevision: account.revision }),
+          body: JSON.stringify({ expectedRevision: account.revision, mode }),
         },
       );
       if (!response.ok) throw await responseError(response, "发起 OAuth 授权失败");
@@ -408,6 +412,14 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
     } finally {
       if (tenantScopeRef.current === requestedScope) setBusyAction(null);
     }
+  };
+
+  const handleReplaceIdentity = async (account: AgentDwsAccount) => {
+    const confirmed = window.confirm(
+      "确认换绑为另一名钉钉成员？员工、历史记录和文件会保留；旧身份的群绑定、消息和待投递结果不会由新身份接管，需要重新观测并配置会话。",
+    );
+    if (!confirmed) return;
+    await handleAuthorize(account, "replace_identity");
   };
 
   const handleEnabledChange = async (account: AgentDwsAccount, enabled: boolean) => {
@@ -609,7 +621,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                     ? "授权进行中"
                     : authorizationNeedsReset
                       ? "重置授权"
-                      : account.status === "active" ? "重新授权" : "发起 OAuth";
+                      : account.status === "active" ? "刷新授权" : "发起 OAuth";
                   const contextScope = contextPolicyText(account);
 
                   return (
@@ -645,6 +657,7 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                       </TableCell>
                       <TableCell className="min-w-44 align-top">
                         <Badge variant={runtimeStatus.variant}>{runtimeStatus.label}</Badge>
+                        <ReadinessSummary readiness={account.readiness} />
                         {account.lastError ? (
                           <p className="mt-2 max-w-64 whitespace-normal break-words text-xs text-danger-ink">
                             {account.lastError}
@@ -698,6 +711,16 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
                                 : null}
                               {authorizeLabel}
                             </Button>
+                            {account.status === "active" ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void handleReplaceIdentity(account)}
+                                disabled={rowBusy || authorizationPending || queryingSession}
+                              >
+                                换绑成员
+                              </Button>
+                            ) : null}
                             {account.status === "active" && account.runtimeStatus === "error" ? (
                               <Button
                                 variant="outline"

@@ -286,7 +286,7 @@ describe('DurableBackgroundTaskService', () => {
     expect(activateCommand).toHaveBeenCalledWith(effectiveContext, 'shell-bg-effective');
   });
 
-  it('persists a hidden Worker session/run with dispatcher snapshot and emits background_task_started', async () => {
+  it('does not grant ordinary background tasks org Worker authority', async () => {
     const { service, runStore, sessionCatalog, eventStore } = fixture();
     sessionCatalog.records.set('parent-session-1', {
       ...session('parent-session-1'),
@@ -342,13 +342,15 @@ describe('DurableBackgroundTaskService', () => {
       shortTaskId: started.shortTaskId,
       orgAgentId: 'org-kaikai',
       executionMode: 'dispatcher',
-      executionRole: 'worker', sandboxResources: { cpu: '2', memoryMb: 4096 },
+      sandboxResources: { cpu: '2', memoryMb: 4096 },
       wakeState: 'none',
     });
     expect(sessionCatalog.records.get(task.sessionId)).toMatchObject({
-      kind: 'subagent', status: 'idle', executionRole: 'worker', orgAgentId: 'org-kaikai',
+      kind: 'subagent', status: 'idle', orgAgentId: 'org-kaikai',
       orgAgentSnapshot: expect.objectContaining({ name: '开开' }),
     });
+    expect(task.metadata).not.toHaveProperty('executionRole');
+    expect(sessionCatalog.records.get(task.sessionId)).not.toHaveProperty('executionRole');
     await expect(service.get(context, started.shortTaskId)).resolves.toMatchObject({ runId: started.taskId });
     const duplicate = { ...task, runId: 'bg-duplicate', metadata: { ...task.metadata } };
     runStore.records.set(duplicate.runId, duplicate);

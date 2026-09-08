@@ -6,7 +6,7 @@ import type { OrgAgentWorkerTaskLineage } from './orgAgentTaskWorkspace.js';
 
 export interface OrgAgentWorkerTaskAuthority {
   readonly taskRunId: string; readonly taskSessionId: string; readonly attemptId: string;
-  assertCurrent(): Promise<void>;
+  assertCurrent(toolName?: string): Promise<void>;
 }
 
 export interface OrgAgentWorkerRunContext {
@@ -63,11 +63,14 @@ export function isAttestedOrgAgentWorkerTaskContext(context: OrgAgentWorkerAutho
     && requirement.policyDigest === RUNTIME_ISOLATION_POLICY_DIGEST;
 }
 
-export async function assertLiveOrgAgentWorkerTaskAuthority(context: OrgAgentWorkerAuthorizationContext): Promise<void> {
+export async function assertLiveOrgAgentWorkerTaskAuthority(
+  context: OrgAgentWorkerAuthorizationContext,
+  toolName?: string,
+): Promise<void> {
   const authority = context.orgAgentTaskAuthority;
   if (!authority || !isAttestedOrgAgentWorkerTaskContext(context))
     throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_INVALID');
-  await authority.assertCurrent();
+  await authority.assertCurrent(toolName);
 }
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {

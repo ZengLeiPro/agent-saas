@@ -87,6 +87,13 @@ const workspace = {
           accountStatus: 'active',
         },
       },
+      readiness: {
+        status: 'blocked',
+        checks: [{
+          code: 'binding.live_deny', severity: 'blocking',
+          message: '当前群已开启立即阻断', fixTarget: 'group_binding',
+        }],
+      },
     },
   ],
   workspaces: [
@@ -167,6 +174,13 @@ describe('GroupAgentWorkspacePanel', () => {
           return jsonResponse({ status: 'queued' }, 202);
         return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
       });
+  });
+
+  it('用人话展示群就绪阻断项', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByText('尚未就绪')).toBeTruthy();
+    expect(screen.getByText(/当前群已开启立即阻断；请检查群配置/)).toBeTruthy();
   });
 
   it('把仅作为知识发布的技能纳入群能力目录', async () => {

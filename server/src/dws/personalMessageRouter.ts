@@ -38,9 +38,11 @@ import {
 import {
   assertDwsReplyAttemptFresh,
   authorizeCurrentDwsRequester,
+  authorizeDirectDelivery,
   boundedExternalId,
   boundedPositive,
   buildSystemContext,
+  buildOrgAgentSharedContext,
   collectAssistantText,
   compactError,
   deterministicId,
@@ -51,6 +53,8 @@ import {
   persistedRejectionReason,
   prepareRoutingClarificationReply,
   rejectionMessage,
+  rejectDwsAccess,
+  requesterIdentitySnapshot,
   safeLogId,
   serviceIdentity,
 } from './personalMessageRouterHelpers.js';
@@ -310,8 +314,13 @@ export class AgentDwsMessageRouter {
         ...(this.options.authorizeCompletionRequester
           ? { authorizeCompletionRequester: this.options.authorizeCompletionRequester }
           : {}),
-        authorizeDirectDelivery: (delivery, account) =>
-          this.authorizeDirectDelivery(delivery, account),
+        authorizeDirectDelivery: (delivery, account) => authorizeDirectDelivery({
+          delivery, account, messageStore: this.options.messageStore,
+          resolveRequester: this.options.resolveRequester,
+          ...(this.options.resolveRequesterOutcome
+            ? { resolveRequesterOutcome: this.options.resolveRequesterOutcome } : {}),
+          authorizeRequester: this.options.authorizeRequester,
+        }),
       }))
     )
       return true;
@@ -595,24 +604,17 @@ export class AgentDwsMessageRouter {
           'agent-dws-private-completion',
           `${privateCompletion.workOrderId}:${privateCompletion.createdByActor.openId}`,
         )
-      : (shared?.workConversation.sessionId ?? legacyBinding!.sessionId);
+      // ConversationSpace owns the durable front desk. WorkConversation remains a
+      // topic/task index and must not split ordinary channel dialogue into a random
+      // session whenever routing selects or creates another topic.
+      : (shared?.binding.serviceSessionId ?? legacyBinding!.sessionId);
     const claimed = await this.options.messageStore.markDispatchStarted(
       item.inboxId,
       this.workerId,
       item.leaseFence,
       sessionId,
       runId,
-      requester?.tenantId
-        ? {
-            id: requester.id,
-            username: requester.username,
-            role: requester.role,
-            tenantId: requester.tenantId,
-            ...(requester.dingtalkStaffId
-              ? { dingtalkStaffId: requester.dingtalkStaffId }
-              : {}),
-          }
-        : undefined,
+      requesterIdentitySnapshot(requester),
     );
 
     const frontReplyDeadline =
@@ -713,116 +715,16 @@ export class AgentDwsMessageRouter {
     );
   }
 
-  private async authorizeDirectDelivery(
-    delivery: import('../data/orgGroupAgents/index.js').DwsDeliveryIntent,
-    account: AgentDwsAccountRecord,
-  ): Promise<{ allowed: boolean; reason?: string }> {
-    if (!delivery.inboxId || !delivery.destination.peerOpenId) {
-      return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
-    }
-    const item = await this.options.messageStore.getById(delivery.tenantId, delivery.inboxId);
-    const snapshot = item?.payload.requesterIdentity;
-    if (
-      !item
-      || item.accountId !== delivery.accountId
-      || item.conversationId !== delivery.conversationId
-      || item.senderOpenDingtalkId !== delivery.destination.peerOpenId
-      || !snapshot
-      || typeof snapshot !== 'object'
-    ) {
-      return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
-    }
-    const expected = snapshot as Record<string, unknown>;
-    if (
-      typeof expected.id !== 'string'
-      || typeof expected.username !== 'string'
-      || (expected.role !== 'admin' && expected.role !== 'user')
-      || typeof expected.tenantId !== 'string'
-      || expected.tenantId !== delivery.tenantId
-      || !item.sessionId
-      || !item.runId
-    ) {
-      return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
-    }
-    return await authorizeCurrentDwsRequester({
-      account,
-      expectedRequester: {
-        id: expected.id,
-        username: expected.username,
-        role: expected.role,
-        tenantId: expected.tenantId,
-        ...(typeof expected.dingtalkStaffId === 'string'
-          ? { dingtalkStaffId: expected.dingtalkStaffId }
-          : {}),
-      },
-      senderOpenDingtalkId: item.senderOpenDingtalkId,
-      ...(typeof item.payload.senderName === 'string'
-        ? { senderName: item.payload.senderName }
-        : {}),
-      sessionId: item.sessionId,
-      runId: item.runId,
-      resolveRequester: this.options.resolveRequester,
-      ...(this.options.resolveRequesterOutcome
-        ? { resolveRequesterOutcome: this.options.resolveRequesterOutcome }
-        : {}),
-      authorizeRequester: this.options.authorizeRequester,
-    });
-  }
   private async rejectAccess(
     account: AgentDwsAccountRecord,
     item: AgentDwsInboxRecord,
     reason: string,
     requester?: UserIdentity,
   ): Promise<void> {
-    await this.options.auditRequesterRejection({
-      account,
-      eventId: item.eventId,
-      ...(requester ? { requester } : {}),
-      reason,
-    });
-    if (item.state === 'reply_pending' && item.replyKind !== 'access_rejection') {
-      await this.visibleReply.replacePendingWithAccessRejection(
-        account, item, rejectionMessage(reason), reason,
-      );
-      this.options.logger?.warn(`Agent DWS pending normal reply reconciled account=${item.accountId} event=${item.eventId} reason=${reason}`);
-      return;
-    }
-    // processing 阶段先持久化拒绝正文与类型；拒绝型 reply_pending 重领时直接恢复。
-    const saved = item.state === 'reply_pending'
-      ? item
-      : await this.options.messageStore.saveRejectionResult(
-          item.inboxId,
-          this.workerId,
-          item.leaseFence,
-          rejectionMessage(reason),
-          reason,
-        );
-    const responseText = saved.responseText ?? rejectionMessage(reason);
-    const reasonCode = saved.rejectionReasonCode ?? reason;
-    const replyAttempt = await this.options.messageStore.markReplyAttemptStarted(
-      item.inboxId,
-      this.workerId,
-      item.leaseFence,
-    );
-    assertDwsReplyAttemptFresh(replyAttempt.replyStartedAt, 'rejection reply', this.options.now?.() ?? Date.now());
-    const rejectionDelivery = await this.visibleReply.send(
-      account,
-      item,
-      responseText,
-      undefined,
-      'access_rejection',
-      'rejected',
-    );
-    if (!(await finalizeReplyDelivery(this.options.messageStore, this.workerId, item, rejectionDelivery))) return;
-    await this.options.messageStore.reject(
-      item.inboxId,
-      this.workerId,
-      item.leaseFence,
-      reasonCode,
-    );
-    this.options.logger?.warn(
-      `Agent DWS requester rejected account=${item.accountId} event=${item.eventId} reason=${reasonCode}`,
-    );
+    await rejectDwsAccess({ account, item, reason, ...(requester ? { requester } : {}),
+      owner: this.workerId, messageStore: this.options.messageStore, visibleReply: this.visibleReply,
+      audit: this.options.auditRequesterRejection, now: this.options.now,
+      warn: message => this.options.logger?.warn(message) });
   }
   private async recoverOrResumeMissingRun(
     item: AgentDwsInboxRecord,
@@ -950,6 +852,7 @@ export class AgentDwsMessageRouter {
                 allowedSkillIds: [...shared.binding.effectiveConfig.capabilities.skillIds],
                 allowedSourceIds: [...shared.binding.effectiveConfig.knowledge.sourceIds],
                 dwsResourceIds: [...shared.binding.effectiveConfig.capabilities.dwsResourceIds],
+                sharedContext: buildOrgAgentSharedContext(shared),
                 contextEnabled: shared.binding.effectiveConfig.knowledge.contextEnabled,
                 taskVisibility: shared.binding.policy.taskVisibility,
                 ...(shared.governanceRole ? { actorRole: shared.governanceRole } : {}),

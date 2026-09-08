@@ -9,6 +9,7 @@ import {
   failClosedAgentDwsContextPolicy,
   hasExactAgentDwsProfile,
   type AgentDwsAccountRecord,
+  type AgentDwsAuthorizationMode,
   type AgentDwsAuthorizedProfile,
   type AgentDwsContextPolicy,
   type AgentDwsContextPolicyMode,
@@ -22,9 +23,12 @@ export interface AgentDwsAccountStore {
   getForTenant(tenantId: string, accountId: string): Promise<AgentDwsAccountRecord | null>;
   deleteForTenant(tenantId: string): Promise<number>;
   create(input: CreateAgentDwsAccountInput): Promise<AgentDwsAccountRecord>;
-  markAuthorizing(tenantId: string, accountId: string, expectedRevision: number, updatedBy: string): Promise<AgentDwsAccountRecord>;
+  markAuthorizing(tenantId: string, accountId: string, expectedRevision: number, updatedBy: string,
+    mode?: AgentDwsAuthorizationMode): Promise<AgentDwsAccountRecord>;
   markAuthorized(tenantId: string, accountId: string, expectedRevision: number, profile: AgentDwsAuthorizedProfile, updatedBy: string): Promise<AgentDwsAccountRecord>;
   markAuthorizationFailed(tenantId: string, accountId: string, expectedRevision: number, error: string, updatedBy: string): Promise<void>;
+  markIdentityCleanupStep?(tenantId: string, accountId: string, identityUpdatedAt: string,
+    step: 'stream_stopped' | 'context_invalidated'): Promise<AgentDwsAccountRecord>;
   setEnabled(tenantId: string, accountId: string, enabled: boolean, expectedRevision: number, updatedBy: string): Promise<AgentDwsAccountRecord>;
   setContextPolicy(
     tenantId: string,
@@ -136,16 +140,23 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     accountId: string,
     expectedRevision: number,
     updatedBy: string,
+    mode: AgentDwsAuthorizationMode = 'reauthorize',
   ): Promise<AgentDwsAccountRecord> {
     const result = await this.pool.query(`
       UPDATE ${this.table}
       SET status='authorizing',runtime_status='stopped',last_error=NULL,
           runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,
+          event_policy_json=jsonb_set(COALESCE(event_policy_json,'{}'::jsonb),
+            '{authorizationIntent}',jsonb_build_object(
+              'mode',$5::text,'expectedProfileId',profile_id,
+              'expectedIdentityUpdatedAt',identity_updated_at
+            ),TRUE),
           revision=revision+1,updated_at=NOW(),updated_by=$4
       WHERE tenant_id=$1 AND account_id=$2 AND revision=$3
         AND status NOT IN ('paused','authorizing')
+        AND NOT (COALESCE(event_policy_json,'{}'::jsonb) ? 'identityCleanupPending')
       RETURNING *
-    `, [tenantId, accountId, expectedRevision, updatedBy]);
+    `, [tenantId, accountId, expectedRevision, updatedBy, mode]);
     return await this.requireUpdated(result.rows[0], tenantId, accountId);
   }
 
@@ -164,13 +175,37 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
       SET profile_id=$4,corp_id=$5,corp_name=$6,
           dingtalk_user_id=$7,dingtalk_user_name=$8,status='active',
           runtime_status='stopped',last_error=NULL,revision=revision+1,
+          event_policy_json=(COALESCE(event_policy_json,'{}'::jsonb)-'authorizationIntent') ||
+            CASE WHEN profile_id IS NOT NULL AND corp_id IS NOT NULL
+              AND dingtalk_user_id IS NOT NULL AND identity_updated_at IS NOT NULL
+              AND (profile_id IS DISTINCT FROM $4 OR corp_id IS DISTINCT FROM $5
+                OR dingtalk_user_id IS DISTINCT FROM $7) THEN jsonb_build_object(
+                'identityCleanupPending',jsonb_build_object(
+                  'previous',jsonb_build_object('profileId',profile_id,'corpId',corp_id,
+                    'dingtalkUserId',dingtalk_user_id,'identityUpdatedAt',identity_updated_at),
+                  'streamStopped',FALSE,'contextInvalidated',FALSE))
+              ELSE '{}'::jsonb END,
           identity_updated_at=CASE
             WHEN profile_id IS DISTINCT FROM $4 OR corp_id IS DISTINCT FROM $5
-              OR dingtalk_user_id IS DISTINCT FROM $7 THEN NOW()
+              OR dingtalk_user_id IS DISTINCT FROM $7
+              THEN GREATEST(NOW(),identity_updated_at+INTERVAL '1 millisecond')
             ELSE identity_updated_at
           END,
           updated_at=NOW(),updated_by=$9
       WHERE tenant_id=$1 AND account_id=$2 AND revision=$3 AND status='authorizing'
+        AND (
+          profile_id IS NULL
+          OR
+          (profile_id IS NOT DISTINCT FROM $4 AND corp_id IS NOT DISTINCT FROM $5
+            AND dingtalk_user_id IS NOT DISTINCT FROM $7)
+          OR (
+            event_policy_json->'authorizationIntent'->>'mode'='replace_identity'
+            AND event_policy_json->'authorizationIntent'->>'expectedProfileId'
+              IS NOT DISTINCT FROM profile_id
+            AND NULLIF(event_policy_json->'authorizationIntent'->>'expectedIdentityUpdatedAt','')
+              ::timestamptz IS NOT DISTINCT FROM identity_updated_at
+          )
+        )
       RETURNING *
     `, [
       tenantId,
@@ -186,6 +221,25 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     return await this.requireUpdated(result.rows[0], tenantId, accountId);
   }
 
+  async markIdentityCleanupStep(
+    tenantId: string,
+    accountId: string,
+    identityUpdatedAt: string,
+    step: 'stream_stopped' | 'context_invalidated',
+  ): Promise<AgentDwsAccountRecord> {
+    const result = await this.pool.query(`UPDATE ${this.table}
+      SET event_policy_json=CASE WHEN $4='stream_stopped'
+        THEN jsonb_set(event_policy_json,'{identityCleanupPending,streamStopped}','true'::jsonb,TRUE)
+        ELSE event_policy_json-'identityCleanupPending' END,updated_at=NOW()
+      WHERE tenant_id=$1 AND account_id=$2
+        AND date_trunc('milliseconds',identity_updated_at)=date_trunc('milliseconds',$3::timestamptz)
+        AND event_policy_json ? 'identityCleanupPending'
+        AND ($4='stream_stopped' OR
+          event_policy_json->'identityCleanupPending'->>'streamStopped'='true')
+      RETURNING *`, [tenantId, accountId, identityUpdatedAt, step]);
+    return await this.requireUpdated(result.rows[0], tenantId, accountId);
+  }
+
   async markAuthorizationFailed(
     tenantId: string,
     accountId: string,
@@ -195,7 +249,11 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
   ): Promise<void> {
     await this.pool.query(`
       UPDATE ${this.table}
-      SET status='error',runtime_status='error',last_error=$4,
+      SET status=CASE WHEN profile_id=corp_id || ':' || dingtalk_user_id
+            THEN 'active' ELSE 'error' END,
+          runtime_status=CASE WHEN profile_id=corp_id || ':' || dingtalk_user_id
+            THEN 'stopped' ELSE 'error' END,last_error=$4,
+          event_policy_json=COALESCE(event_policy_json,'{}'::jsonb)-'authorizationIntent',
           revision=revision+1,updated_at=NOW(),updated_by=$5
       WHERE tenant_id=$1 AND account_id=$2 AND revision=$3 AND status='authorizing'
     `, [tenantId, accountId, expectedRevision, compactError(error), updatedBy]);
@@ -357,6 +415,13 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
   const eventKinds = rawKinds.filter((kind): kind is AgentDwsAccountRecord['eventKinds'][number] => (
     kind === 'at_me' || kind === 'all_direct'
   ));
+  const authorizationIntent = objectValue(policy.authorizationIntent);
+  const cleanup = objectValue(policy.identityCleanupPending);
+  const cleanupPrevious = objectValue(cleanup.previous);
+  const authorizationMode = authorizationIntent.mode === 'reauthorize'
+    || authorizationIntent.mode === 'replace_identity'
+    ? authorizationIntent.mode
+    : undefined;
   return {
     accountId: String(row.account_id),
     tenantId: String(row.tenant_id),
@@ -370,6 +435,9 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
     ...(text(row.profile_id) ? { profileId: text(row.profile_id) } : {}),
     status: String(row.status) as AgentDwsAccountRecord['status'],
     runtimeStatus: String(row.runtime_status) as AgentDwsAccountRecord['runtimeStatus'],
+    runtimeLeaseActive: Boolean(row.runtime_lease_owner)
+      && Boolean(row.runtime_lease_expires_at)
+      && Date.parse(iso(row.runtime_lease_expires_at)) > Date.now(),
     eventKinds: eventKinds.length > 0 ? eventKinds : ['at_me', 'all_direct'],
     contextPolicy: parseContextPolicy(policy.contextPolicy),
     ...(row.last_event_at ? { lastEventAt: iso(row.last_event_at) } : {}),
@@ -378,6 +446,32 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
     createdAt: iso(row.created_at),
     createdBy: String(row.created_by),
     ...(row.identity_updated_at ? { identityUpdatedAt: iso(row.identity_updated_at) } : {}),
+    ...(authorizationMode ? {
+      authorizationIntent: {
+        mode: authorizationMode,
+        ...(text(authorizationIntent.expectedProfileId)
+          ? { expectedProfileId: text(authorizationIntent.expectedProfileId) }
+          : {}),
+        ...(optionalIsoText(authorizationIntent.expectedIdentityUpdatedAt)
+          ? { expectedIdentityUpdatedAt: optionalIsoText(
+              authorizationIntent.expectedIdentityUpdatedAt,
+            ) }
+          : {}),
+      },
+    } : {}),
+    ...(text(cleanupPrevious.profileId) && text(cleanupPrevious.corpId)
+      && text(cleanupPrevious.dingtalkUserId)
+      && optionalIsoText(cleanupPrevious.identityUpdatedAt) ? {
+        identityCleanupPending: {
+          previous: {
+            profileId: text(cleanupPrevious.profileId)!, corpId: text(cleanupPrevious.corpId)!,
+            dingtalkUserId: text(cleanupPrevious.dingtalkUserId)!,
+            identityUpdatedAt: optionalIsoText(cleanupPrevious.identityUpdatedAt)!,
+          },
+          streamStopped: cleanup.streamStopped === true,
+          contextInvalidated: cleanup.contextInvalidated === true,
+        },
+      } : {}),
     updatedAt: iso(row.updated_at),
     updatedBy: String(row.updated_by),
   };

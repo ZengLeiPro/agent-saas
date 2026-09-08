@@ -71,6 +71,7 @@ import {
 import type { ToolInvocationStore } from './toolInvocationStore.js';
 import { selectRuntimeHandRoute, type HandStore } from './handStore.js';
 import type { RuntimeIsolationRequirement } from './runtimeIsolationEvidence.js';
+import { buildRawAgentToolCallContext } from './rawAgentToolCallContext.js';
 import type { RunStore } from './runStore.js';
 import { createLogger } from '../utils/logger.js';
 import { resolveRunTenantId, withDurableRunCancellation } from './runContextGovernance.js';
@@ -628,22 +629,7 @@ export class RawAgentLoop implements AgentLoop {
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
-    const baseToolContext: ToolCallContext = {
-      channelContext: context.channelContext,
-      workspace,
-      env: context.env,
-      sessionId: context.sessionId,
-      runId: context.runId,
-      ...(context.automationFence ? { automationFence: context.automationFence } : {}),
-      ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
-      ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
-      ...(context.orgAgentTaskLineage ? { orgAgentTaskLineage: context.orgAgentTaskLineage } : {}),
-      ...(context.orgAgentTaskAuthority ? { orgAgentTaskAuthority: context.orgAgentTaskAuthority } : {}),
-      ...(context.executionRole === 'worker' ? { executionRole: 'worker' as const,
-        runtimeIsolationAttested: context.runtimeIsolationAttested === true } : {}),
-      hooks: context.hooks,
-      signal: context.signal,
-    };
+    const baseToolContext = buildRawAgentToolCallContext(context, workspace, this.runtimeIsolationRequirement);
     const descriptors = this.toolRuntime.list(baseToolContext);
     const replay = await createRuntimeReplayAccess({ eventStore: this.eventStore,
       tenantId: requireEventTenantId(context), sessionId: context.sessionId, runId: context.runId,
@@ -2205,21 +2191,7 @@ export class RawAgentLoop implements AgentLoop {
       executionTarget: approval.executionTarget ?? pendingState.approvalRequest?.executionTarget ?? resumeContext.executionTarget,
       sandboxPolicy: resumeContext.sandboxPolicy,
     });
-    const baseToolContext: ToolCallContext = {
-      channelContext: resumeContext.channelContext,
-      workspace,
-      env: resumeContext.env,
-      sessionId: resumeContext.sessionId,
-      runId: resumeContext.runId,
-      ...(resumeContext.automationFence ? { automationFence: resumeContext.automationFence } : {}),
-      ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
-      ...(resumeContext.orgAgentTaskLineage ? { orgAgentTaskLineage: resumeContext.orgAgentTaskLineage } : {}),
-      ...(resumeContext.orgAgentTaskAuthority ? { orgAgentTaskAuthority: resumeContext.orgAgentTaskAuthority } : {}),
-      ...(resumeContext.executionRole === 'worker' ? { executionRole: 'worker' as const,
-        runtimeIsolationAttested: resumeContext.runtimeIsolationAttested === true } : {}),
-      hooks: resumeContext.hooks,
-      signal: resumeContext.signal,
-    };
+    const baseToolContext = buildRawAgentToolCallContext(resumeContext, workspace, this.runtimeIsolationRequirement);
     const descriptors = this.toolRuntime.list(baseToolContext);
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, resumeContext);
     const callableDescriptorsByName = this.callableDescriptorsForEvents(descriptorsByName, priorEvents);
@@ -2398,22 +2370,7 @@ export class RawAgentLoop implements AgentLoop {
       executionTarget: context.executionTarget,
       sandboxPolicy: context.sandboxPolicy,
     });
-    const baseToolContext: ToolCallContext = {
-      channelContext: context.channelContext,
-      workspace,
-      env: context.env,
-      sessionId: context.sessionId,
-      runId: context.runId,
-      ...(context.automationFence ? { automationFence: context.automationFence } : {}),
-      ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
-      ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
-      ...(context.orgAgentTaskLineage ? { orgAgentTaskLineage: context.orgAgentTaskLineage } : {}),
-      ...(context.orgAgentTaskAuthority ? { orgAgentTaskAuthority: context.orgAgentTaskAuthority } : {}),
-      ...(context.executionRole === 'worker' ? { executionRole: 'worker' as const,
-        runtimeIsolationAttested: context.runtimeIsolationAttested === true } : {}),
-      hooks: context.hooks,
-      signal: context.signal,
-    };
+    const baseToolContext = buildRawAgentToolCallContext(context, workspace, this.runtimeIsolationRequirement);
     const descriptors = this.toolRuntime.list(baseToolContext);
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
     const callableDescriptorsByName = this.callableDescriptorsForEvents(descriptorsByName, priorEvents);

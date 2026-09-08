@@ -44,6 +44,7 @@ export interface DwsOrgGroupRouterHarnessOptions {
   /** Simulates a process failure before any provider transport can start. */
   failFirstDeliveryClaim?: boolean;
   systemInstructions?: string;
+  serviceSessionId?: string;
   existingRun?: Record<string, unknown>;
   memoryPolicy?: {
     readAgent: boolean;
@@ -63,7 +64,7 @@ export function createBinding(options: DwsOrgGroupRouterHarnessOptions): OrgAgen
     activationState: 'active',
     enabled: true,
     conversationSpaceId: 'space-a',
-    serviceSessionId: 'service-session-a',
+    serviceSessionId: options.serviceSessionId ?? 'service-session-a',
     workspaceId: 'ws_tenant-a__agent_agent-a',
     accountIdentity: {
       profileId: 'corp-a:agent-self', corpId: 'corp-a', dingtalkUserId: 'agent-self',

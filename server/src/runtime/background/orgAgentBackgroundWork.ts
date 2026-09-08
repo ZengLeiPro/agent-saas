@@ -41,6 +41,13 @@ import {
   buildPausedAttemptContext,
   verifyOrgAgentContinuationArtifacts,
 } from './orgAgentContinuation.js';
+import {
+  createOrgAgentEffectiveExecutionContext,
+  parseOrgAgentEffectiveExecutionContext,
+  type OrgAgentEffectiveExecutionContext,
+} from './orgAgentExecutionContext.js';
+import type { OrgAgentRecord } from '../../data/orgAgents/types.js';
+import type { BoundAgentRuntimeProfile } from '../agentProfiles.js';
 
 function snapshotNumber(value: Record<string, unknown>, key: string): number | undefined {
   const raw = value[key];
@@ -63,6 +70,9 @@ export async function prepareOrgAgentBackgroundWork(input: {
   parentRunId: string;
   toolCallId: string;
   taskId: string;
+  agent: OrgAgentRecord;
+  modelRef: string;
+  profile?: BoundAgentRuntimeProfile;
 }): Promise<{ taskLayout?: OrgAgentTaskWorkspaceLayout; workOrder?: OrgAgentWorkOrder }> {
   const orgChannel = input.context.channelContext.orgAgentChannel;
   if (!orgChannel) return {};
@@ -132,6 +142,16 @@ export async function prepareOrgAgentBackgroundWork(input: {
             dwsResourceIds: orgChannel.dwsResourceIds,
             contextEnabled: orgChannel.contextEnabled,
             effectiveConfig: bindingSnapshot!.effectiveConfig,
+            executionContext: createOrgAgentEffectiveExecutionContext({
+              agent: input.agent,
+              binding: bindingSnapshot!,
+              channel: orgChannel,
+              systemContext: input.context.channelContext.systemContext,
+              modelRef: input.modelRef,
+              profile: input.profile,
+              goal: input.request.prompt,
+              acceptance: [input.request.description, '产出须满足组织群任务结果与工件契约'],
+            }),
           },
           cancelPolicy: {
             mode: orgChannel.taskVisibility === 'conversation' && orgChannel.externalActorAssurance === 'mapped'
@@ -152,7 +172,8 @@ export class OrgAgentBackgroundWorkCoordinator {
     if (!metadata?.orgAgentChannel) return undefined;
     if (!metadata.workOrderId || !this.config.orgGroupAgentStore)
       throw new Error('ORG_AGENT_CONTEXT_LINEAGE_INCOMPLETE');
-    await this.resolveTaskLineage(record, metadata, false);
+    const queuedLineage = await this.resolveTaskLineage(record, metadata, false);
+    await this.loadExecutionContext(queuedLineage);
     const tenantId = metadata.orgAgentChannel.agentPrincipal.tenantId;
     const attempt = await this.config.orgGroupAgentStore.transitionWorkAttempt({
       tenantId,
@@ -179,23 +200,61 @@ export class OrgAgentBackgroundWorkCoordinator {
     return this.resolveTaskLineage(record, metadata, true);
   }
 
-  createLiveTaskAuthority(lineage: OrgAgentWorkerTaskLineage): OrgAgentWorkerTaskAuthority {
+  createLiveTaskAuthority(
+    lineage: OrgAgentWorkerTaskLineage,
+    channel?: NonNullable<ToolCallContext['channelContext']['orgAgentChannel']>,
+  ): OrgAgentWorkerTaskAuthority {
     const store = this.config.orgGroupAgentStore;
     if (!store) throw new Error('ORG_AGENT_CONTEXT_LINEAGE_STORE_UNAVAILABLE');
     return { taskRunId: lineage.taskRunId, taskSessionId: lineage.taskSessionId,
-      attemptId: lineage.attemptId, assertCurrent: async () => {
+      attemptId: lineage.attemptId, assertCurrent: async (toolName?: string) => {
+        if (!this.config.orgAgentChannelPolicyEvaluator
+          || !this.config.authorizeOrgAgentRequesterLive
+          || !this.config.resolveOrgAgentRequesterById)
+          throw new Error('ORG_AGENT_WORKER_LIVE_AUTHORITY_DEPENDENCY_MISSING');
         const work = await store.getWorkOrder(lineage.tenantId, lineage.workOrderId);
         const attempt = (await store.listWorkAttempts(lineage.tenantId, lineage.workOrderId))
           .find(item => item.attemptNo === work?.currentAttemptNo);
+        const binding = await store.getBindingById(lineage.tenantId, lineage.bindingId);
+        const agent = this.config.orgAgentStore?.get(lineage.agentId);
         if (!work || !attempt || work.state !== 'running' || attempt.status !== 'running'
           || work.tenantId !== lineage.tenantId || work.agentId !== lineage.agentId
           || work.bindingId !== lineage.bindingId || work.workConversationId !== lineage.workConversationId
           || work.currentAttemptNo !== lineage.attemptNo || attempt.attemptNo !== lineage.attemptNo
           || attempt.attemptId !== lineage.attemptId || attempt.runtimeRunId !== lineage.taskRunId
           || attempt.taskWorkspaceId !== lineage.taskWorkspaceId
-          || attempt.sandboxScopeId !== lineage.sandboxScopeId)
+          || attempt.sandboxScopeId !== lineage.sandboxScopeId
+          || !agent || !agent.enabled || agent.tenantId !== lineage.tenantId
+          || !binding || !binding.enabled || binding.activationState !== 'active'
+          || !binding.policy.enabled || binding.policy.liveDeny
+          || binding.accountId !== lineage.accountId || binding.agentId !== lineage.agentId)
           throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+        {
+          const decision = await this.config.orgAgentChannelPolicyEvaluator({ tenantId: lineage.tenantId,
+            bindingId: lineage.bindingId, accountId: lineage.accountId, agentId: lineage.agentId,
+            conversationId: lineage.channelConversationId, toolName: toolName ?? 'OrgAgentWorker' });
+          if (!decision.allowed) throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+        }
+        if (channel?.externalActor.kind === 'external_user' && channel.externalActor.mappedUserId) {
+          const requester = this.config.resolveOrgAgentRequesterById(channel.externalActor.mappedUserId);
+          if (!requester || requester.id !== channel.externalActor.mappedUserId
+            || requester.tenantId !== lineage.tenantId)
+            throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+          const decision = await this.config.authorizeOrgAgentRequesterLive({ channel,
+            requester });
+          if (!decision.allowed) throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
+        } else throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_REVOKED');
       } };
+  }
+
+  async loadExecutionContext(
+    lineage: OrgAgentWorkerTaskLineage,
+  ): Promise<OrgAgentEffectiveExecutionContext> {
+    const work = await this.config.orgGroupAgentStore?.getWorkOrder(lineage.tenantId, lineage.workOrderId);
+    if (!work || work.currentAttemptNo !== lineage.attemptNo) {
+      throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+    }
+    return parseOrgAgentEffectiveExecutionContext(work.policySnapshot);
   }
 
   private async resolveTaskLineage(record: RunRecord, metadata: NonNullable<ReturnType<typeof parseBackgroundTaskMetadata>>,

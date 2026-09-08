@@ -91,13 +91,14 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
       SET account_profile_id=NULL,account_corp_id=NULL,account_dingtalk_user_id=NULL,
           account_identity_updated_at=NULL,created_at='2026-09-03T00:00:00.000Z'
       WHERE binding_id=$1`, [old.bindingId]);
-    await expect(store.ensureShadowBinding({
+    const nextGeneration = await store.ensureShadowBinding({
       tenantId: 'tenant-a', accountId: 'account-a', agentId: 'agent-a',
       conversationId: 'group-rolling-old', channelKind: 'group',
       workspaceId: 'agent-workspace-a', accountIdentity,
-    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
+    });
+    expect(nextGeneration.bindingId).not.toBe(old.bindingId);
+    expect((await store.getBindingById('tenant-a', old.bindingId))?.bindingId).toBe(old.bindingId);
   });
-
   it('固定账号、binding、topic、work、attempt 身份且 unknown delivery 不自动重发', async () => {
     const shadow = await store.ensureShadowBinding({
       tenantId: 'tenant-a',
@@ -127,7 +128,7 @@ describePg('组织群 Agent PostgreSQL 与 provider fence 不变量', () => {
         profileId: 'corp-b:agent-member-b', corpId: 'corp-b', dingtalkUserId: 'agent-member-b',
         identityUpdatedAt: '2026-09-05T00:00:00.000Z',
       },
-    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_CONFLICT');
+    })).rejects.toThrow('ORG_AGENT_BINDING_ACCOUNT_IDENTITY_STALE');
     const binding = await store.updateBinding({
       tenantId: 'tenant-a',
       accountId: 'account-a',

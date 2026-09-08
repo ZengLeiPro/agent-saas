@@ -14,6 +14,42 @@ export type AgentDwsRuntimeStatus =
 export type AgentDwsEventKind = "at_me" | "all_direct";
 export type AgentDwsContextPolicyMode = "none" | "selected" | "all";
 
+export type AgentDwsReadinessSeverity = "ready" | "blocking" | "unknown";
+export type AgentDwsReadinessStatus = "ready" | "blocked" | "unknown";
+export type AgentDwsReadinessCode =
+  | "account.authorization"
+  | "stream.ready"
+  | "stream.lease"
+  | "agent.enabled"
+  | "agent.dispatcher"
+  | "runtime.v2"
+  | "binding.active"
+  | "binding.live_deny"
+  | "context.dependencies"
+  | "worker.capability"
+  | "completion.delivery";
+export type AgentDwsReadinessFixTarget =
+  | "account_authorization"
+  | "stream_runtime"
+  | "agent_settings"
+  | "runtime_compatibility"
+  | "group_binding"
+  | "context_settings"
+  | "capability_settings"
+  | "delivery_settings";
+
+export interface AgentDwsReadinessCheck {
+  code: AgentDwsReadinessCode;
+  severity: AgentDwsReadinessSeverity;
+  message: string;
+  fixTarget: AgentDwsReadinessFixTarget;
+}
+
+export interface AgentDwsReadiness {
+  status: AgentDwsReadinessStatus;
+  checks: AgentDwsReadinessCheck[];
+}
+
 export interface AgentDwsContextPolicySelection {
   mode: AgentDwsContextPolicyMode;
   conversationIds: string[];
@@ -46,8 +82,10 @@ export interface AgentDwsAccount {
   lastEventAt: string | null;
   lastError: string | null;
   revision: number;
+  identityUpdatedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  readiness?: AgentDwsReadiness;
 }
 
 export interface AgentDwsAuthSession {

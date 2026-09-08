@@ -15,7 +15,7 @@ import {
 } from './dwsOrgGroupMessageRouterFixtures.js';
 
 describe('AgentDwsMessageRouter organization group discovery/binding', () => {
-  it('uses an Agent-owned WorkConversation and durable delivery', async () => {
+  it('uses an Agent-owned ConversationSpace front desk and durable delivery', async () => {
     const test = setup();
     await expect(test.router.runOnce()).resolves.toBe(true);
     expect(test.messageStore.getOrCreateBinding).not.toHaveBeenCalled();
@@ -29,7 +29,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
-        resumeSessionId: 'session-a',
+        resumeSessionId: 'service-session-a',
         sessionOwner: expect.objectContaining({ username: 'agent-dws:agent-a' }),
         orgAgentChannel: expect.objectContaining({
           bindingId: 'channel-binding-a',
@@ -96,7 +96,75 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     );
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ resumeSessionId: 'session-routed' }),
+      expect.objectContaining({ resumeSessionId: 'service-session-a' }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it('keeps an explicit W-short routed task on the ConversationSpace front desk', async () => {
+    const routed = workOrder({ shortId: 'W-123456ABCDEF' });
+    const test = setup({
+      content: '继续 W-123456ABCDEF',
+      shortWorkOrder: routed,
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.orgStore.pinInboxContext).toHaveBeenCalledWith(
+      expect.objectContaining({ workConversationId: 'workconv-route-a' }),
+    );
+    expect(test.dispatch).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        resumeSessionId: 'service-session-a',
+        orgAgentChannel: expect.objectContaining({ workConversationId: 'workconv-route-a' }),
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+
+  it('keeps consecutive messages in one group on the same ConversationSpace front desk', async () => {
+    const test = setup({
+      claimedSequence: [
+        item,
+        {
+          ...item,
+          inboxId: 'inbox-b',
+          eventId: 'event-b',
+          messageId: 'mid-b',
+          content: '再说明一下交付格式',
+        },
+      ],
+    });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.dispatch).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(test.dispatch).mock.calls.map((call) => call[1].resumeSessionId)).toEqual([
+      'service-session-a',
+      'service-session-a',
+    ]);
+  });
+
+  it('keeps distinct binding generations on distinct ConversationSpace front desks', async () => {
+    const previous = setup({ serviceSessionId: 'service-session-old' });
+    const current = setup({ serviceSessionId: 'service-session-current' });
+
+    await expect(previous.router.runOnce()).resolves.toBe(true);
+    await expect(current.router.runOnce()).resolves.toBe(true);
+
+    expect(previous.dispatch).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resumeSessionId: 'service-session-old' }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(current.dispatch).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ resumeSessionId: 'service-session-current' }),
       expect.any(Object),
       expect.any(Object),
     );
@@ -545,6 +613,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
     expect(test.dispatch).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
+        resumeSessionId: 'service-session-a',
         user: undefined,
         orgAgentChannel: expect.objectContaining({
           externalActorAssurance: 'service',
@@ -581,6 +650,7 @@ describe('AgentDwsMessageRouter organization group discovery/binding', () => {
       1,
       expect.stringMatching(/^agent-dws-private-completion-/),
       expect.any(String),
+      undefined,
     );
     expect(test.orgStore.createDelivery).toHaveBeenCalledWith(
       expect.objectContaining({

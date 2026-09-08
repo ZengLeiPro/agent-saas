@@ -5,6 +5,7 @@ import type {
   OrgGroupAgentStore,
 } from '../data/orgGroupAgents/index.js';
 import type { OrgAgentStore } from '../data/orgAgents/index.js';
+import { deriveGroupDwsReadiness } from './agentDwsReadiness.js';
 
 export async function buildGroupWorkspaceView(input: {
   tenantId: string;
@@ -20,6 +21,7 @@ export async function buildGroupWorkspaceView(input: {
     publishedSourceIds: string[];
     channelSourceIds: string[];
   };
+  runtimeV2Ready?: boolean;
 }) {
   const groupBindings = input.bindings.filter((binding) => binding.channelKind === 'group');
   // Group resources without a currently visible identity-bound binding stay fail-closed.
@@ -67,7 +69,24 @@ export async function buildGroupWorkspaceView(input: {
     bindings: input.bindings.map((binding) => {
       const agent = input.agentStore.get(binding.agentId);
       return {
-        ...binding,
+        bindingId: binding.bindingId,
+        accountId: binding.accountId,
+        agentId: binding.agentId,
+        conversationId: binding.conversationId,
+        activationState: binding.activationState,
+        enabled: binding.enabled,
+        policy: binding.policy,
+        effectiveConfig: binding.effectiveConfig,
+        revision: binding.revision,
+        readiness: deriveGroupDwsReadiness({
+          tenantId: input.tenantId,
+          account: input.account,
+          binding,
+          ...(agent ? { agent } : {}),
+          runtimeV2Ready: input.runtimeV2Ready,
+          contextCeiling: input.contextCeiling,
+          channelToolNames: input.frontdeskTools,
+        }),
         effectiveConfigComputation: {
           publishedAgent: {
             skillIds: agent?.allowedSkills ?? [],

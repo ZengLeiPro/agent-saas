@@ -276,7 +276,11 @@ export async function createAgentDwsRuntime(options: {
       agentCwd: options.agentCwd,
       resolveServerRemote: options.resolveServerRemote,
     }),
-    onBeforeAccountIdentityChange: async account => {
+    stopPreviousIdentity: async account => {
+      // 账号 CAS 已提交后再停止旧流，避免 CAS 冲突留下 active 旧身份但 stream/context 被清空。
+      await eventGateway.stopAccount(account.accountId);
+    },
+    invalidatePreviousIdentityContext: async account => {
       await contextRuntime?.invalidateAccountIdentity(account);
     },
     onConnected: async account => {
@@ -290,6 +294,12 @@ export async function createAgentDwsRuntime(options: {
     },
     logger: options.logger.child('AgentDwsAuthFlow'),
   });
+  await authFlowService.recoverPendingIdentityCleanup().catch(error => {
+    options.logger.warn(
+      `Agent DWS identity cleanup recovery deferred: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  authFlowService.startIdentityCleanupRecovery();
   // Approval recovery rechecks the current DWS account identity before resuming side effects.
   const approvalService = options.messageStore && options.orgGroupAgentStore
     && options.pgRunStore && options.runtimeScheduler

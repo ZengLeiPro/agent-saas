@@ -316,6 +316,7 @@ export function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext
     && raw.allowedSourceIds.every(item => typeof item === 'string') ? raw.allowedSourceIds as string[] : undefined;
   const dwsResourceIds = Array.isArray(raw.dwsResourceIds)
     && raw.dwsResourceIds.every(item => typeof item === 'string') ? raw.dwsResourceIds as string[] : [];
+  const sharedContext = parseOrgAgentSharedContext(raw.sharedContext);
   const triggerRoles = parseGovernanceRoles(raw.triggerRoles);
   const approvalRoles = parseGovernanceRoles(raw.approvalRoles);
   const taskVisibility = raw.taskVisibility === 'conversation' || raw.taskVisibility === 'requester_only'
@@ -340,13 +341,36 @@ export function parseOrgAgentChannel(value: unknown): NonNullable<ChannelContext
       : Boolean(externalActor.mappedUserId || externalActor.role || actorRole))) return undefined;
   return { accountId, agentId, bindingId, conversationSpaceId, workConversationId, policyRevision,
     agentPrincipal, externalActorAssurance: assurance, allowedToolNames, allowedSkillIds, allowedSourceIds,
-    dwsResourceIds,
+    dwsResourceIds, ...(sharedContext ? { sharedContext } : {}),
     contextEnabled: raw.contextEnabled === true,
     taskVisibility,
     ...(actorRole ? { actorRole } : {}),
     triggerRoles,
     approvalRoles,
     externalActor, channelPrincipal };
+}
+
+function parseOrgAgentSharedContext(
+  value: unknown,
+): NonNullable<NonNullable<ChannelContext['orgAgentChannel']>['sharedContext']> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.instructions !== 'string' || !Array.isArray(raw.memories)) return undefined;
+  const memories: NonNullable<NonNullable<ChannelContext['orgAgentChannel']>['sharedContext']>['memories'] = [];
+  for (const item of raw.memories) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined;
+    const memory = item as Record<string, unknown>;
+    if (typeof memory.memoryId !== 'string' || !memory.memoryId
+      || !['agent', 'conversation', 'task_checkpoint'].includes(String(memory.scope))
+      || !memory.content || typeof memory.content !== 'object' || Array.isArray(memory.content)
+      || !Number.isSafeInteger(memory.policyRevision) || Number(memory.policyRevision) < 1
+      || !Number.isSafeInteger(memory.version) || Number(memory.version) < 1) return undefined;
+    memories.push({ memoryId: memory.memoryId,
+      scope: memory.scope as 'agent' | 'conversation' | 'task_checkpoint',
+      content: memory.content as Record<string, unknown>,
+      policyRevision: Number(memory.policyRevision), version: Number(memory.version) });
+  }
+  return { instructions: raw.instructions, memories };
 }
 
 function parseExternalActor(value: unknown): NonNullable<ChannelContext['orgAgentChannel']>['externalActor'] | undefined {

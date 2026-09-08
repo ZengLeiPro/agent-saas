@@ -9,7 +9,6 @@ import {
   AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS,
   AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS,
   AgentDwsAccountInvariantError,
-  failClosedAgentDwsContextPolicy,
   hasExactAgentDwsProfile,
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
@@ -24,7 +23,6 @@ import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
 import type { DwsPersonalEventGateway } from '../dws/personalEventGateway.js';
-import type { DwsAuthSessionRecord } from '../dws/authStore.js';
 import { deriveDwsAgentDelegationResourceId } from '../dws/businessToolProvider.js';
 import { OrgAgentApprovalError, type OrgAgentApprovalService } from '../dws/orgAgentApprovalService.js';
 import {
@@ -37,10 +35,18 @@ import {
   observedGroupOptions, toPublicAccount, toPublicInboxRecord,
 } from './agentDwsAccountDiscovery.js';
 import { buildGroupWorkspaceView } from './agentDwsGroupWorkspaceView.js';
+import { resolveRuntimeV2Readiness } from './agentDwsReadiness.js';
 import {
   currentAgentDwsAccountIdentity,
   deliveryMatchesCurrentAccountIdentity,
 } from '../dws/agentDwsAccountIdentity.js';
+import {
+  contextPolicyAllowsConversation,
+  toPublicAccountDelivery,
+  toPublicAuthSession,
+  withRealtimeConsentTimestamps,
+} from './agentDwsAccountPresentation.js';
+import { queryTenant, tenantFor } from './agentDwsRouteTenant.js';
 const eventKindSchema = z.enum(['at_me', 'all_direct']);
 const createSchema = z.object({
   tenantId: z.string().trim().min(1).max(64).optional(),
@@ -52,6 +58,9 @@ const createSchema = z.object({
     .refine(items => new Set(items).size === items.length, 'eventKinds must be unique'),
 });
 const expectedRevisionSchema = z.object({ expectedRevision: z.number().int().positive() });
+const authorizeSchema = expectedRevisionSchema.extend({
+  mode: z.enum(['reauthorize', 'replace_identity']).default('reauthorize'),
+}).strict();
 const enabledSchema = expectedRevisionSchema.extend({ enabled: z.boolean() });
 const conversationIdsSchema = z.array(z.string().trim().min(1).max(256))
   .max(AGENT_DWS_CONTEXT_POLICY_MAX_CONVERSATIONS)
@@ -220,10 +229,14 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       ]);
       const bindings = currentIdentityBindings(allBindings, account);
       const contextCeiling = await resolveGroupContextCeiling(options, account);
+      const runtimeV2Ready = await resolveRuntimeV2Readiness(
+        options.isOrgAgentRuntimeV2Ready, account,
+      );
       return res.json({
         ...await buildGroupWorkspaceView({ tenantId, account, bindings, deliveries,
           store: options.orgGroupAgentStore, agentStore: options.orgAgentStore,
-          limit: parsed.data.limit, frontdeskTools: GROUP_AGENT_FRONTDESK_TOOL_MAX, contextCeiling }),
+          limit: parsed.data.limit, frontdeskTools: GROUP_AGENT_FRONTDESK_TOOL_MAX, contextCeiling,
+          runtimeV2Ready }),
         approvals,
         observedGroups: observedGroupOptions(inbox, bindings, account),
       });
@@ -252,7 +265,9 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       return res.status(404).json({ error: '该群尚未被当前账号的 Personal Stream 观测到' });
     if (await hasStaleIdentityBinding(options.orgGroupAgentStore, account,
       parsed.data.conversationId))
-      return res.status(409).json({ error: '该群绑定属于旧授权身份；请为当前钉钉成员新建账号配置' });
+      return res.status(409).json({
+        error: '该群绑定属于换绑前的旧身份，不能由当前身份接管；请重新观测该群并创建新一代绑定',
+      });
     return await runMutation(req, res, options, {
       action: 'org_agent.channel_binding.create', tenantId, targetId: account.accountId,
       purpose: 'create shadow binding from observed DingTalk group',
@@ -706,7 +721,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
   });
 
   router.post('/agent-dws-accounts/:accountId/authorize', async (req, res) => {
-    const parsed = expectedRevisionSchema.safeParse(req.body);
+    const parsed = authorizeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     if (!options.authFlowService) return res.status(503).json({ error: 'Agent 钉钉授权服务暂不可用' });
     const tenantId = tenantFor(req);
@@ -722,6 +737,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
         req.params.accountId,
         parsed.data.expectedRevision,
         req.user!.sub,
+        parsed.data.mode,
       );
       try {
         await options.eventGateway?.stopAccount(account.accountId);
@@ -785,25 +801,6 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
   });
 
   return router;
-}
-
-function toPublicAccountDelivery(
-  delivery: import('../data/orgGroupAgents/index.js').DwsDeliveryIntent,
-): Record<string, unknown> {
-  return {
-    deliveryId: delivery.deliveryId,
-    inboxId: delivery.inboxId ?? null,
-    conversationId: delivery.conversationId,
-    channelKind: delivery.destination.kind,
-    deliveryKind: delivery.deliveryKind,
-    deliveryState: delivery.deliveryState,
-    disposition: delivery.disposition,
-    attempt: delivery.attempt,
-    providerAttemptPhase: delivery.providerAttemptPhase,
-    createdAt: delivery.createdAt,
-    updatedAt: delivery.updatedAt,
-    completedAt: delivery.completedAt ?? null,
-  };
 }
 
 async function runMutation(
@@ -914,49 +911,6 @@ async function runMutation(
   }
 }
 
-function tenantFor(req: Request, requested?: string): string | null {
-  if (!req.user) return null;
-  if (isPlatformAdmin(req.user)) return requested ?? queryTenant(req) ?? null;
-  if (requested && requested !== req.user.tenantId) return null;
-  return req.user.tenantId;
-}
-
-function queryTenant(req: Request): string | undefined {
-  return typeof req.query.tenantId === 'string' && req.query.tenantId.trim()
-    ? req.query.tenantId.trim()
-    : undefined;
-}
-
-function withRealtimeConsentTimestamps(
-  policy: AgentDwsContextPolicy,
-  previous: AgentDwsContextPolicy | undefined,
-  now = new Date().toISOString(),
-): AgentDwsContextPolicy {
-  const previousPolicy = previous ?? failClosedAgentDwsContextPolicy();
-  const previousMarkers = previousPolicy.realtimeEffectiveAt;
-  if (policy.realtime.mode === 'none') return { ...policy, realtimeEffectiveAt: {} };
-  if (policy.realtime.mode === 'all') {
-    const alreadyAllowed = previousPolicy.realtime.mode === 'all';
-    return {
-      ...policy,
-      realtimeEffectiveAt: {
-        all: alreadyAllowed ? previousMarkers?.all ?? previousPolicy.effectiveAt ?? now : now,
-      },
-    };
-  }
-  const conversations: Record<string, string> = {};
-  for (const conversationId of policy.realtime.conversationIds) {
-    const inherited = previousPolicy.realtime.mode === 'all'
-      ? previousMarkers?.all ?? previousPolicy.effectiveAt
-      : previousPolicy.realtime.mode === 'selected'
-        && previousPolicy.realtime.conversationIds.includes(conversationId)
-        ? previousMarkers?.conversations?.[conversationId] ?? previousPolicy.effectiveAt
-        : undefined;
-    conversations[conversationId] = inherited ?? now;
-  }
-  return { ...policy, realtimeEffectiveAt: { conversations } };
-}
-
 async function resolveGroupContextCeiling(
   options: AgentDwsAccountsRouterOptions,
   account: AgentDwsAccountRecord,
@@ -994,39 +948,6 @@ async function resolveGroupContextCeiling(
         collection.sourceId === sourceId && collection.externalKey === 'chat');
   });
   return { available: true, publishedSourceIds, channelSourceIds };
-}
-
-function contextPolicyAllowsConversation(
-  account: AgentDwsAccountRecord,
-  conversationId: string,
-): boolean {
-  const policy = account.contextPolicy ?? failClosedAgentDwsContextPolicy();
-  const allows = (selection: { mode: 'none' | 'all' | 'selected'; conversationIds: string[] }) =>
-    selection.mode === 'all'
-      || (selection.mode === 'selected' && selection.conversationIds.includes(conversationId));
-  return allows(policy.historical) || allows(policy.realtime);
-}
-
-function toPublicAuthSession(row: DwsAuthSessionRecord): Record<string, unknown> {
-  const expired = Date.parse(row.expiresAt) <= Date.now()
-    && (row.status === 'starting' || row.status === 'awaiting_user');
-  const status = expired ? 'expired' : row.status;
-  return {
-    sessionId: row.sessionId,
-    status,
-    authorizationUrl: status === 'awaiting_user' ? row.authorizationUrl ?? null : null,
-    userCode: status === 'awaiting_user' ? row.userCode ?? null : null,
-    expiresAt: row.expiresAt,
-    message: authMessage(status, row.errorMessage),
-  };
-}
-
-function authMessage(status: string, error?: string): string {
-  if (status === 'starting') return '正在生成 Agent 专属钉钉账号授权页面';
-  if (status === 'awaiting_user') return '请用 Agent 专属钉钉账号确认授权';
-  if (status === 'connected') return 'Agent 钉钉账号已连接，Personal Stream 将自动启动';
-  if (status === 'expired') return '授权码已过期，请重新授权';
-  return error || '钉钉授权未完成，请重试';
 }
 
 function mapError(error: unknown): { status: number; code: string; message: string; changed: boolean } {

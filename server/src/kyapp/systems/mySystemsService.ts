@@ -10,6 +10,7 @@ import type {
   KyAppSystemStatus,
 } from './types.js';
 import type { PgKyAppSystemStore } from './store.js';
+import type { UserCapabilityObservationReader } from '../gateway/capabilityObservationStore.js';
 import type {
   KyAppMineState,
   MyBusinessSystem,
@@ -29,6 +30,7 @@ export interface MySystemsServiceOptions {
     ) => ReturnType<PgAssignmentStore['listEffectiveResourceIds']>;
   };
   runtimeStore?: Pick<PgKyAppInstallationRuntimeStore, 'get'>;
+  capabilityObservations?: Pick<UserCapabilityObservationReader, 'get'>;
   failureThreshold?: number;
 }
 
@@ -52,6 +54,7 @@ export function resolveMineState(input: {
   runtime: KyAppInstallationRuntimeRecord | null;
   failureThreshold: number;
 }): KyAppMineState {
+  if (input.installationStatus === 'pending') return 'pending';
   if (input.installationStatus !== 'enabled' || input.definitionStatus !== 'published') {
     return 'disabled';
   }
@@ -85,6 +88,18 @@ function deriveStatus(input: {
   message: string;
 } {
   const { installation, definition, runtime, failureThreshold } = input;
+  if (installation.status === 'pending') {
+    const domainVerified = installation.domainVerifiedAt !== null;
+    return {
+      pageStatus: 'not_configured',
+      agentStatus: domainVerified ? 'waiting_service' : 'not_configured',
+      reasonCode: domainVerified ? 'ready_required' : 'domain_verification_required',
+      nextAction: 'continue_onboarding',
+      message: domainVerified
+        ? '业务系统正在接入，请继续完成服务就绪检查'
+        : '业务系统正在接入，请继续验证业务域名',
+    };
+  }
   if (installation.status !== 'enabled' || definition.status !== 'published') {
     return {
       pageStatus: 'unavailable',
@@ -171,13 +186,16 @@ export class MySystemsService {
         );
     const allowed = new Set(effective.map((item) => item.resourceId));
     const candidates = installations.filter(
-      (item) => allowed.has(item.installationId) && ['enabled', 'disabled'].includes(item.status),
+      (item) => allowed.has(item.installationId) && item.status !== 'deleted',
     );
-    const resolved = await Promise.all(candidates.map((item) => this.resolve(item)));
+    const resolved = await Promise.all(candidates.map((item) => this.resolve(item, userId)));
     return resolved.filter((item): item is MyBusinessSystem => item !== null);
   }
 
-  private async resolve(installation: KyAppInstallation): Promise<MyBusinessSystem | null> {
+  private async resolve(
+    installation: KyAppInstallation,
+    userId: string,
+  ): Promise<MyBusinessSystem | null> {
     const definition = await this.options.systems.getDefinition(installation.systemId);
     if (!definition?.publishedDigest) return null;
     const digest = installation.registeredDigest ?? definition.publishedDigest;
@@ -194,6 +212,7 @@ export class MySystemsService {
       runtime,
       failureThreshold: this.failureThreshold,
     });
+    const capability = await this.resolveCapabilityStatus(installation, userId, status);
     return {
       installationId: installation.installationId,
       systemId: installation.systemId,
@@ -211,9 +230,74 @@ export class MySystemsService {
       }),
       externalLinkHosts: parseExternalLinkHosts(version?.manifest),
       ...status,
-      personalAuthorizationStatus: 'not_required',
+      ...capability,
       canOpenPage: status.pageStatus === 'available',
-      canUseAgent: status.agentStatus === 'ready',
+      canUseAgent: capability.agentStatus === 'ready',
+    };
+  }
+
+  private async resolveCapabilityStatus(
+    installation: KyAppInstallation,
+    userId: string,
+    technical: ReturnType<typeof deriveStatus>,
+  ): Promise<Pick<
+    MyBusinessSystem,
+    'agentStatus' | 'personalAuthorizationStatus' | 'reasonCode' | 'nextAction' | 'message'
+  >> {
+    if (technical.agentStatus !== 'ready' || !installation.registeredDigest) {
+      return {
+        ...technical,
+        personalAuthorizationStatus:
+          installation.status === 'enabled' ? 'pending' : 'not_required',
+      };
+    }
+    const observation = await this.options.capabilityObservations?.get(
+      installation.tenantId,
+      installation.installationId,
+      userId,
+    );
+    if (!observation || observation.registeredDigest !== installation.registeredDigest) {
+      return {
+        agentStatus: 'waiting_personal_authorization',
+        personalAuthorizationStatus: 'pending',
+        reasonCode: 'me_not_verified',
+        nextAction: 'retry',
+        message: '页面已经开通，请新建对话确认当前账号的业务能力',
+      };
+    }
+    if (observation.status === 'unavailable') {
+      return {
+        agentStatus: 'degraded',
+        personalAuthorizationStatus: 'pending',
+        reasonCode: 'me_unavailable',
+        nextAction: 'retry',
+        message: '页面已经开通，但暂时无法确认当前账号的业务能力',
+      };
+    }
+    if (observation.status === 'capacity_limited') {
+      return {
+        agentStatus: 'degraded',
+        personalAuthorizationStatus: 'connected',
+        reasonCode: 'tool_projection_limit',
+        nextAction: 'retry',
+        message: '当前账号已获授权，但会话工具数量达到上限，暂未注入该业务系统能力',
+      };
+    }
+    if (observation.status === 'insufficient_scope' || observation.enabledCapabilityCount === 0) {
+      return {
+        agentStatus: 'waiting_personal_authorization',
+        personalAuthorizationStatus: 'insufficient_scope',
+        reasonCode: 'me_no_enabled_capabilities',
+        nextAction: 'authorize',
+        message: '页面已经开通，当前账号尚未获得可用的业务能力',
+      };
+    }
+    return {
+      agentStatus: 'ready',
+      personalAuthorizationStatus: 'connected',
+      reasonCode: null,
+      nextAction: 'none',
+      message: '页面和 Agent 能力均可使用',
     };
   }
 }

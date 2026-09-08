@@ -40,6 +40,7 @@ export interface AppsNavItem {
 export const APPS_NAV_UNAVAILABLE_MARK = '暂不可用';
 
 export function appsNavStateMark(state: MySystemState): string | null {
+  if (state === 'pending') return '接入中';
   return state === 'disabled' || state === 'unavailable' ? APPS_NAV_UNAVAILABLE_MARK : null;
 }
 

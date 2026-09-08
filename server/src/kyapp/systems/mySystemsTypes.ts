@@ -32,6 +32,7 @@ export const MY_SYSTEM_NEXT_ACTIONS = [
 export type MySystemNextAction = (typeof MY_SYSTEM_NEXT_ACTIONS)[number];
 
 export const KY_APP_MINE_STATES = [
+  'pending',
   'enabled',
   'disabled',
   'unavailable',

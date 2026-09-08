@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,28 +67,32 @@ function InstallationList({
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
+  const [cursor, setCursor] = useState('');
+  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
+  const params = new URLSearchParams({
+    tenantId,
+    limit: '50',
+    ...(filter === 'all' ? {} : { businessStatus: filter }),
+    ...(appliedQuery ? { query: appliedQuery } : {}),
+    ...(cursor ? { cursor } : {}),
+  });
   const resource = useManagementResource<InstallationPage>(
-    `/installations?${new URLSearchParams({ tenantId, limit: '100' })}`,
+    `/installations?${params}`,
   );
-  const items = useMemo(
-    () =>
-      (resource.data?.installations ?? []).filter((item) => {
-        if (
-          query.trim() &&
-          !`${item.systemName}\n${item.systemId}`
-            .toLocaleLowerCase('zh-CN')
-            .includes(query.trim().toLocaleLowerCase('zh-CN'))
-        )
-          return false;
-        const state = cardState(item);
-        return filter === 'all' || filter === state;
-      }),
-    [filter, query, resource.data],
-  );
+  const items = resource.data?.installations ?? [];
   if (!resource.data) return <ResourceState error={resource.error} retry={resource.reload} />;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
+      <form
+        className="flex flex-wrap gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setAppliedQuery(query.trim());
+          setCursor('');
+          setCursorHistory([]);
+        }}
+      >
         <div className="relative min-w-64 flex-1">
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -102,7 +106,11 @@ function InstallationList({
         <select
           aria-label="状态筛选"
           value={filter}
-          onChange={(event) => setFilter(event.target.value as Filter)}
+          onChange={(event) => {
+            setFilter(event.target.value as Filter);
+            setCursor('');
+            setCursorHistory([]);
+          }}
           className="rounded border bg-background px-3 text-sm"
         >
           <option value="all">全部</option>
@@ -110,7 +118,10 @@ function InstallationList({
           <option value="ready">可以使用</option>
           <option value="disabled">已停用</option>
         </select>
-      </div>
+        <Button type="submit" variant="outline">
+          搜索
+        </Button>
+      </form>
       {!items.length ? (
         <p>暂无符合条件的业务系统</p>
       ) : (
@@ -120,13 +131,44 @@ function InstallationList({
           ))}
         </div>
       )}
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={cursorHistory.length === 0}
+          onClick={() => {
+            const history = [...cursorHistory];
+            setCursor(history.pop() ?? '');
+            setCursorHistory(history);
+          }}
+        >
+          上一页
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!resource.data.nextCursor}
+          onClick={() => {
+            if (!resource.data?.nextCursor) return;
+            setCursorHistory((history) => [...history, cursor]);
+            setCursor(resource.data.nextCursor);
+          }}
+        >
+          下一页
+        </Button>
+      </div>
     </div>
   );
 }
 
 function cardState(item: InstallationItem): Exclude<Filter, 'all'> {
   if (item.status === 'disabled' || item.status === 'deleted') return 'disabled';
-  return item.registeredDigest && item.runtimeStatus === 'healthy' ? 'ready' : 'action_required';
+  return item.status === 'enabled' &&
+    item.registeredDigest !== null &&
+    item.registeredDigest === item.publishedDigest &&
+    item.runtimeStatus === 'healthy'
+    ? 'ready'
+    : 'action_required';
 }
 
 function InstallationCard({
@@ -138,7 +180,11 @@ function InstallationCard({
 }) {
   const state = cardState(item);
   const page =
-    state === 'disabled' ? 'unavailable' : item.domainVerifiedAt ? 'available' : 'not_configured';
+    state === 'disabled'
+      ? 'unavailable'
+      : item.status === 'pending' || !item.domainVerifiedAt
+        ? 'not_configured'
+        : 'available';
   const agent =
     state === 'ready'
       ? 'ready'
@@ -154,6 +200,8 @@ function InstallationCard({
         ? '如需恢复，请先启用系统'
         : !item.domainVerifiedAt
           ? '验证业务域名'
+          : item.status === 'pending'
+            ? '继续完成服务检查、访问授权并启用系统'
           : !item.registeredDigest
             ? '等待业务服务上报并确认版本'
             : '重新检查业务服务';

@@ -13,6 +13,8 @@ export interface InstallationFilter {
   systemId?: string;
   status?: string;
   signal?: string;
+  query?: string;
+  businessStatus?: 'action_required' | 'ready' | 'disabled';
   cursor?: string;
   limit: number;
 }
@@ -229,6 +231,19 @@ export class KyAppManagementQueries {
           : 'FALSE',
       );
     }
+    if (filter.query?.trim()) {
+      params.push(`%${filter.query.trim().toLocaleLowerCase('zh-CN')}%`);
+      where.push(
+        `(LOWER(d.name) LIKE $${params.length} OR LOWER(i.system_id) LIKE $${params.length} OR LOWER(i.installation_id) LIKE $${params.length})`,
+      );
+    }
+    const readyCondition = `COALESCE((i.status='enabled' AND d.status='published'
+      AND i.registered_digest IS NOT NULL AND r.live_status='ok' AND r.ready_status='ok'
+      AND r.manifest_digest=i.registered_digest AND i.registered_digest=d.published_digest),FALSE)`;
+    if (filter.businessStatus === 'ready') where.push(readyCondition);
+    if (filter.businessStatus === 'disabled') where.push("i.status IN ('disabled','deleted')");
+    if (filter.businessStatus === 'action_required')
+      where.push(`i.status NOT IN ('disabled','deleted') AND NOT ${readyCondition}`);
     if (filter.cursor) {
       const cursor = JSON.parse(Buffer.from(filter.cursor, 'base64url').toString()) as {
         at: string;

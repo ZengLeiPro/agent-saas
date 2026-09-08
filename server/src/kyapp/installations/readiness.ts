@@ -25,7 +25,7 @@ export function installationReadiness(input: {
     personalAuthorizationMode: 'not_required' as const,
     lastCheckedAt: runtime?.readyCheckedAt ?? runtime?.liveCheckedAt ?? null,
   };
-  if (installation.status !== 'enabled')
+  if (installation.status === 'disabled' || installation.status === 'deleted')
     return {
       ...base,
       overallStatus: 'disabled',
@@ -36,6 +36,7 @@ export function installationReadiness(input: {
       ownerRole: 'organization_admin',
       nextAction: '启用业务系统',
     };
+  const onboarding = installation.status === 'pending';
   if (!installation.domainVerifiedAt)
     return {
       ...base,
@@ -51,7 +52,11 @@ export function installationReadiness(input: {
     return {
       ...base,
       overallStatus: 'degraded',
-      pageStatus: runtime.liveStatus === 'failed' ? 'unavailable' : 'available',
+      pageStatus: onboarding
+        ? 'not_configured'
+        : runtime.liveStatus === 'failed'
+          ? 'unavailable'
+          : 'available',
       agentStatus: 'degraded',
       currentStep: 'service_readiness',
       reasonCode: 'diagnostic_failed',
@@ -62,7 +67,7 @@ export function installationReadiness(input: {
     return {
       ...base,
       overallStatus: 'action_required',
-      pageStatus: 'available',
+      pageStatus: onboarding ? 'not_configured' : 'available',
       agentStatus: 'waiting_service',
       currentStep: 'service_readiness',
       reasonCode: 'ready_required',
@@ -76,7 +81,7 @@ export function installationReadiness(input: {
     return {
       ...base,
       overallStatus: 'action_required',
-      pageStatus: 'available',
+      pageStatus: onboarding ? 'not_configured' : 'available',
       agentStatus: 'waiting_service',
       currentStep: 'version_registration',
       reasonCode: 'manifest_digest_mismatch',
@@ -87,12 +92,23 @@ export function installationReadiness(input: {
     return {
       ...base,
       overallStatus: 'action_required',
-      pageStatus: 'available',
+      pageStatus: onboarding ? 'not_configured' : 'available',
       agentStatus: 'waiting_assignment',
       currentStep: 'assignment',
       reasonCode: 'assignment_required',
       ownerRole: 'organization_admin',
       nextAction: '配置访问范围',
+    };
+  if (onboarding)
+    return {
+      ...base,
+      overallStatus: 'action_required',
+      pageStatus: 'not_configured',
+      agentStatus: 'waiting_service',
+      currentStep: 'activation',
+      reasonCode: 'activation_required',
+      ownerRole: 'organization_admin',
+      nextAction: '启用业务系统',
     };
   return {
     ...base,

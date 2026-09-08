@@ -8,7 +8,9 @@ import { ResourceState, useManagementResource } from './ManagementResource';
 interface AccessOverview {
   summary: {
     effectiveUserCount: number;
+    verifiedUsableUserCount: number;
     effectiveAgentCount: number;
+    restrictedAgentCount: number;
     pendingPersonalAuthorizationCount: number;
     ruleCount: number;
   };
@@ -20,6 +22,7 @@ interface AccessOverview {
     accessSources: string[];
     personalAuthorizationStatus: string;
     agentCapabilityStatus: string;
+    capabilityCheckedAt: string | null;
   }>;
   agents: Array<{ agentId: string; name: string; source: string; capabilityStatus: string }>;
   nextCursor: string | null;
@@ -29,8 +32,10 @@ export function InstallationAccessOverview({ installationId }: { installationId:
   const [kind, setKind] = useState<'user' | 'agent'>('user');
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
+  const [cursor, setCursor] = useState('');
+  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
   const resource = useManagementResource<AccessOverview>(
-    `${installationPath(installationId, '/access-overview')}?${new URLSearchParams({ kind, ...(appliedQuery ? { query: appliedQuery } : {}) })}`,
+    `${installationPath(installationId, '/access-overview')}?${new URLSearchParams({ kind, ...(appliedQuery ? { query: appliedQuery } : {}), ...(cursor ? { cursor } : {}) })}`,
   );
   return (
     <section className="space-y-3 rounded border p-4">
@@ -47,7 +52,11 @@ export function InstallationAccessOverview({ installationId }: { installationId:
             role="tab"
             aria-selected={kind === 'user'}
             variant={kind === 'user' ? 'default' : 'outline'}
-            onClick={() => setKind('user')}
+            onClick={() => {
+              setKind('user');
+              setCursor('');
+              setCursorHistory([]);
+            }}
           >
             成员
           </Button>
@@ -56,7 +65,11 @@ export function InstallationAccessOverview({ installationId }: { installationId:
             role="tab"
             aria-selected={kind === 'agent'}
             variant={kind === 'agent' ? 'default' : 'outline'}
-            onClick={() => setKind('agent')}
+            onClick={() => {
+              setKind('agent');
+              setCursor('');
+              setCursorHistory([]);
+            }}
           >
             智能体
           </Button>
@@ -67,6 +80,8 @@ export function InstallationAccessOverview({ installationId }: { installationId:
         onSubmit={(event) => {
           event.preventDefault();
           setAppliedQuery(query.trim());
+          setCursor('');
+          setCursorHistory([]);
         }}
       >
         <Input
@@ -85,7 +100,8 @@ export function InstallationAccessOverview({ installationId }: { installationId:
         <>
           <p className="text-sm text-muted-foreground">
             已授权成员 {resource.data.summary.effectiveUserCount} 人 · 已授权智能体{' '}
-            {resource.data.summary.effectiveAgentCount} 个
+            {resource.data.summary.effectiveAgentCount} 个 · 已验证可调用成员{' '}
+            {resource.data.summary.verifiedUsableUserCount} 人
           </p>
           {kind === 'user' ? (
             resource.data.users.length === 0 ? (
@@ -134,6 +150,32 @@ export function InstallationAccessOverview({ installationId }: { installationId:
               ))}
             </ul>
           )}
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={cursorHistory.length === 0}
+              onClick={() => {
+                const history = [...cursorHistory];
+                setCursor(history.pop() ?? '');
+                setCursorHistory(history);
+              }}
+            >
+              上一页
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!resource.data.nextCursor}
+              onClick={() => {
+                if (!resource.data?.nextCursor) return;
+                setCursorHistory((history) => [...history, cursor]);
+                setCursor(resource.data.nextCursor);
+              }}
+            >
+              下一页
+            </Button>
+          </div>
         </>
       )}
     </section>

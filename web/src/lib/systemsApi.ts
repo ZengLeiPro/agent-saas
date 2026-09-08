@@ -14,6 +14,7 @@ import { authFetch } from '@/lib/authFetch';
  * §5.5 /§6.6：停用与 `live` 失败**不把标签从侧边栏拿掉**，而是留在原位标「暂不可用」。
  */
 export const MY_SYSTEM_STATES = [
+  'pending',
   'enabled',
   'disabled',
   'unavailable',

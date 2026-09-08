@@ -122,6 +122,7 @@ export function registerKyAppRoutes(
           memberships: runtime.membershipStore,
           assignments: assembly.assignmentAccess,
           assignmentSets: runtime.assignmentStore!,
+          observations: assembly.capabilityObservations,
           ...(runtime.directoryGroupStore ? { groups: runtime.directoryGroupStore } : {}),
           ...(runtime.orgAgentStore ? { agents: runtime.orgAgentStore } : {}),
         })

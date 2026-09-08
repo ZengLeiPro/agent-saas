@@ -41,6 +41,40 @@ const runtime: KyAppInstallationRuntimeRecord = {
 };
 
 describe('installationReadiness', () => {
+  it('pending 首次接入按真实步骤推进，不归类为已停用', () => {
+    expect(
+      installationReadiness({
+        installation: { ...installation, status: 'pending', domainVerifiedAt: null },
+        publishedDigest: 'digest-a',
+        runtime: null,
+        assignmentConfigured: false,
+      }),
+    ).toMatchObject({
+      overallStatus: 'action_required',
+      pageStatus: 'not_configured',
+      agentStatus: 'not_configured',
+      currentStep: 'domain_verification',
+      reasonCode: 'domain_verification_required',
+      nextAction: '验证业务域名',
+    });
+  });
+
+  it('pending 完成技术与授权门禁后才提示启用', () => {
+    expect(
+      installationReadiness({
+        installation: { ...installation, status: 'pending' },
+        publishedDigest: 'digest-a',
+        runtime,
+        assignmentConfigured: true,
+      }),
+    ).toMatchObject({
+      overallStatus: 'action_required',
+      currentStep: 'activation',
+      reasonCode: 'activation_required',
+      nextAction: '启用业务系统',
+    });
+  });
+
   it('把完整接入闭环归一为可用状态', () => {
     expect(
       installationReadiness({

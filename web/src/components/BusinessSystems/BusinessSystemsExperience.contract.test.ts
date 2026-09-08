@@ -25,6 +25,15 @@ describe('业务系统配置体验契约', () => {
     expect(organizationSource).not.toContain('role="tablist"');
   });
 
+  it('组织列表把搜索、状态和游标交给服务端，不静默截断前 100 条', () => {
+    expect(organizationSource).toContain("limit: '50'");
+    expect(organizationSource).toContain('{ businessStatus: filter }');
+    expect(organizationSource).toContain('{ query: appliedQuery }');
+    expect(organizationSource).toContain('{ cursor }');
+    expect(organizationSource).toContain('resource.data.nextCursor');
+    expect(organizationSource).not.toContain("limit: '100'");
+  });
+
   it('诊断参数由能力 Schema 生成字段，不要求管理员手写 JSON', () => {
     expect(settingsSource).toContain('DiagnosticInputFields');
     expect(settingsSource).not.toContain('诊断参数（JSON）');

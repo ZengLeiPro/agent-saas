@@ -95,6 +95,15 @@ export interface AppToolSnapshotServiceOptions {
   maxSessions?: number;
   now?: () => number;
   logger?: { warn(message: string): void };
+  /** 仅在真实会话构建工具快照时写入，管理页不得用技术就绪替代该观测。 */
+  recordCapabilityObservation?: (input: {
+    tenantId: string;
+    installationId: string;
+    userId: string;
+    registeredDigest: string;
+    status: 'ready' | 'insufficient_scope' | 'capacity_limited' | 'unavailable';
+    enabledCapabilityCount: number;
+  }) => Promise<void>;
 }
 
 const DEFAULT_MAX_SESSIONS = 2_000;
@@ -277,16 +286,22 @@ export class AppToolSnapshotService {
     previous: AppToolSnapshot | undefined,
   ): Promise<AppToolSnapshot> {
     const entries: AppCapabilityEntry[] = [];
+    const successfulProjections = new Map<string, AppVisibleInstallation>();
+    const projectedInstallationIds = new Set<string>();
     let degraded = false;
 
     for (const installation of installations) {
       const manifest = await this.readManifestSafely(installation);
       // digest fail-closed：登记 digest 读不到 manifest 就整实例不投影。
-      if (!manifest) continue;
+      if (!manifest) {
+        await this.recordObservation(input, installation, 'unavailable', 0);
+        continue;
+      }
 
       const systemName = readSystemName(manifest, installation.systemId);
       const enabled = await this.readEnabledSafely(installation, input);
       if (enabled === null) {
+        await this.recordObservation(input, installation, 'unavailable', 0);
         // fail-static：沿用上次快照里属于这个实例的能力集合，但**用新 manifest 重建**条目 ——
         // 只保留能力 id，schema 与 registeredDigest 一律取当前值，避免带着过期 dig 去调用。
         // 上次快照里没有的能力不会凭空出现；首个 run 就失败 → 本会话该实例无工具。
@@ -307,10 +322,14 @@ export class AppToolSnapshotService {
         continue;
       }
 
+      successfulProjections.set(installation.installationId, installation);
       for (const capability of readCapabilities(manifest)) {
         if (!enabled.has(capability.id)) continue;
         const entry = this.toEntry(installation, systemName, capability);
-        if (entry) entries.push(entry);
+        if (entry) {
+          entries.push(entry);
+          projectedInstallationIds.add(installation.installationId);
+        }
       }
     }
 
@@ -323,7 +342,46 @@ export class AppToolSnapshotService {
       );
       entries.length = limit;
     }
+    const finalCountByInstallation = new Map<string, number>();
+    for (const entry of entries) {
+      finalCountByInstallation.set(
+        entry.installationId,
+        (finalCountByInstallation.get(entry.installationId) ?? 0) + 1,
+      );
+    }
+    for (const installation of successfulProjections.values()) {
+      const finalCount = finalCountByInstallation.get(installation.installationId) ?? 0;
+      const hadProjectedEntry = projectedInstallationIds.has(installation.installationId);
+      await this.recordObservation(
+        input,
+        installation,
+        finalCount > 0 ? 'ready' : hadProjectedEntry ? 'capacity_limited' : 'insufficient_scope',
+        finalCount,
+      );
+    }
     return { ...input, key, entries, degraded, createdAt: this.now() };
+  }
+
+  private async recordObservation(
+    input: { tenantId: string; userId: string },
+    installation: AppVisibleInstallation,
+    status: 'ready' | 'insufficient_scope' | 'capacity_limited' | 'unavailable',
+    enabledCapabilityCount: number,
+  ): Promise<void> {
+    try {
+      await this.options.recordCapabilityObservation?.({
+        tenantId: input.tenantId,
+        installationId: installation.installationId,
+        userId: input.userId,
+        registeredDigest: installation.registeredDigest,
+        status,
+        enabledCapabilityCount,
+      });
+    } catch (error) {
+      this.options.logger?.warn(
+        `[ky-app-gateway] 写入 /me 能力观测失败 ${installation.installationId}：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private toEntry(

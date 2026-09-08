@@ -80,6 +80,8 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
           systemId: z.string().optional(),
           status: z.enum(['pending', 'enabled', 'disabled', 'deleted']).optional(),
           signal: z.enum(['outcome_unknown', 'rate_limited', 'upstream_unavailable']).optional(),
+          query: z.string().trim().max(100).optional(),
+          businessStatus: z.enum(['action_required', 'ready', 'disabled']).optional(),
           cursor: z.string().max(1024).optional(),
           limit: z.coerce.number().int().min(1).max(100).default(50),
         })
@@ -365,10 +367,26 @@ export function createKyAppInstallationsRouter(options: KyAppInstallationRoutesO
       if (!canManageTenant(req.user, installation.tenantId)) {
         return sendKyAppError(req, res, 'forbidden', '需要平台管理员或本组织管理员权限');
       }
+      const version = installation.registeredDigest
+        ? await options.systems.getVersion(installation.systemId, installation.registeredDigest)
+        : null;
+      const capabilities = (version?.manifest as { capabilities?: unknown } | undefined)
+        ?.capabilities;
       res.json(
         await options.accessOverview.read({
           tenantId: installation.tenantId,
           installationId: iid.data,
+          systemId: installation.systemId,
+          registeredDigest: installation.registeredDigest,
+          capabilityIds: Array.isArray(capabilities)
+            ? capabilities
+                .map((item) =>
+                  typeof item === 'object' && item !== null && typeof item.id === 'string'
+                    ? item.id
+                    : null,
+                )
+                .filter((item): item is string => item !== null)
+            : [],
           ...query.data,
         }),
       );

@@ -21,6 +21,7 @@ import { inventoryPersonalWorkspace } from './governancePersonalDataRetention.js
 import type { ExecuteUserOffboarding } from './governanceOffboarding.js';
 import type { AppRuntime } from './runtime.js';
 import { resolveRuntimeModelScopeImpact } from './runtimeModelScopeImpact.js';
+import { resolveRuntimeIntegratedSystemScopeImpact } from './runtimeIntegratedSystemScopeImpact.js';
 import { createAssignmentResourceResolver, createEntitlementResourceCatalogResolver, createEntitlementResourceResolver } from './runtimeAssignmentResourceResolver.js';
 import { createOAuthGrantReconciler } from './runtimeOAuthGrantReconciler.js';
 import {
@@ -311,6 +312,9 @@ export function registerGovernanceRoutes(
         }),
         getTenantLifecycle: (tenantId: string) => runtime.tenantStore!.findByIdStrict(tenantId),
         resolveDependencyImpact: input => {
+          if (input.kind === 'scope' && input.resourceType === 'integrated_system') {
+            return resolveRuntimeIntegratedSystemScopeImpact(runtime, input.tenantId);
+          }
           if (input.kind === 'scope' && input.resourceType === 'model') {
             return resolveRuntimeModelScopeImpact(runtime, input.tenantId);
           }

@@ -6,7 +6,7 @@ on:
   push:
     branches: [fix/models-production-write-policy-20260908]
     paths:
-      - scripts/bootstrap-model-write-policy.py
+      - scripts/release/bootstrap-model-write-policy.py
       - .github/workflows/model-write-policy-bootstrap.yml
 
 permissions:
@@ -34,14 +34,14 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('scripts/bootstrap-model-write-policy.py')
+          p = Path('scripts/release/bootstrap-model-write-policy.py')
           source = p.read_text()
           old = "text.index('type SelectedPanel = ')"
           assert source.count(old) == 1
           p.write_text(source.replace(old, "text.index('type SelectedPanel =')"))
           PY
-          python3 scripts/bootstrap-model-write-policy.py
-          git restore -- scripts/bootstrap-model-write-policy.py
+          python3 scripts/release/bootstrap-model-write-policy.py
+          git restore -- scripts/release/bootstrap-model-write-policy.py
           python3 - <<'PY'
           from pathlib import Path
           for name in ('server/vitest.config.ts', 'web/vite.config.ts', 'web/vitest.config.ts'):

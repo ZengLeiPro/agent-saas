@@ -74,8 +74,12 @@ test('catalog rejects incomplete existing quota schemas that cannot execute the 
   const edits = `${prefix}_provider_plan_expiry_edits`;
   const pool = new Pool({ connectionString: url });
   const catalog = JSON.parse(await readFile(new URL('../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
-  const postconditions = catalog.entries[0].checks;
-  for (const entry of catalog.entries) assert.deepEqual(entry.checks, postconditions);
+  const quotaEntries = catalog.entries.filter(
+    (entry) => entry.path === 'server/src/quota/providerQuotaSnapshotStore.ts',
+  );
+  assert.ok(quotaEntries.length > 0);
+  const postconditions = quotaEntries[0].checks;
+  for (const entry of quotaEntries) assert.deepEqual(entry.checks, postconditions);
   const manifest = { releaseId: 'rc-20260908-01', digest: `sha256:${'a'.repeat(64)}`, migrationPlan: { phase: 'expand', planDigest: `sha256:${'b'.repeat(64)}`, postconditions, postconditionsDigest: digestBuffer(canonicalJson(postconditions)) } };
   const readback = () => readMigrationPostconditions({ manifest, config: { runtimeEventStore: { connectionString: url, tablePrefix: prefix } }, environment: 'staging', Pool });
   try {

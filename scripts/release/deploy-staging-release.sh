@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+trap 'status=$?; printf "Staging deployment failed at line %s (exit=%s)\n" "$LINENO" "$status" >&2' ERR
 
 : "${RELEASE_DIR:?RELEASE_DIR is required}"
 : "${UNIT_DIR:?UNIT_DIR is required}"
@@ -397,8 +398,9 @@ if [ -n "$snat_mode" ] && [ "$snat_mode" != disabled ]; then
 fi
 
 if [ -d "$target" ]; then
-  node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server
-  node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs
+  node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server >/dev/null
+  node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs >/dev/null
+  echo "Verified installed server and ACS bytes for $release_id"
   test "sha256:$(sha256sum "$target/.release/staging-runtime-assets.tgz" | cut -d' ' -f1)" = \
     "$STAGING_RUNTIME_ASSETS_DIGEST" || {
     echo 'Immutable Staging runtime assets conflict' >&2
@@ -436,8 +438,9 @@ else
   test -s "$candidate/server/dist/index.js"
   test -s "$candidate/acs-orchestrator/dist/index.js"
   install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
-  node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server
-  node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs
+  node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server >/dev/null
+  node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs >/dev/null
+  echo "Sealed server and ACS inventories for $release_id"
   mv "$candidate" "$target"
 fi
 

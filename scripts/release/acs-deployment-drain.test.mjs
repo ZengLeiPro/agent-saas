@@ -52,8 +52,17 @@ systemctl() {
   printf 'systemctl %s\\n' "$*" >> "$TEST_ROOT/events"
   case "$*" in
     'is-active --quiet acs') [ ! -e "$TEST_ROOT/signalled" ] || [ "$CASE" = timeout ] || [ "$CASE" = pidchange ] ;;
-    *--property=MainPID*) if [ "$CASE" = pidchange ] && [ -e "$TEST_ROOT/signalled" ]; then echo 43; else echo 42; fi ;;
-    *--property=ActiveState*) case "$CASE" in timeout|pidchange) echo active ;; forced|killed) echo failed ;; *) echo inactive ;; esac ;;
+    *--property=MainPID*)
+      if [ ! -e "$TEST_ROOT/signalled" ]; then echo 42
+      elif [ "$CASE" = pidchange ]; then echo 43
+      elif [ "$CASE" = exitbetweenreads ] || [ "$CASE" = deactivating ]; then echo 0
+      else echo 42; fi ;;
+    *--property=ExecMainPID*) [ "$CASE" = foreignexit ] && echo 43 || echo 42 ;;
+    *--property=ActiveState*)
+      if [ "$CASE" = exitbetweenreads ] || [ "$CASE" = deactivating ]; then
+        if [ -e "$TEST_ROOT/transition-observed" ]; then echo inactive
+        else touch "$TEST_ROOT/transition-observed"; [ "$CASE" = deactivating ] && echo deactivating || echo active; fi
+      else case "$CASE" in timeout|pidchange) echo active ;; forced|killed) echo failed ;; *) echo inactive ;; esac; fi ;;
     *--property=ExecMainStatus*) case "$CASE" in forced) echo 1 ;; killed) echo 9 ;; *) echo 0 ;; esac ;;
     *--property=ExecMainCode*) [ "$CASE" != killed ] && echo 1 || echo 2 ;;
     *--property=Result*) case "$CASE" in forced) echo exit-code ;; killed) echo signal ;; *) echo success ;; esac ;;
@@ -81,6 +90,9 @@ sleep() { :; }
 for (const scenario of [
   'clean',
   'legacyquiet',
+  'exitbetweenreads',
+  'deactivating',
+  'foreignexit',
   'forced',
   'killed',
   'missingproof',
@@ -109,7 +121,9 @@ for (const scenario of [
         encoding: 'utf8',
         env: { ...env, DRAIN_HELPER: helper },
       });
-      const success = ['clean', 'legacyquiet'].includes(scenario);
+      const success = ['clean', 'legacyquiet', 'exitbetweenreads', 'deactivating'].includes(
+        scenario,
+      );
       assert.equal(result.status === 0, success, result.stderr);
       const proofPath = join(root, 'acs-drain-123-2.json');
       if (success) {

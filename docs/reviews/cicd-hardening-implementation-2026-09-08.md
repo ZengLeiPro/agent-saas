@@ -36,7 +36,7 @@ Staging 的 Writer 升级和生产证据准备在在线槽锁外；部署与短�
 
 已经取得的局部证据包括：33/33 迁移分析等价；165 项原迁移测试及新增隔离测试；Writer 真包启动；业务短 smoke 反例；生产操作/ACS 排空和 PostgreSQL 后条件回归。真实 Linux 构建包多进程和 ACS 入口均已通过；受控并发的整套 Release/Staging 800 项合同全部通过，包括实际 PG16 后条件。
 
-最终交付前还需完成最新代码的 Linux 发布包验证、全局合同/类型/静态检查、PR 必需检查及测试环境实发观察。线上速度改进以同类型 PR 和发布采样为准；本机迁移减少约 80% 不等于整条 CI 减少 80%。生产发布是否执行及其结果会记录在此处，不能以本地测试代替。
+Linux 发布包、全局合同/类型/静态检查及 PR 必需检查已通过。测试环境实发暴露的退出状态竞态仍须修复后重新验收。线上速度改进以同类型 PR 和发布采样为准；本机迁移减少约 80% 不等于整条 CI 减少 80%。生产发布是否执行及其结果会记录在此处，不能以本地测试代替。
 
 ## 交付验证记录
 
@@ -44,5 +44,14 @@ Staging 的 Writer 升级和生产证据准备在在线槽锁外；部署与短�
 - 仓库门禁：41 项 ratchet 合同及文件长度、环境变量预算通过。
 - Linux 发布包：实际 API/Worker 使用隔离 PG、非超级用户角色及生产配置验证，通过 e2e 和 worker-handoff；ACS 真实 Node 入口通过。
 - Linux Release/Staging：800/800 通过，无跳过；新增兼容 ACS 强制重启反例通过，兼容回滚与封包 48 项、HTTP 重试 39 项、ACS 输入契约 82 项通过。
-- PR #574：GitHub 实际发布包、Writer、浏览器、PG、历史迁移、静态检查、Web 和移动端已通过；发现并修正三处旧 ECS 测试/ACS 输入清单衔接，最终头提交的全部检查继续执行。
-- 线上 Staging 与生产尚未执行，不将本地/PR CI 作为线上验收。
+- [PR #574](https://github.com/ZengLeiPro/agent-saas/pull/574) 已合并；最终头提交全部检查通过。[PR APP CI](https://github.com/ZengLeiPro/agent-saas/actions/runs/34180413256) 用时 5 分 29 秒，[main APP CI](https://github.com/ZengLeiPro/agent-saas/actions/runs/34180749442) 用时 4 分 13 秒，并成功发布不可变包。相较审计中 PR/main 的约 10 分钟中位数，首个样本分别缩短约 46%/59%；这不是长期性能保证。
+- [Staging RC85 实发](https://github.com/ZengLeiPro/agent-saas/actions/runs/34180799527)：Writer 升级、精确 main CI 包消费、摘要校验及 RC 上传通过；ACS 排空观察失败，最终版本对账拒绝将本轮标为成功。Web 发布和业务 smoke 未执行，RC85 不具备生产晋级资格。
+- Staging 最终证据为 `previous_runtime`，四组件均保持 RC84；2026-09-08 03:00 UTC 的独立就绪检查确认 Staging 和生产均为 HTTP 200、原 RC84。此次工作尚未执行生产发布。
+
+### Staging 实发发现：ACS 退出状态读取竞态
+
+部署日志报 `ACS PID changed before its drain outcome was verified`。旧实现分别读取 `ActiveState` 与 `MainPID`；进程恰好在两次读取之间退出时，会把合法的 `MainPID=0` 当作替换 PID，`deactivating` 也被直接拒绝。原日志没有记录观测 PID，不能据此断言线上具体处于哪一个过渡状态；新增确定性测试证明两个合法过渡均会触发旧实现失败。
+
+修复允许等待 `active + MainPID=0` 和 `deactivating` 到达终态，但成功仍须同时证明 `inactive`、正常退出码、成功结果及 `ExecMainPID` 等于最初排空 PID；原生协议还必须具备同 PID 的持久化完成证明。其他正数 PID、强制退出、超时或缺失证明继续拒绝切换。`MainPID` 与保留退出身份 `ExecMainPID` 的区别参见 [systemd 官方 D-Bus 文档](https://wiki.freedesktop.org/www/Software/systemd/dbus/)。三个新反例对旧脚本全部失败，包括错误终态 PID 被放行；修复后的排空与 Staging 生命周期测试 29/29 通过。
+
+同时保留安装清单的写入和全部字节校验，仅收敛其巨大 stdout 输出，并为 Staging 脚本增加失败行号和退出码，避免真正错误淹没在数 MB 清单中。错误钩子不输出命令或环境变量。修复提交仍须通过 GitHub CI 和新一轮 Staging 实发。

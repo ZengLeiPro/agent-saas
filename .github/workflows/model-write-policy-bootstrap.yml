@@ -1,11 +1,13 @@
 name: Model write-policy isolated verification
 
-# Temporary branch-only development helper. Removed before opening the PR.
+# Temporary feature-branch development helper, removed from the final PR diff.
 # No deployment environments, production credentials, or production endpoints.
 on:
   push:
     branches: [fix/models-production-write-policy-20260908]
-    paths: [scripts/bootstrap-model-write-policy.py]
+    paths:
+      - scripts/bootstrap-model-write-policy.py
+      - .github/workflows/model-write-policy-bootstrap.yml
 
 permissions:
   contents: write
@@ -29,7 +31,17 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Apply exact, checked source edits
-        run: python3 scripts/bootstrap-model-write-policy.py
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/bootstrap-model-write-policy.py')
+          source = p.read_text()
+          old = "text.index('type SelectedPanel = ')"
+          assert source.count(old) == 1
+          p.write_text(source.replace(old, "text.index('type SelectedPanel =')"))
+          PY
+          python3 scripts/bootstrap-model-write-policy.py
+          git restore -- scripts/bootstrap-model-write-policy.py
       - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
         with:

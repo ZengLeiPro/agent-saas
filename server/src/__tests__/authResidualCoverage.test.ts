@@ -559,6 +559,27 @@ describe('PATCH /me/preferences', () => {
       .toBe('openai-agents/kimi');
   });
 
+  it('保存并允许清空会话标题与智能分组个人提示语', async () => {
+    h.setCaller(h.users.wainUser);
+    const saved = await h.request('/api/auth/me/preferences', jsonInit('PATCH', {
+      titlePromptAddition: '优先使用客户名称',
+      sessionGroupingPromptAddition: '按客户和项目分类',
+    }));
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({ preferences: {
+      titlePromptAddition: '优先使用客户名称',
+      sessionGroupingPromptAddition: '按客户和项目分类',
+    } });
+
+    const cleared = await h.request('/api/auth/me/preferences', jsonInit('PATCH', {
+      titlePromptAddition: '', sessionGroupingPromptAddition: '',
+    }));
+    expect(cleared.status).toBe(200);
+    expect(h.userStore.findById(h.users.wainUser.id)?.preferences).toMatchObject({
+      titlePromptAddition: '', sessionGroupingPromptAddition: '',
+    });
+  });
+
   it('模型配置热更新后可立即保存新分组模型为个人默认模型', async () => {
     h.setCaller(h.users.wainUser);
     await h.tenantStore.updateSettings('wain', {

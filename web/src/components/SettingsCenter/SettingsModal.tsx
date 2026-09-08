@@ -24,6 +24,7 @@ import {
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { BrowserNotificationSettings } from "@/components/SettingsCenter/BrowserNotificationSettings";
 import { AppearanceLayoutPreferences } from "@/components/SettingsCenter/AppearanceLayoutPreferences";
+import { SessionOrganizationSettings } from "@/components/SettingsCenter/SessionOrganizationSettings";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import {
   ConnectionsSection,
@@ -854,6 +855,7 @@ export function SettingsModalInner({
       ),
     },
     { id: "chat-model", node: <GeneralSection /> },
+    { id: "session-organization", node: <SessionOrganizationSettings /> },
     {
       id: "appearance-layout",
       node: (

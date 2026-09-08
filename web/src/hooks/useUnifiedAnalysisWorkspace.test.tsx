@@ -36,7 +36,6 @@ function Harness() {
     governanceRoute: governanceRoute("platform.runtime.sessions"),
     managementAccess: access,
     sessionId: "session-1",
-    pushActiveTab: vi.fn(),
     setActiveTab: vi.fn(),
   });
 

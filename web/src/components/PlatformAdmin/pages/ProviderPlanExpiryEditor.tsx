@@ -75,7 +75,7 @@ export function ProviderPlanExpiryEditor({
     >
       <button
         type="button"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        className="inline-flex items-center gap-3 rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`编辑 ${snapshot.accountLabel} 套餐到期时间`}
         title={`${state.manualEndTime ? '手动设置' : '编辑套餐到期'} · 北京时间`}
         onClick={() => {
@@ -85,7 +85,9 @@ export function ProviderPlanExpiryEditor({
         }}
       >
         {label}
-        <Pencil className="size-3" />
+        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-accent">
+          <Pencil className="size-3.5" />
+        </span>
       </button>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>

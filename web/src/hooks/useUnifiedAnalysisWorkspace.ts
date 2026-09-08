@@ -14,14 +14,12 @@ export function useUnifiedAnalysisWorkspace({
   governanceRoute,
   managementAccess,
   sessionId,
-  pushActiveTab,
   setActiveTab,
 }: {
   mode: boolean;
   governanceRoute: GovernanceRouteState | null;
   managementAccess: ManagementSettingsAccess;
   sessionId: string | null;
-  pushActiveTab: (tab: AppTab) => void;
   setActiveTab: (tab: AppTab) => void;
 }) {
   const lastOrgIdRef = useRef<string | null>(null);
@@ -29,14 +27,13 @@ export function useUnifiedAnalysisWorkspace({
 
   const open = useCallback(() => {
     const source = `${window.location.pathname}${window.location.search}`;
-    markAnalysisHistoryEntry(source, 1);
     const area = managementAccess.platformEntryAllowed ? 'platform' : 'organization';
     const firstPage = managementPagesFor('analytics', area)[0];
     if (firstPage) {
-      pushActiveTab(area === 'platform' ? 'platform-admin' : 'tenant-admin');
       navigateGovernance(managementRouteForPage(firstPage, governanceRoute, lastOrgIdRef.current));
+      markAnalysisHistoryEntry(source, 1);
     }
-  }, [governanceRoute, managementAccess.platformEntryAllowed, pushActiveTab]);
+  }, [governanceRoute, managementAccess.platformEntryAllowed]);
   const close = useCallback(() => closeAnalysisHistory(() => setActiveTab("chat")), [setActiveTab]);
   const navigate = useCallback((routeId: string) => {
     const currentUrl = `${window.location.pathname}${window.location.search}`;

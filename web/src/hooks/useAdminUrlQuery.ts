@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { analysisHistoryStateForNavigation } from "@/lib/analysisHistory";
+import { managementHistoryStateForNavigation } from "@/lib/managementHistory";
 import { pushCurrentAppHistoryState, replaceAppHistoryState } from "@/lib/appHistory";
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -46,12 +46,12 @@ function nextHref(params: URLSearchParams) {
 
 function replaceSearch(params: URLSearchParams) {
   const href = nextHref(params);
-  replaceAppHistoryState(analysisHistoryStateForNavigation("replace", href), href);
+  replaceAppHistoryState(managementHistoryStateForNavigation("replace", href), href);
 }
 
 function pushSearch(params: URLSearchParams) {
   const href = nextHref(params);
-  pushCurrentAppHistoryState(analysisHistoryStateForNavigation("push", href), href);
+  pushCurrentAppHistoryState(managementHistoryStateForNavigation("push", href), href);
 }
 
 function applyValues(params: URLSearchParams, values: Record<string, QueryValue>) {

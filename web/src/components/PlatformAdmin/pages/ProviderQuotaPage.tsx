@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 
 import { platformAdminApi } from '../api';
 import { ProviderPlanExpiryEditor } from './ProviderPlanExpiryEditor';
+import { ProviderQuotaPlanBadge } from './ProviderQuotaPlanBadge';
 import { formatTime } from '../format';
 
 const SOURCE_LABEL: Record<ProviderQuotaSnapshot['sourceKind'], string> = {
@@ -184,24 +185,6 @@ function WindowTile({ window, baseline }: { window: ProviderQuotaWindow; baselin
   );
 }
 
-function Fact({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div
-        className={cn(
-          'truncate text-xs text-foreground',
-          tone === 'critical' && 'text-danger-ink',
-          tone === 'warning' && 'text-warning-ink',
-        )}
-        title={value}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function AccountCard({
   snapshot,
   history,
@@ -230,6 +213,8 @@ function AccountCard({
     typeof snapshot.extra?.lastSuccessAt === 'string' ? snapshot.extra.lastSuccessAt : null;
   const credits = snapshot.extra?.credits as
     { balance?: string | number; hasCredits?: boolean } | undefined;
+  const creditBalance = Number(credits?.balance ?? 0);
+  const showCredits = Number.isFinite(creditBalance) && creditBalance !== 0;
   const subtitle = [
     SOURCE_LABEL[snapshot.sourceKind],
     snapshot.plan?.type === 'pro' ? 'Pro' : snapshot.plan?.type,
@@ -237,9 +222,6 @@ function AccountCard({
     !isCodex && snapshot.plan?.autoRenew ? '自动续费' : undefined,
   ].filter(Boolean).join(' · ');
   const minuteTime = (value: string) => formatTime(value).replace(/:\d{2}$/, '');
-  const facts: Array<{ label: string; value: string; tone?: Tone }> = [
-    ...(credits ? [{ label: 'Credits', value: String(credits.balance ?? 0) }] : []),
-  ];
   return (
     <Card
       className={cn('h-full border-l-[3px]', TONE_EDGE[status.tone])}
@@ -270,7 +252,7 @@ function AccountCard({
             <Button
               variant="ghost"
               size="sm"
-              className="col-start-2 row-start-1 h-7 px-2 text-xs sm:col-start-3"
+              className="col-start-2 row-start-1 size-7 justify-self-end p-0 text-xs sm:col-start-3"
               aria-label={`刷新 ${snapshot.accountLabel}`}
               disabled={refreshing}
               onClick={() => onRefresh(snapshot.accountKey)}
@@ -278,8 +260,11 @@ function AccountCard({
               <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} />
             </Button>
           )}
-          <span className="col-start-1 row-start-2 text-xs text-muted-foreground" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>{subtitle}</span>
-          <div className="col-start-1 row-start-4 text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
+          <div className="col-span-2 col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:col-span-1" title={isCodex && credential?.expiresAt ? `凭据到期 ${minuteTime(credential.expiresAt)}${credential.accessTokenExpired ? '（已过期）' : ''}` : undefined}>
+            <ProviderQuotaPlanBadge sourceKind={snapshot.sourceKind} planType={snapshot.plan?.type}>{subtitle}</ProviderQuotaPlanBadge>
+            {showCredits && <span className="whitespace-nowrap tabular-nums text-muted-foreground">Credits {credits!.balance}</span>}
+          </div>
+          <div className="col-span-2 col-start-1 row-start-4 justify-self-end text-xs tabular-nums text-muted-foreground sm:col-start-2 sm:row-start-2 sm:text-right">
             <ProviderPlanExpiryEditor snapshot={snapshot} onSaved={onExpirySaved} />
           </div>
         </div>
@@ -307,11 +292,6 @@ function AccountCard({
             ))}
           </div>
         )}
-        {facts.length > 0 && <div className="grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-3 sm:grid-cols-4">
-          {facts.map((fact) => (
-            <Fact key={fact.label} {...fact} />
-          ))}
-        </div>}
         {additionalWindows.length > 0 && (
           <details className="rounded-md border p-3">
             <summary className="cursor-pointer text-xs text-muted-foreground">

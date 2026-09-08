@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderQuotaHistoryResponse, ProviderQuotaOverviewResponse } from '@agent/shared';
 
@@ -147,6 +147,20 @@ describe('ProviderQuotaPage', () => {
     fireEvent.click(screen.getByRole('button', { name: '刷新 kaiyankeji.3@gmail.com' }));
     await waitFor(() => expect(api.refreshProviderQuota).toHaveBeenCalledWith('codex:c1'));
     expect(api.providerQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0, '0', '0.00', undefined])('Credits 为 %s 时不显示占位', async (balance) => {
+    api.providerQuota.mockResolvedValue({ ...overview, items: [{ ...overview.items[1], extra: { credits: { balance } } }] });
+    render(<ProviderQuotaPage />);
+    const card = await screen.findByTestId('quota-account-codex:c1');
+    expect(within(card).queryByText(/Credits/)).toBeNull();
+  });
+
+  it.each([2.5, '12', -1])('非零 Credits %s 紧接套餐标签展示', async (balance) => {
+    api.providerQuota.mockResolvedValue({ ...overview, items: [{ ...overview.items[1], extra: { credits: { balance } } }] });
+    render(<ProviderQuotaPage />);
+    const badge = await screen.findByText('Codex 订阅 · Pro · 重置券 2');
+    expect(within(badge.parentElement!).getByText(`Credits ${balance}`)).toBeTruthy();
   });
 
   it('Claude 订阅是推送型来源：正常渲染额度，但不给单账号刷新按钮', async () => {

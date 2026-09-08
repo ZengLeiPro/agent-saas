@@ -3,15 +3,11 @@ import { useCallback } from "react";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import { replaceAppHistoryState } from "@/lib/appHistory";
 import {
-  buildPlatformAdminUrl,
-  buildTenantAdminUrl,
   buildUrl,
   closePersonalSettingsHistory,
   governanceSettingsRoute,
-  preserveSearchKeys,
   pushSettingsRoute,
   readPersonalSettingsHistoryState,
-  TENANT_ADMIN_SCOPE_KEYS,
   normalizeSettingsSection,
   type PlatformAdminSection,
   type TenantAdminSection,
@@ -36,12 +32,10 @@ export interface PersonalSettingsNavigationDeps {
 
 export function usePersonalSettingsNavigation(deps: PersonalSettingsNavigationDeps) {
   const returnUrl = useCallback(() => {
-    const tab = deps.getActiveTab();
-    if (tab === "platform-admin") return buildPlatformAdminUrl(deps.getPlatformRoute());
-    if (tab === "tenant-admin") {
-      return buildTenantAdminUrl({ section: deps.getTenantSection(), search: preserveSearchKeys(TENANT_ADMIN_SCOPE_KEYS) });
-    }
-    return buildUrl(tab, tab === "chat" ? deps.getSessionId() : null);
+    const activeTab = deps.getActiveTab();
+    // 直接打开管理设置时没有来源记录；回退到主内容，不能再次打开管理工作区。
+    const tab = activeTab === 'platform-admin' || activeTab === 'tenant-admin' ? 'chat' : activeTab;
+    return buildUrl(tab, tab === 'chat' ? deps.getSessionId() : null);
   }, [deps]);
 
   const openSettings = useCallback((section: SettingsSectionId = "account-security") => {

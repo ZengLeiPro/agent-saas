@@ -1,8 +1,9 @@
 import { startTransition } from 'react';
 import type { AppTab } from '@/types/sidebar';
 import type { CanonicalSettingsSectionId, SettingsSectionInput } from '@/types/settings';
-import { analysisHistoryStateForNavigation, readAnalysisHistoryState } from '@/lib/analysisHistory';
-export { analysisHistoryStateForNavigation } from '@/lib/analysisHistory';
+import { readAnalysisHistoryState } from '@/lib/analysisHistory';
+import { managementHistoryStateForNavigation, readPersonalSettingsHistoryState, settingsHistoryState, type PersonalSettingsHistoryState } from '@/lib/managementHistory';
+export { managementHistoryStateForNavigation, readPersonalSettingsHistoryState, type PersonalSettingsHistoryState } from '@/lib/managementHistory';
 import {
   buildGovernanceUrl,
   governanceRoute,
@@ -576,28 +577,6 @@ export function buildSettingsUrl(section: SettingsSectionInput): string {
   return buildGovernanceUrl(governanceSettingsRoute(section));
 }
 
-const PERSONAL_SETTINGS_HISTORY_KEY = '__personalSettingsV2';
-
-export interface PersonalSettingsHistoryState {
-  source: string;
-  depth: number;
-}
-
-export function readPersonalSettingsHistoryState(state: unknown = window.history.state): PersonalSettingsHistoryState | null {
-  if (!state || typeof state !== 'object') return null;
-  const value = (state as Record<string, unknown>)[PERSONAL_SETTINGS_HISTORY_KEY];
-  if (!value || typeof value !== 'object') return null;
-  const source = (value as Record<string, unknown>).source;
-  const depth = (value as Record<string, unknown>).depth;
-  return typeof source === 'string' && source.startsWith('/') && typeof depth === 'number' && depth > 0
-    ? { source, depth }
-    : null;
-}
-
-function settingsHistoryState(navigation?: PersonalSettingsHistoryState): Record<string, unknown> {
-  return navigation ? { [PERSONAL_SETTINGS_HISTORY_KEY]: navigation } : {};
-}
-
 /** Close every settings history leaf in one move; direct links are replaced, never pushed. */
 export function closePersonalSettingsHistory(fallbackUrl: string): 'back' | 'replace' {
   const current = readPersonalSettingsHistoryState();
@@ -606,6 +585,7 @@ export function closePersonalSettingsHistory(fallbackUrl: string): 'back' | 'rep
     return 'back';
   }
   replaceAppHistoryState({}, fallbackUrl);
+  notifyRouteChange();
   return 'replace';
 }
 
@@ -646,7 +626,7 @@ export function replaceUrl(tab: AppTab, sessionId: string | null): void {
 export function pushPlatformAdminUrl(state: { section?: PlatformAdminSection | null; entityId?: string | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildPlatformAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    const historyState = analysisHistoryStateForNavigation('push', next);
+    const historyState = managementHistoryStateForNavigation('push', next);
     if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(next)) return;
     pushAppHistoryState(historyState, next);
   }
@@ -655,7 +635,7 @@ export function pushPlatformAdminUrl(state: { section?: PlatformAdminSection | n
 export function replacePlatformAdminUrl(state: { section?: PlatformAdminSection | null; entityId?: string | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildPlatformAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    replaceAppHistoryState(analysisHistoryStateForNavigation('replace', next), next);
+    replaceAppHistoryState(managementHistoryStateForNavigation('replace', next), next);
   }
 }
 
@@ -704,7 +684,7 @@ export function replaceAdminSettingsUrl(
 export function pushTenantAdminUrl(state: { section?: TenantAdminSection | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildTenantAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    const historyState = analysisHistoryStateForNavigation('push', next);
+    const historyState = managementHistoryStateForNavigation('push', next);
     if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(next)) return;
     pushAppHistoryState(historyState, next);
   }
@@ -713,7 +693,7 @@ export function pushTenantAdminUrl(state: { section?: TenantAdminSection | null;
 export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | null; search?: string | URLSearchParams | Record<string, string | number | boolean | null | undefined> } = {}): void {
   const next = buildTenantAdminUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    replaceAppHistoryState(analysisHistoryStateForNavigation('replace', next), next);
+    replaceAppHistoryState(managementHistoryStateForNavigation('replace', next), next);
   }
 }
 
@@ -726,14 +706,14 @@ export function replaceTenantAdminUrl(state: { section?: TenantAdminSection | nu
 export function pushGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    pushAppHistoryState(analysisHistoryStateForNavigation('push', next), next);
+    pushAppHistoryState(managementHistoryStateForNavigation('push', next), next);
   }
 }
 
 export function replaceGovernanceUrl(state: GovernanceRouteState): void {
   const next = buildGovernanceUrl(state);
   if (`${window.location.pathname}${window.location.search}` !== next) {
-    replaceAppHistoryState(analysisHistoryStateForNavigation('replace', next), next);
+    replaceAppHistoryState(managementHistoryStateForNavigation('replace', next), next);
   }
 }
 
@@ -825,7 +805,7 @@ export function navigateAdminSettings(target: AdminSettingsTarget, section?: str
  */
 export function navigateToHref(href: string): void {
   if (`${window.location.pathname}${window.location.search}` !== href) {
-    const historyState = analysisHistoryStateForNavigation('push', href);
+    const historyState = managementHistoryStateForNavigation('push', href);
     if (!readAnalysisHistoryState(historyState) && maybeNavigateWithUpdate(href)) return;
     pushAppHistoryState(historyState, href);
   }

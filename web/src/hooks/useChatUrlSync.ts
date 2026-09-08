@@ -13,7 +13,7 @@ import {
   buildTenantAdminUrl,
   replaceTenantAdminUrl,
   replaceGovernanceUrl,
-  analysisHistoryStateForNavigation,
+  managementHistoryStateForNavigation,
 } from '@/lib/urlSync';
 import { buildGovernanceUrl } from '@/lib/governanceNavigation';
 import { maybeReloadOnPopstate } from '@/lib/swUpdate';
@@ -140,7 +140,7 @@ export function useChatUrlSync({
       const current = `${window.location.pathname}${window.location.search}`;
       if (current !== pendingCanonicalPath) {
         window.history.replaceState(
-          analysisHistoryStateForNavigation('replace', pendingCanonicalPath),
+          managementHistoryStateForNavigation('replace', pendingCanonicalPath),
           '',
           pendingCanonicalPath,
         );

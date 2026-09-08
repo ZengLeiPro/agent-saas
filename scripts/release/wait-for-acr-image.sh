@@ -31,24 +31,9 @@ records="$RUNNER_TEMP/acr-build-records.json"
 build="$RUNNER_TEMP/acr-build.json"
 selected_build_record_id="${ACR_SELECTED_RECORD_ID:-}"
 while true; do
-  if [ -n "$selected_build_record_id" ]; then
-    # Once selected, poll its ID instead of repeatedly scanning years of history.
-    # A full stable scan still confirms uniqueness before accepting SUCCESS.
-    aliyun cr GetRepoBuildRecord \
-      --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
-      --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
-      --BuildRecordId "$selected_build_record_id" > "$RUNNER_TEMP/acr-selected.json"
-    node - "$RUNNER_TEMP/acr-selected.json" "$records" "$selected_build_record_id" <<'NODE'
-const fs = require('node:fs');
-const [source, target, id] = process.argv.slice(2);
-const record = JSON.parse(fs.readFileSync(source, 'utf8'));
-if (record.Code !== 'success' || record.IsSuccess !== true || record.BuildRecordId !== id)
-  throw new Error('Selected ACR build lookup failed or changed identity');
-fs.writeFileSync(target, JSON.stringify({ BuildRecords: [{ ...record, BuildStatus: record.Status }] }));
-NODE
-  else
-    bash scripts/release/list-acr-build-records.sh "$records"
-  fi
+  # Keep the existing repository-scoped read permission. GetRepoBuildRecord
+  # requires a separate instance-wide action that Staging intentionally lacks.
+  bash scripts/release/list-acr-build-records.sh "$records"
   rm -f -- "$build"
   node - "$short_sha" "$records" "$build" <<'NODE'
 const [shortSha, source, target] = process.argv.slice(2);

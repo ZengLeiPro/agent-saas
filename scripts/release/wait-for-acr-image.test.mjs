@@ -30,13 +30,6 @@ printf '%s\n' '${releaseSha}'
 set -euo pipefail
 action=$2
 case "$action" in
-  GetRepoBuildRecord)
-    test "\${13}:\${14}" = '--BuildRecordId:record-1'
-    printf 'get:record-1\n' >> '${events}'
-    record_id=record-1
-    if [ '${scenario}' = pinned-drift ]; then record_id=record-2; fi
-    printf '{"Code":"success","IsSuccess":true,"BuildRecordId":"%s","Status":"SUCCESS","Image":{"ImageTag":"main-aaaaaa"}}' "$record_id"
-    ;;
   ListRepoBuildRecord)
     test "$#" -eq 18
     test "$3:$4:$5:$6:$7:$8:$9:\${10}:\${11}:\${12}:\${13}:\${14}:\${15}:\${17}:\${18}" = '--mode:AK:--access-key-id:read-id:--access-key-secret:read-secret:--region:cn-test:--InstanceId:instance:--RepoId:repository:--PageNo:--PageSize:100'
@@ -44,6 +37,7 @@ case "$action" in
     printf 'list:%s\n' "$page" >> '${events}'
     calls=$(grep -c '^list:' '${events}')
     record_id=record-1
+    if [ '${scenario}' = pinned-drift ]; then record_id=record-2; fi
     if [ '${scenario}' = record-drift ] && [ "$calls" -gt 2 ]; then record_id=record-2; fi
     node - "$page" "$record_id" <<'NODE'
 const [pageText, recordId] = process.argv.slice(2);
@@ -142,11 +136,12 @@ test('rejects a Staging ACR log whose commit info does not match the requested S
   await rm(run.root, { recursive: true, force: true });
 });
 
-test('polls a selected build directly but still scans full history before acceptance', async () => {
+test('preserves selected identity using existing repository-scoped read permissions', async () => {
   const run = await runWait('pinned-success');
   assert.equal(run.result.status, 0, run.result.stderr);
   assert.deepEqual((await readFile(run.events, 'utf8')).trim().split('\n'), [
-    'get:record-1',
+    'list:1',
+    'list:2',
     'log:record-1',
     'tag:main-aaaaaa',
     'list:1',
@@ -156,9 +151,9 @@ test('polls a selected build directly but still scans full history before accept
   await rm(run.root, { recursive: true, force: true });
 });
 
-test('rejects identity drift from a direct selected-build query', async () => {
+test('rejects identity drift between pinned observations', async () => {
   const run = await runWait('pinned-drift');
   assert.notEqual(run.result.status, 0);
-  assert.match(run.result.stderr, /Selected ACR build lookup failed or changed identity/u);
+  assert.match(run.result.stderr, /selected ACR build record changed while polling/u);
   await rm(run.root, { recursive: true, force: true });
 });

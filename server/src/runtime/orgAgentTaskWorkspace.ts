@@ -12,6 +12,16 @@ export interface OrgAgentTaskWorkspaceLayout {
   sandboxScopeId: string;
 }
 
+/** Host 从持久化 binding/work order/current attempt 重验后签发，禁止从工具输入反序列化。 */
+export interface OrgAgentWorkerTaskLineage {
+  kind: 'org_agent_task'; tenantId: string; agentId: string; accountId: string;
+  ownerWorkspaceId: string; bindingId: string; conversationSpaceId: string;
+  workConversationId: string; channelConversationId: string; policyRevision: number;
+  workOrderId: string; taskRunId: string; taskSessionId: string; attemptId: string;
+  attemptNo: number; currentAttemptNo: number; taskWorkspaceId: string; sandboxScopeId: string;
+  allowedSourceIds: string[];
+}
+
 export interface OrgAgentSharedViewLayout {
   root: string;
   mountSubPath: string;

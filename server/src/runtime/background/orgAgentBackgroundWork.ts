@@ -13,6 +13,7 @@ import { resolveAgentCwd, resolveAgentMountSubPath } from '../../workspace/resol
 import {
   deriveOrgAgentSharedView,
   deriveOrgAgentTaskWorkspace,
+  type OrgAgentWorkerTaskLineage,
   type OrgAgentTaskWorkspaceLayout,
 } from '../orgAgentTaskWorkspace.js';
 import {
@@ -23,6 +24,7 @@ import {
 } from '../orgAgentArtifactPublisher.js';
 import { runtimeRunController } from '../runController.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtimeIsolationEvidence.js';
+import type { OrgAgentWorkerTaskAuthority } from '../orgAgentWorkerCapability.js';
 import type { RunRecord, RunStatus } from '../runStore.js';
 import {
   createEventStoreForSession,
@@ -39,6 +41,20 @@ import {
   buildPausedAttemptContext,
   verifyOrgAgentContinuationArtifacts,
 } from './orgAgentContinuation.js';
+
+function snapshotNumber(value: Record<string, unknown>, key: string): number | undefined {
+  const raw = value[key];
+  return typeof raw === 'number' && Number.isSafeInteger(raw) ? raw : undefined;
+}
+function snapshotStrings(value: Record<string, unknown>, key: string): string[] {
+  const candidate = value[key];
+  if (!Array.isArray(candidate) || candidate.some(item => typeof item !== 'string' || !item.trim())) return [];
+  const result = candidate.map(item => (item as string).trim());
+  return new Set(result).size === result.length ? result : [];
+}
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every(value => b.includes(value));
+}
 
 export async function prepareOrgAgentBackgroundWork(input: {
   config: RawRuntimeRunDispatchConfig;
@@ -131,10 +147,12 @@ export async function prepareOrgAgentBackgroundWork(input: {
 export class OrgAgentBackgroundWorkCoordinator {
   constructor(private readonly config: RawRuntimeRunDispatchConfig) {}
 
-  async markRunning(record: RunRecord): Promise<void> {
+  async markRunning(record: RunRecord): Promise<OrgAgentWorkerTaskLineage | undefined> {
     const metadata = parseBackgroundTaskMetadata(record);
-    if (!metadata?.workOrderId || !metadata.orgAgentChannel || !this.config.orgGroupAgentStore)
-      return;
+    if (!metadata?.orgAgentChannel) return undefined;
+    if (!metadata.workOrderId || !this.config.orgGroupAgentStore)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_INCOMPLETE');
+    await this.resolveTaskLineage(record, metadata, false);
     const tenantId = metadata.orgAgentChannel.agentPrincipal.tenantId;
     const attempt = await this.config.orgGroupAgentStore.transitionWorkAttempt({
       tenantId,
@@ -158,6 +176,86 @@ export class OrgAgentBackgroundWorkCoordinator {
       )
         throw new Error('ORG_AGENT_WORK_ATTEMPT_START_CONFLICT');
     }
+    return this.resolveTaskLineage(record, metadata, true);
+  }
+
+  createLiveTaskAuthority(lineage: OrgAgentWorkerTaskLineage): OrgAgentWorkerTaskAuthority {
+    const store = this.config.orgGroupAgentStore;
+    if (!store) throw new Error('ORG_AGENT_CONTEXT_LINEAGE_STORE_UNAVAILABLE');
+    return { taskRunId: lineage.taskRunId, taskSessionId: lineage.taskSessionId,
+      attemptId: lineage.attemptId, assertCurrent: async () => {
+        const work = await store.getWorkOrder(lineage.tenantId, lineage.workOrderId);
+        const attempt = (await store.listWorkAttempts(lineage.tenantId, lineage.workOrderId))
+          .find(item => item.attemptNo === work?.currentAttemptNo);
+        if (!work || !attempt || work.state !== 'running' || attempt.status !== 'running'
+          || work.tenantId !== lineage.tenantId || work.agentId !== lineage.agentId
+          || work.bindingId !== lineage.bindingId || work.workConversationId !== lineage.workConversationId
+          || work.currentAttemptNo !== lineage.attemptNo || attempt.attemptNo !== lineage.attemptNo
+          || attempt.attemptId !== lineage.attemptId || attempt.runtimeRunId !== lineage.taskRunId
+          || attempt.taskWorkspaceId !== lineage.taskWorkspaceId
+          || attempt.sandboxScopeId !== lineage.sandboxScopeId)
+          throw new Error('ORG_AGENT_WORKER_TASK_AUTHORITY_STALE');
+      } };
+  }
+
+  private async resolveTaskLineage(record: RunRecord, metadata: NonNullable<ReturnType<typeof parseBackgroundTaskMetadata>>,
+    requireRunning: boolean): Promise<OrgAgentWorkerTaskLineage> {
+    const store = this.config.orgGroupAgentStore, channel = metadata.orgAgentChannel;
+    if (!store || !channel || !metadata.workOrderId || !metadata.attemptId || !metadata.attemptNo
+      || !metadata.sandboxScopeId || !metadata.sharedReadOnlySubPath || !metadata.runtimeIsolationRequirement)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_INCOMPLETE');
+    const tenantId = channel.agentPrincipal.tenantId, requirement = metadata.runtimeIsolationRequirement;
+    if (record.tenantId !== tenantId || record.workspaceId !== metadata.workspaceId
+      || requirement.tenantId !== tenantId || requirement.taskId !== metadata.workOrderId
+      || requirement.runId !== record.runId || requirement.sessionId !== record.sessionId
+      || requirement.workspaceId !== metadata.workspaceId
+      || requirement.policyDigest !== RUNTIME_ISOLATION_POLICY_DIGEST)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_RUNTIME_MISMATCH');
+    const work = await store.getWorkOrder(tenantId, metadata.workOrderId);
+    const attempt = (await store.listWorkAttempts(tenantId, metadata.workOrderId))
+      .find(item => item.attemptNo === work?.currentAttemptNo);
+    const validWork = requireRunning ? work?.state === 'running' : work?.state === 'queued' || work?.state === 'running';
+    const validAttempt = requireRunning ? attempt?.status === 'running' : attempt?.status === 'queued' || attempt?.status === 'running';
+    if (!work || !attempt || !validWork || !validAttempt || attempt.runtimeRunId !== record.runId
+      || attempt.attemptId !== metadata.attemptId || attempt.attemptNo !== metadata.attemptNo
+      || work.currentAttemptNo !== metadata.attemptNo || work.tenantId !== tenantId
+      || work.agentId !== channel.agentId || work.bindingId !== channel.bindingId
+      || work.workConversationId !== channel.workConversationId)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_ATTEMPT_MISMATCH');
+    const [binding, conversation] = await Promise.all([
+      store.getBindingById(tenantId, work.bindingId), store.getWorkConversation(tenantId, work.workConversationId),
+    ]);
+    if (!binding || !conversation || binding.tenantId !== tenantId || binding.agentId !== work.agentId
+      || binding.accountId !== channel.accountId || binding.workspaceId !== channel.agentPrincipal.workspaceId
+      || binding.conversationSpaceId !== channel.conversationSpaceId
+      || binding.conversationId !== channel.channelPrincipal.conversationId
+      || conversation.tenantId !== tenantId || conversation.bindingId !== binding.bindingId
+      || conversation.workConversationId !== work.workConversationId)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_CHANNEL_MISMATCH');
+    const policyRevision = snapshotNumber(work.policySnapshot, 'revision');
+    const allowedSourceIds = snapshotStrings(work.policySnapshot, 'allowedSourceIds');
+    if (policyRevision !== channel.policyRevision || !sameStrings(allowedSourceIds, channel.allowedSourceIds))
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_POLICY_MISMATCH');
+    const agentRoot = resolveAgentCwd(this.config.agentCwd, tenantId, work.agentId);
+    const agentMountSubPath = resolveAgentMountSubPath(this.config.agentCwd, tenantId, work.agentId);
+    const shared = deriveOrgAgentSharedView({ agentRoot, agentMountSubPath,
+      bindingId: binding.bindingId, workConversationId: conversation.workConversationId });
+    const expected = deriveOrgAgentTaskWorkspace({ agentWorkspaceId: binding.workspaceId, agentRoot,
+      agentMountSubPath, sharedReadOnlySubPath: attempt.sharedReadOnlySubPath,
+      taskId: attempt.runtimeRunId, attemptNo: attempt.attemptNo });
+    if (metadata.workspaceId !== expected.taskWorkspaceId || metadata.cwd !== expected.taskRoot
+      || metadata.sandboxScopeId !== expected.sandboxScopeId || metadata.sharedReadOnlySubPath !== shared.mountSubPath
+      || attempt.taskWorkspaceId !== expected.taskWorkspaceId || attempt.sandboxScopeId !== expected.sandboxScopeId
+      || attempt.mountSubPath !== expected.mountSubPath || attempt.sharedReadOnlySubPath !== shared.mountSubPath
+      || attempt.attemptId !== expected.attemptId)
+      throw new Error('ORG_AGENT_CONTEXT_LINEAGE_WORKSPACE_MISMATCH');
+    return { kind: 'org_agent_task', tenantId, agentId: work.agentId, accountId: binding.accountId,
+      ownerWorkspaceId: binding.workspaceId, bindingId: binding.bindingId,
+      conversationSpaceId: binding.conversationSpaceId, workConversationId: conversation.workConversationId,
+      channelConversationId: binding.conversationId, policyRevision, workOrderId: work.workOrderId,
+      taskRunId: record.runId, taskSessionId: record.sessionId, attemptId: attempt.attemptId,
+      attemptNo: attempt.attemptNo, currentAttemptNo: work.currentAttemptNo,
+      taskWorkspaceId: attempt.taskWorkspaceId, sandboxScopeId: attempt.sandboxScopeId, allowedSourceIds };
   }
 
   async syncTerminal(

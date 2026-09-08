@@ -19,6 +19,7 @@ import type { AgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
 import type { OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { BackgroundTaskRuntime } from '../runtime/background/backgroundTaskRuntime.js';
 import type { OrgAgentStore } from '../data/orgAgents/index.js';
+import { resolveOrgAgentRuntimeSkillIds } from '../data/orgAgents/runtimePolicy.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { ContextStore } from '../context/store/index.js';
 import type { AgentDwsAuthFlowServiceLike } from '../dws/agentAuthFlow.js';
@@ -36,7 +37,10 @@ import {
   observedGroupOptions, toPublicAccount, toPublicInboxRecord,
 } from './agentDwsAccountDiscovery.js';
 import { buildGroupWorkspaceView } from './agentDwsGroupWorkspaceView.js';
-import { currentAgentDwsAccountIdentity } from '../dws/agentDwsAccountIdentity.js';
+import {
+  currentAgentDwsAccountIdentity,
+  deliveryMatchesCurrentAccountIdentity,
+} from '../dws/agentDwsAccountIdentity.js';
 const eventKindSchema = z.enum(['at_me', 'all_direct']);
 const createSchema = z.object({
   tenantId: z.string().trim().min(1).max(64).optional(),
@@ -166,6 +170,33 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       res.json({ items: items.map(toPublicInboxRecord) });
     } catch {
       res.status(503).json({ error: 'Agent 钉钉消息诊断读取失败' });
+    }
+  });
+
+  router.get('/agent-dws-accounts/:accountId/deliveries', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (!options.accountStore || !options.orgGroupAgentStore) {
+      return res.status(503).json({ error: 'Agent 钉钉投递诊断服务暂不可用' });
+    }
+    const parsed = inboxQuerySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const tenantId = tenantFor(req);
+    if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
+    const account = await options.accountStore.getForTenant(tenantId, req.params.accountId);
+    if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
+    try {
+      const deliveries = await options.orgGroupAgentStore.listDeliveries(
+        tenantId, account.accountId, parsed.data.limit,
+      );
+      res.json({
+        deliveries: deliveries
+          .filter(delivery => deliveryMatchesCurrentAccountIdentity(
+            delivery.accountIdentity, account,
+          ))
+          .map(toPublicAccountDelivery),
+      });
+    } catch {
+      res.status(503).json({ error: 'Agent 钉钉投递诊断读取失败' });
     }
   });
 
@@ -309,8 +340,9 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
         return res
           .status(409)
           .json({ error: '启用群聊前，活动 Runtime Worker 必须支持组织群任务协议 v2' });
+      const publishedSkillIds = new Set(resolveOrgAgentRuntimeSkillIds(agent));
       const invalidSkill = effectiveConfig.capabilities.skillIds.some(
-        (id) => !agent.allowedSkills.includes(id),
+        (id) => !publishedSkillIds.has(id),
       );
       const contextCeiling = await resolveGroupContextCeiling(options, account);
       if (effectiveConfig.knowledge.contextEnabled && !contextCeiling.available)
@@ -350,7 +382,10 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
       }
     });
   });
-  router.post('/agent-dws-accounts/:accountId/group-workspace/deliveries/:deliveryId/reconcile', async (req, res) => {
+  router.post([
+    '/agent-dws-accounts/:accountId/deliveries/:deliveryId/reconcile',
+    '/agent-dws-accounts/:accountId/group-workspace/deliveries/:deliveryId/reconcile',
+  ], async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     if (!options.accountStore || !options.orgGroupAgentStore) return res.status(503).json({ error: '组织群工作台暂不可用' });
     const parsed = deliveryReconcileSchema.safeParse(req.body);
@@ -363,8 +398,28 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!account || !delivery || delivery.accountId !== account.accountId) {
       return res.status(404).json({ error: '账号或投递记录不存在' });
     }
-    const binding = delivery.bindingId ? await options.orgGroupAgentStore.getBindingById(tenantId, delivery.bindingId) : null;
-    if (!binding || currentIdentityBindings([binding], account).length === 0) return res.status(404).json({ error: '投递记录不属于当前账号身份' });
+    const binding = delivery.bindingId
+      ? await options.orgGroupAgentStore.getBindingById(tenantId, delivery.bindingId)
+      : null;
+    const groupDeliveryAllowed = Boolean(
+      binding
+      && binding.accountId === account.accountId
+      && binding.conversationId === delivery.conversationId
+      && currentIdentityBindings([binding], account).length > 0,
+    );
+    const directDeliveryAllowed = Boolean(
+      !delivery.bindingId
+      && !delivery.agentId
+      && delivery.destination.provider === 'dingtalk'
+      && delivery.destination.kind === 'direct'
+      && delivery.destination.accountId === account.accountId
+      && delivery.destination.conversationId === delivery.conversationId
+      && delivery.destination.peerOpenId
+      && deliveryMatchesCurrentAccountIdentity(delivery.accountIdentity, account),
+    );
+    if (!groupDeliveryAllowed && !directDeliveryAllowed) {
+      return res.status(404).json({ error: '投递记录不属于当前账号身份或会话' });
+    }
     return await runMutation(req, res, options, {
       action: 'org_agent.delivery.reconcile', tenantId, targetId: req.params.deliveryId,
       purpose: parsed.data.reason,
@@ -730,6 +785,25 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
   });
 
   return router;
+}
+
+function toPublicAccountDelivery(
+  delivery: import('../data/orgGroupAgents/index.js').DwsDeliveryIntent,
+): Record<string, unknown> {
+  return {
+    deliveryId: delivery.deliveryId,
+    inboxId: delivery.inboxId ?? null,
+    conversationId: delivery.conversationId,
+    channelKind: delivery.destination.kind,
+    deliveryKind: delivery.deliveryKind,
+    deliveryState: delivery.deliveryState,
+    disposition: delivery.disposition,
+    attempt: delivery.attempt,
+    providerAttemptPhase: delivery.providerAttemptPhase,
+    createdAt: delivery.createdAt,
+    updatedAt: delivery.updatedAt,
+    completedAt: delivery.completedAt ?? null,
+  };
 }
 
 async function runMutation(

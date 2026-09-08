@@ -70,7 +70,7 @@ const workspace = {
       effectiveConfigComputation: {
         publishedAgent: {
           skillIds: ['skill-1', 'skill-2'],
-          knowledgeSkillIds: [],
+          knowledgeSkillIds: ['knowledge-skill-1'],
           sourceIds: ['source-1', 'source-2'],
           executionMode: 'dispatcher',
           enabled: true,
@@ -167,6 +167,20 @@ describe('GroupAgentWorkspacePanel', () => {
           return jsonResponse({ status: 'queued' }, 202);
         return jsonResponse({ error: `unexpected ${String(path)}` }, 500);
       });
+  });
+
+  it('把仅作为知识发布的技能纳入群能力目录', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    expect(await screen.findByText('knowledge-skill-1')).toBeTruthy();
+  });
+
+  it('群指令输入与后端运行预算一致且明确提示长资料处理方式', async () => {
+    render(<GroupAgentWorkspacePanel tenantId="tenant-a" accounts={[account]} />);
+
+    const input = await screen.findByLabelText('群 Agent 指令');
+    expect(input.getAttribute('maxlength')).toBe('20000');
+    expect(screen.getByText(/更长资料请配置为知识源/)).toBeTruthy();
   });
 
   it('active 账号可从 Personal Stream 已观测群创建 shadow binding', async () => {
@@ -418,6 +432,7 @@ describe('GroupAgentWorkspacePanel', () => {
   it('空能力目录与不可用知识源目录展示明确限制并保留既有值', async () => {
     const emptyWorkspace = structuredClone(workspace);
     emptyWorkspace.bindings[0].effectiveConfigComputation.publishedAgent.skillIds = [];
+    emptyWorkspace.bindings[0].effectiveConfigComputation.publishedAgent.knowledgeSkillIds = [];
     emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.toolNames = [];
     emptyWorkspace.bindings[0].effectiveConfigComputation.channelCeiling.contextDirectoryAvailable = false;
     vi.mocked(authFetch).mockImplementation(async (path, init) => {

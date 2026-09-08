@@ -310,6 +310,8 @@ export class AgentDwsMessageRouter {
         ...(this.options.authorizeCompletionRequester
           ? { authorizeCompletionRequester: this.options.authorizeCompletionRequester }
           : {}),
+        authorizeDirectDelivery: (delivery, account) =>
+          this.authorizeDirectDelivery(delivery, account),
       }))
     )
       return true;
@@ -600,6 +602,17 @@ export class AgentDwsMessageRouter {
       item.leaseFence,
       sessionId,
       runId,
+      requester?.tenantId
+        ? {
+            id: requester.id,
+            username: requester.username,
+            role: requester.role,
+            tenantId: requester.tenantId,
+            ...(requester.dingtalkStaffId
+              ? { dingtalkStaffId: requester.dingtalkStaffId }
+              : {}),
+          }
+        : undefined,
     );
 
     const frontReplyDeadline =
@@ -698,6 +711,62 @@ export class AgentDwsMessageRouter {
     this.options.logger?.info(
       `Agent DWS inbox completed account=${item.accountId} event=${item.eventId} session=${sessionId}`,
     );
+  }
+
+  private async authorizeDirectDelivery(
+    delivery: import('../data/orgGroupAgents/index.js').DwsDeliveryIntent,
+    account: AgentDwsAccountRecord,
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    if (!delivery.inboxId || !delivery.destination.peerOpenId) {
+      return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
+    }
+    const item = await this.options.messageStore.getById(delivery.tenantId, delivery.inboxId);
+    const snapshot = item?.payload.requesterIdentity;
+    if (
+      !item
+      || item.accountId !== delivery.accountId
+      || item.conversationId !== delivery.conversationId
+      || item.senderOpenDingtalkId !== delivery.destination.peerOpenId
+      || !snapshot
+      || typeof snapshot !== 'object'
+    ) {
+      return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
+    }
+    const expected = snapshot as Record<string, unknown>;
+    if (
+      typeof expected.id !== 'string'
+      || typeof expected.username !== 'string'
+      || (expected.role !== 'admin' && expected.role !== 'user')
+      || typeof expected.tenantId !== 'string'
+      || expected.tenantId !== delivery.tenantId
+      || !item.sessionId
+      || !item.runId
+    ) {
+      return { allowed: false, reason: 'REQUESTER_IDENTITY_MISSING' };
+    }
+    return await authorizeCurrentDwsRequester({
+      account,
+      expectedRequester: {
+        id: expected.id,
+        username: expected.username,
+        role: expected.role,
+        tenantId: expected.tenantId,
+        ...(typeof expected.dingtalkStaffId === 'string'
+          ? { dingtalkStaffId: expected.dingtalkStaffId }
+          : {}),
+      },
+      senderOpenDingtalkId: item.senderOpenDingtalkId,
+      ...(typeof item.payload.senderName === 'string'
+        ? { senderName: item.payload.senderName }
+        : {}),
+      sessionId: item.sessionId,
+      runId: item.runId,
+      resolveRequester: this.options.resolveRequester,
+      ...(this.options.resolveRequesterOutcome
+        ? { resolveRequesterOutcome: this.options.resolveRequesterOutcome }
+        : {}),
+      authorizeRequester: this.options.authorizeRequester,
+    });
   }
   private async rejectAccess(
     account: AgentDwsAccountRecord,

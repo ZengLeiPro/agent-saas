@@ -12,6 +12,7 @@ import { inboxMatchesCurrentAccountIdentity } from './agentDwsAccountIdentity.js
 import type { DwsRequesterResolution } from './requesterIdentityResolver.js';
 
 const MAX_SYSTEM_CONTEXT_FIELD = 500;
+const MAX_GROUP_INSTRUCTIONS = 20_000;
 const DWS_REPLY_IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1_000;
 
 export function isV1InboxWithoutIdentity(item: AgentDwsInboxRecord): boolean {
@@ -49,7 +50,7 @@ export function buildSystemContext(
           `本轮调用者身份可信度：${shared.externalActor.kind === 'service_event' ? 'service' : shared.externalActor.assurance}。只能调用本群 effective config 明确开放的工具。`,
           ...(shared.binding.effectiveConfig.instructions.system.trim()
             ? [
-                `当前群管理员指令：${bounded(shared.binding.effectiveConfig.instructions.system.trim(), 8_000)}`,
+                `当前群管理员指令：${boundedStructured(shared.binding.effectiveConfig.instructions.system, MAX_GROUP_INSTRUCTIONS)}`,
               ]
             : []),
           '这是组织共享会话。禁止读取请求者个人记忆、个人连接器或其他群内容；未映射身份只能处理本群允许的组织共享信息。',
@@ -164,6 +165,19 @@ export function boundedPositive(value: number | undefined, fallback: number): nu
 
 function bounded(value: string, maxLength = MAX_SYSTEM_CONTEXT_FIELD): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+/** 管理员规则需要保留段落、列表和代码结构；旧数据超限时必须显式标记，不能静默丢规则。 */
+function boundedStructured(value: string, maxLength: number): string {
+  const normalized = value.replace(/\r\n?/g, '\n').trim();
+  if (normalized.length <= maxLength) return normalized;
+  const marker = '\n[管理员指令超出当前 20000 字符运行预算，超出部分未注入；请在后台拆分为知识资料后重新发布]';
+  let cut = Math.max(0, maxLength - marker.length);
+  const lastCodeUnit = normalized.charCodeAt(cut - 1);
+  const nextCodeUnit = normalized.charCodeAt(cut);
+  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff
+    && nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) cut -= 1;
+  return `${normalized.slice(0, cut)}${marker}`;
 }
 
 export function boundedExternalId(value: unknown, maxLength: number): value is string {

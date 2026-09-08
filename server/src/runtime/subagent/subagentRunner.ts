@@ -593,6 +593,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       ...(childRuntimeIsolationRequirement
         ? { runtimeIsolationRequirement: childRuntimeIsolationRequirement }
         : {}),
+      ...(parentContext.orgAgentTaskLineage ? { orgAgentTaskLineage: parentContext.orgAgentTaskLineage } : {}),
+      ...(parentContext.orgAgentTaskAuthority ? { orgAgentTaskAuthority: parentContext.orgAgentTaskAuthority } : {}),
       ...(childRecord.executionRole === 'worker' ? {
         executionRole: 'worker' as const,
         // ensureRuntimeHandRegistered 对 runtimeIsolationRequirement 已做证据校验；

@@ -25,6 +25,7 @@ import type { OrgAgentStore } from '../data/orgAgents/index.js';
 import type { OrgAgentChannelBinding, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
 import type { UserStore } from '../data/users/store.js';
 import type { RunStore } from '../runtime/runStore.js';
+import { assertLiveOrgAgentWorkerTaskAuthority, isAttestedOrgAgentWorkerTaskContext } from '../runtime/orgAgentWorkerCapability.js';
 import type { RuntimeSessionRecord, SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
@@ -144,14 +145,26 @@ export class DwsBusinessToolProvider implements ToolProvider {
     context: ToolCallContext,
   ): Promise<ToolResult | undefined> {
     if (call.toolId !== dwsBusinessToolDescriptor.id) return undefined;
+    if (context.executionRole === 'worker') await assertLiveOrgAgentWorkerTaskAuthority({
+      ...context, workspaceId: context.workspace.id, sandboxScopeId: context.workspace.sandboxScopeId,
+    });
     const identity = context.channelContext.sessionOwner ?? context.channelContext.user;
-    const operator = context.channelContext.user ?? identity;
     const orgChannel = context.channelContext.orgAgentChannel;
     const sharedGroup = orgChannel?.channelPrincipal.kind === 'group';
-    const workspaceIdentity = sharedGroup ? identity : operator;
     const session = context.sessionId
       ? await this.options.sessionCatalog.get(context.sessionId)
       : null;
+    const workerTaskAuthorized = session?.executionRole === 'worker' && isAttestedOrgAgentWorkerTaskContext({
+      ...context, workspaceId: context.workspace.id, sandboxScopeId: context.workspace.sandboxScopeId,
+    });
+    const mappedWorkerRequester = sharedGroup && session?.executionRole === 'worker'
+      && orgChannel?.externalActor.kind === 'external_user'
+      && orgChannel.externalActor.assurance === 'mapped' && orgChannel.externalActor.mappedUserId
+      ? this.options.userStore.findById(orgChannel.externalActor.mappedUserId) : undefined;
+    const trustedMappedWorkerRequester = mappedWorkerRequester && !mappedWorkerRequester.disabled
+      && mappedWorkerRequester.tenantId === orgChannel?.agentPrincipal.tenantId ? mappedWorkerRequester : undefined;
+    const operator = context.channelContext.user ?? trustedMappedWorkerRequester ?? identity;
+    const workspaceIdentity = sharedGroup ? identity : operator;
     const workload =
       context.workspace.workload ??
       (context.memoryMaintenanceMode === 'consolidation'
@@ -232,9 +245,10 @@ export class DwsBusinessToolProvider implements ToolProvider {
         ? sharedGroupSubjectMismatches({
             orgChannel,
             identity,
-            operator: context.channelContext.user,
+            operator: context.channelContext.user ?? trustedMappedWorkerRequester,
             session,
             workspace: context.workspace,
+            workerTaskAuthorized,
           })
         : []),
     ];
@@ -262,11 +276,12 @@ export class DwsBusinessToolProvider implements ToolProvider {
       ) {
         mismatchFields.push('channelBinding.livePrincipal');
       }
-      if (sharedBinding && context.channelContext.user) {
+      const liveRequester = context.channelContext.user ?? trustedMappedWorkerRequester;
+      if (sharedBinding && liveRequester) {
         const liveAccess = await authorizeSharedGroupDwsRequester(this.options, {
           channel: orgChannel,
           binding: sharedBinding,
-          requester: context.channelContext.user,
+          requester: liveRequester,
         });
         if (!liveAccess.allowed) {
           await auditRejection('DWS_BUSINESS_SHARED_REQUESTER_REVOKED', {
@@ -325,6 +340,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
         channel: orgChannel,
         resourceAllowlist: sharedBinding?.effectiveConfig.capabilities.dwsResourceIds ?? [],
         ...(session?.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
+        ...(session?.executionRole === 'worker' ? { workerTaskAuthorized } : {}),
       });
       if (!sharedDecision.allowed) {
         await auditRejection('DWS_BUSINESS_SHARED_GROUP_DENIED', {
@@ -466,6 +482,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
         };
       }
       profileId = principalAndProfile.profileId;
+      if (context.executionRole === 'worker') await assertLiveOrgAgentWorkerTaskAuthority({
+        ...context, workspaceId: context.workspace.id, sandboxScopeId: context.workspace.sandboxScopeId,
+      });
       const result = await this.execute(
         principalAndProfile.principal,
         principalAndProfile.profileId,
@@ -655,8 +674,9 @@ function sharedGroupSubjectMismatches(input: {
   operator?: ToolCallContext['channelContext']['user'];
   session: RuntimeSessionRecord | null;
   workspace: ToolCallContext['workspace'];
+  workerTaskAuthorized: boolean;
 }): string[] {
-  const { orgChannel, identity, operator, session, workspace } = input;
+  const { orgChannel, identity, operator, session, workspace, workerTaskAuthorized } = input;
   const principal = orgChannel.agentPrincipal;
   const actor = orgChannel.externalActor;
   const expectedOwnerId = `adws-${principal.accountId}`;
@@ -679,7 +699,7 @@ function sharedGroupSubjectMismatches(input: {
     ...(JSON.stringify(session?.principal) !== JSON.stringify(principal)
       ? ['session.principal']
       : []),
-    ...(workspace.id !== principal.workspaceId ? ['workspace.id'] : []),
+    ...(!workerTaskAuthorized && workspace.id !== principal.workspaceId ? ['workspace.id'] : []),
     ...(workspace.userId !== expectedOwnerId ? ['workspace.userId'] : []),
     ...(workspace.tenantId !== principal.tenantId ? ['workspace.tenantId'] : []),
   ];

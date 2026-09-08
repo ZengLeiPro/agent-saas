@@ -522,7 +522,12 @@ function BindingEditor({
   const [sources, setSources] = useState(binding.effectiveConfig.knowledge.sourceIds);
   const [memoryPolicy, setMemoryPolicy] = useState(binding.effectiveConfig.memory);
   const computation = binding.effectiveConfigComputation;
-  const skillCatalog = computation?.publishedAgent.skillIds;
+  const skillCatalog = computation
+    ? [...new Set([
+        ...computation.publishedAgent.skillIds,
+        ...computation.publishedAgent.knowledgeSkillIds,
+      ])]
+    : undefined;
   const toolCatalog = computation?.channelCeiling.toolNames;
   const sourceCatalog = computation?.channelCeiling.contextDirectoryAvailable
     ? computation.channelCeiling.contextSourceIds.filter((sourceId) =>
@@ -605,9 +610,13 @@ function BindingEditor({
         <Textarea
           id={`instructions-${binding.bindingId}`}
           value={instructions}
+          maxLength={20_000}
           placeholder="只对当前群生效的职责、边界与输出要求"
           onChange={(event) => setInstructions(event.target.value)}
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          保留段落与列表结构，最多 20,000 字符；更长资料请配置为知识源。{instructions.length.toLocaleString()}/20,000
+        </p>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <div>

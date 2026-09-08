@@ -23,6 +23,8 @@ import type {
 } from '../runtime/executionTransport.js';
 import { isSupersededHand, selectRuntimeHandRoute, type HandStore } from '../runtime/handStore.js';
 import type { RuntimeIsolationRequirement } from '../runtime/runtimeIsolationEvidence.js';
+import type { OrgAgentWorkerTaskAuthority } from '../runtime/orgAgentWorkerCapability.js';
+import type { OrgAgentWorkerTaskLineage } from '../runtime/orgAgentTaskWorkspace.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
   DefaultExecutionTransportRegistry,
@@ -155,6 +157,10 @@ export interface ToolCallContext {
   automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string; rootSessionId?:string; rootRunId?:string };
   /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
+  orgAgentTaskLineage?: OrgAgentWorkerTaskLineage;
+  orgAgentTaskAuthority?: OrgAgentWorkerTaskAuthority;
+  executionRole?: 'worker';
+  runtimeIsolationAttested?: boolean;
   toolCallId?: string;
   invocationId?: string; correlation?: import('@agent/shared').CorrelationContext;
   onStreamChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => Promise<void> | void;

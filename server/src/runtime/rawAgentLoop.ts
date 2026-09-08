@@ -637,6 +637,10 @@ export class RawAgentLoop implements AgentLoop {
       ...(context.automationFence ? { automationFence: context.automationFence } : {}),
       ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
+      ...(context.orgAgentTaskLineage ? { orgAgentTaskLineage: context.orgAgentTaskLineage } : {}),
+      ...(context.orgAgentTaskAuthority ? { orgAgentTaskAuthority: context.orgAgentTaskAuthority } : {}),
+      ...(context.executionRole === 'worker' ? { executionRole: 'worker' as const,
+        runtimeIsolationAttested: context.runtimeIsolationAttested === true } : {}),
       hooks: context.hooks,
       signal: context.signal,
     };
@@ -2209,6 +2213,10 @@ export class RawAgentLoop implements AgentLoop {
       runId: resumeContext.runId,
       ...(resumeContext.automationFence ? { automationFence: resumeContext.automationFence } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
+      ...(resumeContext.orgAgentTaskLineage ? { orgAgentTaskLineage: resumeContext.orgAgentTaskLineage } : {}),
+      ...(resumeContext.orgAgentTaskAuthority ? { orgAgentTaskAuthority: resumeContext.orgAgentTaskAuthority } : {}),
+      ...(resumeContext.executionRole === 'worker' ? { executionRole: 'worker' as const,
+        runtimeIsolationAttested: resumeContext.runtimeIsolationAttested === true } : {}),
       hooks: resumeContext.hooks,
       signal: resumeContext.signal,
     };
@@ -2399,6 +2407,10 @@ export class RawAgentLoop implements AgentLoop {
       ...(context.automationFence ? { automationFence: context.automationFence } : {}),
       ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
+      ...(context.orgAgentTaskLineage ? { orgAgentTaskLineage: context.orgAgentTaskLineage } : {}),
+      ...(context.orgAgentTaskAuthority ? { orgAgentTaskAuthority: context.orgAgentTaskAuthority } : {}),
+      ...(context.executionRole === 'worker' ? { executionRole: 'worker' as const,
+        runtimeIsolationAttested: context.runtimeIsolationAttested === true } : {}),
       hooks: context.hooks,
       signal: context.signal,
     };

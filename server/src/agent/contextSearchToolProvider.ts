@@ -15,6 +15,7 @@ import type {
   ToolProvider,
   ToolResult,
 } from './toolRuntime.js';
+import { assertLiveOrgAgentWorkerTaskAuthority, isAttestedOrgAgentWorkerTaskContext } from '../runtime/orgAgentWorkerCapability.js';
 
 const DEFAULT_CONTEXT_LIMIT = 10;
 const MAX_CONTEXT_LIMIT = 50;
@@ -107,6 +108,7 @@ export class ContextSearchToolProvider implements ToolProvider {
     context: ToolCallContext,
   ): Promise<ToolResult | undefined> {
     if (call.toolId === contextSearchToolDescriptor.id) {
+      await assertWorkerTaskAuthorityIfNeeded(context);
       const input = contextSearchSchema.parse(call.input);
       const subject = resolveContextRecallSubject(context);
       const scope = await this.resolveNonEmptyScope(subject, { operation: 'search' });
@@ -136,6 +138,7 @@ export class ContextSearchToolProvider implements ToolProvider {
     }
 
     if (call.toolId === contextGetToolDescriptor.id) {
+      await assertWorkerTaskAuthorityIfNeeded(context);
       const input = contextGetSchema.parse(call.input);
       const subject = resolveContextRecallSubject(context);
       // Deliberately resolve again here; a prior search scope is never reused as authority.
@@ -173,6 +176,18 @@ export class ContextSearchToolProvider implements ToolProvider {
   }
 }
 
+async function assertWorkerTaskAuthorityIfNeeded(context: ToolCallContext): Promise<void> {
+  if (context.executionRole !== 'worker') return;
+  try {
+    await assertLiveOrgAgentWorkerTaskAuthority({ ...context, workspaceId: context.workspace.id,
+      sandboxScopeId: context.workspace.sandboxScopeId });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'ORG_AGENT_WORKER_TASK_AUTHORITY_INVALID')
+      throw new ContextRecallAuthorizationError('CONTEXT_RECALL_SUBJECT_MISMATCH');
+    throw error;
+  }
+}
+
 type ExtendedToolCallContext = ToolCallContext & {
   orgAgentId?: unknown;
   orgAgent?: { id?: unknown };
@@ -200,11 +215,11 @@ export function resolveContextRecallSubject(context: ToolCallContext): ContextRe
   }
 
   const extended = context as ExtendedToolCallContext;
-  const workspaceId = optionalTrustedString(context.workspace.id);
+  const executionWorkspaceId = optionalTrustedString(context.workspace.id);
   const sessionId = optionalTrustedString(context.sessionId)
     ?? optionalTrustedString(extended.session?.id)
     ?? optionalTrustedString(context.workspace.sessionId);
-  const orgAgentId = optionalTrustedString(extended.orgAgentId)
+  const explicitOrgAgentId = optionalTrustedString(extended.orgAgentId)
     ?? optionalTrustedString(extended.orgAgent?.id)
     ?? optionalTrustedString(extended.session?.orgAgentId);
 
@@ -212,10 +227,21 @@ export function resolveContextRecallSubject(context: ToolCallContext): ContextRe
   if (channel && (!channel.contextEnabled || channel.allowedSourceIds.length === 0)) {
     throw new ContextRecallAuthorizationError('CONTEXT_RECALL_EMPTY_SCOPE');
   }
-  if (channel && (channel.agentPrincipal.tenantId !== tenantId
-    || channel.agentPrincipal.agentId !== (orgAgentId ?? channel.agentId)
-    || channel.agentPrincipal.workspaceId !== workspaceId)) {
-    throw new ContextRecallAuthorizationError('CONTEXT_RECALL_SUBJECT_MISMATCH');
+  let workspaceId = executionWorkspaceId, orgAgentId = explicitOrgAgentId;
+  if (channel) {
+    if (channel.agentPrincipal.tenantId !== tenantId
+      || channel.agentPrincipal.agentId !== (explicitOrgAgentId ?? channel.agentId))
+      throw new ContextRecallAuthorizationError('CONTEXT_RECALL_SUBJECT_MISMATCH');
+    orgAgentId = channel.agentId;
+    if (context.executionRole === 'worker') {
+      const workerContext = { ...context, workspaceId: executionWorkspaceId,
+        sandboxScopeId: context.workspace.sandboxScopeId };
+      if (!isAttestedOrgAgentWorkerTaskContext(workerContext))
+        throw new ContextRecallAuthorizationError('CONTEXT_RECALL_SUBJECT_MISMATCH');
+      workspaceId = workerContext.orgAgentTaskLineage.ownerWorkspaceId;
+    } else if (channel.agentPrincipal.workspaceId !== executionWorkspaceId) {
+      throw new ContextRecallAuthorizationError('CONTEXT_RECALL_SUBJECT_MISMATCH');
+    }
   }
   return {
     tenantId,

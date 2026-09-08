@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import {
   hasExactAgentDwsProfile,
+  type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
 import type { DwsDeliveryIntent, OrgGroupAgentStore } from '../data/orgGroupAgents/index.js';
@@ -29,6 +30,10 @@ export interface OrgAgentDeliveryWorkerOptions {
     agentId: string,
     userId: string,
   ) => Promise<boolean> | boolean;
+  authorizeDirectDelivery?: (
+    delivery: DwsDeliveryIntent,
+    account: AgentDwsAccountRecord,
+  ) => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 /**
@@ -70,6 +75,28 @@ export async function deliverNextOrgAgentIntent(
         'ORG_AGENT_DELIVERY_ACCOUNT_IDENTITY_STALE',
       );
       return true;
+    }
+
+    if (!delivery.bindingId && !delivery.agentId && delivery.destination.kind === 'direct') {
+      if (!options.authorizeDirectDelivery) {
+        await options.store.markClaimedDeliveryDeadLetter(
+          delivery.deliveryId,
+          options.workerId,
+          delivery.leaseFence,
+          'ORG_AGENT_DIRECT_REQUESTER_AUTHORIZER_UNAVAILABLE',
+        );
+        return true;
+      }
+      const authorization = await options.authorizeDirectDelivery(delivery, account);
+      if (!authorization.allowed) {
+        await options.store.markClaimedDeliveryDeadLetter(
+          delivery.deliveryId,
+          options.workerId,
+          delivery.leaseFence,
+          `ORG_AGENT_DIRECT_REQUESTER_ACCESS_REVOKED:${authorization.reason ?? 'ACCESS_DENIED'}`,
+        );
+        return true;
+      }
     }
 
     if (delivery.deliveryKind === 'task_completion') {

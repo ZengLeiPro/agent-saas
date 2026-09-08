@@ -56,7 +56,13 @@ export interface AgentDwsInboxRecord {
   responseText?: string;
   replyStartedAt?: string;
   replyKind?: 'normal' | 'access_rejection';
-  disposition?: 'rejected' | 'reply_blocked' | 'delivery_unknown';
+  disposition?:
+    | 'rejected'
+    | 'reply_blocked'
+    | 'delivery_unknown'
+    | 'delivery_recovery_pending'
+    | 'execution_failed'
+    | 'execution_failure_delivery_exhausted';
   rejectionReasonCode?: string;
   attempt: number;
   maxAttempts: number;
@@ -108,6 +114,7 @@ export interface AgentDwsMessageStore {
     identity: AgentDwsCurrentAccountIdentity,
   ): Promise<boolean>;
   listActiveForAccount(tenantId: string, accountId: string): Promise<AgentDwsInboxRecord[]>;
+  getById(tenantId: string, inboxId: string): Promise<AgentDwsInboxRecord | null>;
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
   releaseClaim(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
   renewLease(inboxId: string, owner: string, fence: number, ttlMs: number): Promise<boolean>;
@@ -131,6 +138,13 @@ export interface AgentDwsMessageStore {
     fence: number,
     sessionId: string,
     runId?: string,
+    requesterIdentity?: {
+      id: string;
+      username: string;
+      role: 'admin' | 'user';
+      tenantId: string;
+      dingtalkStaffId?: string;
+    },
   ): Promise<AgentDwsInboxRecord>;
   saveDispatchResult(
     inboxId: string,

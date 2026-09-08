@@ -164,7 +164,7 @@ export async function getDeliveryIntent(
 }
 
 export async function reconcileUnknownDelivery(
-  pool: pg.Pool, deliveriesTable: string, input: {
+  pool: pg.Pool, tables: Pick<DeliveryClaimTables, 'deliveries' | 'inbox'>, input: {
     tenantId: string; deliveryId: string; actorId: string; reason: string;
     evidence: Record<string, unknown>;
     outcome: 'confirmed_sent' | 'confirmed_not_sent' | 'indeterminate';
@@ -175,16 +175,47 @@ export async function reconcileUnknownDelivery(
   });
   const state = input.outcome === 'confirmed_sent' ? 'sent'
     : input.outcome === 'confirmed_not_sent' ? 'pending' : 'unknown';
-  const result = await pool.query(
-    `UPDATE ${deliveriesTable}
-    SET delivery_state=$3,provider_receipt_json=$4::jsonb,lease_owner=NULL,lease_expires_at=NULL,
-        last_error=$5,completed_at=CASE WHEN $3='pending' THEN NULL ELSE NOW() END,updated_at=NOW()
-    WHERE tenant_id=$1 AND delivery_id=$2 AND delivery_state='unknown' RETURNING *`,
-    [input.tenantId, input.deliveryId, state,
-      JSON.stringify({ ...evidence, reconciledBy: input.actorId }), compactDeliveryError(input.reason)],
-  );
-  if (!result.rows[0]) throw new Error('DWS_DELIVERY_NOT_RECONCILABLE');
-  return mapDelivery(result.rows[0] as Record<string, unknown>);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `UPDATE ${tables.deliveries}
+      SET delivery_state=$3,provider_receipt_json=$4::jsonb,lease_owner=NULL,lease_expires_at=NULL,
+          last_error=$5,completed_at=CASE WHEN $3='pending' THEN NULL ELSE NOW() END,updated_at=NOW()
+      WHERE tenant_id=$1 AND delivery_id=$2 AND delivery_state='unknown' RETURNING *`,
+      [input.tenantId, input.deliveryId, state,
+        JSON.stringify({ ...evidence, reconciledBy: input.actorId }), compactDeliveryError(input.reason)],
+    );
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) throw new Error('DWS_DELIVERY_NOT_RECONCILABLE');
+    const inboxId = typeof row.inbox_id === 'string' ? row.inbox_id : undefined;
+    if (inboxId && input.outcome !== 'indeterminate') {
+      const inbox = await client.query(
+        `UPDATE ${tables.inbox}
+        SET state='completed',
+            lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,
+            payload_json=payload_json || jsonb_build_object(
+              'disposition',CASE WHEN $3='confirmed_not_sent'
+                THEN 'delivery_recovery_pending' ELSE 'replied' END
+            ),
+            last_error=CASE WHEN $3='confirmed_not_sent' THEN NULL ELSE last_error END,
+            completed_at=NOW(),
+            updated_at=NOW()
+        WHERE tenant_id=$1 AND inbox_id=$2 AND state='dead_letter'
+          AND payload_json->>'disposition'='delivery_unknown'
+        RETURNING inbox_id`,
+        [input.tenantId, inboxId, input.outcome],
+      );
+      if (!inbox.rows[0]) throw new Error('DWS_DELIVERY_INBOX_NOT_RECONCILABLE');
+    }
+    await client.query('COMMIT');
+    return mapDelivery(row);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function finishClaimedDelivery(
@@ -311,7 +342,11 @@ export async function claimNextDeliveryIntent(
           SELECT 1 FROM ${tables.inbox} inbound
           WHERE inbound.tenant_id=pending_delivery.tenant_id
             AND inbound.inbox_id=pending_delivery.inbox_id
-            AND inbound.state IN ('reply_pending','dead_letter')
+            AND (
+              inbound.state='reply_pending'
+              OR (inbound.state='dead_letter'
+                AND COALESCE(inbound.payload_json->>'disposition','')<>'execution_failed')
+            )
         ))
         AND (delivery_kind<>'task_completion' OR EXISTS (
           SELECT 1 FROM ${tables.workOrders} work

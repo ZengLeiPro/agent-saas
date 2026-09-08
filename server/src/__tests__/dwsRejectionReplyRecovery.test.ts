@@ -73,6 +73,7 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
     }),
     fail: vi.fn().mockResolvedValue({ ...claimed[0], state: 'retry_wait' }),
     complete: vi.fn(), getOrCreateBinding: vi.fn().mockResolvedValue({ sessionId: 'session-a' }),
+    getById: vi.fn(async () => claimed[0] ?? null),
     markDispatchStarted: vi.fn(async () => claimed[0]),
     saveDispatchResult: vi.fn(), defer: vi.fn(), releaseClaim: vi.fn(), init: vi.fn(), ingest: vi.fn(),
     listForAccount: vi.fn(), hasObservedGroup: vi.fn(), listActiveForAccount: vi.fn(),
@@ -146,6 +147,57 @@ function setup(claimed: AgentDwsInboxRecord[], options: {
 }
 
 describe('Agent DWS rejection reply recovery', () => {
+  it('执行失败终态重领时直接投递持久正文，不重新运行原业务', async () => {
+    const terminal = {
+      ...item,
+      eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const,
+      attempt: 8,
+      maxAttempts: 8,
+      responseText: '这次处理未能完成，请稍后重试；如持续出现，请联系管理员查看运行记录。',
+      replyKind: 'normal' as const,
+      disposition: 'execution_failed' as const,
+      sessionId: 'session-a',
+      runId: 'stable-run-a',
+    };
+    const test = setup([terminal], { requester: true, withDeliveryStore: true });
+
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.dispatch).not.toHaveBeenCalled();
+    expect(test.providerSend).toHaveBeenCalledWith(terminal.responseText);
+    expect(test.messageStore.complete).toHaveBeenCalledWith(
+      'inbox-a', expect.any(String), 1,
+    );
+  });
+
+  it('失败终态首次创建 outbox 前瞬时失败，重领后仍发送固定正文且不重跑业务', async () => {
+    const terminal = {
+      ...item,
+      eventType: 'user_im_message_receive_o2o_all' as const,
+      state: 'reply_pending' as const,
+      attempt: 8,
+      maxAttempts: 8,
+      responseText: '这次处理未能完成，请稍后重试；如持续出现，请联系管理员查看运行记录。',
+      replyKind: 'normal' as const,
+      disposition: 'execution_failed' as const,
+      sessionId: 'session-a',
+      runId: 'stable-run-a',
+    };
+    const retry = { ...terminal, attempt: 9, leaseFence: 2 };
+    const test = setup([terminal, retry], { requester: true, withDeliveryStore: true });
+    vi.mocked(test.orgGroupAgentStore!.createDelivery)
+      .mockRejectedValueOnce(new Error('database unavailable before durable outbox'));
+
+    await expect(test.router.runOnce()).resolves.toBe(false);
+    await expect(test.router.runOnce()).resolves.toBe(true);
+
+    expect(test.dispatch).not.toHaveBeenCalled();
+    expect(test.messageStore.fail).toHaveBeenCalledOnce();
+    expect(test.providerSend).toHaveBeenCalledOnce();
+    expect(test.providerSend).toHaveBeenCalledWith(terminal.responseText);
+  });
+
   it('初始拒绝发送失败后从 reply_pending 重领，复用正文与 reasonCode', async () => {
     const retry = { ...item, state: 'reply_pending' as const, replyKind: 'access_rejection' as const,
       attempt: 2, leaseFence: 2, responseText: '已持久化拒绝',

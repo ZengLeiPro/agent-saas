@@ -521,7 +521,10 @@ export class PgOrgGroupAgentStore implements OrgGroupAgentStore {
     outcome: 'confirmed_sent' | 'confirmed_not_sent' | 'indeterminate';
   }): Promise<DwsDeliveryIntent> {
     assertTexts(input.tenantId, input.deliveryId, input.actorId, input.reason);
-    return reconcileUnknownDelivery(this.pool, this.deliveriesTable, input);
+    return reconcileUnknownDelivery(this.pool, {
+      deliveries: this.deliveriesTable,
+      inbox: this.inboxTable,
+    }, input);
   }
 
   async createWorkOrder(input: {

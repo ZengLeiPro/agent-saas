@@ -475,7 +475,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   async execute(record: RunRecord, lease?: BackgroundTaskLease): Promise<void> {
     const metadata = parseBackgroundTaskMetadata(record);
     if (!metadata) throw new Error(`后台任务 metadata 不完整：${record.runId}`);
-    await this.orgWork.markRunning(record);
+    const orgAgentTaskLineage = await this.orgWork.markRunning(record);
+    const orgAgentTaskAuthority = orgAgentTaskLineage
+      ? this.orgWork.createLiveTaskAuthority(orgAgentTaskLineage) : undefined;
     const sessionCatalog = resolveSessionCatalog(this.config);
     const taskSession = await sessionCatalog.get(record.sessionId);
     if (!taskSession) throw new Error(`后台任务 session 不存在：${record.sessionId}`);
@@ -560,7 +562,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       );
       const baseParentContext = buildBackgroundTaskParentContext({
         record, metadata, taskSession, channelContext, env: connectorRunEnv,
-        runtimeIsolationRequirement, signal: abortController.signal,
+        runtimeIsolationRequirement, orgAgentTaskLineage, orgAgentTaskAuthority,
+        signal: abortController.signal,
       });
       const parentContext: ToolCallContext = metadata.workload
         ? { ...baseParentContext, workspace: { ...baseParentContext.workspace, workload: metadata.workload } }

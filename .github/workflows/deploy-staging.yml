@@ -690,9 +690,82 @@ jobs:
           retention-days: 14
           path: ${{ runner.temp }}/production-live-observation-error.log
 
+  prepare-acs:
+    name: 准备精确 ACS 镜像（含自动恢复）
+    needs: prepare-evidence
+    concurrency:
+      group: acr-image-${{ github.sha }}
+      cancel-in-progress: false
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    environment: staging
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      include_acs: ${{ steps.image.outputs.include_acs }}
+      artifact_name: ${{ steps.image.outputs.artifact_name }}
+    steps:
+      - name: 检出不可变触发版本
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: 配置 Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: 安装阿里云 CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL --connect-timeout 10 --max-time 120 https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+      - name: 等待并按需恢复精确镜像
+        id: image
+        timeout-minutes: 46
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
+          RELEASE_EVIDENCE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_TOKEN }}
+          ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
+          ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
+          ACR_WEBHOOK_REDELIVERY_TOKEN: ${{ secrets.ACS_WEBHOOK_REDELIVERY_TOKEN }}
+          # Reuse the existing ACS workflow binding; allow an explicit rotation.
+          ACR_GITHUB_HOOK_ID: ${{ vars.ACR_GITHUB_HOOK_ID || '649018221' }}
+        run: |
+          set -euo pipefail
+          created_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          release_date="${created_at:0:10}"
+          release_id="rc-${release_date//-/}-$(printf '%02d' "$GITHUB_RUN_NUMBER")"
+          echo "artifact_name=prepared-acs-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+          echo 'include_acs=false' >> "$GITHUB_OUTPUT"
+          # Existing RCs are validated and reused by the deployment job, never rebuilt.
+          if gh release view "$release_id" >/dev/null 2>&1; then exit 0; fi
+          curl -fsS --connect-timeout 10 --max-time 60 --retry 2 \
+            -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
+            "$RELEASE_EVIDENCE_URL?sha=$GITHUB_SHA" > "$RUNNER_TEMP/acs-authority.json"
+          jq -e --arg sha "$GITHUB_SHA" '.ok == true and .releaseSha == $sha and (.affectedComponents | type == "array")' "$RUNNER_TEMP/acs-authority.json" >/dev/null
+          if jq -e '.affectedComponents | index("acs") != null' "$RUNNER_TEMP/acs-authority.json" >/dev/null; then
+            RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image-prepared.json" \
+              bash scripts/release/wait-for-acr-image.sh
+            echo 'include_acs=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: 保存同一次运行的已验证镜像与诊断
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepared-acs-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/acs-image-prepared.json
+            ${{ runner.temp }}/acr-recovery-report.json
+
   build-deploy-verify:
     name: 部署并校验精确的测试环境 RC
-    needs: prepare-evidence
+    needs: [prepare-evidence, prepare-acs]
     # Only online mutation and validation own the Staging slot. Preparation can overlap.
     # GitHub keeps one pending intent; a newer dispatch replaces an older pending job.
     concurrency:
@@ -851,8 +924,16 @@ jobs:
           fi
           diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
+      - name: 下载本次运行已验证的 ACS 镜像证据
+        if: env.REUSE_RC != 'true' && needs.prepare-acs.outputs.include_acs == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          # Failed-job reruns retain the successful producer's original attempt.
+          name: ${{ needs.prepare-acs.outputs.artifact_name }}
+          path: ${{ runner.temp }}
       - name: 按需解析精确 ACS 镜像
         if: env.REUSE_RC != 'true'
+        timeout-minutes: 3
         env:
           ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ACR_READ_ACCESS_KEY_ID }}
           ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ACR_READ_ACCESS_KEY_SECRET }}
@@ -863,8 +944,13 @@ jobs:
             : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing staging secret ACR_READ_ACCESS_KEY_ID}"
             : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing staging secret ACR_READ_ACCESS_KEY_SECRET}"
             include_acs=true
-            RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
-              bash scripts/release/wait-for-acr-image.sh
+            test -s "$RUNNER_TEMP/acs-image-prepared.json"
+            # Recheck immutable build identity immediately before mutation; no waiting
+            # or webhook writes while holding the Staging deployment slot.
+            ACR_SINGLE_PROBE=true RELEASE_SHA="$GITHUB_SHA" OUTPUT_FILE="$RUNNER_TEMP/acs-image.json" \
+              timeout --kill-after=5s 120s bash scripts/release/wait-for-acr-image.sh
+            diff <(jq -S . "$RUNNER_TEMP/acs-image-prepared.json") \
+                 <(jq -S . "$RUNNER_TEMP/acs-image.json")
           fi
           echo "INCLUDE_ACS=$include_acs" >> "$GITHUB_ENV"
 

@@ -63,14 +63,15 @@ test('Staging workflow locks the dispatch SHA, single slot, and dedicated ACR re
   assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   const preparation = workflow.slice(0, workflow.indexOf('  build-deploy-verify:'));
   const mutation = workflow.slice(workflow.indexOf('  build-deploy-verify:'));
-  assert.doesNotMatch(preparation, /^\s*concurrency:/mu);
+  assert.doesNotMatch(preparation, /group: staging-runtime/u);
+  assert.match(preparation, /group: acr-image-\$\{\{ github.sha \}\}/u);
   assert.match(mutation, /concurrency:\s+group: staging-runtime\s+cancel-in-progress: false/u);
   assert.doesNotMatch(preparation, /bash '\$remote\/deploy-staging-release\.sh'/u);
   assert.match(mutation, /bash '\$remote\/deploy-staging-release\.sh'/u);
   assert.match(mutation, /node scripts\/staging\/core-business-smoke\.mjs/u);
   assert.match(
     workflow,
-    /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
+    /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: \[prepare-evidence, prepare-acs\][\s\S]*environment: staging/u,
   );
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/u);

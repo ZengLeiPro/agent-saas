@@ -14,6 +14,11 @@ ACR_SK="${ACR_SK:-${ALIBABACLOUD_ACCESS_KEY_SECRET:-}}"
 : "${ACR_SK:?ACR read access key secret is required}"
 export ACR_REGION_ID ACR_AK ACR_SK
 
+# The supervisor owns wall-clock deadlines, heartbeat, and exact-push recovery.
+if [ "${ACR_SINGLE_PROBE:-}" != true ]; then
+  exec python3 scripts/release/acr-image-supervisor.py
+fi
+
 printf '%s' "$RELEASE_SHA" | grep -Eq '^[a-f0-9]{40}$'
 short_sha="${RELEASE_SHA:0:6}"
 matches="$(git rev-list --all | grep -Ec "^${short_sha}" || true)"
@@ -24,11 +29,26 @@ test "$matches" = 1 || {
 
 records="$RUNNER_TEMP/acr-build-records.json"
 build="$RUNNER_TEMP/acr-build.json"
-selected_build_record_id=''
-attempt=0
-while [ "$attempt" -lt 60 ]; do
-  attempt=$((attempt + 1))
-  bash scripts/release/list-acr-build-records.sh "$records"
+selected_build_record_id="${ACR_SELECTED_RECORD_ID:-}"
+while true; do
+  if [ -n "$selected_build_record_id" ]; then
+    # Once selected, poll its ID instead of repeatedly scanning years of history.
+    # A full stable scan still confirms uniqueness before accepting SUCCESS.
+    aliyun cr GetRepoBuildRecord \
+      --mode AK --access-key-id "$ACR_AK" --access-key-secret "$ACR_SK" \
+      --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
+      --BuildRecordId "$selected_build_record_id" > "$RUNNER_TEMP/acr-selected.json"
+    node - "$RUNNER_TEMP/acr-selected.json" "$records" "$selected_build_record_id" <<'NODE'
+const fs = require('node:fs');
+const [source, target, id] = process.argv.slice(2);
+const record = JSON.parse(fs.readFileSync(source, 'utf8'));
+if (record.Code !== 'success' || record.IsSuccess !== true || record.BuildRecordId !== id)
+  throw new Error('Selected ACR build lookup failed or changed identity');
+fs.writeFileSync(target, JSON.stringify({ BuildRecords: [{ ...record, BuildStatus: record.Status }] }));
+NODE
+  else
+    bash scripts/release/list-acr-build-records.sh "$records"
+  fi
   rm -f -- "$build"
   node - "$short_sha" "$records" "$build" <<'NODE'
 const [shortSha, source, target] = process.argv.slice(2);
@@ -62,11 +82,12 @@ NODE
         echo "Exact ACR build failed: $status" >&2
         exit 1
         ;;
-      PENDING|BUILDING) ;;
+      PENDING) exit 75 ;;
+      BUILDING) exit 76 ;;
       *) echo "Unexpected ACR build status: $status" >&2; exit 1 ;;
     esac
   fi
-  sleep 30
+  exit 77 # No exact record: the supervisor may recover its failed push webhook.
 done
 test -s "$build" || { echo 'Exact ACR build record did not appear' >&2; exit 1; }
 test "$(jq -r .BuildStatus "$build")" = SUCCESS || {

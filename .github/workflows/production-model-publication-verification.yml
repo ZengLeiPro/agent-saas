@@ -1,6 +1,5 @@
 name: Production model publication integration verification
-# Temporary PR-593 development helper. No deployment environment, secrets,
-# production endpoint, main writes, merge or deployment action.
+# Temporary PR-593 helper; no deployment, environments or production credentials.
 on:
   push:
     branches: [fix/models-production-write-policy-20260908]
@@ -53,11 +52,9 @@ jobs:
           assert s.count('    alias: {') == 1
           s = s.replace('    alias: {', "    packages: 'external', alias: {")
           assert s.count("symlinkSync(resolve('node_modules')") == 1
-          s = s.replace("symlinkSync(resolve('node_modules')", "symlinkSync(resolve('../node_modules')")
-          p.write_text(s)
+          p.write_text(s.replace("symlinkSync(resolve('node_modules')", "symlinkSync(resolve('../node_modules')"))
           p = Path('web/src/components/ModelManager/useModelWritePolicy.ts')
-          s = p.read_text().replace('        ? `${PRODUCTION_NOTICE} ${policy.message}`', '        ? (policy.message || PRODUCTION_NOTICE)')
-          p.write_text(s)
+          p.write_text(p.read_text().replace('        ? `${PRODUCTION_NOTICE} ${policy.message}`', '        ? (policy.message || PRODUCTION_NOTICE)'))
           PY
       - uses: ./.github/actions/setup-pnpm
       - uses: actions/setup-node@v5
@@ -81,9 +78,9 @@ jobs:
           import hashlib, json, subprocess
           from pathlib import Path
           path = 'server/src/app/runtime.ts'
-          old = subprocess.check_output(['git', 'show', f'HEAD:{path}'])
           digest = lambda data: 'sha256:' + hashlib.sha256(data).hexdigest()
-          old_digest, new_digest = digest(old), digest(Path(path).read_bytes())
+          old_digest = digest(subprocess.check_output(['git', 'show', f'HEAD:{path}']))
+          new_digest = digest(Path(path).read_bytes())
           document = 'docs/release/生产模型在线发布运行时装配审核-20260909.md'
           evidence = {'path': document, 'digest': digest(Path(document).read_bytes())}
           p = Path('config/release-migration-reviews.json')
@@ -92,27 +89,25 @@ jobs:
           for review in data['reviews']:
               touched = False
               for item in review['files']:
-                  if item['path'] != path:
-                      continue
-                  assert item['targetDigest'] == old_digest, 'Historical target is not the reviewed source baseline'
+                  if item['path'] != path: continue
+                  assert item['targetDigest'] == old_digest
                   item['targetDigest'] = new_digest
                   item['reason'] += ' 本次追加生产模型签名配置发布、双进程读回及记忆索引事务装配，不新增数据库结构或数据变更；见生产模型在线发布运行时装配审核。'
                   touched = True
                   updated += 1
-              if touched and evidence not in review['evidence']:
-                  review['evidence'].append(evidence)
+              if touched and evidence not in review['evidence']: review['evidence'].append(evidence)
           assert updated > 0
           p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
           paths = set(json.loads(Path('/tmp/production-model-integration-paths.json').read_text()))
           paths.update([str(p), document, 'scripts/release/config-publication-release.test.mjs'])
           Path('/tmp/production-model-integration-paths.json').write_text(json.dumps(sorted(paths)))
-          print('Preserved historical classifications and rebound', updated, 'runtime reviews', old_digest, new_digest)
+          print('Preserved historical classifications and rebound', updated, 'runtime reviews')
           PY
       - name: Typechecks, production saves, real Worker restart and bundles
         run: |
           set -euo pipefail
           exec 3>&1
-          trap 'tail -n 160 /tmp/production-model-publication-verification.log >&3' EXIT
+          trap 'grep -E "Test Files|Tests |tests [0-9]|pass [0-9]|fail [0-9]|built in|error TS|ERROR|FAIL" /tmp/production-model-publication-verification.log >&3 || true; tail -n 100 /tmp/production-model-publication-verification.log >&3' EXIT
           {
             node --test scripts/release/config-publication.test.mjs scripts/release/config-publication-release.test.mjs
             pnpm -F @agent/shared typecheck

@@ -17,6 +17,27 @@
           "targetDigest": "sha256:f368c7bd58a930c10574d46e8b346cd011207b2985ab7d55a5a4a5e5f89c0131",
           "classification": "expand",
           "reason": "启动阶段初始化工具提示语动态存储，并在每次 Run admission 时读取覆盖；本文件自身无 SQL，结构变更全部委托已单独审核的 PgToolDescriptionStore。"
+        },
+        {
+          "path": "server/src/data/governance-schema/latestMigrations.ts",
+          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
+          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/migrations.ts",
+          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
+          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
+          "classification": "no-schema-change",
+          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
+        },
+        {
+          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
+          "baselineDigest": null,
+          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
+          "classification": "expand",
+          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
         }
       ],
       "evidence": [
@@ -27,6 +48,10 @@
         {
           "path": "server/src/data/toolDescriptionStore.pg.test.ts",
           "digest": "sha256:26400d1185b4fed03211e736e64f503f285f153e1699ea32bfb1d0d1f03bece2"
+        },
+        {
+          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
+          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
         }
       ]
     },
@@ -10249,38 +10274,6 @@
           "path": "server/src/quota/providerQuotaPushedAccounts.pg.test.ts",
           "digest": "sha256:196cbbaa82971c533ce3f40eefc78943fbd005e353d6f643efe40f4d1065d41c"
         },
-        {
-          "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
-          "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"
-        }
-      ]
-    },
-    {
-      "baselineSha": "892ab5ef212ac3ce51f62dc4d73475bfaeac683a",
-      "files": [
-        {
-          "path": "server/src/data/governance-schema/latestMigrations.ts",
-          "baselineDigest": "sha256:f6f99dbacafe3a442e0f134250f899d798a3c0e8393d9165f5dc7543567956d2",
-          "targetDigest": "sha256:09cf9dd69f125464552e070922b629cea8870479072035197ab736a187bac744",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
-        },
-        {
-          "path": "server/src/data/governance-schema/migrations.ts",
-          "baselineDigest": "sha256:14d22917d899679d8fbecf2846cf73366f5e4de041c151837866561b84de56fd",
-          "targetDigest": "sha256:3948fbcdecdd4a7a2c8a2c29622d928b99f1f4c131d023bd3105c4b2dae1b054",
-          "classification": "no-schema-change",
-          "reason": "仅追加 V45 注册及当前版本号，旧迁移语句、次序与执行器不变，实际 DDL 单独在 V45 文件审核。"
-        },
-        {
-          "path": "server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts",
-          "baselineDigest": null,
-          "targetDigest": "sha256:c90ac7c8e7495abae80ff111eadc8ad6a12c5e9f0e7dff09add0fc80074502b7",
-          "classification": "expand",
-          "reason": "V45 仅新增系统默认接入配置表，含主键、指向系统定义的外键与版本默认值；不改写旧表或安装数据，旧应用可忽略新表。"
-        }
-      ],
-      "evidence": [
         {
           "path": "server/src/kyapp/delivery/existingOnboard.pg.test.ts",
           "digest": "sha256:feeb81b6fd080244206582855c44f77c08b23d2669ac6ebae41d6480ee735970"

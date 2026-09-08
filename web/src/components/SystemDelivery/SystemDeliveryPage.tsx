@@ -188,14 +188,25 @@ function DeliveryExecution({
           )}
           {claim && ticket && (
             <div className="rounded border p-3">
-              <p>请将一次性领取链接交给技术联系人，过期时间：{claim.ticketExpiresAt}</p>
+              <p>
+                平台管理员可直接领取，也可将链接交给技术联系人。过期时间：{claim.ticketExpiresAt}
+              </p>
               <input
-                aria-label="技术联系人领取链接"
+                aria-label="凭据领取链接"
                 readOnly
                 value={credentialClaimUrl(execution.installationId, ticket)}
                 className="w-full rounded border bg-background p-2 text-xs"
               />
               <p className="text-xs">刷新后不保留此链接；如遗失，请到实例运营页重新签发。</p>
+              <Button asChild variant="outline">
+                <a
+                  href={credentialClaimUrl(execution.installationId, ticket)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  领取凭据
+                </a>
+              </Button>
             </div>
           )}
           {['waiting_external', 'failed'].includes(execution.status) && (
@@ -263,10 +274,10 @@ function DeliveryExecution({
 
 function connectionWaitingMessage(code: string | null) {
   const messages: Record<string, string> = {
-    credential_claim_required: '待领取凭据：请技术联系人登录领取并装配凭据。',
-    credential_ack_required: '待服务确认：请技术联系人装配凭据，启动业务服务并完成确认。',
-    domain_verification_required: '待域名验证：请技术联系人按处理信息配置 DNS TXT，完成后继续。',
-    ready_required: '待服务就绪：请技术联系人部署本次接入版本，服务就绪后继续。',
+    credential_claim_required: '待领取凭据：平台管理员或技术联系人可登录领取并装配凭据。',
+    credential_ack_required: '待服务确认：请装配凭据，启动业务服务并完成确认。',
+    domain_verification_required: '待域名验证：请按处理信息配置 DNS TXT，完成后继续。',
+    ready_required: '待服务就绪：请部署本次接入版本，服务就绪后继续。',
     assignment_required: '待授权成员：请打开实例与授权，选择可使用的成员及 Agent，完成后继续。',
     diagnostic_configuration_required:
       '待配置接入诊断：请在系统接入配置中选择只读能力和参数，保存后继续。',

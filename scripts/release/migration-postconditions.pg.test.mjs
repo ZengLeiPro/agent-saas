@@ -7,6 +7,32 @@ import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 const { Pool } = createRequire(new URL('../../server/package.json', import.meta.url))('pg');
 const url = process.env.TEST_DATABASE_URL;
 
+test('V45 connection settings catalog independently checks required columns and constraints', { skip: !url }, async () => {
+  const prefix = `ky45_${process.pid}_${Date.now().toString(36)}`;
+  const pool = new Pool({ connectionString: url });
+  const table = `${prefix}_ky_app_connection_settings`;
+  const systems = `${prefix}_ky_app_system_definitions`;
+  const catalog = JSON.parse(await readFile(new URL('../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
+  const entry = catalog.entries.find((item) => item.path === 'server/src/data/governance-schema/v45KyAppConnectionSettingsMigration.ts');
+  assert.ok(entry?.checks.length, 'V45 postconditions must be registered');
+  const postconditions = entry.checks;
+  const manifest = { releaseId: 'rc-20260908-01', digest: `sha256:${'a'.repeat(64)}`, migrationPlan: { phase: 'expand', planDigest: `sha256:${'b'.repeat(64)}`, postconditions, postconditionsDigest: digestBuffer(canonicalJson(postconditions)) } };
+  const readback = () => readMigrationPostconditions({ manifest, config: { runtimeEventStore: { connectionString: url, tablePrefix: prefix } }, environment: 'staging', Pool });
+  try {
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`CREATE TABLE ${systems} (system_id TEXT PRIMARY KEY);
+      CREATE TABLE ${table} (system_id TEXT PRIMARY KEY REFERENCES ${systems}(system_id), settings_json JSONB NOT NULL, version INTEGER NOT NULL DEFAULT 1, updated_by TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    assert.equal((await readback()).status, 'passed');
+    await pool.query(`ALTER TABLE ${table} ALTER COLUMN settings_json DROP NOT NULL`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+    await pool.query(`ALTER TABLE ${table} ALTER COLUMN settings_json SET NOT NULL; ALTER TABLE ${table} DROP CONSTRAINT ${table}_system_id_fkey`);
+    await assert.rejects(readback(), /Database postcondition failed/);
+  } finally {
+    await pool.query(`DROP TABLE IF EXISTS ${table}; DROP TABLE IF EXISTS ${systems}`);
+    await pool.end();
+  }
+});
+
 test(
   'D-03: PostgreSQL checks real column types, index readiness and backfill; readback cannot write',
   { skip: !url },
@@ -74,8 +100,10 @@ test('catalog rejects incomplete existing quota schemas that cannot execute the 
   const edits = `${prefix}_provider_plan_expiry_edits`;
   const pool = new Pool({ connectionString: url });
   const catalog = JSON.parse(await readFile(new URL('../../config/release-migration-postconditions.json', import.meta.url), 'utf8'));
-  const postconditions = catalog.entries[0].checks;
-  for (const entry of catalog.entries) assert.deepEqual(entry.checks, postconditions);
+  const quotaEntries = catalog.entries.filter((entry) => entry.path === 'server/src/quota/providerQuotaSnapshotStore.ts');
+  assert.ok(quotaEntries.length > 0, 'quota schema postconditions must be registered');
+  const postconditions = quotaEntries[0].checks;
+  for (const entry of quotaEntries) assert.deepEqual(entry.checks, postconditions);
   const manifest = { releaseId: 'rc-20260908-01', digest: `sha256:${'a'.repeat(64)}`, migrationPlan: { phase: 'expand', planDigest: `sha256:${'b'.repeat(64)}`, postconditions, postconditionsDigest: digestBuffer(canonicalJson(postconditions)) } };
   const readback = () => readMigrationPostconditions({ manifest, config: { runtimeEventStore: { connectionString: url, tablePrefix: prefix } }, environment: 'staging', Pool });
   try {

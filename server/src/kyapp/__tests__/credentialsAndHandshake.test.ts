@@ -12,6 +12,7 @@ import {
 } from '../installations/credentials.js';
 import {
   MEMBER,
+  ORG_ADMIN,
   PLATFORM_ADMIN,
   TEST_IID,
   TEST_ORIGIN,
@@ -57,7 +58,7 @@ async function claimCredential(harness: KyAppTestRig): Promise<{
 }
 
 describe('服务凭据一次性领取与确认', () => {
-  it('签发响应不含明文；领取只成功一次；非技术联系人不能领', async () => {
+  it('签发响应不含明文；联系人领取只成功一次；普通成员不能领', async () => {
     const harness = await rig();
     await seedPublishedInstallation(harness);
     harness.setUser(PLATFORM_ADMIN);
@@ -72,7 +73,7 @@ describe('服务凭据一次性领取与确认', () => {
     // 票据 ≥192 bit → base64url 至少 32 字符。
     expect(ticket.length).toBeGreaterThanOrEqual(32);
 
-    // 非技术联系人 → 403。
+    // 非联系人普通成员 → 403。
     harness.setUser(MEMBER);
     expect(
       (await harness.request(`${BASE}/installations/${TEST_IID}/credentials/claim/${ticket}`))
@@ -93,6 +94,34 @@ describe('服务凭据一次性领取与确认', () => {
       `${BASE}/installations/${TEST_IID}/credentials/claim/${ticket}`,
     );
     expect(second.status).toBe(409);
+  });
+
+  it('平台管理员无需成为联系人即可领取；组织管理员不能代领；票据跨角色只使用一次', async () => {
+    const harness = await rig();
+    await seedPublishedInstallation(harness);
+    harness.setUser(PLATFORM_ADMIN);
+    const issued = await harness.request(
+      `${BASE}/installations/${TEST_IID}/credentials`,
+      json('POST'),
+    );
+    expect(issued.status).toBe(201);
+    const { credential } = (await issued.json()) as { credential: { ticket: string } };
+    const path = `${BASE}/installations/${TEST_IID}/credentials/claim/${credential.ticket}`;
+    harness.setUser(ORG_ADMIN);
+    expect((await harness.request(path)).status).toBe(403);
+    harness.setUser(null);
+    expect((await harness.request(path)).status).toBe(401);
+    harness.setUser(PLATFORM_ADMIN);
+    const claimed = await harness.request(path);
+    expect(claimed.status).toBe(200);
+    expect(claimed.headers.get('cache-control')).toBe('no-store');
+    const body = (await claimed.json()) as {
+      credential: { serviceCredential: string; installationKey: string };
+    };
+    expect(body.credential.serviceCredential.length).toBeGreaterThanOrEqual(40);
+    expect(body.credential.installationKey).toBeTruthy();
+    harness.setUser({ ...MEMBER, sub: 'u_tech' });
+    expect((await harness.request(path)).status).toBe(409);
   });
 
   it('credential-ack 用服务凭据 Bearer 自鉴权；24 小时后失效', async () => {
@@ -287,20 +316,33 @@ describe('壳握手', () => {
 
   it('缓存重放仍校验成员授权、用户和会话；撤权后不能续期', async () => {
     const visible = [TEST_IID];
-    const { harness, keyVersion, installationKey } = await handshakeSetup({ visibleInstallationIds: visible });
+    const { harness, keyVersion, installationKey } = await handshakeSetup({
+      visibleInstallationIds: visible,
+    });
     harness.setUser(MEMBER);
-    const { nonce } = await (await harness.request(`${BASE}/installations/${TEST_IID}/handshake/nonce`, json('POST'))).json();
+    const { nonce } = await (
+      await harness.request(`${BASE}/installations/${TEST_IID}/handshake/nonce`, json('POST'))
+    ).json();
     const attestation = await attest({ keyVersion, installationKey, nonce });
-    const verify = () => harness.request(`${BASE}/installations/${TEST_IID}/handshake/verify`, json('POST', { nonce, attestation }));
+    const verify = () =>
+      harness.request(
+        `${BASE}/installations/${TEST_IID}/handshake/verify`,
+        json('POST', { nonce, attestation }),
+      );
     expect((await verify()).status).toBe(200);
-    for (const identity of [{ ...MEMBER, sub: 'another-member' }, { ...MEMBER, jti: 'another-session' }]) {
+    for (const identity of [
+      { ...MEMBER, sub: 'another-member' },
+      { ...MEMBER, jti: 'another-session' },
+    ]) {
       harness.setUser(identity);
       expect((await verify()).status).toBe(403);
     }
     harness.setUser(MEMBER);
     visible.length = 0;
     expect((await verify()).status).toBe(403);
-    expect((await harness.request(`${BASE}/installations/${TEST_IID}/token`, json('POST'))).status).toBe(403);
+    expect(
+      (await harness.request(`${BASE}/installations/${TEST_IID}/token`, json('POST'))).status,
+    ).toBe(403);
   });
 
   it('别的用户拿到 nonce 也换不到令牌（绑定校验）', async () => {

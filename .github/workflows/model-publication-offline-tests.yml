@@ -1,0 +1,44 @@
+name: Model publication offline test dependencies
+# Temporary feature-branch test helper; removed from the final PR diff.
+# Read-only repository access, no environments, no production secrets or deployment.
+on:
+  push:
+    branches: [fix/models-production-write-policy-20260908]
+    paths: [.github/workflows/model-publication-offline-tests.yml]
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    if: github.repository == 'ZengLeiPro/agent-saas' && github.ref == 'refs/heads/fix/models-production-write-policy-20260908'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-pnpm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.23.1'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Archive only installed test dependencies and pinned executables
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/model-publication-tools
+          cp "$(command -v node)" /tmp/model-publication-tools/node
+          cp "$(command -v pnpm)" /tmp/model-publication-tools/pnpm
+          paths=(node_modules)
+          while IFS= read -r -d '' path; do paths+=("$path"); done < <(find server shared web packages acs-orchestrator mobile -mindepth 1 -maxdepth 2 -name node_modules -type d -print0)
+          tar -czf /tmp/model-publication-dependencies.tar.gz "${paths[@]}"
+          tar -czf /tmp/model-publication-tools.tar.gz -C /tmp model-publication-tools
+          sha256sum /tmp/model-publication-{dependencies,tools}.tar.gz > /tmp/model-publication-artifacts.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: model-publication-offline-dependencies
+          path: |
+            /tmp/model-publication-dependencies.tar.gz
+            /tmp/model-publication-tools.tar.gz
+            /tmp/model-publication-artifacts.sha256
+          compression-level: 0
+          retention-days: 1
